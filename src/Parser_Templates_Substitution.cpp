@@ -1027,7 +1027,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					num_pack_elements = pack_param_info_[0].pack_size;
 				}
 
-				FLASH_LOG(Templates, Debug, "Complex fold expansion: num_pack_elements=", num_pack_elements);
+				FLASH_LOG(Templates, Trace, "Complex fold expansion: num_pack_elements=", num_pack_elements);
 
 				if (num_pack_elements == 0) {
 					if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
@@ -1112,7 +1112,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					}
 				}
 
-				FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
+				FLASH_LOG(Templates, Trace, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
 
 				if (pack_param_idx.has_value()) {
 					size_t pack_size = pack_binding.found ? pack_binding.count : 0;
@@ -1295,7 +1295,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			// sizeof... operator - replace with the pack size as a constant
 			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
 			std::string_view pack_name = sizeof_pack.pack_name();
-			FLASH_LOG(Templates, Debug, "*** SizeofPackNode handler entered for pack: '", pack_name, "'");
+			FLASH_LOG(Templates, Trace, "*** SizeofPackNode handler entered for pack: '", pack_name, "'");
 
 			NamedPackBinding pack_binding = resolveNamedPackBinding(pack_name);
 			size_t num_pack_elements = pack_binding.found ? pack_binding.count : 0;
@@ -1409,7 +1409,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					}
 				}
 				if (is_known_template_param) {
-					FLASH_LOG(Templates, Debug, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
+					FLASH_LOG(Templates, Trace, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
 					return node;
 				}
 				// Pack name is genuinely unknown — this is a C++ constraint violation.
@@ -1418,7 +1418,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			}
 
 			// Create an integer literal with the pack size
-			FLASH_LOG(Templates, Debug, "*** Replacing sizeof...(", pack_name, ") with literal: ", num_pack_elements);
+			FLASH_LOG(Templates, Trace, "*** Replacing sizeof...(", pack_name, ") with literal: ", num_pack_elements);
 			StringBuilder pack_size_builder;
 			std::string_view pack_size_str = pack_size_builder.append(num_pack_elements).commit();
 			Token literal_token(Token::Type::Literal, pack_size_str,
@@ -1427,7 +1427,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			ASTNode result = emplace_node<ExpressionNode>(
 				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements),
 								   TypeCategory::Int, TypeQualifier::None, 32));
-			FLASH_LOG(Templates, Debug, "*** Created NumericLiteralNode, returning");
+			FLASH_LOG(Templates, Trace, "*** Created NumericLiteralNode, returning");
 			return result;
 		} else if (std::holds_alternative<InitializerListConstructionNode>(expr)) {
 			return substituteWithExpressionSubstitutor(node);
@@ -1697,7 +1697,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 
 	} else if (node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
-		FLASH_LOG(Templates, Debug, "  substituteTemplateParameters TypeSpecifierNode: cat=", static_cast<int>(type_spec.category()),
+		FLASH_LOG(Templates, Trace, "  substituteTemplateParameters TypeSpecifierNode: cat=", static_cast<int>(type_spec.category()),
 			" token='", type_spec.token().value(), "' pointer_depth=", static_cast<int>(type_spec.pointer_depth()));
 		const auto makeTypeSpecifierFromTemplateArg = [&](const TemplateTypeArg& arg) -> ASTNode {
 			Token substituted_token = type_spec.token();
@@ -1934,7 +1934,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 							continue;
 						}
 						const TypeInfo* inst_type_info = it->second;
-						FLASH_LOG(Templates, Debug,
+						FLASH_LOG(Templates, Trace,
 							"Remapped nested struct type '", type_name,
 							"' -> '", StringTable::getStringView(inst_type_info->name()), "'");
 						return makeTypeSpecifier(*inst_type_info);
@@ -2138,7 +2138,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_condition, eval_ctx);
 			if (eval_result.success()) {
 				bool condition_value = eval_result.as_int() != 0;
-				FLASH_LOG(Templates, Debug, "if constexpr condition evaluated to ", condition_value ? "true" : "false");
+				FLASH_LOG(Templates, Trace, "if constexpr condition evaluated to ", condition_value ? "true" : "false");
 				ASTNode selected;
 				if (condition_value) {
 					selected = substitute_nested(if_stmt.get_then_statement());
@@ -2197,7 +2197,7 @@ std::string_view Parser::extract_base_template_name(std::string_view mangled_nam
 		// Check if this is a registered class template
 		auto candidate_opt = gTemplateRegistry.lookupTemplate(candidate);
 		if (candidate_opt.has_value()) {
-			FLASH_LOG(Templates, Debug, "extract_base_template_name: found template '",
+			FLASH_LOG(Templates, Trace, "extract_base_template_name: found template '",
 					  candidate, "' in mangled name '", mangled_name, "'");
 			return candidate;
 		}
@@ -2205,7 +2205,7 @@ std::string_view Parser::extract_base_template_name(std::string_view mangled_nam
 		// Also check alias templates
 		auto alias_candidate = gTemplateRegistry.lookup_alias_template(candidate);
 		if (alias_candidate.has_value()) {
-			FLASH_LOG(Templates, Debug, "extract_base_template_name: found alias template '",
+			FLASH_LOG(Templates, Trace, "extract_base_template_name: found alias template '",
 					  candidate, "' in mangled name '", mangled_name, "'");
 			return candidate;
 		}
@@ -2229,7 +2229,7 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 		// Check if current name is a registered template
 		auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 		if (template_opt.has_value()) {
-			FLASH_LOG(Templates, Debug, "extract_base_template_name_by_stripping: found template '",
+			FLASH_LOG(Templates, Trace, "extract_base_template_name_by_stripping: found template '",
 					  base_template_name, "' by stripping from '", instantiated_name, "'");
 			return base_template_name;
 		}
@@ -2237,7 +2237,7 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 		// Also check alias templates
 		auto alias_opt = gTemplateRegistry.lookup_alias_template(base_template_name);
 		if (alias_opt.has_value()) {
-			FLASH_LOG(Templates, Debug, "extract_base_template_name_by_stripping: found alias template '",
+			FLASH_LOG(Templates, Trace, "extract_base_template_name_by_stripping: found alias template '",
 					  base_template_name, "' by stripping from '", instantiated_name, "'");
 			return base_template_name;
 		}
@@ -2444,11 +2444,11 @@ bool Parser::expandPackExpansionArgs(
 	if (!num_pack_elements.has_value())
 		return false;
 	if (*num_pack_elements == 0) {
-		FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: empty pack");
+		FLASH_LOG(Templates, Trace, "Expanding PackExpansionExprNode in function call args: empty pack");
 		return true;
 	}
 
-	FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: ", *num_pack_elements, " elements");
+	FLASH_LOG(Templates, Trace, "Expanding PackExpansionExprNode in function call args: ", *num_pack_elements, " elements");
 	for (size_t pi = 0; pi < *num_pack_elements; ++pi) {
 		// Build substitution params for this single pack element
 		InlineVector<TemplateParameterNode, 4> subst_params;

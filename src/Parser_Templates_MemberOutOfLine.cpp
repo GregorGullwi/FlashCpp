@@ -115,7 +115,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 							// Skip the entire definition (params, body, etc.)
 							discard_saved_token(nested_check);
 							discard_saved_token(ctor_check);
-							FLASH_LOG_FORMAT(Templates, Debug,
+							FLASH_LOG_FORMAT(Templates, Trace,
 											 "Skipping out-of-line nested class member function: {}::{}::{}",
 											 potential_class.value(), nested_class_token.value(),
 											 (is_nested_dtor ? "~dtor" : "ctor/func"));
@@ -263,7 +263,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						makeQualifiedClassIdentifier(ctor_class_name),
 						out_of_line_ctor);
 
-					FLASH_LOG(Templates, Debug, "Registered out-of-line template ",
+					FLASH_LOG(Templates, Trace, "Registered out-of-line template ",
 							  (is_dtor ? "destructor" : "constructor"), ": ",
 							  ctor_class_name);
 					discard_saved_token(saved_pos);
@@ -623,7 +623,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			makeQualifiedClassIdentifier(qualified_class_name),
 			out_of_line_var);
 
-		FLASH_LOG(Templates, Debug, "Registered out-of-class static member variable definition: ",
+		FLASH_LOG(Templates, Trace, "Registered out-of-class static member variable definition: ",
 				  class_name, "::", function_name_token.value());
 
 		return true;	 // Successfully parsed out-of-line static member variable definition
@@ -649,7 +649,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			makeQualifiedClassIdentifier(qualified_class_name),
 			out_of_line_var);
 
-		FLASH_LOG(Templates, Debug, "Registered out-of-class static member variable definition (no initializer): ",
+		FLASH_LOG(Templates, Trace, "Registered out-of-class static member variable definition (no initializer): ",
 				  class_name, "::", function_name_token.value());
 
 		return true;	 // Successfully parsed out-of-line static member variable definition
@@ -889,7 +889,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 				StringTable::getOrInternStringHandle(qualified_name)},
 			function_template_args, func_node);
 
-		FLASH_LOG(Templates, Debug, "Registered template member function specialization: ",
+		FLASH_LOG(Templates, Trace, "Registered template member function specialization: ",
 				  qualified_name, " with ", function_template_args.size(), " template args");
 	} else {
 		// Regular out-of-line member function for a template class
@@ -914,7 +914,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			out_of_line_member);
 
 		if (!inner_template_params.empty()) {
-			FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
+			FLASH_LOG(Templates, Trace, "Registered nested template out-of-line member: ",
 					  class_name, "::", function_name_token.value(),
 					  " (outer params: ", template_params.size(),
 					  ", inner params: ", inner_template_params.size(), ")");

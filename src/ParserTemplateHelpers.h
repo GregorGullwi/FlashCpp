@@ -3992,7 +3992,7 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 		template_args);
 	auto eval_result = ConstExpr::Evaluator::evaluate(*initializer, eval_ctx);
 	if (!eval_result.success()) {
-		FLASH_LOG(Templates, Debug,
+		FLASH_LOG(Templates, Trace,
 				  "Failed early-normalizing static member initializer of type ",
 				  initializer->type_name(),
 				  ": ",
@@ -4013,7 +4013,7 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 									 : "Early-normalized static member initializer to: ";
 		initializer = ASTNode::emplace_node<ExpressionNode>(
 			NumericLiteralNode(num_token, static_cast<unsigned long long>(val), literal_type, TypeQualifier::None, literal_size));
-		FLASH_LOG(Templates, Debug, log_message, val);
+		FLASH_LOG(Templates, Trace, log_message, val);
 	}
 
 	return tryBuildConstantStaticMemberInitializer(

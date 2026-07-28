@@ -1559,7 +1559,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							if (peek() == "..."_tok) {
 								advance();
 								alias_arg.is_pack = true;
-								FLASH_LOG(Templates, Debug, "Marked alias template argument as pack expansion");
+								FLASH_LOG(Templates, Trace, "Marked alias template argument as pack expansion");
 							}
 
 							template_args.push_back(alias_arg);
@@ -1684,7 +1684,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				if (peek() == "..."_tok) {
 					advance(); // consume '...'
 					bool_arg.is_pack = true;
-					FLASH_LOG(Templates, Debug, "Marked boolean literal as pack expansion");
+					FLASH_LOG(Templates, Trace, "Marked boolean literal as pack expansion");
 				}
 
 				template_args.push_back(bool_arg);
@@ -1750,7 +1750,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				if (peek() == "..."_tok) {
 					advance(); // consume '...'
 					num_arg.is_pack = true;
-					FLASH_LOG(Templates, Debug, "Marked numeric literal as pack expansion");
+					FLASH_LOG(Templates, Trace, "Marked numeric literal as pack expansion");
 				}
 
 				template_args.push_back(num_arg);
@@ -1818,7 +1818,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					if (peek() == "..."_tok) {
 						advance(); // consume '...'
 						const_arg.is_pack = true;
-						FLASH_LOG(Templates, Debug, "Marked constant expression as pack expansion");
+						FLASH_LOG(Templates, Trace, "Marked constant expression as pack expansion");
 					}
 
 					template_args.push_back(const_arg);
@@ -1909,7 +1909,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							 type_it->second->getEnumInfo() != nullptr ||
 							 type_it->second->isTemplateInstantiation() ||
 							 type_it->second->isDependentMemberType())) {
-							FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qname,
+							FLASH_LOG(Templates, Trace, "QualifiedIdentifierNode '", qname,
 									  "' is a concrete type, falling through to type parsing");
 							is_concrete_qualified_type = true;
 							restore_token_position(arg_saved_pos);
@@ -1942,7 +1942,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								names_alias_template = true;
 							}
 							if (names_alias_template) {
-								FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qname,
+								FLASH_LOG(Templates, Trace, "QualifiedIdentifierNode '", qname,
 										  "' names an alias template, falling through to type parsing");
 								is_concrete_qualified_type = true;
 								restore_token_position(arg_saved_pos);
@@ -1953,7 +1953,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					if (!is_concrete_qualified_type &&
 						!currentArgRejectsValueLikeParsing() &&
 						(peek() == ">"_tok || peek() == ","_tok || peek() == "..."_tok)) {
-						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
+						FLASH_LOG(Templates, Trace, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
 						auto makeDependentCompileTimeArg = [&](StringHandle dependent_name, std::optional<ASTNode> dep_expr) {
 							TypeCategory value_category = dependentExpressionValueCategory(
@@ -1990,7 +1990,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 						if (peek() == "..."_tok) {
 							advance(); // consume '...'
 							dependent_arg.is_pack = true;
-							FLASH_LOG(Templates, Debug, "Marked compile-time expression as pack expansion");
+							FLASH_LOG(Templates, Trace, "Marked compile-time expression as pack expansion");
 						}
 						template_args.push_back(dependent_arg);
 						if (out_type_nodes && expr_result.node().has_value()) {
@@ -2015,7 +2015,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					}
 				}
 			} else {
-				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (in template body with dependent context)");
+				FLASH_LOG(Templates, Trace, "Skipping constant expression evaluation (in template body with dependent context)");
 
 				// BUGFIX: Even in a template body, static constexpr members like __g and __d2
 				// in a partial specialization have concrete values and should be evaluated.
@@ -2035,7 +2035,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								// Try to evaluate the static member's initializer
 								static_member_value = try_evaluate_constant_expression(*static_member.initializer);
 								if (static_member_value.has_value()) {
-									FLASH_LOG(Templates, Debug, "Evaluated static constexpr member '", id.name(),
+									FLASH_LOG(Templates, Trace, "Evaluated static constexpr member '", id.name(),
 											  "' to value ", static_member_value->value);
 									evaluated_static_member = true;
 								}
@@ -2050,7 +2050,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							if (static_member.name == id_handle && static_member.initializer.has_value()) {
 								static_member_value = try_evaluate_constant_expression(*static_member.initializer);
 								if (static_member_value.has_value()) {
-									FLASH_LOG(Templates, Debug, "Evaluated static constexpr member '", id.name(),
+									FLASH_LOG(Templates, Trace, "Evaluated static constexpr member '", id.name(),
 											  "' (from struct_node) to value ", static_member_value->value);
 									evaluated_static_member = true;
 								}
@@ -2090,7 +2090,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				// During template declaration, expressions like is_int<T>::value are dependent
 				// and cannot be evaluated yet. Check if we successfully parsed such an expression
 				// by verifying that the next token is ',' or '>'
-				FLASH_LOG_FORMAT(Templates, Debug, "After parsing expression, peek_token={}",
+				FLASH_LOG_FORMAT(Templates, Trace, "After parsing expression, peek_token={}",
 								 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 
 				// Special case: If we parsed T[N] as an array subscript expression,
@@ -2098,7 +2098,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				// not an array access. Reparse as a type.
 				bool is_array_subscript = std::holds_alternative<ArraySubscriptNode>(expr);
 				if (is_array_subscript) {
-					FLASH_LOG(Templates, Debug, "Detected array subscript in template arg - reparsing as array type");
+					FLASH_LOG(Templates, Trace, "Detected array subscript in template arg - reparsing as array type");
 					restore_token_position(arg_saved_pos);
 					// Fall through to type parsing below
 				} else {
@@ -2151,7 +2151,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								// Type aliases have type_index pointing to the underlying type
 								if (type_info->getStructInfo() != nullptr) {
 									is_concrete_type = true;
-									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
+									FLASH_LOG(Templates, Trace, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
 								} else if (const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_)) {
 									// Check if this is a type alias (type_index points to underlying type)
 									// and the underlying type is concrete (not a template parameter)
@@ -2164,7 +2164,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										underlying->resolvedType() != TypeCategory::UserDefined) {
 									// It's a type alias to a concrete type (struct or built-in)
 										is_concrete_type = true;
-										FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
+										FLASH_LOG(Templates, Trace, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
 									}
 								}
 							}
@@ -2176,7 +2176,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							// a function call, not a type. The function returns a value, and that value is used as
 							// the non-type template argument.
 							// DO NOT set is_concrete_type = true here - let it be accepted as a dependent expression.
-							FLASH_LOG(Templates, Debug, "Call expression - treating as function call expression, not a type");
+							FLASH_LOG(Templates, Trace, "Call expression - treating as function call expression, not a type");
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 							// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
 							// or a template instantiation like ns::Inner<int> (when the template has already been
@@ -2192,7 +2192,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								const TypeInfo* type_info = type_it->second;
 								if (type_info->getStructInfo() != nullptr) {
 									is_concrete_type = true;
-									FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qualified_name, "' is a concrete type, falling through to type parsing");
+									FLASH_LOG(Templates, Trace, "QualifiedIdentifierNode '", qualified_name, "' is a concrete type, falling through to type parsing");
 								}
 							}
 							// Keep unresolved qualified-ids value-like by default.
@@ -2260,7 +2260,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									}
 									if (subst.is_type_param) {
 										// Found a type substitution! Use it instead of creating a dependent arg
-										FLASH_LOG(Templates, Debug, "Found type substitution for parameter '",
+										FLASH_LOG(Templates, Trace, "Found type substitution for parameter '",
 												  param_name_to_check, "' -> ", subst.substituted_type.toString());
 
 										TemplateTypeArg substituted_arg = subst.substituted_type;
@@ -2269,7 +2269,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										if (peek() == "..."_tok) {
 											advance(); // consume '...'
 											substituted_arg.is_pack = true;
-											FLASH_LOG(Templates, Debug, "Marked substituted type as pack expansion");
+											FLASH_LOG(Templates, Trace, "Marked substituted type as pack expansion");
 										}
 
 										template_args.push_back(substituted_arg);
@@ -2291,7 +2291,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										}
 										break;  // Break from the for loop
 									} else if (subst.is_value_param) {
-										FLASH_LOG(Templates, Debug, "Found value substitution for parameter '",
+										FLASH_LOG(Templates, Trace, "Found value substitution for parameter '",
 												  param_name_to_check, "' -> ", subst.value);
 
 										TemplateTypeArg substituted_arg = TemplateTypeArg::makeValue(
@@ -2301,7 +2301,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										if (peek() == "..."_tok) {
 											advance(); // consume '...'
 											substituted_arg.is_pack = true;
-											FLASH_LOG(Templates, Debug, "Marked substituted value as pack expansion");
+											FLASH_LOG(Templates, Trace, "Marked substituted value as pack expansion");
 										}
 
 										template_args.push_back(substituted_arg);
@@ -2329,7 +2329,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								continue;  // Continue to next template argument
 							}
 
-							FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
+							FLASH_LOG(Templates, Trace, "Accepting dependent expression as template argument");
 							// Successfully parsed a dependent expression
 							// Create a dependent template argument
 							// IMPORTANT: Preserve whether this is a type-like placeholder (e.g. T)
@@ -2375,7 +2375,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									 std::holds_alternative<ConstructorCallNode>(expr)) &&
 									expr_result.node().has_value()) {
 									stored_expr = *expr_result.node();
-									FLASH_LOG(Templates, Debug, "Storing dependent NTTP expression (sizeof/alignof/etc) for re-evaluation");
+									FLASH_LOG(Templates, Trace, "Storing dependent NTTP expression (sizeof/alignof/etc) for re-evaluation");
 								}
 								dependent_arg = TemplateTypeArg::makeDependentValue(
 									StringHandle{},
@@ -2401,7 +2401,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								auto type_it = getTypesByNameMap().find(param_name);
 								if (type_it != getTypesByNameMap().end()) {
 									dependent_arg.type_index = type_it->second->type_index_;
-									FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
+									FLASH_LOG(Templates, Trace, "  Found type_index=", dependent_arg.type_index,
 											  " for template parameter '", StringTable::getStringView(param_name), "'");
 								}
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
@@ -2412,7 +2412,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(id.name()));
 								if (type_it != getTypesByNameMap().end()) {
 									dependent_arg.type_index = type_it->second->type_index_;
-									FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
+									FLASH_LOG(Templates, Trace, "  Found type_index=", dependent_arg.type_index,
 											  " for identifier '", id.name(), "'");
 								} else {
 									// Check if this identifier is a template alias (like void_t)
@@ -2433,7 +2433,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										// If the alias always resolves to a concrete type (like void_t -> void),
 										// use that concrete type instead of marking as dependent
 										if (target_type == TypeCategory::Void) {
-											FLASH_LOG(Templates, Debug, "Template alias '", id.name(),
+											FLASH_LOG(Templates, Trace, "Template alias '", id.name(),
 													  "' resolves to concrete type ", static_cast<int>(target_type));
 											dependent_arg.setType(target_type);
 											dependent_arg.is_dependent = false;	// Not dependent - resolves to concrete type
@@ -2449,7 +2449,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							if (peek() == "..."_tok) {
 								advance(); // consume '...'
 								dependent_arg.is_pack = true;
-								FLASH_LOG(Templates, Debug, "Marked dependent expression as pack expansion");
+								FLASH_LOG(Templates, Trace, "Marked dependent expression as pack expansion");
 							}
 
 							template_args.push_back(dependent_arg);
@@ -3004,7 +3004,7 @@ try_type_template_argument_parse:
 				 gTemplateRegistry.isClassTemplate(template_name_handle))) {
 				arg = TemplateTypeArg::makeTemplate(template_name_handle);
 				arg.is_pack = is_pack_expansion;
-				FLASH_LOG(Templates, Debug, "Classified explicit template argument '",
+				FLASH_LOG(Templates, Trace, "Classified explicit template argument '",
 						  StringTable::getStringView(template_name_handle),
 						  "' as a template-template argument");
 			}
@@ -3013,7 +3013,7 @@ try_type_template_argument_parse:
 			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_node.token().value());
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.is_value_param && subst.param_name == type_name_handle) {
-					FLASH_LOG(Templates, Debug, "Resolved non-type template argument from substitution: ",
+					FLASH_LOG(Templates, Trace, "Resolved non-type template argument from substitution: ",
 							  type_node.token().value(), " -> ", subst.value);
 					arg = TemplateTypeArg::makeValue(subst.value, subst.value_type);
 					arg.is_pack = is_pack_expansion;
@@ -3070,7 +3070,7 @@ try_type_template_argument_parse:
 			// Prefer the source token spelling when it exists, but fall back to the
 			// canonical gTypeInfo name for qualified/composite cases that lost the token text.
 			std::string_view type_name = type_node.token().value();
-			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, type_name from token: {}", type_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "UserDefined type, type_name from token: {}", type_name);
 
 			// Also get the full type name from gTypeInfo for composite/qualified types
 			// The token may only have the base name (e.g., "remove_reference")
@@ -3079,12 +3079,12 @@ try_type_template_argument_parse:
 			TypeIndex idx = type_node.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(idx)) {
 				full_type_name = StringTable::getStringView(type_info->name());
-				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
+				FLASH_LOG_FORMAT(Templates, Trace, "Full type name from gTypeInfo: {}", full_type_name);
 			}
 
 			if (type_name.empty() && !full_type_name.empty()) {
 				type_name = full_type_name;
-				FLASH_LOG(Templates, Debug, "Using canonical full type name for dependency check");
+				FLASH_LOG(Templates, Trace, "Using canonical full type name for dependency check");
 			}
 
 			if (!type_name.empty()) {
@@ -3125,7 +3125,7 @@ try_type_template_argument_parse:
 						 arg_type_info->is_incomplete_instantiation_))) {
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
+					FLASH_LOG_FORMAT(Templates, Trace, "Template argument is dependent (type name: {})", type_name);
 				} else if (template_instantiation_mode_ != TemplateInstantiationMode::SoftProbe) {
 					// Also check the full type name from gTypeInfo for composite/qualified types
 					std::string_view check_name = !full_type_name.empty() ? full_type_name : type_name;
@@ -3150,7 +3150,7 @@ try_type_template_argument_parse:
 							if (contains_param) {
 								arg.is_dependent = true;
 								arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
-								FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to qualified identifier with template param: {}", check_name);
+								FLASH_LOG_FORMAT(Templates, Trace, "Template argument marked dependent due to qualified identifier with template param: {}", check_name);
 								break;
 							}
 						}
@@ -3174,7 +3174,7 @@ try_type_template_argument_parse:
 						bool was_pack = arg.is_pack;
 						arg = TemplateTypeArg::makeDependentValue(token_name, non_type_category);
 						arg.is_pack = was_pack;
-						FLASH_LOG(Templates, Debug, "Registered target non-type template parameter as dependent template argument");
+						FLASH_LOG(Templates, Trace, "Registered target non-type template parameter as dependent template argument");
 					} else {
 						const TypeCategory recovered_type_category =
 							target_param->kind() == TemplateParameterKind::Template
@@ -3198,7 +3198,7 @@ try_type_template_argument_parse:
 						arg.type_index = recovered_type_index;
 						arg.is_dependent = true;
 						arg.dependent_name = token_name;
-						FLASH_LOG(Templates, Debug, "Registered target type template parameter as dependent template argument");
+						FLASH_LOG(Templates, Trace, "Registered target type template parameter as dependent template argument");
 					}
 				}
 				if (!handled_by_target_param) {
@@ -3217,7 +3217,7 @@ try_type_template_argument_parse:
 							bool was_pack = arg.is_pack;
 							arg = TemplateTypeArg::makeDependentValue(token_name, non_type_category);
 							arg.is_pack = was_pack;
-							FLASH_LOG(Templates, Debug, "Registered missing dependent non-type template argument");
+							FLASH_LOG(Templates, Trace, "Registered missing dependent non-type template argument");
 						} else {
 							TypeInfo& type_info = add_template_param_type(token_name, TypeCategory::UserDefined, 0);
 							type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
@@ -3225,7 +3225,7 @@ try_type_template_argument_parse:
 							arg.type_index = type_node.type_index();
 							arg.is_dependent = true;
 							arg.dependent_name = token_name;
-							FLASH_LOG(Templates, Debug, "Registered missing dependent placeholder TypeIndex for template argument");
+							FLASH_LOG(Templates, Trace, "Registered missing dependent placeholder TypeIndex for template argument");
 						}
 					}
 					else if (findTypeByName(token_name) == nullptr) {
@@ -3240,14 +3240,14 @@ try_type_template_argument_parse:
 								arg = TemplateTypeArg::makeDependentValue(token_name, non_type_category);
 							}
 							arg.is_pack = was_pack;
-							FLASH_LOG(Templates, Debug, "Recovered unresolved template argument as value-like identifier");
+							FLASH_LOG(Templates, Trace, "Recovered unresolved template argument as value-like identifier");
 						} else if (parsing_template_depth_ > 0 ||
 								   !struct_parsing_context_stack_.empty()) {
 							arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);
 							arg.is_value = false;
 							arg.is_dependent = true;
 							arg.dependent_name = token_name;
-							FLASH_LOG(Templates, Debug, "Recovered unresolved template argument as dependent type identifier");
+							FLASH_LOG(Templates, Trace, "Recovered unresolved template argument as dependent type identifier");
 						} else {
 							restore_token_position(saved_pos);
 							last_failed_template_arg_parse_handle_ = saved_pos;
@@ -3265,14 +3265,14 @@ try_type_template_argument_parse:
 							arg.type_index = recovered_type_index;
 							arg.is_dependent = true;
 							arg.dependent_name = token_name;
-							FLASH_LOG(Templates, Debug, "Reattached known dependent placeholder TypeIndex for template argument");
+							FLASH_LOG(Templates, Trace, "Reattached known dependent placeholder TypeIndex for template argument");
 						} else if (parsing_template_depth_ > 0 ||
 								   !struct_parsing_context_stack_.empty()) {
 							arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);
 							arg.is_value = false;
 							arg.is_dependent = true;
 							arg.dependent_name = token_name;
-							FLASH_LOG(Templates, Debug, "Recovered known-name template argument as dependent type identifier");
+							FLASH_LOG(Templates, Trace, "Recovered known-name template argument as dependent type identifier");
 						} else {
 							throw InternalError("Unregistered dependent placeholder type reached template argument classification");
 						}
@@ -3318,11 +3318,11 @@ try_type_template_argument_parse:
 					// Only mark as dependent if the type name itself is a template parameter
 					// A template class like HasType being used as an argument is NOT dependent
 					if (contains_template_param) {
-						FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is primary template matching template param - marking as dependent", type_name);
+						FLASH_LOG_FORMAT(Templates, Trace, "Template argument {} is primary template matching template param - marking as dependent", type_name);
 						arg.is_dependent = true;
 						arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					} else {
-						FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is a concrete template class (used as template template arg) - NOT dependent", type_name);
+						FLASH_LOG_FORMAT(Templates, Trace, "Template argument {} is a concrete template class (used as template template arg) - NOT dependent", type_name);
 					}
 				}
 			}

@@ -910,7 +910,7 @@ public:
 	void updatePhase(StringHandle instantiated_name, ClassInstantiationPhase new_phase) {
 		auto it = lazy_classes_.find(instantiated_name);
 		if (it != lazy_classes_.end()) {
-			FLASH_LOG(Templates, Debug, "Updating lazy class phase: ", instantiated_name,
+			FLASH_LOG(Templates, Trace, "Updating lazy class phase: ", instantiated_name,
 					  " from ", static_cast<int>(it->second.current_phase),
 					  " to ", static_cast<int>(new_phase));
 			it->second.current_phase = new_phase;
@@ -1481,7 +1481,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 					full_type_name = StringTable::getStringView(type_idx_ti->name_);
 				}
 
-				FLASH_LOG(Templates, Debug, "evaluateConstraintExpression: sizeof(", type_name, "), full_type_name='", full_type_name, "', type_index=", type_idx);
+				FLASH_LOG(Templates, Trace, "evaluateConstraintExpression: sizeof(", type_name, "), full_type_name='", full_type_name, "', type_index=", type_idx);
 
 				// Check if the type name is a simple template parameter (e.g., sizeof(T))
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
@@ -1840,7 +1840,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 						std::string_view base_part = full_type_name.substr(0, scope_pos);
 						std::string_view member_part = full_type_name.substr(scope_pos + 2);
 
-						FLASH_LOG(Templates, Debug, "  Nested type access: base='", base_part, "', member='", member_part, "'");
+						FLASH_LOG(Templates, Trace, "  Nested type access: base='", base_part, "', member='", member_part, "'");
 
 						const TypeInfo* member_base_info = dependent_member_info;
 						if (!member_base_info->isTemplateInstantiation()) {
@@ -1879,7 +1879,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 										member_part,
 										concrete_member_args);
 								alias_size.has_value()) {
-								FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::", member_part, ") = ", *alias_size);
+								FLASH_LOG(Templates, Trace, "  Resolved sizeof(", template_name, "<...>::", member_part, ") = ", *alias_size);
 								return *alias_size;
 							}
 							if (concrete_member_args.size() == 1) {
@@ -1901,7 +1901,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 															MemberAliasSizeResolver::sizeFromConcreteTemplateArg(
 																concrete_member_args[0]);
 														param_alias_size.has_value()) {
-														FLASH_LOG(Templates, Debug, "  Resolved sizeof single-parameter member alias");
+														FLASH_LOG(Templates, Trace, "  Resolved sizeof single-parameter member alias");
 														return *param_alias_size;
 													}
 												}
@@ -1913,7 +1913,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 										MemberAliasSizeResolver::sizeFromConcreteTemplateArg(
 											concrete_member_args[0]);
 									dependent_single_arg_size.has_value()) {
-									FLASH_LOG(Templates, Debug, "  Resolved sizeof dependent single-argument member alias");
+									FLASH_LOG(Templates, Trace, "  Resolved sizeof dependent single-argument member alias");
 									return *dependent_single_arg_size;
 								}
 							}
@@ -1936,7 +1936,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 											member_part,
 											concrete_member_args);
 									alias_size.has_value()) {
-									FLASH_LOG(Templates, Debug, "  Resolved sizeof(", bound_base_arg->template_name_handle.view(), "<...>::", member_part, ") = ", *alias_size);
+									FLASH_LOG(Templates, Trace, "  Resolved sizeof(", bound_base_arg->template_name_handle.view(), "<...>::", member_part, ") = ", *alias_size);
 									return *alias_size;
 								}
 							} else if (std::optional<long long> concrete_member_size =
@@ -1944,7 +1944,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 										*bound_base_arg,
 										member_part);
 								concrete_member_size.has_value()) {
-								FLASH_LOG(Templates, Debug, "  Resolved sizeof(", base_param_name, "::", member_part, ") = ", *concrete_member_size);
+								FLASH_LOG(Templates, Trace, "  Resolved sizeof(", base_param_name, "::", member_part, ") = ", *concrete_member_size);
 								return *concrete_member_size;
 							}
 						}
@@ -1954,7 +1954,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 									MemberAliasSizeResolver::sizeFromConcreteTemplateArg(
 										template_args[0]);
 								placeholder_arg_size.has_value()) {
-								FLASH_LOG(Templates, Debug, "  Resolved sizeof hashed dependent member from outer argument");
+								FLASH_LOG(Templates, Trace, "  Resolved sizeof hashed dependent member from outer argument");
 								return *placeholder_arg_size;
 							}
 						}
@@ -2028,11 +2028,11 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	Parser* parser = nullptr,
 	std::span<const TemplateParameterNode> template_params = {}) {
 
-	FLASH_LOG(Templates, Debug, "evaluateConstraint: constraint type=", constraint_expr.type_name(), ", template_args.size()=", template_args.size());
+	FLASH_LOG(Templates, Trace, "evaluateConstraint: constraint type=", constraint_expr.type_name(), ", template_args.size()=", template_args.size());
 	for (size_t i = 0; i < template_param_names.size(); ++i) {
 		if (i < template_args.size()) {
 			const auto& arg = template_args[i];
-			FLASH_LOG(Templates, Debug, "  param '", template_param_names[i], "' -> is_template_template_arg=", arg.is_template_template_arg,
+			FLASH_LOG(Templates, Trace, "  param '", template_param_names[i], "' -> is_template_template_arg=", arg.is_template_template_arg,
 					  ", base_type=", static_cast<int>(arg.typeEnum()), ", type_index=", arg.type_index);
 		}
 	}
@@ -2228,10 +2228,10 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			}
 		}
 
-		FLASH_LOG(Templates, Debug, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_params.size()=", concept_params.size());
+		FLASH_LOG(Templates, Trace, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_params.size()=", concept_params.size());
 		for (size_t i = 0; i < concept_params.size(); ++i) {
 			if (i < concept_args.size()) {
-				FLASH_LOG(Templates, Debug, "  param[", i, "] name='", concept_params[i].name(), "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
+				FLASH_LOG(Templates, Trace, "  param[", i, "] name='", concept_params[i].name(), "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
 			}
 		}
 
@@ -2392,7 +2392,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		case TypeTraitKind::IsSame: {
 			if (trait_expr.has_second_type()) {
 				auto second = resolve_type(trait_expr.second_type_node());
-				FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.base_type_cat),
+				FLASH_LOG(Templates, Trace, "IsSame comparison: first={type=", static_cast<int>(first.base_type_cat),
 						  ", idx=", first.type_index, ", ptr=", static_cast<int>(first.pointer_depth),
 						  ", ref_qual=", static_cast<int>(first.ref_qualifier),
 						  ", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.base_type_cat),

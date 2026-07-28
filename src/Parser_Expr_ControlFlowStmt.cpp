@@ -1558,7 +1558,7 @@ ParseResult Parser::parse_if_statement() {
 		auto eval_result = ConstExpr::Evaluator::evaluate(*condition.node(), eval_ctx);
 		if (eval_result.success()) {
 			bool condition_value = eval_result.as_int() != 0;
-			FLASH_LOG(Templates, Debug, "if constexpr condition evaluated to ", condition_value ? "true" : "false", " during template body re-parse");
+			FLASH_LOG(Templates, Trace, "if constexpr condition evaluated to ", condition_value ? "true" : "false", " during template body re-parse");
 
 			if (condition_value) {
 				// Parse the then-branch normally

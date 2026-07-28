@@ -4975,7 +4975,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	std::string_view qualified_name = func_name;
 	if (call_expr.has_qualified_name()) {
 		qualified_name = call_expr.qualified_name();
-		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
+		FLASH_LOG(Templates, Trace, "Using qualified name for template lookup: ", qualified_name);
 	}
 
 	if (auto helper_eval = tryEvaluateSimpleConstexprTypeHelperCall(call_expr, func_name, qualified_name)) {
@@ -5398,7 +5398,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
 			return evaluate_resolved_function_call(instantiated_func, arguments, context, nullptr);
 		} else if (instantiated_opt.has_value()) {
-			FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
+			FLASH_LOG(Templates, Trace, "Instantiation succeeded but result is not a FunctionDeclarationNode");
 		}
 
 		// No pre-instantiated version found and couldn't instantiate on-demand

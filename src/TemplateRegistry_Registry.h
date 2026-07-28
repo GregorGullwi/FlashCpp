@@ -734,11 +734,11 @@ public:
 	std::optional<ASTNode> lookupExactSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args) const {
 		SpecializationKey key{StringTable::getOrInternStringHandle(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
 
-		FLASH_LOG(Templates, Debug, "lookupExactSpecialization: '", template_name, "' with ", template_args.size(), " args");
+		FLASH_LOG(Templates, Trace, "lookupExactSpecialization: '", template_name, "' with ", template_args.size(), " args");
 		if (FLASH_LOG_ENABLED(Templates, Debug)) {
 			for (size_t i = 0; i < key.template_args.size(); ++i) {
 				const auto& arg = key.template_args[i];
-				FLASH_LOG(Templates, Debug, "  lookup_arg[", i, "] value=", arg.value, ", cat=", static_cast<int>(arg.category()),
+				FLASH_LOG(Templates, Trace, "  lookup_arg[", i, "] value=", arg.value, ", cat=", static_cast<int>(arg.category()),
 						  ", is_value=", arg.is_value, ", is_dependent=", arg.is_dependent);
 			}
 		}
@@ -753,22 +753,22 @@ public:
 
 	// Look up a template specialization (exact match first, then pattern match)
 	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args) const {
-		FLASH_LOG(Templates, Debug, "lookupSpecialization: template_name='", template_name, "', num_args=", template_args.size());
+		FLASH_LOG(Templates, Trace, "lookupSpecialization: template_name='", template_name, "', num_args=", template_args.size());
 
 		// First, try exact match
 		auto exact = lookupExactSpecialization(template_name, template_args);
 		if (exact.has_value()) {
-			FLASH_LOG(Templates, Debug, "  Found exact specialization match");
+			FLASH_LOG(Templates, Trace, "  Found exact specialization match");
 			return exact;
 		}
 
 		// No exact match - try pattern matching
-		FLASH_LOG(Templates, Debug, "  No exact match, trying pattern matching...");
+		FLASH_LOG(Templates, Trace, "  No exact match, trying pattern matching...");
 		auto pattern_result = matchSpecializationPattern(template_name, template_args);
 		if (pattern_result.has_value()) {
 			FLASH_LOG(Templates, Debug, "  Found pattern match!");
 		} else {
-			FLASH_LOG(Templates, Debug, "  No pattern match found");
+			FLASH_LOG(Templates, Trace, "  No pattern match found");
 		}
 		return pattern_result;
 	}
@@ -817,12 +817,12 @@ public:
 		// Heterogeneous lookup - string_view accepted directly
 		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
-			FLASH_LOG(Templates, Debug, "    No patterns registered for template '", template_name, "'");
+			FLASH_LOG(Templates, Trace, "    No patterns registered for template '", template_name, "'");
 			return std::nullopt;	 // No patterns for this template
 		}
 
 		std::span<const TemplatePattern> patterns = patterns_it->second;
-		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", template_name, "'");
+		FLASH_LOG(Templates, Trace, "    Found ", patterns.size(), " pattern(s) for template '", template_name, "'");
 
 		const TemplatePattern* best_match = nullptr;
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> best_substitutions;
@@ -831,19 +831,19 @@ public:
 		// Find the most specific matching pattern
 		for (size_t i = 0; i < patterns.size(); ++i) {
 			const auto& pattern = patterns[i];
-			FLASH_LOG(Templates, Debug, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
+			FLASH_LOG(Templates, Trace, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
 			std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
 			if (pattern.matches(concrete_args, substitutions)) {
-				FLASH_LOG(Templates, Debug, "      Pattern #", i, " MATCHES!");
+				FLASH_LOG(Templates, Trace, "      Pattern #", i, " MATCHES!");
 				int spec = pattern.specificity();
 				if (spec > best_specificity) {
 					best_match = &pattern;
 					best_substitutions = std::move(substitutions);
 					best_specificity = spec;
-					FLASH_LOG(Templates, Debug, "      New best match (specificity=", spec, ")");
+					FLASH_LOG(Templates, Trace, "      New best match (specificity=", spec, ")");
 				}
 			} else {
-				FLASH_LOG(Templates, Debug, "      Pattern #", i, " does not match");
+				FLASH_LOG(Templates, Trace, "      Pattern #", i, " does not match");
 			}
 		}
 
@@ -855,7 +855,7 @@ public:
 				std::move(best_substitutions)};
 		}
 
-		FLASH_LOG(Templates, Debug, "    No matching pattern found");
+		FLASH_LOG(Templates, Trace, "    No matching pattern found");
 		return std::nullopt;
 	}
 
@@ -939,14 +939,14 @@ private:
 			for (size_t i = 0; i < pattern_args.size(); ++i) {
 				const auto& arg = pattern_args[i];
 				std::string_view dep_name_view = arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : "";
-				FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.category()),
+				FLASH_LOG(Templates, Trace, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.category()),
 						  ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
 						  ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
 			}
 
 			// Debug: log each template param type
 			for (size_t i = 0; i < template_params.size(); ++i) {
-				FLASH_LOG(Templates, Debug, "  template_param[", i, "]: name=", template_params[i].name());
+				FLASH_LOG(Templates, Trace, "  template_param[", i, "]: name=", template_params[i].name());
 			}
 		}
 
@@ -988,7 +988,7 @@ private:
 									start = sep + 2;
 								}
 								pattern.sfinae_condition = SfinaeCondition(i, std::move(member_chain));
-								FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking param[",
+								FLASH_LOG(Templates, Trace, "Auto-detected void_t SFINAE pattern: checking param[",
 										  i, "]::", dep_name.substr(first_component.size() + 2), " from dependent_name '", dep_name, "'");
 								break;
 							}
@@ -1000,7 +1000,7 @@ private:
 
 		specialization_patterns_[template_name].push_back(std::move(pattern));
 		const auto& stored_pattern = specialization_patterns_[template_name].back();
-		FLASH_LOG(Templates, Debug, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
+		FLASH_LOG(Templates, Trace, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
 		if (stored_pattern.sfinae_condition.has_value()) {
 			StringBuilder member_chain_builder;
 			bool first_member = true;
@@ -1012,7 +1012,7 @@ private:
 				member_chain_builder.append(member_name);
 			}
 			std::string_view member_chain_view = member_chain_builder.commit();
-			FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index,
+			FLASH_LOG(Templates, Trace, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index,
 					  "]::", member_chain_view);
 		}
 	}
@@ -1038,7 +1038,7 @@ private:
 		if (FLASH_LOG_ENABLED(Templates, Debug)) {
 			for (size_t i = 0; i < key.template_args.size(); ++i) {
 				const auto& arg = key.template_args[i];
-				FLASH_LOG(Templates, Debug, "  spec_arg[", i, "] value=", arg.value, ", cat=", static_cast<int>(arg.category()),
+				FLASH_LOG(Templates, Trace, "  spec_arg[", i, "] value=", arg.value, ", cat=", static_cast<int>(arg.category()),
 						  ", is_value=", arg.is_value, ", is_dependent=", arg.is_dependent);
 			}
 		}

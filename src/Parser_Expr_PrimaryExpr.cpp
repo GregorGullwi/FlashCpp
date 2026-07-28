@@ -2837,7 +2837,7 @@ bool Parser::trySubstituteValueTemplateParameterExpression(
 					source_token.file_index());
 				ASTNode entity_id = emplace_node<ExpressionNode>(createBoundIdentifier(entity_token));
 				result = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
-				FLASH_LOG(Templates, Debug, "Substituted pointer/reference/function-pointer NTTP '", param_name,
+				FLASH_LOG(Templates, Trace, "Substituted pointer/reference/function-pointer NTTP '", param_name,
 					"' with &", entity_name_view);
 				return true;
 			}
@@ -2891,7 +2891,7 @@ bool Parser::trySubstituteValueTemplateParameterExpression(
 				subst.value_type,
 				TypeQualifier::None,
 				get_type_size_bits(subst.value_type)));
-		FLASH_LOG(Templates, Debug, "Substituted template parameter '", param_name,
+		FLASH_LOG(Templates, Trace, "Substituted template parameter '", param_name,
 			"' with value ", subst.value);
 		return true;
 	}
@@ -4776,12 +4776,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Build struct-qualified name: "StructName::member"
 						struct_qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 
-						FLASH_LOG_FORMAT(Templates, Debug, "Trying struct-qualified variable template lookup: '{}'", struct_qualified_name);
+						FLASH_LOG_FORMAT(Templates, Trace, "Trying struct-qualified variable template lookup: '{}'", struct_qualified_name);
 						var_template_opt = gTemplateRegistry.lookupVariableTemplate(struct_qualified_name);
 						if (var_template_opt.has_value()) {
-							FLASH_LOG(Templates, Debug, "Found variable template with struct-qualified name!");
+							FLASH_LOG(Templates, Trace, "Found variable template with struct-qualified name!");
 						} else {
-							FLASH_LOG(Templates, Debug, "Variable template NOT found with struct-qualified name");
+							FLASH_LOG(Templates, Trace, "Variable template NOT found with struct-qualified name");
 						}
 					}
 
@@ -4792,7 +4792,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							template_name_for_instantiation = struct_qualified_name;
 						}
 
-						FLASH_LOG(Templates, Debug, "Found variable template, instantiating: ", template_name_for_instantiation);
+						FLASH_LOG(Templates, Trace, "Found variable template, instantiating: ", template_name_for_instantiation);
 						// Try instantiation with determined name first, fall back to simple name
 						auto instantiated_var = try_instantiate_variable_template(template_name_for_instantiation, *template_args, nullptr);
 						if (!instantiated_var.has_value()) {
@@ -4876,7 +4876,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 
 					if (alias_opt.has_value()) {
-						FLASH_LOG(Templates, Debug, "Found alias template, resolving: ", qualified_name);
+						FLASH_LOG(Templates, Trace, "Found alias template, resolving: ", qualified_name);
 						const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 						AliasTemplateMaterializationResult materialized_alias =
 							materializeAliasTemplateInstantiation(alias_lookup_name, *template_args);
@@ -4946,7 +4946,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										// It's a type argument - get the type name and create an identifier
 										StringHandle type_name_handle = type_info->name();
 										std::string_view type_name = StringTable::getStringView(type_name_handle);
-										FLASH_LOG_FORMAT(Templates, Debug, "Alias template parameter '{}' resolved to type '{}'", target_name, type_name);
+										FLASH_LOG_FORMAT(Templates, Trace, "Alias template parameter '{}' resolved to type '{}'", target_name, type_name);
 
 										// Return an IdentifierNode for the resolved type
 										Token resolved_token(Token::Type::Identifier, type_name,
@@ -4960,7 +4960,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 
 						// If the target type is not a direct parameter reference, fall through to other handling
-						FLASH_LOG(Templates, Debug, "Alias template target is not a direct parameter, continuing with class template instantiation");
+						FLASH_LOG(Templates, Trace, "Alias template target is not a direct parameter, continuing with class template instantiation");
 					}
 
 					Parser::AliasTemplateMaterializationResult materialized_owner =
@@ -5575,7 +5575,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				bool has_explicit_template_args = has_any_explicit_template_args && !template_arg_nodes.empty();
 				if (has_explicit_template_args) {
 					setCallTemplateArguments(result->as<ExpressionNode>(), std::move(template_arg_nodes));
-					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in call expression (path 1)");
+					FLASH_LOG(Templates, Trace, "Stored ", template_arg_nodes.size(), " template argument nodes in call expression (path 1)");
 				}
 
 				// Store the qualified source name for template lookup during constexpr evaluation
@@ -6460,7 +6460,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// If class/variable template instantiation failed, try function template instantiation
 				// This handles cases like: ns::func<int, int>()
 				if (!identifierType.has_value()) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Trying function template instantiation for '{}' with {} args",
+					FLASH_LOG_FORMAT(Templates, Trace, "Trying function template instantiation for '{}' with {} args",
 									 qualified_template_name, template_args->size());
 					auto func_template_inst = try_instantiate_template_explicit(qualified_template_name, *template_args);
 					if (const FunctionDeclarationNode* func_decl =
@@ -6507,7 +6507,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					// If explicit template arguments were provided, use them for instantiation
 					if (template_args.has_value() && !template_args->empty()) {
-						FLASH_LOG_FORMAT(Templates, Debug, "Instantiating function template '{}' with {} explicit template arguments",
+						FLASH_LOG_FORMAT(Templates, Trace, "Instantiating function template '{}' with {} explicit template arguments",
 										 qualified_name, template_args->size());
 						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
 						if (const FunctionDeclarationNode* func_decl =
@@ -7005,7 +7005,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return ParseResult::success(*result);
 			} else {
 				if (has_dependent_call_args) {
-					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
+					FLASH_LOG(Templates, Trace, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
@@ -7059,7 +7059,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// SFINAE contexts (e.g. decltype(...) inside a default template arg).
 				// Let the caller reject the overload without emitting a hard parser error.
 				if (!isHardUseLikeInstantiationMode()) {
-					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: template instantiation failed for call to '{}'", identifier_token.value());
+					FLASH_LOG_FORMAT(Templates, Trace, "SFINAE: template instantiation failed for call to '{}'", identifier_token.value());
 				} else {
 					FLASH_LOG(Parser, Error, "Template instantiation failed");
 				}
@@ -7568,7 +7568,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				};
 
 				auto make_dependent_call_result = [&]() -> ParseResult {
-					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
+					FLASH_LOG(Templates, Trace, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
@@ -7766,7 +7766,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// to avoid namespace-scope template functions shadowing class member function overloads
 				std::optional<ASTNode> template_func_inst;
 				auto make_dependent_decltype_call = [&](ChunkedVector<ASTNode>&& call_args) -> ParseResult {
-					FLASH_LOG(Templates, Debug, "Creating dependent call expression for decltype call to '", identifier_token.value(), "'");
+					FLASH_LOG(Templates, Trace, "Creating dependent call expression for decltype call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(
 						TypeCategory::Auto,
 						TypeQualifier::None,
@@ -9606,7 +9606,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
 							if (var_template_opt.has_value()) {
 								template_name_to_use = qualified_name;
-								FLASH_LOG_FORMAT(Templates, Debug, "Found variable template with namespace-qualified name: {}", qualified_name);
+								FLASH_LOG_FORMAT(Templates, Trace, "Found variable template with namespace-qualified name: {}", qualified_name);
 							}
 						}
 					}
@@ -10250,7 +10250,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									deleted_call_has_dependent_arguments();
 
 								auto make_late_dependent_call_result = [&]() -> ParseResult {
-									FLASH_LOG(Templates, Debug, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
+									FLASH_LOG(Templates, Trace, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
 									auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 									auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 									result = emplace_node<ExpressionNode>(
@@ -10534,7 +10534,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										// IMPORTANT: We must create a call expression (not just IdentifierNode) to preserve the information
 										// that this is a function call with template arguments. This is needed for non-type template arguments
 										// like: bool_constant<test_func<T>()> where the function call result is used as a constant expression.
-										FLASH_LOG(Templates, Debug, "Creating dependent call expression for call to '", identifier_token.value(), "'");
+										FLASH_LOG(Templates, Trace, "Creating dependent call expression for call to '", identifier_token.value(), "'");
 
 										// Create a placeholder declaration for the dependent function call
 										TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);

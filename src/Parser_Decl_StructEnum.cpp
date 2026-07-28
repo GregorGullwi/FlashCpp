@@ -636,7 +636,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					}
 					std::string_view resolved_base_class_name = StringTable::getStringView(base_type_info->name());
 
-					FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", resolved_base_class_name);
+					FLASH_LOG(Templates, Trace, "Resolved decltype base class immediately: ", resolved_base_class_name);
 
 					// Check if base class is final
 					if (base_type_info->getStructInfo() && base_type_info->getStructInfo()->is_final) {
@@ -651,7 +651,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					continue;
 				} else {
 					// Could not evaluate now - must be template-dependent, so defer it
-					FLASH_LOG(Templates, Debug, "Deferring decltype base class - will be resolved during template instantiation");
+					FLASH_LOG(Templates, Trace, "Deferring decltype base class - will be resolved during template instantiation");
 					is_decltype_base = true;
 					auto [replay_definition_lookup_context, replay_template_parameters] =
 						buildDeferredBaseReplayMetadata(
@@ -716,7 +716,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								}
 							}
 							std::string_view member_chain = member_chain_builder.commit();
-							FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}{}", full_name, member_chain);
+							FLASH_LOG_FORMAT(Templates, Trace, "Found member type access after template args: {}{}", full_name, member_chain);
 						}
 
 						// Check if any template arguments are dependent
@@ -730,7 +730,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 						// If template arguments are dependent, defer resolution
 						if (has_dependent_args) {
-							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", full_name);
+							FLASH_LOG_FORMAT(Templates, Trace, "Base class {} has dependent template arguments - deferring resolution", full_name);
 
 							std::vector<TemplateArgumentNodeInfo> arg_infos;
 							arg_infos.reserve(template_args.size());
@@ -803,7 +803,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						std::string_view resolved = instantiate_and_register_base_template(mutable_full_name, template_args);
 						if (!resolved.empty()) {
 							full_name = mutable_full_name;
-							FLASH_LOG_FORMAT(Templates, Debug, "Resolved base class template: {}", full_name);
+							FLASH_LOG_FORMAT(Templates, Trace, "Resolved base class template: {}", full_name);
 						}
 					}
 
@@ -849,7 +849,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 					}
 					std::string_view member_chain = member_chain_builder.commit();
-					FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}{}", base_class_name, member_chain);
+					FLASH_LOG_FORMAT(Templates, Trace, "Found member type access after template args: {}{}", base_class_name, member_chain);
 				}
 
 				// Check if any template arguments are dependent
@@ -901,10 +901,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					if (is_struct_type(arg.category())) {
 						if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
 							StringHandle type_name_handle = type_info->name();
-							FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'",
+							FLASH_LOG_FORMAT(Templates, Trace, "Checking base class arg: type={}, type_index={}, name='{}'",
 											 static_cast<int>(arg.category()), arg.type_index, StringTable::getStringView(type_name_handle));
 							if (contains_template_param(type_name_handle)) {
-								FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' contains template parameter - marking as dependent", StringTable::getStringView(type_name_handle));
+								FLASH_LOG_FORMAT(Templates, Trace, "Base class arg '{}' contains template parameter - marking as dependent", StringTable::getStringView(type_name_handle));
 								has_dependent_args = true;
 								break;
 							}
@@ -940,7 +940,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 										}
 									}
 									if (confirmed_dependent) {
-										FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' is a dependent template placeholder (base='{}') - marking as dependent",
+										FLASH_LOG_FORMAT(Templates, Trace, "Base class arg '{}' is a dependent template placeholder (base='{}') - marking as dependent",
 														 StringTable::getStringView(type_name_handle), dep_base_name);
 										has_dependent_args = true;
 										break;
@@ -966,7 +966,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								// it might be a dependent instantiation that was skipped
 								auto template_entry = gTemplateRegistry.lookupTemplate(type_name_handle);
 								if (template_entry.has_value()) {
-									FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' is a template class in template body - marking as dependent", StringTable::getStringView(type_name_handle));
+									FLASH_LOG_FORMAT(Templates, Trace, "Base class arg '{}' is a template class in template body - marking as dependent", StringTable::getStringView(type_name_handle));
 									has_dependent_args = true;
 									break;
 								}
@@ -978,7 +978,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// If template arguments are dependent, we're inside a template declaration
 				// Don't try to instantiate or resolve the base class yet
 				if (has_dependent_args) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
+					FLASH_LOG_FORMAT(Templates, Trace, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
 
 					auto arg_infos = build_template_arg_infos(template_args, template_arg_nodes);
 
@@ -1026,7 +1026,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					}
 
 					base_class_name = StringTable::getStringView(resolved_type->name());
-					FLASH_LOG_FORMAT(Templates, Debug, "Resolved member alias base to underlying type: {}", base_class_name);
+					FLASH_LOG_FORMAT(Templates, Trace, "Resolved member alias base to underlying type: {}", base_class_name);
 
 					if (post_info.member_name_token.has_value()) {
 						base_name_token = *post_info.member_name_token;
@@ -5390,7 +5390,7 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 		registerFriendInStructInfo(friend_node.as<FriendDeclarationNode>(), struct_info);
 		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 
-		FLASH_LOG(Templates, Debug,
+		FLASH_LOG(Templates, Trace,
 			"Materialized hidden friend '", StringTable::getStringView(func_name_handle),
 			"' for class template instantiation '", StringTable::getStringView(instantiated_name), "'");
 	}

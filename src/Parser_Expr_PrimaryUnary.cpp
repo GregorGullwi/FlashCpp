@@ -999,7 +999,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error()) {
 			if (isTemplateParameterTrackingActive()) {
-				FLASH_LOG(Templates, Debug, "Recovering dependent noexcept operand after parse failure");
+				FLASH_LOG(Templates, Trace, "Recovering dependent noexcept operand after parse failure");
 				int paren_depth = 1;
 				while (!current_token_.kind().is_eof() && paren_depth > 0) {
 					if (current_token_.type() == Token::Type::Punctuator) {

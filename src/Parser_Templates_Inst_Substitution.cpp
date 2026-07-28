@@ -592,11 +592,11 @@ namespace {
 			std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 			template_args);
 	if (!evaluated_default.has_value()) {
-		FLASH_LOG(Templates, Debug, "substituteAndEvaluateNonTypeDefaultImpl: evaluation failed");
+		FLASH_LOG(Templates, Trace, "substituteAndEvaluateNonTypeDefaultImpl: evaluation failed");
 		return std::nullopt;
 	}
 
-	FLASH_LOG(Templates, Debug, "substituteAndEvaluateNonTypeDefaultImpl: succeeded");
+	FLASH_LOG(Templates, Trace, "substituteAndEvaluateNonTypeDefaultImpl: succeeded");
 	if (template_args.size() < template_params.size()) {
 		const TemplateParameterNode& param = template_params[template_args.size()];
 		if (std::optional<TypeSpecifierNode> target_type =
@@ -1100,7 +1100,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	// before alias-parameter substitution and produce a different value.
 	const bool is_type_trait_expr = std::get_if<TypeTraitExprNode>(&arg_expr) != nullptr;
 	if (is_type_trait_expr) {
-		FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: skipping early eval for TypeTraitExprNode");
+		FLASH_LOG(Templates, Trace, "materializeDeferredAliasTemplateArg: skipping early eval for TypeTraitExprNode");
 
 		// If the type arguments that feed this TypeTraitExpr are still dependent
 		// (e.g. __is_final(H) where H is an outer template parameter of HeadBase),
@@ -1128,7 +1128,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		for (const TemplateTypeArg& arg : template_args) {
 			if (StringHandle dependent_anchor = unresolved_dependent_anchor(arg);
 				dependent_anchor.isValid()) {
-				FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: arg is dependent, returning dependent bool placeholder");
+				FLASH_LOG(Templates, Trace, "materializeDeferredAliasTemplateArg: arg is dependent, returning dependent bool placeholder");
 				// Pre-substitute the alias template parameters (e.g. 'Type' in __is_final(Type))
 				// into the outer dependent parameter (e.g. 'Head') so that when the outer
 				// template is later instantiated, materializeStoredTemplateArgs can find
@@ -1154,7 +1154,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		std::span<const TemplateParameterNode> params_span(
 			template_parameters.data(), template_parameters.size());
 		if (auto pack_size = countPackSizeFromParams(pack_name, params_span, template_args.size())) {
-			FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: sizeof...(", pack_name, ") = ", *pack_size, " (counted from template_parameters/args)");
+			FLASH_LOG(Templates, Trace, "materializeDeferredAliasTemplateArg: sizeof...(", pack_name, ") = ", *pack_size, " (counted from template_parameters/args)");
 			TypeCategory value_cat = TypeCategory::UnsignedLongLong;
 			if (target_template_param != nullptr && target_template_param->has_type()) {
 				value_cat = target_template_param->type_specifier_node().type();
@@ -3696,7 +3696,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 						const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 						filled_args.emplace_back(default_type);
 					}
-					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+					FLASH_LOG(Templates, Trace, "Filled in default type argument for param ", i);
 				} else if (param->kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 					if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
 							default_node,
@@ -3707,7 +3707,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 							primary_param_names);
 						evaluated_default.has_value()) {
 						filled_args.push_back(*evaluated_default);
-						FLASH_LOG(Templates, Debug, "Filled in default non-type argument for param ", i);
+						FLASH_LOG(Templates, Trace, "Filled in default non-type argument for param ", i);
 					}
 				}
 			}
@@ -3747,7 +3747,7 @@ std::optional<ASTNode> Parser::tryResolveSizeofMemberAlias(
 	const TypeInfo& qualified_type_info = *qualified_type_it->second;
 	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 		qualified_type_info.registeredTypeIndex().withCategory(qualified_type_info.typeEnum()));
-	FLASH_LOG(Templates, Debug, "sizeof substitution: resolved member alias ", StringTable::getStringView(qualified_alias_name),
+	FLASH_LOG(Templates, Trace, "sizeof substitution: resolved member alias ", StringTable::getStringView(qualified_alias_name),
 			  " size_bits=", qualified_type_info.sizeInBits().value);
 	TypeSpecifierNode new_type(
 		qualified_type_info.registeredTypeIndex().withCategory(qualified_type_info.typeEnum()),
@@ -3812,12 +3812,12 @@ ASTNode Parser::substitute_template_params_in_expression(
 
 	// ASTNode is a typed pointer wrapper, check if it contains an ExpressionNode
 	if (!expr.is<ExpressionNode>()) {
-		FLASH_LOG(Templates, Debug, "substitute_template_params_in_expression: not an ExpressionNode");
+		FLASH_LOG(Templates, Trace, "substitute_template_params_in_expression: not an ExpressionNode");
 		return expr; // Return as-is if not an expression
 	}
 
 	const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
-	FLASH_LOG(Templates, Debug, "substitute_template_params_in_expression: processing expression, variant index=", expr_variant.index());
+	FLASH_LOG(Templates, Trace, "substitute_template_params_in_expression: processing expression, variant index=", expr_variant.index());
 
 	// Handle sizeof expressions
 	if (std::holds_alternative<SizeofExprNode>(expr_variant)) {
@@ -3827,13 +3827,13 @@ ASTNode Parser::substitute_template_params_in_expression(
 		if (sizeof_node.is_type() && sizeof_node.type_or_expr().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_node = sizeof_node.type_or_expr().as<TypeSpecifierNode>();
 
-			FLASH_LOG(Templates, Debug, "sizeof substitution: checking type_index=", type_node.type_index(),
+			FLASH_LOG(Templates, Trace, "sizeof substitution: checking type_index=", type_node.type_index(),
 					  " type=", static_cast<int>(type_node.type()));
 
 			// First, try to find by type_index
 			auto it = type_substitution_map.find(type_node.type_index());
 			if (it != type_substitution_map.end()) {
-				FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by type_index, substituting with ", it->second.toString());
+				FLASH_LOG(Templates, Trace, "sizeof substitution: FOUND match by type_index, substituting with ", it->second.toString());
 
 				// Create a new type node with the substituted type
 				const TemplateTypeArg& arg = it->second;
@@ -3857,14 +3857,14 @@ ASTNode Parser::substitute_template_params_in_expression(
 					}
 				}
 				if (!type_name.empty()) {
-					FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
+					FLASH_LOG(Templates, Trace, "sizeof substitution: checking by name: ", type_name);
 
 					// Search substitution map for any entry where the key type_index has the same name
 					for (const auto& [key_type_index, arg] : type_substitution_map) {
 						if (const TypeInfo* key_type_info = tryGetTypeInfo(key_type_index)) {
 							std::string_view param_name = StringTable::getStringView(key_type_info->name());
 							if (param_name == type_name) {
-								FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by name, substituting with ", arg.toString());
+								FLASH_LOG(Templates, Trace, "sizeof substitution: FOUND match by name, substituting with ", arg.toString());
 
 							// Create a new type node with the substituted type
 								TypeSpecifierNode new_type =
@@ -3924,7 +3924,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 				return *resolved;
 			}
 
-			FLASH_LOG(Templates, Debug, "sizeof substitution: NO match found");
+			FLASH_LOG(Templates, Trace, "sizeof substitution: NO match found");
 		} else if (!sizeof_node.is_type()) {
 			if (sizeof_node.type_or_expr().is<ExpressionNode>() &&
 				std::holds_alternative<IdentifierNode>(sizeof_node.type_or_expr().as<ExpressionNode>())) {
@@ -4090,13 +4090,13 @@ ASTNode Parser::substitute_template_params_in_expression(
 		if (unop.op() == "sizeof" && unop.get_operand().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_node = unop.get_operand().as<TypeSpecifierNode>();
 
-			FLASH_LOG(Templates, Debug, "sizeof substitution: checking type_index=", type_node.type_index(),
+			FLASH_LOG(Templates, Trace, "sizeof substitution: checking type_index=", type_node.type_index(),
 					  " type=", static_cast<int>(type_node.type()));
 
 			// Check if this type needs substitution
 			auto it = type_substitution_map.find(type_node.type_index());
 			if (it != type_substitution_map.end()) {
-				FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match, substituting with ", it->second.toString());
+				FLASH_LOG(Templates, Trace, "sizeof substitution: FOUND match, substituting with ", it->second.toString());
 
 				// Create a new type node with the substituted type
 				const TemplateTypeArg& arg = it->second;
@@ -4123,7 +4123,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					unop.is_prefix());
 				return emplace_node<ExpressionNode>(new_unop);
 			} else {
-				FLASH_LOG(Templates, Debug, "sizeof substitution: NO match found in map");
+				FLASH_LOG(Templates, Trace, "sizeof substitution: NO match found in map");
 			}
 		}
 
@@ -4185,7 +4185,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 			StringHandle dep_name = arg.dependent_name;
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.is_type_param && subst.param_name == dep_name && !subst.substituted_type.is_dependent) {
-					FLASH_LOG(Templates, Debug, "Resolving dependent template parameter '", dep_name,
+					FLASH_LOG(Templates, Trace, "Resolving dependent template parameter '", dep_name,
 							  "' with concrete type ", subst.substituted_type.toString());
 					arg = subst.substituted_type;
 					break;
@@ -4203,7 +4203,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(arg.type_index);
 					if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != arg.type_index) {
 						TemplateTypeArg resolved = makeTemplateTypeArgFromResolvedAlias(resolved_alias, arg.type_index);
-						FLASH_LOG(Templates, Debug, "Resolved type alias arg from ", arg.type_index, " to ", resolved.type_index);
+						FLASH_LOG(Templates, Trace, "Resolved type alias arg from ", arg.type_index, " to ", resolved.type_index);
 						arg = resolved;
 					}
 				}
@@ -4211,7 +4211,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 					StringHandle type_name = type_info->name();
 					for (const auto& subst : template_param_substitutions_) {
 						if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
-							FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name,
+							FLASH_LOG(Templates, Trace, "Substituting template parameter '", type_name,
 									  "' with concrete type ", subst.substituted_type.toString());
 							arg = subst.substituted_type;
 							break;
@@ -4229,7 +4229,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 	for (size_t i = 0; i < resolved_args.size(); ++i) {
 		const auto& arg = resolved_args[i];
 		if (arg.is_dependent) {
-			FLASH_LOG(Templates, Debug, "Skipping variable template '", template_name,
+			FLASH_LOG(Templates, Trace, "Skipping variable template '", template_name,
 					  "' instantiation - arg[", i, "] is dependent: ", arg.toString());
 			return std::nullopt;
 		}
@@ -4240,7 +4240,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		template_opt = gTemplateRegistry.lookupVariableTemplate(simple_template_name);
 	}
 	if (!template_opt.has_value()) {
-		FLASH_LOG(Templates, Debug, "Variable template '", template_name, "' not found");
+		FLASH_LOG(Templates, Trace, "Variable template '", template_name, "' not found");
 		return std::nullopt;
 	}
 
@@ -4526,7 +4526,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 			if (!init_result.is_error()) {
 				reparsed_initializer = init_result.node();
 			} else {
-				FLASH_LOG(Templates, Debug,
+				FLASH_LOG(Templates, Trace,
 					"Replay parse failed for variable template initializer ",
 					declaration_for_reparse.identifier_token().value(), ": ",
 					init_result.error_message(),
@@ -4538,7 +4538,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 				init_result.node().has_value()) {
 				reparsed_initializer = *init_result.node();
 			} else if (init_result.is_error()) {
-				FLASH_LOG(Templates, Debug,
+				FLASH_LOG(Templates, Trace,
 					"Replay brace-init parse failed for variable template initializer ",
 					declaration_for_reparse.identifier_token().value(), ": ",
 					init_result.error_message(),
@@ -4589,7 +4589,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 	}
 
 	if (structural_match.has_value() && structural_match->node.is<TemplateVariableDeclarationNode>()) {
-		FLASH_LOG(Templates, Debug, "Found variable template partial specialization via structural match");
+		FLASH_LOG(Templates, Trace, "Found variable template partial specialization via structural match");
 		const TemplateVariableDeclarationNode& spec_template = structural_match->node.as<TemplateVariableDeclarationNode>();
 		const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
 		const Token& orig_token = spec_var_decl.declaration().identifier_token();
@@ -4694,7 +4694,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 	// Substitute template parameters in initializer expression
 	std::optional<ASTNode> new_initializer = std::nullopt;
 	if (orig_var_decl.initializer().has_value()) {
-		FLASH_LOG(Templates, Debug, "Substituting initializer expression for variable template");
+		FLASH_LOG(Templates, Trace, "Substituting initializer expression for variable template");
 		StringHandle instantiated_var_handle =
 			StringTable::getOrInternStringHandle(persistent_name);
 		new_initializer = try_replay_variable_template_initializer(
@@ -4708,7 +4708,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 				orig_var_decl.initializer().value(),
 				variable_template_context);
 		}
-		FLASH_LOG(Templates, Debug, "Initializer substitution complete");
+		FLASH_LOG(Templates, Trace, "Initializer substitution complete");
 
 		// PHASE 3 FIX: After substitution, trigger instantiation of any class templates
 		// referenced in the initializer expression. This ensures specialization pattern
@@ -4717,7 +4717,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		// After substitution, we need to instantiate is_pointer_impl<int*> which should
 		// match the specialization pattern is_pointer_impl<T*> and inherit from true_type.
 		if (new_initializer.has_value()) {
-			FLASH_LOG(Templates, Debug, "Phase 3: Checking initializer for variable template '", template_name,
+			FLASH_LOG(Templates, Trace, "Phase 3: Checking initializer for variable template '", template_name,
 					  "', is ExpressionNode: ", new_initializer->is<ExpressionNode>());
 
 			if (new_initializer->is<ExpressionNode>()) {
@@ -4725,7 +4725,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 
 				// Check if the initializer is a qualified identifier (e.g., Template<Args>::member)
 				bool is_qual_id = std::holds_alternative<QualifiedIdentifierNode>(init_expr);
-				FLASH_LOG(Templates, Debug, "Phase 3: Is QualifiedIdentifierNode: ", is_qual_id);
+				FLASH_LOG(Templates, Trace, "Phase 3: Is QualifiedIdentifierNode: ", is_qual_id);
 
 				if (is_qual_id) {
 					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(init_expr);
@@ -4733,13 +4733,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 					// The struct/class name is the namespace handle's name
 					// For "is_pointer_impl<int*>::value", the namespace name is "is_pointer_impl<int*>"
 					NamespaceHandle ns_handle = qual_id.namespace_handle();
-					FLASH_LOG(Templates, Debug, "Phase 3: Namespace handle depth: ", gNamespaceRegistry.getDepth(ns_handle));
+					FLASH_LOG(Templates, Trace, "Phase 3: Namespace handle depth: ", gNamespaceRegistry.getDepth(ns_handle));
 
 					if (!ns_handle.isGlobal()) {
 						// Get the struct name from the namespace handle
 						std::string_view struct_name_view = gNamespaceRegistry.getName(ns_handle);
 
-						FLASH_LOG(Templates, Debug, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
+						FLASH_LOG(Templates, Trace, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
 
 						// The struct name might be a mangled template instantiation (hash-based)
 						// Extract the base template name from metadata
@@ -4747,7 +4747,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 						std::string_view base_name = extractBaseTemplateName(struct_name_view);
 						if (!base_name.empty()) {
 							template_name_to_lookup = base_name;
-							FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
+							FLASH_LOG(Templates, Trace, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
 						}
 
 						// Try to instantiate the struct/class referenced in the qualified identifier
@@ -4769,7 +4769,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 							// This is a template - try to instantiate it with the concrete arguments
 							// Use the referenced placeholder's own template arguments so outer
 							// defaults are only forwarded when the inner template actually uses them.
-							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup,
+							FLASH_LOG(Templates, Trace, "Phase 3: Triggering instantiation of '", template_name_to_lookup,
 									  "' with ", inner_template_args.size(), " args from variable template initializer");
 
 							auto instantiated = try_instantiate_class_template(template_name_to_lookup, inner_template_args);
@@ -4780,7 +4780,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 								// Now update the qualified identifier to use the correct instantiated name
 								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
 								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, inner_template_args);
-								FLASH_LOG(Templates, Debug, "Phase 3: Instantiated class name: '", instantiated_name, "'");
+								FLASH_LOG(Templates, Trace, "Phase 3: Instantiated class name: '", instantiated_name, "'");
 
 								// Create a new qualified identifier with the updated namespace
 								// Get the parent namespace and add the instantiated name as a child
@@ -4843,7 +4843,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	ASTNode& spec_node) {
 	// Generate the instantiated class name
 	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
-	FLASH_LOG(Templates, Debug, "instantiate_full_specialization called for: ", instantiated_name);
+	FLASH_LOG(Templates, Trace, "instantiate_full_specialization called for: ", instantiated_name);
 
 	if (!spec_node.is<StructDeclarationNode>()) {
 		FLASH_LOG(Templates, Error, "Full specialization is not a StructDeclarationNode");
@@ -5004,7 +5004,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			}
 			getTypesByNameMap().insert_or_assign(qualified_alias_name, &alias_type_info);
 
-			FLASH_LOG(Templates, Debug, "Registered type alias: ", StringTable::getStringView(qualified_alias_name),
+			FLASH_LOG(Templates, Trace, "Registered type alias: ", StringTable::getStringView(qualified_alias_name),
 					  " -> type=", static_cast<int>(alias_registration_type_spec.type()),
 					  ", type_index=", alias_target_index);
 		}
@@ -5109,7 +5109,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Check if we already have this instantiation
 	auto existing_type = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 	if (existing_type != getTypesByNameMap().end()) {
-		FLASH_LOG(Templates, Debug, "Full spec already instantiated: ", instantiated_name);
+		FLASH_LOG(Templates, Trace, "Full spec already instantiated: ", instantiated_name);
 
 		// Even if the struct is already instantiated, we need to register type aliases
 		// with qualified names if they haven't been registered yet
@@ -5196,7 +5196,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// initializers even when the parsed StructTypeInfo has not materialized them yet.
 	if (!spec_struct.static_members().empty()) {
 		for (const auto& static_member : spec_struct.static_members()) {
-			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.name));
+			FLASH_LOG(Templates, Trace, "Copying static member: ", StringTable::getStringView(static_member.name));
 			struct_info->addStaticMember(
 				static_member.name,
 				static_member.type_index,
@@ -5223,7 +5223,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			const StructTypeInfo* spec_struct_info = spec_type_it->second->getStructInfo();
 			if (spec_struct_info) {
 				for (const auto& static_member : spec_struct_info->static_members) {
-					FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
+					FLASH_LOG(Templates, Trace, "Copying static member: ", static_member.getName());
 					struct_info->static_members.push_back(static_member);
 				}
 			}
@@ -5357,7 +5357,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// If no constructor was defined, we should synthesize a default one
 	// For now, mark that we need one and it will be generated in codegen
 	struct_info->needs_default_constructor = !has_constructor;
-	FLASH_LOG(Templates, Debug, "Full spec has constructor: ", has_constructor ? "yes" : "no, needs default");
+	FLASH_LOG(Templates, Trace, "Full spec has constructor: ", has_constructor ? "yes" : "no, needs default");
 
 	struct_type_info.attachStructInfo(*struct_info);
 	struct_type_info.bindStructInfoOwnership();
@@ -5736,6 +5736,6 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 		return templateTypeArgFromEvalResult(result);
 	}
 
-	FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: evaluation failed for dependent expression");
+	FLASH_LOG(Templates, Warning, "evaluateDependentNTTPExpression: evaluation failed for dependent expression");
 	return std::nullopt;
 }

@@ -399,7 +399,7 @@ InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplat
 				}
 				append_candidates(base_lookup_result);
 				if (!candidates.empty()) {
-					FLASH_LOG(Templates, Debug, "Found base template class lookup: ", base_request.owner_name.view());
+					FLASH_LOG(Templates, Trace, "Found base template class lookup: ", base_request.owner_name.view());
 				}
 			}
 		}
@@ -1528,7 +1528,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 			// If the specialization has a body position and no definition yet, parse it now
 			if (spec_func.has_template_body_position() && spec_func.needs_body_materialization()) {
-				FLASH_LOG(Templates, Debug, "Parsing specialization body for ", specialization_lookup_name.view());
+				FLASH_LOG(Templates, Trace, "Parsing specialization body for ", specialization_lookup_name.view());
 
 				// Look up the struct type index and node for the member function context
 				TypeIndex struct_type_index{};
@@ -1588,7 +1588,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				} else {
 					spec_func.set_definition(*body_result.node());
 					finalize_function_after_definition(spec_func, true);
-					FLASH_LOG(Templates, Debug, "Successfully parsed specialization body");
+					FLASH_LOG(Templates, Trace, "Successfully parsed specialization body");
 				}
 			}
 
@@ -3049,7 +3049,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		for (StringHandle outer_name : outer_param_names) {
 			param_names.push_back(outer_name);
 		}
-		FLASH_LOG(Templates, Debug, "Added ", outer_param_names.size(), " outer template param bindings for body parsing");
+		FLASH_LOG(Templates, Trace, "Added ", outer_param_names.size(), " outer template param bindings for body parsing");
 	}
 	if (outer_binding != nullptr) {
 		// Fallback for partial-specialization OOL member function templates: the
@@ -3059,7 +3059,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		for (StringHandle outer_name : outer_binding->param_names) {
 			param_names.push_back(outer_name);
 		}
-		FLASH_LOG(Templates, Debug, "Added outer template param bindings from registry for body parsing");
+		FLASH_LOG(Templates, Trace, "Added outer template param bindings from registry for body parsing");
 	}
 
 	// Save current position
@@ -3071,7 +3071,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Look up the struct type info
 	auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 	if (struct_type_it == getTypesByNameMap().end()) {
-		FLASH_LOG(Templates, Debug, "Struct type not found: ", struct_name);
+		FLASH_LOG(Templates, Trace, "Struct type not found: ", struct_name);
 		restore_token_position(current_pos);
 		return std::nullopt;
 	}

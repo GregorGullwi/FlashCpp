@@ -156,12 +156,12 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Example: template<typename T> auto func(T x) -> decltype(x + 1)
 	DeclarationNode& decl_node = func_decl.decl_node();
 	TypeSpecifierNode& return_type = decl_node.type_specifier_node();
-	FLASH_LOG(Templates, Debug, "Template instantiation: pre-trailing return type: type=", static_cast<int>(return_type.type()),
+	FLASH_LOG(Templates, Trace, "Template instantiation: pre-trailing return type: type=", static_cast<int>(return_type.type()),
 			  ", index=", return_type.type_index(), ", token='", return_type.token().value(), "'");
 	if (!peek().is_eof()) {
-		FLASH_LOG(Templates, Debug, "Template instantiation: next token after params='", peek_info().value(), "'");
+		FLASH_LOG(Templates, Trace, "Template instantiation: next token after params='", peek_info().value(), "'");
 	} else {
-		FLASH_LOG(Templates, Debug, "Template instantiation: no token after params");
+		FLASH_LOG(Templates, Trace, "Template instantiation: no token after params");
 	}
 	if (isPlaceholderAutoType(return_type.type()) && peek() == "->"_tok) {
 		// Save position of '->' for SFINAE re-parsing of trailing return type
@@ -187,17 +187,17 @@ ParseResult Parser::parse_template_function_declaration_body(
 		// Note: consume_pointer_ref_modifiers already called inside parse_trailing_return_type_with_params.
 		// trailing_ts is still used below for logging.
 
-		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
+		FLASH_LOG(Templates, Trace, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 				  ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
 		if (const TypeInfo* trailing_type_info = tryGetTypeInfo(trailing_ts.type_index())) {
-			FLASH_LOG(Templates, Debug, "Template instantiation: trailing return gTypeInfo name='",
+			FLASH_LOG(Templates, Trace, "Template instantiation: trailing return gTypeInfo name='",
 					  StringTable::getStringView(trailing_type_info->name()),
 					  "', underlying_type=", static_cast<int>(trailing_type_info->category()));
 		}
 
 		// Replace the auto type with the trailing return type
 		return_type = trailing_type_specifier.node()->as<TypeSpecifierNode>();
-		FLASH_LOG(Templates, Debug, "Template instantiation: updated return type from trailing clause: type=", static_cast<int>(return_type.type()),
+		FLASH_LOG(Templates, Trace, "Template instantiation: updated return type from trailing clause: type=", static_cast<int>(return_type.type()),
 				  ", index=", return_type.type_index());
 	}
 
@@ -1057,7 +1057,7 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 // Returns pair of (value, type) if successful, nullopt otherwise
 std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(const ASTNode& expr_node) {
 	if (!expr_node.is<ExpressionNode>()) {
-		FLASH_LOG(Templates, Debug, "Not an ExpressionNode");
+		FLASH_LOG(Templates, Trace, "Not an ExpressionNode");
 		return std::nullopt;
 	}
 
@@ -1198,7 +1198,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			return std::nullopt;
 		}
 		std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
-		FLASH_LOG_FORMAT(Templates, Debug, "try_evaluate_specialization_static_member: base='{}' member='{}' args={}",
+		FLASH_LOG_FORMAT(Templates, Trace, "try_evaluate_specialization_static_member: base='{}' member='{}' args={}",
 						 base_template_name, StringTable::getStringView(member_name_handle), type_info->templateArgs().size());
 		if (base_template_name.empty()) {
 			return std::nullopt;
@@ -1227,19 +1227,19 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 
 		auto specialization_ast = gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
 		if (!specialization_ast.has_value()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "No exact specialization AST for '{}', trying patterns", base_template_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "No exact specialization AST for '{}', trying patterns", base_template_name);
 			specialization_ast = gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args);
 		}
 		if (!specialization_ast.has_value() || !specialization_ast->is<StructDeclarationNode>()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "No specialization AST found for '{}'", base_template_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "No specialization AST found for '{}'", base_template_name);
 			return std::nullopt;
 		}
 
 		const auto& specialization_struct = specialization_ast->as<StructDeclarationNode>();
-		FLASH_LOG_FORMAT(Templates, Debug, "Found specialization AST '{}' with {} static members",
+		FLASH_LOG_FORMAT(Templates, Trace, "Found specialization AST '{}' with {} static members",
 						 StringTable::getStringView(specialization_struct.name()), specialization_struct.static_members().size());
 		for (const auto& static_member_decl : specialization_struct.static_members()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "  specialization static member '{}' has initializer={}",
+			FLASH_LOG_FORMAT(Templates, Trace, "  specialization static member '{}' has initializer={}",
 							 StringTable::getStringView(static_member_decl.name), static_member_decl.initializer.has_value());
 			if (static_member_decl.name != member_name_handle ||
 				!static_member_decl.initializer.has_value()) {
@@ -1275,7 +1275,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		auto ctx = makeConstExprContext();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Qualified identifier constexpr evaluation succeeded: {}", eval_result.as_int());
+			FLASH_LOG_FORMAT(Templates, Trace, "Qualified identifier constexpr evaluation succeeded: {}", eval_result.as_int());
 			return makeConstantValueFromEvalResult(eval_result);
 		}
 
@@ -1287,7 +1287,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// Find the last :: to split type name from member name
 		size_t last_scope_pos = full_qualified_name.rfind("::");
 		if (last_scope_pos == std::string::npos) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Qualified identifier '{}' has no scope separator", full_qualified_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Qualified identifier '{}' has no scope separator", full_qualified_name);
 			return std::nullopt;
 		}
 
@@ -1295,12 +1295,12 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		std::string_view member_name(full_qualified_name.data() + last_scope_pos + 2,
 									 full_qualified_name.size() - last_scope_pos - 2);
 
-		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating constant expression: {}::{}", type_name, member_name);
+		FLASH_LOG_FORMAT(Templates, Trace, "Evaluating constant expression: {}::{}", type_name, member_name);
 
 		// Look up the type - it should be an instantiated template class
 		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it == getTypesByNameMap().end()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system, attempting to instantiate as template", type_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Type {} not found in type system, attempting to instantiate as template", type_name);
 
 			// Try to parse the type name as a template instantiation (e.g., "Num<int>")
 			// Extract template name and arguments
@@ -1327,23 +1327,23 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 						TemplateDeclarationKind::ClassTemplate);
 				}
 				if (template_entry.has_value()) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Found template '{}', but instantiation failed or incomplete", template_name);
+					FLASH_LOG_FORMAT(Templates, Trace, "Found template '{}', but instantiation failed or incomplete", template_name);
 				}
 			}
 
-			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found even after instantiation attempt", type_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Type {} not found even after instantiation attempt", type_name);
 			return std::nullopt;
 		}
 
 		const TypeInfo* type_info = type_it->second;
 		if (!type_info->isStruct()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Type {} is not a struct", type_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Type {} is not a struct", type_name);
 			return std::nullopt;
 		}
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
 		if (!struct_info) {
-			FLASH_LOG(Templates, Debug, "Could not get struct info");
+			FLASH_LOG(Templates, Trace, "Could not get struct info");
 			return std::nullopt;
 		}
 
@@ -1356,20 +1356,20 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// Use findStaticMemberRecursive to also search base classes
 		auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 		if (!static_member) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
 		}
 
 		// If the static member was found in a base class, trigger lazy instantiation for that base class too
 		if (owner_struct != struct_info) {
-			FLASH_LOG(Templates, Debug, "Static member '", member_name, "' found in base class '",
+			FLASH_LOG(Templates, Trace, "Static member '", member_name, "' found in base class '",
 					  StringTable::getStringView(owner_struct->name), "', triggering lazy instantiation");
 			instantiateLazyStaticMember(owner_struct->name, member_name_handle);
 			// Re-fetch the static member after lazy instantiation
 			auto [updated_static_member, updated_owner] = owner_struct->findStaticMemberRecursive(member_name_handle);
 			static_member = updated_static_member;
 			if (!static_member) {
-				FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found after lazy instantiation", member_name);
+				FLASH_LOG_FORMAT(Templates, Trace, "Static member {} not found after lazy instantiation", member_name);
 				return std::nullopt;
 			}
 		}
@@ -1379,7 +1379,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle)) {
 				return value;
 			}
-			FLASH_LOG_FORMAT(Templates, Debug, "Static member {}::{} has no initializer", type_name, member_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Static member {}::{} has no initializer", type_name, member_name);
 			return std::nullopt;
 		}
 
@@ -1415,24 +1415,24 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		const IdentifierNode& id_node = std::get<IdentifierNode>(obj_expr);
 		std::string_view type_name = id_node.name();
 
-		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating constant expression: {}::{}", type_name, member_name);
+		FLASH_LOG_FORMAT(Templates, Trace, "Evaluating constant expression: {}::{}", type_name, member_name);
 
 		// Look up the type - it should be an instantiated template class
 		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it == getTypesByNameMap().end()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system", type_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Type {} not found in type system", type_name);
 			return std::nullopt;
 		}
 
 		const TypeInfo* type_info = type_it->second;
 		if (!type_info->isStruct()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Type {} is not a struct", type_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Type {} is not a struct", type_name);
 			return std::nullopt;
 		}
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
 		if (!struct_info) {
-			FLASH_LOG(Templates, Debug, "Could not get struct info");
+			FLASH_LOG(Templates, Trace, "Could not get struct info");
 			return std::nullopt;
 		}
 
@@ -1444,7 +1444,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// Look for the static member with the given name (may have just been lazily instantiated)
 		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle2);
 		if (!static_member) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
 		}
 
@@ -1453,7 +1453,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle2)) {
 				return value;
 			}
-			FLASH_LOG_FORMAT(Templates, Debug, "Static member {}::{} has no initializer", type_name, member_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Static member {}::{} has no initializer", type_name, member_name);
 			return std::nullopt;
 		}
 
@@ -1472,12 +1472,12 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		TypeTraitResult eval_result = evaluateTypeTrait(trait_expr);
 
 		if (!eval_result.success) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Type trait {} requires special handling or is not supported",
+			FLASH_LOG_FORMAT(Templates, Trace, "Type trait {} requires special handling or is not supported",
 							 static_cast<int>(trait_expr.kind()));
 			return std::nullopt;
 		}
 
-		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
+		FLASH_LOG_FORMAT(Templates, Trace, "Type trait evaluation result: {}", eval_result.value);
 		return makeConstantValueFromCategory(eval_result.value ? 1 : 0, TypeCategory::Bool);
 	}
 
@@ -1492,33 +1492,33 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 
 	// Handle ternary operator expressions (e.g., (5 < 0) ? -1 : 1)
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
-		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
+		FLASH_LOG(Templates, Trace, "Evaluating ternary operator expression");
 		auto ctx = makeConstExprContext();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
+			FLASH_LOG_FORMAT(Templates, Trace, "Ternary evaluated to: {}", eval_result.as_int());
 			return makeConstantValueFromEvalResult(eval_result);
 		}
-		FLASH_LOG(Templates, Debug, "Failed to evaluate ternary operator");
+		FLASH_LOG(Templates, Trace, "Failed to evaluate ternary operator");
 		return std::nullopt;
 	}
 
 	// Handle binary operator expressions (e.g., 5 < 0, 1 + 2)
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-		FLASH_LOG(Templates, Debug, "Evaluating binary operator expression");
+		FLASH_LOG(Templates, Trace, "Evaluating binary operator expression");
 		auto ctx = makeConstExprContext();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
+			FLASH_LOG_FORMAT(Templates, Trace, "Binary op evaluated to: {}", eval_result.as_int());
 			return makeConstantValueFromEvalResult(eval_result);
 		}
-		FLASH_LOG(Templates, Debug, "Failed to evaluate binary operator");
+		FLASH_LOG(Templates, Trace, "Failed to evaluate binary operator");
 		return std::nullopt;
 	}
 
 	// Handle unary operator expressions (e.g., -5, ~0, !true, &global)
 	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-		FLASH_LOG(Templates, Debug, "Evaluating unary operator expression");
+		FLASH_LOG(Templates, Trace, "Evaluating unary operator expression");
 
 		// Special case: address-of a named entity (&identifier).
 		// The generic ConstExpr evaluator drops the entity name and returns 0,
@@ -1534,7 +1534,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 					if (sym->is<FunctionDeclarationNode>()) {
 						TypeIndex fp_type = nativeTypeIndex(TypeCategory::FunctionPointer);
 						auto identity = FlashCpp::NonTypeValueIdentity::makeFunctionPointer(fp_type, entity_handle);
-						FLASH_LOG(Templates, Debug, "Address-of function '", id.name(), "' evaluated as FunctionPointer identity");
+						FLASH_LOG(Templates, Trace, "Address-of function '", id.name(), "' evaluated as FunctionPointer identity");
 						return ConstantValue{0, TypeCategory::FunctionPointer, fp_type, identity};
 					}
 					const TypeSpecifierNode* type_node = nullptr;
@@ -1545,7 +1545,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 					if (type_node) {
 						TypeIndex pointee_type = type_node->type_index().withCategory(type_node->type());
 						auto identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(pointee_type, entity_handle, 0);
-						FLASH_LOG(Templates, Debug, "Address-of variable '", id.name(), "' evaluated as ObjectPointer identity");
+						FLASH_LOG(Templates, Trace, "Address-of variable '", id.name(), "' evaluated as ObjectPointer identity");
 						return ConstantValue{0, type_node->type(), pointee_type, identity};
 					}
 				}
@@ -1555,17 +1555,17 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		auto ctx = makeConstExprContext();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Unary op evaluated to: {}", eval_result.as_int());
+			FLASH_LOG_FORMAT(Templates, Trace, "Unary op evaluated to: {}", eval_result.as_int());
 			return makeConstantValueFromEvalResult(eval_result);
 		}
-		FLASH_LOG(Templates, Debug, "Failed to evaluate unary operator");
+		FLASH_LOG(Templates, Trace, "Failed to evaluate unary operator");
 		return std::nullopt;
 	}
 
 	auto ctx = makeConstExprContext();
 	auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 	if (eval_result.success()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "General constexpr evaluation succeeded: {}", eval_result.as_int());
+		FLASH_LOG_FORMAT(Templates, Trace, "General constexpr evaluation succeeded: {}", eval_result.as_int());
 		return makeConstantValueFromEvalResult(eval_result);
 	}
 

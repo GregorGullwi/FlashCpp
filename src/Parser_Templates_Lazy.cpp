@@ -746,14 +746,14 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	const bool replay_saved_body =
 		has_saved_body_position && (!has_parsed_body || parsed_body_has_local_class);
 	if (has_saved_body_position && has_parsed_body) {
-		FLASH_LOG(Templates, Debug, "Lazy member function has both parsed body and saved body position; ",
+		FLASH_LOG(Templates, Trace, "Lazy member function has both parsed body and saved body position; ",
 			parsed_body_has_local_class
 				? "replaying local class declarations with concrete template bindings"
 				: "using the parsed body for structural substitution");
 	}
 
 	if (replay_saved_body) {
-		FLASH_LOG(Templates, Debug, "Lazy member function body: re-parsing from saved position");
+		FLASH_LOG(Templates, Trace, "Lazy member function body: re-parsing from saved position");
 		FLASH_LOG(
 			Templates,
 			Debug,
@@ -1051,7 +1051,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						member_func.function_decl) == lazy_info.registry_key) {
 					// Replace with the instantiated function
 					member_func.function_decl = new_func_node;
-					FLASH_LOG(Templates, Debug, "Updated StructTypeInfo with instantiated function body");
+					FLASH_LOG(Templates, Trace, "Updated StructTypeInfo with instantiated function body");
 					break;
 				}
 			}
@@ -1088,7 +1088,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	} inProgressGuard{lazy_static_members_in_progress, instantiation_key};
 	lazy_static_members_in_progress.insert(instantiation_key);
 
-	FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for static member: ",
+	FLASH_LOG(Templates, Trace, "Lazy instantiation triggered for static member: ",
 			  instantiated_class_name, "::", member_name);
 
 	// Get the lazy member info (returns a pointer to avoid copying)
@@ -1121,12 +1121,12 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	auto try_reparse_lazy_static_initializer = [&]() -> bool {
 		if (!lazy_info.initializer_position.has_value() || !lazy_info.declaration.has_value()) {
-			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: skipping — ",
+			FLASH_LOG(Templates, Trace, "try_reparse_lazy_static_initializer: skipping — ",
 					  !lazy_info.initializer_position.has_value() ? "no initializer_position" : "no declaration");
 			return false;
 		}
 		if (!lazy_info.declaration->is<DeclarationNode>()) {
-			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: skipping — declaration is not a DeclarationNode");
+			FLASH_LOG(Templates, Trace, "try_reparse_lazy_static_initializer: skipping — declaration is not a DeclarationNode");
 			return false;
 		}
 
@@ -1184,26 +1184,26 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		if (peek() == "="_tok) {
-			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: reparsing from '=' position");
+			FLASH_LOG(Templates, Trace, "try_reparse_lazy_static_initializer: reparsing from '=' position");
 			ParseResult init_result = parse_copy_initialization(decl, type_spec);
 			if (!init_result.is_error()) {
 				substituted_initializer = init_result.node();
 			} else {
-				FLASH_LOG(Templates, Debug,
+				FLASH_LOG(Templates, Trace,
 					"try_reparse_lazy_static_initializer: parse_copy_initialization failed for ",
 					decl.identifier_token().value(), ": ",
 					init_result.error_message(),
 					" - falling back to stored initializer AST");
 				substituted_initializer.reset();
 			}
-			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: parse_copy_initialization result has_value=",
+			FLASH_LOG(Templates, Trace, "try_reparse_lazy_static_initializer: parse_copy_initialization result has_value=",
 					  substituted_initializer.has_value());
 		} else if (peek() == "{"_tok) {
 			ParseResult init_result = parse_brace_initializer(type_spec);
 			if (!init_result.is_error()) {
 				substituted_initializer = init_result.node();
 			} else {
-				FLASH_LOG(Templates, Debug,
+				FLASH_LOG(Templates, Trace,
 					"try_reparse_lazy_static_initializer: brace initializer parse failed for ",
 					decl.identifier_token().value(), ": ",
 					init_result.error_message(),
@@ -1355,7 +1355,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				ExpressionSubstitutor substitutor(substitution_environment, *this);
 				substitutor.setCurrentOwnerTypeName(struct_info->getName());
 				substituted_initializer = substitutor.substitute(substituted_initializer.value());
-				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
+				FLASH_LOG(Templates, Trace, "Applied general template parameter substitution to lazy static member initializer");
 			}
 		}
 
@@ -1403,7 +1403,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			}
 			auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
 			if (!eval_result.success()) {
-				FLASH_LOG(Templates, Debug, "Inner ConstExpr eval FAILED for substituted lazy member initializer (error: ",
+				FLASH_LOG(Templates, Warning, "Inner ConstExpr eval FAILED for substituted lazy member initializer (error: ",
 						  eval_result.error_message, ")");
 			}
 			if (eval_result.success()) {
@@ -1425,7 +1425,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 					substituted_initializer = emplace_node<ExpressionNode>(
 						NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 64));
 				}
-				FLASH_LOG(Templates, Debug, "Evaluated lazy static member initializer to constant: ", val);
+				FLASH_LOG(Templates, Trace, "Evaluated lazy static member initializer to constant: ", val);
 			}
 		}
 	}
@@ -1538,7 +1538,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 		registry.updatePhase(instantiated_name, ClassInstantiationPhase::Layout);
 		current_phase = ClassInstantiationPhase::Layout;
 
-		FLASH_LOG(Templates, Debug, "Completed Layout phase for: ", instantiated_name);
+		FLASH_LOG(Templates, Trace, "Completed Layout phase for: ", instantiated_name);
 	}
 
 	// Phase B -> C transition: Instantiate all members and base classes
@@ -1563,7 +1563,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 		// Mark as fully instantiated
 		registry.markFullyInstantiated(instantiated_name);
 
-		FLASH_LOG(Templates, Debug, "Completed Full phase for: ", instantiated_name);
+		FLASH_LOG(Templates, Trace, "Completed Full phase for: ", instantiated_name);
 	}
 
 	normalizePendingSemanticRoots();
@@ -1592,7 +1592,7 @@ std::optional<TypeIndex> Parser::evaluateLazyTypeAlias(
 		return std::nullopt;	 // Not registered for lazy evaluation
 	}
 
-	FLASH_LOG(Templates, Debug, "Evaluating lazy type alias: ",
+	FLASH_LOG(Templates, Trace, "Evaluating lazy type alias: ",
 			  instantiated_class_name, "::", member_name);
 
 	// Evaluate the type alias by substituting template parameters
@@ -1613,7 +1613,7 @@ std::optional<TypeIndex> Parser::evaluateLazyTypeAlias(
 	// Cache the result
 	registry.markEvaluated(instantiated_class_name, member_name, substituted_type_index);
 
-	FLASH_LOG(Templates, Debug, "Successfully evaluated lazy type alias: ",
+	FLASH_LOG(Templates, Trace, "Successfully evaluated lazy type alias: ",
 			  instantiated_class_name, "::", member_name,
 			  " -> type=", static_cast<int>(substituted_type_index.category()), ", index=", substituted_type_index);
 
@@ -1633,7 +1633,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		return std::nullopt;	 // Not registered for lazy instantiation (or already instantiated)
 	}
 
-	FLASH_LOG(Templates, Debug, "Instantiating lazy nested type: ",
+	FLASH_LOG(Templates, Trace, "Instantiating lazy nested type: ",
 			  parent_class_name, "::", nested_type_name);
 
 	// Get the nested type declaration

@@ -1850,11 +1850,11 @@ bool Parser::parse_static_member_function(
 	}
 
 	// Add static member function to struct
-	FLASH_LOG(Templates, Debug, "Adding static member function '", decl_node.identifier_token().value(), "' to struct '", StringTable::getStringView(struct_name_handle), "'");
+	FLASH_LOG(Templates, Trace, "Adding static member function '", decl_node.identifier_token().value(), "' to struct '", StringTable::getStringView(struct_name_handle), "'");
 	struct_ref.add_member_function(member_func_node, current_access,
 								   false, false, false, false,
 								   member_quals.cv_qualifier);
-	FLASH_LOG(Templates, Debug, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
+	FLASH_LOG(Templates, Trace, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
 
 	// Also register in StructTypeInfo (unless deferred to the struct finalization loop)
 	if (add_to_struct_info) {

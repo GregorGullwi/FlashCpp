@@ -805,20 +805,20 @@ struct TemplatePattern {
 
 						auto type_it = getTypesByNameMap().find(qualified_handle);
 						if (type_it == getTypesByNameMap().end()) {
-							FLASH_LOG(Templates, Debug, "SFINAE condition failed: ",
+							FLASH_LOG(Templates, Trace, "SFINAE condition failed: ",
 									  StringTable::getStringView(qualified_handle), " does not exist");
 							return false; // SFINAE failure - pattern doesn't match
 						}
 						type_info = type_it->second;
 					}
-					FLASH_LOG(Templates, Debug, "SFINAE condition passed: ",
+					FLASH_LOG(Templates, Trace, "SFINAE condition passed: ",
 							  StringTable::getStringView(type_info->name()), " exists");
 				} else {
-					FLASH_LOG(Templates, Debug, "SFINAE condition failed: concrete argument has no member type scope");
+					FLASH_LOG(Templates, Trace, "SFINAE condition failed: concrete argument has no member type scope");
 					return false;
 				}
 			} else {
-				FLASH_LOG(Templates, Debug, "SFINAE condition failed: missing concrete argument for checked template parameter");
+				FLASH_LOG(Templates, Trace, "SFINAE condition failed: missing concrete argument for checked template parameter");
 				return false;
 			}
 		}

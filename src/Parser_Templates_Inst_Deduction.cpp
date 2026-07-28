@@ -30,15 +30,15 @@ static void logTemplateRequiresClauseFailure(
 		return;
 	}
 
-	FLASH_LOG(Templates, Debug, "constraint not satisfied for template function '", template_name, "'");
-	FLASH_LOG(Templates, Debug, "  ", constraint_result.error_message);
+	FLASH_LOG(Templates, Trace, "constraint not satisfied for template function '", template_name, "'");
+	FLASH_LOG(Templates, Trace, "  ", constraint_result.error_message);
 	if (!constraint_result.failed_requirement.empty()) {
-		FLASH_LOG(Templates, Debug, "  failed requirement: ", constraint_result.failed_requirement);
+		FLASH_LOG(Templates, Trace, "  failed requirement: ", constraint_result.failed_requirement);
 	}
 	if (!constraint_result.suggestion.empty()) {
-		FLASH_LOG(Templates, Debug, "  suggestion: ", constraint_result.suggestion);
+		FLASH_LOG(Templates, Trace, "  suggestion: ", constraint_result.suggestion);
 	}
-	FLASH_LOG(Templates, Debug, "  template arguments: ", args_str);
+	FLASH_LOG(Templates, Trace, "  template arguments: ", args_str);
 }
 
 // Enter all ancestor namespace scopes for a source namespace (outermost first).
@@ -346,7 +346,7 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 			!current_semantic_type_info->hasDependentQualifiedName()) {
 			return std::nullopt;
 		}
-		FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias semantic path for ",
+		FLASH_LOG(Templates, Trace, "resolveDependentMemberAlias semantic path for ",
 				  StringTable::getStringView(current_semantic_type_info->name()));
 		if (const TypeInfo* resolved_dependent_type =
 				resolveDependentMemberTypeSemantic(
@@ -386,7 +386,7 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 			materialized_member_alias != nullptr) {
 			return emplaceResolvedSpec(materialized_member_alias);
 		}
-		FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias semantic path still dependent for ",
+		FLASH_LOG(Templates, Trace, "resolveDependentMemberAlias semantic path still dependent for ",
 				  StringTable::getStringView(current_semantic_type_info->name()));
 		return std::nullopt;
 	};
@@ -427,7 +427,7 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		if (!type_info)
 			return DependentAliasResolutionStatus::StillDependent;
 		type_name = StringTable::getStringView(type_info->name());
-		FLASH_LOG(Templates, Debug, "Resolved dependent alias through substitution: ", type_name);
+		FLASH_LOG(Templates, Trace, "Resolved dependent alias through substitution: ", type_name);
 		if (std::optional<DependentAliasResolutionStatus> resolved_status =
 				tryResolveCurrentTypeNodeFromSemanticRecord();
 			resolved_status.has_value()) {
@@ -729,7 +729,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 	std::span<const TemplateParameterNode> template_params,
 	InlineVector<TemplateTypeArg, 4>& template_args,
 	NamespaceHandle source_namespace) {
-	FLASH_LOG_FORMAT(Templates, Debug,
+	FLASH_LOG_FORMAT(Templates, Trace,
 					 "tryAppendDefaultTemplateArg: param='{}', has_default={}, has_default_pos={}, source_ns={}",
 					 param.name(), param.has_default(), param.has_default_value_position(),
 					 source_namespace.isValid() ? gNamespaceRegistry.getQualifiedName(source_namespace) : "(none)");
@@ -835,7 +835,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 		if (reparse_result.is_error() || !reparse_result.node().has_value() ||
 			!reparse_result.node()->is<ExpressionNode>()) {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 							 "SFINAE: non-type default template arg re-parse failed for param '{}', rejecting overload",
 							 param.name());
 			return false;
@@ -863,7 +863,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
 			int entered_ns = enterSourceNamespaceScopes(source_namespace);
-			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE reparse: entered_ns={}, current_ns={}",
+			FLASH_LOG_FORMAT(Templates, Trace, "SFINAE reparse: entered_ns={}, current_ns={}",
 				entered_ns,
 				gSymbolTable.get_current_namespace_handle().isValid()
 					? gNamespaceRegistry.getQualifiedName(gSymbolTable.get_current_namespace_handle())
@@ -874,7 +874,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 			if (reparse_result.is_error() || !reparse_result.node().has_value() ||
 				!reparse_result.node()->is<TypeSpecifierNode>()) {
-				FLASH_LOG_FORMAT(Templates, Debug,
+				FLASH_LOG_FORMAT(Templates, Trace,
 								 "SFINAE: default template arg re-parse failed for param '{}', rejecting overload",
 								 param.name());
 				return false;
@@ -1750,7 +1750,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			return false;
 		}
 		if (inserted) {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 							 "[depth={}]: Pre-deduced {} param '{}' = {}",
 							 recursion_depth, kind_label, StringTable::getStringView(param_name), value_label);
 		}
@@ -2107,7 +2107,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		}
 		param_name_to_arg.emplace(fp_name, new_arg);
 		pre_deduced_arg_indices.insert(concrete_arg_index);
-		FLASH_LOG_FORMAT(Templates, Debug,
+		FLASH_LOG_FORMAT(Templates, Trace,
 						 "[depth={}]: Direct-param pre-deduced type param '{}' = type {} from func param {} / call arg {}",
 						 recursion_depth, StringTable::getStringView(fp_name),
 						 static_cast<int>(ca_type.type()), i, concrete_arg_index);
@@ -2478,7 +2478,7 @@ bool Parser::materializeTemplateFunctionParameters(
 				i < arg_types->size() &&
 				(*arg_types)[i].category() == TypeCategory::Struct) {
 				override_type_index = (*arg_types)[i].type_index();
-				FLASH_LOG_FORMAT(Templates, Debug,
+				FLASH_LOG_FORMAT(Templates, Trace,
 								 "[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
 								 recursion_depth, override_type_index);
 			}
@@ -2604,7 +2604,7 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 		const auto& func_definition = new_func_ref.get_definition();
 		if (!func_definition.has_value()) {
 			new_func_ref.set_inline_always(true);
-			FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (no body): ",
+			FLASH_LOG(Templates, Trace, "Marked template instantiation as inline_always (no body): ",
 					  new_func_ref.decl_node().identifier_token().value());
 		} else if (func_definition->is<BlockNode>()) {
 			const BlockNode& block = func_definition->as<BlockNode>();
@@ -2639,10 +2639,10 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 			});
 			new_func_ref.set_inline_always(is_pure_expr);
 			if (is_pure_expr) {
-				FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (pure expression): ",
+				FLASH_LOG(Templates, Trace, "Marked template instantiation as inline_always (pure expression): ",
 						  new_func_ref.decl_node().identifier_token().value());
 			} else {
-				FLASH_LOG(Templates, Debug, "Template instantiation has computation/side effects (not inlining): ",
+				FLASH_LOG(Templates, Trace, "Template instantiation has computation/side effects (not inlining): ",
 						  new_func_ref.decl_node().identifier_token().value());
 			}
 		}
@@ -2676,7 +2676,7 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 
 	const auto& func_definition = new_func_ref.get_definition();
 	const bool has_unresolved_signature = functionHasUnresolvedPlaceholderSignature(new_func_ref);
-	FLASH_LOG_FORMAT(Templates, Debug,
+	FLASH_LOG_FORMAT(Templates, Trace,
 		"'{}': has_body={}, has_unresolved_signature={}, registering={}",
 		template_name, func_definition.has_value(), has_unresolved_signature,
 		func_definition.has_value() && !has_unresolved_signature && commit_instantiation);
@@ -2761,7 +2761,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		}
 
 		if (templateCycleStackContains(g_trailing_return_in_progress, mangled_name_handle)) {
-			FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "')");
+			FLASH_LOG(Templates, Warning, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "')");
 			return false;
 		}
 		TemplateCycleStackGuard trailing_return_guard(g_trailing_return_in_progress, mangled_name_handle);
@@ -3004,7 +3004,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			return_type = emplace_node<TypeSpecifierNode>(orig_return_type);
 		} else if (should_reparse) {
 			if (templateCycleStackContains(g_trailing_return_in_progress, mangled_name_handle)) {
-				FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "'), returning auto to break cycle");
+				FLASH_LOG(Templates, Warning, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "'), returning auto to break cycle");
 				return std::nullopt;
 			}
 			TemplateCycleStackGuard trailing_return_guard(g_trailing_return_in_progress, mangled_name_handle);
@@ -3179,7 +3179,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 	} else if (func_decl.has_template_body_position()) {
 		if (use_explicit_materialization) {
 			if (templateCycleStackContains(g_body_parse_in_progress, mangled_name_handle)) {
-				FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", mangled_name, "'), skipping body");
+				FLASH_LOG(Templates, Warning, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", mangled_name, "'), skipping body");
 				return std::nullopt;
 			}
 			TemplateCycleStackGuard body_guard(g_body_parse_in_progress, mangled_name_handle);
@@ -3504,7 +3504,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 		const auto& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
-		FLASH_LOG_FORMAT(Templates, Debug, "[explicit] func_decl name='{}' ns={}",
+		FLASH_LOG_FORMAT(Templates, Trace, "[explicit] func_decl name='{}' ns={}",
 			func_decl.decl_node().identifier_token().value(),
 			func_decl.namespace_handle().isValid()
 				? gNamespaceRegistry.getQualifiedName(func_decl.namespace_handle())
@@ -3717,7 +3717,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					}
 
 					// No explicit arg, no call arg to deduce from, and no usable default.
-					FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need argument at position {} but only {} types provided",
+					FLASH_LOG_FORMAT(Templates, Trace, "Template overload mismatch: need argument at position {} but only {} types provided",
 									 explicit_idx, explicit_types.size());
 					overload_mismatch = true;
 					break;
@@ -3746,7 +3746,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			// Create a copy of explicit_types with template template arg flags properly set
 			InlineVector<TemplateTypeArg, 4> constraint_eval_args = template_args;
 
-			FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", constraint_eval_args.size(), " template args and ", eval_param_names.size(), " param names");
+			FLASH_LOG(Templates, Trace, "  Evaluating constraint with ", constraint_eval_args.size(), " template args and ", eval_param_names.size(), " param names");
 
 			// Evaluate the constraint with the template arguments
 			auto constraint_result = evaluateConstraint(
@@ -3756,7 +3756,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				this,
 				template_params);
 
-			FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
+			FLASH_LOG(Templates, Trace, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 
 			if (!constraint_result.satisfied) {
 				// Constraint not satisfied - report detailed error
@@ -3936,7 +3936,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			if (return_type_result.is_error() ||
 				!return_type_result.node().has_value() ||
 				!return_type_result.node()->is<TypeSpecifierNode>()) {
-				FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
+				FLASH_LOG_FORMAT(Templates, Trace, "SFINAE: trailing return type re-parse failed for '{}', trying next overload", template_name);
 				continue;  // SFINAE: this overload's return type failed, try next
 			}
 			reparsed_trailing_return_type = return_type_result.node()->as<TypeSpecifierNode>();
@@ -4165,11 +4165,11 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	if (all_templates.empty()) {
 		// This is expected for regular (non-template) functions - the caller will fall back
 		// to creating a forward declaration. Only log at Debug level to avoid noise.
-		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
+		FLASH_LOG(Templates, Trace, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
 		return std::nullopt;
 	}
 
-	FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Found {} template overload(s) for '{}'",
+	FLASH_LOG_FORMAT(Templates, Trace, "[depth={}]: Found {} template overload(s) for '{}'",
 					 recursion_depth, all_templates.size(), template_name);
 
 	// Try each template overload in order.
@@ -4321,7 +4321,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 						auto specialization_opt = gTemplateRegistry.lookupSpecialization(
 							template_name, winner.template_args);
 						if (specialization_opt.has_value()) {
-							FLASH_LOG_FORMAT(Templates, Debug,
+							FLASH_LOG_FORMAT(Templates, Trace,
 								"[depth={}]: Shape-winner: found explicit specialization for '{}'",
 								recursion_depth, template_name);
 							return *specialization_opt;
@@ -4455,12 +4455,12 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		const ASTNode& template_node = all_templates[overload_idx];
 
 		if (!template_node.is<TemplateFunctionDeclarationNode>()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Skipping overload {} - not a function template",
+			FLASH_LOG_FORMAT(Templates, Trace, "[depth={}]: Skipping overload {} - not a function template",
 							 recursion_depth, overload_idx);
 			continue;
 		}
 
-		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Trying template overload {} for '{}'",
+		FLASH_LOG_FORMAT(Templates, Trace, "[depth={}]: Trying template overload {} for '{}'",
 						 recursion_depth, overload_idx, template_name);
 
 		// Enter the mode appropriate for this instantiation attempt.
@@ -4479,7 +4479,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				// In SFINAE: collect all viable candidates for best-match selection.
 				int spec = computeTemplateFunctionSpecificity(template_func);
 				bool is_del = func_decl.is_deleted();
-				FLASH_LOG_FORMAT(Templates, Debug,
+				FLASH_LOG_FORMAT(Templates, Trace,
 					"[depth={}]: SFINAE candidate overload {} for '{}' specificity={} deleted={}",
 					recursion_depth, overload_idx, template_name, spec, is_del);
 				sfinae_candidates.push_back({*result, spec, is_del, overload_idx});
@@ -4505,7 +4505,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			}
 		} else {
 			// Instantiation failed - try next overload (SFINAE)
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Overload {} failed substitution, trying next",
+			FLASH_LOG_FORMAT(Templates, Trace, "[depth={}]: Overload {} failed substitution, trying next",
 							 recursion_depth, overload_idx);
 		}
 	}
@@ -4533,12 +4533,12 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			}
 		}
 		if (!best_non_deleted) {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 				"[depth={}]: SFINAE failure for '{}': all best-specificity candidates are = delete (specificity={})",
 				recursion_depth, template_name, best_specificity);
 			return std::nullopt;
 		}
-		FLASH_LOG_FORMAT(Templates, Debug,
+		FLASH_LOG_FORMAT(Templates, Trace,
 			"[depth={}]: SFINAE best match for '{}' is overload {} specificity={} deleted=false",
 			recursion_depth, template_name, best_non_deleted->overload_idx, best_specificity);
 		return best_non_deleted->result;
@@ -4557,7 +4557,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// All overloads failed. In SFINAE/constraint probes, that is an ordinary
 	// not-viable result, not a hard program diagnostic.
 	if (isTemplateInstantiationFailureProbeMode()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: All {} template overload(s) failed for '{}'",
+		FLASH_LOG_FORMAT(Templates, Trace, "[depth={}]: All {} template overload(s) failed for '{}'",
 						 recursion_depth, all_templates.size(), template_name);
 	} else {
 		FLASH_LOG_FORMAT(Templates, Error, "[depth={}]: All {} template overload(s) failed for '{}'",
@@ -4734,7 +4734,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 		// as "this overload does not match", so this path is part of normal
 		// overload resolution and must not be logged as an error.
 		std::string_view param_name_sv = StringTable::getStringView(param_handle);
-		FLASH_LOG_FORMAT(Templates, Debug,
+		FLASH_LOG_FORMAT(Templates, Trace,
 			"[depth={}]: SFINAE: non-type template parameter '{}' could not be deduced",
 			recursion_depth, param_name_sv);
 		return std::nullopt;
@@ -4779,7 +4779,7 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 	}
 	if (arg_types.size() < min_required_args ||
 		(!has_function_parameter_pack && arg_types.size() > non_pack_params)) {
-		FLASH_LOG_FORMAT(Templates, Debug,
+		FLASH_LOG_FORMAT(Templates, Trace,
 			"[depth={}]: SFINAE: argument count {} is not viable for template candidate "
 			"(required={}, fixed_params={}, has_pack={})",
 			recursion_depth,
@@ -4851,11 +4851,11 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 	if (!functionTemplateAcceptsCallArgumentCount(func_decl, arg_types.size())) {
 		size_t required_params = countMinRequiredArgs(func_decl);
 		if (arg_types.size() < required_params) {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 				"[depth={}]: SFINAE: argument count {} < required parameter count {}",
 				recursion_depth, arg_types.size(), required_params);
 		} else {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 				"[depth={}]: SFINAE: argument count {} > parameter count {}",
 				recursion_depth, arg_types.size(), func_decl.parameter_nodes().size());
 		}
@@ -4934,7 +4934,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// already recorded a substitution failure for the same deduced args,
 	// skip the entire reparse.  This is the N²-reparse elimination.
 	if (gTemplateRegistry.isFailedInstantiation(key, overload_id)) {
-		FLASH_LOG_FORMAT(Templates, Debug,
+		FLASH_LOG_FORMAT(Templates, Trace,
 			"[depth={}]: SFINAE fast-path: '{}' previously failed substitution for this overload",
 			recursion_depth, template_name);
 		return std::nullopt;
@@ -4949,7 +4949,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// node under this key, treat it as a SFINAE miss rather than a hit.
 			if (existing_inst->is<FunctionDeclarationNode>() &&
 				existing_inst->as<FunctionDeclarationNode>().failed_substitution()) {
-				FLASH_LOG_FORMAT(Templates, Debug,
+				FLASH_LOG_FORMAT(Templates, Trace,
 					"[depth={}]: cached instantiation for '{}' is FailedSubstitution — skipping",
 					recursion_depth, template_name);
 				return std::nullopt;
@@ -4975,7 +4975,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
-	FLASH_LOG(Templates, Debug, "Checking requires clause for template function '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
+	FLASH_LOG(Templates, Trace, "Checking requires clause for template function '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
 	if (template_func.has_requires_clause()) {
 		const RequiresClauseNode& requires_clause =
 			template_func.requires_clause()->as<RequiresClauseNode>();
@@ -4986,7 +4986,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			eval_param_names.push_back(tparam_node.name());
 		}
 
-		FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", template_args.size(), " template args and ", eval_param_names.size(), " param names");
+		FLASH_LOG(Templates, Trace, "  Evaluating constraint with ", template_args.size(), " template args and ", eval_param_names.size(), " param names");
 
 		// Evaluate the constraint with the template arguments
 		auto constraint_result = evaluateConstraint(
@@ -4996,7 +4996,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			this,
 			template_params);
 
-		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
+		FLASH_LOG(Templates, Trace, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 
 		if (!constraint_result.satisfied) {
 			// Constraint not satisfied - report detailed error
@@ -5055,8 +5055,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					this);
 				if (!constraint_result.satisfied) {
 					if (isTemplateInstantiationFailureProbeMode()) {
-						FLASH_LOG(Templates, Debug, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
-						FLASH_LOG(Templates, Debug, "  ", constraint_result.error_message);
+						FLASH_LOG(Templates, Trace, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
+						FLASH_LOG(Templates, Trace, "  ", constraint_result.error_message);
 					} else {
 						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
 						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);

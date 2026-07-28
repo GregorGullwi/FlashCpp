@@ -804,7 +804,7 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 			.append(member_name)
 			.append("' because no concrete call argument types were collected")
 			.commit();
-		FLASH_LOG(Templates, Debug, failure_reason);
+		FLASH_LOG(Templates, Trace, failure_reason);
 		return failTemplateInstantiation(failure_reason, nullptr, std::nullopt);
 	}
 	return try_instantiate_member_function_template(
@@ -1342,7 +1342,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 							std::span<const TemplateTypeArg>{});
 				}
 				if (instantiated_func.has_value()) {
-					FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
+					FLASH_LOG(Templates, Trace, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
 				}
 			}
 		}
@@ -2907,7 +2907,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 			// DEBUG: Log what we have at this point
 			if (!peek().is_eof()) {
-				FLASH_LOG(Templates, Info, "After function call check: template_args.has_value()=", template_args.has_value(),
+				FLASH_LOG(Templates, Trace, "After function call check: template_args.has_value()=", template_args.has_value(),
 						  ", peek='", peek_info().value(), "', peek.empty()=", peek_info().value().empty());
 			}
 
@@ -2915,7 +2915,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				// This might be a variable template usage with qualified name: ns::var_template<Args>
 				// Build the qualified name for lookup
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
-				FLASH_LOG(Templates, Info, "Checking for qualified template: ", qualified_name, ", peek='", peek_info().value(), "'");
+				FLASH_LOG(Templates, Trace, "Checking for qualified template: ", qualified_name, ", peek='", peek_info().value(), "'");
 
 				TemplateNameLookupResult qualified_var_lookup = gTemplateRegistry.lookupTemplateName(
 					buildTemplateNameLookupRequest(
@@ -2939,7 +2939,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					qualified_var_lookup.hasVariableTemplate() ||
 					unqualified_var_lookup.hasVariableTemplate();
 				if (has_variable_template) {
-					FLASH_LOG(Templates, Info, "Found variable template: ", variable_template_lookup_name);
+					FLASH_LOG(Templates, Debug, "Found variable template: ", variable_template_lookup_name);
 					auto instantiated_var = try_instantiate_variable_template(variable_template_lookup_name, *template_args, nullptr);
 					if (instantiated_var.has_value()) {
 						// Get the instantiated variable name
@@ -2968,7 +2968,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				// If we have template args, try to instantiate the class template
 				// This handles patterns like: std::is_integral<int>::value
 				if (!has_variable_template) {
-					FLASH_LOG(Templates, Info, "Attempting class template instantiation for: ", qualified_name);
+					FLASH_LOG(Templates, Debug, "Attempting class template instantiation for: ", qualified_name);
 					auto instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
 					// Update the type_name to use the fully instantiated name (with defaults filled in)
 					if (instantiation_result.has_value() && instantiation_result->is<StructDeclarationNode>()) {
@@ -2977,7 +2977,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						// Replace the base template name in namespaces with the instantiated name
 						if (!namespaces.empty()) {
 							namespaces.back() = StringType<32>(instantiated_name);
-							FLASH_LOG(Templates, Debug, "Updated namespace to use instantiated name: ", instantiated_name);
+							FLASH_LOG(Templates, Trace, "Updated namespace to use instantiated name: ", instantiated_name);
 						}
 					}
 				}

@@ -5523,7 +5523,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// are seeded for all instantiated function/lambda/struct/variable bodies, so
 				// this path indicates either a not-yet-migrated context or a valid unsupported
 				// template form. Log at Debug level to make unresolved cases observable.
-				FLASH_LOG(Templates, Debug,
+				FLASH_LOG(Templates, Trace,
 						  "SemanticAnalysis: TemplateParameterReferenceNode '",
 						  StringTable::getStringView(e.param_name()),
 						  "' not resolved via sema-owned scope — returning empty type");

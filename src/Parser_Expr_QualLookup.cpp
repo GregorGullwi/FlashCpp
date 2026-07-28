@@ -558,7 +558,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	// Trigger lazy member function instantiation if needed
 	if (!instantiated_func.has_value() &&
 		isHardUseLikeInstantiationMode()) {
-		FLASH_LOG(Templates, Debug, "Checking lazy instantiation for: ", instantiated_class_name, "::", member_name);
+		FLASH_LOG(Templates, Trace, "Checking lazy instantiation for: ", instantiated_class_name, "::", member_name);
 		instantiated_func =
 			instantiateLazyMemberForCanonicalOwner(
 				instantiated_class_name,
@@ -886,7 +886,7 @@ bool Parser::is_template_parameter(std::string_view name) const {
 bool Parser::is_base_class_template_parameter(std::string_view base_class_name) const {
 	for (const auto& param_name : currentTemplateParamNames()) {
 		if (StringTable::getStringView(param_name) == base_class_name) {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 							 "Base class '{}' is a template parameter - deferring resolution",
 							 base_class_name);
 			return true;
@@ -904,18 +904,18 @@ bool Parser::is_base_class_template_parameter(std::string_view base_class_name) 
 static const TypeInfo* tryResolveDeferredBaseToConcreteStruct(
 	const BaseClassSpecifier& base_class) {
 	if (!base_class.type_index.is_valid()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Skipping deferred base class '{}'", base_class.name);
+		FLASH_LOG_FORMAT(Templates, Trace, "Skipping deferred base class '{}'", base_class.name);
 		return nullptr;
 	}
 	const TypeInfo* deferred_type = tryGetTypeInfo(base_class.type_index);
 	if (deferred_type == nullptr) {
-		FLASH_LOG_FORMAT(Templates, Debug,
+		FLASH_LOG_FORMAT(Templates, Trace,
 			"Deferred base '{}' has type_index but couldn't resolve, skipping",
 			base_class.name);
 		return nullptr;
 	}
 	if (deferred_type->getStructInfo()) {
-		FLASH_LOG_FORMAT(Templates, Debug,
+		FLASH_LOG_FORMAT(Templates, Trace,
 			"Deferred base '{}' has valid type_index, resolved to concrete struct '{}', recursing",
 			base_class.name, StringTable::getStringView(deferred_type->name()));
 		return deferred_type;
@@ -924,17 +924,17 @@ static const TypeInfo* tryResolveDeferredBaseToConcreteStruct(
 	if (deferred_type->type_index_.is_valid()) {
 		const TypeInfo* chained_type = tryGetTypeInfo(deferred_type->type_index_);
 		if (chained_type != nullptr && chained_type->getStructInfo()) {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 				"Deferred base '{}' resolved via alias chain to '{}', recursing",
 				base_class.name, StringTable::getStringView(chained_type->name()));
 			return chained_type;
 		}
-		FLASH_LOG_FORMAT(Templates, Debug,
+		FLASH_LOG_FORMAT(Templates, Trace,
 			"Deferred base '{}' has type_index but no concrete struct found via alias chain, skipping",
 			base_class.name);
 		return nullptr;
 	}
-	FLASH_LOG_FORMAT(Templates, Debug,
+	FLASH_LOG_FORMAT(Templates, Trace,
 		"Deferred base '{}' has type_index but no concrete struct found, skipping",
 		base_class.name);
 	return nullptr;
@@ -952,7 +952,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 		return nullptr;
 	}
 
-	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_type_alias: looking for '{}::{}' ",
+	FLASH_LOG_FORMAT(Templates, Trace, "lookup_inherited_type_alias: looking for '{}::{}' ",
 					 StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
 
 	// First try direct lookup with qualified name
@@ -993,14 +993,14 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 
 	auto direct_it = getTypesByNameMap().find(qualified_name_handle);
 	if (direct_it != getTypesByNameMap().end()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Found direct type alias '{}'", qualified_name);
+		FLASH_LOG_FORMAT(Templates, Trace, "Found direct type alias '{}'", qualified_name);
 		return direct_it->second;
 	}
 
 	// Not found directly, look up the struct and search its base classes
 	auto struct_it = getTypesByNameMap().find(struct_name);
 	if (struct_it == getTypesByNameMap().end()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' not found in getTypesByNameMap()", StringTable::getStringView(struct_name));
+		FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' not found in getTypesByNameMap()", StringTable::getStringView(struct_name));
 		return nullptr;
 	}
 
@@ -1087,25 +1087,25 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 			// by comparing the pointer addresses
 			if (underlying_type != struct_type_info && underlying_type->getStructInfo()) {
 				StringHandle underlying_name = underlying_type->name();
-				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias",
+				FLASH_LOG_FORMAT(Templates, Trace, "Type '{}' is an alias for '{}', following alias",
 								 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
 				return lookup_inherited_type_alias(underlying_name, member_name, depth + 1);
 			}
 		}
-		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has no struct_info_ and couldn't resolve alias", StringTable::getStringView(struct_name));
+		FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has no struct_info_ and couldn't resolve alias", StringTable::getStringView(struct_name));
 		return nullptr;
 	}
 
 	// Search base classes recursively
 	const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
+	FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
 	for (const auto& base_class : struct_info->base_classes) {
 		if (base_class.is_deferred) {
 			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
 			if (resolved != nullptr) {
 				const TypeInfo* base_result = lookup_inherited_type_alias(resolved->name(), member_name, depth + 1);
 				if (base_result != nullptr) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Found inherited type alias '{}::{}' via deferred base '{}'",
+					FLASH_LOG_FORMAT(Templates, Trace, "Found inherited type alias '{}::{}' via deferred base '{}'",
 									 StringTable::getStringView(struct_name), StringTable::getStringView(member_name), base_class.name);
 					return base_result;
 				}
@@ -1113,12 +1113,12 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 			continue;
 		}
 
-		FLASH_LOG_FORMAT(Templates, Debug, "Checking base class '{}'", base_class.name);
+		FLASH_LOG_FORMAT(Templates, Trace, "Checking base class '{}'", base_class.name);
 		// Recursively look up in base class - convert base_class.name to StringHandle for performance
 		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_class.name);
 		const TypeInfo* base_result = lookup_inherited_type_alias(base_name_handle, member_name, depth + 1);
 		if (base_result != nullptr) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Found inherited type alias '{}::{}' via base class '{}'",
+			FLASH_LOG_FORMAT(Templates, Trace, "Found inherited type alias '{}::{}' via base class '{}'",
 							 StringTable::getStringView(struct_name), StringTable::getStringView(member_name), base_class.name);
 			return base_result;
 		}
@@ -1137,7 +1137,7 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 		return nullptr;
 	}
 
-	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_template: looking for '{}::{}' ",
+	FLASH_LOG_FORMAT(Templates, Trace, "lookup_inherited_template: looking for '{}::{}' ",
 					 StringTable::getStringView(struct_name), template_name);
 
 	// First try direct lookup through the semantic member-template lookup service.
@@ -1151,14 +1151,14 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 		direct_templates = gTemplateRegistry.lookupAllTemplates(lookup_result.resolved_name);
 	}
 	if (direct_templates != nullptr && !direct_templates->empty()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Found direct template function '{}'", lookup_result.resolved_name.view());
+		FLASH_LOG_FORMAT(Templates, Trace, "Found direct template function '{}'", lookup_result.resolved_name.view());
 		return direct_templates;
 	}
 
 	// Not found directly, look up the struct and search its base classes
 	auto struct_it = getTypesByNameMap().find(struct_name);
 	if (struct_it == getTypesByNameMap().end()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' not found in getTypesByNameMap()", StringTable::getStringView(struct_name));
+		FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' not found in getTypesByNameMap()", StringTable::getStringView(struct_name));
 		return nullptr;
 	}
 
@@ -1174,25 +1174,25 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 			// by comparing the pointer addresses
 			if (underlying_type != struct_type_info && underlying_type->getStructInfo()) {
 				StringHandle underlying_name = underlying_type->name();
-				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias",
+				FLASH_LOG_FORMAT(Templates, Trace, "Type '{}' is an alias for '{}', following alias",
 								 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
 				return lookup_inherited_template(underlying_name, template_name, depth + 1);
 			}
 		}
-		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has no struct_info_ and couldn't resolve alias", StringTable::getStringView(struct_name));
+		FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has no struct_info_ and couldn't resolve alias", StringTable::getStringView(struct_name));
 		return nullptr;
 	}
 
 	// Search base classes recursively
 	const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
+	FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
 	for (const auto& base_class : struct_info->base_classes) {
 		if (base_class.is_deferred) {
 			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
 			if (resolved != nullptr) {
 				const std::vector<ASTNode>* base_result = lookup_inherited_template(resolved->name(), template_name, depth + 1);
 				if (base_result != nullptr && !base_result->empty()) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Found inherited template function '{}::{}' via deferred base '{}'",
+					FLASH_LOG_FORMAT(Templates, Trace, "Found inherited template function '{}::{}' via deferred base '{}'",
 									 StringTable::getStringView(struct_name), template_name, base_class.name);
 					return base_result;
 				}
@@ -1200,12 +1200,12 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 			continue;
 		}
 
-		FLASH_LOG_FORMAT(Templates, Debug, "Checking base class '{}'", base_class.name);
+		FLASH_LOG_FORMAT(Templates, Trace, "Checking base class '{}'", base_class.name);
 		// Recursively look up in base class - convert base_class.name to StringHandle for performance
 		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_class.name);
 		const std::vector<ASTNode>* base_result = lookup_inherited_template(base_name_handle, template_name, depth + 1);
 		if (base_result != nullptr && !base_result->empty()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Found inherited template function '{}::{}' via base class '{}'",
+			FLASH_LOG_FORMAT(Templates, Trace, "Found inherited template function '{}::{}' via base class '{}'",
 							 StringTable::getStringView(struct_name), template_name, base_class.name);
 			return base_result;
 		}
@@ -1716,7 +1716,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 					member_access.member_name,
 					0);
 			if (qualified_member_template_name.empty()) {
-				FLASH_LOG(Templates, Debug, "resolveBaseClassMemberTypeChain failed member-template lookup ",
+				FLASH_LOG(Templates, Trace, "resolveBaseClassMemberTypeChain failed member-template lookup ",
 						  current_base_name, "::", member_name);
 				return nullptr;
 			}
@@ -1736,7 +1736,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 					StringTable::getOrInternStringHandle(materialized_member.instantiated_name));
 			}
 			if (resolved_type == nullptr) {
-				FLASH_LOG(Templates, Debug, "resolveBaseClassMemberTypeChain failed materialized member-template ",
+				FLASH_LOG(Templates, Trace, "resolveBaseClassMemberTypeChain failed materialized member-template ",
 						  qualified_member_template_name);
 				return nullptr;
 			}
@@ -1756,7 +1756,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 			resolved_type = lookup_inherited_type_alias(current_base_name, member_name);
 		}
 		if (resolved_type == nullptr) {
-			FLASH_LOG(Templates, Debug, "resolveBaseClassMemberTypeChain failed member lookup ",
+			FLASH_LOG(Templates, Trace, "resolveBaseClassMemberTypeChain failed member lookup ",
 					  current_base_name, "::", member_name);
 			return nullptr;
 		}
@@ -1868,7 +1868,7 @@ ParseResult Parser::validate_and_add_base_class(
 		// that depend on template parameters (e.g., using __hash_code_base = typename __hashtable_base::__hash_code_base;)
 		// Defer resolution until template instantiation.
 		if ((parsing_template_depth_ > 0)) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Deferring unresolved base class '{}' in template body", base_class_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Deferring unresolved base class '{}' in template body", base_class_name);
 			bool is_deferred = true;
 			struct_ref.add_base_class(base_class_name, TypeIndex{}, base_access, is_virtual_base, is_deferred);
 			struct_info->addBaseClass(base_class_name, TypeIndex{}, base_access, is_virtual_base, is_deferred);
@@ -2334,14 +2334,14 @@ TypeIndex Parser::substitute_template_parameter(
 		if (!token_names_template_parameter) {
 			type_name = StringTable::getStringView(indexed_type_info->name());
 		}
-		FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", current_type_index,
+		FLASH_LOG(Templates, Trace, "substitute_template_parameter: type_index=", current_type_index,
 				  ", type_name='", type_name, "', underlying_type=", static_cast<int>(indexed_type_info->typeEnum()),
 				  ", underlying_type_index=", indexed_type_info->type_index_);
 	} else if (!type_name.empty()) {
 		if (const TypeInfo* token_type_info = lookupTypeInfoByName(type_name)) {
 			assignResolvedType(*token_type_info);
 		}
-		FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", current_type_index, " is placeholder)");
+		FLASH_LOG(Templates, Trace, "substitute_template_parameter: using token name '", type_name, "' (type_index=", current_type_index, " is placeholder)");
 	}
 
 	if (type_name.empty()) {
@@ -2602,7 +2602,7 @@ TypeIndex Parser::substitute_template_parameter(
 				}
 
 				const std::string_view base_template_name = type_name.substr(0, param_pos - 1);
-				FLASH_LOG(Templates, Debug, "substitute_template_parameter: '", type_name,
+				FLASH_LOG(Templates, Trace, "substitute_template_parameter: '", type_name,
 						  "' is a dependent placeholder for template '", base_template_name, "' - instantiating with concrete args");
 
 				std::vector<TemplateTypeArg> concrete_args(template_args.begin(), template_args.end());
@@ -2615,7 +2615,7 @@ TypeIndex Parser::substitute_template_parameter(
 				if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
 					assignResolvedType(*resolved_type_info);
 					substitution_applied = true;
-					FLASH_LOG(Templates, Debug, "  Resolved to '", materialized_type.instantiated_name, "' (type_index=", current_type_index, ")");
+					FLASH_LOG(Templates, Trace, "  Resolved to '", materialized_type.instantiated_name, "' (type_index=", current_type_index, ")");
 				}
 			});
 	}
@@ -2633,7 +2633,7 @@ TypeIndex Parser::substitute_template_parameter(
 						const TemplateTypeArg& template_arg = template_args[i];
 						current_type = template_arg.typeEnum();
 						current_type_index = template_arg.type_index;
-						FLASH_LOG(Templates, Debug, "Substituted type alias '", type_name,
+						FLASH_LOG(Templates, Trace, "Substituted type alias '", type_name,
 								  "' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(current_type));
 						substitution_applied = true;
 						break;
@@ -2673,7 +2673,7 @@ TypeIndex Parser::substitute_template_parameter(
 				if (instantiated_type_info != nullptr) {
 					assignResolvedType(*instantiated_type_info);
 					substitution_applied = true;
-					FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' -> '{}' via concrete template '{}'",
+					FLASH_LOG_FORMAT(Templates, Trace, "Resolved template-template placeholder '{}' -> '{}' via concrete template '{}'",
 									 base_template_name,
 									 StringTable::getStringView(instantiated_type_info->name()),
 									 concrete_template_name);

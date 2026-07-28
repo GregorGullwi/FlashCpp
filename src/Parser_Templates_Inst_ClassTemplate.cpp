@@ -163,7 +163,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (subst.is_template_template_param && subst.param_name == name_handle &&
 				subst.concrete_template_name.isValid()) {
 				std::string_view concrete_name = StringTable::getStringView(subst.concrete_template_name);
-				FLASH_LOG(Templates, Debug, "Redirecting template template param '", template_name,
+				FLASH_LOG(Templates, Trace, "Redirecting template template param '", template_name,
 						  "' -> '", concrete_name, "'");
 				return try_instantiate_class_template(concrete_name, template_args, force_eager);
 			}
@@ -341,14 +341,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 			}
-			FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for alias template '{}'", template_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Skipping try_instantiate_class_template for alias template '{}'", template_name);
 			return std::nullopt;
 		}
 
 		auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		if (template_opt.has_value() && !template_opt->is<TemplateClassDeclarationNode>()) {
 			// This is not a class template (probably a function template) - skip silently
-			FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for non-class template '{}'", template_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Skipping try_instantiate_class_template for non-class template '{}'", template_name);
 			return std::nullopt;
 		}
 	}
@@ -358,7 +358,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	{
 		// Try both unqualified and with std:: prefix
 		if (gConceptRegistry.hasConcept(template_name)) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for concept '{}'", template_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Skipping try_instantiate_class_template for concept '{}'", template_name);
 			return std::nullopt;
 		}
 		// Also check without namespace prefix (e.g., "std::same_as" -> "same_as")
@@ -366,7 +366,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (last_colon_pos != std::string_view::npos) {
 			std::string_view simple_name = template_name.substr(last_colon_pos + 2);
 			if (gConceptRegistry.hasConcept(simple_name)) {
-				FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for concept '{}'", template_name);
+				FLASH_LOG_FORMAT(Templates, Trace, "Skipping try_instantiate_class_template for concept '{}'", template_name);
 				return std::nullopt;
 			}
 		}
@@ -376,7 +376,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// If so, we cannot instantiate the template yet - it's a dependent type
 	for (const auto& arg : template_args) {
 		if (arg.is_dependent) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Skipping instantiation of {} - template arguments are dependent", template_name);
+			FLASH_LOG_FORMAT(Templates, Trace, "Skipping instantiation of {} - template arguments are dependent", template_name);
 
 			// Register a placeholder TypeInfo for the dependent instantiated name
 			// so that extractBaseTemplateName() can identify it via TypeInfo metadata
@@ -405,7 +405,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_args_info,
 					nullptr);
 				getTypesByNameMap()[inst_handle] = &type_info;
-				FLASH_LOG_FORMAT(Templates, Debug, "Registered dependent placeholder '{}' with base template '{}'", inst_name, template_name);
+				FLASH_LOG_FORMAT(Templates, Trace, "Registered dependent placeholder '{}' with base template '{}'", inst_name, template_name);
 			}
 
 			// Return success (nullopt) but don't actually instantiate
@@ -417,7 +417,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	{
 		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
 		if (exact_spec.has_value()) {
-			FLASH_LOG(Templates, Debug, "Found exact specialization for ", template_name, " with ", template_args.size(), " args before cache lookup");
+			FLASH_LOG(Templates, Trace, "Found exact specialization for ", template_name, " with ", template_args.size(), " args before cache lookup");
 			return instantiate_full_specialization(template_name, template_args, *exact_spec);
 		}
 	}
@@ -880,7 +880,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt;
 		}
 
-		FLASH_LOG(Templates, Debug, "Evaluated fold expression to: ", *result);
+		FLASH_LOG(Templates, Trace, "Evaluated fold expression to: ", *result);
 
 		// Create a bool literal for && and ||, numeric for others
 		if (op == "&&" || op == "||") {
@@ -911,7 +911,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::string_view base_part = type_name.substr(0, double_colon_pos);
 		std::string_view member_name = type_name.substr(double_colon_pos + 2);
 
-		FLASH_LOG(Templates, Debug, "Resolving dependent type: ", type_name,
+		FLASH_LOG(Templates, Trace, "Resolving dependent type: ", type_name,
 				  " -> base='", base_part, "', member='", member_name, "'");
 
 		// Check if base_part contains a placeholder using TypeInfo-based detection
@@ -934,7 +934,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			.append(member_name);
 		std::string_view qualified_name = qualified_name_builder.commit();
 
-		FLASH_LOG(Templates, Debug, "Looking up resolved type: ", qualified_name);
+		FLASH_LOG(Templates, Trace, "Looking up resolved type: ", qualified_name);
 
 		// Look up the member type
 		auto resolved_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_name));
@@ -961,7 +961,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TemplateTypeArg resolved_arg;
 		resolved_arg.type_index = resolved_type_index.withCategory(resolved_base_type);
 
-		FLASH_LOG(Templates, Debug, "Resolved dependent type to: type=",
+		FLASH_LOG(Templates, Trace, "Resolved dependent type to: type=",
 				  static_cast<int>(resolved_base_type), ", index=", resolved_type_index);
 
 		return resolved_arg;
@@ -1004,7 +1004,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		out_args.push_back(templateTypeArgFromEvalResult(eval_result));
 
-		FLASH_LOG(Templates, Debug, "Evaluated ", log_context, " via ConstExprEvaluator: ", eval_result.as_int());
+		FLASH_LOG(Templates, Trace, "Evaluated ", log_context, " via ConstExprEvaluator: ", eval_result.as_int());
 		return true;
 	};
 
@@ -1177,7 +1177,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::span<const TemplateTypeArg>(args)));
 		}
 
-		FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: alias_name=", StringTable::getStringView(type_alias.alias_name),
+		FLASH_LOG(Templates, Trace, "buildSubstitutedTypeAliasSpecifier: alias_name=", StringTable::getStringView(type_alias.alias_name),
 				  ", array_dimensions.size()=", type_alias.array_dimensions.size(),
 				  ", resolved_alias_target.isArray()=", resolved_alias_target.isArray());
 
@@ -1192,11 +1192,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::vector<size_t> resolved_dims;
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		for (const auto& dim_expr : type_alias.array_dimensions) {
-			FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: substituting dim_expr, params.size()=", params.size(),
+			FLASH_LOG(Templates, Trace, "buildSubstitutedTypeAliasSpecifier: substituting dim_expr, params.size()=", params.size(),
 					  ", args.size()=", args.size());
 			ASTNode substituted_dim = substituteTemplateParameters(dim_expr, params, args);
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_dim, eval_ctx);
-			FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: evaluated dim, success=", eval_result.success(),
+			FLASH_LOG(Templates, Trace, "buildSubstitutedTypeAliasSpecifier: evaluated dim, success=", eval_result.success(),
 					  ", value=", eval_result.success() ? eval_result.as_int() : -999);
 			if (!eval_result.success() || eval_result.as_int() <= 0) {
 				return std::nullopt;
@@ -1345,7 +1345,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	{
 		auto exact_spec = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
 		if (exact_spec.has_value()) {
-			FLASH_LOG(Templates, Debug, "Found exact specialization for ", template_name, " with ", template_args.size(), " args");
+			FLASH_LOG(Templates, Trace, "Found exact specialization for ", template_name, " with ", template_args.size(), " args");
 			// Instantiate the exact specialization
 			return instantiate_full_specialization(template_name, template_args, *exact_spec);
 		}
@@ -1362,11 +1362,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
 		if (existing_type->second != nullptr &&
 			existing_type->second->needsClassTemplateLayoutCompletion()) {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 				"Type-map hit for '{}' is an incomplete class-template placeholder — completing layout",
 				StringTable::getStringView(instantiated_name));
 		} else if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
-			FLASH_LOG_FORMAT(Templates, Debug,
+			FLASH_LOG_FORMAT(Templates, Trace,
 				"Type-map hit for '{}' is backed by a ShapeOnly instantiation — re-entering full instantiation",
 				StringTable::getStringView(instantiated_name));
 		} else {
@@ -1414,7 +1414,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TemplateTypeArg void_arg;
 						void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
 						filled_args_for_pattern_match.push_back(void_arg);
-						FLASH_LOG(Templates, Debug, "Filled in default argument for param ", i, ": void");
+						FLASH_LOG(Templates, Trace, "Filled in default argument for param ", i, ": void");
 						continue;
 					}
 
@@ -1435,7 +1435,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							TemplateTypeArg void_arg;
 							void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
 							filled_args_for_pattern_match.push_back(void_arg);
-							FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
+							FLASH_LOG(Templates, Trace, "Filled in void_t alias default for param ", i, ": void");
 							continue;
 						}
 					}
@@ -1462,7 +1462,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						ASTNode substituted_default_node = substituteDefaultTemplateArg(default_node, primary_params, filled_args_for_pattern_match);
 						if (substituted_default_node.is<TypeSpecifierNode>()) {
 							filled_args_for_pattern_match.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
-							FLASH_LOG(Templates, Debug, "Filled in substituted default type argument for param ", i);
+							FLASH_LOG(Templates, Trace, "Filled in substituted default type argument for param ", i);
 							handled_type_default = true;
 						}
 					}
@@ -1470,7 +1470,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (!handled_type_default) {
 						// For other default types, use the type as-is
 						filled_args_for_pattern_match.push_back(TemplateTypeArg(default_type));
-						FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+						FLASH_LOG(Templates, Trace, "Filled in default type argument for param ", i);
 					}
 				} else if (param->kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 					// Handle non-type template parameter defaults like is_arithmetic<T>::value
@@ -1496,7 +1496,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										primary_params,
 										filled_args_for_pattern_match,
 										"pattern-match non-type default qualified static member")) {
-									FLASH_LOG(Templates, Debug, "Resolved dependent qualified identifier: ",
+									FLASH_LOG(Templates, Trace, "Resolved dependent qualified identifier: ",
 											  type_name, "::", member_name);
 								}
 							}
@@ -1546,7 +1546,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 													if (size_in_bytes > 0) {
 														filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
-														FLASH_LOG(Templates, Debug, "Filled in sizeof(", type_name, ") default: ", size_in_bytes, " bytes");
+														FLASH_LOG(Templates, Trace, "Filled in sizeof(", type_name, ") default: ", size_in_bytes, " bytes");
 														found_substitution = true;
 														break;
 													}
@@ -1561,7 +1561,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									int size_in_bits = type_spec.size_in_bits();
 									int size_in_bytes = (size_in_bits + 7) / 8; // Round up to bytes
 									filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
-									FLASH_LOG(Templates, Debug, "Filled in sizeof default: ", size_in_bytes, " bytes");
+									FLASH_LOG(Templates, Trace, "Filled in sizeof default: ", size_in_bytes, " bytes");
 								}
 							}
 						}
@@ -1625,7 +1625,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (filled_args_for_pattern_match.size() > template_args.size()) {
 		StringHandle original_instantiated_name = instantiated_name;
 		instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, filled_args_for_pattern_match));
-		FLASH_LOG(Templates, Debug, "Regenerated instantiated name with defaults: ", StringTable::getStringView(instantiated_name));
+		FLASH_LOG(Templates, Trace, "Regenerated instantiated name with defaults: ", StringTable::getStringView(instantiated_name));
 
 		// Check again if we already have this instantiation (with filled-in defaults)
 		auto existing_type_with_defaults = getTypesByNameMap().find(instantiated_name);
@@ -1638,12 +1638,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
 			if (existing_type_with_defaults->second != nullptr &&
 				existing_type_with_defaults->second->needsClassTemplateLayoutCompletion()) {
-				FLASH_LOG(Templates, Debug,
+				FLASH_LOG(Templates, Trace,
 					"Found incomplete class-template placeholder with filled-in defaults; completing layout");
 			} else if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
-				FLASH_LOG(Templates, Debug, "Found ShapeOnly instantiation with filled-in defaults; re-entering full instantiation");
+				FLASH_LOG(Templates, Trace, "Found ShapeOnly instantiation with filled-in defaults; re-entering full instantiation");
 			} else {
-				FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
+				FLASH_LOG(Templates, Trace, "Found existing instantiation with filled-in defaults");
 				return std::nullopt;
 			}
 		}
@@ -1677,7 +1677,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			StructDeclarationNode& pattern_struct = *pattern_struct_ptr;
-			FLASH_LOG(Templates, Debug, "Pattern struct name: ", pattern_struct.name());
+			FLASH_LOG(Templates, Trace, "Pattern struct name: ", pattern_struct.name());
 
 			// Register the mapping from instantiated name to pattern name
 			// This allows member alias lookup to find the correct specialization
@@ -1800,7 +1800,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Handle base classes from the pattern
 			// Base classes need to be instantiated with concrete template arguments
-			FLASH_LOG(Templates, Debug, "Pattern has ", pattern_struct.base_classes().size(), " base classes");
+			FLASH_LOG(Templates, Trace, "Pattern has ", pattern_struct.base_classes().size(), " base classes");
 			for (const auto& pattern_base : pattern_struct.base_classes()) {
 				// IMPORTANT: pattern_base.name might be a string_view pointing to freed memory!
 				// Convert to string immediately to avoid issues
@@ -1818,7 +1818,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 
-				FLASH_LOG(Templates, Debug, "Processing base class: ", base_name_str);
+				FLASH_LOG(Templates, Trace, "Processing base class: ", base_name_str);
 
 				// NEW: Check if the base class IS a template parameter name (like T1, T2)
 				// If so, substitute it with the corresponding template argument
@@ -1831,7 +1831,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						// Get the concrete type name for this argument
 						std::string substituted_name = arg.toString();
-						FLASH_LOG(Templates, Debug, "Substituting base class template parameter '", base_name_str,
+						FLASH_LOG(Templates, Trace, "Substituting base class template parameter '", base_name_str,
 								  "' with '", substituted_name, "'");
 						base_name_str = substituted_name;
 						break;
@@ -1882,9 +1882,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						throw InternalError("Base template argument mapping missing for non-variadic base instantiation");
 					}
 
-					FLASH_LOG(Templates, Debug, "Base class instantiation: ", base_template_name, " with ", base_template_args.size(), " args");
+					FLASH_LOG(Templates, Trace, "Base class instantiation: ", base_template_name, " with ", base_template_args.size(), " args");
 					base_name_str = std::string(instantiateAndResolveBaseName(base_template_name, base_template_args, false));
-					FLASH_LOG(Templates, Debug, "Base class resolved to: ", base_name_str);
+					FLASH_LOG(Templates, Trace, "Base class resolved to: ", base_name_str);
 				}
 
 				// Convert string_view to permanent string using StringTable
@@ -1903,7 +1903,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Handle deferred template base classes from the pattern (added by parse_member_struct_template_base_class_list)
 			if (!pattern_struct.deferred_template_base_classes().empty()) {
-				FLASH_LOG_FORMAT(Templates, Debug, "Pattern '{}' has {} deferred template base classes",
+				FLASH_LOG_FORMAT(Templates, Trace, "Pattern '{}' has {} deferred template base classes",
 								 StringTable::getStringView(pattern_struct.name()),
 								 pattern_struct.deferred_template_base_classes().size());
 
@@ -1920,7 +1920,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				for (const auto& deferred_base : pattern_struct.deferred_template_base_classes()) {
 					std::string_view base_tpl_name = StringTable::getStringView(deferred_base.base_template_name);
-					FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' ({} args)",
+					FLASH_LOG_FORMAT(Templates, Trace, "Processing deferred template base '{}' ({} args)",
 									 base_tpl_name, deferred_base.template_arguments.size());
 					DeferredBaseReplayContextScope deferred_base_replay_scope(
 						*this,
@@ -2174,10 +2174,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			// Copy members from pattern
-			FLASH_LOG(Templates, Debug, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
+			FLASH_LOG(Templates, Trace, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
 			for (const auto& member_decl : pattern_struct.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
-				FLASH_LOG(Templates, Debug, "Copying member: ", decl.identifier_token().value(),
+				FLASH_LOG(Templates, Trace, "Copying member: ", decl.identifier_token().value(),
 						  " has_initializer=", member_decl.default_initializer.has_value());
 				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 				TypeSpecifierNode resolved_dependent_member_type_spec = type_spec;
@@ -2455,14 +2455,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Copy deleted special member function flags from the pattern AST node
 			// This is especially important for partial specializations where deleted constructors
 			// are tracked in the AST node but not yet in StructTypeInfo
-			FLASH_LOG(Templates, Debug, "Checking pattern AST node for deleted constructors: default=",
+			FLASH_LOG(Templates, Trace, "Checking pattern AST node for deleted constructors: default=",
 					  pattern_struct.has_deleted_default_constructor(), ", copy=",
 					  pattern_struct.has_deleted_copy_constructor(), ", move=",
 					  pattern_struct.has_deleted_move_constructor());
 			if (pattern_struct.has_deleted_default_constructor()) {
 				struct_info->has_deleted_default_constructor = true;
 				struct_info->has_deleted_constructor = true;
-				FLASH_LOG(Templates, Debug, "Copied has_deleted_default_constructor from pattern AST node");
+				FLASH_LOG(Templates, Trace, "Copied has_deleted_default_constructor from pattern AST node");
 			}
 			if (pattern_struct.has_deleted_copy_constructor()) {
 				struct_info->has_deleted_copy_constructor = true;
@@ -2502,7 +2502,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (pattern_struct_info->has_deleted_destructor) {
 						struct_info->has_deleted_destructor = true;
 					}
-					FLASH_LOG(Templates, Debug, "Copied deleted constructor flags from pattern StructTypeInfo: default=",
+					FLASH_LOG(Templates, Trace, "Copied deleted constructor flags from pattern StructTypeInfo: default=",
 							  pattern_struct_info->has_deleted_default_constructor, ", copy=",
 							  pattern_struct_info->has_deleted_copy_constructor);
 					synthesize_implicit_copy_constructor_if_needed(
@@ -2510,22 +2510,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						instantiated_name);
 
-					FLASH_LOG(Templates, Debug, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
+					FLASH_LOG(Templates, Trace, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
 					for (const auto& static_member : pattern_struct_info->static_members) {
-						FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
+						FLASH_LOG(Templates, Trace, "Copying static member: ", static_member.getName());
 
 						// Check if initializer contains sizeof...(pack_name) and substitute with pack size
 						std::optional<ASTNode> substituted_initializer = static_member.initializer;
 						if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
 							const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
-							FLASH_LOG(Templates, Debug, "Static member initializer is an expression, checking for sizeof...");
+							FLASH_LOG(Templates, Trace, "Static member initializer is an expression, checking for sizeof...");
 
 							// Calculate pack size for substitution
 							auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
-								FLASH_LOG(Templates, Debug, "Looking for pack: ", pack_name);
+								FLASH_LOG(Templates, Trace, "Looking for pack: ", pack_name);
 								for (size_t i = 0; i < template_params.size(); ++i) {
 									const TemplateParameterNode& tparam = template_params[i];
-									FLASH_LOG(Templates, Debug, "  Checking param ", tparam.name(), " is_variadic=", tparam.is_variadic() ? "true" : "false");
+									FLASH_LOG(Templates, Trace, "  Checking param ", tparam.name(), " is_variadic=", tparam.is_variadic() ? "true" : "false");
 									if (tparam.name() == pack_name && tparam.is_variadic()) {
 										size_t non_variadic_count = 0;
 										for (const auto& param : template_params) {
@@ -2665,20 +2665,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Handle template parameter reference substitution (e.g., static constexpr T value = v;)
 							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 								const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-								FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
+								FLASH_LOG(Templates, Trace, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
 								if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args_for_member_copy, template_params)) {
 									substituted_initializer = subst;
-									FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", tparam_ref.param_name(), "'");
+									FLASH_LOG(Templates, Trace, "Substituted static member initializer template parameter '", tparam_ref.param_name(), "'");
 								}
 							}
 							// Handle IdentifierNode that might be a template parameter
 							else if (std::holds_alternative<IdentifierNode>(expr)) {
 								const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 								std::string_view id_name = id_node.name();
-								FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
+								FLASH_LOG(Templates, Trace, "Static member initializer contains IdentifierNode: ", id_name);
 								if (auto subst = substitute_template_param_in_initializer(id_name, template_args_for_member_copy, template_params)) {
 									substituted_initializer = subst;
-									FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", id_name, "' (template parameter)");
+									FLASH_LOG(Templates, Trace, "Substituted static member initializer identifier '", id_name, "' (template parameter)");
 								}
 							}
 							// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
@@ -2686,7 +2686,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
 								std::string_view pack_name = fold.pack_name();
 								std::string_view op = fold.op();
-								FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
+								FLASH_LOG(Templates, Trace, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
 
 								// Find the parameter pack in template parameters
 								std::optional<size_t> pack_param_idx;
@@ -2714,7 +2714,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									for (size_t i = non_variadic_count; i < template_args_for_member_copy.size() && all_values_found; ++i) {
 										if (template_args_for_member_copy[i].is_value) {
 											pack_values.push_back(template_args_for_member_copy[i].value);
-											FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_for_member_copy[i].value);
+											FLASH_LOG(Templates, Trace, "Pack value[", i - non_variadic_count, "] = ", template_args_for_member_copy[i].value);
 										} else {
 											all_values_found = false;
 										}
@@ -2740,7 +2740,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 									if (std::holds_alternative<TemplateParameterReferenceNode>(cond_expr)) {
 										const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
-										FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
+										FLASH_LOG(Templates, Trace, "Ternary condition is template parameter: ", tparam_ref.param_name());
 
 										// Look up the parameter value
 										for (size_t p = 0; p < template_params.size(); ++p) {
@@ -2748,7 +2748,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
 												if (p < template_args_for_member_copy.size() && template_args_for_member_copy[p].is_value) {
 													cond_value = template_args_for_member_copy[p].value;
-													FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+													FLASH_LOG(Templates, Trace, "Found template param value: ", *cond_value);
 												}
 												break;
 											}
@@ -2756,7 +2756,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									} else if (std::holds_alternative<IdentifierNode>(cond_expr)) {
 										const IdentifierNode& id_node = std::get<IdentifierNode>(cond_expr);
 										std::string_view id_name = id_node.name();
-										FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
+										FLASH_LOG(Templates, Trace, "Ternary condition is identifier: ", id_name);
 
 										// Look up the identifier as a template parameter
 										for (size_t p = 0; p < template_params.size(); ++p) {
@@ -2764,7 +2764,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
 												if (p < template_args_for_member_copy.size() && template_args_for_member_copy[p].is_value) {
 													cond_value = template_args_for_member_copy[p].value;
-													FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+													FLASH_LOG(Templates, Trace, "Found template param value: ", *cond_value);
 												}
 												break;
 											}
@@ -2789,7 +2789,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 												substituted_initializer = emplace_node<ExpressionNode>(
 													NumericLiteralNode(num_token, num_val, lit.type(), lit.qualifier(), lit.sizeInBits()));
-												FLASH_LOG(Templates, Debug, "Evaluated ternary to: ", num_val);
+												FLASH_LOG(Templates, Trace, "Evaluated ternary to: ", num_val);
 											}
 										}
 									}
@@ -2804,7 +2804,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (substituted_initializer.has_value()) {
 							substituted_initializer = substituteTemplateParameters(
 							substituted_initializer.value(), template_params, template_args_for_member_copy);
-							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member '",
+							FLASH_LOG(Templates, Trace, "Substituted template parameters in static member '",
 									  static_member.getName(), "' initializer");
 						}
 
@@ -3016,7 +3016,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if (!init_result.is_error()) {
 									reparsed_initializer = init_result.node();
 								} else {
-									FLASH_LOG(Templates, Debug,
+									FLASH_LOG(Templates, Trace,
 										"Replay parse failed for static member initializer ",
 										declaration_copy.identifier_token().value(), ": ",
 										init_result.error_message(),
@@ -3028,7 +3028,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									init_result.node().has_value()) {
 									reparsed_initializer = *init_result.node();
 								} else if (init_result.is_error()) {
-									FLASH_LOG(Templates, Debug,
+									FLASH_LOG(Templates, Trace,
 										"Replay brace-init parse failed for static member initializer ",
 										declaration_copy.identifier_token().value(), ": ",
 										init_result.error_message(),
@@ -3068,9 +3068,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				effective_member_copy_template_args_storage.size());
 
 			if (!pattern_struct.static_members().empty()) {
-				FLASH_LOG(Templates, Debug, "Copying ", pattern_struct.static_members().size(), " static members from pattern AST node");
+				FLASH_LOG(Templates, Trace, "Copying ", pattern_struct.static_members().size(), " static members from pattern AST node");
 				for (const auto& static_member : pattern_struct.static_members()) {
-					FLASH_LOG(Templates, Debug, "Copying static member from AST: ", StringTable::getStringView(static_member.name));
+					FLASH_LOG(Templates, Trace, "Copying static member from AST: ", StringTable::getStringView(static_member.name));
 
 					// Check if already added from StructTypeInfo
 					if (struct_info->findStaticMember(static_member.name) != nullptr) {
@@ -3239,7 +3239,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
 							substituted_size = substituted_type_info->sizeInBits().value;
 						}
-						FLASH_LOG(Templates, Debug, "Substituted partial-specialization alias parameter '",
+						FLASH_LOG(Templates, Trace, "Substituted partial-specialization alias parameter '",
 							StringTable::getStringView(binding->first), "' from its semantic binding");
 					}
 				}
@@ -3967,7 +3967,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						deduced_args[pname] = template_args_for_pattern[i];
 					}
 					if (orig_func.is_materialized()) {
-						FLASH_LOG(Templates, Debug, "Copying function definition to new function");
+						FLASH_LOG(Templates, Trace, "Copying function definition to new function");
 						ASTNode substituted_body = *orig_func.get_definition();
 						if (!template_args_for_pattern.empty()) {
 							substituted_body = substituteTemplateParameters(
@@ -3989,7 +3989,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Member struct template partial specializations store function bodies
 						// as deferred template body positions — re-parse the body now with
 						// concrete template arguments so the definition is available at codegen.
-						FLASH_LOG(Templates, Debug, "Re-parsing deferred function body from template body position");
+						FLASH_LOG(Templates, Trace, "Re-parsing deferred function body from template body position");
 
 						// Reuse the already-aligned template args so deferred body re-parsing
 						// sees the deduced specialization parameters, not the raw concrete
@@ -4044,7 +4044,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						restore_lexer_position_only(current_pos);
 						discard_saved_token(current_pos);
 					} else {
-						FLASH_LOG(Templates, Debug, "Original function has NO definition - may need delayed parsing");
+						FLASH_LOG(Templates, Trace, "Original function has NO definition - may need delayed parsing");
 					}
 
 					copy_function_properties(new_func, orig_func);
@@ -4117,7 +4117,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				append_unique_out_of_line_members(base_out_of_line_members);
 			}
 
-			FLASH_LOG(Templates, Debug, "Processing ", out_of_line_members.size(),
+			FLASH_LOG(Templates, Trace, "Processing ", out_of_line_members.size(),
 				" out-of-line member functions for ", template_name,
 				" (base fallback: ", template_base_name, ")");
 			for (const auto& out_of_line_member : out_of_line_members) {
@@ -4242,7 +4242,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 							registerLateMaterializedOwningStructRoot(instantiated_name);
 							normalizePendingSemanticRoots();
-							FLASH_LOG(Templates, Debug,
+							FLASH_LOG(Templates, Trace,
 								"Parsed and substituted OOL plain member body "
 								"for partial-spec: ", plain_ool_name);
 						} else {
@@ -4612,11 +4612,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			// Re-evaluate deferred static_asserts with substituted template parameters
-			FLASH_LOG(Templates, Debug, "Checking ", pattern_struct.deferred_static_asserts().size(),
+			FLASH_LOG(Templates, Trace, "Checking ", pattern_struct.deferred_static_asserts().size(),
 					  " deferred static_asserts for instantiation");
 
 			for (const auto& deferred_assert : pattern_struct.deferred_static_asserts()) {
-				FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
+				FLASH_LOG(Templates, Trace, "Re-evaluating deferred static_assert during template instantiation");
 
 				// Build template parameter name to type mapping for substitution
 				auto sub_map = buildSubstitutionParamMap(template_params, template_args_for_pattern);
@@ -4659,7 +4659,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return std::nullopt;
 				}
 
-				FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
+				FLASH_LOG(Templates, Trace, "Deferred static_assert passed during template instantiation");
 			}
 
 			// Mark instantiation complete with the type index
@@ -4745,7 +4745,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								.append(member_name)
 								.commit());
 							if (auto base_opt = gTemplateRegistry.lookupTemplate(base_member); base_opt.has_value()) {
-								FLASH_LOG_FORMAT(Templates, Debug,
+								FLASH_LOG_FORMAT(Templates, Trace,
 									"Inherited member template lookup: '{}' -> '{}'",
 									template_name, base_member);
 								template_opt = base_opt;
@@ -4762,7 +4762,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										.commit());
 									if (auto orig_opt = gTemplateRegistry.lookupTemplate(orig_base_member);
 										orig_opt.has_value()) {
-										FLASH_LOG_FORMAT(Templates, Debug,
+										FLASH_LOG_FORMAT(Templates, Trace,
 											"Inherited member template lookup (orig): '{}' -> '{}'",
 											template_name, orig_base_member);
 										template_opt = orig_opt;
@@ -4804,7 +4804,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										.commit());
 									if (auto base_opt = gTemplateRegistry.lookupTemplate(base_member);
 										base_opt.has_value()) {
-										FLASH_LOG_FORMAT(Templates, Debug,
+										FLASH_LOG_FORMAT(Templates, Trace,
 											"Inherited member template lookup (deferred): '{}' -> '{}'",
 											template_name, base_member);
 										template_opt = base_opt;
@@ -4882,7 +4882,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									   ? template_args.size() - non_variadic_param_count
 									   : 0;
 				pack_infos.push_back({param->name(), pack_size});
-				FLASH_LOG(Templates, Debug, "Registered class template pack '", param->name(), "' with size ", pack_size);
+				FLASH_LOG(Templates, Trace, "Registered class template pack '", param->name(), "' with size ", pack_size);
 			}
 		}
 		if (!pack_infos.empty()) {
@@ -5161,7 +5161,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		} else if (param->kind() == TemplateParameterKind::NonType) {
 			// For non-type parameters with defaults, evaluate the expression
 			const ASTNode& default_node = param->default_value();
-			FLASH_LOG(Templates, Debug, "Processing non-type param default, is_expression=", default_node.is<ExpressionNode>());
+			FLASH_LOG(Templates, Trace, "Processing non-type param default, is_expression=", default_node.is<ExpressionNode>());
 
 			// Substitute template parameters in the default expression
 			ASTNode substituted_default_node = default_node;
@@ -5170,15 +5170,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					default_node,
 					template_params,
 					filled_template_args);
-				FLASH_LOG(Templates, Debug, "Substituted template parameters in non-type default expression");
+				FLASH_LOG(Templates, Trace, "Substituted template parameters in non-type default expression");
 			}
 
 			if (substituted_default_node.is<ExpressionNode>()) {
 				const ExpressionNode& expr = substituted_default_node.as<ExpressionNode>();
-				FLASH_LOG(Templates, Debug, "Expression node type index: ", expr.index());
+				FLASH_LOG(Templates, Trace, "Expression node type index: ", expr.index());
 				if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
-					FLASH_LOG(Templates, Debug, "Processing QualifiedIdentifierNode for non-type default");
+					FLASH_LOG(Templates, Trace, "Processing QualifiedIdentifierNode for non-type default");
 
 					// Handle dependent static member access like is_arithmetic_void::value or is_arithmetic__Tp::value
 					// namespace handle name = template instantiation name (e.g., is_arithmetic_void or is_arithmetic__Tp)
@@ -5186,7 +5186,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (!qual_id.namespace_handle().isGlobal()) {
 						std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 						std::string_view member_name = qual_id.name();
-						FLASH_LOG(Templates, Debug, "Non-global qualified id: type='", type_name, "', member='", member_name, "'");
+						FLASH_LOG(Templates, Trace, "Non-global qualified id: type='", type_name, "', member='", member_name, "'");
 
 						// Check if type_name contains a template parameter placeholder
 						// Use TypeInfo-based detection for template instantiation placeholders
@@ -5198,10 +5198,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Mangling: template_name + "_" + param_name
 							// For param "_Tp", this becomes: template_name + "_" + "_Tp" = template_name + "__Tp"
 							size_t last_underscore = type_name.rfind('_');
-							FLASH_LOG(Templates, Debug, "Checking for dependent param in type='", type_name, "', last_underscore=", last_underscore);
+							FLASH_LOG(Templates, Trace, "Checking for dependent param in type='", type_name, "', last_underscore=", last_underscore);
 							if (last_underscore != std::string_view::npos && last_underscore > 0) {
 								std::string_view suffix = type_name.substr(last_underscore + 1);
-								FLASH_LOG(Templates, Debug, "Suffix='", suffix, "'");
+								FLASH_LOG(Templates, Trace, "Suffix='", suffix, "'");
 
 								// Check if suffix looks like a template parameter
 								// Template parameters typically start with uppercase (Tp, T, U) or underscore (_Tp)
@@ -5220,7 +5220,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									if (prev_underscore != std::string_view::npos) {
 										template_base_name = type_name.substr(0, prev_underscore);
 										is_dependent = true;
-										FLASH_LOG(Templates, Debug, "Double underscore detected, template_base_name='", template_base_name, "'");
+										FLASH_LOG(Templates, Trace, "Double underscore detected, template_base_name='", template_base_name, "'");
 									}
 								} else if (looks_like_param) {
 									// Check if there's a double underscore pattern (param starts with _)
@@ -5240,7 +5240,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								// Already set is_dependent=true above, just log
 								if (!template_base_name.empty()) {
-									FLASH_LOG(Templates, Debug, "Looks like template param! template_base_name='", template_base_name, "'");
+									FLASH_LOG(Templates, Trace, "Looks like template param! template_base_name='", template_base_name, "'");
 								}
 							}
 						}
@@ -5253,7 +5253,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_params,
 									filled_template_args,
 									"dependent qualified static member")) {
-								FLASH_LOG(Templates, Debug, "Resolved dependent qualified identifier: ",
+								FLASH_LOG(Templates, Trace, "Resolved dependent qualified identifier: ",
 										  type_name, "::", member_name);
 							}
 						}
@@ -5278,7 +5278,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
 					std::string_view member_name = member_access.member_name();
 
-					FLASH_LOG(Templates, Debug, "Processing MemberAccess for non-type default: member='", member_name, "'");
+					FLASH_LOG(Templates, Trace, "Processing MemberAccess for non-type default: member='", member_name, "'");
 
 					// Check if the object is a type/template instantiation
 					ASTNode object_node = member_access.object();
@@ -5290,7 +5290,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							const IdentifierNode& obj_id = std::get<IdentifierNode>(obj_expr);
 							std::string_view obj_name = obj_id.name();
 
-							FLASH_LOG(Templates, Debug, "MemberAccess object is IdentifierNode: '", obj_name, "'");
+							FLASH_LOG(Templates, Trace, "MemberAccess object is IdentifierNode: '", obj_name, "'");
 
 							// Check if this identifier has template arguments stored separately
 							// For now, look for a type that was parsed as a dependent template instantiation
@@ -5306,7 +5306,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										template_params,
 										filled_template_args,
 										"dependent member-access static member")) {
-									FLASH_LOG(Templates, Debug, "Resolved static member '", member_name,
+									FLASH_LOG(Templates, Trace, "Resolved static member '", member_name,
 											  "' from instantiated type '", obj_name, "'");
 								}
 							}
@@ -5347,7 +5347,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												const int size_in_bytes = getTemplateArgumentSizeInBytes(filled_arg);
 												if (size_in_bytes > 0) {
 													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
-													FLASH_LOG(Templates, Debug, "Filled in sizeof(", sizeof_type_name, ") default for instantiation: ", size_in_bytes, " bytes");
+													FLASH_LOG(Templates, Trace, "Filled in sizeof(", sizeof_type_name, ") default for instantiation: ", size_in_bytes, " bytes");
 													found_substitution = true;
 													break;
 												}
@@ -5362,7 +5362,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								int size_in_bits = type_spec.size_in_bits();
 								int size_in_bytes = (size_in_bits + 7) / 8; // Round up to bytes
 								filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
-								FLASH_LOG(Templates, Debug, "Filled in sizeof default for instantiation: ", size_in_bytes, " bytes");
+								FLASH_LOG(Templates, Trace, "Filled in sizeof default for instantiation: ", size_in_bytes, " bytes");
 							}
 						}
 					}
@@ -5560,7 +5560,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto pack_it = pack_substitution_map.find(
 					StringTable::getOrInternStringHandle(param_name));
 				if (pack_it != pack_substitution_map.end()) {
-					FLASH_LOG(Templates, Debug, "Added pack substitution: ",
+					FLASH_LOG(Templates, Trace, "Added pack substitution: ",
 							  param_name, " -> ", pack_it->second.size(), " arguments");
 				}
 				break;
@@ -5568,7 +5568,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto subst_it = name_substitution_map.find(param_name);
 			if (subst_it != name_substitution_map.end()) {
 				const TemplateTypeArg& arg_to_insert = subst_it->second;
-				FLASH_LOG(Templates, Debug, "Added substitution: ", param_name,
+				FLASH_LOG(Templates, Trace, "Added substitution: ", param_name,
 						  " -> base_type=", static_cast<int>(arg_to_insert.typeEnum()),
 						  " type_index=", arg_to_insert.type_index,
 						  " is_value=", arg_to_insert.is_value,
@@ -5679,12 +5679,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
 		if (existing_type->second != nullptr &&
 			existing_type->second->needsClassTemplateLayoutCompletion()) {
-			FLASH_LOG(Templates, Debug,
+			FLASH_LOG(Templates, Trace,
 				"Type already exists as incomplete class-template placeholder, completing layout");
 		} else if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
-			FLASH_LOG(Templates, Debug, "Type already exists from ShapeOnly instantiation, continuing to upgrade");
+			FLASH_LOG(Templates, Trace, "Type already exists from ShapeOnly instantiation, continuing to upgrade");
 		} else {
-			FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
+			FLASH_LOG(Templates, Trace, "Type already exists, returning nullopt");
 			// Already instantiated, return the existing struct node
 			// We need to find the struct node in the AST
 			// For now, just return nullopt and let the type lookup handle it
@@ -5766,14 +5766,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Handle base classes from the primary template
 	// Base classes need to be instantiated with concrete template arguments
-	FLASH_LOG(Templates, Debug, "Primary template has ", class_decl.base_classes().size(), " base classes");
+	FLASH_LOG(Templates, Trace, "Primary template has ", class_decl.base_classes().size(), " base classes");
 	for (const auto& base : class_decl.base_classes()) {
 		std::string_view base_class_name = base.name;
-		FLASH_LOG(Templates, Debug, "Processing primary template base class: ", base_class_name);
+		FLASH_LOG(Templates, Trace, "Processing primary template base class: ", base_class_name);
 
 		// Check if this base class is deferred (a template parameter)
 		if (base.is_deferred) {
-			FLASH_LOG(Templates, Debug, "Base class '", base_class_name, "' is deferred - resolving with concrete type");
+			FLASH_LOG(Templates, Trace, "Base class '", base_class_name, "' is deferred - resolving with concrete type");
 
 			auto try_add_concrete_base = [&](TemplateTypeArg concrete_arg) -> bool {
 				TemplateTypeArg original_arg = concrete_arg;
@@ -5807,7 +5807,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				if (!concrete_type || !concrete_type->getStructInfo()) {
 					if (const TypeInfo* fallback_type = tryGetTypeInfo(concrete_arg.type_index)) {
-						FLASH_LOG(Templates, Debug, "Deferred base '", base_class_name,
+						FLASH_LOG(Templates, Trace, "Deferred base '", base_class_name,
 								  "' did not resolve to a concrete struct (candidate='",
 								  StringTable::getStringView(fallback_type->name()), "')");
 					}
@@ -5825,7 +5825,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					recorded_base_index,
 					base.access,
 					base.is_virtual);
-				FLASH_LOG(Templates, Debug, "Resolved deferred base '", base_class_name,
+				FLASH_LOG(Templates, Trace, "Resolved deferred base '", base_class_name,
 						  "' to concrete type '", StringTable::getStringView(recorded_base_type->name()),
 						  "' with type_index=", recorded_base_index);
 				return true;
@@ -5868,7 +5868,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							unresolved_base->registeredTypeIndex(),
 							base.access,
 							base.is_virtual);
-						FLASH_LOG(Templates, Debug, "Preserved unresolved deferred base '", base_class_name,
+						FLASH_LOG(Templates, Trace, "Preserved unresolved deferred base '", base_class_name,
 								  "' as placeholder '", StringTable::getStringView(unresolved_base->name()), "'");
 						found = true;
 					}
@@ -5890,7 +5890,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					recorded_base_index,
 					base.access,
 					base.is_virtual);
-				FLASH_LOG(Templates, Debug, "Added base class: ", StringTable::getStringView(recorded_base_type->name()),
+				FLASH_LOG(Templates, Trace, "Added base class: ", StringTable::getStringView(recorded_base_type->name()),
 						  " with type_index=", recorded_base_index);
 			} else {
 				FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in getTypesByNameMap()");
@@ -5899,7 +5899,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Handle deferred template base classes (with dependent template arguments)
-	FLASH_LOG_FORMAT(Templates, Debug, "Template '{}' has {} deferred template base classes",
+	FLASH_LOG_FORMAT(Templates, Trace, "Template '{}' has {} deferred template base classes",
 					 StringTable::getStringView(class_decl.name()), class_decl.deferred_template_base_classes().size());
 	if (!class_decl.deferred_template_base_classes().empty()) {
 		ensure_substitution_maps();
@@ -5920,7 +5920,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		};
 
 		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' with {} template args",
+			FLASH_LOG_FORMAT(Templates, Trace, "Processing deferred template base '{}' with {} template args",
 							 StringTable::getStringView(deferred_base.base_template_name), deferred_base.template_arguments.size());
 			DeferredBaseReplayContextScope deferred_base_replay_scope(
 				*this,
@@ -6148,7 +6148,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											member_arg.is_pack = arg_info.is_pack;
 											resolved_args.push_back(member_arg);
 											resolved = true;
-											FLASH_LOG_FORMAT(Templates, Debug,
+											FLASH_LOG_FORMAT(Templates, Trace,
 												"Resolved deferred base member alias '{}' to terminal type_index={}",
 												type_name, member_arg.type_index);
 										}
@@ -6182,7 +6182,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													inst_arg.is_pack = arg_info.is_pack;
 													resolved_args.push_back(inst_arg);
 													resolved = true;
-													FLASH_LOG_FORMAT(Templates, Debug,
+													FLASH_LOG_FORMAT(Templates, Trace,
 														"Resolved deferred base alias-template member argument '{}' via alias target",
 														type_name);
 												}
@@ -6197,7 +6197,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												inst_arg.is_pack = arg_info.is_pack;
 												resolved_args.push_back(inst_arg);
 												resolved = true;
-												FLASH_LOG_FORMAT(Templates, Debug,
+												FLASH_LOG_FORMAT(Templates, Trace,
 													"Resolved deferred base alias-template argument '{}' via alias target metadata",
 													type_name);
 											}
@@ -6226,7 +6226,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											inst_arg.cv_qualifier = type_spec.cv_qualifier();
 											resolved_args.push_back(inst_arg);
 											resolved = true;
-											FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred base placeholder '{}' to '{}'",
+											FLASH_LOG_FORMAT(Templates, Trace, "Resolved deferred base placeholder '{}' to '{}'",
 															 type_name, inst_name);
 										}
 									}
@@ -6238,7 +6238,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										// This is a template class - try to instantiate it with our template args
 										// The template args for the nested template should be our current template args
 										// (e.g., is_integral<T> with T=int should become is_integral_int)
-										FLASH_LOG(Templates, Debug, "Nested template lookup found '", type_name,
+										FLASH_LOG(Templates, Trace, "Nested template lookup found '", type_name,
 												  "', attempting instantiation with ", template_args_to_use.size(), " args");
 										auto instantiated = try_instantiate_class_template(type_name, template_args_to_use);
 										if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
@@ -6256,7 +6256,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											inst_arg.cv_qualifier = type_spec.cv_qualifier();
 											resolved_args.push_back(inst_arg);
 											resolved = true;
-											FLASH_LOG_FORMAT(Templates, Debug, "Resolved nested template '{}' to '{}'", type_name, inst_name);
+											FLASH_LOG_FORMAT(Templates, Trace, "Resolved nested template '{}' to '{}'", type_name, inst_name);
 										}
 									}
 
@@ -6312,11 +6312,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								TemplateTypeArg subst_arg = subst_it->second;
 								subst_arg.is_pack = arg_info.is_pack;
 								resolved_args.push_back(subst_arg);
-								FLASH_LOG_FORMAT(Templates, Debug, "Substituted template parameter '{}' with type_index {} in deferred base",
+								FLASH_LOG_FORMAT(Templates, Trace, "Substituted template parameter '{}' with type_index {} in deferred base",
 												 param_name, subst_it->second.type_index);
 								continue;
 							} else {
-								FLASH_LOG_FORMAT(Templates, Debug, "Template parameter '{}' not found in substitution map", param_name);
+								FLASH_LOG_FORMAT(Templates, Trace, "Template parameter '{}' not found in substitution map", param_name);
 								// Template parameter not found in substitution - this is an unresolved dependency
 								unresolved_arg = true;
 								break;
@@ -6333,7 +6333,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								TemplateTypeArg subst_arg = subst_it->second;
 								subst_arg.is_pack = arg_info.is_pack;
 								resolved_args.push_back(subst_arg);
-								FLASH_LOG_FORMAT(Templates, Debug, "Substituted identifier '{}' in deferred base via name_substitution_map", id_name);
+								FLASH_LOG_FORMAT(Templates, Trace, "Substituted identifier '{}' in deferred base via name_substitution_map", id_name);
 								continue;
 							}
 							// Try as a concrete global type name
@@ -6344,10 +6344,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								a.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
 								a.is_pack = arg_info.is_pack;
 								resolved_args.push_back(a);
-								FLASH_LOG_FORMAT(Templates, Debug, "Resolved identifier '{}' as concrete type in deferred base", id_name);
+								FLASH_LOG_FORMAT(Templates, Trace, "Resolved identifier '{}' as concrete type in deferred base", id_name);
 								continue;
 							}
-							FLASH_LOG_FORMAT(Templates, Debug, "Identifier '{}' unresolved in deferred base – falling through", id_name);
+							FLASH_LOG_FORMAT(Templates, Trace, "Identifier '{}' unresolved in deferred base – falling through", id_name);
 						}
 
 						auto makeEvaluatedDeferredBaseValueArg = [&](const auto& constant_value) {
@@ -6487,7 +6487,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// These need template parameter substitution before evaluation
 							const CallExprNode& func_call = std::get<CallExprNode>(expr);
 
-							FLASH_LOG(Templates, Debug, "Processing CallExprNode in deferred base argument");
+							FLASH_LOG(Templates, Trace, "Processing CallExprNode in deferred base argument");
 
 							// Check if the function has template arguments that need substitution
 							bool has_dependent_template_args = false;
@@ -6503,7 +6503,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											auto subst_it = subst_map.find(param_name);
 											if (subst_it != subst_map.end()) {
 												substituted_func_template_args.push_back(subst_it->second);
-												FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg '{}' with type_index {}",
+												FLASH_LOG_FORMAT(Templates, Trace, "Substituted function template arg '{}' with type_index {}",
 																 param_name, subst_it->second.type_index);
 											} else {
 												has_dependent_template_args = true;
@@ -6513,7 +6513,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											auto subst_it = subst_map.find(id.name());
 											if (subst_it != subst_map.end()) {
 												substituted_func_template_args.push_back(subst_it->second);
-												FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg identifier '{}' with type_index {}",
+												FLASH_LOG_FORMAT(Templates, Trace, "Substituted function template arg identifier '{}' with type_index {}",
 																 id.name(), subst_it->second.type_index);
 											} else {
 												has_dependent_template_args = true;
@@ -6547,23 +6547,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// If we successfully substituted all template arguments, try to instantiate and call the function
 							if (!has_dependent_template_args && !substituted_func_template_args.empty()) {
 								std::string_view func_name = func_call.called_from().value();
-								FLASH_LOG_FORMAT(Templates, Debug, "Trying to instantiate constexpr function '{}' with {} template args",
+								FLASH_LOG_FORMAT(Templates, Trace, "Trying to instantiate constexpr function '{}' with {} template args",
 												 func_name, substituted_func_template_args.size());
 
 								// Try to instantiate the template function
 								auto instantiated_func = try_instantiate_template_explicit(func_name, substituted_func_template_args);
 
 								if (instantiated_func.has_value()) {
-									FLASH_LOG_FORMAT(Templates, Debug, "try_instantiate_template_explicit returned node, is FunctionDeclarationNode: {}",
+									FLASH_LOG_FORMAT(Templates, Trace, "try_instantiate_template_explicit returned node, is FunctionDeclarationNode: {}",
 													 instantiated_func->is<FunctionDeclarationNode>());
 								} else {
-									FLASH_LOG(Templates, Debug, "try_instantiate_template_explicit returned nullopt");
+									FLASH_LOG(Templates, Trace, "try_instantiate_template_explicit returned nullopt");
 								}
 
 								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 									const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
 
-									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated function: is_constexpr={}, has_definition={}",
+									FLASH_LOG_FORMAT(Templates, Trace, "Instantiated function: is_constexpr={}, has_definition={}",
 													 func_decl.is_constexpr(), func_decl.is_materialized());
 
 									// Check if the function is constexpr
@@ -6576,19 +6576,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										// This handles the common type_traits pattern
 										if (func_decl.is_materialized()) {
 											const ASTNode& body_node = *func_decl.get_definition();
-											FLASH_LOG_FORMAT(Templates, Debug, "Function body is BlockNode: {}", body_node.is<BlockNode>());
+											FLASH_LOG_FORMAT(Templates, Trace, "Function body is BlockNode: {}", body_node.is<BlockNode>());
 											if (body_node.is<BlockNode>()) {
 												const BlockNode& block = body_node.as<BlockNode>();
-												FLASH_LOG_FORMAT(Templates, Debug, "Block has {} statements", block.get_statements().size());
+												FLASH_LOG_FORMAT(Templates, Trace, "Block has {} statements", block.get_statements().size());
 												if (block.get_statements().size() == 1) {
 													const ASTNode& stmt = block.get_statements()[0];
-													FLASH_LOG_FORMAT(Templates, Debug, "First statement is ReturnStatementNode: {}", stmt.is<ReturnStatementNode>());
+													FLASH_LOG_FORMAT(Templates, Trace, "First statement is ReturnStatementNode: {}", stmt.is<ReturnStatementNode>());
 													if (stmt.is<ReturnStatementNode>()) {
 														const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
 														if (ret_stmt.expression().has_value()) {
 															// Try to evaluate the return expression as a constant
 															if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
-																FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
+																FLASH_LOG_FORMAT(Templates, Trace, "Evaluated constexpr function call to value {}", ret_value->value);
 																resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*ret_value));
 																continue;
 															}
@@ -6616,7 +6616,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									const VariableDeclarationNode& var_decl = var_template_node->as<VariableDeclarationNode>();
 									if (var_decl.initializer().has_value()) {
 										if (auto value = tryEvaluateDeferredBaseConstant(*var_decl.initializer())) {
-											FLASH_LOG_FORMAT(Templates, Debug, "Evaluated variable template '{}' to value {}",
+											FLASH_LOG_FORMAT(Templates, Trace, "Evaluated variable template '{}' to value {}",
 															 func_name, value->value);
 											resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 											continue;
@@ -6628,17 +6628,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 							if (auto value = tryEvaluateDeferredBaseConstant(substituted_node)) {
-								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted deferred base call to value {}", value->value);
+								FLASH_LOG_FORMAT(Templates, Trace, "Evaluated substituted deferred base call to value {}", value->value);
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							}
 
-							FLASH_LOG(Templates, Debug,
+							FLASH_LOG(Templates, Trace,
 									  "Could not constexpr-evaluate substituted deferred base call argument; leaving deferred base unresolved");
 						} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
 							// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
 							// These need template parameter substitution before evaluation
-							FLASH_LOG(Templates, Debug, "Processing BinaryOperatorNode/TernaryOperatorNode in deferred base argument");
+							FLASH_LOG(Templates, Trace, "Processing BinaryOperatorNode/TernaryOperatorNode in deferred base argument");
 
 							// Use ExpressionSubstitutor to substitute template parameters
 							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
@@ -6646,16 +6646,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 							// Now try to evaluate the substituted expression
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
-								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted binary/ternary operator to value {}", value->value);
+								FLASH_LOG_FORMAT(Templates, Trace, "Evaluated substituted binary/ternary operator to value {}", value->value);
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
-								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted binary/ternary operator");
+								FLASH_LOG(Templates, Trace, "Failed to evaluate substituted binary/ternary operator");
 							}
 						} else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 							// Handle unary operator expressions like: -Num<T>::num
 							// These need template parameter substitution before evaluation
-							FLASH_LOG(Templates, Debug, "Processing UnaryOperatorNode in deferred base argument");
+							FLASH_LOG(Templates, Trace, "Processing UnaryOperatorNode in deferred base argument");
 
 							// Use ExpressionSubstitutor to substitute template parameters
 							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
@@ -6663,22 +6663,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 							// Now try to evaluate the substituted expression
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
-								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted unary operator to value {}", value->value);
+								FLASH_LOG_FORMAT(Templates, Trace, "Evaluated substituted unary operator to value {}", value->value);
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
-								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted unary operator");
+								FLASH_LOG(Templates, Trace, "Failed to evaluate substituted unary operator");
 							}
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-							FLASH_LOG(Templates, Debug, "Processing QualifiedIdentifierNode in deferred base argument");
+							FLASH_LOG(Templates, Trace, "Processing QualifiedIdentifierNode in deferred base argument");
 							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
-								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted qualified identifier to value {}", value->value);
+								FLASH_LOG_FORMAT(Templates, Trace, "Evaluated substituted qualified identifier to value {}", value->value);
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
-								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted qualified identifier");
+								FLASH_LOG(Templates, Trace, "Failed to evaluate substituted qualified identifier");
 							}
 						} else {
 							// Try to evaluate non-type template argument after substitution
@@ -6691,7 +6691,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// This is expected for dependent types in template metaprogramming.
 					// Leave the base unresolved instead of instantiating it with wrong arguments.
-					FLASH_LOG(Templates, Debug, "Could not resolve deferred template base argument for '",
+					FLASH_LOG(Templates, Trace, "Could not resolve deferred template base argument for '",
 							  StringTable::getStringView(deferred_base.base_template_name), "'; skipping base instantiation");
 					unresolved_arg = true;
 					break;
@@ -6700,7 +6700,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (unresolved_arg) {
 					// Cannot resolve all template arguments for the base class - skip it
 					// Don't try to instantiate with wrong arguments as it will cause errors/crashes
-					FLASH_LOG(Templates, Debug, "Skipping deferred base '",
+					FLASH_LOG(Templates, Trace, "Skipping deferred base '",
 							  StringTable::getStringView(deferred_base.base_template_name),
 							  "' due to unresolved template arguments");
 					continue;
@@ -6741,7 +6741,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							return try_evaluate_constant_expression(node);
 						});
 					if (!resolved_member_chain.has_value()) {
-						FLASH_LOG(Templates, Debug, "Deferred template base member args not fully resolved for '",
+						FLASH_LOG(Templates, Trace, "Deferred template base member args not fully resolved for '",
 								  StringTable::getStringView(deferred_base.base_template_name), "'");
 						continue;
 					}
@@ -6758,7 +6758,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 						std::string_view unresolved_base_name = unresolved_base_builder.commit();
-						FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ",
+						FLASH_LOG(Templates, Trace, "Deferred template base alias not found: ",
 								  unresolved_base_name,
 								  " (this may be expected for SFINAE/dependent template arguments)");
 						continue;
@@ -6802,9 +6802,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Handle deferred base classes (decltype bases) from the primary template
 	// These need to be evaluated with concrete template arguments
-	FLASH_LOG(Templates, Debug, "Primary template has ", class_decl.deferred_base_classes().size(), " deferred base classes");
+	FLASH_LOG(Templates, Trace, "Primary template has ", class_decl.deferred_base_classes().size(), " deferred base classes");
 	for (const auto& deferred_base : class_decl.deferred_base_classes()) {
-		FLASH_LOG(Templates, Debug, "Processing deferred decltype base class");
+		FLASH_LOG(Templates, Trace, "Processing deferred decltype base class");
 		DeferredBaseReplayContextScope deferred_base_replay_scope(
 			*this,
 			deferred_base,
@@ -6836,7 +6836,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				candidate_base_type->type_index_,
 				deferred_base.access,
 				deferred_base.is_virtual);
-			FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name,
+			FLASH_LOG(Templates, Trace, "Added deferred base class: ", base_class_name,
 					  " with type_index=", candidate_base_type->type_index_);
 			return true;
 		};
@@ -6849,7 +6849,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			ensure_substitution_maps();
 
 			// Use ExpressionSubstitutor to perform template parameter substitution
-			FLASH_LOG(Templates, Debug, "Using ExpressionSubstitutor to substitute template parameters in decltype expression");
+			FLASH_LOG(Templates, Trace, "Using ExpressionSubstitutor to substitute template parameters in decltype expression");
 			ExpressionSubstitutor substitutor(name_substitution_map, pack_substitution_map, *this, template_param_order);
 			ASTNode substituted_expr = substitutor.substitute(deferred_base.decltype_expression);
 
@@ -6931,7 +6931,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				return materializeTemplateArgs(*member_type_info, effective_template_params, effective_template_args);
 			};
 
-			FLASH_LOG(Templates, Debug, "Member type_info: name='", member_struct_name,
+			FLASH_LOG(Templates, Trace, "Member type_info: name='", member_struct_name,
 					  "', isTemplateInstantiation=", member_type_info->isTemplateInstantiation(),
 					  ", hasStructInfo=", (member_type_info->getStructInfo() != nullptr),
 					  ", total_size=", member_type_info->getStructInfo() ? toSizeT(member_type_info->getStructInfo()->total_size) : 0);
@@ -6947,19 +6947,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Not yet instantiated - get the base template name and instantiate
 					member_struct_name = StringTable::getStringView(member_type_info->baseTemplateName());
 					needs_instantiation = true;
-					FLASH_LOG(Templates, Debug, "Member needs instantiation (placeholder with size=0 or no struct_info): base_name='", member_struct_name, "'");
+					FLASH_LOG(Templates, Trace, "Member needs instantiation (placeholder with size=0 or no struct_info): base_name='", member_struct_name, "'");
 				} else {
-					FLASH_LOG(Templates, Debug, "Member already instantiated: ", member_struct_name, ", size=",
+					FLASH_LOG(Templates, Trace, "Member already instantiated: ", member_struct_name, ", size=",
 							  member_type_info->getStructInfo() ? toSizeT(member_type_info->getStructInfo()->total_size) : 0);
 				}
 			} else {
-				FLASH_LOG(Templates, Debug, "Member already instantiated (non-template struct): ", member_struct_name);
+				FLASH_LOG(Templates, Trace, "Member already instantiated (non-template struct): ", member_struct_name);
 			}
 
 			if (needs_instantiation) {
 				// Try to instantiate with the current template arguments
 				std::vector<TemplateTypeArg> member_template_args = materializeMemberTemplateArgs();
-				FLASH_LOG(Templates, Debug, "Instantiating member template: ", member_struct_name, " with ", member_template_args.size(), " args");
+				FLASH_LOG(Templates, Trace, "Instantiating member template: ", member_struct_name, " with ", member_template_args.size(), " args");
 				try_instantiate_class_template(member_struct_name, member_template_args);
 
 				// If instantiation succeeded, look up the instantiated type
@@ -7110,11 +7110,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (!substituted_type_spec.is_pointer() && !substituted_type_spec.is_reference() && !substituted_type_spec.is_rvalue_reference() && member_type_index.category() == TypeCategory::Struct) {
 				if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index);
 					member_type_info && member_type_info->getStructInfo()) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Found struct member '{}' with type_index={}, total_size={} bytes, struct name={}",
+					FLASH_LOG_FORMAT(Templates, Trace, "Primary template: Found struct member '{}' with type_index={}, total_size={} bytes, struct name={}",
 									 decl.identifier_token().value(), member_type_index, member_size,
 									 StringTable::getStringView(member_type_info->name()));
 				} else {
-					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Struct member '{}' type_index={} not found in gTypeInfo, using default size={} bytes",
+					FLASH_LOG_FORMAT(Templates, Trace, "Primary template: Struct member '{}' type_index={} not found in gTypeInfo, using default size={} bytes",
 									 decl.identifier_token().value(), member_type_index, member_size);
 				}
 			}
@@ -7300,7 +7300,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (!init_result.is_error()) {
 				reparsed_initializer = init_result.node();
 			} else {
-				FLASH_LOG(Templates, Debug,
+				FLASH_LOG(Templates, Trace,
 					"Replay parse failed for class static initializer ",
 					declaration_copy_ref.identifier_token().value(), ": ",
 					init_result.error_message(),
@@ -7311,7 +7311,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (!init_result.is_error() && init_result.node().has_value()) {
 				reparsed_initializer = *init_result.node();
 			} else if (init_result.is_error()) {
-				FLASH_LOG(Templates, Debug,
+				FLASH_LOG(Templates, Trace,
 					"Replay brace-init parse failed for class static initializer ",
 					declaration_copy_ref.identifier_token().value(), ": ",
 					init_result.error_message(),
@@ -7390,7 +7390,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Process static members from StructTypeInfo (preferred source)
 	if (template_struct_info && !template_struct_info->static_members.empty()) {
-		FLASH_LOG(Templates, Debug, "Processing ", template_struct_info->static_members.size(), " static members from primary template StructTypeInfo");
+		FLASH_LOG(Templates, Trace, "Processing ", template_struct_info->static_members.size(), " static members from primary template StructTypeInfo");
 
 		// Helper to check if an initializer needs complex substitution
 		// Returns true for fold expressions, sizeof...(pack), template parameter references, etc.
@@ -7561,7 +7561,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		};
 
 		for (const auto& static_member : template_struct_info->static_members) {
-			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.getName()));
+			FLASH_LOG(Templates, Trace, "Copying static member: ", StringTable::getStringView(static_member.getName()));
 
 			// Check if this static member should be lazily instantiated
 			bool member_needs_complex_substitution = needs_complex_substitution(static_member.initializer);
@@ -7587,7 +7587,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				!member_refs_current_template_identifier &&
 				!member_is_constexpr) {
 				// Register for lazy instantiation instead of processing now
-				FLASH_LOG(Templates, Debug, "Registering static member '", static_member.getName(),
+				FLASH_LOG(Templates, Trace, "Registering static member '", static_member.getName(),
 						  "' for lazy instantiation");
 
 				LazyStaticMemberInfo lazy_info;
@@ -7693,7 +7693,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.pointer_depth,
 					UnresolvedSizeofPolicy::AllowDependent);
 
-			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.memberType(),
+			FLASH_LOG(Templates, Trace, "Static member type substitution: original type=", (int)static_member.memberType(),
 					  " -> substituted type=", (int)substituted_type_index.category(), ", size=", substituted_size);
 
 			struct_info->addStaticMember(
@@ -8689,7 +8689,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
-			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
+			FLASH_LOG(Templates, Trace, "Registered nested class: ", StringTable::getStringView(qualified_name));
 			if (shouldCommitTemplateInstantiationArtifacts()) {
 				OuterTemplateBinding nested_alias_outer_binding;
 				collectOuterTemplateBinding(
@@ -8725,7 +8725,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// These are patterns like: template<typename T> struct Outer<T>::Inner { T data; };
 	// The definition was saved during parsing and is now re-parsed with template parameter substitution.
 	auto ool_nested_classes = gTemplateRegistry.getOutOfLineNestedClasses(template_name);
-	FLASH_LOG(Templates, Debug, "Processing ", ool_nested_classes.size(), " out-of-line nested class definitions for ", template_name);
+	FLASH_LOG(Templates, Trace, "Processing ", ool_nested_classes.size(), " out-of-line nested class definitions for ", template_name);
 	for (const auto& ool_nested : ool_nested_classes) {
 		// Full specializations (template<>) store concrete args — skip if they don't match
 		// this instantiation's arguments (e.g., Wrapper<int>::Nested shouldn't apply to Wrapper<float>).
@@ -8746,10 +8746,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (existing_it != getTypesByNameMap().end()) {
 			TypeInfo* existing_nested_type = existing_it->second;
 			if (existing_nested_type->getStructInfo() && !existing_nested_type->getStructInfo()->members.empty()) {
-				FLASH_LOG(Templates, Debug, "Out-of-line nested class already has members: ", StringTable::getStringView(qualified_name));
+				FLASH_LOG(Templates, Trace, "Out-of-line nested class already has members: ", StringTable::getStringView(qualified_name));
 				continue;
 			}
-			FLASH_LOG(Templates, Debug, "Replacing forward-declared nested class: ", StringTable::getStringView(qualified_name));
+			FLASH_LOG(Templates, Trace, "Replacing forward-declared nested class: ", StringTable::getStringView(qualified_name));
 		}
 
 		// Save current lexer position and parser state
@@ -8788,7 +8788,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			FLASH_LOG(Templates, Warning, "Failed to parse out-of-line nested class: ",
 					  StringTable::getStringView(qualified_name));
 		} else {
-			FLASH_LOG(Templates, Debug, "Parsed out-of-line nested class via parse_struct_declaration(): ",
+			FLASH_LOG(Templates, Trace, "Parsed out-of-line nested class via parse_struct_declaration(): ",
 					  StringTable::getStringView(qualified_name));
 			auto resolved_nested_it = getTypesByNameMap().find(qualified_name);
 			auto extractNestedStructAndInfo = [&]() -> std::pair<StructDeclarationNode*, StructTypeInfo*> {
@@ -8911,7 +8911,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									member.alignment = resolved_type->getStructInfo()->alignment;
 								}
 								had_fixup = true;
-								FLASH_LOG(Templates, Debug, "Fixed nested class member '", StringTable::getStringView(member.name),
+								FLASH_LOG(Templates, Trace, "Fixed nested class member '", StringTable::getStringView(member.name),
 										  "': ", mem_type_name, " -> ", StringTable::getStringView(resolved_handle),
 										  " (size=", member.size, ")");
 							}
@@ -8924,7 +8924,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (had_fixup) {
 				si->recalculateLayout();
 				struct_type_info.fallback_size_bits_ = si->sizeInBits().value;
-				FLASH_LOG(Templates, Debug, "Re-laid out struct ", instantiated_name,
+				FLASH_LOG(Templates, Trace, "Re-laid out struct ", instantiated_name,
 						  " after nested class fixup, total_size=", si->total_size);
 			}
 		}
@@ -9007,7 +9007,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Pointer arithmetic on deque elements is undefined behavior
 						TypeIndex inst_idx = inst_it->second->type_index_;
 						substituted_type_index = inst_idx;
-						FLASH_LOG(Templates, Debug, "Self-referential type alias '", StringTable::getStringView(type_alias.alias_name),
+						FLASH_LOG(Templates, Trace, "Self-referential type alias '", StringTable::getStringView(type_alias.alias_name),
 								  "' now points to instantiated type '", instantiated_name, "' (index ", inst_idx, ")");
 					}
 				} else {
@@ -9197,7 +9197,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// prior partial instantiation that pointed at TTT$hash) is overwritten
 		// with the concrete type (e.g., MakeMid$hash).
 		getTypesByNameMap().insert_or_assign(qualified_alias_name, &alias_type_info);
-		FLASH_LOG_FORMAT(Templates, Debug, "Registered type alias '{}' -> type={}, type_index={}",
+		FLASH_LOG_FORMAT(Templates, Trace, "Registered type alias '{}' -> type={}, type_index={}",
 						 StringTable::getStringView(qualified_alias_name), static_cast<int>(substituted_type), substituted_type_index);
 
 		// If this alias refers to an unscoped enum, track its TypeIndex so that
@@ -9279,7 +9279,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				instantiated_static_member->initializer = std::move(retry_initializer);
 				instantiated_static_member->normalized_init = std::move(normalized_initializer);
-				FLASH_LOG(Templates, Debug, "Retry-normalized static member initializer after alias registration: ",
+				FLASH_LOG(Templates, Trace, "Retry-normalized static member initializer after alias registration: ",
 						  StringTable::getStringView(pattern_static_member.name));
 			}
 		};
@@ -9843,12 +9843,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				if (func_decl.is_materialized()) {
 					// Use the already-parsed definition
-					FLASH_LOG(Templates, Debug, "Function has definition, using parsed body");
+					FLASH_LOG(Templates, Trace, "Function has definition, using parsed body");
 					body_to_substitute = func_decl.get_definition();
 				} else if (func_decl.has_template_body_position()) {
 					// Re-parse the function body from saved position
 					// This is needed for member struct templates where body parsing is deferred
-					FLASH_LOG(Templates, Debug, "Function has template body position, re-parsing");
+					FLASH_LOG(Templates, Trace, "Function has template body position, re-parsing");
 
 					// Set up template parameter types in the type system for body parsing
 					FlashCpp::TemplateParameterScope template_scope;
@@ -9908,7 +9908,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_ctx.local_struct_info = nullptr;
 					struct_parsing_context_stack_.push_back(struct_ctx);
 
-					FLASH_LOG(Templates, Debug, "Pushed struct context: ", struct_ctx.struct_name);
+					FLASH_LOG(Templates, Trace, "Pushed struct context: ", struct_ctx.struct_name);
 
 					try {
 						ASTNode substituted_body = substituteTemplateParameters(
@@ -9933,7 +9933,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 						new_func_ref.set_definition(substituted_body);
-						FLASH_LOG(Templates, Debug, "Successfully substituted function body");
+						FLASH_LOG(Templates, Trace, "Successfully substituted function body");
 					} catch (const std::exception& e) {
 						struct_parsing_context_stack_.pop_back(); // Clean up on error
 						FLASH_LOG(Templates, Error, "Exception during template parameter substitution for function ",
@@ -9948,7 +9948,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Pop struct parsing context
 					struct_parsing_context_stack_.pop_back();
-					FLASH_LOG(Templates, Debug, "Popped struct context");
+					FLASH_LOG(Templates, Trace, "Popped struct context");
 				}
 
 				// Copy function specifiers from original
@@ -10052,7 +10052,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return_type_result.node()->is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& resolved_type = return_type_result.node()->as<TypeSpecifierNode>();
 						new_func_ref.decl_node().set_type_node(resolved_type);
-						FLASH_LOG_FORMAT(Templates, Debug,
+						FLASH_LOG_FORMAT(Templates, Trace,
 							"Resolved auto trailing return type for declaration-only member function '{}'",
 							new_func_ref.decl_node().identifier_token().value());
 					}
@@ -10366,7 +10366,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const TemplateFunctionDeclarationNode& template_func =
 				mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
 
-			FLASH_LOG(Templates, Debug, "Copying member template function to instantiated class with outer param substitution");
+			FLASH_LOG(Templates, Trace, "Copying member template function to instantiated class with outer param substitution");
 
 			const FunctionDeclarationNode& func_decl =
 				template_func.function_declaration().as<FunctionDeclarationNode>();
@@ -10726,7 +10726,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					OuterTemplateBinding template_func_outer_binding;
 					buildMergedOuterTemplateBinding(template_func_outer_binding);
 					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(template_func_outer_binding));
-					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
+					FLASH_LOG(Templates, Trace, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
 			} else {
 				// Even when no outer substitution is needed in the member template signature,
@@ -10971,7 +10971,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					gTemplateRegistry.registerOuterTemplateBinding(
 						qualified_name_handle,
 						std::move(merged_outer_binding));
-					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
+					FLASH_LOG(Templates, Trace, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
 			}
 		} else {
@@ -10984,7 +10984,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Process out-of-line member function definitions for the template
 	auto out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(template_name);
 	const std::string_view template_base_name = extractBaseTemplateName(template_name);
-	FLASH_LOG(Templates, Debug, "Processing ", out_of_line_members.size(), " out-of-line member functions for ", template_name);
+	FLASH_LOG(Templates, Trace, "Processing ", out_of_line_members.size(), " out-of-line member functions for ", template_name);
 
 	for (const auto& out_of_line_member : out_of_line_members) {
 		// Check if this is a nested template (member function template of a class template)
@@ -10998,7 +10998,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				template_name,
 				template_base_name);
 
-			FLASH_LOG(Templates, Debug, "Processing nested template out-of-line member: ", ool_func_name);
+			FLASH_LOG(Templates, Trace, "Processing nested template out-of-line member: ", ool_func_name);
 
 			bool found = false;
 			const size_t ool_inner_template_param_count =
@@ -11304,7 +11304,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const FunctionDeclarationNode& func_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>();
 		const DeclarationNode& decl = func_decl.decl_node();
 
-		FLASH_LOG(Templates, Debug, "  Looking for replay-first match of out-of-line '", decl.identifier_token().value(),
+		FLASH_LOG(Templates, Trace, "  Looking for replay-first match of out-of-line '", decl.identifier_token().value(),
 				  "' via source-member identity");
 
 		// Replay-first plain-member attachment path: match the out-of-line definition
@@ -11916,7 +11916,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (!init_result.is_error()) {
 						reparsed_initializer = init_result.node();
 					} else {
-						FLASH_LOG(Templates, Debug,
+						FLASH_LOG(Templates, Trace,
 							"Replay parse failed for out-of-line static member initializer ",
 							declaration_copy_ref.identifier_token().value(), ": ",
 							init_result.error_message(),
@@ -11927,7 +11927,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (!init_parse_result.is_error() && init_parse_result.node().has_value()) {
 						reparsed_initializer = *init_parse_result.node();
 					} else if (init_parse_result.is_error()) {
-						FLASH_LOG(Templates, Debug,
+						FLASH_LOG(Templates, Trace,
 							"Replay brace-init parse failed for out-of-line static member initializer ",
 							declaration_copy_ref.identifier_token().value(), ": ",
 							init_parse_result.error_message(),
@@ -11991,7 +11991,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (substituted_initializer.has_value()) {
 					existing_member->initializer = substituted_initializer;
 					existing_member->normalized_init.reset();
-					FLASH_LOG(Templates, Debug, "Updated out-of-line static member initializer for ", out_of_line_var.member_name,
+					FLASH_LOG(Templates, Trace, "Updated out-of-line static member initializer for ", out_of_line_var.member_name,
 							  " in instantiated struct ", instantiated_name);
 				}
 			} else {
@@ -12019,7 +12019,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					out_of_line_var.definition_lookup_context,
 					out_of_line_is_constexpr);
 
-				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
+				FLASH_LOG(Templates, Trace, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
 			}
 		}
@@ -12181,7 +12181,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Use shared helper lambda defined at function scope
 						if (auto subst = substitute_template_param_in_initializer(param_name, template_args_to_use, template_params_typed)) {
 							substituted_initializer = subst;
-							FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", param_name, "'");
+							FLASH_LOG(Templates, Trace, "Substituted static member initializer template parameter '", param_name, "'");
 						}
 					}
 					// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
@@ -12196,7 +12196,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 							if (std::holds_alternative<TemplateParameterReferenceNode>(cond_expr)) {
 								const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
-								FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
+								FLASH_LOG(Templates, Trace, "Ternary condition is template parameter: ", tparam_ref.param_name());
 
 								// Look up the parameter value
 								for (size_t p = 0; p < template_params.size(); ++p) {
@@ -12206,7 +12206,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										tparam->kind() == TemplateParameterKind::NonType) {
 										if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
 											cond_value = template_args_to_use[p].value;
-											FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+											FLASH_LOG(Templates, Trace, "Found template param value: ", *cond_value);
 										}
 										break;
 									}
@@ -12214,7 +12214,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							} else if (std::holds_alternative<IdentifierNode>(cond_expr)) {
 								const IdentifierNode& id_node = std::get<IdentifierNode>(cond_expr);
 								std::string_view id_name = id_node.name();
-								FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
+								FLASH_LOG(Templates, Trace, "Ternary condition is identifier: ", id_name);
 
 								// Look up the identifier as a template parameter
 								for (size_t p = 0; p < template_params.size(); ++p) {
@@ -12224,7 +12224,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										tparam->kind() == TemplateParameterKind::NonType) {
 										if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
 											cond_value = template_args_to_use[p].value;
-											FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+											FLASH_LOG(Templates, Trace, "Found template param value: ", *cond_value);
 										}
 										break;
 									}
@@ -12249,7 +12249,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 										substituted_initializer = emplace_node<ExpressionNode>(
 											NumericLiteralNode(num_token, num_val, lit.type(), lit.qualifier(), lit.sizeInBits()));
-										FLASH_LOG(Templates, Debug, "Evaluated ternary to: ", num_val);
+										FLASH_LOG(Templates, Trace, "Evaluated ternary to: ", num_val);
 									}
 								}
 							}
@@ -12321,18 +12321,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	const bool skip_deferred_body_replay = is_implicit_instantiation && !has_implicit_special;
 	if (!skip_deferred_body_replay && !template_class.deferred_bodies().empty()) {
-		FLASH_LOG(Templates, Debug, "Parsing ", template_class.deferred_bodies().size(),
+		FLASH_LOG(Templates, Trace, "Parsing ", template_class.deferred_bodies().size(),
 				  " deferred template member function bodies for ", instantiated_name);
 
 		// Save current position before parsing deferred bodies
 		// We need to restore this after parsing so the parser continues from the correct location
 		SaveHandle saved_pos = save_token_position();
-		FLASH_LOG(Templates, Debug, "Saved current position: ", saved_pos);
+		FLASH_LOG(Templates, Trace, "Saved current position: ", saved_pos);
 
 		// Parse each deferred body
 		// Note: parse_delayed_function_body internally restores to body_start, parses, then leaves position at end of body
 		for (const auto& deferred : template_class.deferred_bodies()) {
-			FLASH_LOG(Templates, Debug, "About to parse body for ", deferred.identity.original_lookup_name, " at position ", deferred.body_start);
+			FLASH_LOG(Templates, Trace, "About to parse body for ", deferred.identity.original_lookup_name, " at position ", deferred.body_start);
 
 			// Find the corresponding member function in the instantiated struct
 			FunctionDeclarationNode* target_func = nullptr;
@@ -12412,13 +12412,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				template_param_substitutions_,
 				deferred_body_environment);
 
-			FLASH_LOG(Templates, Debug, "About to parse deferred body for ", deferred.identity.original_lookup_name);
+			FLASH_LOG(Templates, Trace, "About to parse deferred body for ", deferred.identity.original_lookup_name);
 
 			// Parse the body
 			std::optional<ASTNode> body;
 			auto result = parse_delayed_function_body(delayed, body);
 
-			FLASH_LOG(Templates, Debug, "Finished parse_delayed_function_body, result.is_error()=", result.is_error());
+			FLASH_LOG(Templates, Trace, "Finished parse_delayed_function_body, result.is_error()=", result.is_error());
 
 			clearCurrentTemplateParameters();
 			template_param_substitutions_.clear(); // Clear substitutions after parsing
@@ -12437,22 +12437,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				continue;
 			}
 
-			FLASH_LOG(Templates, Debug, "Successfully parsed deferred template body for ", deferred.identity.original_lookup_name);
+			FLASH_LOG(Templates, Trace, "Successfully parsed deferred template body for ", deferred.identity.original_lookup_name);
 		}
 
-		FLASH_LOG(Templates, Debug, "Finished parsing all deferred bodies");
+		FLASH_LOG(Templates, Trace, "Finished parsing all deferred bodies");
 
 		// Restore the position we saved before parsing deferred bodies
 		// This ensures the parser continues from the correct location after template instantiation
-		FLASH_LOG(Templates, Debug, "About to restore to saved position: ", saved_pos);
+		FLASH_LOG(Templates, Trace, "About to restore to saved position: ", saved_pos);
 
 		// Check if the saved position is still valid
 		if (saved_pos >= saved_tokens_.size() || !saved_tokens_[saved_pos].has_value()) {
 			FLASH_LOG(Templates, Error, "Saved position ", saved_pos, " not found in saved_tokens_!");
 		} else {
-			FLASH_LOG(Templates, Debug, "Saved position ", saved_pos, " found, restoring...");
+			FLASH_LOG(Templates, Trace, "Saved position ", saved_pos, " found, restoring...");
 			restore_lexer_position_only(saved_pos);
-			FLASH_LOG(Templates, Debug, "Restored to saved position");
+			FLASH_LOG(Templates, Trace, "Restored to saved position");
 		}
 	}
 
@@ -12462,12 +12462,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		effective_template_params,
 		effective_template_args);
 
-	FLASH_LOG(Templates, Debug, "About to return instantiated_struct for ", instantiated_name);
+	FLASH_LOG(Templates, Trace, "About to return instantiated_struct for ", instantiated_name);
 
 	// Check if the template class has any constructors
 	// If not, mark that we need to generate a default one for the instantiation
 	struct_info_ptr->needs_default_constructor = !effective_has_constructor;
-	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", effective_has_constructor,
+	FLASH_LOG(Templates, Trace, "Instantiated struct ", instantiated_name, " has_constructor=", effective_has_constructor,
 			  ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
 
 	// Propagate deleted constructor flags from the template pattern to the instantiated struct.
@@ -12510,11 +12510,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		instantiated_name);
 
 	// Re-evaluate deferred static_asserts with substituted template parameters
-	FLASH_LOG(Templates, Debug, "Checking deferred static_asserts for struct '", class_decl.name(),
+	FLASH_LOG(Templates, Trace, "Checking deferred static_asserts for struct '", class_decl.name(),
 			  "': found ", class_decl.deferred_static_asserts().size(), " deferred asserts");
 
 	for (const auto& deferred_assert : class_decl.deferred_static_asserts()) {
-		FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
+		FLASH_LOG(Templates, Trace, "Re-evaluating deferred static_assert during template instantiation");
 
 		// Build template parameter name to type mapping for substitution
 		ensure_substitution_maps();
@@ -12561,7 +12561,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt;
 		}
 
-		FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
+		FLASH_LOG(Templates, Trace, "Deferred static_assert passed during template instantiation");
 	}
 
 	// Mark instantiation complete with the type index

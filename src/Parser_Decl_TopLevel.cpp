@@ -380,7 +380,7 @@ ParseResult Parser::parse_static_assert() {
 	// In non-template code, fall through to error handling (e.g. sizeof returning 0 for incomplete types).
 	if (!eval_result.success() && eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
 		if (is_in_template_definition || is_in_template_struct) {
-			FLASH_LOG(Templates, Debug, "Deferring static_assert with template-dependent expression: ", eval_result.error_message);
+			FLASH_LOG(Templates, Trace, "Deferring static_assert with template-dependent expression: ", eval_result.error_message);
 
 			// Store the deferred static_assert in the current struct/class for later evaluation
 			if (!struct_parsing_context_stack_.empty()) {
@@ -388,7 +388,7 @@ ParseResult Parser::parse_static_assert() {
 				if (struct_ctx.struct_node) {
 					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
 					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
-					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '",
+					FLASH_LOG(Templates, Trace, "Stored deferred static_assert in struct '",
 							  struct_ctx.struct_node->name(), "' for later evaluation");
 				}
 			}
@@ -401,7 +401,7 @@ ParseResult Parser::parse_static_assert() {
 	// If we're in a template definition and evaluation failed for other reasons,
 	// that's okay - skip it and it will be checked during instantiation
 	if ((is_in_template_definition || is_in_template_struct) && !eval_result.success()) {
-		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
+		FLASH_LOG(Templates, Trace, "static_assert evaluation failed in template body: ", eval_result.error_message);
 
 		// Store the deferred static_assert in the current struct/class for later evaluation
 		if (!struct_parsing_context_stack_.empty()) {
@@ -438,7 +438,7 @@ ParseResult Parser::parse_static_assert() {
 		// type traits like is_constructible<_Tp, _Args...> return false_type
 		// for unknown/dependent types. Defer instead of failing.
 		if (is_in_template_definition || is_in_template_struct) {
-			FLASH_LOG(Templates, Debug, "Deferring static_assert that evaluated to false in template context");
+			FLASH_LOG(Templates, Trace, "Deferring static_assert that evaluated to false in template context");
 			if (!struct_parsing_context_stack_.empty()) {
 				const auto& struct_ctx = struct_parsing_context_stack_.back();
 				if (struct_ctx.struct_node) {

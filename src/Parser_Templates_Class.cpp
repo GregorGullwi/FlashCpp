@@ -257,7 +257,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			} else if (is_extern) {
 				// extern template - suppresses implicit instantiation
 				// For now, we just note it (could be used to optimize away redundant instantiations)
-				FLASH_LOG(Templates, Debug, "Extern template declaration (suppresses implicit instantiation): ", name_token.value());
+				FLASH_LOG(Templates, Trace, "Extern template declaration (suppresses implicit instantiation): ", name_token.value());
 			}
 
 			return saved_position.success();
@@ -265,7 +265,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 		// Handle other explicit instantiations (functions, etc.)
 		// For now, just consume until ';'
-		FLASH_LOG(Templates, Debug, "Explicit template instantiation (other): skipping");
+		FLASH_LOG(Templates, Trace, "Explicit template instantiation (other): skipping");
 		while (peek() != ";"_tok) {
 			advance();
 		}
@@ -653,7 +653,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						gSymbolTable.get_current_namespace_handle()),
 					std::move(out_of_line_member));
 
-				FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
+				FLASH_LOG(Templates, Trace, "Registered nested template out-of-line member: ",
 						  nested_qualified_class_name, "::", nested_func_name_token.value(),
 						  " (outer params: ", template_param_nodes.size(),
 						  ", inner params: ", inner_template_params.size(), ")");
@@ -1316,7 +1316,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					discard_saved_token(scope_check);
 					std::string_view member_class_name = peek_info().value();
 					advance(); // consume member class name
-					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition (full spec): {}::{}",
+					FLASH_LOG_FORMAT(Templates, Trace, "Out-of-line member class definition (full spec): {}::{}",
 									 template_name, member_class_name);
 
 					// Skip base class list if present
@@ -1352,7 +1352,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 																					  context_.getCurrentPackAlignment(),
 																					  template_args	// concrete specialization args (e.g., <int>)
 																				  });
-					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class (full spec): {}::{}",
+					FLASH_LOG_FORMAT(Templates, Trace, "Registered out-of-line nested class (full spec): {}::{}",
 									 template_name, member_class_name);
 
 					// Reset parsing context flags
@@ -1398,7 +1398,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					template_args.toVector(),
 					struct_node);
 
-				FLASH_LOG_FORMAT(Templates, Debug, "Registered forward declaration for specialization: {}",
+				FLASH_LOG_FORMAT(Templates, Trace, "Registered forward declaration for specialization: {}",
 								 StringTable::getStringView(instantiated_name));
 
 				// Reset parsing context flags
@@ -1513,7 +1513,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 						// If template arguments are dependent, we're inside a template declaration
 						if (has_dependent_args) {
-							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
+							FLASH_LOG_FORMAT(Templates, Trace, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
 
 							auto arg_infos = build_template_arg_infos(base_template_args, template_arg_nodes);
 
@@ -2005,14 +2005,14 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 									// Mark the deleted constructor in the struct AST node
 									if (is_copy_ctor) {
 										struct_ref.mark_deleted_copy_constructor();
-										FLASH_LOG(Templates, Debug, "Marked copy constructor as deleted in struct: ", instantiated_name);
+										FLASH_LOG(Templates, Trace, "Marked copy constructor as deleted in struct: ", instantiated_name);
 									} else if (is_move_ctor) {
 										struct_ref.mark_deleted_move_constructor();
-										FLASH_LOG(Templates, Debug, "Marked move constructor as deleted in struct: ", instantiated_name);
+										FLASH_LOG(Templates, Trace, "Marked move constructor as deleted in struct: ", instantiated_name);
 									} else {
 										// Default constructor (no params or only optional params)
 										struct_ref.mark_deleted_default_constructor();
-										FLASH_LOG(Templates, Debug, "Marked default constructor as deleted in struct: ", instantiated_name);
+										FLASH_LOG(Templates, Trace, "Marked default constructor as deleted in struct: ", instantiated_name);
 									}
 
 									continue;
@@ -2583,7 +2583,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 			// If no constructor was found, mark that we need a default one
 			struct_info_ptr->needs_default_constructor = !has_constructor;
-			FLASH_LOG(Templates, Debug, "Full spec ", instantiated_name, " has_constructor=", has_constructor);
+			FLASH_LOG(Templates, Trace, "Full spec ", instantiated_name, " has_constructor=", has_constructor);
 
 			// Finalize the struct layout with base classes
 			bool finalize_success;
@@ -2777,7 +2777,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					discard_saved_token(scope_check);
 					StringHandle member_class_name_handle = peek_info().handle();
 					advance(); // consume member class name
-					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition: {}::{}",
+					FLASH_LOG_FORMAT(Templates, Trace, "Out-of-line member class definition: {}::{}",
 									 template_name, member_class_name_handle.view());
 
 					// Skip base class list if present
@@ -2814,7 +2814,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 																					  context_.getCurrentPackAlignment(),
 																					  {}	 // no specialization args — applies to all instantiations
 																				  });
-					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class: {}::{}",
+					FLASH_LOG_FORMAT(Templates, Trace, "Registered out-of-line nested class: {}::{}",
 									 template_name, member_class_name_handle.view());
 
 					// Clean up template parameter context
@@ -2975,7 +2975,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// If template arguments are dependent, we're inside a template declaration
 						// Defer base class resolution until template instantiation
 						if (has_dependent_args) {
-							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
+							FLASH_LOG_FORMAT(Templates, Trace, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
 
 							auto arg_infos = build_template_arg_infos(template_args, template_arg_nodes);
 
@@ -3504,14 +3504,14 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 									// Mark the deleted constructor in the struct AST node
 									if (is_copy_ctor) {
 										struct_ref.mark_deleted_copy_constructor();
-										FLASH_LOG(Templates, Debug, "Marked copy constructor as deleted in struct: ", instantiated_name);
+										FLASH_LOG(Templates, Trace, "Marked copy constructor as deleted in struct: ", instantiated_name);
 									} else if (is_move_ctor) {
 										struct_ref.mark_deleted_move_constructor();
-										FLASH_LOG(Templates, Debug, "Marked move constructor as deleted in struct: ", instantiated_name);
+										FLASH_LOG(Templates, Trace, "Marked move constructor as deleted in struct: ", instantiated_name);
 									} else {
 										// Default constructor (no params or only optional params)
 										struct_ref.mark_deleted_default_constructor();
-										FLASH_LOG(Templates, Debug, "Marked default constructor as deleted in struct: ", instantiated_name);
+										FLASH_LOG(Templates, Trace, "Marked default constructor as deleted in struct: ", instantiated_name);
 									}
 
 									continue;
@@ -4612,8 +4612,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 		// Add debug logging for __call_is_nt to track hang location
 		if (simple_name == "__call_is_nt") {
-			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Registering __call_is_nt template");
-			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Function has ", func_decl.parameter_nodes().size(), " parameters");
+			FLASH_LOG(Templates, Trace, "[DEBUG_HANG] Registering __call_is_nt template");
+			FLASH_LOG(Templates, Trace, "[DEBUG_HANG] Function has ", func_decl.parameter_nodes().size(), " parameters");
 		}
 
 		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys

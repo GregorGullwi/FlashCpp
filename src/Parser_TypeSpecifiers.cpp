@@ -464,7 +464,7 @@ ParseResult Parser::parse_type_specifier() {
 		// If the argument is a template parameter or dependent type, create a dependent type placeholder
 		if ((arg_type.category() == TypeCategory::UserDefined || arg_type.category() == TypeCategory::TypeAlias || arg_type.category() == TypeCategory::Template) && !arg_type.type_index().is_valid()) {
 			// Dependent type - return a placeholder that will be resolved during template instantiation
-			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of dependent type, returning dependent placeholder");
+			FLASH_LOG(Templates, Trace, "parse_type_specifier: __underlying_type of dependent type, returning dependent placeholder");
 			return ParseResult::success(makeDependentUnderlyingType(arg_type));
 		}
 
@@ -474,7 +474,7 @@ ParseResult Parser::parse_type_specifier() {
 			std::string_view arg_type_name = arg_type.token().value();
 			for (const auto& param_name : currentTemplateParamNames()) {
 				if (arg_type_name == param_name) {
-					FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of template parameter '", arg_type_name, "', returning dependent placeholder");
+					FLASH_LOG(Templates, Trace, "parse_type_specifier: __underlying_type of template parameter '", arg_type_name, "', returning dependent placeholder");
 					return ParseResult::success(makeDependentUnderlyingType(arg_type));
 				}
 			}
@@ -506,7 +506,7 @@ ParseResult Parser::parse_type_specifier() {
 		}
 
 		if (type_info.is_incomplete_instantiation_ || type_info.isDependentMemberType()) {
-			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of incomplete dependent type, returning dependent placeholder");
+			FLASH_LOG(Templates, Trace, "parse_type_specifier: __underlying_type of incomplete dependent type, returning dependent placeholder");
 			return ParseResult::success(makeDependentUnderlyingType(arg_type));
 		}
 
@@ -1576,7 +1576,7 @@ ParseResult Parser::parse_type_specifier() {
 							// Pattern like _R1::num where _R1 is a template parameter
 							// The member 'num' is likely a static data member, not a template
 							// Treat < as comparison operator
-							FLASH_LOG_FORMAT(Templates, Debug,
+							FLASH_LOG_FORMAT(Templates, Trace,
 											 "Qualified name '{}' has template param base and non-template member - treating '<' as comparison operator",
 											 type_name);
 							should_parse_as_template = false;
@@ -2127,7 +2127,7 @@ ParseResult Parser::parse_type_specifier() {
 							type_name = StringTable::getStringView(subst.concrete_template_name);
 							type_name_token = Token(Token::Type::Identifier, type_name,
 													type_name_token.line(), type_name_token.column(), type_name_token.file_index());
-							FLASH_LOG(Templates, Debug, "Resolved template template param alias -> '", type_name, "'");
+							FLASH_LOG(Templates, Trace, "Resolved template template param alias -> '", type_name, "'");
 							break;
 						}
 					}
@@ -2146,7 +2146,7 @@ ParseResult Parser::parse_type_specifier() {
 					return var_template_check;
 				};
 				if (lookup_variable_template_for_type_name().has_value()) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Rejecting variable template '{}' as a type-specifier", type_name);
+					FLASH_LOG_FORMAT(Templates, Trace, "Rejecting variable template '{}' as a type-specifier", type_name);
 					restore_token_position(type_name_start_pos);
 					return ParseResult::null();
 				}
@@ -2241,7 +2241,7 @@ ParseResult Parser::parse_type_specifier() {
 								convertToTemplateArgInfo(*template_args));
 							getTypesByNameMap()[type_handle] = &placeholder_type;
 							type_idx = placeholder_type.type_index_;
-							FLASH_LOG(Templates, Debug, "Created placeholder for dependent nested type: ", dependent_type_name);
+							FLASH_LOG(Templates, Trace, "Created placeholder for dependent nested type: ", dependent_type_name);
 						} else {
 							type_idx = type_it->second->type_index_;
 						}
@@ -2305,7 +2305,7 @@ ParseResult Parser::parse_type_specifier() {
 							std::move(placeholder_param_names),
 							template_args_info,
 							nullptr);
-						FLASH_LOG_FORMAT(Templates, Debug, "Created dependent template-template placeholder '{}' with {} args",
+						FLASH_LOG_FORMAT(Templates, Trace, "Created dependent template-template placeholder '{}' with {} args",
 										 instantiated_name, template_args_info.size());
 
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -2338,7 +2338,7 @@ ParseResult Parser::parse_type_specifier() {
 							type_name = StringTable::getStringView(subst.concrete_template_name);
 							type_name_token = Token(Token::Type::Identifier, type_name,
 													type_name_token.line(), type_name_token.column(), type_name_token.file_index());
-							FLASH_LOG(Templates, Debug, "Resolved template template param alias -> '", type_name, "'");
+							FLASH_LOG(Templates, Trace, "Resolved template template param alias -> '", type_name, "'");
 							break;
 						}
 					}
@@ -2466,7 +2466,7 @@ ParseResult Parser::parse_type_specifier() {
 							for (const auto& arg_info : template_arg_infos) {
 								if (templateArgInfoContainsDependentPlaceholder(arg_info)) {
 									has_dependent_args = true;
-									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' has dependent template arguments", instantiated_name);
+									FLASH_LOG_FORMAT(Templates, Trace, "Instantiated name '{}' has dependent template arguments", instantiated_name);
 									break;
 								}
 							}
@@ -2478,7 +2478,7 @@ ParseResult Parser::parse_type_specifier() {
 				if (!has_dependent_args && isTemplateParameterTrackingActive()) {
 					if (!instantiated_class.has_value() && !gTemplateRegistry.lookupTemplate(type_name).has_value()) {
 						has_dependent_args = true;
-						FLASH_LOG_FORMAT(Templates, Debug, "Template '{}' not found in template body - treating as dependent", type_name);
+						FLASH_LOG_FORMAT(Templates, Trace, "Template '{}' not found in template body - treating as dependent", type_name);
 					}
 				}
 
@@ -2607,7 +2607,7 @@ ParseResult Parser::parse_type_specifier() {
 					auto create_dependent_qualified_type_placeholder =
 						[&](std::optional<StringHandle> dependent_member_template_base,
 							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> dependent_member_template_args) -> ParseResult {
-						FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
+						FLASH_LOG_FORMAT(Templates, Trace, "Creating dependent type placeholder for {}", qualified_type_name);
 						auto type_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
 						TypeInfo& type_info = add_empty_type_entry();
 						type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
@@ -2808,7 +2808,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (LazyNestedTypeRegistry::getInstance().needsInstantiation(parent_name_handle, nested_name_handle)) {
 							auto inst_result = instantiateLazyNestedType(parent_name_handle, nested_name_handle);
 							if (inst_result.has_value()) {
-								FLASH_LOG(Templates, Debug, "Used lazy nested type instantiation for: ", qualified_type_name);
+								FLASH_LOG(Templates, Trace, "Used lazy nested type instantiation for: ", qualified_type_name);
 							}
 						}
 
@@ -2819,7 +2819,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (LazyTypeAliasRegistry::getInstance().needsEvaluation(class_name_handle, member_name_handle_alias)) {
 							auto eval_result = evaluateLazyTypeAlias(class_name_handle, member_name_handle_alias);
 							if (eval_result.has_value()) {
-								FLASH_LOG(Templates, Debug, "Used lazy type alias evaluation for: ", qualified_type_name);
+								FLASH_LOG(Templates, Trace, "Used lazy type alias evaluation for: ", qualified_type_name);
 							}
 						}
 
@@ -2859,7 +2859,7 @@ ParseResult Parser::parse_type_specifier() {
 								if (!member_is_template) {
 									// Member is NOT a known template, so < is likely a comparison operator
 									// Don't parse it as template arguments - create placeholder without template args
-									FLASH_LOG_FORMAT(Templates, Debug,
+									FLASH_LOG_FORMAT(Templates, Trace,
 													 "Member '{}' is not a known template - treating '<' as comparison operator, not template args",
 													 member_name);
 									has_template_args = false; // Reset flag to skip template arg parsing
@@ -3350,7 +3350,7 @@ ParseResult Parser::parse_type_specifier() {
 				// with the full instantiated name (e.g., "is_function__Tp" instead of "is_function")
 				// This preserves the dependent type information for use in nested template instantiations
 				if (has_dependent_args) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
+					FLASH_LOG_FORMAT(Templates, Trace, "Creating dependent template placeholder for '{}'", instantiated_name);
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
 					TypeInfo& type_info = add_empty_type_entry();
 					type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
@@ -3378,7 +3378,7 @@ ParseResult Parser::parse_type_specifier() {
 						std::move(placeholder_param_names),
 						template_args_info,
 						nullptr);
-					FLASH_LOG_FORMAT(Templates, Debug, "Set template instantiation metadata for dependent placeholder: base='{}', args={}",
+					FLASH_LOG_FORMAT(Templates, Trace, "Set template instantiation metadata for dependent placeholder: base='{}', args={}",
 									 type_name, template_args_info.size());
 
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -3586,7 +3586,7 @@ ParseResult Parser::parse_type_specifier() {
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(concrete_type));
 						}
 						TypeIndex param_type_idx = param_type_info->type_index_;
-						FLASH_LOG_FORMAT(Templates, Debug,
+						FLASH_LOG_FORMAT(Templates, Trace,
 										 "parse_type_specifier: '{}' is a template parameter, returning dependent type at index {}",
 										 type_name, param_type_idx);
 						TypeSpecifierNode param_type(
@@ -3596,7 +3596,7 @@ ParseResult Parser::parse_type_specifier() {
 					} else {
 						// Template parameter not yet in getTypesByNameMap() - create a placeholder
 						// This can happen when parsing the template parameter list itself
-						FLASH_LOG_FORMAT(Templates, Debug,
+						FLASH_LOG_FORMAT(Templates, Trace,
 										 "parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder",
 										 type_name);
 						TypeInfo& type_info = add_empty_type_entry();
@@ -3976,7 +3976,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		bool should_recover = tokenRangeMentionsActiveTemplateParam(expr_start_pos) &&
 							  (template_instantiation_mode_ != TemplateInstantiationMode::SoftProbe || is_recursion_error);
 		if (should_recover) {
-			FLASH_LOG(Templates, Debug, "Creating dependent type for failed decltype expression in template context");
+			FLASH_LOG(Templates, Trace, "Creating dependent type for failed decltype expression in template context");
 			// Restore position to start of expression for reliable paren counting
 			restore_token_position(expr_start_pos);
 			// Skip to closing ')' to recover parsing - depth 1 for the opening decltype(
@@ -4084,7 +4084,7 @@ ParseResult Parser::parse_decltype_specifier() {
 		// set parsing_template_depth_ > 0 but will have template parameter names.
 		if (decltype_source_mentions_active_template_param ||
 			expressionRequiresDeferredDecltype(*decltype_expr)) {
-			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
+			FLASH_LOG(Templates, Trace, "Creating dependent type for decltype expression in template context");
 			return saved_position.success(
 				makeDependentDecltypeType(
 					decltype_token,
