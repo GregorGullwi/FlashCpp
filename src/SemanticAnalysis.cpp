@@ -359,13 +359,10 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 		return original_var_decl.declaration_node();
 	}
 
-	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
-	if (placeholder_type.category() == TypeCategory::Auto) {
-		resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
-		if (placeholder_type.cv_qualifier() != CVQualifier::None) {
-			resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
-		}
-	}
+	TypeSpecifierNode resolved_type = applyPlaceholderDeclaratorDeduction(
+		placeholder_type.type(),
+		placeholder_type,
+		deduced_type);
 
 	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
 	resolved_decl.set_type_node(resolved_type);

@@ -1681,8 +1681,10 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 							  "Deferred auto variable type deduction for dependent initializer type");
 					return init_expr_result;
 				}
-				// Use the full deduced type specifier (preserves struct type index, etc.)
-				type_specifier = *deduced_type_spec_opt;
+				type_specifier = applyPlaceholderDeclaratorDeduction(
+					TypeCategory::Auto,
+					type_specifier,
+					*deduced_type_spec_opt);
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type from initializer: type=",
 						  (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
 			} else {
@@ -1701,16 +1703,18 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 
 				TypeCategory deduced_type = deduction_result.type;
 				const SizeInBits deduced_size{get_type_size_bits(deduced_type)};
-				type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, decl_node.identifier_token(), original_cv_qual);
+				TypeSpecifierNode provisional(
+					deduced_type,
+					TypeQualifier::None,
+					deduced_size,
+					decl_node.identifier_token(),
+					original_cv_qual);
+				type_specifier = applyPlaceholderDeclaratorDeduction(
+					TypeCategory::Auto,
+					type_specifier,
+					provisional);
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type: type=",
 						  (int)type_specifier.type(), " size=", deduced_size);
-			}
-
-			// Restore the original reference qualifier and CV qualifier (for const auto&, auto&, auto&& etc.)
-			type_specifier.set_reference_qualifier(original_ref_qual);
-			// Also ensure CV qualifier is preserved (especially for const auto&)
-			if (original_cv_qual != CVQualifier::None) {
-				type_specifier.set_cv_qualifier(original_cv_qual);
 			}
 		} else if (type_specifier.category() == TypeCategory::DeclTypeAuto && initializer.has_value()) {
 			auto deduced_type_spec_opt = get_expression_type(*initializer);
@@ -1721,7 +1725,10 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 												   .append("'; use an explicit type when the initializer's exact type cannot be inferred")
 												   .commit()));
 			}
-			type_specifier = *deduced_type_spec_opt;
+			type_specifier = applyPlaceholderDeclaratorDeduction(
+				TypeCategory::DeclTypeAuto,
+				type_specifier,
+				*deduced_type_spec_opt);
 			if (type_specifier.size_in_bits() == 0 && type_specifier.pointer_depth() == 0 &&
 				!type_specifier.is_reference()) {
 				type_specifier.set_size_in_bits(get_type_size_bits(type_specifier.category()));

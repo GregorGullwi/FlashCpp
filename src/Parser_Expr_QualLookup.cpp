@@ -26,52 +26,62 @@ bool identifierRefersToActiveTemplateParam(
 		identifier) != current_template_param_names.end();
 }
 
-bool expressionDirectlyReferencesTemplateDependency(
-	const ASTNode& expr,
-	const InlineVector<StringHandle, 4>& current_template_param_names,
-	bool implicit_object_type_is_dependent) {
-	return AstTraversal::visitASTUntil(expr, [&](const ASTNode& current) {
-		if (current.is<TemplateParameterReferenceNode>()) {
-			return true;
-		}
-		if (current.is<IdentifierNode>()) {
-			const IdentifierNode& identifier = current.as<IdentifierNode>();
-			if (implicit_object_type_is_dependent &&
-				(identifier.name() == "this"sv ||
-				 identifier.binding() == IdentifierBinding::NonStaticMember)) {
-				return true;
-			}
-			return identifierRefersToActiveTemplateParam(
-				identifier.nameHandle(),
-				current_template_param_names);
-		}
-		if (current.is<QualifiedIdentifierNode>()) {
-			const QualifiedIdentifierNode& qualified_identifier = current.as<QualifiedIdentifierNode>();
-			const std::string_view namespace_name =
-				gNamespaceRegistry.getQualifiedName(qualified_identifier.namespace_handle());
-			if (namespace_name.empty()) {
-				return false;
-			}
-			auto type_it = getTypesByNameMap().find(
-				StringTable::getOrInternStringHandle(namespace_name));
-			return type_it != getTypesByNameMap().end() &&
-				   type_it->second != nullptr &&
-				   (type_it->second->isDependentPlaceholder() ||
-					type_it->second->is_incomplete_instantiation_);
-		}
-		if (current.is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& type_spec = current.as<TypeSpecifierNode>();
-			return identifierRefersToActiveTemplateParam(
-				type_spec.token().handle(),
-				current_template_param_names);
-		}
+bool expressionResultTypeIsNeverDependent(const ASTNode& node) {
+	// C++20 [temp.dep.expr]: sizeof / alignof / noexcept / sizeof... result
+	// types are non-dependent even when an operand is dependent.
+	if (node.is<SizeofExprNode>() ||
+		node.is<SizeofPackNode>() ||
+		node.is<AlignofExprNode>() ||
+		node.is<NoexceptExprNode>() ||
+		node.is<OffsetofExprNode>()) {
+		return true;
+	}
+	if (!node.is<ExpressionNode>()) {
 		return false;
-	});
+	}
+	const ExpressionNode& expr = node.as<ExpressionNode>();
+	return std::holds_alternative<SizeofExprNode>(expr) ||
+		   std::holds_alternative<SizeofPackNode>(expr) ||
+		   std::holds_alternative<AlignofExprNode>(expr) ||
+		   std::holds_alternative<NoexceptExprNode>(expr) ||
+		   std::holds_alternative<OffsetofExprNode>(expr);
+}
+
+bool memberTypeIsDependent(
+	TypeIndex owner_type_index,
+	StringHandle member_name) {
+	if (!owner_type_index.is_valid() || !member_name.isValid()) {
+		return true;
+	}
+	auto member_result =
+		FlashCpp::gLazyMemberResolver.resolve(owner_type_index, member_name);
+	if (!member_result || member_result.member == nullptr) {
+		// Unknown / dependent member lookup remains type-dependent.
+		return true;
+	}
+	if (typeIndexContainsDependentPlaceholder(member_result.member->type_index)) {
+		return true;
+	}
+	TypeSpecifierNode member_type(
+		member_result.member->memberType(),
+		TypeQualifier::None,
+		member_result.member->size * 8,
+		Token{},
+		CVQualifier::None);
+	member_type.set_type_index(member_result.member->type_index);
+	if (member_result.member->pointer_depth > 0) {
+		member_type.add_pointer_levels(member_result.member->pointer_depth);
+	}
+	if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
+		member_type.set_reference_qualifier(member_result.member->reference_qualifier);
+	}
+	return typeSpecStillUsesDependentPlaceholder(member_type);
 }
 }
 
 bool Parser::currentImplicitObjectTypeIsDependent() const {
-	if (member_function_context_stack_.empty()) {
+	if (member_function_context_stack_.empty() ||
+		!member_function_context_stack_.back().has_implicit_this) {
 		return false;
 	}
 
@@ -102,56 +112,178 @@ bool Parser::currentImplicitObjectTypeIsDependent() const {
 	return type_info != nullptr && type_info->isDependentPlaceholder();
 }
 
-bool Parser::expressionTypeDeductionIsStillDependent(const ASTNode& expr) {
-	if (expressionDirectlyReferencesTemplateDependency(
-			expr,
-			currentTemplateParamNames(),
-			currentImplicitObjectTypeIsDependent())) {
-		return true;
+std::optional<TypeSpecifierNode> Parser::lookupSubstitutedLocalBindingType(
+	StringHandle name) const {
+	if (active_template_body_substitution_ == nullptr || !name.isValid()) {
+		return std::nullopt;
 	}
 
-	return AstTraversal::visitASTUntil(expr, [this](const ASTNode& current) {
-		if (!current.is<IdentifierNode>()) {
-			return false;
+	const auto& bindings = active_template_body_substitution_->local_bindings;
+	for (size_t i = bindings.size(); i > 0; --i) {
+		const SubstitutedLocalBinding& binding = bindings[i - 1];
+		if (binding.name == name && binding.declaration != nullptr) {
+			return binding.declaration->type_specifier_node();
+		}
+	}
+	return std::nullopt;
+}
+
+bool Parser::isTypeDependentExpression(const ASTNode& expr) {
+	// C++20 [temp.dep.expr]-oriented classification for placeholder deduction.
+	return AstTraversal::visitASTWithDecisions(expr, [&](const ASTNode& current) {
+		if (expressionResultTypeIsNeverDependent(current)) {
+			return AstTraversal::VisitDecision::SkipChildren;
 		}
 
-		const IdentifierNode& identifier = current.as<IdentifierNode>();
-		auto symbol = lookup_symbol(identifier.nameHandle());
-		if (!symbol.has_value()) {
-			return false;
+		if (current.is<TemplateParameterReferenceNode>()) {
+			return AstTraversal::VisitDecision::Stop;
 		}
 
-		const DeclarationNode* declaration = get_decl_from_symbol(*symbol);
-		return declaration != nullptr &&
-			   typeSpecStillUsesDependentPlaceholder(
-				   declaration->type_specifier_node());
+		if (current.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = current.as<TypeSpecifierNode>();
+			if (identifierRefersToActiveTemplateParam(
+					type_spec.token().handle(),
+					currentTemplateParamNames()) ||
+				typeSpecStillUsesDependentPlaceholder(type_spec)) {
+				return AstTraversal::VisitDecision::Stop;
+			}
+			return AstTraversal::VisitDecision::Continue;
+		}
+
+		if (current.is<QualifiedIdentifierNode>()) {
+			const QualifiedIdentifierNode& qualified_identifier =
+				current.as<QualifiedIdentifierNode>();
+			const std::string_view namespace_name =
+				gNamespaceRegistry.getQualifiedName(qualified_identifier.namespace_handle());
+			if (!namespace_name.empty()) {
+				auto type_it = getTypesByNameMap().find(
+					StringTable::getOrInternStringHandle(namespace_name));
+				if (type_it != getTypesByNameMap().end() &&
+					type_it->second != nullptr &&
+					(type_it->second->isDependentPlaceholder() ||
+					 type_it->second->is_incomplete_instantiation_)) {
+					return AstTraversal::VisitDecision::Stop;
+				}
+			}
+			return AstTraversal::VisitDecision::Continue;
+		}
+
+		if (current.is<MemberAccessNode>()) {
+			const MemberAccessNode& member_access = current.as<MemberAccessNode>();
+			std::optional<TypeSpecifierNode> object_type;
+			const ASTNode& object_node = member_access.object();
+			if (object_node.is<ExpressionNode>()) {
+				const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(object_expr)) {
+					const IdentifierNode& object_ident =
+						std::get<IdentifierNode>(object_expr);
+					if (object_ident.name() == "this"sv &&
+						!member_function_context_stack_.empty() &&
+						member_function_context_stack_.back().has_implicit_this) {
+						const MemberFunctionContext& member_ctx =
+							member_function_context_stack_.back();
+						if (const TypeInfo* type_info =
+								tryGetTypeInfo(member_ctx.struct_type_index)) {
+							object_type = TypeSpecifierNode(
+								type_info->type_index_.withCategory(TypeCategory::Struct),
+								type_info->sizeInBits(),
+								Token{},
+								CVQualifier::None,
+								ReferenceQualifier::None);
+						}
+					}
+				}
+			} else if (object_node.is<IdentifierNode>()) {
+				const IdentifierNode& object_ident = object_node.as<IdentifierNode>();
+				if (object_ident.name() == "this"sv &&
+					!member_function_context_stack_.empty() &&
+					member_function_context_stack_.back().has_implicit_this) {
+					const MemberFunctionContext& member_ctx =
+						member_function_context_stack_.back();
+					if (const TypeInfo* type_info =
+							tryGetTypeInfo(member_ctx.struct_type_index)) {
+						object_type = TypeSpecifierNode(
+							type_info->type_index_.withCategory(TypeCategory::Struct),
+							type_info->sizeInBits(),
+							Token{},
+							CVQualifier::None,
+							ReferenceQualifier::None);
+					}
+				}
+			}
+			if (!object_type.has_value()) {
+				object_type = get_expression_type(object_node);
+			}
+			if (!object_type.has_value()) {
+				return AstTraversal::VisitDecision::Stop;
+			}
+			if (!is_struct_type(object_type->category()) ||
+				!object_type->type_index().is_valid()) {
+				return AstTraversal::VisitDecision::Stop;
+			}
+			if (memberTypeIsDependent(
+					object_type->type_index(),
+					StringTable::getOrInternStringHandle(member_access.member_name()))) {
+				return AstTraversal::VisitDecision::Stop;
+			}
+			// Member type is non-dependent; do not treat `this` dependence alone
+			// as making the access type-dependent ([temp.dep.expr]).
+			return AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<IdentifierNode>()) {
+			const IdentifierNode& identifier = current.as<IdentifierNode>();
+			if (identifier.name() == "this"sv) {
+				return currentImplicitObjectTypeIsDependent()
+					? AstTraversal::VisitDecision::Stop
+					: AstTraversal::VisitDecision::Continue;
+			}
+
+			if (identifierRefersToActiveTemplateParam(
+					identifier.nameHandle(),
+					currentTemplateParamNames())) {
+				return AstTraversal::VisitDecision::Stop;
+			}
+
+			if (auto substituted_local =
+					lookupSubstitutedLocalBindingType(identifier.nameHandle())) {
+				return typeSpecStillUsesDependentPlaceholder(*substituted_local)
+					? AstTraversal::VisitDecision::Stop
+					: AstTraversal::VisitDecision::Continue;
+			}
+
+			if (identifier.binding() == IdentifierBinding::NonStaticMember) {
+				TypeIndex owner_type_index{};
+				if (!member_function_context_stack_.empty()) {
+					owner_type_index =
+						member_function_context_stack_.back().struct_type_index;
+				} else if (active_template_body_substitution_ != nullptr) {
+					owner_type_index =
+						active_template_body_substitution_->owner_type_index;
+				}
+				if (memberTypeIsDependent(owner_type_index, identifier.nameHandle())) {
+					return AstTraversal::VisitDecision::Stop;
+				}
+				return AstTraversal::VisitDecision::Continue;
+			}
+
+			auto symbol = lookup_symbol(identifier.nameHandle());
+			if (symbol.has_value()) {
+				const DeclarationNode* declaration = get_decl_from_symbol(*symbol);
+				if (declaration != nullptr &&
+					typeSpecStillUsesDependentPlaceholder(
+						declaration->type_specifier_node())) {
+					return AstTraversal::VisitDecision::Stop;
+				}
+			}
+		}
+
+		return AstTraversal::VisitDecision::Continue;
 	});
 }
 
-std::optional<TypeSpecifierNode> Parser::getExpressionTypeForOwner(
-	const ASTNode& expr_node,
-	StringHandle owner_type_name) {
-	if (!member_function_context_stack_.empty() ||
-		!owner_type_name.isValid()) {
-		return get_expression_type(expr_node);
-	}
-
-	const TypeInfo* owner_type_info = findTypeByName(owner_type_name);
-	if (owner_type_info == nullptr || owner_type_info->getStructInfo() == nullptr) {
-		return get_expression_type(expr_node);
-	}
-
-	member_function_context_stack_.push_back({
-		owner_type_name,
-		owner_type_info->registeredTypeIndex(),
-		nullptr,
-		nullptr,
-		true
-	});
-	auto context_guard = ScopeGuard([this]() {
-		member_function_context_stack_.pop_back();
-	});
-	return get_expression_type(expr_node);
+bool Parser::expressionTypeDeductionIsStillDependent(const ASTNode& expr) {
+	return isTypeDependentExpression(expr);
 }
 
 // Helper: Parse template brace initialization: Template<Args>{}
@@ -2799,10 +2931,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		return literal_type;
 	} else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
-		auto substituted_local_type =
-			substituted_auto_local_types_.find(ident.nameHandle());
-		if (substituted_local_type != substituted_auto_local_types_.end()) {
-			return substituted_local_type->second;
+		if (auto substituted_local =
+				lookupSubstitutedLocalBindingType(ident.nameHandle())) {
+			return *substituted_local;
 		}
 		auto symbol = this->lookup_symbol(ident.nameHandle());
 		if (symbol.has_value()) {
@@ -3363,7 +3494,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(object_expr)) {
 				const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
-				if (object_ident.name() == "this" && !member_function_context_stack_.empty()) {
+				if (object_ident.name() == "this" &&
+					!member_function_context_stack_.empty() &&
+					member_function_context_stack_.back().has_implicit_this) {
 					const auto& member_ctx = member_function_context_stack_.back();
 				if (const TypeInfo* type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
 						object_type_opt = TypeSpecifierNode(type_info->type_index_.withCategory(TypeCategory::Struct), type_info->sizeInBits(), Token{}, CVQualifier::None, ReferenceQualifier::None);

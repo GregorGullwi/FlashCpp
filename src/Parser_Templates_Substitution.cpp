@@ -341,11 +341,31 @@ ASTNode Parser::substituteTemplateParameters(
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	const TemplateInstantiationContext& context) {
-	return substituteTemplateParameters(
+	TemplateBodySubstitutionState state;
+	state.owner_type_name = context.current_instantiation_name;
+	state.owner_type_index = context.current_instantiation_type;
+	if (!state.owner_type_index.is_valid() && state.owner_type_name.isValid()) {
+		if (const TypeInfo* owner_type_info = findTypeByName(state.owner_type_name)) {
+			state.owner_type_index = owner_type_info->registeredTypeIndex();
+		}
+	}
+	if (!member_function_context_stack_.empty()) {
+		state.has_implicit_this =
+			member_function_context_stack_.back().has_implicit_this;
+		if (!state.owner_type_index.is_valid()) {
+			state.owner_type_index =
+				member_function_context_stack_.back().struct_type_index;
+		}
+		if (!state.owner_type_name.isValid()) {
+			state.owner_type_name =
+				member_function_context_stack_.back().struct_name;
+		}
+	}
+	return substituteTemplateParametersWithState(
 		node,
 		context.template_parameters,
 		context.template_arguments,
-		context.current_instantiation_name);
+		state);
 }
 
 ASTNode Parser::substituteTemplateParameters(
@@ -353,25 +373,100 @@ ASTNode Parser::substituteTemplateParameters(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle current_owner_type_name) {
-	const bool is_root_substitution = template_substitution_depth_ == 0;
-	if (is_root_substitution) {
-		substituted_auto_local_types_.clear();
+	bool has_implicit_this = false;
+	if (!member_function_context_stack_.empty()) {
+		has_implicit_this =
+			member_function_context_stack_.back().has_implicit_this;
+	} else {
+		// Name-only callers historically substitute non-static member bodies.
+		has_implicit_this = current_owner_type_name.isValid();
 	}
-	++template_substitution_depth_;
-	auto substitution_scope = ScopeGuard([this, is_root_substitution]() {
-		--template_substitution_depth_;
-		if (is_root_substitution) {
-			substituted_auto_local_types_.clear();
+	return substituteTemplateParameters(
+		node,
+		template_params,
+		template_args,
+		current_owner_type_name,
+		has_implicit_this);
+}
+
+ASTNode Parser::substituteTemplateParameters(
+	const ASTNode& node,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle current_owner_type_name,
+	bool has_implicit_this) {
+	TemplateBodySubstitutionState state;
+	state.owner_type_name = current_owner_type_name;
+	state.has_implicit_this = has_implicit_this;
+	if (current_owner_type_name.isValid()) {
+		if (const TypeInfo* owner_type_info = findTypeByName(current_owner_type_name)) {
+			state.owner_type_index = owner_type_info->registeredTypeIndex();
 		}
-	});
+	}
+	if (!member_function_context_stack_.empty()) {
+		if (!state.owner_type_index.is_valid()) {
+			state.owner_type_index =
+				member_function_context_stack_.back().struct_type_index;
+		}
+		if (!state.owner_type_name.isValid()) {
+			state.owner_type_name =
+				member_function_context_stack_.back().struct_name;
+		}
+	}
+	return substituteTemplateParametersWithState(
+		node,
+		template_params,
+		template_args,
+		state);
+}
+
+ASTNode Parser::substituteTemplateParametersWithState(
+	const ASTNode& node,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	TemplateBodySubstitutionState& state) {
+	const bool is_root_substitution =
+		active_template_body_substitution_ != &state;
+	TemplateBodySubstitutionState* previous_active =
+		active_template_body_substitution_;
+	bool pushed_member_context = false;
+	if (is_root_substitution) {
+		active_template_body_substitution_ = &state;
+		if (state.owner_type_name.isValid() &&
+			state.owner_type_index.is_valid() &&
+			(member_function_context_stack_.empty() ||
+			 member_function_context_stack_.back().struct_type_index !=
+				 state.owner_type_index ||
+			 member_function_context_stack_.back().has_implicit_this !=
+				 state.has_implicit_this)) {
+			member_function_context_stack_.push_back({
+				state.owner_type_name,
+				state.owner_type_index,
+				nullptr,
+				nullptr,
+				state.has_implicit_this
+			});
+			pushed_member_context = true;
+		}
+	}
+	auto substitution_scope = ScopeGuard(
+		[this, is_root_substitution, previous_active, pushed_member_context]() {
+			if (pushed_member_context) {
+				member_function_context_stack_.pop_back();
+			}
+			if (is_root_substitution) {
+				active_template_body_substitution_ = previous_active;
+			}
+		});
 
 	const auto substitute_nested = [&](const ASTNode& child) -> ASTNode {
-		return substituteTemplateParameters(
+		return substituteTemplateParametersWithState(
 			child,
 			template_params,
 			template_args,
-			current_owner_type_name);
+			state);
 	};
+	const StringHandle current_owner_type_name = state.owner_type_name;
 	// Helper function to get type name as string
 	auto get_type_name = [](TypeCategory type) -> std::string_view {
 		switch (type) {
@@ -1923,25 +2018,40 @@ ASTNode Parser::substituteTemplateParameters(
 	} else if (node.is<BlockNode>()) {
 		// Handle block nodes by substituting in all statements
 		const BlockNode& block = node.as<BlockNode>();
+		const bool introduces_scope = !block.is_synthetic_decl_list();
+		const size_t saved_binding_count = state.local_bindings.size();
 
 		auto new_block = emplace_node<BlockNode>();
 		BlockNode& new_block_ref = new_block.as<BlockNode>();
+		new_block_ref.set_synthetic_decl_list(block.is_synthetic_decl_list());
 
 		for (size_t i = 0; i < block.get_statements().size(); ++i) {
 			new_block_ref.add_statement_node(substitute_nested(block.get_statements()[i]));
 		}
 
+		if (introduces_scope) {
+			state.local_bindings.resize(saved_binding_count);
+		}
+
 		return new_block;
 
 	} else if (node.is<ForStatementNode>()) {
-		// Handle for statements
+		// Handle for statements — init is in scope for condition/update/body.
 		const ForStatementNode& for_stmt = node.as<ForStatementNode>();
+		const size_t saved_binding_count = state.local_bindings.size();
 
-		auto init_stmt = for_stmt.get_init_statement().has_value() ? std::optional<ASTNode>(substitute_nested(*for_stmt.get_init_statement())) : std::nullopt;
-		auto condition = for_stmt.get_condition().has_value() ? std::optional<ASTNode>(substitute_nested(*for_stmt.get_condition())) : std::nullopt;
-		auto update_expr = for_stmt.get_update_expression().has_value() ? std::optional<ASTNode>(substitute_nested(*for_stmt.get_update_expression())) : std::nullopt;
+		auto init_stmt = for_stmt.get_init_statement().has_value()
+			? std::optional<ASTNode>(substitute_nested(*for_stmt.get_init_statement()))
+			: std::nullopt;
+		auto condition = for_stmt.get_condition().has_value()
+			? std::optional<ASTNode>(substitute_nested(*for_stmt.get_condition()))
+			: std::nullopt;
+		auto update_expr = for_stmt.get_update_expression().has_value()
+			? std::optional<ASTNode>(substitute_nested(*for_stmt.get_update_expression()))
+			: std::nullopt;
 		auto body_stmt = substitute_nested(for_stmt.get_body_statement());
 
+		state.local_bindings.resize(saved_binding_count);
 		return emplace_node<ForStatementNode>(init_stmt, condition, update_expr, body_stmt);
 
 	} else if (node.is<UnaryOperatorNode>()) {
@@ -1960,12 +2070,15 @@ ASTNode Parser::substituteTemplateParameters(
 		// Handle variable declarations
 		const VariableDeclarationNode& var_decl = node.as<VariableDeclarationNode>();
 		ASTNode substituted_decl = substitute_nested(var_decl.declaration_node());
-		const bool had_placeholder_auto =
-			substituted_decl.is<DeclarationNode>() &&
-			isPlaceholderAutoType(
-				substituted_decl.as<DeclarationNode>()
-					.type_specifier_node()
-					.type());
+		if (substituted_decl.is<DeclarationNode>()) {
+			DeclarationNode& local_decl = substituted_decl.as<DeclarationNode>();
+			if (local_decl.identifier_token().handle().isValid()) {
+				state.local_bindings.push_back({
+					local_decl.identifier_token().handle(),
+					&local_decl
+				});
+			}
+		}
 
 		auto initializer = var_decl.initializer().has_value() ? std::optional<ASTNode>(substitute_nested(*var_decl.initializer())) : std::nullopt;
 
@@ -1993,12 +2106,21 @@ ASTNode Parser::substituteTemplateParameters(
 		}
 		if (substituted_decl.is<DeclarationNode>() && initializer.has_value()) {
 			DeclarationNode& sub_decl_ref = substituted_decl.as<DeclarationNode>();
-			if (isPlaceholderAutoType(sub_decl_ref.type_specifier_node().type())) {
+			const TypeCategory placeholder_cat =
+				sub_decl_ref.type_specifier_node().type();
+			if (isPlaceholderAutoType(placeholder_cat)) {
 				if (std::optional<TypeSpecifierNode> deduced_type =
-						getExpressionTypeForOwner(
-							*initializer,
-							current_owner_type_name)) {
-					sub_decl_ref.set_type_node(*deduced_type);
+						get_expression_type(*initializer)) {
+					if (typeSpecStillUsesDependentPlaceholder(*deduced_type)) {
+						FLASH_LOG(Parser, Debug,
+								  "Deferred substituted auto local; initializer type still dependent");
+					} else {
+						sub_decl_ref.set_type_node(
+							applyPlaceholderDeclaratorDeduction(
+								placeholder_cat,
+								sub_decl_ref.type_specifier_node(),
+								*deduced_type));
+					}
 				} else if (!isDependentTemplateContext()) {
 					throw CompileError(std::string(StringBuilder()
 						.append("Unable to deduce 'auto' type for instantiated local variable '")
@@ -2012,13 +2134,6 @@ ASTNode Parser::substituteTemplateParameters(
 		ASTNode new_var_node = emplace_node<VariableDeclarationNode>(substituted_decl, initializer, var_decl.storage_class());
 		VariableDeclarationNode& new_var = new_var_node.as<VariableDeclarationNode>();
 		setOuterTemplateBindingsFromParams(new_var, template_params, template_args);
-		if (had_placeholder_auto &&
-			!isPlaceholderAutoType(
-				new_var.declaration().type_specifier_node().type())) {
-			substituted_auto_local_types_.insert_or_assign(
-				new_var.declaration().identifier_token().handle(),
-				new_var.declaration().type_specifier_node());
-		}
 
 		// Preserve constexpr/constinit flags
 		new_var.set_is_thread_local(var_decl.is_thread_local());
@@ -2045,9 +2160,14 @@ ASTNode Parser::substituteTemplateParameters(
 		return emplace_node<ReturnStatementNode>(expr, ret_stmt.return_token());
 
 	} else if (node.is<IfStatementNode>()) {
-		// Handle if statements
+		// Handle if statements — init is substituted before condition/branches
+		// and introduces a scope spanning the whole if ([stmt.if]/2).
 		const IfStatementNode& if_stmt = node.as<IfStatementNode>();
+		const size_t saved_binding_count = state.local_bindings.size();
 
+		auto substituted_init = if_stmt.get_init_statement().has_value()
+			? std::optional<ASTNode>(substitute_nested(*if_stmt.get_init_statement()))
+			: std::nullopt;
 		ASTNode substituted_condition = substitute_nested(if_stmt.get_condition());
 
 		// For if constexpr, evaluate the condition at compile time and eliminate the dead branch
@@ -2057,22 +2177,31 @@ ASTNode Parser::substituteTemplateParameters(
 			if (eval_result.success()) {
 				bool condition_value = eval_result.as_int() != 0;
 				FLASH_LOG(Templates, Debug, "if constexpr condition evaluated to ", condition_value ? "true" : "false");
+				ASTNode selected;
 				if (condition_value) {
-					return substitute_nested(if_stmt.get_then_statement());
+					selected = substitute_nested(if_stmt.get_then_statement());
 				} else if (if_stmt.has_else()) {
-					return substitute_nested(*if_stmt.get_else_statement());
+					selected = substitute_nested(*if_stmt.get_else_statement());
 				} else {
-					// No else branch and condition is false - return empty block
-					return emplace_node<BlockNode>();
+					selected = emplace_node<BlockNode>();
 				}
+				state.local_bindings.resize(saved_binding_count);
+				return selected;
 			}
 		}
 
 		ASTNode substituted_then = substitute_nested(if_stmt.get_then_statement());
-		auto substituted_else = if_stmt.get_else_statement().has_value() ? std::optional<ASTNode>(substitute_nested(*if_stmt.get_else_statement())) : std::nullopt;
-		auto substituted_init = if_stmt.get_init_statement().has_value() ? std::optional<ASTNode>(substitute_nested(*if_stmt.get_init_statement())) : std::nullopt;
+		auto substituted_else = if_stmt.get_else_statement().has_value()
+			? std::optional<ASTNode>(substitute_nested(*if_stmt.get_else_statement()))
+			: std::nullopt;
 
-		return emplace_node<IfStatementNode>(substituted_condition, substituted_then, substituted_else, substituted_init, if_stmt.is_constexpr());
+		state.local_bindings.resize(saved_binding_count);
+		return emplace_node<IfStatementNode>(
+			substituted_condition,
+			substituted_then,
+			substituted_else,
+			substituted_init,
+			if_stmt.is_constexpr());
 
 	} else if (node.is<WhileStatementNode>()) {
 		// Handle while statements

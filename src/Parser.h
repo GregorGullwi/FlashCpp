@@ -1180,9 +1180,23 @@ private:
 		std::vector<TemplateTypeArg> pack_args;
 	};
 	InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
-	// Scratch types for sequential dependent auto declarations in one substituted body.
-	size_t template_substitution_depth_ = 0;
-	std::unordered_map<StringHandle, TypeSpecifierNode> substituted_auto_local_types_;
+
+	// Root-local lexical bindings for one template-body substitution.
+	// Capacity 8 covers typical member bodies with up to eight simultaneously
+	// active local declarations without heap spill; nested scopes resize back.
+	struct SubstitutedLocalBinding {
+		StringHandle name{};
+		DeclarationNode* declaration = nullptr;
+	};
+	struct TemplateBodySubstitutionState {
+		InlineVector<SubstitutedLocalBinding, 8> local_bindings;
+		TypeIndex owner_type_index{};
+		StringHandle owner_type_name{};
+		bool has_implicit_this = false;
+	};
+	// Active only for the duration of a root substitution; nested independent
+	// substitutions save/restore this pointer for reentrancy.
+	TemplateBodySubstitutionState* active_template_body_substitution_ = nullptr;
 
 	// Track nesting depth of template body parsing (for template parameter reference recognition).
 	// A value > 0 means we are inside one or more template definitions.
@@ -3236,6 +3250,12 @@ public:	// Public methods for template instantiation
 		StringHandle current_owner_type_name);
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		StringHandle current_owner_type_name,
+		bool has_implicit_this);
+	ASTNode substituteTemplateParameters(
+		const ASTNode& node,
 		const TemplateInstantiationContext& context);
 	FunctionSignature substituteTemplateFunctionSignature(
 		FunctionSignature signature,
@@ -3249,7 +3269,8 @@ public:	// Public methods for template instantiation
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
 		const TemplateEnvironmentSnapshot& outer_snapshot,
-		StringHandle instantiated_owner_name);
+		StringHandle instantiated_owner_name,
+		bool has_implicit_this);
 
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
@@ -3385,11 +3406,16 @@ private:	 // Resume private methods
 		TypeCategory type = TypeCategory::Invalid;
 	};
 
-	std::optional<TypeSpecifierNode> getExpressionTypeForOwner(
-		const ASTNode& expr_node,
-		StringHandle owner_type_name);
 	bool currentImplicitObjectTypeIsDependent() const;
+	bool isTypeDependentExpression(const ASTNode& expr);
 	bool expressionTypeDeductionIsStillDependent(const ASTNode& expr);
+	std::optional<TypeSpecifierNode> lookupSubstitutedLocalBindingType(
+		StringHandle name) const;
+	ASTNode substituteTemplateParametersWithState(
+		const ASTNode& node,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		TemplateBodySubstitutionState& state);
 	ExpressionTypeDeductionResult deduce_type_from_expression(const ASTNode& expr);
 	void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
 	std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
