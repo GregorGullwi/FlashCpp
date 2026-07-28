@@ -3247,11 +3247,6 @@ public:	// Public methods for template instantiation
 		const ASTNode& node,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
-		StringHandle current_owner_type_name);
-	ASTNode substituteTemplateParameters(
-		const ASTNode& node,
-		std::span<const TemplateParameterNode> template_params,
-		std::span<const TemplateTypeArg> template_args,
 		TypeIndex current_owner_type_index,
 		bool has_implicit_this);
 	ASTNode substituteTemplateParameters(

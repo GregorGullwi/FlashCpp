@@ -335,26 +335,14 @@ ASTNode Parser::substituteTemplateParameters(
 		node,
 		template_params,
 		template_args,
-		StringHandle{});
+		TypeIndex{},
+		false);
 }
 
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	const TemplateInstantiationContext& context) {
 	TypeIndex owner_type_index = context.current_instantiation_type;
-	if (!owner_type_index.is_valid() && context.current_instantiation_name.isValid()) {
-		const TypeInfo* owner_type_info =
-			findTypeByName(context.current_instantiation_name);
-		if (owner_type_info == nullptr) {
-			throw CompileError(std::string(StringBuilder()
-				.append("Unable to resolve concrete template substitution owner '")
-				.append(StringTable::getStringView(context.current_instantiation_name))
-				.append("'")
-				.commit()));
-		}
-		owner_type_index =
-			owner_type_info->registeredTypeIndex().withCategory(TypeCategory::Struct);
-	}
 	const bool has_implicit_this = !member_function_context_stack_.empty() &&
 		member_function_context_stack_.back().has_implicit_this;
 	if (!owner_type_index.is_valid() && !member_function_context_stack_.empty()) {
@@ -368,44 +356,6 @@ ASTNode Parser::substituteTemplateParameters(
 		context.template_parameters,
 		context.template_arguments,
 		state);
-}
-
-ASTNode Parser::substituteTemplateParameters(
-	const ASTNode& node,
-	std::span<const TemplateParameterNode> template_params,
-	std::span<const TemplateTypeArg> template_args,
-	StringHandle current_owner_type_name) {
-	bool has_implicit_this = false;
-	if (!member_function_context_stack_.empty()) {
-		has_implicit_this =
-			member_function_context_stack_.back().has_implicit_this;
-	} else {
-		// Name-only callers historically substitute non-static member bodies.
-		has_implicit_this = current_owner_type_name.isValid();
-	}
-	TypeIndex owner_type_index{};
-	if (current_owner_type_name.isValid()) {
-		const TypeInfo* owner_type_info =
-			findTypeByName(current_owner_type_name);
-		if (owner_type_info == nullptr) {
-			throw CompileError(std::string(StringBuilder()
-				.append("Unable to resolve concrete template substitution owner '")
-				.append(StringTable::getStringView(current_owner_type_name))
-				.append("'")
-				.commit()));
-		}
-		owner_type_index =
-			owner_type_info->registeredTypeIndex().withCategory(TypeCategory::Struct);
-	}
-	if (!owner_type_index.is_valid() && !member_function_context_stack_.empty()) {
-		owner_type_index = member_function_context_stack_.back().struct_type_index;
-	}
-	return substituteTemplateParameters(
-		node,
-		template_params,
-		template_args,
-		owner_type_index,
-		has_implicit_this);
 }
 
 ASTNode Parser::substituteTemplateParameters(

@@ -5369,7 +5369,8 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 				*pattern_func.get_definition(),
 				template_params,
 				template_args,
-				instantiated_name);
+				concrete_owner_type_index,
+				false);
 			new_func_ref.set_definition(substituted_body);
 			finalize_function_after_definition(new_func_ref);
 		} else if (pattern_func.has_template_body_position()) {
