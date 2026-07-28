@@ -2056,6 +2056,27 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			: makeDirectCallExpr(target_decl, std::move(args), called_from);
 		return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
 	};
+	auto tryAttachSubstitutedReturnTypeHint = [&](
+		CallExprNode& target_call,
+		const FunctionDeclarationNode* hint_target) {
+		if (hint_target == nullptr) {
+			return;
+		}
+		TypeSpecifierNode substituted_return =
+			substituteInType(hint_target->decl_node().type_specifier_node());
+		if (!typeSpecStillUsesDependentPlaceholder(substituted_return) &&
+			!isPlaceholderAutoType(substituted_return.category()) &&
+			substituted_return.category() != TypeCategory::Invalid) {
+			setCallParserReturnTypeHint(target_call, substituted_return);
+		}
+	};
+	auto tryAttachSubstitutedReturnTypeHintToExpr = [&](
+		ExpressionNode& expr,
+		const FunctionDeclarationNode* hint_target) {
+		if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+			tryAttachSubstitutedReturnTypeHint(*call_expr, hint_target);
+		}
+	};
 	auto materializeResolvedCallExpr = [&](
 		const FunctionDeclarationNode& target_func,
 		ChunkedVector<ASTNode>&& args,
@@ -2097,6 +2118,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		if (target_func.has_mangled_name()) {
 			setCallMangledName(new_expr, target_func.mangled_name());
 		}
+		// Rebound pattern returns (e.g. CRTP Derived&) through the active
+		// substitution map so auto deduction can see the concrete type before
+		// the callee body itself is lazily materialized.
+		tryAttachSubstitutedReturnTypeHintToExpr(new_expr, &target_func);
 		if (!call.has_definition_lookup_record() &&
 			!call.has_dependent_unqualified_lookup_record()) {
 			CallExprNode* materialized_call = std::get_if<CallExprNode>(&new_expr);
@@ -2205,6 +2230,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				return substitute(template_arg);
 			},
 			CallMetadataCopyOptions{});
+		const FunctionDeclarationNode* hint_target =
+			getBestEffortDirectCallTarget(call);
+		tryAttachSubstitutedReturnTypeHint(substituted_call, hint_target);
 		ExpressionNode& new_expr =
 			gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(substituted_call));
 		return ASTNode(&new_expr);
@@ -3330,6 +3358,39 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				);
 			}
 		}
+	}
+
+	// Unqualified same-class calls (CRTP `_Cast()` / `cast()`) often keep a
+	// pattern callee through eager body substitution. Rebind through the
+	// concrete owner before falling back so return types like Derived& become
+	// Subrange& for local auto deduction.
+	if (current_owner_type_name_.isValid() &&
+		!func_name.empty() &&
+		func_name.find("::") == std::string_view::npos) {
+		ChunkedVector<ASTNode> substituted_args =
+			substituteCallArgumentsPreservingPackExpansion(call.arguments());
+		std::string_view owner_name =
+			StringTable::getStringView(current_owner_type_name_);
+		parser_.instantiateLazyMemberForCanonicalOwner(
+			owner_name,
+			func_name,
+			std::span<const TemplateTypeArg>{});
+		if (const FunctionDeclarationNode* owner_target =
+				resolveQualifiedOwnerOverload(
+					owner_name,
+					func_name,
+					substituted_args);
+			owner_target != nullptr) {
+			return materializeResolvedCallExpr(
+				*owner_target,
+				std::move(substituted_args),
+				call.called_from(),
+				std::nullopt,
+				true, // copy_template_arguments
+				true  // infer_qualified_name_from_parent
+			);
+		}
+		return materializeSubstitutedUnresolvedCall(std::move(substituted_args));
 	}
 
 	// Return with substituted children preserved.

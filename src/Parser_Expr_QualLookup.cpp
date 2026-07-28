@@ -3301,14 +3301,33 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		return operand_type;
 	} else if (auto call_info_opt = CallInfo::tryFrom(expr)) {
 		if (const auto* call_expr = std::get_if<CallExprNode>(&expr);
-			call_expr != nullptr &&
-			(call_expr->has_dependent_qualified_lookup_record() ||
-			 call_expr->has_dependent_unqualified_lookup_record())) {
-			// A dependent call's return type is not fixed until instantiation.
-			// Using a parser hint here can freeze the first same-name overload
-			// seen during template parsing, which is wrong for decltype(...)
-			// and other dependent unevaluated contexts.
-			return std::nullopt;
+			call_expr != nullptr) {
+			if (call_expr->has_dependent_qualified_lookup_record()) {
+				// A dependent qualified call's return type is not fixed until
+				// instantiation. Using a parser hint here can freeze the first
+				// same-name overload seen during template parsing, which is
+				// wrong for decltype(...) and other dependent unevaluated
+				// contexts.
+				return std::nullopt;
+			}
+			if (call_expr->has_dependent_unqualified_lookup_record()) {
+				const DependentUnqualifiedCallLookupRecord& dependent_record =
+					*call_expr->dependent_unqualified_lookup_record();
+				const bool has_completed_poi =
+					dependent_record.point_of_instantiation_function != nullptr;
+				const bool has_concrete_return_hint =
+					call_expr->has_parser_return_type_hint() &&
+					!typeSpecStillUsesDependentPlaceholder(
+						call_expr->parser_return_type_hint().value()) &&
+					!isPlaceholderAutoType(
+						call_expr->parser_return_type_hint().value().category()) &&
+					call_expr->parser_return_type_hint().value().category() !=
+						TypeCategory::Invalid;
+				if (!has_completed_poi && !has_concrete_return_hint) {
+					// Still definition-bound only; return type is not fixed yet.
+					return std::nullopt;
+				}
+			}
 		}
 		const CallInfo& call_info = *call_info_opt;
 		const DeclarationNode& callee_decl = *call_info.declaration;
@@ -3338,6 +3357,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto should_prefer_struct_member_return_type =
 			[](const TypeSpecifierNode& current,
 			   const TypeSpecifierNode& candidate) {
+				if (typeSpecStillUsesDependentPlaceholder(current) &&
+					!typeSpecStillUsesDependentPlaceholder(candidate)) {
+					return true;
+				}
 				if (!current.type_index().is_valid() && candidate.type_index().is_valid()) {
 					return true;
 				}

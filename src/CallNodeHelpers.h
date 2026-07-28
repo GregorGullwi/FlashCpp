@@ -18,10 +18,33 @@
 inline const FunctionDeclarationNode* getParserStoredDirectCallTarget(const CallExprNode& node) {
 	// Dependent unqualified calls may carry a provisional parser-time callee only
 	// to preserve the definition-bound ordinary lookup result.  Once the POI
-	// completion record exists, downstream semantic consumers must not treat that
-	// provisional target as authoritative.
+	// completion record exists, that completed target is authoritative for typing
+	// and downstream consumers (mirrors SemanticAnalysis POI resolution).
 	if (node.has_dependent_unqualified_lookup_record()) {
+		const DependentUnqualifiedCallLookupRecord& record =
+			*node.dependent_unqualified_lookup_record();
+		if (record.point_of_instantiation_function != nullptr) {
+			return record.point_of_instantiation_function;
+		}
 		return nullptr;
+	}
+	return node.callee().function_declaration_or_null();
+}
+
+// Best-effort direct callee for typing during template substitution when the
+// call may still carry a dependent-unqualified record and/or a provisional
+// parser-time declaration.
+inline const FunctionDeclarationNode* getBestEffortDirectCallTarget(const CallExprNode& node) {
+	if (const FunctionDeclarationNode* stored = getParserStoredDirectCallTarget(node);
+		stored != nullptr) {
+		return stored;
+	}
+	if (node.has_dependent_unqualified_lookup_record()) {
+		const DependentUnqualifiedCallLookupRecord& record =
+			*node.dependent_unqualified_lookup_record();
+		if (record.definition_bound_function != nullptr) {
+			return record.definition_bound_function;
+		}
 	}
 	return node.callee().function_declaration_or_null();
 }
