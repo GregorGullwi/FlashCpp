@@ -88,7 +88,6 @@ struct TemplateInstantiationContext {
 	std::span<const TemplateTypeArg> template_arguments;
 	TemplateEnvironment environment;
 	InlineVector<TemplatePackExpansionState, 2> pack_state;
-	StringHandle current_instantiation_name{};
 	TypeIndex current_instantiation_type{};
 	TemplateLookupContext lookup_context;
 	const TemplateDefinitionLookupContext* definition_lookup_context = nullptr;

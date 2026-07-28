@@ -2191,7 +2191,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ASTNode::emplace_node<TypeSpecifierNode>(type_spec),
 							template_params,
 							template_args_for_member_copy,
-							struct_info->getName());
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+							false);
 						if (substituted_type_node.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& substituted_type =
 								substituted_type_node.as<TypeSpecifierNode>();
@@ -2326,7 +2327,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*orig_ctor.get_definition(),
 							template_params,
 							template_args_for_member_copy,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
@@ -2420,7 +2421,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*orig_func.get_definition(),
 							template_params,
 							template_args_for_member_copy,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							!orig_func.is_static());
 						if (orig_func.is_static()) {
 							substituted_body = rebindStaticMemberInitializerFunctionCalls(
@@ -2966,8 +2967,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_for_substitution,
 									nullptr,
 									currentTemplateSubstitutionFailurePolicy());
-							substitution_context.current_instantiation_name =
-								instantiated_name;
+							substitution_context.current_instantiation_type =
+								struct_type_info.registeredTypeIndex().withCategory(
+									TypeCategory::Struct);
 
 							TemplateDefinitionLookupContext definition_lookup_context =
 								ensureReplayDefinitionLookupContext(
@@ -3572,7 +3574,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*orig_ctor.get_definition(),
 							template_params,
 							template_args_for_pattern,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
@@ -3972,7 +3974,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								*orig_func.get_definition(),
 								template_params,
 								template_args_for_pattern,
-								instantiated_name,
+								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 								!orig_func.is_static());
 						}
 						if (orig_func.is_static()) {
@@ -4026,7 +4028,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									*block_result.node(),
 									template_params,
 									template_args_for_pattern,
-									instantiated_name,
+									struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 									!orig_func.is_static());
 								if (orig_func.is_static()) {
 									const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
@@ -4152,7 +4154,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::span<const TemplateTypeArg>(
 							template_args_for_pattern.data(),
 							template_args_for_pattern.size()),
-						instantiated_name);
+						struct_type_info.registeredTypeIndex().withCategory(
+							TypeCategory::Struct));
 					FunctionDeclarationNode* inst_func = member_resolution.func;
 					if (inst_func != nullptr) {
 						// Copy definition-site parameter names so the body can reference them.
@@ -4173,7 +4176,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::span<const TemplateTypeArg>(
 								template_args_for_pattern.data(),
 								template_args_for_pattern.size()),
-							instantiated_name);
+							struct_type_info.registeredTypeIndex().withCategory(
+								TypeCategory::Struct));
 
 						const std::span<const ASTNode> inst_func_params =
 							inst_func->parameter_nodes();
@@ -4231,7 +4235,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									std::span<const TemplateTypeArg>(
 										template_args_for_pattern.data(),
 										template_args_for_pattern.size()),
-									instantiated_name);
+									struct_type_info.registeredTypeIndex().withCategory(
+										TypeCategory::Struct));
 								info_func_resolution.func->set_definition(*inst_func->get_definition());
 								finalize_function_after_definition(*info_func_resolution.func, true);
 							}
@@ -4338,7 +4343,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								std::span<const TemplateTypeArg>(
 									template_args_for_pattern.data(),
 									template_args_for_pattern.size()),
-								instantiated_name,
+								struct_type_info.registeredTypeIndex().withCategory(
+									TypeCategory::Struct),
 								std::span<const TemplateParameterNode>(
 									out_of_line_member.inner_template_params.data(),
 									out_of_line_member.inner_template_params.size()));
@@ -4516,7 +4522,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::span<const TemplateTypeArg>(
 							template_args_for_pattern.data(),
 							template_args_for_pattern.size()),
-						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(
+							TypeCategory::Struct),
 						std::span<const TemplateParameterNode>(
 							out_of_line_member.inner_template_params.data(),
 							out_of_line_member.inner_template_params.size()));
@@ -7184,14 +7191,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	auto push_replay_member_context =
-		[this](StringHandle instantiated_class_name, StructTypeInfo* instantiated_struct_info) {
-		TypeIndex struct_type_index{};
-		if (auto type_it = getTypesByNameMap().find(instantiated_class_name);
-			type_it != getTypesByNameMap().end()) {
-			struct_type_index = type_it->second->type_index_;
-		}
+		[this](
+			StringHandle instantiated_class_name,
+			TypeIndex struct_type_index,
+			StructTypeInfo* instantiated_struct_info) {
 		member_function_context_stack_.push_back(
-			{instantiated_class_name, struct_type_index, nullptr, instantiated_struct_info});
+			{instantiated_class_name, struct_type_index, nullptr, instantiated_struct_info, false});
 		return ScopeGuard([this]() {
 			if (!member_function_context_stack_.empty()) {
 				member_function_context_stack_.pop_back();
@@ -7205,6 +7210,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const auto& template_params,
 			std::span<const TemplateTypeArg> template_args,
 			StringHandle owning_instantiated_name,
+			TypeIndex owning_type_index,
 			NamespaceHandle fallback_definition_namespace,
 			bool requires_replay_metadata) -> std::optional<ASTNode> {
 		if (!static_member.initializer_position.has_value() ||
@@ -7232,8 +7238,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				template_args,
 				nullptr,
 				currentTemplateSubstitutionFailurePolicy());
-		substitution_context.current_instantiation_name =
-			owning_instantiated_name;
+		substitution_context.current_instantiation_type =
+			owning_type_index;
 
 		TemplateDefinitionLookupContext definition_lookup_context =
 			ensureReplayDefinitionLookupContext(
@@ -7269,7 +7275,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			non_type_categories);
 
 		auto member_ctx_scope =
-			push_replay_member_context(owning_instantiated_name, struct_info);
+			push_replay_member_context(
+				owning_instantiated_name,
+				owning_type_index,
+				struct_info);
 
 		restore_lexer_position_only(*static_member.initializer_position);
 
@@ -7327,6 +7336,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const auto& template_params,
 			std::span<const TemplateTypeArg> template_args,
 			StringHandle owning_instantiated_name,
+			TypeIndex owning_type_index,
 			NamespaceHandle fallback_definition_namespace,
 			const auto& fallback_template_args) -> std::optional<ASTNode> {
 		if (!static_member.initializer.has_value()) {
@@ -7350,6 +7360,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_params,
 					template_args,
 					owning_instantiated_name,
+					owning_type_index,
 					fallback_definition_namespace,
 					requires_replay_metadata);
 		} catch (const std::exception& ex) {
@@ -7370,7 +7381,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				*static_member.initializer,
 				template_params,
 				fallback_template_args,
-				owning_instantiated_name);
+				owning_type_index,
+				false);
 		}
 
 		return substituted_initializer;
@@ -7660,6 +7672,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						effective_template_args_vector.data(),
 						effective_template_args_vector.size()),
 					instantiated_name,
+					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 					struct_info->getNamespaceHandle(),
 					effective_template_args);
 
@@ -7671,6 +7684,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					gSymbolTable,
 					*this,
 					struct_info,
+					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 					effective_template_params,
 					effective_template_args_vector,
 					substituted_type_index,
@@ -7728,6 +7742,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						effective_template_args_vector.data(),
 						effective_template_args_vector.size()),
 					instantiated_name,
+					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 					struct_info->getNamespaceHandle(),
 					effective_template_args);
 			struct_info->addStaticMember(
@@ -8131,6 +8146,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_params,
 							template_args_to_use,
 							qualified_name,
+							nested_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							nested_struct_info->getNamespaceHandle(),
 							template_args_to_use);
 					nested_struct_info->addStaticMember(
@@ -8245,7 +8261,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*original_ctor.get_definition(),
 							template_params,
 							template_args_to_use,
-							qualified_name));
+							nested_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
 
@@ -8260,7 +8277,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*original_ctor.requires_clause(),
 							template_params,
 							template_args_to_use,
-							qualified_name));
+							nested_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+							true));
 					}
 					instantiated_nested_struct_ref.add_constructor(
 						substituted_ctor_node,
@@ -8304,7 +8322,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::span<const TemplateTypeArg>(
 								template_args_to_use.data(),
 								template_args_to_use.size()),
-							qualified_name,
+							nested_type_info.registeredTypeIndex().withCategory(
+								TypeCategory::Struct),
 							std::span<const TemplateParameterNode>(
 								out_of_line_member.inner_template_params.data(),
 								out_of_line_member.inner_template_params.size()));
@@ -8378,7 +8397,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::span<const TemplateTypeArg>(
 								template_args_to_use.data(),
 								template_args_to_use.size()),
-							qualified_name,
+							nested_type_info.registeredTypeIndex().withCategory(
+								TypeCategory::Struct),
 							std::span<const TemplateParameterNode>(
 								out_of_line_member.inner_template_params.data(),
 								out_of_line_member.inner_template_params.size()));
@@ -8513,7 +8533,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								std::span<const TemplateTypeArg>(
 									template_args_to_use.data(),
 									template_args_to_use.size()),
-								qualified_name,
+								nested_type_info.registeredTypeIndex().withCategory(
+									TypeCategory::Struct),
 								std::span<const TemplateParameterNode>(
 									out_of_line_member.inner_template_params.data(),
 									out_of_line_member.inner_template_params.size()));
@@ -9235,6 +9256,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							effective_template_args_vector.data(),
 							effective_template_args_vector.size()),
 						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						struct_info->getNamespaceHandle(),
 						effective_template_args);
 				std::optional<NormalizedInitializer> normalized_initializer =
@@ -9243,6 +9265,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						gSymbolTable,
 						*this,
 						struct_info,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						effective_template_params,
 						effective_template_args_vector,
 						instantiated_static_member->type_index,
@@ -9892,7 +9915,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*body_to_substitute,
 							effective_template_params,
 							effective_template_args,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							!func_decl.is_static());
 						if (force_eager) {
 							if (std::optional<StringHandle> unresolved_type =
@@ -10109,7 +10132,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*ctor_decl.get_definition(),
 							template_params,
 							template_args_to_use,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							true);
 					}
 
@@ -10248,7 +10271,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						*dtor_decl.get_definition(),
 						template_params,
 						template_args_to_use,
-						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						true);
 
 					// Create a new destructor declaration with substituted body
@@ -10996,7 +11019,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::span<const TemplateTypeArg>(
 							template_args_to_use.data(),
 							template_args_to_use.size()),
-						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(
+							TypeCategory::Struct),
 						std::span<const TemplateParameterNode>(
 							out_of_line_member.inner_template_params.data(),
 							out_of_line_member.inner_template_params.size()));
@@ -11130,7 +11154,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::span<const TemplateTypeArg>(
 							template_args_to_use.data(),
 							template_args_to_use.size()),
-						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(
+							TypeCategory::Struct),
 						std::span<const TemplateParameterNode>(
 							out_of_line_member.inner_template_params.data(),
 							out_of_line_member.inner_template_params.size()));
@@ -11300,7 +11325,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::span<const TemplateTypeArg>(
 					template_args_to_use.data(),
 					template_args_to_use.size()),
-				instantiated_name);
+				struct_type_info.registeredTypeIndex().withCategory(
+					TypeCategory::Struct));
 		if (FunctionDeclarationNode* inst_func = plain_member_resolution.func;
 			inst_func != nullptr) {
 			materializeReplayAttachedFunctionParameterTypesFromDefinition(
@@ -11317,7 +11343,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::span<const TemplateTypeArg>(
 					template_args_to_use.data(),
 					template_args_to_use.size()),
-				instantiated_name);
+				struct_type_info.registeredTypeIndex().withCategory(
+					TypeCategory::Struct));
 			const std::span<const ASTNode> inst_func_params = inst_func->parameter_nodes();
 			std::vector<ASTNode> definition_scope_params(
 				inst_func_params.begin(),
@@ -11397,7 +11424,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::span<const TemplateTypeArg>(
 							template_args_to_use.data(),
 							template_args_to_use.size()),
-						instantiated_name);
+						struct_type_info.registeredTypeIndex().withCategory(
+							TypeCategory::Struct));
 					info_func_resolution.func->set_definition(*inst_func->get_definition());
 					finalize_function_after_definition(*info_func_resolution.func, true);
 				}
@@ -11456,7 +11484,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::span<const TemplateTypeArg>(
 						template_args_to_use.data(),
 						template_args_to_use.size()),
-					instantiated_name);
+					struct_type_info.registeredTypeIndex().withCategory(
+						TypeCategory::Struct));
 			if (ctor_resolution.ambiguous) {
 				std::string ambiguity_msg = std::string(StringBuilder()
 					.append("Could not uniquely match out-of-line constructor '")
@@ -11709,7 +11738,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						*body_result.node(),
 						out_of_line_member.template_params,
 						template_args_to_use,
-						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						true);
 					ctor.set_definition(substituted_body);
 					// Also update the StructTypeInfo's copy (used by codegen)
@@ -11817,6 +11846,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						template_args_to_use,
 						nullptr,
 						currentTemplateSubstitutionFailurePolicy());
+				substitution_context.current_instantiation_type =
+					struct_type_info.registeredTypeIndex().withCategory(
+						TypeCategory::Struct);
 
 				const DeclarationNode* declaration_ptr =
 					get_decl_from_symbol(*out_of_line_var.declaration);
@@ -11859,7 +11891,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					non_type_categories);
 
 				auto member_ctx_scope =
-					push_replay_member_context(instantiated_name, struct_info_ptr);
+					push_replay_member_context(
+						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(
+							TypeCategory::Struct),
+						struct_info_ptr);
 
 				restore_lexer_position_only(*out_of_line_var.initializer_position);
 				ASTNode declaration_copy = *out_of_line_var.declaration;

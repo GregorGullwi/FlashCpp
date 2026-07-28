@@ -3247,12 +3247,7 @@ public:	// Public methods for template instantiation
 		const ASTNode& node,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
-		StringHandle current_owner_type_name);
-	ASTNode substituteTemplateParameters(
-		const ASTNode& node,
-		std::span<const TemplateParameterNode> template_params,
-		std::span<const TemplateTypeArg> template_args,
-		StringHandle current_owner_type_name,
+		TypeIndex current_owner_type_index,
 		bool has_implicit_this);
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
@@ -3269,7 +3264,7 @@ public:	// Public methods for template instantiation
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
 		const TemplateEnvironmentSnapshot& outer_snapshot,
-		StringHandle instantiated_owner_name,
+		TypeIndex instantiated_owner_type_index,
 		bool has_implicit_this);
 
 	// Helper to extract type from an expression for overload resolution.
@@ -3411,6 +3406,9 @@ private:	 // Resume private methods
 	bool expressionTypeDeductionIsStillDependent(const ASTNode& expr);
 	std::optional<TypeSpecifierNode> lookupSubstitutedLocalBindingType(
 		StringHandle name) const;
+	TemplateBodySubstitutionState makeTemplateBodySubstitutionState(
+		TypeIndex owner_type_index,
+		bool has_implicit_this) const;
 	ASTNode substituteTemplateParametersWithState(
 		const ASTNode& node,
 		std::span<const TemplateParameterNode> template_params,
@@ -3553,7 +3551,7 @@ private:	 // Resume private methods
 		const ASTNode& arg,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
-		StringHandle current_owner_type_name,
+		TemplateBodySubstitutionState& state,
 		ChunkedVector<ASTNode>& out);
 
 		// Phase 3: Expression context tracking for template disambiguation
