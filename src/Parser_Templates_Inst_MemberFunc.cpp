@@ -2957,7 +2957,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				*orig_body,
 				template_params,
 				inline_template_args,
-				current_owner_type_name);
+				current_owner_type_name,
+				!func_decl.is_static());
 			if (func_decl.has_outer_template_bindings()) {
 				InlineVector<StringHandle, 4> outer_param_names;
 				InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos;
@@ -2977,7 +2978,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					substituted_body,
 					typed_outer_params,
 					outer_args,
-					current_owner_type_name);
+					current_owner_type_name,
+					!func_decl.is_static());
 			}
 			if (outer_binding != nullptr) {
 				InlineVector<TemplateParameterNode, 4> typed_outer_params;
@@ -3002,7 +3004,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					substituted_body,
 					typed_outer_params,
 					outer_args,
-					current_owner_type_name);
+					current_owner_type_name,
+					!func_decl.is_static());
 			}
 			new_func_ref.set_definition(substituted_body);
 			finalize_function_after_definition(new_func_ref);
@@ -3200,7 +3203,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					*block_result.node(),
 					template_params,
 					inline_template_args,
-					current_owner_type_name);
+					current_owner_type_name,
+					!func_decl.is_static());
 				new_func_ref.set_definition(substituted_body);
 			}
 		} // current_template_param_names_ restored here

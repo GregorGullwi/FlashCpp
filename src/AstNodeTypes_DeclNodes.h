@@ -2374,6 +2374,44 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placehold
 	return deduced_type;
 }
 
+// Apply placeholder deduction for a variable declarator.
+// - `decltype(auto)` keeps the exact deduced expression type.
+// - value `auto` strips top-level reference/cv from the expression type.
+// - reference declarators retain referred-to cv, combine declarator cv, and
+//   apply forwarding-reference collapsing (`auto&`, `const auto&`, `auto&&`).
+inline TypeSpecifierNode applyPlaceholderDeclaratorDeduction(
+	TypeCategory placeholder_cat,
+	const TypeSpecifierNode& declarator_type,
+	TypeSpecifierNode deduced_expr_type) {
+	assert(isPlaceholderAutoType(placeholder_cat));
+	if (placeholder_cat == TypeCategory::DeclTypeAuto) {
+		return deduced_expr_type;
+	}
+
+	const ReferenceQualifier initializer_ref =
+		deduced_expr_type.reference_qualifier();
+	const CVQualifier initializer_cv = deduced_expr_type.cv_qualifier();
+	TypeSpecifierNode result =
+		finalizePlaceholderTypeDeduction(placeholder_cat, deduced_expr_type);
+	const ReferenceQualifier declarator_ref =
+		declarator_type.reference_qualifier();
+	if (declarator_ref == ReferenceQualifier::LValueReference ||
+		(declarator_ref == ReferenceQualifier::RValueReference &&
+		 initializer_ref == ReferenceQualifier::LValueReference)) {
+		result.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	} else {
+		result.set_reference_qualifier(declarator_ref);
+	}
+	if (declarator_ref != ReferenceQualifier::None) {
+		result.set_cv_qualifier(static_cast<CVQualifier>(
+			static_cast<uint8_t>(initializer_cv) |
+			static_cast<uint8_t>(declarator_type.cv_qualifier())));
+	} else if (declarator_type.cv_qualifier() != CVQualifier::None) {
+		result.set_cv_qualifier(declarator_type.cv_qualifier());
+	}
+	return result;
+}
+
 // Compute the size in bits of the value type described by a TypeSpecifierNode.
 // Per C++20 [expr.sizeof], this returns the object representation size for complete types.
 // For Struct/UserDefined: authoritative lookup via toBits(StructTypeInfo::total_size).value,

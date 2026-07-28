@@ -2325,7 +2325,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref.set_definition(substituteTemplateParameters(
 							*orig_ctor.get_definition(),
 							template_params,
-							template_args_for_member_copy));
+							template_args_for_member_copy,
+							instantiated_name,
+							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
@@ -2417,7 +2419,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						ASTNode substituted_body = substituteTemplateParameters(
 							*orig_func.get_definition(),
 							template_params,
-							template_args_for_member_copy);
+							template_args_for_member_copy,
+							instantiated_name,
+							!orig_func.is_static());
 						if (orig_func.is_static()) {
 							substituted_body = rebindStaticMemberInitializerFunctionCalls(
 								substituted_body,
@@ -3564,7 +3568,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Copy definition if present (with template parameter substitution)
 					if (orig_ctor.is_materialized()) {
-						new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args_for_pattern));
+						new_ctor_ref.set_definition(substituteTemplateParameters(
+							*orig_ctor.get_definition(),
+							template_params,
+							template_args_for_pattern,
+							instantiated_name,
+							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
@@ -3962,7 +3971,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_body = substituteTemplateParameters(
 								*orig_func.get_definition(),
 								template_params,
-								template_args_for_pattern);
+								template_args_for_pattern,
+								instantiated_name,
+								!orig_func.is_static());
 						}
 						if (orig_func.is_static()) {
 							const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
@@ -4014,7 +4025,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								ASTNode substituted_body = substituteTemplateParameters(
 									*block_result.node(),
 									template_params,
-									template_args_for_pattern);
+									template_args_for_pattern,
+									instantiated_name,
+									!orig_func.is_static());
 								if (orig_func.is_static()) {
 									const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
 									substituted_body = rebindStaticMemberInitializerFunctionCalls(
@@ -9878,7 +9891,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						ASTNode substituted_body = substituteTemplateParameters(
 							*body_to_substitute,
 							effective_template_params,
-							effective_template_args);
+							effective_template_args,
+							instantiated_name,
+							!func_decl.is_static());
 						if (force_eager) {
 							if (std::optional<StringHandle> unresolved_type =
 									findUnresolvedHardUseTypeSpecifier(substituted_body);
@@ -10093,7 +10108,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_body = substituteTemplateParameters(
 							*ctor_decl.get_definition(),
 							template_params,
-							template_args_to_use);
+							template_args_to_use,
+							instantiated_name,
+							true);
 					}
 
 					// Copy all initializers (member, base, delegating) with template parameter substitution
@@ -10230,7 +10247,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ASTNode substituted_body = substituteTemplateParameters(
 						*dtor_decl.get_definition(),
 						template_params,
-						template_args_to_use);
+						template_args_to_use,
+						instantiated_name,
+						true);
 
 					// Create a new destructor declaration with substituted body
 					StringHandle specialized_dtor_name = StringTable::getOrInternStringHandle(StringBuilder()
@@ -11689,7 +11708,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ASTNode substituted_body = substituteTemplateParameters(
 						*body_result.node(),
 						out_of_line_member.template_params,
-						template_args_to_use);
+						template_args_to_use,
+						instantiated_name,
+						true);
 					ctor.set_definition(substituted_body);
 					// Also update the StructTypeInfo's copy (used by codegen)
 					if (struct_type_info.getStructInfo()) {

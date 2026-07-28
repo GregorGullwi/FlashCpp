@@ -46,7 +46,8 @@ ASTNode Parser::substituteLazyMemberBody(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	const TemplateEnvironmentSnapshot& outer_snapshot,
-	StringHandle instantiated_owner_name) {
+	StringHandle instantiated_owner_name,
+	bool has_implicit_this) {
 	std::optional<TemplateEnvironment> outer_environment;
 	TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
 		outer_snapshot,
@@ -61,7 +62,8 @@ ASTNode Parser::substituteLazyMemberBody(
 		body,
 		template_params,
 		template_args,
-		instantiated_owner_name);
+		instantiated_owner_name,
+		has_implicit_this);
 }
 
 std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
@@ -447,7 +449,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			lazy_info.template_params,
 			converted_template_args,
 			lazy_info.outer_template_environment_snapshot,
-			lazy_info.identity.instantiated_owner_name);
+			lazy_info.identity.instantiated_owner_name,
+			true);
 		new_ctor_ref.set_definition(substituted_body);
 		new_ctor_ref.set_mangled_name(NameMangling::generateMangledNameFromNode(
 			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
@@ -627,7 +630,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			lazy_info.template_params,
 			converted_template_args,
 			lazy_info.outer_template_environment_snapshot,
-			lazy_info.identity.instantiated_owner_name);
+			lazy_info.identity.instantiated_owner_name,
+			true);
 		new_dtor_ref.set_definition(substituted_body);
 
 		registerAndNormalizeLateMaterializedTopLevelNode(new_dtor_node);
@@ -960,7 +964,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			std::span<const TemplateParameterNode>(substitution_params.data(), substitution_params.size()),
 			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
 			lazy_info.outer_template_environment_snapshot,
-			lazy_info.identity.instantiated_owner_name);
+			lazy_info.identity.instantiated_owner_name,
+			!func_decl.is_static());
 		std::optional<TemplateEnvironment> outer_environment;
 		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
 			lazy_info.outer_template_environment_snapshot,
