@@ -353,6 +353,18 @@ ASTNode Parser::substituteTemplateParameters(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle current_owner_type_name) {
+	const bool is_root_substitution = template_substitution_depth_ == 0;
+	if (is_root_substitution) {
+		substituted_auto_local_types_.clear();
+	}
+	++template_substitution_depth_;
+	auto substitution_scope = ScopeGuard([this, is_root_substitution]() {
+		--template_substitution_depth_;
+		if (is_root_substitution) {
+			substituted_auto_local_types_.clear();
+		}
+	});
+
 	const auto substitute_nested = [&](const ASTNode& child) -> ASTNode {
 		return substituteTemplateParameters(
 			child,
@@ -1948,6 +1960,12 @@ ASTNode Parser::substituteTemplateParameters(
 		// Handle variable declarations
 		const VariableDeclarationNode& var_decl = node.as<VariableDeclarationNode>();
 		ASTNode substituted_decl = substitute_nested(var_decl.declaration_node());
+		const bool had_placeholder_auto =
+			substituted_decl.is<DeclarationNode>() &&
+			isPlaceholderAutoType(
+				substituted_decl.as<DeclarationNode>()
+					.type_specifier_node()
+					.type());
 
 		auto initializer = var_decl.initializer().has_value() ? std::optional<ASTNode>(substitute_nested(*var_decl.initializer())) : std::nullopt;
 
@@ -1977,7 +1995,9 @@ ASTNode Parser::substituteTemplateParameters(
 			DeclarationNode& sub_decl_ref = substituted_decl.as<DeclarationNode>();
 			if (isPlaceholderAutoType(sub_decl_ref.type_specifier_node().type())) {
 				if (std::optional<TypeSpecifierNode> deduced_type =
-						get_expression_type(*initializer)) {
+						getExpressionTypeForOwner(
+							*initializer,
+							current_owner_type_name)) {
 					sub_decl_ref.set_type_node(*deduced_type);
 				} else if (!isDependentTemplateContext()) {
 					throw CompileError(std::string(StringBuilder()
@@ -1992,6 +2012,13 @@ ASTNode Parser::substituteTemplateParameters(
 		ASTNode new_var_node = emplace_node<VariableDeclarationNode>(substituted_decl, initializer, var_decl.storage_class());
 		VariableDeclarationNode& new_var = new_var_node.as<VariableDeclarationNode>();
 		setOuterTemplateBindingsFromParams(new_var, template_params, template_args);
+		if (had_placeholder_auto &&
+			!isPlaceholderAutoType(
+				new_var.declaration().type_specifier_node().type())) {
+			substituted_auto_local_types_.insert_or_assign(
+				new_var.declaration().identifier_token().handle(),
+				new_var.declaration().type_specifier_node());
+		}
 
 		// Preserve constexpr/constinit flags
 		new_var.set_is_thread_local(var_decl.is_thread_local());

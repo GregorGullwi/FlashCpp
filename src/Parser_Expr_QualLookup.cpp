@@ -26,16 +26,23 @@ bool identifierRefersToActiveTemplateParam(
 		identifier) != current_template_param_names.end();
 }
 
-bool expressionTypeDeductionIsStillDependent(
+bool expressionDirectlyReferencesTemplateDependency(
 	const ASTNode& expr,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const InlineVector<StringHandle, 4>& current_template_param_names,
+	bool implicit_object_type_is_dependent) {
 	return AstTraversal::visitASTUntil(expr, [&](const ASTNode& current) {
 		if (current.is<TemplateParameterReferenceNode>()) {
 			return true;
 		}
 		if (current.is<IdentifierNode>()) {
+			const IdentifierNode& identifier = current.as<IdentifierNode>();
+			if (implicit_object_type_is_dependent &&
+				(identifier.name() == "this"sv ||
+				 identifier.binding() == IdentifierBinding::NonStaticMember)) {
+				return true;
+			}
 			return identifierRefersToActiveTemplateParam(
-				current.as<IdentifierNode>().nameHandle(),
+				identifier.nameHandle(),
 				current_template_param_names);
 		}
 		if (current.is<QualifiedIdentifierNode>()) {
@@ -61,6 +68,90 @@ bool expressionTypeDeductionIsStillDependent(
 		return false;
 	});
 }
+}
+
+bool Parser::currentImplicitObjectTypeIsDependent() const {
+	if (member_function_context_stack_.empty()) {
+		return false;
+	}
+
+	const MemberFunctionContext& member_context = member_function_context_stack_.back();
+	if (!member_context.has_implicit_this) {
+		return false;
+	}
+
+	if (parsing_template_class_) {
+		for (StringHandle param_name : currentTemplateParamNames()) {
+			const bool has_substitution = std::find_if(
+				template_param_substitutions_.begin(),
+				template_param_substitutions_.end(),
+				[param_name](const TemplateParamSubstitution& substitution) {
+					return substitution.param_name == param_name;
+				}) != template_param_substitutions_.end();
+			if (!has_substitution) {
+				return true;
+			}
+		}
+	}
+
+	if (typeIndexContainsDependentPlaceholder(member_context.struct_type_index)) {
+		return true;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(member_context.struct_type_index);
+	return type_info != nullptr && type_info->isDependentPlaceholder();
+}
+
+bool Parser::expressionTypeDeductionIsStillDependent(const ASTNode& expr) {
+	if (expressionDirectlyReferencesTemplateDependency(
+			expr,
+			currentTemplateParamNames(),
+			currentImplicitObjectTypeIsDependent())) {
+		return true;
+	}
+
+	return AstTraversal::visitASTUntil(expr, [this](const ASTNode& current) {
+		if (!current.is<IdentifierNode>()) {
+			return false;
+		}
+
+		const IdentifierNode& identifier = current.as<IdentifierNode>();
+		auto symbol = lookup_symbol(identifier.nameHandle());
+		if (!symbol.has_value()) {
+			return false;
+		}
+
+		const DeclarationNode* declaration = get_decl_from_symbol(*symbol);
+		return declaration != nullptr &&
+			   typeSpecStillUsesDependentPlaceholder(
+				   declaration->type_specifier_node());
+	});
+}
+
+std::optional<TypeSpecifierNode> Parser::getExpressionTypeForOwner(
+	const ASTNode& expr_node,
+	StringHandle owner_type_name) {
+	if (!member_function_context_stack_.empty() ||
+		!owner_type_name.isValid()) {
+		return get_expression_type(expr_node);
+	}
+
+	const TypeInfo* owner_type_info = findTypeByName(owner_type_name);
+	if (owner_type_info == nullptr || owner_type_info->getStructInfo() == nullptr) {
+		return get_expression_type(expr_node);
+	}
+
+	member_function_context_stack_.push_back({
+		owner_type_name,
+		owner_type_info->registeredTypeIndex(),
+		nullptr,
+		nullptr,
+		true
+	});
+	auto context_guard = ScopeGuard([this]() {
+		member_function_context_stack_.pop_back();
+	});
+	return get_expression_type(expr_node);
 }
 
 // Helper: Parse template brace initialization: Template<Args>{}
@@ -2708,6 +2799,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		return literal_type;
 	} else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
+		auto substituted_local_type =
+			substituted_auto_local_types_.find(ident.nameHandle());
+		if (substituted_local_type != substituted_auto_local_types_.end()) {
+			return substituted_local_type->second;
+		}
 		auto symbol = this->lookup_symbol(ident.nameHandle());
 		if (symbol.has_value()) {
 			if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
@@ -3560,7 +3656,7 @@ Parser::ExpressionTypeDeductionResult Parser::deduce_type_from_expression(const 
 	}
 
 	if (isDependentTemplateContext() &&
-		expressionTypeDeductionIsStillDependent(expr, currentTemplateParamNames())) {
+		expressionTypeDeductionIsStillDependent(expr)) {
 		return {ExpressionTypeDeductionStatus::StillDependent, TypeCategory::Auto};
 	}
 
@@ -3644,8 +3740,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 						typeSpecStillUsesDependentPlaceholder(normalized_type) ||
 						(isDependentTemplateContext() &&
 						 expressionTypeDeductionIsStillDependent(
-							 *ret.expression(),
-							 currentTemplateParamNames()))) {
+							 *ret.expression()))) {
 						// Expression type could be formed but remains dependent at this
 						// stage; defer hard deduction/consistency checks for now.
 						has_still_dependent_return = true;
@@ -3662,7 +3757,8 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 						}
 					}
 				} else if (isDependentTemplateContext() &&
-						   expressionTypeDeductionIsStillDependent(*ret.expression(), currentTemplateParamNames())) {
+						   expressionTypeDeductionIsStillDependent(
+							   *ret.expression())) {
 					has_still_dependent_return = true;
 				}
 			} else {
@@ -3694,7 +3790,8 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					}
 					return;
 				}
-				if (expressionTypeDeductionIsStillDependent(if_stmt.get_condition(), currentTemplateParamNames())) {
+				if (expressionTypeDeductionIsStillDependent(
+						if_stmt.get_condition())) {
 					has_still_dependent_return = true;
 					return;
 				}

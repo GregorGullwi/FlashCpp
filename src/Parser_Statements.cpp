@@ -1675,6 +1675,12 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 			// Get the full type specifier from the initializer expression
 			auto deduced_type_spec_opt = get_expression_type(*initializer);
 			if (deduced_type_spec_opt.has_value()) {
+				if (isDependentTemplateContext() &&
+					typeSpecStillUsesDependentPlaceholder(*deduced_type_spec_opt)) {
+					FLASH_LOG(Parser, Debug,
+							  "Deferred auto variable type deduction for dependent initializer type");
+					return init_expr_result;
+				}
 				// Use the full deduced type specifier (preserves struct type index, etc.)
 				type_specifier = *deduced_type_spec_opt;
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type from initializer: type=",

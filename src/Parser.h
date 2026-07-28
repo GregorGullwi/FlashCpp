@@ -1180,6 +1180,9 @@ private:
 		std::vector<TemplateTypeArg> pack_args;
 	};
 	InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
+	// Scratch types for sequential dependent auto declarations in one substituted body.
+	size_t template_substitution_depth_ = 0;
+	std::unordered_map<StringHandle, TypeSpecifierNode> substituted_auto_local_types_;
 
 	// Track nesting depth of template body parsing (for template parameter reference recognition).
 	// A value > 0 means we are inside one or more template definitions.
@@ -3382,6 +3385,11 @@ private:	 // Resume private methods
 		TypeCategory type = TypeCategory::Invalid;
 	};
 
+	std::optional<TypeSpecifierNode> getExpressionTypeForOwner(
+		const ASTNode& expr_node,
+		StringHandle owner_type_name);
+	bool currentImplicitObjectTypeIsDependent() const;
+	bool expressionTypeDeductionIsStillDependent(const ASTNode& expr);
 	ExpressionTypeDeductionResult deduce_type_from_expression(const ASTNode& expr);
 	void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
 	std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
