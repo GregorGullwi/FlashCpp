@@ -2071,8 +2071,40 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			const TypeCategory placeholder_cat =
 				sub_decl_ref.type_specifier_node().type();
 			if (isPlaceholderAutoType(placeholder_cat)) {
-				if (std::optional<TypeSpecifierNode> deduced_type =
-						get_expression_type(*initializer)) {
+				std::optional<TypeSpecifierNode> deduced_type =
+					get_expression_type(*initializer);
+				// When typing still treats the call as dependent-unqualified but
+				// the callee declaration is known, recover its return type and
+				// rebind through the active substitution (view_interface::_Cast).
+				if (!deduced_type.has_value()) {
+					const CallExprNode* call_expr = nullptr;
+					if (initializer->is<CallExprNode>()) {
+						call_expr = &initializer->as<CallExprNode>();
+					} else if (initializer->is<ExpressionNode>()) {
+						call_expr = std::get_if<CallExprNode>(
+							&initializer->as<ExpressionNode>());
+					}
+					if (call_expr != nullptr) {
+						if (const FunctionDeclarationNode* callee_func =
+								getBestEffortDirectCallTarget(*call_expr);
+							callee_func != nullptr) {
+							deduced_type = callee_func->decl_node().type_specifier_node();
+						} else if (call_expr->has_parser_return_type_hint()) {
+							deduced_type = call_expr->parser_return_type_hint();
+						}
+					}
+				}
+				if (deduced_type.has_value()) {
+					// Call return types may still spell template parameters
+					// (CRTP Derived& / _Derived&) until run through the active
+					// substitution map. Rebind before deciding to defer.
+					if (typeSpecStillUsesDependentPlaceholder(*deduced_type)) {
+						ASTNode rebound_type_node = substitute_nested(
+							emplace_node<TypeSpecifierNode>(*deduced_type));
+						if (rebound_type_node.is<TypeSpecifierNode>()) {
+							deduced_type = rebound_type_node.as<TypeSpecifierNode>();
+						}
+					}
 					if (typeSpecStillUsesDependentPlaceholder(*deduced_type)) {
 						FLASH_LOG(Parser, Debug,
 								  "Deferred substituted auto local; initializer type still dependent");
