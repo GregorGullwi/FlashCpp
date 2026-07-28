@@ -136,13 +136,15 @@ struct SpecializedBox {
 };
 
 int main() {
-	// Force all bodies to instantiate and type-check. Reference lowering for
-	// copied aggregates is outside this parser/sema regression.
-	if (false) {
-		Box<int> ints;
-		Box<short> shorts;
-		SpecializedBox<char> chars;
-		return ints.test() + shorts.test() + chars.test();
-	}
-	return 42;
+	Box<int> ints;
+	ints.data.first.value = 1;
+	ints.data.second.value = 2;
+	Box<short> shorts;
+	shorts.data.first.value = 3;
+	shorts.data.second.value = 4;
+	SpecializedBox<char> chars;
+	chars.item.value = 5;
+	chars.item.tag = 6;
+	const int result = ints.test() + shorts.test() + chars.test();
+	return result == 275 ? 42 : 1;
 }

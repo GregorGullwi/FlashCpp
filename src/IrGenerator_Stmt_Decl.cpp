@@ -48,6 +48,13 @@ bool isExprResultPRValue(const ExprResult& expr_result) {
 	return false;
 }
 
+bool isExprResultLValue(const ExprResult& expr_result) {
+	if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+		return getTempVarMetadata(*temp_var).category == ValueCategory::LValue;
+	}
+	return false;
+}
+
 [[noreturn]] void reportNoMatchingConstructor(StringHandle struct_name, std::string_view init_kind, const Token& token) {
 	throw CompileError(std::string(StringBuilder()
 									   .append("No matching constructor for ")
@@ -1366,6 +1373,21 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		operands.emplace_back(appended_result.value);
 		operands.emplace_back(static_cast<int>(appended_result.storage));
 	};
+	auto visitVariableInitializer = [&](const ExpressionNode& initializer) {
+		const bool binds_reference = type_node.is_reference() || type_node.is_rvalue_reference();
+		ExprResult result = visitExpressionNode(
+			initializer,
+			binds_reference ? ExpressionContext::LValueAddress : ExpressionContext::Load);
+		if (binds_reference &&
+			isExprResultLValue(result) &&
+			!exprResultAlreadyHoldsRuntimeAddress(result)) {
+			result = materializeAddressResult(
+				initializer,
+				std::move(result),
+				decl.identifier_token());
+		}
+		return result;
+	};
 	operands.emplace_back(type_node.type());
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
 	int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
@@ -1448,7 +1470,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				const ASTNode& single_init = init_list.initializers()[0];
 
 					// Visit the initializer expression to get its IR
-				ExprResult init_operands = visitExpressionNode(single_init.as<ExpressionNode>());
+				ExprResult init_operands = visitVariableInitializer(single_init.as<ExpressionNode>());
 
 					// Append the initializer operands
 				appendExprResultToOperands(init_operands);
@@ -2044,11 +2066,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (!is_copy_init_for_struct) {
 					// Already registered via ensure_symbol_registered() above.
 
-					// For reference types, use LValueAddress context to get the address of the initializer
-				ExpressionContext ref_context = (type_node.is_reference() || type_node.is_rvalue_reference())
-													? ExpressionContext::LValueAddress
-													: ExpressionContext::Load;
-				ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>(), ref_context);
+				ExprResult init_operands = visitVariableInitializer(init_node.as<ExpressionNode>());
 
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()

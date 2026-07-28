@@ -33,12 +33,7 @@ public:
 };
 
 int main() {
-	// These calls force both bodies to instantiate and type-check. Keep them out
-	// of the executed path because reference lowering is a separate codegen concern.
-	if (false) {
-		Container<int> int_container;
-		Container<long long> wide_container;
-		return int_container.test() + wide_container.test();
-	}
-	return 42;
+	Container<int> int_container;
+	Container<long long> wide_container;
+	return int_container.test() + wide_container.test();
 }
