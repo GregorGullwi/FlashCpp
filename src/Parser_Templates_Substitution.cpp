@@ -341,26 +341,28 @@ ASTNode Parser::substituteTemplateParameters(
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	const TemplateInstantiationContext& context) {
-	TemplateBodySubstitutionState state;
-	state.owner_type_name = context.current_instantiation_name;
-	state.owner_type_index = context.current_instantiation_type;
-	if (!state.owner_type_index.is_valid() && state.owner_type_name.isValid()) {
-		if (const TypeInfo* owner_type_info = findTypeByName(state.owner_type_name)) {
-			state.owner_type_index = owner_type_info->registeredTypeIndex();
+	TypeIndex owner_type_index = context.current_instantiation_type;
+	if (!owner_type_index.is_valid() && context.current_instantiation_name.isValid()) {
+		const TypeInfo* owner_type_info =
+			findTypeByName(context.current_instantiation_name);
+		if (owner_type_info == nullptr) {
+			throw CompileError(std::string(StringBuilder()
+				.append("Unable to resolve concrete template substitution owner '")
+				.append(StringTable::getStringView(context.current_instantiation_name))
+				.append("'")
+				.commit()));
 		}
+		owner_type_index =
+			owner_type_info->registeredTypeIndex().withCategory(TypeCategory::Struct);
 	}
-	if (!member_function_context_stack_.empty()) {
-		state.has_implicit_this =
-			member_function_context_stack_.back().has_implicit_this;
-		if (!state.owner_type_index.is_valid()) {
-			state.owner_type_index =
-				member_function_context_stack_.back().struct_type_index;
-		}
-		if (!state.owner_type_name.isValid()) {
-			state.owner_type_name =
-				member_function_context_stack_.back().struct_name;
-		}
+	const bool has_implicit_this = !member_function_context_stack_.empty() &&
+		member_function_context_stack_.back().has_implicit_this;
+	if (!owner_type_index.is_valid() && !member_function_context_stack_.empty()) {
+		owner_type_index = member_function_context_stack_.back().struct_type_index;
 	}
+	TemplateBodySubstitutionState state = makeTemplateBodySubstitutionState(
+		owner_type_index,
+		has_implicit_this);
 	return substituteTemplateParametersWithState(
 		node,
 		context.template_parameters,
@@ -381,11 +383,28 @@ ASTNode Parser::substituteTemplateParameters(
 		// Name-only callers historically substitute non-static member bodies.
 		has_implicit_this = current_owner_type_name.isValid();
 	}
+	TypeIndex owner_type_index{};
+	if (current_owner_type_name.isValid()) {
+		const TypeInfo* owner_type_info =
+			findTypeByName(current_owner_type_name);
+		if (owner_type_info == nullptr) {
+			throw CompileError(std::string(StringBuilder()
+				.append("Unable to resolve concrete template substitution owner '")
+				.append(StringTable::getStringView(current_owner_type_name))
+				.append("'")
+				.commit()));
+		}
+		owner_type_index =
+			owner_type_info->registeredTypeIndex().withCategory(TypeCategory::Struct);
+	}
+	if (!owner_type_index.is_valid() && !member_function_context_stack_.empty()) {
+		owner_type_index = member_function_context_stack_.back().struct_type_index;
+	}
 	return substituteTemplateParameters(
 		node,
 		template_params,
 		template_args,
-		current_owner_type_name,
+		owner_type_index,
 		has_implicit_this);
 }
 
@@ -393,31 +412,39 @@ ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
-	StringHandle current_owner_type_name,
+	TypeIndex current_owner_type_index,
 	bool has_implicit_this) {
-	TemplateBodySubstitutionState state;
-	state.owner_type_name = current_owner_type_name;
-	state.has_implicit_this = has_implicit_this;
-	if (current_owner_type_name.isValid()) {
-		if (const TypeInfo* owner_type_info = findTypeByName(current_owner_type_name)) {
-			state.owner_type_index = owner_type_info->registeredTypeIndex();
-		}
-	}
-	if (!member_function_context_stack_.empty()) {
-		if (!state.owner_type_index.is_valid()) {
-			state.owner_type_index =
-				member_function_context_stack_.back().struct_type_index;
-		}
-		if (!state.owner_type_name.isValid()) {
-			state.owner_type_name =
-				member_function_context_stack_.back().struct_name;
-		}
-	}
+	TemplateBodySubstitutionState state = makeTemplateBodySubstitutionState(
+		current_owner_type_index,
+		has_implicit_this);
 	return substituteTemplateParametersWithState(
 		node,
 		template_params,
 		template_args,
 		state);
+}
+
+Parser::TemplateBodySubstitutionState Parser::makeTemplateBodySubstitutionState(
+	TypeIndex owner_type_index,
+	bool has_implicit_this) const {
+	TemplateBodySubstitutionState state;
+	state.owner_type_index = owner_type_index;
+	state.has_implicit_this = has_implicit_this;
+
+	if (state.owner_type_index.is_valid()) {
+		const TypeInfo* owner_type_info = tryGetTypeInfo(state.owner_type_index);
+		if (owner_type_info == nullptr) {
+			throw CompileError(std::string(StringBuilder()
+				.append("Unable to resolve concrete template substitution owner TypeIndex ")
+				.append(static_cast<uint64_t>(state.owner_type_index.index()))
+				.commit()));
+		}
+		state.owner_type_name = owner_type_info->name();
+	} else if (has_implicit_this) {
+		throw CompileError(
+			"Implicit-object template substitution requires a concrete owner TypeIndex");
+	}
+	return state;
 }
 
 ASTNode Parser::substituteTemplateParametersWithState(
@@ -608,7 +635,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				arg,
 				template_params,
 				template_args,
-				current_owner_type_name,
+				state,
 				substituted_args);
 		}
 		CallExprNode substituted_call = call.has_receiver()
@@ -962,18 +989,15 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				/*wrap_in_expression=*/true);
 		} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 			const ConstructorCallNode& constructor_call = std::get<ConstructorCallNode>(expr);
-			ASTNode substituted_type = substituteTemplateParameters(
-				ASTNode(&constructor_call.type_node()),
-				template_params,
-				template_args,
-				current_owner_type_name);
+			ASTNode substituted_type =
+				substitute_nested(ASTNode(&constructor_call.type_node()));
 			ChunkedVector<ASTNode> substituted_args;
 			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
 				substituteArgWithPackExpansion(
 					constructor_call.arguments()[i],
 					template_params,
 					template_args,
-					current_owner_type_name,
+					state,
 					substituted_args);
 			}
 			return makeRebuiltConstructorCallNode(
@@ -983,11 +1007,10 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				/*wrap_in_expression=*/true);
 		} else if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 			const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
-			ASTNode substituted_type = substituteTemplateParameters(
-				trait_expr.type_node(), template_params, template_args, current_owner_type_name);
+			ASTNode substituted_type = substitute_nested(trait_expr.type_node());
 			if (trait_expr.has_second_type()) {
-				ASTNode substituted_second_type = substituteTemplateParameters(
-					trait_expr.second_type_node(), template_params, template_args, current_owner_type_name);
+				ASTNode substituted_second_type =
+					substitute_nested(trait_expr.second_type_node());
 				return emplace_node<ExpressionNode>(
 					TypeTraitExprNode(trait_expr.kind(), substituted_type, substituted_second_type, trait_expr.trait_token()));
 			}
@@ -1058,7 +1081,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 
 				if (num_pack_elements == 0) {
 					if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
-						return substituteTemplateParameters(*fold.init_expr(), template_params, template_args);
+						return substitute_nested(*fold.init_expr());
 					}
 					// C++17: empty unary fold is allowed only for &&, || and comma
 					// For other operators, return identity values
@@ -1119,7 +1142,11 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					if (!func_pack_name.empty() && expanded_pack_expr.has_value()) {
 						expanded_pack_expr = replacePackIdentifierInExpr(expanded_pack_expr, func_pack_name, i);
 					}
-					ASTNode substituted = substituteTemplateParameters(expanded_pack_expr, subst_params, subst_args);
+					ASTNode substituted = substituteTemplateParametersWithState(
+						expanded_pack_expr,
+						subst_params,
+						subst_args,
+						state);
 					pack_values.push_back(substituted);
 				}
 			} else {
@@ -1242,7 +1269,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				};
 
 				if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
-					ASTNode init = substituteTemplateParameters(*fold.init_expr(), template_params, template_args);
+					ASTNode init = substitute_nested(*fold.init_expr());
 					if (!appendConstantOperand(init)) {
 						return std::nullopt;
 					}
@@ -1294,7 +1321,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				}
 			} else {
 				// Binary fold with init expression
-				ASTNode init = substituteTemplateParameters(*fold.init_expr(), template_params, template_args);
+				ASTNode init = substitute_nested(*fold.init_expr());
 
 				if (fold.direction() == FoldExpressionNode::Direction::Left) {
 					// Left binary fold: (init op ... op pack) = (((init op pack[0]) op pack[1]) op ...)
@@ -1462,10 +1489,8 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
 			// static_cast<Type>(expr) - recursively substitute in both target type and expression
 			const StaticCastNode& cast_node = *static_cast_node;
-			ASTNode substituted_type = substituteTemplateParameters(
-				ASTNode(&cast_node.target_type()),
-				template_params,
-				template_args);
+			ASTNode substituted_type =
+				substitute_nested(ASTNode(&cast_node.target_type()));
 			if (cast_node.expr().is<ExpressionNode>()) {
 				const ExpressionNode& cast_expr = cast_node.expr().as<ExpressionNode>();
 				if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&cast_expr)) {
@@ -1484,27 +1509,21 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			return emplace_node<ExpressionNode>(StaticCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {
 			const DynamicCastNode& cast_node = *dynamic_cast_node;
-			ASTNode substituted_type = substituteTemplateParameters(
-				ASTNode(&cast_node.target_type()),
-				template_params,
-				template_args);
-			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			ASTNode substituted_type =
+				substitute_nested(ASTNode(&cast_node.target_type()));
+			ASTNode substituted_expr = substitute_nested(cast_node.expr());
 			return emplace_node<ExpressionNode>(DynamicCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
 			const ConstCastNode& cast_node = *const_cast_node;
-			ASTNode substituted_type = substituteTemplateParameters(
-				ASTNode(&cast_node.target_type()),
-				template_params,
-				template_args);
-			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			ASTNode substituted_type =
+				substitute_nested(ASTNode(&cast_node.target_type()));
+			ASTNode substituted_expr = substitute_nested(cast_node.expr());
 			return emplace_node<ExpressionNode>(ConstCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr)) {
 			const ReinterpretCastNode& cast_node = *reinterpret_cast_node;
-			ASTNode substituted_type = substituteTemplateParameters(
-				ASTNode(&cast_node.target_type()),
-				template_params,
-				template_args);
-			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
+			ASTNode substituted_type =
+				substitute_nested(ASTNode(&cast_node.target_type()));
+			ASTNode substituted_expr = substitute_nested(cast_node.expr());
 			return emplace_node<ExpressionNode>(ReinterpretCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
 		} else if (std::holds_alternative<SizeofExprNode>(expr)) {
 			// sizeof operator - substitute template parameters in the operand and try to evaluate
@@ -1610,11 +1629,8 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		}
 
 		if (std::holds_alternative<ConstructorCallNode>(expr)) {
-			return substituteTemplateParameters(
-				ASTNode(&std::get<ConstructorCallNode>(expr)),
-				template_params,
-				template_args,
-				current_owner_type_name);
+			return substitute_nested(
+				ASTNode(&std::get<ConstructorCallNode>(expr)));
 		}
 
 		// For other expression types that don't contain subexpressions, return as-is
@@ -1647,7 +1663,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 						constructor_call.arguments()[i],
 						template_params,
 						template_args,
-						current_owner_type_name,
+						state,
 						substituted_args);
 				}
 				if (std::optional<ASTNode> function_symbol =
@@ -1662,18 +1678,15 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				}
 			}
 		}
-		ASTNode substituted_type = substituteTemplateParameters(
-			ASTNode(&constructor_call.type_node()),
-			template_params,
-			template_args,
-			current_owner_type_name);
+		ASTNode substituted_type =
+			substitute_nested(ASTNode(&constructor_call.type_node()));
 			ChunkedVector<ASTNode> substituted_args;
 			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
 				substituteArgWithPackExpansion(
 					constructor_call.arguments()[i],
 					template_params,
 					template_args,
-					current_owner_type_name,
+					state,
 					substituted_args);
 			}
 		return makeRebuiltConstructorCallNode(
@@ -2004,8 +2017,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					}
 				}
 			}
-			ASTNode substituted_init = substituteTemplateParameters(
-				element, template_params, template_args, current_owner_type_name);
+			ASTNode substituted_init = substitute_nested(element);
 			if (init_list.is_designated(i)) {
 				new_init_list_ref.add_designated_initializer(init_list.member_name(i), substituted_init);
 			} else {
@@ -2527,7 +2539,7 @@ void Parser::substituteArgWithPackExpansion(
 	const ASTNode& arg,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
-	StringHandle current_owner_type_name,
+	TemplateBodySubstitutionState& state,
 	ChunkedVector<ASTNode>& out) {
 	if (arg.is<ExpressionNode>()) {
 		const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
@@ -2537,11 +2549,11 @@ void Parser::substituteArgWithPackExpansion(
 			}
 		}
 	}
-	out.push_back(substituteTemplateParameters(
+	out.push_back(substituteTemplateParametersWithState(
 		arg,
 		template_params,
 		template_args,
-		current_owner_type_name));
+		state));
 }
 
 // Replace a pack parameter identifier in an expression pattern with its expanded element name.

@@ -2326,7 +2326,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*orig_ctor.get_definition(),
 							template_params,
 							template_args_for_member_copy,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
@@ -2420,7 +2420,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*orig_func.get_definition(),
 							template_params,
 							template_args_for_member_copy,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							!orig_func.is_static());
 						if (orig_func.is_static()) {
 							substituted_body = rebindStaticMemberInitializerFunctionCalls(
@@ -3572,7 +3572,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*orig_ctor.get_definition(),
 							template_params,
 							template_args_for_pattern,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							true));
 					}
 					pack_param_info_.resize(saved_pack_info);
@@ -3972,7 +3972,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								*orig_func.get_definition(),
 								template_params,
 								template_args_for_pattern,
-								instantiated_name,
+								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 								!orig_func.is_static());
 						}
 						if (orig_func.is_static()) {
@@ -4026,7 +4026,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									*block_result.node(),
 									template_params,
 									template_args_for_pattern,
-									instantiated_name,
+									struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 									!orig_func.is_static());
 								if (orig_func.is_static()) {
 									const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
@@ -9892,7 +9892,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*body_to_substitute,
 							effective_template_params,
 							effective_template_args,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							!func_decl.is_static());
 						if (force_eager) {
 							if (std::optional<StringHandle> unresolved_type =
@@ -10109,7 +10109,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							*ctor_decl.get_definition(),
 							template_params,
 							template_args_to_use,
-							instantiated_name,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							true);
 					}
 
@@ -10248,7 +10248,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						*dtor_decl.get_definition(),
 						template_params,
 						template_args_to_use,
-						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						true);
 
 					// Create a new destructor declaration with substituted body
@@ -11709,7 +11709,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						*body_result.node(),
 						out_of_line_member.template_params,
 						template_args_to_use,
-						instantiated_name,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						true);
 					ctor.set_definition(substituted_body);
 					// Also update the StructTypeInfo's copy (used by codegen)

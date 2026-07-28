@@ -2086,6 +2086,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 	}
 	const StringHandle current_owner_type_name = StringTable::getOrInternStringHandle(struct_name);
+	TypeIndex current_owner_type_index{};
+	if (const TypeInfo* current_owner_type_info = findTypeByName(current_owner_type_name)) {
+		current_owner_type_index =
+			current_owner_type_info->registeredTypeIndex().withCategory(TypeCategory::Struct);
+	}
 	const OuterTemplateBinding* outer_binding =
 		gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view());
 	std::optional<OuterTemplateBinding> synthesized_outer_binding;
@@ -2885,7 +2890,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			func_decl.noexcept_expression()->node(),
 			template_params,
 			inline_template_args,
-			current_owner_type_name);
+			current_owner_type_index,
+			!func_decl.is_static());
 		if (func_decl.has_outer_template_bindings()) {
 			InlineVector<StringHandle, 4> outer_param_names;
 			InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos;
@@ -2905,7 +2911,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				substituted_noexcept,
 				typed_outer_params,
 				outer_args,
-				current_owner_type_name);
+				current_owner_type_index,
+				!func_decl.is_static());
 		}
 		if (outer_binding != nullptr) {
 			InlineVector<TemplateParameterNode, 4> typed_outer_params;
@@ -2930,7 +2937,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				substituted_noexcept,
 				typed_outer_params,
 				outer_args,
-				current_owner_type_name);
+				current_owner_type_index,
+				!func_decl.is_static());
 		}
 		new_func_ref.set_noexcept_expression(ExpressionHandle(substituted_noexcept));
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
@@ -2957,7 +2965,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				*orig_body,
 				template_params,
 				inline_template_args,
-				current_owner_type_name,
+				current_owner_type_index,
 				!func_decl.is_static());
 			if (func_decl.has_outer_template_bindings()) {
 				InlineVector<StringHandle, 4> outer_param_names;
@@ -2978,7 +2986,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					substituted_body,
 					typed_outer_params,
 					outer_args,
-					current_owner_type_name,
+					current_owner_type_index,
 					!func_decl.is_static());
 			}
 			if (outer_binding != nullptr) {
@@ -3004,7 +3012,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					substituted_body,
 					typed_outer_params,
 					outer_args,
-					current_owner_type_name,
+					current_owner_type_index,
 					!func_decl.is_static());
 			}
 			new_func_ref.set_definition(substituted_body);
@@ -3203,7 +3211,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					*block_result.node(),
 					template_params,
 					inline_template_args,
-					current_owner_type_name,
+					current_owner_type_index,
 					!func_decl.is_static());
 				new_func_ref.set_definition(substituted_body);
 			}

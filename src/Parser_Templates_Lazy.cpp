@@ -46,7 +46,7 @@ ASTNode Parser::substituteLazyMemberBody(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	const TemplateEnvironmentSnapshot& outer_snapshot,
-	StringHandle instantiated_owner_name,
+	TypeIndex instantiated_owner_type_index,
 	bool has_implicit_this) {
 	std::optional<TemplateEnvironment> outer_environment;
 	TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
@@ -62,7 +62,7 @@ ASTNode Parser::substituteLazyMemberBody(
 		body,
 		template_params,
 		template_args,
-		instantiated_owner_name,
+		instantiated_owner_type_index,
 		has_implicit_this);
 }
 
@@ -115,6 +115,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Push a parser-level instantiation context so backtraces can identify this lazy-member step.
 	// Use the instantiated owner name as the origin since that is the most descriptive identifier.
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, lazy_info.identity.instantiated_owner_name);
+	TypeIndex instantiated_owner_type_index{};
+	if (auto owner_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+		owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) {
+		instantiated_owner_type_index =
+			owner_it->second->registeredTypeIndex().withCategory(TypeCategory::Struct);
+	}
 
 	// Constructors/destructors for nested template types are also materialized lazily.
 	if (lazy_info.identity.kind == DeferredMemberIdentity::Kind::Constructor && lazy_info.identity.original_member_node.is<ConstructorDeclarationNode>()) {
@@ -144,10 +150,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		} else {
 			setOuterTemplateBindingsFromParams(new_ctor_ref, lazy_info.template_params, lazy_info.template_args);
 		}
-		TypeIndex instantiated_owner_type_index{};
-		if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-			struct_it != getTypesByNameMap().end()) {
-			instantiated_owner_type_index = struct_it->second->type_index_;
+		if (instantiated_owner_type_index.is_valid()) {
 			new_ctor_ref.set_owning_type_index(instantiated_owner_type_index);
 		}
 
@@ -296,7 +299,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						param_decl.default_value(),
 						lazy_info.template_params,
 						lazy_info.template_args,
-						lazy_info.identity.instantiated_owner_name);
+						instantiated_owner_type_index,
+						true);
 					substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 				}
 				new_ctor_ref.add_parameter_node(substituted_param_decl);
@@ -320,7 +324,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				expr,
 				lazy_info.template_params,
 				converted_template_args,
-				lazy_info.identity.instantiated_owner_name);
+				instantiated_owner_type_index,
+				true);
 		};
 
 		{
@@ -449,7 +454,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			lazy_info.template_params,
 			converted_template_args,
 			lazy_info.outer_template_environment_snapshot,
-			lazy_info.identity.instantiated_owner_name,
+			instantiated_owner_type_index,
 			true);
 		new_ctor_ref.set_definition(substituted_body);
 		new_ctor_ref.set_mangled_name(NameMangling::generateMangledNameFromNode(
@@ -597,7 +602,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				dtor_decl.noexcept_expression()->node(),
 				lazy_info.template_params,
 				converted_template_args,
-				lazy_info.identity.instantiated_owner_name);
+				instantiated_owner_type_index,
+				true);
 			new_dtor_ref.set_noexcept_expression(
 				ExpressionHandle(substituted_noexcept));
 			ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
@@ -630,7 +636,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			lazy_info.template_params,
 			converted_template_args,
 			lazy_info.outer_template_environment_snapshot,
-			lazy_info.identity.instantiated_owner_name,
+			instantiated_owner_type_index,
 			true);
 		new_dtor_ref.set_definition(substituted_body);
 
@@ -663,12 +669,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Resolve self-referential types: when a member function's return type or parameter type
 	// refers to the template class itself (e.g., W& in W<T>::operator+=), the type_index
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
-	// resolve it to the instantiated class (e.g., W<int> with correct size).
-	TypeIndex instantiated_owner_type_index{};
-	if (auto it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-		it != getTypesByNameMap().end()) {
-		instantiated_owner_type_index = it->second->type_index_;
-	}
+	// resolve it to the instantiated class (e.g., W<int> with correct size). The owner
+	// TypeIndex was resolved once at function entry and is reused for that purpose.
 	// Invariant: fn_identifier_token.handle() == effectiveLookupName(lazy_info.identity).
 	// This is asserted below after finalization (Slice 5).
 	// Slice 4: use the canonical instantiated lookup name (from identity) as the
@@ -964,7 +966,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			std::span<const TemplateParameterNode>(substitution_params.data(), substitution_params.size()),
 			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
 			lazy_info.outer_template_environment_snapshot,
-			lazy_info.identity.instantiated_owner_name,
+			instantiated_owner_type_index,
 			!func_decl.is_static());
 		std::optional<TemplateEnvironment> outer_environment;
 		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
