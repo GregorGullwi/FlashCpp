@@ -12,6 +12,22 @@
 #include <cassert>
 #include <numeric>
 
+namespace {
+
+template <typename RegisterFn>
+void forEachEnvironmentBinding(
+	const TemplateEnvironment& environment,
+	RegisterFn&& register_fn) {
+	if (environment.parent != nullptr) {
+		forEachEnvironmentBinding(*environment.parent, register_fn);
+	}
+	for (const TemplateBinding& binding : environment.bindings) {
+		register_fn(binding);
+	}
+}
+
+} // namespace
+
 static void logTemplateRequiresClauseFailure(
 	bool emit_parser_error,
 	std::string_view template_name,
@@ -456,12 +472,15 @@ const TypeInfo* Parser::resolveDependentMemberTypeSemantic(
 		buildSubstitutionParamMap(template_params, template_args);
 	for (const TemplateParamSubstitution& substitution :
 		 template_param_substitutions_) {
-		if (!substitution.param_name.isValid()) {
+		if (!substitution.param_name.isValid() ||
+			substitution.is_pack) {
 			continue;
 		}
 		std::string_view binding_name =
 			StringTable::getStringView(substitution.param_name);
-		if (binding_name.empty()) {
+		if (binding_name.empty() ||
+			std::ranges::find(sub_map.param_order, binding_name) !=
+				sub_map.param_order.end()) {
 			continue;
 		}
 
@@ -473,20 +492,14 @@ const TypeInfo* Parser::resolveDependentMemberTypeSemantic(
 			bound_arg =
 				TemplateTypeArg::makeTemplate(substitution.concrete_template_name);
 		} else if (substitution.is_value_param) {
-			if (substitution.typed_value_identity.has_value()) {
-				bound_arg = TemplateTypeArg::makeValueIdentity(
-					*substitution.typed_value_identity);
-			} else {
-				bound_arg = TemplateTypeArg(
-					substitution.value,
-					substitution.value_type);
-			}
+			bound_arg = substitution.typed_value_identity.has_value()
+				? TemplateTypeArg::makeValueIdentity(
+					  *substitution.typed_value_identity)
+				: TemplateTypeArg(
+					  substitution.value,
+					  substitution.value_type);
 		}
-		if (!bound_arg.has_value()) {
-			continue;
-		}
-		if (std::ranges::find(sub_map.param_order, binding_name) ==
-			sub_map.param_order.end()) {
+		if (bound_arg.has_value()) {
 			sub_map.param_order.push_back(binding_name);
 			sub_map.param_map[binding_name] = *bound_arg;
 		}
@@ -494,7 +507,40 @@ const TypeInfo* Parser::resolveDependentMemberTypeSemantic(
 	appendInstantiationContextBindingsToSubstitutionMap(
 		dependent_type_info.instantiationContext(),
 		sub_map);
-	ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+
+	std::optional<TemplateEnvironment> parent_environment;
+	if (dependent_type_info.hasInstantiationContext()) {
+		parent_environment = buildTemplateEnvironment(
+			*dependent_type_info.instantiationContext());
+	}
+	TemplateEnvironment substitution_environment =
+		buildTemplateEnvironment(
+			template_params,
+			template_args,
+			parent_environment.has_value()
+				? &*parent_environment
+				: nullptr);
+	std::unordered_map<
+		StringHandle,
+		std::vector<TemplateTypeArg>,
+		TransparentStringHash,
+		std::equal_to<>> pack_map;
+	forEachEnvironmentBinding(
+		substitution_environment,
+		[&](const TemplateBinding& binding) {
+			if (binding.is_pack && binding.name.isValid()) {
+				std::vector<TemplateTypeArg>& pack_args =
+					pack_map[binding.name];
+				pack_args.assign(
+					binding.args.begin(),
+					binding.args.end());
+			}
+		});
+	ExpressionSubstitutor substitutor(
+		sub_map.param_map,
+		pack_map,
+		*this,
+		sub_map.param_order);
 	if (current_owner_type_name.isValid()) {
 		substitutor.setCurrentOwnerTypeName(current_owner_type_name);
 	}
@@ -971,22 +1017,6 @@ void registerTypeParamsInScope(
 		scope.addParameter(&type_info);
 	}
 }
-
-namespace {
-
-template <typename RegisterFn>
-void forEachEnvironmentBinding(
-	const TemplateEnvironment& environment,
-	RegisterFn&& register_fn) {
-	if (environment.parent != nullptr) {
-		forEachEnvironmentBinding(*environment.parent, register_fn);
-	}
-	for (const TemplateBinding& binding : environment.bindings) {
-		register_fn(binding);
-	}
-}
-
-} // namespace
 
 void registerTypeParamsInScope(
 	const TemplateEnvironment& environment,
