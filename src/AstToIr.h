@@ -80,6 +80,7 @@ private:
 
 	struct AddressComponents {
 		std::variant<StringHandle, TempVar> base;			  // Base variable or temp
+		ValueStorage base_storage = ValueStorage::ContainsData; // Whether the base names storage or contains an address
 		std::vector<ComputeAddressOp::ArrayIndex> array_indices;	 // Array indices
 		int total_member_offset = 0;						 // Accumulated member offsets
 		TypeIndex final_type_index{};					  // Type identity of final result (TypeCategory embedded)

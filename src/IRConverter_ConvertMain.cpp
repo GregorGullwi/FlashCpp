@@ -14361,7 +14361,8 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 	int64_t base_offset = 0;
 	bool base_is_global = false;
 	StringHandle base_global_name;
-	bool base_is_indirect = false;  // True if base is a pointer/reference (not a regular variable)
+	bool base_is_indirect =
+		op.base_storage == ValueStorage::ContainsAddress; // True if base contains a pointer/reference
 	if (std::holds_alternative<StringHandle>(op.base)) {
 			// Variable name - look up its stack offset
 		StringHandle base_name = std::get<StringHandle>(op.base);
@@ -14380,7 +14381,9 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 
 				// Check if base is a pointer (reference or 'this')
 				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
-			base_is_indirect = isPointerBaseStorage(static_cast<int32_t>(base_offset));
+			base_is_indirect =
+				base_is_indirect ||
+				isPointerBaseStorage(static_cast<int32_t>(base_offset));
 		}
 	} else {
 			// TempVar - get its stack offset
@@ -14388,7 +14391,9 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 		base_offset = getStackOffsetFromTempVar(base_temp);
 
 			// Check if TempVar is a reference or address-only
-		base_is_indirect = isPointerBaseStorage(static_cast<int32_t>(base_offset), base_temp);
+		base_is_indirect =
+			base_is_indirect ||
+			isPointerBaseStorage(static_cast<int32_t>(base_offset), base_temp);
 	}
 
 	if (base_is_global) {

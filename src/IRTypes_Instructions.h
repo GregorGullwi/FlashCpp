@@ -508,6 +508,7 @@ public:
 			} else {
 				oss << "base: %" << std::get<TempVar>(op.base).var_number;
 			}
+			oss << (op.base_storage == ValueStorage::ContainsAddress ? " (address)" : " (object)");
 
 			// Print array indices if any
 			for (size_t i = 0; i < op.array_indices.size(); ++i) {

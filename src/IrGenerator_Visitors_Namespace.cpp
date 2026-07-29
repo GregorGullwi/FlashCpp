@@ -570,30 +570,33 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 		}
 return_conversion_done:
 
-		// For reference returns, prefer materializing the referred-to address in IR when we
-		// have direct member lvalue metadata. This avoids relying on backend reconstruction
-		// from a loaded member temp.
+		// A reference return must carry the address of the selected subobject.
+		// Member access in LValueAddress context can intentionally remain metadata-only;
+		// materialize that metadata through the shared address-expression path before
+		// emitting the return. This covers named objects and address-holding temporary
+		// bases such as static_cast<T&>(object) without inferring pointer storage here.
+		if (currentFunctionReturnsReference() &&
+			std::holds_alternative<TempVar>(operands.value)) {
+			const TempVar member_temp = std::get<TempVar>(operands.value);
+			const std::optional<LValueInfo> member_lvalue =
+				getTempVarLValueInfo(member_temp);
+			if (member_lvalue.has_value() &&
+				member_lvalue->kind == LValueInfo::Kind::Member) {
+				operands = materializeAddressResult(
+					expr_opt->as<ExpressionNode>(),
+					std::move(operands),
+					node.return_token());
+			}
+		}
+
+		// Materialize remaining indexed lvalue forms that carry enough source metadata.
 		if (currentFunctionReturnsReference() &&
 			std::holds_alternative<TempVar>(operands.value)) {
 			TempVar return_temp = std::get<TempVar>(operands.value);
 			auto lv_info_opt = getTempVarLValueInfo(return_temp);
 			if (lv_info_opt.has_value()) {
 				const LValueInfo& lv_info = *lv_info_opt;
-				if (lv_info.kind == LValueInfo::Kind::Member &&
-					std::holds_alternative<StringHandle>(lv_info.base)) {
-					TempVar address_temp = var_counter.next();
-					AddressOfMemberOp addr_member_op;
-					addr_member_op.result = address_temp;
-					addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
-					addr_member_op.member_offset = lv_info.offset;
-					addr_member_op.member_type_index = current_function_return_type_index_;
-					addr_member_op.member_size_in_bits = current_function_return_size_;
-					ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
-					TempVarMetadata address_meta = TempVarMetadata::makeReference(currentFunctionReturnTypeIndex(), SizeInBits{current_function_return_size_}, ValueCategory::LValue);
-					address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
-					setTempVarMetadata(address_temp, std::move(address_meta));
-					operands.value = address_temp;
-				} else if (lv_info.kind == LValueInfo::Kind::ArrayElement &&
+				if (lv_info.kind == LValueInfo::Kind::ArrayElement &&
 						   lv_info.array_index.has_value()) {
 					// Materialize an ArrayElementAddress instruction for returning a reference
 					// to an array element (e.g., return values[index]).

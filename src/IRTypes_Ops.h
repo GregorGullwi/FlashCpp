@@ -646,6 +646,7 @@ struct ComputeAddressOp {
 
 	// Base address (one of these)
 	std::variant<StringHandle, TempVar> base;		  // Variable name or temp
+	ValueStorage base_storage = ValueStorage::ContainsData; // Whether the base names storage or contains an address
 
 	// Array indexing (optional, can have multiple for nested arrays)
 	struct ArrayIndex {
