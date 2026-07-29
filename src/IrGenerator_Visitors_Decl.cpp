@@ -2953,6 +2953,21 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								member_value = 0ULL;	 // unexpected node type: fall back to zero
 							} else {
 								ExprResult init_operands = visitExpressionNode(init_expr_node.as<ExpressionNode>());
+								// An initializer that yields a reference (e.g. static_cast<T&&>,
+								// std::move/std::forward, or a call returning T&) arrives holding the
+								// *address* of the source object. Storing that pointer into a
+								// non-reference scalar member would copy the address instead of the
+								// pointee value, so load through it first. Reference members keep the
+								// pointer (they bind to the address), so they are left untouched.
+								init_operands = materializeAddressResultForValueContext(
+									init_operands,
+									member.type_index,
+									member.type_index.category(),
+									SizeInBits{static_cast<int>(member.size * 8)},
+									PointerDepth{},
+									member.is_rvalue_reference() ? ReferenceQualifier::RValueReference
+										: (member.is_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None),
+									node.name_token());
 								// Extract just the value (third element of init_operands)
 								if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
 									member_value = *temp_var;
