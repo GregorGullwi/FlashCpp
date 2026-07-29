@@ -1229,10 +1229,15 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 				AssignmentOp assign_op;
 				assign_op.result = lvalue_temp;
-				assign_op.lhs = makeTypedValue(pointee_type, SizeInBits{64}, lvalue_temp);  // 64-bit pointer dest
-				assign_op.rhs = makeTypedValue(pointee_type, SizeInBits{64}, var_handle);  // 64-bit pointer source
+				assign_op.lhs = withStorage(
+					makeTypedValue(pointee_type, SizeInBits{64}, lvalue_temp),
+					ValueStorage::ContainsAddress);
+				assign_op.rhs = withStorage(
+					makeTypedValue(pointee_type, SizeInBits{64}, var_handle),
+					ValueStorage::ContainsAddress);
 				assign_op.is_pointer_store = false;
 				assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
+				assign_op.propagate_rhs_address_metadata = true;
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
 				LValueInfo lvalue_info(
@@ -1402,10 +1407,15 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						// Use AssignmentOp to copy the pointer value to a temp
 					AssignmentOp assign_op;
 					assign_op.result = addr_temp;
-					assign_op.lhs = makeTypedValue(pointee_type, SizeInBits{64}, addr_temp);	 // 64-bit pointer dest
-					assign_op.rhs = makeTypedValue(pointee_type, SizeInBits{64}, var_handle);  // 64-bit pointer source
+					assign_op.lhs = withStorage(
+						makeTypedValue(pointee_type, SizeInBits{64}, addr_temp),
+						ValueStorage::ContainsAddress);
+					assign_op.rhs = withStorage(
+						makeTypedValue(pointee_type, SizeInBits{64}, var_handle),
+						ValueStorage::ContainsAddress);
 					assign_op.is_pointer_store = false;
 					assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
+					assign_op.propagate_rhs_address_metadata = true;
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
 						// Mark the temp with Indirect LValue metadata

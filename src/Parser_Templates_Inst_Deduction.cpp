@@ -2643,7 +2643,7 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 				bool inner_is_pure_expr = true;
 				bool has_pure_return = false;
 				statements.visit([&](const ASTNode& stmt) {
-					if (stmt.is<TypedefDeclarationNode>()) {
+					if (!stmt.has_value() || stmt.is<TypedefDeclarationNode>()) {
 					} else if (stmt.is<ReturnStatementNode>()) {
 						const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
 						const auto& expr_opt = ret_stmt.expression();
@@ -4041,6 +4041,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		instantiation_flags = mergeInstantiationFlags(
 			instantiation_flags,
 			FunctionTemplateInstantiationFlags::RegisterInstantiation);
+		instantiation_flags = mergeInstantiationFlags(
+			instantiation_flags,
+			FunctionTemplateInstantiationFlags::RunInlineHeuristic);
 		return instantiateBoundFunctionTemplate(
 			instantiation_context,
 			binding_data,

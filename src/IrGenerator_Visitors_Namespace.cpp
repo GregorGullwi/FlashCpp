@@ -183,7 +183,12 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			emitDestructorsForNonLocalExit(0);
 
 			// Now return the temporary variable
-			emitReturn(temp_var, currentFunctionReturnTypeIndex(), return_size, node.return_token());
+			emitReturn(
+				temp_var,
+				currentFunctionReturnTypeIndex(),
+				return_size,
+				node.return_token(),
+				ValueStorage::ContainsData);
 			return;
 		}
 
@@ -210,7 +215,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							emitDestructorsForNonLocalExit(0);
 							emitReturn(StringTable::getOrInternStringHandle("this"),
 									   currentFunctionReturnTypeIndex(), current_function_return_size_,
-									   node.return_token());
+									   node.return_token(), ValueStorage::ContainsAddress);
 							return;
 						}
 					}
@@ -729,7 +734,7 @@ return_conversion_done:
 		}
 		// Use the function's return type, not the expression type
 		emitReturn(return_value, currentFunctionReturnTypeIndex(), current_function_return_size_,
-				   node.return_token());
+				   node.return_token(), operands.storage);
 	} else {
 		// Call any enclosing __finally funclets before returning
 		emitSehFinallyCallsBeforeReturn(node.return_token());

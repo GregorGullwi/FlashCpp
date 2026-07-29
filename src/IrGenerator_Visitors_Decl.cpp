@@ -747,7 +747,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							// Label: diff - return the inner <=> result
 							ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = diff_label}, func_decl.identifier_token()));
 							{
-								emitReturn(IrValue{call_result}, nativeTypeIndex(TypeCategory::Int), 32, func_decl.identifier_token());
+								emitReturn(IrValue{call_result}, nativeTypeIndex(TypeCategory::Int), 32,
+									func_decl.identifier_token(), ValueStorage::ContainsData);
 							}
 
 								// Label: next - continue to next member
@@ -818,13 +819,15 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = lt_label}, func_decl.identifier_token()));
 					{
-						emitReturn(IrValue{0xFFFFFFFFULL}, nativeTypeIndex(TypeCategory::Int), 32, func_decl.identifier_token());
+						emitReturn(IrValue{0xFFFFFFFFULL}, nativeTypeIndex(TypeCategory::Int), 32,
+							func_decl.identifier_token(), ValueStorage::ContainsData);
 					}
 
 					// Label: gt - return 1
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = gt_label}, func_decl.identifier_token()));
 					{
-						emitReturn(IrValue{1ULL}, nativeTypeIndex(TypeCategory::Int), 32, func_decl.identifier_token());
+						emitReturn(IrValue{1ULL}, nativeTypeIndex(TypeCategory::Int), 32,
+							func_decl.identifier_token(), ValueStorage::ContainsData);
 					}
 
 					// Label: next - continue to next member
@@ -832,7 +835,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				}
 			}
 		// All members equal - return 0
-		emitReturn(IrValue{0ULL}, nativeTypeIndex(TypeCategory::Int), 32, func_decl.identifier_token());
+		emitReturn(IrValue{0ULL}, nativeTypeIndex(TypeCategory::Int), 32,
+			func_decl.identifier_token(), ValueStorage::ContainsData);
 		symbol_table.exit_scope();
 		return;
 	}
@@ -978,7 +982,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
 
 			// Return the boolean result
-			emitReturn(IrValue{cmp_result}, nativeTypeIndex(TypeCategory::Bool), 8, func_decl.identifier_token());
+			emitReturn(IrValue{cmp_result}, nativeTypeIndex(TypeCategory::Bool), 8,
+				func_decl.identifier_token(), ValueStorage::ContainsData);
 		} else if (function_operator_kind == OverloadableOperator::Equal && compare_struct_info && !compare_struct_info->members.empty()) {
 			static size_t equal_counter = 0;
 			size_t current_equal = equal_counter++;
@@ -1114,12 +1119,15 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = equal_next_label}, func_decl.identifier_token()));
 			}
 
-			emitReturn(IrValue{1ULL}, nativeTypeIndex(TypeCategory::Bool), 8, func_decl.identifier_token());
+			emitReturn(IrValue{1ULL}, nativeTypeIndex(TypeCategory::Bool), 8,
+				func_decl.identifier_token(), ValueStorage::ContainsData);
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = equal_false_label}, func_decl.identifier_token()));
-			emitReturn(IrValue{0ULL}, nativeTypeIndex(TypeCategory::Bool), 8, func_decl.identifier_token());
+			emitReturn(IrValue{0ULL}, nativeTypeIndex(TypeCategory::Bool), 8,
+				func_decl.identifier_token(), ValueStorage::ContainsData);
 		} else {
 			// Fallback: operator<=> not found, return false for synthesized comparison operators
-			emitReturn(IrValue{0ULL}, nativeTypeIndex(TypeCategory::Bool), 8, func_decl.identifier_token());
+			emitReturn(IrValue{0ULL}, nativeTypeIndex(TypeCategory::Bool), 8,
+				func_decl.identifier_token(), ValueStorage::ContainsData);
 		}
 
 		symbol_table.exit_scope();
@@ -1240,7 +1248,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					// same way the visitReturnStatementNode reference fast path does.
 					emitReturn(StringTable::getOrInternStringHandle("this"),
 						currentFunctionReturnTypeIndex(), current_function_return_size_,
-						func_decl.identifier_token());
+						func_decl.identifier_token(), ValueStorage::ContainsAddress);
 				}
 			}
 		}
@@ -1283,7 +1291,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 		// Special case: main() implicitly returns 0 if no return statement
 		else if (func_decl.identifier_token().value() == "main") {
-			emitReturn(0ULL, nativeTypeIndex(TypeCategory::Int), 32, func_decl.identifier_token());
+			emitReturn(0ULL, nativeTypeIndex(TypeCategory::Int), 32,
+				func_decl.identifier_token(), ValueStorage::ContainsData);
 		}
 		// For other non-void functions, this is a warning (missing return statement)
 		// A full implementation would require control flow analysis to check all paths,

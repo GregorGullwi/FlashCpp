@@ -500,68 +500,57 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				arg_base.set_reference_qualifier(ReferenceQualifier::None);
 				return return_base.matches_signature(arg_base);
 			};
-			bool can_inline = true;
-			if (auto arg_type = getInlineAlwaysArgType(); arg_type.has_value()) {
-				can_inline = inlineAlwaysTypeMatches(*arg_type);
-			} else {
-				can_inline = false;
+			bool can_inline = false;
+			// This rewrite substitutes addressof(arg), so it is valid only for
+			// reference-returning identity casts. Non-reference pure expressions
+			// still require body-expression substitution, and aggregate references
+			// still require value-context materialization that this fast path does
+			// not provide.
+			if (returns_reference &&
+				!isIrStructType(toIrType(return_type_spec.type()))) {
+				if (auto arg_type = getInlineAlwaysArgType(); arg_type.has_value()) {
+					can_inline = inlineAlwaysTypeMatches(*arg_type);
+				}
 			}
 			if (can_inline) {
 				FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
 
-				if (returns_reference) {
-					// For functions returning references (like std::move, std::forward),
-					// we need to generate an addressof the argument, not just return it
-					const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+				const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
 
-					// Check if the argument is an identifier (common case for move(x))
-					if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
+				// Check if the argument is an identifier (common forwarding case).
+				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+					const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 
-						// Generate addressof for the identifier
-						TempVar result_var = var_counter.next();
-						AddressOfOp op;
-						op.result = result_var;
+					// Generate addressof for the identifier.
+					TempVar result_var = var_counter.next();
+					AddressOfOp op;
+					op.result = result_var;
 
-						// Get type info from the identifier
-						StringHandle id_handle = ident.nameHandle();
-						TypeCategory operand_type = TypeCategory::Int;  // Default
-						static constexpr int DefaultInlineAlwaysOperandSizeBits = 32;
-						int operand_size = DefaultInlineAlwaysOperandSizeBits;
-						if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
-							const TypeSpecifierNode& type = decl->type_specifier_node();
-							operand_type = type.type();
-							operand_size = static_cast<int>(type.size_in_bits());
-							if (operand_size == 0)
-								operand_size = get_type_size_bits(operand_type);
-						}
-						TypeIndex value_type_index = return_type_spec.type_index().is_valid()
-							? return_type_spec.type_index().withCategory(return_type_spec.type())
-							: nativeTypeIndex(operand_type);
-
-						op.operand.setType(operand_type);
-						op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
-						op.operand.pointer_depth = PointerDepth{};
-						op.operand.value = id_handle;
-
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
-
-						TempVarMetadata metadata = TempVarMetadata::makeReference(
-							value_type_index,
-							SizeInBits{operand_size},
-							return_type_spec.is_rvalue_reference() ? ValueCategory::XValue : ValueCategory::LValue);
-						metadata.lvalue_info = LValueInfo(LValueInfo::Kind::Direct, id_handle, 0);
-						setTempVarMetadata(result_var, std::move(metadata));
-
-						return makeExprResult(value_type_index, SizeInBits{64}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsAddress);
+					// Get type info from the identifier.
+					StringHandle id_handle = ident.nameHandle();
+					TypeCategory operand_type = TypeCategory::Int;
+					static constexpr int DefaultInlineAlwaysOperandSizeBits = 32;
+					int operand_size = DefaultInlineAlwaysOperandSizeBits;
+					if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
+						const TypeSpecifierNode& type = decl->type_specifier_node();
+						operand_type = type.type();
+						operand_size = static_cast<int>(type.size_in_bits());
+						if (operand_size == 0)
+							operand_size = get_type_size_bits(operand_type);
 					}
-					// For non-identifier expressions, fall through to generate a regular call
-					// (we can't inline complex expressions that need reference semantics)
-				} else {
-					// Non-reference return - can inline directly by returning argument
-					auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
-					return arg_ir;
+					op.operand.setType(operand_type);
+					op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
+					op.operand.pointer_depth = PointerDepth{};
+					op.operand.value = id_handle;
+
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
+
+					TypeIndex value_type_index = return_type_spec.type_index().is_valid()
+						? return_type_spec.type_index().withCategory(return_type_spec.type())
+						: nativeTypeIndex(operand_type);
+					return makeExprResult(value_type_index, SizeInBits{64}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsAddress);
 				}
+				// For non-identifier expressions, fall through to a regular call.
 			}
 		}
 	}

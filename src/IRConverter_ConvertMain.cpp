@@ -8877,13 +8877,16 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								 return_var.name(), (it != current_scope.variables.end()));
 
 					// Check if return type is float/double
-				bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
+				bool is_float_return =
+					isFloatingPointType(ret_op.return_type_index.category()) &&
+					!current_function_returns_reference_;
 
 				bool handled_reference_return = false;
 				{
 					auto lv_info_opt = getTempVarLValueInfo(return_var);
-					auto return_meta = getTempVarMetadata(return_var);
-					if (lv_info_opt.has_value() && (current_function_returns_reference_ || return_meta.is_address)) {
+					if (lv_info_opt.has_value() &&
+						(current_function_returns_reference_ ||
+						 ret_op.return_storage == ValueStorage::ContainsAddress)) {
 						const LValueInfo& lv_info = lv_info_opt.value();
 						auto loadBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool base_is_pointer) -> bool {
 							int base_offset = 0;
@@ -12047,6 +12050,9 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 	// Get RHS source
 	TypeCategory rhs_type = op.rhs.typeEnum();
 	const bool rhs_contains_address = op.rhs.storage == ValueStorage::ContainsAddress;
+	const bool treat_rhs_as_float =
+		is_floating_point_type(rhs_type) &&
+		!rhs_contains_address;
 	X64Register source_reg = X64Register::RAX;
 	std::optional<IndirectStorageInfo> copied_indirect_info;
 	TempVar lhs_temp_for_metadata{};
@@ -12065,15 +12071,19 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			// Check if RHS is a reference - if so, dereference it unless this
 			// assignment is explicitly copying an address.
 			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
-			if (rhs_ref_info.has_value() && !rhs_contains_address &&
-				(!op.dereference_rhs_references || rhs_ref_info->holds_address_only)) {
-				// Propagate indirect/address-only metadata to the LHS TempVar in two cases:
+			if (rhs_ref_info.has_value() &&
+				((!rhs_contains_address &&
+				  (!op.dereference_rhs_references || rhs_ref_info->holds_address_only)) ||
+				 op.propagate_rhs_address_metadata)) {
+				// Propagate indirect/address-only metadata to the LHS TempVar in three cases:
 				// 1. dereference_rhs_references == false: explicit pointer copy (existing behaviour).
 				// 2. holds_address_only == true: even when dereference_rhs_references is true,
 				//    an address-only slot is never implicitly dereferenced, so the pointer value
 				//    is copied as-is and the LHS must inherit the holds_address_only flag.
 				//    Without this, `assign %t = %this` would leave %t without the flag and the
 				//    call-site would emit `lea` (address of slot) instead of `mov` (pointer value).
+				// 3. propagate_rhs_address_metadata == true: the IR producer explicitly marked
+				//    this as an address copy whose indirect metadata must follow the payload.
 				copied_indirect_info = rhs_ref_info;
 			}
 			if (rhs_ref_info.has_value() &&
@@ -12087,7 +12097,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 				emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 				source_reg = ptr_reg;
-			} else if (is_floating_point_type(rhs_type)) {
+			} else if (treat_rhs_as_float) {
 				source_reg = allocateXMMRegisterWithSpilling();
 				bool is_float = (rhs_type == TypeCategory::Float);
 				emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
@@ -12140,14 +12150,16 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 			emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 			source_reg = ptr_reg;
-		} else if (rhs_ref_info.has_value() && !rhs_contains_address &&
-			(!op.dereference_rhs_references || rhs_ref_info->holds_address_only)) {
+		} else if (rhs_ref_info.has_value() &&
+			((!rhs_contains_address &&
+			  (!op.dereference_rhs_references || rhs_ref_info->holds_address_only)) ||
+			 op.propagate_rhs_address_metadata)) {
 			copied_indirect_info = rhs_ref_info;
 		} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
 				// Check if the value is already in a register
 			source_reg = rhs_reg.value();
 		} else {
-			if (is_floating_point_type(rhs_type)) {
+			if (treat_rhs_as_float) {
 				source_reg = allocateXMMRegisterWithSpilling();
 				bool is_float = (rhs_type == TypeCategory::Float);
 				emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
@@ -12192,7 +12204,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		int value_size_bits = ref_info->value_size_bits.value;
 		int size_bytes = value_size_bits / 8;
 
-		if (is_floating_point_type(rhs_type)) {
+		if (treat_rhs_as_float) {
 				// For floating-point, use SSE store instruction helper
 			bool is_float = (rhs_type == TypeCategory::Float);
 			auto store_inst = generateFloatMovToMemory(source_reg, ptr_reg, is_float);
@@ -12207,7 +12219,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		regAlloc.release(ptr_reg);
 	} else {
 			// Normal (non-reference) assignment - store directly to stack location
-		if (is_floating_point_type(rhs_type)) {
+		if (treat_rhs_as_float) {
 			bool is_float = (rhs_type == TypeCategory::Float);
 			emitFloatMovToFrame(source_reg, lhs_offset, is_float);
 		} else {
