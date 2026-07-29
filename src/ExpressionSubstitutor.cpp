@@ -1018,6 +1018,23 @@ InlineVector<TemplateTypeArg, 4> ExpressionSubstitutor::materializeDependentReco
 	materialized_args.reserve(stored_args.size());
 	for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
 		TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+		if (arg.is_pack) {
+			StringHandle pack_name = arg.dependent_name;
+			if (!pack_name.isValid() && arg.type_index.is_valid()) {
+				if (const TypeInfo* pack_type_info = tryGetTypeInfo(arg.type_index)) {
+					pack_name = pack_type_info->name();
+				}
+			}
+			if (pack_name.isValid()) {
+				auto pack_it = pack_map_.find(pack_name);
+				if (pack_it != pack_map_.end()) {
+					for (const TemplateTypeArg& pack_arg : pack_it->second) {
+						materialized_args.push_back(pack_arg);
+					}
+					continue;
+				}
+			}
+		}
 		if (arg.is_value && arg.dependent_expr.has_value()) {
 			ASTNode substituted_expr = substitute(*arg.dependent_expr);
 			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
@@ -1555,10 +1572,9 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 
 bool ExpressionSubstitutor::templateArgsStillDependent(std::span<const TemplateTypeArg> args) const {
 	for (const TemplateTypeArg& arg : args) {
-		if (arg.is_dependent) {
-			return true;
-		}
-		if (arg.dependent_name.isValid()) {
+		if (arg.is_dependent ||
+			arg.dependent_name.isValid() ||
+			arg.dependent_expr.has_value()) {
 			return true;
 		}
 		if (!arg.is_value && arg.type_index.is_valid()) {
@@ -2582,14 +2598,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 				return instantiated;
 			};
-			auto templateArgsStillDependent = [&](std::span<const TemplateTypeArg> args) {
-				for (const TemplateTypeArg& arg : args) {
-					if (arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value()) {
-						return true;
-					}
-				}
-				return false;
-			};
 			auto tryInstantiateExplicitQualifiedMemberTemplateFromRecord =
 				[&]() -> std::optional<ASTNode> {
 				if (!call.has_dependent_qualified_lookup_record()) {
@@ -2676,11 +2684,21 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			};
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
+			const bool has_variable_template_candidate =
+				gTemplateRegistry.lookupVariableTemplate(func_name).has_value() ||
+				(call.has_qualified_name() &&
+					gTemplateRegistry.lookupVariableTemplate(call.qualified_name()).has_value());
+			const bool has_concept_candidate =
+				gConceptRegistry.lookupConcept(func_name).has_value() ||
+				(call.has_qualified_name() &&
+					gConceptRegistry.lookupConcept(call.qualified_name()).has_value());
 			if (call.has_dependent_qualified_lookup_record()) {
 				instantiated_template =
 					tryInstantiateExplicitQualifiedMemberTemplateFromRecord();
 			}
 			if (!instantiated_template.has_value() &&
+				!has_variable_template_candidate &&
+				!has_concept_candidate &&
 				!call.has_dependent_qualified_lookup_record() &&
 				!qualified_name.empty()) {
 				if (size_t scope_pos = qualified_name.rfind("::"); scope_pos != std::string_view::npos) {
@@ -2745,7 +2763,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					instantiated_template = tryInstantiateExplicitFunctionTemplate(qualified_name);
 				}
 			}
-			if (!instantiated_template.has_value()) {
+			if (!instantiated_template.has_value() &&
+				!has_variable_template_candidate &&
+				!has_concept_candidate &&
+				qualified_name.empty()) {
 				instantiated_template =
 					tryInstantiateExplicitMemberTemplateForCurrentOwner(func_name);
 			}
@@ -2781,10 +2802,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			// Try variable template instantiation before class template
 			const bool had_dependent_template_args =
 				templateArgsStillDependent(std::span<const TemplateTypeArg>(substituted_template_args.data(), substituted_template_args.size()));
-			const bool has_variable_template_candidate =
-				gTemplateRegistry.lookupVariableTemplate(func_name).has_value() ||
-				(call.has_qualified_name() &&
-					gTemplateRegistry.lookupVariableTemplate(call.qualified_name()).has_value());
 			std::optional<ASTNode> var_template_node;
 			if (gTemplateRegistry.lookupVariableTemplate(func_name).has_value()) {
 				var_template_node =

@@ -5664,43 +5664,6 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 		}
 	}
 
-	// Build type substitution map from template params to args
-	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
-	// Build non-type substitution map for value parameters
-	std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
-	for (size_t i = 0; i < effective_template_params.size() && i < effective_template_args.size(); ++i) {
-		const TemplateParameterNode* param = &effective_template_params[i];
-		if (param->kind() == TemplateParameterKind::Type) {
-			// For typename/class parameters, registered_type_index() is the TypeIndex assigned
-			// when the template was parsed (via add_user_type in Parser_Templates_Function.cpp).
-			// This is the same TypeIndex that sizeof(T) will carry in its TypeSpecifierNode.
-			if (param->registered_type_index().is_valid()) {
-				type_substitution_map[param->registered_type_index()] = effective_template_args[i];
-			}
-			// For non-type parameters that have an explicit type node (e.g., template<int N>
-			// where someone uses sizeof(N)), also map by the param's type specifier index.
-			if (param->has_type()) {
-				const TypeSpecifierNode& param_type = param->type_specifier_node();
-				type_substitution_map[param_type.type_index()] = effective_template_args[i];
-			}
-		} else if (param->kind() == TemplateParameterKind::NonType && effective_template_args[i].is_value) {
-			nontype_substitution_map[param->name()] = effective_template_args[i].value;
-		}
-	}
-	for (const auto& subst : template_param_substitutions_) {
-		if (subst.is_type_param && !subst.substituted_type.is_value && subst.substituted_type.type_index.is_valid()) {
-			auto type_it = getTypesByNameMap().find(subst.param_name);
-			if (type_it != getTypesByNameMap().end() && type_it->second != nullptr) {
-				TypeIndex param_type_index = type_it->second->registeredTypeIndex();
-				if (param_type_index.is_valid()) {
-					type_substitution_map[param_type_index] = subst.substituted_type;
-				}
-			}
-		} else if (subst.is_value_param) {
-			nontype_substitution_map[StringTable::getStringView(subst.param_name)] = subst.value;
-		}
-	}
-
 	if (substitution_owner.isValid()) {
 		if (const TypeInfo* owner_type_info = findTypeByName(substitution_owner);
 			owner_type_info != nullptr &&
@@ -5714,9 +5677,20 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 		}
 	}
 
-	// Substitute template parameters in the expression to get a concrete AST
-	ASTNode substituted = substitute_template_params_in_expression(
-		dependent_expr, type_substitution_map, nontype_substitution_map, substitution_owner);
+	TypeIndex substitution_owner_type;
+	if (substitution_owner.isValid()) {
+		if (const TypeInfo* owner_type_info = findTypeByName(substitution_owner)) {
+			substitution_owner_type =
+				owner_type_info->registeredTypeIndex().withCategory(
+					owner_type_info->typeEnum());
+		}
+	}
+	ASTNode substituted = substituteTemplateParameters(
+		dependent_expr,
+		effective_template_params,
+		effective_template_args,
+		substitution_owner_type,
+		false);
 
 	// Evaluate the substituted expression using the standard constant expression evaluator
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
@@ -5736,6 +5710,8 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 		return templateTypeArgFromEvalResult(result);
 	}
 
-	FLASH_LOG(Templates, Warning, "evaluateDependentNTTPExpression: evaluation failed for dependent expression");
+	FLASH_LOG(Templates, Trace,
+		"evaluateDependentNTTPExpression: evaluation failed for dependent expression: ",
+		result.error_message);
 	return std::nullopt;
 }
