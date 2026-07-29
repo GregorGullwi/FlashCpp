@@ -8,10 +8,17 @@ fully substituted before mangling and IR conversion.
 - A called `move`-shaped template returning
   `remove_reference_t<T>&&` can retain the template parameter in its mangled
   parameter type and fail to link with an unresolved external.
-- The full `<tuple>` `get<I>` path can reach IR conversion with its
-  `tuple_element_t<I, T>&` return still represented as placeholder `Auto`.
-  A reduced non-library form using a dependent member alias through a partial
-  specialization also returns the wrong value.
+- The full `<tuple>` header still fails later (deferred unmaterialized member
+  emission / constructor/`swap` gaps). The reduced partial-spec nested typedef
+  shape (`using Ttype = Tuple<This, Rest...>`) is covered by
+  `tests/test_dependent_alias_tuple_element_get_ret0.cpp` and now materializes.
+  The regression models an MSVC `tuple_element` / `get` chain with a dependent
+  `ElemT = typename Elem<I, T>::type` alias and an index-zero partial
+  specialization whose nested `Ttype = Tuple<This, Rest...>` must expand the
+  pack and materialize a concrete `Tuple` specialization. It ODR-uses `Ttype`
+  through a pointer cast so a dependent placeholder cannot survive into IR.
+  Reference-returning member access through `static_cast<Ttype&>` is covered
+  separately by `tests/test_static_cast_ref_member_address_ret0.cpp`.
 
 These are generic alias substitution/materialization bugs, not library-name
 problems. Fix the canonical return type before mangling and IR lowering; do not

@@ -2860,6 +2860,21 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			TypeSpecifierNode& resolved_type = resolved_return_type.as<TypeSpecifierNode>();
 			resolveAliasTemplateInstantiation(resolved_type);
 			apply_resolved_alias_metadata_local(resolved_type);
+			// Dependent-alias returns that failed to materialize can leave a valid Auto
+			// TypeIndex. Reject those SoftProbes; leave intentional undeduced `auto`
+			// returns alone (they are rewritten after body substitution).
+			if (!isPlaceholderAutoType(parsed_return_type.category()) &&
+				isPlaceholderAutoType(resolved_type.category())) {
+				failTemplateInstantiation(
+					StringBuilder()
+						.append("template function '")
+						.append(template_name)
+						.append("' return type stayed as an unresolved placeholder after materialization")
+						.commit(),
+					&key,
+					overload_id);
+				return false;
+			}
 			if ((resolved_type.category() == TypeCategory::UserDefined ||
 				 resolved_type.category() == TypeCategory::TypeAlias ||
 				 resolved_type.category() == TypeCategory::Template) &&
@@ -3089,6 +3104,12 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		auto& rt = return_type.as<TypeSpecifierNode>();
 		resolveAliasTemplateInstantiation(rt);
 		apply_resolved_alias_metadata_local(rt);
+		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
+		if (!isPlaceholderAutoType(orig_return_type.category()) &&
+			isPlaceholderAutoType(rt.category())) {
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
+			return std::nullopt;
+		}
 		if ((rt.category() == TypeCategory::UserDefined ||
 			 rt.category() == TypeCategory::TypeAlias ||
 			 rt.category() == TypeCategory::Template) &&

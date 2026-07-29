@@ -3304,11 +3304,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				if (const TypeInfo* alias_target_info = tryGetTypeInfo(TypeIndex{substituted_type_index});
 					alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
-					std::vector<TemplateTypeArg> concrete_alias_args;
-					concrete_alias_args.reserve(alias_target_info->templateArgs().size());
+					// Substitute pattern parameters (including pack expansion) the same way
+					// partial-spec base-class materialization does. Bare toTemplateTypeArg
+					// leaves This/Rest... dependent and skips Tuple<This, Rest...> lookup.
+					std::vector<TemplateTypeArg> concrete_alias_args =
+						materializeTemplateArgsExpandingPacks(
+							*alias_target_info,
+							template_params,
+							template_args_for_pattern);
 					bool has_unresolved_alias_arg = false;
-					for (const auto& stored_arg : alias_target_info->templateArgs()) {
-						TemplateTypeArg concrete_arg = toTemplateTypeArg(stored_arg);
+					for (auto& concrete_arg : concrete_alias_args) {
 						if (concrete_arg.is_value && concrete_arg.is_dependent && concrete_arg.dependent_name.isValid()) {
 							const StructStaticMember* referenced_static_member =
 								instantiated_struct_info ? instantiated_struct_info->findStaticMember(concrete_arg.dependent_name) : nullptr;
@@ -3330,7 +3335,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (concrete_arg.is_dependent) {
 							has_unresolved_alias_arg = true;
 						}
-						concrete_alias_args.push_back(std::move(concrete_arg));
 					}
 					if (!has_unresolved_alias_arg) {
 						std::string_view alias_template_name =

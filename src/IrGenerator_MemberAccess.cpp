@@ -1613,7 +1613,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 
 	// Try to find by direct index lookup
 	if (const TypeInfo* ti = tryGetTypeInfo(base_type_index)) {
-		if (isIrStructType(toIrType(*ti)) && ti->getStructInfo()) {
+		if (is_struct_type(ti->typeEnum()) && ti->getStructInfo()) {
 			type_info = ti;
 		}
 	}
@@ -1625,7 +1625,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			if (type_info) {
 				return;
 			}
-			if (ti.type_index_ == base_type_index && isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
+			if (ti.type_index_ == base_type_index && is_struct_type(ti.typeEnum()) && ti.getStructInfo()) {
 				type_info = &ti;
 			}
 		});
@@ -1646,22 +1646,25 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	}
 
 	if (!struct_info) {
-		std::cerr << "Error: Struct type info not found for type_index=" << base_type_index.index() << "\n";
+		std::cerr << "Error: Struct type info not found for type_index=" << base_type_index.index()
+				  << " category=" << static_cast<int>(base_type_index.category()) << "\n";
+		if (const TypeInfo* missing_info = tryGetTypeInfo(base_type_index)) {
+			std::cerr << "  TypeInfo name: " << missing_info->name()
+					  << " typeEnum=" << static_cast<int>(missing_info->typeEnum())
+					  << " isAlias=" << missing_info->isTypeAlias()
+					  << " dependentPlaceholder=" << missing_info->isDependentPlaceholder() << "\n";
+		}
 		if (const auto* string_ptr = std::get_if<StringHandle>(&base_object)) {
 			std::cerr << "  Object name: " << *string_ptr << "\n";
 		}
+		// Avoid toIrType() here: placeholder Auto/Template TypeInfos throw and
+		// replace the real member-access failure with a misleading category-25 error.
 		std::cerr << "  Available struct types in gTypeInfo:\n";
 		forEachTypeInfo([&](const TypeInfo& ti) {
-			if (isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
+			if (ti.getStructInfo() && is_struct_type(ti.typeEnum())) {
 				std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_.index() << ")\n";
 			}
 		});
-		std::cerr << "  Available types in getTypesByNameMap():\n";
-		for (const auto& [name, ti] : getTypesByNameMap()) {
-			if (isIrStructType(toIrType(*ti))) {
-				std::cerr << "    - " << name << " (type_index=" << ti->type_index_.index() << ")\n";
-			}
-		}
 		std::cerr << "error: struct type info not found\n";
 		throw InternalError("struct type info not found for type_index=" + std::to_string(base_type_index.index()));
 	}
