@@ -12,6 +12,36 @@ bool isBoolResultOperator(std::string_view op) {
 		   op == ">" || op == ">=" ||
 		   op == "&&" || op == "||";
 }
+
+std::optional<std::span<const TemplateParameterNode>> templateParametersForCandidate(
+	const TemplateNameLookupCandidate& candidate) {
+	const ASTNode& declaration = candidate.declaration;
+	switch (candidate.identity.kind) {
+	case TemplateDeclarationKind::ClassTemplate:
+		if (declaration.is<TemplateClassDeclarationNode>()) {
+			return declaration.as<TemplateClassDeclarationNode>().template_parameters();
+		}
+		break;
+	case TemplateDeclarationKind::FunctionTemplate:
+		if (declaration.is<TemplateFunctionDeclarationNode>()) {
+			return declaration.as<TemplateFunctionDeclarationNode>().template_parameters();
+		}
+		break;
+	case TemplateDeclarationKind::AliasTemplate:
+		if (declaration.is<TemplateAliasNode>()) {
+			return declaration.as<TemplateAliasNode>().template_parameters();
+		}
+		break;
+	case TemplateDeclarationKind::VariableTemplate:
+		if (declaration.is<TemplateVariableDeclarationNode>()) {
+			return declaration.as<TemplateVariableDeclarationNode>().template_parameters();
+		}
+		break;
+	default:
+		break;
+	}
+	return std::nullopt;
+}
 }
 
 ParseResult Parser::parse_template_parameter_list(InlineVector<TemplateParameterNode, 4>& out_params) {
@@ -4018,26 +4048,25 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 	const TemplateNameLookupResult& template_lookup,
 	InlineVector<ASTNode, 4>* out_type_nodes) {
 	for (const TemplateNameLookupCandidate& candidate : template_lookup.candidates) {
-		const ASTNode& declaration = candidate.declaration;
-		if (declaration.is<TemplateClassDeclarationNode>()) {
-			return parse_explicit_template_arguments(
-				declaration.as<TemplateClassDeclarationNode>().template_parameters(),
+		if (auto template_parameters =
+				templateParametersForCandidate(candidate);
+			template_parameters.has_value()) {
+			const size_t original_type_node_count =
+				out_type_nodes != nullptr ? out_type_nodes->size() : 0;
+			last_failed_template_arg_parse_handle_ = SIZE_MAX;
+			auto parsed_args = parse_explicit_template_arguments(
+				*template_parameters,
 				out_type_nodes);
-		}
-		if (declaration.is<TemplateAliasNode>()) {
-			return parse_explicit_template_arguments(
-				declaration.as<TemplateAliasNode>().template_parameters(),
-				out_type_nodes);
-		}
-		if (declaration.is<TemplateVariableDeclarationNode>()) {
-			return parse_explicit_template_arguments(
-				declaration.as<TemplateVariableDeclarationNode>().template_parameters(),
-				out_type_nodes);
-		}
-		if (declaration.is<TemplateFunctionDeclarationNode>()) {
-			return parse_explicit_template_arguments(
-				declaration.as<TemplateFunctionDeclarationNode>().template_parameters(),
-				out_type_nodes);
+			if (parsed_args.has_value()) {
+				return parsed_args;
+			}
+			if (last_failed_template_arg_parse_handle_ != SIZE_MAX) {
+				discard_saved_token(last_failed_template_arg_parse_handle_);
+				last_failed_template_arg_parse_handle_ = SIZE_MAX;
+			}
+			if (out_type_nodes != nullptr) {
+				out_type_nodes->resize(original_type_node_count);
+			}
 		}
 	}
 	return parse_explicit_template_arguments(out_type_nodes);
