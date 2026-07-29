@@ -2,6 +2,7 @@
 #include "AstTraversal.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
+#include "InlineAlwaysAnalysis.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
@@ -2631,50 +2632,15 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 	}
 
 	if (run_inline_heuristic) {
-		const auto& func_definition = new_func_ref.get_definition();
-		if (!func_definition.has_value()) {
-			new_func_ref.set_inline_always(true);
-			FLASH_LOG(Templates, Trace, "Marked template instantiation as inline_always (no body): ",
+		const bool is_reference_identity =
+			isReferenceIdentityInlineCandidate(new_func_ref);
+		new_func_ref.set_inline_always(is_reference_identity);
+		if (is_reference_identity) {
+			FLASH_LOG(Templates, Trace, "Marked template instantiation as inline_always (reference identity): ",
 					  new_func_ref.decl_node().identifier_token().value());
-		} else if (func_definition->is<BlockNode>()) {
-			const BlockNode& block = func_definition->as<BlockNode>();
-			const auto& statements = block.get_statements();
-			const bool is_pure_expr = std::invoke([&statements]() -> bool {
-				bool inner_is_pure_expr = true;
-				bool has_pure_return = false;
-				statements.visit([&](const ASTNode& stmt) {
-					if (!stmt.has_value() || stmt.is<TypedefDeclarationNode>()) {
-					} else if (stmt.is<ReturnStatementNode>()) {
-						const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
-						const auto& expr_opt = ret_stmt.expression();
-						if (expr_opt.has_value() && expr_opt->is<ExpressionNode>()) {
-							const ExpressionNode& expr = expr_opt->as<ExpressionNode>();
-							std::visit([&](const auto& e) {
-								using T = std::decay_t<decltype(e)>;
-								if constexpr (std::is_same_v<T, StaticCastNode> ||
-											  std::is_same_v<T, ReinterpretCastNode> ||
-											  std::is_same_v<T, ConstCastNode> ||
-											  std::is_same_v<T, IdentifierNode>) {
-									has_pure_return = true;
-								}
-							},
-									   expr);
-						}
-					} else {
-						inner_is_pure_expr = false;
-					}
-				});
-				inner_is_pure_expr &= static_cast<int>(has_pure_return);
-				return inner_is_pure_expr;
-			});
-			new_func_ref.set_inline_always(is_pure_expr);
-			if (is_pure_expr) {
-				FLASH_LOG(Templates, Trace, "Marked template instantiation as inline_always (pure expression): ",
-						  new_func_ref.decl_node().identifier_token().value());
-			} else {
-				FLASH_LOG(Templates, Trace, "Template instantiation has computation/side effects (not inlining): ",
-						  new_func_ref.decl_node().identifier_token().value());
-			}
+		} else {
+			FLASH_LOG(Templates, Trace, "Template instantiation is not a reference identity (not force-inlining): ",
+					  new_func_ref.decl_node().identifier_token().value());
 		}
 	}
 

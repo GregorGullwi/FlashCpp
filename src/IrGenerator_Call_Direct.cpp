@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "CallNodeHelpers.h"
+#include "InlineAlwaysAnalysis.h"
 #include "SemanticAnalysis.h"
 #include "TypeSizeQuery.h"
 
@@ -452,6 +453,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	if (inline_always_target &&
 		inline_always_target->is_inline_always() &&
+		isReferenceIdentityInlineCandidate(*inline_always_target) &&
 		callExprNode.arguments().size() == 1) {
 		const TypeSpecifierNode& return_type_spec = inline_always_target->decl_node().type_specifier_node();
 		bool returns_reference = return_type_spec.is_reference() || return_type_spec.is_rvalue_reference();
@@ -513,7 +515,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 			if (can_inline) {
-				FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
+				FLASH_LOG(Codegen, Debug, "Inlining reference identity function (inline_always): ", func_name_view);
 
 				const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
 
