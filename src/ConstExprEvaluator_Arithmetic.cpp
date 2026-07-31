@@ -152,7 +152,8 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 					ctor_param_bindings,
 					result.object_member_bindings,
 					context,
-					true);  // ignore_default_initializer_errors
+					true,
+					&result.object_base_values);  // ignore_default_initializer_errors
 				if (materialize_result.success()) {
 					// Ensure synthesized iterator pointers keep their snapshot payload even
 					// when constructor materialization routes through parameter/member

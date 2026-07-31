@@ -1,5 +1,6 @@
 #pragma once
 #include <cassert>
+#include <memory>
 #include <span>
 #include "AstNodeTypes_TypeSystem.h"
 #include "SizeTypes.h"
@@ -7,6 +8,9 @@
 
 class TypeSpecifierNode;
 class ConstructorDeclarationNode;
+namespace FlashCpp {
+struct StructuralClassValue;
+}
 struct StructTypeInfo;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 
@@ -1119,6 +1123,7 @@ struct TypeInfo {
 		StringHandle nttp_entity_name;                 // Entity name for pointer/reference/function-pointer NTTPs
 		StringHandle nttp_member_name;                 // Member name for member-pointer NTTPs
 		int64_t nttp_pointer_offset;                   // Object-pointer element offset or member-pointer value offset
+		FlashCpp::StructuralClassValue* structural_value = nullptr;
 
 		// Index into gTemplateArgInfoColdPayloads for rare fat fields (~function sig / dependent expr).
 		uint32_t cold_payload_index_ = kNoColdPayload;

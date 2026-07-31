@@ -5,6 +5,7 @@
 #include "NamespaceRegistry.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
+#include "TemplateTypes.h"
 
 // Global debug flag
 bool g_enable_debug_output = false;
@@ -16,6 +17,7 @@ NamespaceRegistry gNamespaceRegistry;
 ChunkedAnyVector<> gChunkedAnyStorage;
 
 namespace FlashCpp {
+ChunkedVector<StructuralClassValue> gStructuralClassValues;
 LazyMemberResolver gLazyMemberResolver;
 InstantiationQueue gInstantiationQueue;
 } // namespace FlashCpp

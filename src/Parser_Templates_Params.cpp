@@ -484,26 +484,24 @@ ParseResult Parser::parse_template_parameter() {
 	if (!type_result.node().has_value()) {
 		return ParseResult::error("Expected type specifier for non-type template parameter", current_token_);
 	}
-		TypeSpecifierNode nttp_type = type_result.node()->as<TypeSpecifierNode>();
-		consume_pointer_ref_modifiers(nttp_type);
-		if (nttp_type.is_reference() &&
-			nttp_type.type() != TypeCategory::Auto &&
-			nttp_type.type() != TypeCategory::DeclTypeAuto) {
-			return ParseResult::error(
-				"Reference non-type template parameters are not supported yet",
-				type_result.node()->as<TypeSpecifierNode>().token());
-		}
-		if ((nttp_type.type() == TypeCategory::Struct ||
-			 nttp_type.type() == TypeCategory::UserDefined ||
-			 nttp_type.type() == TypeCategory::TypeAlias) &&
+	TypeSpecifierNode nttp_type = type_result.node()->as<TypeSpecifierNode>();
+	consume_pointer_ref_modifiers(nttp_type);
+	if (nttp_type.is_reference() &&
+		nttp_type.type() != TypeCategory::Auto &&
+		nttp_type.type() != TypeCategory::DeclTypeAuto) {
+		return ParseResult::error(
+			"Reference non-type template parameters are not supported yet",
+			type_result.node()->as<TypeSpecifierNode>().token());
+	}
+	if (nttp_type.type() == TypeCategory::Struct &&
 		nttp_type.type_index().is_valid()) {
 		const TypeInfo* nttp_type_info = tryGetTypeInfo(nttp_type.type_index());
 		if (nttp_type_info != nullptr &&
 			!nttp_type_info->isDependentPlaceholder() &&
 			nttp_type_info->getStructInfo() != nullptr) {
-			return ParseResult::error(
-				"Structural class-type non-type template parameters are not supported yet",
-				type_result.node()->as<TypeSpecifierNode>().token());
+			FLASH_LOG(Templates, Trace,
+				"Accepting structural class-type non-type template parameter '",
+				nttp_type_info->name(), "'");
 		}
 	}
 

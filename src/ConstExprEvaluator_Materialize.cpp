@@ -36,7 +36,94 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 
 	EvalResult object_result = EvalResult::from_int(0);
 	object_result.object_type_index = type_index;
-	auto bind_members_result = bind_members_from_initializer_list(struct_info, init_list, object_result.object_member_bindings, context, outer_bindings);
+	const size_t positional_base_count = init_list.has_any_designated()
+		? 0
+		: std::min(struct_info->base_classes.size(), init_list.size());
+	object_result.object_base_values.reserve(struct_info->base_classes.size());
+	for (size_t base_index = 0; base_index < struct_info->base_classes.size(); ++base_index) {
+		const BaseClassSpecifier& base = struct_info->base_classes[base_index];
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+		if (!base_struct_info) {
+			return EvalResult::error("Aggregate base type is not a struct");
+		}
+
+		EvalResult base_result;
+		if (base_index < positional_base_count) {
+			const ASTNode& initializer = init_list.initializers()[base_index];
+			if (initializer.is<InitializerListNode>()) {
+				const InitializerListNode& base_init_list = initializer.as<InitializerListNode>();
+				ChunkedVector<ASTNode> base_args;
+				for (const ASTNode& arg : base_init_list.initializers()) {
+					base_args.push_back(arg);
+				}
+				if (auto ctor_result = try_materialize_struct_from_ctor_args(
+						base_struct_info,
+						base.type_index,
+						base_args,
+						context,
+						false,
+						outer_bindings,
+						nullptr,
+						false)) {
+					base_result = std::move(*ctor_result);
+				} else {
+					base_result = materialize_aggregate_object_value(
+						base_struct_info,
+						base.type_index,
+						base_init_list,
+						context,
+						outer_bindings);
+				}
+			} else {
+				base_result = outer_bindings
+					? evaluate_expression_with_bindings_const(initializer, *outer_bindings, context)
+					: evaluate(initializer, context);
+				if (!base_result.success() || !base_result.object_type_index.is_valid()) {
+					ChunkedVector<ASTNode> base_args;
+					base_args.push_back(initializer);
+					if (auto ctor_result = try_materialize_struct_from_ctor_args(
+							base_struct_info,
+							base.type_index,
+							base_args,
+							context,
+							false,
+							outer_bindings,
+							nullptr,
+							false)) {
+						base_result = std::move(*ctor_result);
+					}
+				}
+			}
+		} else {
+			base_result = makeConstructorDefaultInitFromType(
+				makeTypeSpecForDefaultInit(base.type_index),
+				context);
+		}
+		if (!base_result.success()) {
+			return base_result;
+		}
+		object_result.object_base_values.push_back(std::move(base_result));
+	}
+
+	InitializerListNode direct_init_list(init_list.is_paren_init()
+		? InitializerListNode::InitializationStyle::Paren
+		: InitializerListNode::InitializationStyle::Brace);
+	for (size_t init_index = positional_base_count; init_index < init_list.size(); ++init_index) {
+		if (init_list.is_designated(init_index)) {
+			direct_init_list.add_designated_initializer(
+				init_list.member_name(init_index),
+				init_list.initializers()[init_index]);
+		} else {
+			direct_init_list.add_initializer(init_list.initializers()[init_index]);
+		}
+	}
+	auto bind_members_result = bind_members_from_initializer_list(
+		struct_info,
+		direct_init_list,
+		object_result.object_member_bindings,
+		context,
+		outer_bindings);
 	if (!bind_members_result.success()) {
 		return bind_members_result;
 	}
@@ -753,8 +840,10 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
 	std::unordered_map<std::string_view, EvalResult>& member_bindings,
 	EvaluationContext& context,
-	bool ignore_default_initializer_errors) {
+	bool ignore_default_initializer_errors,
+	std::vector<EvalResult>* base_values) {
 	auto* saved_local_bindings = context.local_bindings;
+	std::vector<std::optional<EvalResult>> ordered_base_values(struct_info->base_classes.size());
 
 	// Handle delegating constructors: S() : S(42) {} — the delegation performs
 	// full construction; the delegating constructor's own body runs afterwards.
@@ -787,6 +876,9 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		}
 		// Copy member bindings from the delegated-to constructor result
 		member_bindings = std::move(del_result->object_member_bindings);
+		if (base_values != nullptr) {
+			*base_values = std::move(del_result->object_base_values);
+		}
 		// Now execute the delegating constructor's own body (if any)
 		const auto& ctor_definition = ctor_decl.get_definition();
 		if (!ctor_definition.has_value() || !ctor_definition->is<BlockNode>()) {
@@ -877,6 +969,8 @@ EvalResult Evaluator::materialize_members_from_constructor(
 			if (!base_result.success()) {
 				return base_result;
 			}
+			const size_t base_index = static_cast<size_t>(base_spec - struct_info->base_classes.data());
+			ordered_base_values[base_index] = base_result;
 
 			for (const auto& [member_name, member_value] : base_result.object_member_bindings) {
 				member_bindings[member_name] = member_value;
@@ -891,7 +985,8 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		return base_bind_result;
 	}
 
-	for (const auto& base : struct_info->base_classes) {
+	for (size_t base_index = 0; base_index < struct_info->base_classes.size(); ++base_index) {
+		const auto& base = struct_info->base_classes[base_index];
 		bool has_explicit_base_initializer = false;
 		StringHandle base_name = StringTable::getOrInternStringHandle(base.name);
 		for (const auto& base_init : ctor_decl.base_initializers()) {
@@ -908,10 +1003,22 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		if (!base_result.success()) {
 			return base_result;
 		}
+		ordered_base_values[base_index] = base_result;
 		for (const auto& [base_member_name, base_member_value] : base_result.object_member_bindings) {
 			if (member_bindings.find(base_member_name) == member_bindings.end()) {
 				member_bindings[base_member_name] = base_member_value;
 			}
+		}
+	}
+
+	if (base_values != nullptr) {
+		base_values->clear();
+		base_values->reserve(ordered_base_values.size());
+		for (const auto& base_value : ordered_base_values) {
+			if (!base_value.has_value()) {
+				return EvalResult::error("Missing base subobject during constexpr construction");
+			}
+			base_values->push_back(*base_value);
 		}
 	}
 
@@ -1007,7 +1114,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_member_from_constructor_initia
 		ctor_param_bindings,
 		member_bindings,
 		context,
-		true);
+		true,
+		nullptr);
 	if (!materialize_result.success()) {
 		return materialize_result;
 	}
@@ -1077,8 +1185,13 @@ std::optional<EvalResult> Evaluator::try_materialize_struct_from_ctor_args(
 	}
 
 	auto materialize_result = materialize_members_from_constructor(
-		struct_info, *matching_ctor, ctor_param_bindings,
-		object_result.object_member_bindings, context, ignore_default_initializer_errors);
+		struct_info,
+		*matching_ctor,
+		ctor_param_bindings,
+		object_result.object_member_bindings,
+		context,
+		ignore_default_initializer_errors,
+		&object_result.object_base_values);
 	if (!materialize_result.success()) {
 		return materialize_result;
 	}

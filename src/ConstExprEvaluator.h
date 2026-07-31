@@ -154,6 +154,7 @@ struct EvalResult {
 	StringHandle member_pointer_member;
 	bool is_null_member_pointer = false;
 	bool is_indeterminate = false;
+	std::vector<EvalResult> object_base_values;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -162,33 +163,33 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		EvalResult result{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		EvalResult result{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
 		result.set_exact_type(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 		return result;
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
 	}
 
 	static EvalResult indeterminate() {
@@ -200,18 +201,18 @@ struct EvalResult {
 	// Create a pointer-to-variable result (for address-of operator on constexpr variables).
 	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
 	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}, {}, {}, false, false};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}, {}, {}, false, false, {}};
 		return r;
 	}
 
 	// Overload that accepts an already-interned StringHandle directly (avoids double interning).
 	static EvalResult from_pointer(StringHandle sh, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}, {}, {}, false, false};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}, {}, {}, false, false, {}};
 		return r;
 	}
 
 	static EvalResult from_member_pointer(StringHandle member_name, int64_t offset) {
-		EvalResult r{offset, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false};
+		EvalResult r{offset, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
 		r.member_pointer_member = member_name;
 		return r;
 	}
@@ -317,6 +318,9 @@ struct EvalResult {
 		return 0.0;
 	}
 };
+
+std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentity(
+	const EvalResult& result);
 
 template <typename AstNodeContainer>
 inline const ASTNode* tryGetSingleExpressionInitializer(const AstNodeContainer& initializers) {
@@ -689,7 +693,8 @@ public:
 		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
 		std::unordered_map<std::string_view, EvalResult>& member_bindings,
 		EvaluationContext& context,
-		bool ignore_default_initializer_errors);
+		bool ignore_default_initializer_errors,
+		std::vector<EvalResult>* base_values);
 	static std::optional<EvalResult> try_evaluate_member_from_constructor_initializers(
 		const StructTypeInfo* struct_info,
 		const ConstructorDeclarationNode& ctor_decl,

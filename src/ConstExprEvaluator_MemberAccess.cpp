@@ -1626,6 +1626,15 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	// - Extract the member value from the initializer expression
 
 	const IdentifierNode* object_identifier = tryGetIdentifier(object_expr);
+	if (object_identifier != nullptr) {
+		EvalResult evaluated_object = evaluate(object_expr, context);
+		if (evaluated_object.success() && evaluated_object.object_type_index.is_valid()) {
+			auto member_it = evaluated_object.object_member_bindings.find(member_name);
+			if (member_it != evaluated_object.object_member_bindings.end()) {
+				return validateConstexprRead(member_it->second);
+			}
+		}
+	}
 
 	std::string_view var_name = getIdentifierNameFromAstNode(object_expr);
 	if (var_name.empty()) {
@@ -1822,7 +1831,8 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 					ctor_param_bindings,
 					object_result.object_member_bindings,
 					context,
-					false);
+					false,
+					&object_result.object_base_values);
 				if (!materialize_result.success()) {
 					return materialize_result;
 				}
@@ -2053,7 +2063,8 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		resolved_member.evaluation_bindings,
 		member_bindings,
 		context,
-		true);
+		true,
+		nullptr);
 	if (!materialize_result.success()) {
 		return materialize_result;
 	}
@@ -2328,7 +2339,8 @@ EvalResult Evaluator::evaluate_nested_member_access(
 									ctor_param_bindings,
 									materialized_result.object_member_bindings,
 									context,
-									false);
+									false,
+									&materialized_result.object_base_values);
 								if (!materialize_result.success()) {
 									return materialize_result;
 								}
@@ -2437,7 +2449,8 @@ EvalResult Evaluator::evaluate_nested_member_access(
 							ctor_param_bindings,
 							materialized_result.object_member_bindings,
 							context,
-							false);
+							false,
+							&materialized_result.object_base_values);
 						if (!materialize_result.success()) {
 							return materialize_result;
 						}
@@ -2596,7 +2609,8 @@ EvalResult Evaluator::evaluate_nested_member_access(
 						ctor_param_bindings,
 						materialized_value.object_member_bindings,
 						context,
-						false);
+						false,
+						&materialized_value.object_base_values);
 					if (!materialize_result.success()) {
 						return materialize_result;
 					}

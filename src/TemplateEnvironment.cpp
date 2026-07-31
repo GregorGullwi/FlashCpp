@@ -64,6 +64,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 		if (id.member_class_name.isValid()) {
 			info.member_class_name = id.member_class_name;
 		}
+		info.structural_value = id.structural_value;
 		info.nttp_pointer_offset = id.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer
 			? id.value
 			: id.pointer_offset;
@@ -132,6 +133,11 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 				break;
 			case FlashCpp::NonTypeValueIdentityKind::Nullptr:
 				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeNullptr(arg.type_index));
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::StructuralClass:
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeStructuralClass(
+					arg.type_index,
+					arg.structural_value));
 				break;
 			default:
 				ta.value = arg.intValue();

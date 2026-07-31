@@ -3731,6 +3731,12 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 
 		// Handle non-type template parameters (values)
 		if (arg.is_value) {
+			if (arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
+				// Keep structural class values as identifiers so member access can be
+				// evaluated from the aggregate value bound in the constexpr context.
+				ExpressionNode& expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(id);
+				return ASTNode(&expr);
+			}
 			FLASH_LOG(Templates, Trace, "  Non-type template parameter, creating literal with value: ", arg.value);
 
 			// Determine the type based on the template argument's base_type
