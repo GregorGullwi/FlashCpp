@@ -10,5 +10,5 @@ struct structural_tag {
 constexpr Key key{42};
 
 int main() {
-	return structural_tag<key>::value;
+	return structural_tag<key>::value == 42 ? 0 : 1;
 }

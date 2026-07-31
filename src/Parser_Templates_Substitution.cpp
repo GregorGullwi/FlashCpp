@@ -30,6 +30,24 @@ std::string buildMemberPointerOwnerReconstructionErrorMessage(
 			.commit());
 }
 
+bool preserveStructuralClassTemplateParameterReference(
+	const TemplateTypeArg& arg,
+	StringHandle param_name,
+	const Token& source_token,
+	std::optional<ASTNode>& result) {
+	if (!arg.has_typed_value_identity ||
+		arg.typed_value_identity.kind !=
+			FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
+		return false;
+	}
+	// Structural class members are resolved by constexpr evaluation from the
+	// canonical value. Replacing the reference with its legacy integer carrier
+	// would turn `K.member` into `0.member`.
+	result = ASTNode::emplace_node<ExpressionNode>(
+		TemplateParameterReferenceNode(param_name, source_token));
+	return true;
+}
+
 size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	if (arg.pointer_depth > 0 ||
 		arg.category() == TypeCategory::FunctionPointer ||
@@ -657,6 +675,14 @@ ASTNode Parser::substituteTemplateParametersWithState(
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_template_param_ref = true;
 					} else if (arg.is_value) {
+						if (preserveStructuralClassTemplateParameterReference(
+								arg,
+								tparam_ref.param_name(),
+								tparam_ref.token(),
+								substituted_node)) {
+							substituted_template_param_ref = true;
+							return;
+						}
 						// Pointer/reference NTTP: emit &entity_name so *P works correctly.
 						// Callable F() still needs a follow-up fix after substitution.
 						if (arg.has_typed_value_identity) {
@@ -754,6 +780,14 @@ ASTNode Parser::substituteTemplateParametersWithState(
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_identifier = true;
 					} else if (arg.is_value) {
+						if (preserveStructuralClassTemplateParameterReference(
+								arg,
+								StringTable::getOrInternStringHandle(id_name),
+								id_node.identifier_token(),
+								substituted_node)) {
+							substituted_identifier = true;
+							return;
+						}
 						// Pointer/reference NTTP: emit &entity_name so *P works correctly.
 						// Callable F() still needs a follow-up fix after substitution.
 						if (arg.has_typed_value_identity) {

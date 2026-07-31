@@ -142,6 +142,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	if (!node.is_materialized() && !node.is_implicit()) {
 		return;
 	}
+	const FunctionDeclarationNode* saved_current_function_node = current_function_node_;
+	current_function_node_ = &node;
+	struct CurrentFunctionNodeGuard {
+		const FunctionDeclarationNode*& current;
+		const FunctionDeclarationNode* saved;
+		~CurrentFunctionNodeGuard() { current = saved; }
+	} current_function_node_guard{current_function_node_, saved_current_function_node};
 
 	// C++20 [basic.def.odr]: an unused inline definition need not be emitted.
 	// Defer free inline/__inline bodies (e.g. UCRT wmemchr) until a call marks

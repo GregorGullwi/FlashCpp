@@ -3140,6 +3140,10 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			instantiation_flags)) {
 		return std::nullopt;
 	}
+	setOuterTemplateBindingsFromParams(
+		new_func_ref,
+		template_params,
+		template_args);
 	if (!resolveMaterializedTrailingReturnType(new_func_ref)) {
 		return std::nullopt;
 	}

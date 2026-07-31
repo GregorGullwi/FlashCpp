@@ -1323,6 +1323,7 @@ private:
 
 	// Current function name (plain, used for friend access checks and diagnostics)
 	StringHandle current_function_name_;
+	const FunctionDeclarationNode* current_function_node_ = nullptr;
 	// Current function mangled name (used for static local variable namespacing)
 	StringHandle current_function_mangled_name_;
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
