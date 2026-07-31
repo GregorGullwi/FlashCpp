@@ -90,6 +90,9 @@ struct ShiftEvaluationInfo {
 };
 
 const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, StringHandle member_name_handle);
+const EvalResult* findConstexprObjectMemberRecursive(
+	const EvalResult& object,
+	StringHandle member_name_handle);
 TypeSpecifierNode makeMemberTypeSpecForDefaultInit(const StructMember& member);
 TypeSpecifierNode makeTypeSpecForDefaultInit(TypeIndex type_index);
 EvalResult makeConstructorDefaultInitFromType(const TypeSpecifierNode& type_spec, EvaluationContext& context);
