@@ -764,10 +764,15 @@ void AstToIr::generateAddressOfForReference(
 		const TempVar& source_var = std::get<TempVar>(base);
 		AssignmentOp assign_op;
 		assign_op.result = result_var;
-		assign_op.lhs = makeTypedValue(target_type, SizeInBits{64}, result_var);	 // 64-bit pointer dest
-		assign_op.rhs = makeTypedValue(target_type, SizeInBits{64}, source_var);	 // 64-bit pointer source
+		assign_op.lhs = withStorage(
+			makeTypedValue(target_type, SizeInBits{64}, result_var),
+			ValueStorage::ContainsAddress);
+		assign_op.rhs = withStorage(
+			makeTypedValue(target_type, SizeInBits{64}, source_var),
+			ValueStorage::ContainsAddress);
 		assign_op.is_pointer_store = false;
 		assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
+		assign_op.propagate_rhs_address_metadata = true;
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
 	}
 }

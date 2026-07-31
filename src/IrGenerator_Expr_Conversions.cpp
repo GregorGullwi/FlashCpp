@@ -496,6 +496,9 @@ std::optional<AstToIr::AddressComponents> AstToIr::makeAddressComponentsFromEval
 			if (lvalue_info.kind == LValueInfo::Kind::Member) {
 				AddressComponents result;
 				result.base = lvalue_info.base;
+				result.base_storage = lvalue_info.is_pointer_to_member
+					? ValueStorage::ContainsAddress
+					: ValueStorage::ContainsData;
 				result.total_member_offset = lvalue_info.offset + accumulated_offset;
 				result.final_type_index = expr_result.type_index;
 				result.final_size_bits = expr_result.size_in_bits;
@@ -516,12 +519,14 @@ std::optional<AstToIr::AddressComponents> AstToIr::makeAddressComponentsFromEval
 
 	if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
 		result.base = *temp_var;
+		result.base_storage = ValueStorage::ContainsAddress;
 		result.total_member_offset = accumulated_offset;
 		return result;
 	}
 
 	if (const auto* base_name = std::get_if<StringHandle>(&expr_result.value)) {
 		result.base = *base_name;
+		result.base_storage = ValueStorage::ContainsAddress;
 		result.total_member_offset = accumulated_offset;
 		return result;
 	}
@@ -562,6 +567,7 @@ ExprResult AstToIr::materializeAddressResult(
 		ComputeAddressOp compute_addr_op;
 		compute_addr_op.result = address_temp;
 		compute_addr_op.base = addr_components.base;
+		compute_addr_op.base_storage = addr_components.base_storage;
 		compute_addr_op.array_indices = std::move(addr_components.array_indices);
 		compute_addr_op.total_member_offset = addr_components.total_member_offset;
 		compute_addr_op.result_type_index = addr_components.final_type_index;
@@ -801,6 +807,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			ComputeAddressOp compute_addr_op;
 			compute_addr_op.result = result_var;
 			compute_addr_op.base = addr_components->base;
+			compute_addr_op.base_storage = addr_components->base_storage;
 			compute_addr_op.array_indices = std::move(addr_components->array_indices);
 			compute_addr_op.total_member_offset = addr_components->total_member_offset;
 			compute_addr_op.result_type_index = addr_components->final_type_index;

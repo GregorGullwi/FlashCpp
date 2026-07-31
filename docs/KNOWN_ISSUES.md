@@ -1,5 +1,35 @@
 # Known Issues
 
+## Dependent alias return types in function-template materialization
+
+Function-template return types that pass through a dependent alias are not always
+fully substituted before mangling and IR conversion.
+
+- A called `move`-shaped template returning
+  `remove_reference_t<T>&&` can retain the template parameter in its mangled
+  parameter type and fail to link with an unresolved external.
+- The full `<tuple>` header still fails later (deferred unmaterialized member
+  emission / constructor/`swap` gaps). The reduced partial-spec nested typedef
+  shape (`using Ttype = Tuple<This, Rest...>`) is covered by
+  `tests/test_dependent_alias_tuple_element_get_ret0.cpp` and now materializes.
+  The regression models an MSVC `tuple_element` / `get` chain with a dependent
+  `ElemT = typename Elem<I, T>::type` alias and an index-zero partial
+  specialization whose nested `Ttype = Tuple<This, Rest...>` must expand the
+  pack and materialize a concrete `Tuple` specialization. It ODR-uses `Ttype`
+  through a pointer cast so a dependent placeholder cannot survive into IR.
+  Reference-returning member access through `static_cast<Ttype&>` is covered
+  separately by `tests/test_static_cast_ref_member_address_ret0.cpp`.
+
+These are generic alias substitution/materialization bugs, not library-name
+problems. Fix the canonical return type before mangling and IR lowering; do not
+special-case standard-library or vendor helper names.
+
+The standard headers also continue to produce non-fatal template-probe noise
+around failed `swap` overloads, dependent NTTP evaluation, and missing template
+parameter substitutions. These diagnostics are separate from the fixed
+`<utility>` runtime crash and should be removed by correcting the corresponding
+generic substitution and overload-probe states.
+
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
 suite stays green, even though they are not strictly standard-conforming under a

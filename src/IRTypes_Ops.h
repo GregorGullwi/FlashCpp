@@ -584,6 +584,7 @@ struct ReturnOp {
 	std::optional<IrValue> return_value;	 // ~40 bytes
 	TypeIndex return_type_index{};		   // TypeCategory embedded; replaces optional<Type> return_type; category() != Invalid means non-void
 	int return_size = 0;					 // 4 bytes
+	ValueStorage return_storage = ValueStorage::ContainsData;
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 };
@@ -645,6 +646,7 @@ struct ComputeAddressOp {
 
 	// Base address (one of these)
 	std::variant<StringHandle, TempVar> base;		  // Variable name or temp
+	ValueStorage base_storage = ValueStorage::ContainsData; // Whether the base names storage or contains an address
 
 	// Array indexing (optional, can have multiple for nested arrays)
 	struct ArrayIndex {
@@ -740,6 +742,7 @@ struct AssignmentOp {
 	TypedValue rhs;								   // Right-hand side (source)
 	bool is_pointer_store = false;					   // True if lhs is a pointer and we should store through it
 	bool dereference_rhs_references = true;			// True if RHS references should be dereferenced (default), false to just copy the pointer
+	bool propagate_rhs_address_metadata = false;	// True when an explicit address copy must preserve indirect storage metadata
 };
 
 // Loop begin (marks loop start with labels for break/continue)

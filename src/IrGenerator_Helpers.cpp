@@ -602,7 +602,12 @@ TempVar AstToIr::emitDereference(TypeCategory pointee_type, int pointer_size_bit
 // ============================================================================
 // Return IR helper
 // ============================================================================
-void AstToIr::emitReturn(IrValue return_value, TypeIndex return_type_index, int return_size, const Token& token) {
+void AstToIr::emitReturn(
+	IrValue return_value,
+	TypeIndex return_type_index,
+	int return_size,
+	const Token& token,
+	ValueStorage return_storage) {
 	// Normalize ULL immediates to the declared return type width and signedness.
 	// This ensures the ReturnOp carries a consistently-typed value rather than an
 	// overwide carrier (e.g. int(-1) sign-extended to 0xFFFFFFFFFFFFFFFF for a char32_t return).
@@ -614,5 +619,6 @@ void AstToIr::emitReturn(IrValue return_value, TypeIndex return_type_index, int 
 	ret_op.return_value = return_value;
 	ret_op.return_type_index = return_type_index;
 	ret_op.return_size = return_size;
+	ret_op.return_storage = return_storage;
 	ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
 }

@@ -2,6 +2,7 @@
 #include "AstTraversal.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
+#include "InlineAlwaysAnalysis.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
@@ -2631,50 +2632,15 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 	}
 
 	if (run_inline_heuristic) {
-		const auto& func_definition = new_func_ref.get_definition();
-		if (!func_definition.has_value()) {
-			new_func_ref.set_inline_always(true);
-			FLASH_LOG(Templates, Trace, "Marked template instantiation as inline_always (no body): ",
+		const bool is_reference_identity =
+			isReferenceIdentityInlineCandidate(new_func_ref);
+		new_func_ref.set_inline_always(is_reference_identity);
+		if (is_reference_identity) {
+			FLASH_LOG(Templates, Trace, "Marked template instantiation as inline_always (reference identity): ",
 					  new_func_ref.decl_node().identifier_token().value());
-		} else if (func_definition->is<BlockNode>()) {
-			const BlockNode& block = func_definition->as<BlockNode>();
-			const auto& statements = block.get_statements();
-			const bool is_pure_expr = std::invoke([&statements]() -> bool {
-				bool inner_is_pure_expr = true;
-				bool has_pure_return = false;
-				statements.visit([&](const ASTNode& stmt) {
-					if (stmt.is<TypedefDeclarationNode>()) {
-					} else if (stmt.is<ReturnStatementNode>()) {
-						const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
-						const auto& expr_opt = ret_stmt.expression();
-						if (expr_opt.has_value() && expr_opt->is<ExpressionNode>()) {
-							const ExpressionNode& expr = expr_opt->as<ExpressionNode>();
-							std::visit([&](const auto& e) {
-								using T = std::decay_t<decltype(e)>;
-								if constexpr (std::is_same_v<T, StaticCastNode> ||
-											  std::is_same_v<T, ReinterpretCastNode> ||
-											  std::is_same_v<T, ConstCastNode> ||
-											  std::is_same_v<T, IdentifierNode>) {
-									has_pure_return = true;
-								}
-							},
-									   expr);
-						}
-					} else {
-						inner_is_pure_expr = false;
-					}
-				});
-				inner_is_pure_expr &= static_cast<int>(has_pure_return);
-				return inner_is_pure_expr;
-			});
-			new_func_ref.set_inline_always(is_pure_expr);
-			if (is_pure_expr) {
-				FLASH_LOG(Templates, Trace, "Marked template instantiation as inline_always (pure expression): ",
-						  new_func_ref.decl_node().identifier_token().value());
-			} else {
-				FLASH_LOG(Templates, Trace, "Template instantiation has computation/side effects (not inlining): ",
-						  new_func_ref.decl_node().identifier_token().value());
-			}
+		} else {
+			FLASH_LOG(Templates, Trace, "Template instantiation is not a reference identity (not force-inlining): ",
+					  new_func_ref.decl_node().identifier_token().value());
 		}
 	}
 
@@ -2894,6 +2860,21 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			TypeSpecifierNode& resolved_type = resolved_return_type.as<TypeSpecifierNode>();
 			resolveAliasTemplateInstantiation(resolved_type);
 			apply_resolved_alias_metadata_local(resolved_type);
+			// Dependent-alias returns that failed to materialize can leave a valid Auto
+			// TypeIndex. Reject those SoftProbes; leave intentional undeduced `auto`
+			// returns alone (they are rewritten after body substitution).
+			if (!isPlaceholderAutoType(parsed_return_type.category()) &&
+				isPlaceholderAutoType(resolved_type.category())) {
+				failTemplateInstantiation(
+					StringBuilder()
+						.append("template function '")
+						.append(template_name)
+						.append("' return type stayed as an unresolved placeholder after materialization")
+						.commit(),
+					&key,
+					overload_id);
+				return false;
+			}
 			if ((resolved_type.category() == TypeCategory::UserDefined ||
 				 resolved_type.category() == TypeCategory::TypeAlias ||
 				 resolved_type.category() == TypeCategory::Template) &&
@@ -3123,6 +3104,12 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		auto& rt = return_type.as<TypeSpecifierNode>();
 		resolveAliasTemplateInstantiation(rt);
 		apply_resolved_alias_metadata_local(rt);
+		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
+		if (!isPlaceholderAutoType(orig_return_type.category()) &&
+			isPlaceholderAutoType(rt.category())) {
+			gTemplateRegistry.markFailedInstantiation(key, overload_id);
+			return std::nullopt;
+		}
 		if ((rt.category() == TypeCategory::UserDefined ||
 			 rt.category() == TypeCategory::TypeAlias ||
 			 rt.category() == TypeCategory::Template) &&
@@ -4041,6 +4028,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		instantiation_flags = mergeInstantiationFlags(
 			instantiation_flags,
 			FunctionTemplateInstantiationFlags::RegisterInstantiation);
+		instantiation_flags = mergeInstantiationFlags(
+			instantiation_flags,
+			FunctionTemplateInstantiationFlags::RunInlineHeuristic);
 		return instantiateBoundFunctionTemplate(
 			instantiation_context,
 			binding_data,

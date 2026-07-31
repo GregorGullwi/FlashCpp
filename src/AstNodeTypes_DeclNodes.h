@@ -2031,7 +2031,37 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 					alias_type_spec->category() != TypeCategory::Invalid) {
 					alias_spec_type_index = nativeTypeIndex(alias_type_spec->category());
 				}
-				if (alias_spec_type_index.is_valid() &&
+				// Prefer a concrete materialized alias specifier over a stale
+				// placeholder target left in TypeInfo::type_index_ (e.g. Auto
+				// registered before the dependent member alias was resolved).
+				// Do not call typeIndexContainsDependentPlaceholder here — it
+				// recurses through resolveAliasTypeInfo.
+				auto is_placeholder_like_category = [](TypeCategory cat) {
+					return isPlaceholderAutoType(cat) ||
+						   cat == TypeCategory::Template ||
+						   cat == TypeCategory::Invalid;
+				};
+				auto stored_target_unusable = [&](TypeIndex stored) {
+					if (!stored.is_valid() ||
+						stored.index() == current_type_index.index() ||
+						is_placeholder_like_category(stored.category())) {
+						return true;
+					}
+					if (const TypeInfo* stored_info = tryGetTypeInfo(stored)) {
+						if (is_placeholder_like_category(stored_info->typeEnum()) ||
+							stored_info->isDependentPlaceholder()) {
+							return true;
+						}
+					}
+					return false;
+				};
+				const bool alias_spec_usable =
+					alias_spec_type_index.is_valid() &&
+					!is_placeholder_like_category(alias_type_spec->category());
+				if (alias_spec_usable && stored_target_unusable(next_type_index)) {
+					next_type_index =
+						alias_spec_type_index.withCategory(alias_type_spec->category());
+				} else if (alias_spec_type_index.is_valid() &&
 					(!next_type_index.is_valid() ||
 					 next_type_index.index() == current_type_index.index())) {
 					next_type_index =
@@ -2259,11 +2289,13 @@ inline bool templateArgInfoContainsDependentPlaceholder(const TypeInfo::Template
 }
 
 inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_spec) {
-	// TypeCategory::Auto or DeclTypeAuto with an invalid TypeIndex means the abbreviated-
-	// template auto parameter (e.g. `void f(auto x)`) was never substituted.
-	// typeIndexContainsDependentPlaceholder() returns false for an invalid TypeIndex, so
-	// we must detect this case explicitly before delegating.
-	if (isPlaceholderAutoType(type_spec.type()) && !type_spec.type_index().is_valid()) {
+	// Placeholder Auto / decltype(auto) on a function signature is unresolved whether
+	// or not a TypeIndex slot exists. A valid Auto index often means a dependent alias
+	// target was registered before materialization and never rewritten — that must not
+	// reach IR. (Abbreviated-template `auto` parameters are substituted away before
+	// codegen; intentional undeduced auto returns are gated by the same check until
+	// deduce_and_update_auto_return_type rewrites them.)
+	if (isPlaceholderAutoType(type_spec.type())) {
 		return true;
 	}
 	if (typeIndexContainsDependentPlaceholder(type_spec.type_index())) {
