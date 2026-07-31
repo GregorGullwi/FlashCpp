@@ -24,12 +24,6 @@ These are generic alias substitution/materialization bugs, not library-name
 problems. Fix the canonical return type before mangling and IR lowering; do not
 special-case standard-library or vendor helper names.
 
-The standard headers also continue to produce non-fatal template-probe noise
-around failed `swap` overloads, dependent NTTP evaluation, and missing template
-parameter substitutions. These diagnostics are separate from the fixed
-`<utility>` runtime crash and should be removed by correcting the corresponding
-generic substitution and overload-probe states.
-
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
 suite stays green, even though they are not strictly standard-conforming under a

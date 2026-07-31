@@ -633,6 +633,16 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 	if (!record.callee_name.isValid()) {
 		return std::nullopt;
 	}
+	for (const TypeSpecifierNode& arg_type : arg_types) {
+		if (typeSpecStillUsesDependentPlaceholder(arg_type)) {
+			FLASH_LOG_FORMAT(
+				Templates,
+				Trace,
+				"Deferring dependent unqualified call '{}' until substitution",
+				record.callee_name.view());
+			return std::nullopt;
+		}
+	}
 
 	ScopedDefinitionLookupContext ctx_scope(
 		current_template_definition_lookup_context_,
@@ -811,6 +821,16 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 		arg_types.size());
 	if (qualified_name.empty()) {
 		return std::nullopt;
+	}
+	for (const TypeSpecifierNode& arg_type : arg_types) {
+		if (typeSpecStillUsesDependentPlaceholder(arg_type)) {
+			FLASH_LOG_FORMAT(
+				Templates,
+				Trace,
+				"Deferring dependent qualified call '{}' until substitution",
+				qualified_name);
+			return std::nullopt;
+		}
 	}
 
 	std::optional<InlineVector<TemplateTypeArg, 4>> explicit_template_args;

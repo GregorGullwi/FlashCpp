@@ -2300,7 +2300,13 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 	// reach IR. (Abbreviated-template `auto` parameters are substituted away before
 	// codegen; intentional undeduced auto returns are gated by the same check until
 	// deduce_and_update_auto_return_type rewrites them.)
-	if (isPlaceholderAutoType(type_spec.type())) {
+	// A parser-created TypeSpecifierNode can also retain the identity of a template
+	// parameter after its TypeIndex has been normalized to a concrete-looking
+	// category. That identity is the canonical dependence marker for overload
+	// arguments until substitution rewrites the node; do not probe overloads from
+	// the category alone.
+	if (type_spec.has_template_parameter_identity() ||
+		isPlaceholderAutoType(type_spec.type())) {
 		return true;
 	}
 	if (typeIndexContainsDependentPlaceholder(type_spec.type_index())) {
