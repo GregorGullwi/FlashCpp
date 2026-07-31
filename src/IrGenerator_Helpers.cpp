@@ -12,6 +12,35 @@ ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols
 	if (global_symbol_table_) {
 		ctx.global_symbols = global_symbol_table_;
 	}
+	if (current_function_node_ != nullptr &&
+		current_function_node_->has_outer_template_bindings()) {
+		OuterTemplateBinding function_binding;
+		function_binding.param_names.assign(
+			current_function_node_->outer_template_param_names().begin(),
+			current_function_node_->outer_template_param_names().end());
+		const auto function_args = toTemplateTypeArgList(
+			std::span<const TypeInfo::TemplateArgInfo>(
+				current_function_node_->outer_template_args().data(),
+				current_function_node_->outer_template_args().size()));
+		function_binding.param_args.assign(function_args.begin(), function_args.end());
+		function_binding.all_args = function_args;
+		TemplateEnvironment function_environment = buildTemplateEnvironment(function_binding);
+		function_environment.bindings.insert(
+			function_environment.bindings.end(),
+			ctx.template_environment.bindings.begin(),
+			ctx.template_environment.bindings.end());
+		ctx.template_environment = std::move(function_environment);
+		ctx.template_param_names.reserve(
+			current_function_node_->outer_template_param_names().size());
+		ctx.template_args.reserve(function_binding.all_args.size());
+		for (StringHandle param_name :
+			 current_function_node_->outer_template_param_names()) {
+			ctx.template_param_names.push_back(StringTable::getStringView(param_name));
+		}
+		ctx.template_args.assign(
+			function_binding.all_args.begin(),
+			function_binding.all_args.end());
+	}
 	if (current_struct_name_.isValid()) {
 		const auto& types_by_name = getTypesByNameMap();
 		auto struct_type_it = types_by_name.find(current_struct_name_);

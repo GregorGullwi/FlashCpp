@@ -647,7 +647,7 @@ const TemplateTypeArg* findTemplateValueParameterBindingCompatibility(
 	return nullptr;
 }
 
-const TemplateTypeArg* findTemplateValueParameterBinding(StringHandle param_name_handle, const EvaluationContext& context) {
+const TemplateTypeArg* findTemplateValueParameterBindingImpl(StringHandle param_name_handle, const EvaluationContext& context) {
 	if (!param_name_handle.isValid()) {
 		return nullptr;
 	}
@@ -1013,6 +1013,12 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 }
 
 } // namespace
+
+const TemplateTypeArg* findTemplateValueParameterBinding(
+	StringHandle param_name_handle,
+	const EvaluationContext& context) {
+	return findTemplateValueParameterBindingImpl(param_name_handle, context);
+}
 
 std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentity(
 	const EvalResult& result) {
