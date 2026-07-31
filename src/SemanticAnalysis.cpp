@@ -8814,7 +8814,20 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			InlineVector<TypeSpecifierNode, 6> qualified_template_arg_types;
 			if (tryCollectOverloadResolutionArgTypes(arguments, qualified_template_arg_types)) {
 				std::optional<ASTNode> resolved_target;
-				if (call_info.definition_lookup_record != nullptr &&
+				if (call_info.dependent_qualified_lookup_record != nullptr) {
+					// The dependent-qualified record is the semantic owner of this
+					// lookup until expression substitution materializes its owner and
+					// member chain. Running ordinary qualified overload resolution here
+					// probes the spelling-level owner (for example a dependent base alias)
+					// and turns an intentionally deferred call into a false overload
+					// failure. The substitution path retries from the canonical record at
+					// the point of instantiation.
+					FLASH_LOG_FORMAT(
+						Templates,
+						Trace,
+						"Deferring dependent qualified call '{}' to substitution",
+						call_info.qualified_name.view());
+				} else if (call_info.definition_lookup_record != nullptr &&
 					call_info.definition_lookup_record->has_value() &&
 					call_info.definition_lookup_record
 						->value()
