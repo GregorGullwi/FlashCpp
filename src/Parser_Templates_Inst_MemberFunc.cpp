@@ -2094,6 +2094,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const OuterTemplateBinding* outer_binding =
 		gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view());
 	std::optional<OuterTemplateBinding> synthesized_outer_binding;
+	std::optional<OuterTemplateBinding> function_decl_outer_binding;
 	if (outer_binding == nullptr) {
 		synthesized_outer_binding = buildOuterBindingForOwner(current_owner_type_name);
 		if (synthesized_outer_binding.has_value() &&
@@ -2101,6 +2102,16 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			 !synthesized_outer_binding->all_args.empty())) {
 			outer_binding = &*synthesized_outer_binding;
 		}
+	}
+	if (outer_binding == nullptr && func_decl.has_outer_template_bindings()) {
+		function_decl_outer_binding.emplace();
+		function_decl_outer_binding->param_names = func_decl.outer_template_param_names();
+		for (const auto& arg_info : func_decl.outer_template_args()) {
+			TemplateTypeArg arg = toTemplateTypeArg(arg_info);
+			function_decl_outer_binding->param_args.push_back(arg);
+			function_decl_outer_binding->all_args.push_back(std::move(arg));
+		}
+		outer_binding = &*function_decl_outer_binding;
 	}
 	InlineVector<TemplateTypeArg, 4> inline_template_args;
 	inline_template_args.reserve(template_args.size());
@@ -2381,6 +2392,25 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Create the new function declaration
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, struct_name);
+	InlineVector<ASTNode, 4> instantiated_template_params;
+	InlineVector<TemplateTypeArg, 4> instantiated_template_args;
+	if (outer_binding != nullptr) {
+		appendOuterBindingSubstitutionInputs(
+			*outer_binding,
+			instantiated_template_params,
+			instantiated_template_args);
+	}
+	for (const auto& template_param : template_params) {
+		instantiated_template_params.push_back(
+			ASTNode::emplace_node<TemplateParameterNode>(template_param));
+	}
+	for (const auto& template_arg : template_args) {
+		instantiated_template_args.push_back(template_arg);
+	}
+	setOuterTemplateBindingsFromParams(
+		new_func_ref,
+		instantiated_template_params,
+		instantiated_template_args);
 
 	std::unordered_map<TypeIndex, TemplateTypeArg> default_type_sub_map;
 	std::unordered_map<std::string_view, int64_t> default_nontype_sub_map;

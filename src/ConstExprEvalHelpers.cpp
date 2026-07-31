@@ -718,6 +718,40 @@ const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, S
 	return nullptr;
 }
 
+const EvalResult* findConstexprObjectMemberRecursive(
+	const EvalResult& object,
+	StringHandle member_name_handle) {
+	if (!member_name_handle.isValid()) {
+		return nullptr;
+	}
+
+	if (const auto member_it = object.object_member_bindings.find(
+			StringTable::getStringView(member_name_handle));
+		member_it != object.object_member_bindings.end()) {
+		return &member_it->second;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(object.object_type_index);
+	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+	if (struct_info == nullptr) {
+		return nullptr;
+	}
+
+	const size_t base_count = std::min(
+		struct_info->base_classes.size(),
+		object.object_base_values.size());
+	for (size_t base_index = 0; base_index < base_count; ++base_index) {
+		if (const EvalResult* member = findConstexprObjectMemberRecursive(
+				object.object_base_values[base_index],
+				member_name_handle);
+			member != nullptr) {
+			return member;
+		}
+	}
+
+	return nullptr;
+}
+
 TypeSpecifierNode makeMemberTypeSpecForDefaultInit(const StructMember& member) {
 	TypeSpecifierNode type_spec(
 		member.type_index,

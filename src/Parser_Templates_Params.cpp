@@ -1014,6 +1014,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		ValueLike,
 		Unknown,
 	};
+	auto makeConcreteValueArg = [](const TemplateParamSubstitution& subst) {
+		return subst.typed_value_identity.has_value()
+			? TemplateTypeArg::makeValueIdentity(*subst.typed_value_identity)
+			: TemplateTypeArg::makeValue(subst.value, subst.value_type);
+	};
 
 	// Classifies a simple identifier name and – when it turns out to be ValueLike due to a
 	// concrete substitution – also returns the already-built TemplateTypeArg so the caller
@@ -1027,7 +1032,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			// NonType param – also scan substitutions so we can return a concrete arg in one pass
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.param_name == name_handle && subst.is_value_param) {
-					return { SimpleTemplateArgKind::ValueLike, TemplateTypeArg::makeValue(subst.value, subst.value_type) };
+					return { SimpleTemplateArgKind::ValueLike, makeConcreteValueArg(subst) };
 				}
 			}
 			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
@@ -1038,7 +1043,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				continue;
 			}
 			if (subst.is_value_param) {
-				return { SimpleTemplateArgKind::ValueLike, TemplateTypeArg::makeValue(subst.value, subst.value_type) };
+				return { SimpleTemplateArgKind::ValueLike, makeConcreteValueArg(subst) };
 			}
 			if (subst.is_type_param || subst.is_template_template_param) {
 				return { SimpleTemplateArgKind::TypeLike, std::nullopt };
@@ -1050,13 +1055,18 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			if (symbol_lookup->is<VariableDeclarationNode>()) {
 				const VariableDeclarationNode& variable_decl = symbol_lookup->as<VariableDeclarationNode>();
 				if (variable_decl.initializer().has_value()) {
-					if (auto const_value = try_evaluate_constant_expression(*variable_decl.initializer())) {
-						TemplateTypeArg value_arg;
-						value_arg.is_value = true;
-						value_arg.value = const_value->value;
-						value_arg.type_index = const_value->type_index.category() != TypeCategory::Invalid
-							? const_value->type_index
-							: nativeTypeIndex(const_value->type).withCategory(const_value->type);
+					Token identifier_token(
+						Token::Type::Identifier,
+						StringTable::getStringView(name_handle),
+						0,
+						0,
+						0);
+					ASTNode identifier_expression =
+						ASTNode::emplace_node<ExpressionNode>(
+							IdentifierNode(identifier_token));
+					if (auto const_value = try_evaluate_constant_expression(identifier_expression)) {
+						TemplateTypeArg value_arg =
+							TemplateTypeArg::makeValueIdentity(const_value->identity);
 						return { SimpleTemplateArgKind::ValueLike, value_arg };
 					}
 				}

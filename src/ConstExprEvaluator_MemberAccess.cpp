@@ -1576,8 +1576,13 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	// rather than an identifier. Resolve its structural value before the normal
 	// identifier/object-source paths so `K.member` can participate in constexpr
 	// evaluation after template argument substitution.
-	if (const TemplateParameterReferenceNode* template_param =
-			tryGetNode<TemplateParameterReferenceNode>(object_expr)) {
+	const TemplateParameterReferenceNode* template_param =
+		tryGetNode<TemplateParameterReferenceNode>(object_expr);
+	if (template_param == nullptr && object_expr.is<ExpressionNode>()) {
+		template_param = std::get_if<TemplateParameterReferenceNode>(
+			&object_expr.as<ExpressionNode>());
+	}
+	if (template_param != nullptr) {
 		const TemplateTypeArg* arg = findTemplateValueParameterBinding(
 			template_param->param_name(), context);
 		if (arg == nullptr) {
@@ -1592,14 +1597,16 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				"Unsupported template parameter value in member access",
 				EvalErrorType::TemplateDependentExpression);
 		}
-		auto member_it = resolved_object->object_member_bindings.find(member_name);
-		if (member_it == resolved_object->object_member_bindings.end()) {
+		const EvalResult* member_value = findConstexprObjectMemberRecursive(
+			*resolved_object,
+			StringTable::getOrInternStringHandle(member_name));
+		if (member_value == nullptr) {
 			return EvalResult::error(
 				"Member '" + std::string(member_name) +
 				"' not found on template parameter value",
 				EvalErrorType::Other);
 		}
-		return validateConstexprRead(member_it->second);
+		return validateConstexprRead(*member_value);
 	}
 
 	// Handle arrow access (ptr->member): evaluate the pointer expression to get the

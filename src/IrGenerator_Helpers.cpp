@@ -12,8 +12,11 @@ ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols
 	if (global_symbol_table_) {
 		ctx.global_symbols = global_symbol_table_;
 	}
+	TemplateEnvironment function_environment;
+	bool has_function_environment = false;
 	if (current_function_node_ != nullptr &&
 		current_function_node_->has_outer_template_bindings()) {
+		has_function_environment = true;
 		OuterTemplateBinding function_binding;
 		function_binding.param_names.assign(
 			current_function_node_->outer_template_param_names().begin(),
@@ -24,7 +27,7 @@ ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols
 				current_function_node_->outer_template_args().size()));
 		function_binding.param_args.assign(function_args.begin(), function_args.end());
 		function_binding.all_args = function_args;
-		TemplateEnvironment function_environment = buildTemplateEnvironment(function_binding);
+		function_environment = buildTemplateEnvironment(function_binding);
 		function_environment.bindings.insert(
 			function_environment.bindings.end(),
 			ctx.template_environment.bindings.begin(),
@@ -50,7 +53,16 @@ ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols
 			if (ctx.struct_info != nullptr) {
 				ctx.struct_type_index = struct_type_info->registeredTypeIndex().withCategory(struct_type_info->typeEnum());
 				if (const auto* inst_ctx = struct_type_info->instantiationContext()) {
-					ctx.template_environment = buildTemplateEnvironment(*inst_ctx);
+					TemplateEnvironment struct_environment = buildTemplateEnvironment(*inst_ctx);
+					if (has_function_environment) {
+						function_environment.bindings.insert(
+							function_environment.bindings.end(),
+							struct_environment.bindings.begin(),
+							struct_environment.bindings.end());
+						ctx.template_environment = std::move(function_environment);
+					} else {
+						ctx.template_environment = std::move(struct_environment);
+					}
 					ctx.template_param_names.reserve(inst_ctx->param_names.size());
 					ctx.template_args.reserve(inst_ctx->param_args().size());
 					for (StringHandle param_name : inst_ctx->param_names) {

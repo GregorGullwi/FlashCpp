@@ -324,6 +324,8 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentity(
 const TemplateTypeArg* findTemplateValueParameterBinding(
 	StringHandle param_name_handle,
 	const EvaluationContext& context);
+std::optional<EvalResult> tryResolveTemplateValueParameter(
+	const TemplateTypeArg& arg);
 
 template <typename AstNodeContainer>
 inline const ASTNode* tryGetSingleExpressionInitializer(const AstNodeContainer& initializers) {

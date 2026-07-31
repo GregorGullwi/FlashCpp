@@ -852,7 +852,7 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityIm
 		&structural_value);
 }
 
-std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
+std::optional<EvalResult> tryResolveTemplateValueParameterImpl(const TemplateTypeArg& arg) {
 	if (!arg.is_value) {
 		return std::nullopt;
 	}
@@ -1018,6 +1018,10 @@ const TemplateTypeArg* findTemplateValueParameterBinding(
 	StringHandle param_name_handle,
 	const EvaluationContext& context) {
 	return findTemplateValueParameterBindingImpl(param_name_handle, context);
+}
+
+std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
+	return tryResolveTemplateValueParameterImpl(arg);
 }
 
 std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentity(
