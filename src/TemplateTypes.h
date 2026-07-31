@@ -324,6 +324,8 @@ struct TypeIndexArg {
  */
 // NonTypeValueIdentityKind is defined in AstNodeTypes_TypeSystem.h (included via AstNodeTypes.h).
 
+struct StructuralClassValue;
+
 struct NonTypeValueIdentity {
 	NonTypeValueIdentityKind kind = NonTypeValueIdentityKind::Integral;
 	int64_t value = 0;              // Integral value or ABI offset/sentinel for pointer-to-member
@@ -335,6 +337,7 @@ struct NonTypeValueIdentity {
 	StringHandle dependent_name{};  // Name when dependent (e.g., "N" for template<int N>)
 	std::optional<ASTNode> dependent_expression{}; // Structural dependent expression identity when no single name represents the argument
 	std::optional<FunctionSignature> function_signature{}; // Member/function pointer type identity when available
+	StructuralClassValue* structural_value = nullptr;
 	bool is_dependent = false;      // True if this is a dependent (not yet substituted) value
 
 	TypeCategory valueTypeCategory() const {
@@ -374,6 +377,10 @@ struct NonTypeValueIdentity {
 		id.dependent_name = {};
 		return id;
 	}
+
+	static NonTypeValueIdentity makeStructuralClass(
+		TypeIndex type_index,
+		StructuralClassValue* value);
 
 	static NonTypeValueIdentity makeNullptr(TypeIndex type_index) {
 		NonTypeValueIdentity id;
@@ -509,6 +516,37 @@ struct NonTypeValueIdentity {
 	size_t hash() const;
 	std::string toString() const;
 };
+
+struct StructuralClassValueMember {
+	StringHandle name{};
+	NonTypeValueIdentity scalar_value{};
+	StructuralClassValue* nested_value = nullptr;
+};
+
+struct StructuralClassValue {
+	TypeIndex type_index{};
+	InlineVector<StructuralClassValue*, 2> base_values;
+	InlineVector<StructuralClassValueMember, 4> members;
+
+	bool operator==(const StructuralClassValue& other) const;
+	size_t hash() const;
+};
+
+inline NonTypeValueIdentity NonTypeValueIdentity::makeStructuralClass(
+	TypeIndex type_index,
+	StructuralClassValue* value) {
+	NonTypeValueIdentity id;
+	id.kind = NonTypeValueIdentityKind::StructuralClass;
+	id.value_type_index = type_index;
+	id.structural_value = value;
+	id.value = id.structural_value != nullptr
+		? static_cast<int64_t>(id.structural_value->hash())
+		: 0;
+	id.is_dependent = false;
+	return id;
+}
+
+extern ChunkedVector<StructuralClassValue> gStructuralClassValues;
 
 // ============================================================================
 // Ordered Template Instantiation Identity - Phase 7

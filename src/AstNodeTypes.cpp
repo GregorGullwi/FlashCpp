@@ -440,6 +440,7 @@ void copyTemplateArgInfoScalarFields(TypeInfo::TemplateArgInfo& dst, const TypeI
 	dst.nttp_entity_name = src.nttp_entity_name;
 	dst.nttp_member_name = src.nttp_member_name;
 	dst.nttp_pointer_offset = src.nttp_pointer_offset;
+	dst.structural_value = src.structural_value;
 }
 
 } // namespace
@@ -480,6 +481,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(const TemplateArgInfo& other)
 	  nttp_entity_name(other.nttp_entity_name),
 	  nttp_member_name(other.nttp_member_name),
 	  nttp_pointer_offset(other.nttp_pointer_offset),
+	  structural_value(other.structural_value),
 	  cold_payload_index_(cloneTemplateArgInfoColdPayload(other.cold_payload_index_)) {}
 
 TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
@@ -503,6 +505,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
 	  nttp_entity_name(other.nttp_entity_name),
 	  nttp_member_name(other.nttp_member_name),
 	  nttp_pointer_offset(other.nttp_pointer_offset),
+	  structural_value(std::move(other.structural_value)),
 	  cold_payload_index_(other.cold_payload_index_) {
 	other.cold_payload_index_ = kNoColdPayload;
 }

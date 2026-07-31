@@ -1,3 +1,5 @@
+#include <bit>
+#include <cstring>
 #include <limits>
 #include <ranges>
 #include <unordered_set>
@@ -720,9 +722,143 @@ std::optional<size_t> resolveSizeofPackCount(
 	return std::nullopt;
 }
 
+EvalResult evalResultFromStructuralValue(
+	const FlashCpp::StructuralClassValue& structural_value) {
+	EvalResult result = EvalResult::from_int(0);
+	result.object_type_index = structural_value.type_index;
+	result.object_base_values.reserve(structural_value.base_values.size());
+	for (const FlashCpp::StructuralClassValue* base_value : structural_value.base_values) {
+		if (base_value == nullptr) {
+			return EvalResult::error("Structural class value has a null base subobject");
+		}
+		EvalResult base_result = evalResultFromStructuralValue(*base_value);
+		if (!base_result.success()) {
+			return base_result;
+		}
+		result.object_base_values.push_back(std::move(base_result));
+	}
+	for (const FlashCpp::StructuralClassValueMember& member : structural_value.members) {
+		EvalResult member_result;
+		if (member.nested_value != nullptr) {
+			member_result = evalResultFromStructuralValue(*member.nested_value);
+		} else {
+			const FlashCpp::NonTypeValueIdentity& scalar = member.scalar_value;
+			if (scalar.kind == FlashCpp::NonTypeValueIdentityKind::Floating) {
+				if (scalar.valueTypeCategory() == TypeCategory::Float) {
+					const uint32_t bits = static_cast<uint32_t>(scalar.value);
+					float float_value = 0.0f;
+					std::memcpy(&float_value, &bits, sizeof(float_value));
+					member_result = EvalResult::from_double(static_cast<double>(float_value));
+				} else {
+					member_result = EvalResult::from_double(
+						std::bit_cast<double>(static_cast<uint64_t>(scalar.value)));
+				}
+			} else if (scalar.valueTypeCategory() == TypeCategory::Bool) {
+				member_result = EvalResult::from_bool(scalar.value != 0);
+			} else if (is_unsigned_integer_type(scalar.valueTypeCategory())) {
+				member_result = EvalResult::from_uint(static_cast<unsigned long long>(scalar.value));
+			} else {
+				member_result = EvalResult::from_int(scalar.value);
+			}
+		}
+		if (member.scalar_value.value_type_index.is_valid() &&
+			member.nested_value == nullptr) {
+			const TypeIndex scalar_type = member.scalar_value.value_type_index;
+			const TypeInfo* scalar_type_info = tryGetTypeInfo(scalar_type);
+			const int size_bits = scalar_type_info
+				? scalar_type_info->sizeInBits().value
+				: get_type_size_bits(scalar_type.category());
+			member_result.set_exact_type(TypeSpecifierNode(
+				scalar_type,
+				TypeQualifier::None,
+				SizeInBits{size_bits},
+				Token{},
+				CVQualifier::None));
+		}
+		result.object_member_bindings[StringTable::getStringView(member.name)] = std::move(member_result);
+	}
+	return result;
+}
+
+const StructTypeInfo* structuralClassStructInfo(TypeIndex type_index) {
+	const TypeInfo* type_info = tryGetTypeInfo(type_index);
+	return type_info ? type_info->getStructInfo() : nullptr;
+}
+
+std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentityImpl(
+	const EvalResult& result) {
+	if (!result.object_type_index.is_valid()) {
+		return std::nullopt;
+	}
+	const StructTypeInfo* struct_info = structuralClassStructInfo(result.object_type_index);
+	if (!struct_info || result.object_base_values.size() != struct_info->base_classes.size()) {
+		return std::nullopt;
+	}
+
+	FlashCpp::StructuralClassValue& structural_value =
+		FlashCpp::gStructuralClassValues.emplace_back();
+	structural_value.type_index = result.object_type_index;
+	structural_value.base_values.reserve(result.object_base_values.size());
+	for (const EvalResult& base_result : result.object_base_values) {
+		std::optional<FlashCpp::NonTypeValueIdentity> base_identity =
+			makeStructuralClassValueIdentityImpl(base_result);
+		if (!base_identity.has_value() || base_identity->structural_value == nullptr) {
+			return std::nullopt;
+		}
+		structural_value.base_values.push_back(base_identity->structural_value);
+	}
+	structural_value.members.reserve(struct_info->members.size());
+	for (const StructMember& member_info : struct_info->members) {
+		const std::string_view member_name = StringTable::getStringView(member_info.getName());
+		auto member_it = result.object_member_bindings.find(member_name);
+		if (member_it == result.object_member_bindings.end()) {
+			return std::nullopt;
+		}
+		const EvalResult& member_result = member_it->second;
+		FlashCpp::StructuralClassValueMember member;
+		member.name = member_info.getName();
+		if (member_result.object_type_index.is_valid()) {
+			std::optional<FlashCpp::NonTypeValueIdentity> nested_identity =
+				makeStructuralClassValueIdentityImpl(member_result);
+			if (!nested_identity.has_value() || nested_identity->structural_value == nullptr) {
+				return std::nullopt;
+			}
+			member.nested_value = nested_identity->structural_value;
+		} else {
+			TypeCategory category = member_result.exact_type.has_value()
+				? member_result.exact_type->category()
+				: member_info.memberType();
+			TypeIndex type_index = member_result.exact_type.has_value()
+				? member_result.exact_type->type_index().withCategory(category)
+				: member_info.type_index;
+			if (!type_index.is_valid()) {
+				type_index = nativeTypeIndex(category);
+			}
+			if (!type_index.is_valid()) {
+				type_index = TypeIndex{0, category};
+			}
+			if (std::holds_alternative<double>(member_result.value)) {
+				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeFloating(
+					std::get<double>(member_result.value), type_index);
+			} else {
+				member.scalar_value = FlashCpp::NonTypeValueIdentity::makeConcrete(
+					member_result.as_int(), type_index);
+			}
+		}
+		structural_value.members.push_back(std::move(member));
+	}
+	return FlashCpp::NonTypeValueIdentity::makeStructuralClass(
+		result.object_type_index,
+		&structural_value);
+}
+
 std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
 	if (!arg.is_value) {
 		return std::nullopt;
+	}
+	if (arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass &&
+		arg.valueIdentity().structural_value != nullptr) {
+		return evalResultFromStructuralValue(*arg.valueIdentity().structural_value);
 	}
 	if (arg.category() == TypeCategory::Bool) {
 		return EvalResult::from_bool(arg.value != 0);
@@ -877,6 +1013,11 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 }
 
 } // namespace
+
+std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentity(
+	const EvalResult& result) {
+	return makeStructuralClassValueIdentityImpl(result);
+}
 
 EvalResult validateConstexprRead(const EvalResult& heap_val) {
 	if (heap_val.is_indeterminate) {
@@ -3241,7 +3382,8 @@ EvalResult Evaluator::evaluate_new_expression(
 						ctor_param_bindings,
 						object_result.object_member_bindings,
 						context,
-						false);
+						false,
+						&object_result.object_base_values);
 					if (!materialize_result.success()) {
 						return materialize_result;
 					}

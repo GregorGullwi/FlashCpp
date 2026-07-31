@@ -1096,6 +1096,15 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		return {};
 	};
 	auto makeConstantValueFromEvalResult = [&](const ConstExpr::EvalResult& eval_result) {
+		if (auto structural_identity = ConstExpr::makeStructuralClassValueIdentity(eval_result)) {
+			TypeCategory category = eval_result.object_type_index.category();
+			TypeIndex type_index = makeConstantValueTypeIndex(category, eval_result.object_type_index);
+			return ConstantValue{
+				structural_identity->value,
+				category,
+				type_index,
+				*structural_identity};
+		}
 		TypeCategory category = TypeCategory::Int;
 		TypeIndex type_index{};
 		if (eval_result.exact_type.has_value()) {

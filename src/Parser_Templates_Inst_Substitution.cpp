@@ -291,6 +291,9 @@ static void appendMergedOuterTemplateBinding(
 }
 
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
+	if (auto structural_identity = ConstExpr::makeStructuralClassValueIdentity(eval_result)) {
+		return TemplateTypeArg::makeValueIdentity(*structural_identity);
+	}
 	TypeIndex value_type_index = eval_result.exact_type.has_value()
 		? eval_result.exact_type->type_index().withCategory(eval_result.exact_type->category())
 		: TypeIndex{};
@@ -5636,6 +5639,9 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 			direct_substitution.is_value_param = true;
 			direct_substitution.value = arg.value;
 			direct_substitution.value_type = arg.category();
+			if (arg.has_typed_value_identity) {
+				direct_substitution.typed_value_identity = arg.typed_value_identity;
+			}
 			template_param_substitutions_.push_back(direct_substitution);
 		}
 	}
@@ -5656,6 +5662,9 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 				owner_substitution.is_value_param = true;
 				owner_substitution.value = owner_arg.value;
 				owner_substitution.value_type = owner_arg.category();
+				if (owner_arg.has_typed_value_identity) {
+					owner_substitution.typed_value_identity = owner_arg.typed_value_identity;
+				}
 			} else {
 				owner_substitution.is_type_param = true;
 				owner_substitution.substituted_type = owner_arg;

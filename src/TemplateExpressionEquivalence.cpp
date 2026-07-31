@@ -953,6 +953,52 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 
 } // namespace
 
+bool StructuralClassValue::operator==(const StructuralClassValue& other) const {
+	if (!equalTypeIndexIdentity(type_index, other.type_index) ||
+		base_values.size() != other.base_values.size() ||
+		members.size() != other.members.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < base_values.size(); ++i) {
+		if ((base_values[i] != nullptr) != (other.base_values[i] != nullptr)) {
+			return false;
+		}
+		if (base_values[i] != nullptr && !(*base_values[i] == *other.base_values[i])) {
+			return false;
+		}
+	}
+	for (size_t i = 0; i < members.size(); ++i) {
+		const StructuralClassValueMember& lhs_member = members[i];
+		const StructuralClassValueMember& rhs_member = other.members[i];
+		if (lhs_member.name != rhs_member.name ||
+			(lhs_member.nested_value != nullptr) != (rhs_member.nested_value != nullptr)) {
+			return false;
+		}
+		if (lhs_member.nested_value != nullptr) {
+			if (!(*lhs_member.nested_value == *rhs_member.nested_value)) {
+				return false;
+			}
+		} else if (!(lhs_member.scalar_value == rhs_member.scalar_value)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+size_t StructuralClassValue::hash() const {
+	size_t seed = hashTypeIndexIdentity(type_index);
+	for (const StructuralClassValue* base_value : base_values) {
+		hashCombine(seed, base_value != nullptr ? base_value->hash() : 0);
+	}
+	for (const StructuralClassValueMember& member : members) {
+		hashCombine(seed, std::hash<StringHandle>{}(member.name));
+		hashCombine(seed, member.nested_value != nullptr
+			? member.nested_value->hash()
+			: member.scalar_value.hash());
+	}
+	return seed;
+}
+
 bool equalDependentExpressionIdentity(const ASTNode& lhs, const ASTNode& rhs) {
 	return equalDependentExpressionIdentityImpl(lhs, rhs);
 }
@@ -980,9 +1026,13 @@ bool NonTypeValueIdentity::operator==(const NonTypeValueIdentity& other) const {
 	switch (kind) {
 	case NonTypeValueIdentityKind::Integral:
 	case NonTypeValueIdentityKind::Floating:
-	case NonTypeValueIdentityKind::StructuralClass:
 	case NonTypeValueIdentityKind::Unsupported:
 		return value == other.value;
+	case NonTypeValueIdentityKind::StructuralClass:
+		if (structural_value == nullptr || other.structural_value == nullptr) {
+			return structural_value == other.structural_value;
+		}
+		return *structural_value == *other.structural_value;
 	case NonTypeValueIdentityKind::Nullptr:
 		return true;
 	case NonTypeValueIdentityKind::ObjectPointer:
@@ -1037,6 +1087,9 @@ size_t NonTypeValueIdentity::hash() const {
 	if (function_signature.has_value()) {
 		h ^= hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}
+	if (kind == NonTypeValueIdentityKind::StructuralClass && structural_value != nullptr) {
+		h ^= structural_value->hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
 	h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	return h;
 }
@@ -1058,6 +1111,9 @@ std::string NonTypeValueIdentity::toString() const {
 	}
 	if (kind == NonTypeValueIdentityKind::Nullptr) {
 		return "nullptr";
+	}
+	if (kind == NonTypeValueIdentityKind::StructuralClass) {
+		return std::string(StringBuilder().append("struct$"sv).append(static_cast<uint64_t>(hash())).commit());
 	}
 	if (entity_name.isValid()) {
 		std::string result;

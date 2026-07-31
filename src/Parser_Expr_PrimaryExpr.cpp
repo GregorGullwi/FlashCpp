@@ -2824,6 +2824,14 @@ bool Parser::trySubstituteValueTemplateParameterExpression(
 		if (subst.typed_value_identity.has_value()) {
 			const auto& identity = *subst.typed_value_identity;
 			const auto kind = identity.kind;
+			if (kind == FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
+				// Preserve the named object expression so later constexpr evaluation can
+				// perform member access on the structural NTTP value.
+				result = emplace_node<ExpressionNode>(
+					TemplateParameterReferenceNode(param_name, source_token));
+				FLASH_LOG(Templates, Trace, "Preserved structural class NTTP '", param_name, "' for constexpr member access");
+				return true;
+			}
 			if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
 				 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
 				 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
