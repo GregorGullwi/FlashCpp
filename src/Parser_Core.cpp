@@ -921,15 +921,19 @@ Token Parser::consume_token() {
 		// Use injected token as the next current_token_
 		current_token_ = injected_token_;
 		injected_token_ = Token{};  // reset to Uninitialized
-		FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from injected='{}'",
-						 std::string(token.value()),
-						 std::string(current_token_.value()));
+		if (FLASH_LOG_ENABLED(Parser, Debug)) {
+			FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from injected='{}'",
+							 std::string(token.value()),
+							 std::string(current_token_.value()));
+		}
 	} else {
 		// Normal path: get next token from lexer
 		Token next = lexer_.next_token();
-		FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'",
-						 std::string(token.value()),
-						 std::string(next.value()));
+		if (FLASH_LOG_ENABLED(Parser, Debug)) {
+			FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'",
+							 std::string(token.value()),
+							 std::string(next.value()));
+		}
 		current_token_ = next;
 	}
 	return token;
@@ -1119,8 +1123,10 @@ Parser::SaveHandle Parser::save_token_position() {
 	}
 #endif
 
-	FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}",
-					 static_cast<unsigned long>(handle), std::string(current_token_.value()));
+	if (FLASH_LOG_ENABLED(Parser, Debug)) {
+		FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}",
+						 static_cast<unsigned long>(handle), std::string(current_token_.value()));
+	}
 
 	return handle;
 }
@@ -1143,7 +1149,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 	}
 
 	const SavedToken& saved_token = *saved_tokens_[handle];
-	{
+	if (FLASH_LOG_ENABLED(Parser, Debug)) {
 		std::string saved_tok = std::string(saved_token.current_token_.value());
 		std::string current_tok = std::string(current_token_.value());
 

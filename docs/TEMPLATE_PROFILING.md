@@ -103,13 +103,13 @@ To completely disable profiling (zero overhead), edit `src/TemplateProfilingStat
 ### Profiling Macros
 
 ```cpp
-PROFILE_TEMPLATE_INSTANTIATION(name)       // Track template instantiation
+PROFILE_TEMPLATE_INSTANTIATION(name, ...)  // Track template instantiation
 PROFILE_TEMPLATE_LOOKUP()                   // Track template lookup
 PROFILE_TEMPLATE_PARSING()                  // Track template parsing
 PROFILE_TEMPLATE_SUBSTITUTION()             // Track type substitution
 PROFILE_TEMPLATE_SPECIALIZATION_MATCH()     // Track specialization matching
-PROFILE_TEMPLATE_CACHE_HIT(name)            // Record cache hit
-PROFILE_TEMPLATE_CACHE_MISS(name)           // Record cache miss
+PROFILE_TEMPLATE_CACHE_HIT(name, ...)       // Record cache hit
+PROFILE_TEMPLATE_CACHE_MISS(name, ...)      // Record cache miss
 ```
 
 ### Adding New Profiling Points
@@ -124,7 +124,7 @@ To add profiling to a new code path:
 2. Add profiling at function entry:
 ```cpp
 void my_template_function() {
-    PROFILE_TEMPLATE_INSTANTIATION("MyTemplate");
+    PROFILE_TEMPLATE_INSTANTIATION("MyTemplate", "_func");
     // ... rest of function
 }
 ```
