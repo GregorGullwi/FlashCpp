@@ -1,13 +1,15 @@
 #pragma once
 
 #include <chrono>
-#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
 #include <cstdio>
 #include <climits>
 #include <cstdint>
+#include <type_traits>
+#include <utility>
 #include "StringTable.h"
 
 // Hash functor for StringHandle to use in unordered containers
@@ -102,10 +104,8 @@ public:
 #endif
 	}
 
-	// Overload for std::string for backward compatibility
-	void recordInstantiation(const std::string& template_name, std::chrono::microseconds duration) {
-		StringHandle handle = StringTable::getOrInternStringHandle(template_name);
-		recordInstantiation(handle, duration);
+	void recordInstantiation(std::string_view template_name, std::chrono::microseconds duration) {
+		recordInstantiation(StringTable::getOrInternStringHandle(template_name), duration);
 	}
 
 #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
@@ -142,10 +142,8 @@ public:
 		cache_hits_by_handle_[template_name_handle]++;
 	}
 
-	// Overload for std::string for backward compatibility
-	void recordCacheHit(const std::string& template_name) {
-		StringHandle handle = StringTable::getOrInternStringHandle(template_name);
-		recordCacheHit(handle);
+	void recordCacheHit(std::string_view template_name) {
+		recordCacheHit(StringTable::getOrInternStringHandle(template_name));
 	}
 
 	// Record a cache miss using StringHandle for efficiency
@@ -153,10 +151,8 @@ public:
 		cache_misses_by_handle_[template_name_handle]++;
 	}
 
-	// Overload for std::string for backward compatibility
-	void recordCacheMiss(const std::string& template_name) {
-		StringHandle handle = StringTable::getOrInternStringHandle(template_name);
-		recordCacheMiss(handle);
+	void recordCacheMiss(std::string_view template_name) {
+		recordCacheMiss(StringTable::getOrInternStringHandle(template_name));
 	}
 
 	// Record template lookup time
@@ -397,6 +393,52 @@ private:
 	TemplateProfilingAccumulator specialization_match_time_;
 };
 
+template <typename... Args>
+inline StringBuilder& appendTemplateProfilingName(StringBuilder& builder, Args&&... args) {
+	(builder.append(std::forward<Args>(args)), ...);
+	return builder;
+}
+
+template <typename... Args>
+inline StringHandle createTemplateProfilingNameHandle(Args&&... args) {
+	if constexpr (sizeof...(Args) == 1 && (std::is_same_v<std::remove_cvref_t<Args>, StringHandle> && ...)) {
+		return StringHandle(std::forward<Args>(args)...);
+	}
+
+	StringBuilder builder;
+	appendTemplateProfilingName(builder, std::forward<Args>(args)...);
+	std::string_view name = builder.preview();
+	StringHandle handle = name.empty() ? StringHandle{} : StringTable::getOrInternStringHandle(name);
+	builder.reset();
+	return handle;
+}
+
+template <typename... Args>
+inline void recordTemplateProfilingCacheHit(Args&&... args) {
+	if constexpr (sizeof...(Args) == 1 && (std::is_same_v<std::remove_cvref_t<Args>, StringHandle> && ...)) {
+		TemplateProfilingStats::getInstance().recordCacheHit(std::forward<Args>(args)...);
+		return;
+	}
+
+	StringBuilder builder;
+	TemplateProfilingStats::getInstance().recordCacheHit(
+		appendTemplateProfilingName(builder, std::forward<Args>(args)...).preview());
+	builder.reset();
+}
+
+template <typename... Args>
+inline void recordTemplateProfilingCacheMiss(Args&&... args) {
+	if constexpr (sizeof...(Args) == 1 && (std::is_same_v<std::remove_cvref_t<Args>, StringHandle> && ...)) {
+		TemplateProfilingStats::getInstance().recordCacheMiss(std::forward<Args>(args)...);
+		return;
+	}
+
+	StringBuilder builder;
+	TemplateProfilingStats::getInstance().recordCacheMiss(
+		appendTemplateProfilingName(builder, std::forward<Args>(args)...).preview());
+	builder.reset();
+}
+
 // RAII timer for automatic timing of template operations
 class TemplateProfilingTimer {
 public:
@@ -408,8 +450,12 @@ public:
 		SpecializationMatch
 	};
 
-	TemplateProfilingTimer(Operation op, std::string_view name = "")
-		: operation_(op), name_handle_(name.empty() ? StringHandle{} : StringTable::getOrInternStringHandle(name)),
+	template <typename... Args>
+	TemplateProfilingTimer(Operation op, Args&&... name_parts)
+		: operation_(op),
+		  name_handle_(op == Operation::Instantiation
+						   ? createTemplateProfilingNameHandle(std::forward<Args>(name_parts)...)
+						   : StringHandle{}),
 		  start_(std::chrono::high_resolution_clock::now()) {
 		// Log start of instantiation for long-running template instantiation debugging
 #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
@@ -458,8 +504,8 @@ private:
 #define PROFILE_TEMPLATE_CONCAT(a, b) PROFILE_TEMPLATE_CONCAT_IMPL(a, b)
 #define PROFILE_TEMPLATE_UNIQUE_VAR PROFILE_TEMPLATE_CONCAT(_template_prof_timer_, __COUNTER__)
 
-#define PROFILE_TEMPLATE_INSTANTIATION(name) \
-	TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::Instantiation, name)
+#define PROFILE_TEMPLATE_INSTANTIATION(...) \
+	TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::Instantiation, __VA_ARGS__)
 
 #define PROFILE_TEMPLATE_LOOKUP() \
 	TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::Lookup)
@@ -473,11 +519,15 @@ private:
 #define PROFILE_TEMPLATE_SPECIALIZATION_MATCH() \
 	TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::SpecializationMatch)
 
-#define PROFILE_TEMPLATE_CACHE_HIT(name) \
-	TemplateProfilingStats::getInstance().recordCacheHit(name)
+#define PROFILE_TEMPLATE_CACHE_HIT(...) \
+	do { \
+		recordTemplateProfilingCacheHit(__VA_ARGS__); \
+	} while (0)
 
-#define PROFILE_TEMPLATE_CACHE_MISS(name) \
-	TemplateProfilingStats::getInstance().recordCacheMiss(name)
+#define PROFILE_TEMPLATE_CACHE_MISS(...) \
+	do { \
+		recordTemplateProfilingCacheMiss(__VA_ARGS__); \
+	} while (0)
 
 #else
 
@@ -492,7 +542,7 @@ public:
 	void reset() {}
 };
 
-#define PROFILE_TEMPLATE_INSTANTIATION(name) \
+#define PROFILE_TEMPLATE_INSTANTIATION(...) \
 	do {                                     \
 	} while (0)
 #define PROFILE_TEMPLATE_LOOKUP() \
@@ -507,10 +557,10 @@ public:
 #define PROFILE_TEMPLATE_SPECIALIZATION_MATCH() \
 	do {                                        \
 	} while (0)
-#define PROFILE_TEMPLATE_CACHE_HIT(name) \
+#define PROFILE_TEMPLATE_CACHE_HIT(...) \
 	do {                                 \
 	} while (0)
-#define PROFILE_TEMPLATE_CACHE_MISS(name) \
+#define PROFILE_TEMPLATE_CACHE_MISS(...) \
 	do {                                  \
 	} while (0)
 

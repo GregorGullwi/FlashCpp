@@ -157,16 +157,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// re-parse, "Container" may be a template template parameter bound to a concrete
 	// template (e.g., "MyVec").  Look up the substitution and redirect.
 	// Must be done before the early cache check so the cache key uses the resolved name.
-	{
-		StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
-		for (const auto& subst : template_param_substitutions_) {
-			if (subst.is_template_template_param && subst.param_name == name_handle &&
-				subst.concrete_template_name.isValid()) {
-				std::string_view concrete_name = StringTable::getStringView(subst.concrete_template_name);
-				FLASH_LOG(Templates, Trace, "Redirecting template template param '", template_name,
-						  "' -> '", concrete_name, "'");
-				return try_instantiate_class_template(concrete_name, template_args, force_eager);
-			}
+	StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
+	for (const auto& subst : template_param_substitutions_) {
+		if (subst.is_template_template_param && subst.param_name == name_handle &&
+			subst.concrete_template_name.isValid()) {
+			std::string_view concrete_name = StringTable::getStringView(subst.concrete_template_name);
+			FLASH_LOG(Templates, Trace, "Redirecting template template param '", template_name,
+						"' -> '", concrete_name, "'");
+			return try_instantiate_class_template(concrete_name, template_args, force_eager);
 		}
 	}
 
@@ -264,7 +262,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Push a parser-level instantiation context for provenance tracking and backtraces.
 	// The mode snapshot is taken at call time (before any inner mode changes).
-	StringHandle template_name_handle_for_ctx = StringTable::getOrInternStringHandle(template_name);
+	StringHandle template_name_handle_for_ctx = name_handle;
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, template_name_handle_for_ctx);
 
 	TemplateInstantiationAttemptScope attempt_scope(template_name, template_args.size());
@@ -1370,11 +1368,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				"Type-map hit for '{}' is backed by a ShapeOnly instantiation — re-entering full instantiation",
 				StringTable::getStringView(instantiated_name));
 		} else {
-		PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name));
+		PROFILE_TEMPLATE_CACHE_HIT(instantiated_name);
 		return std::nullopt;
 		}
 	}
-	PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name));
+	PROFILE_TEMPLATE_CACHE_MISS(instantiated_name);
 
 	// Fill in default template arguments BEFORE pattern matching (void_t SFINAE fix)
 	// This is critical for patterns like: template<typename T, typename = void> struct has_type;

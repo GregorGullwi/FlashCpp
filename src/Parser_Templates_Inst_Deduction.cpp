@@ -4174,7 +4174,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(
 // Try to instantiate a function template with the given argument types
 // Returns the instantiated function declaration node if successful
 std::optional<ASTNode> Parser::try_instantiate_template(std::string_view template_name, std::span<const TypeSpecifierNode> arg_types) {
-	PROFILE_TEMPLATE_INSTANTIATION(StringBuilder().append(template_name).append("_func").commit());
+	PROFILE_TEMPLATE_INSTANTIATION(template_name, "_func");
 
 	TemplateInstantiationAttemptScope attempt_scope(template_name, arg_types.size());
 	if (!attempt_scope.allowed()) {
@@ -4978,10 +4978,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					recursion_depth, template_name);
 				return std::nullopt;
 			}
-			PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name) + "_func");
+			PROFILE_TEMPLATE_CACHE_HIT(template_name, "_func");
 			return *existing_inst;  // Return existing instantiation
 		}
-		PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name) + "_func");
+		PROFILE_TEMPLATE_CACHE_MISS(template_name, "_func");
 	} else {
 		FLASH_LOG_FORMAT(
 			Templates,
