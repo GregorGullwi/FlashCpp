@@ -147,6 +147,10 @@ bool Parser::isTypeDependentExpression(const ASTNode& expr) {
 				typeSpecStillUsesDependentPlaceholder(type_spec)) {
 				return AstTraversal::VisitDecision::Stop;
 			}
+			const TemplateTypeArg type_arg(type_spec);
+			if (type_arg.is_dependent || type_arg.dependent_name.isValid()) {
+				return AstTraversal::VisitDecision::Stop;
+			}
 			return AstTraversal::VisitDecision::Continue;
 		}
 
@@ -3888,6 +3892,8 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
 			if (ret.expression().has_value()) {
 				auto expr_type_opt = get_expression_type(*ret.expression());
+				const bool expression_is_dependent =
+					expressionTypeDeductionIsStillDependent(*ret.expression());
 				if (expr_type_opt.has_value()) {
 					// Store this return type for validation
 					TypeSpecifierNode normalized_type =
@@ -3895,8 +3901,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					if (isPlaceholderAutoType(normalized_type.type()) ||
 						typeSpecStillUsesDependentPlaceholder(normalized_type) ||
 						(isDependentTemplateContext() &&
-						 expressionTypeDeductionIsStillDependent(
-							 *ret.expression()))) {
+							 expression_is_dependent)) {
 						// Expression type could be formed but remains dependent at this
 						// stage; defer hard deduction/consistency checks for now.
 						has_still_dependent_return = true;
@@ -3912,9 +3917,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 									  (int)deduced_type->type(), " size: ", (int)deduced_type->size_in_bits());
 						}
 					}
-				} else if (isDependentTemplateContext() &&
-						   expressionTypeDeductionIsStillDependent(
-							   *ret.expression())) {
+				} else if (isDependentTemplateContext() && expression_is_dependent) {
 					has_still_dependent_return = true;
 				}
 			} else {
@@ -3936,6 +3939,9 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 				ConstExpr::EvalResult eval_result =
 					ConstExpr::Evaluator::evaluate(if_stmt.get_condition(), eval_ctx);
+				const bool condition_is_dependent =
+					eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression ||
+					expressionTypeDeductionIsStillDependent(if_stmt.get_condition());
 				if (eval_result.success()) {
 					if (eval_result.as_bool()) {
 						if (if_stmt.get_then_statement().has_value()) {
@@ -3946,8 +3952,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					}
 					return;
 				}
-				if (expressionTypeDeductionIsStillDependent(
-						if_stmt.get_condition())) {
+				if (condition_is_dependent) {
 					has_still_dependent_return = true;
 					return;
 				}
