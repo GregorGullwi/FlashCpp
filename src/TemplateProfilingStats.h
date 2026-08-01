@@ -408,12 +408,12 @@ public:
 		SpecializationMatch
 	};
 
-	TemplateProfilingTimer(Operation op, const std::string& name = "")
-		: operation_(op), name_(name), start_(std::chrono::high_resolution_clock::now()) {
+	TemplateProfilingTimer(Operation op, std::string_view name = "")
+		: operation_(op), name_handle_(name.empty() ? StringHandle{} : StringTable::getOrInternStringHandle(name)),
+		  start_(std::chrono::high_resolution_clock::now()) {
 		// Log start of instantiation for long-running template instantiation debugging
 #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
-		if (operation_ == Operation::Instantiation && !name_.empty()) {
-			name_handle_ = StringTable::getOrInternStringHandle(name_);
+		if (operation_ == Operation::Instantiation && name_handle_.isValid()) {
 			TemplateProfilingStats::getInstance().recordInstantiationStart(name_handle_);
 		}
 #endif
@@ -429,7 +429,7 @@ public:
 #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
 			stats.recordInstantiationEnd(name_handle_);
 #endif
-			stats.recordInstantiation(name_, duration);
+			stats.recordInstantiation(name_handle_, duration);
 			break;
 		case Operation::Lookup:
 			stats.recordLookup(duration);
@@ -448,10 +448,7 @@ public:
 
 private:
 	Operation operation_;
-	std::string name_;
-#if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
 	StringHandle name_handle_;
-#endif
 	std::chrono::high_resolution_clock::time_point start_;
 };
 

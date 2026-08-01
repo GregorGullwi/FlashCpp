@@ -151,7 +151,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(ClassTemplateInstantiation);
 #endif
-	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
+	PROFILE_TEMPLATE_INSTANTIATION(template_name);
 
 	// Resolve template template parameter aliases: when inside a template function body
 	// re-parse, "Container" may be a template template parameter bound to a concrete

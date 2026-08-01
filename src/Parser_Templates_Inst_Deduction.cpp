@@ -4174,7 +4174,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(
 // Try to instantiate a function template with the given argument types
 // Returns the instantiated function declaration node if successful
 std::optional<ASTNode> Parser::try_instantiate_template(std::string_view template_name, std::span<const TypeSpecifierNode> arg_types) {
-	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name) + "_func");
+	PROFILE_TEMPLATE_INSTANTIATION(StringBuilder().append(template_name).append("_func").commit());
 
 	TemplateInstantiationAttemptScope attempt_scope(template_name, arg_types.size());
 	if (!attempt_scope.allowed()) {
