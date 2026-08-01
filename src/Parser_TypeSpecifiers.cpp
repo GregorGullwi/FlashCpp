@@ -1617,6 +1617,13 @@ ParseResult Parser::parse_type_specifier() {
 				if (alias_opt.has_value()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Found alias template for '{}', is_deferred={}", type_name, alias_opt->as<TemplateAliasNode>().is_deferred());
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+					const TypeSpecifierNode& alias_target_type_spec = alias_node.target_type_node();
+					const bool alias_target_preserves_surface =
+						alias_target_type_spec.cv_qualifier() != CVQualifier::None ||
+						alias_target_type_spec.reference_qualifier() != ReferenceQualifier::None ||
+						alias_target_type_spec.pointer_depth() != 0 ||
+						alias_target_type_spec.has_function_signature() ||
+						alias_target_type_spec.is_array();
 
 					// Check for recursion: if we're already resolving this alias, return error
 					if (resolving_aliases_.find(type_name) != resolving_aliases_.end()) {
@@ -1969,6 +1976,22 @@ ParseResult Parser::parse_type_specifier() {
 							if (materialized_alias.resolved_type_info == nullptr) {
 								materialized_alias.resolved_type_info =
 									findTypeByName(StringTable::getOrInternStringHandle(materialized_alias.instantiated_name));
+							}
+						}
+						if (alias_target_preserves_surface &&
+							materialized_alias.resolved_type_info != nullptr) {
+							ASTNode substituted_alias_target = substituteTemplateParameters(
+								ASTNode::emplace_node<TypeSpecifierNode>(alias_node.target_type_node()),
+								alias_node.template_parameters(),
+								*template_args);
+							if (substituted_alias_target.is<TypeSpecifierNode>()) {
+								const TypeSpecifierNode& substituted_target =
+									substituted_alias_target.as<TypeSpecifierNode>();
+								if (!typeSpecStillUsesDependentPlaceholder(substituted_target) &&
+									substituted_target.type() != TypeCategory::Template) {
+									return ParseResult::success(
+										emplace_node<TypeSpecifierNode>(substituted_target));
+								}
 							}
 						}
 						if (std::optional<ParseResult> finalized_alias =
