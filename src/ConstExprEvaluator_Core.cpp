@@ -5088,8 +5088,10 @@ bool Evaluator::hasDependentTemplateArguments(const CallExprNode& call_expr, Eva
 	}
 	for (const ASTNode& template_arg_node : call_expr.template_arguments()) {
 		if (template_arg_node.is<TypeSpecifierNode>()) {
-			if (typeSpecStillUsesDependentPlaceholder(
-					template_arg_node.as<TypeSpecifierNode>())) {
+			const TypeSpecifierNode& type_spec = template_arg_node.as<TypeSpecifierNode>();
+			const TemplateTypeArg type_arg(type_spec);
+			if (typeSpecStillUsesDependentPlaceholder(type_spec) ||
+				type_arg.is_dependent || type_arg.dependent_name.isValid()) {
 				return true;
 			}
 			continue;
@@ -5445,6 +5447,12 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		auto result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 		if (result.success())
 			return result;
+		if (hasDependentTemplateArguments(call_expr, context)) {
+			return EvalResult::error(
+				"Dependent function/variable template call in constant expression: " +
+					std::string(func_name),
+				EvalErrorType::TemplateDependentExpression);
+		}
 		// If variable template instantiation failed, fall through to try other lookups
 	}
 

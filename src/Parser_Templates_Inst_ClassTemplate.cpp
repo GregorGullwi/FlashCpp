@@ -56,10 +56,13 @@ FunctionSignature Parser::substituteTemplateFunctionSignature(
 		return signature;
 	}
 	if (const auto parser_value =
-			try_evaluate_constant_expression(substituted_expression);
+		try_evaluate_constant_expression(substituted_expression);
 		parser_value.has_value()) {
 		signature.is_noexcept = parser_value->value != 0;
 		signature.noexcept_expression.reset();
+		return signature;
+	}
+	if (value.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
 		return signature;
 	}
 	if (!anyTemplateArgIsStructurallyDependent(template_args)) {

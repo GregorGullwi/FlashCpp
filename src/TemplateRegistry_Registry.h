@@ -194,8 +194,10 @@ public:
 		for (const TemplateParameterNode& template_param : template_params) {
 			typed_template_params.push_back(template_param);
 		}
+		std::optional<SfinaeCondition> sfinae_condition =
+			inferSfinaeCondition(template_params, pattern_args);
 		variable_template_specializations_[key].push_back(
-			TemplatePattern{std::move(typed_template_params), pattern_args, specialized_node, std::nullopt});
+			TemplatePattern{std::move(typed_template_params), pattern_args, specialized_node, std::move(sfinae_condition)});
 	}
 	// Find the best matching variable template partial specialization for concrete args.
 	// Returns the specialized ASTNode and the deduced parameter substitutions.
@@ -924,6 +926,67 @@ public:
 	}
 
 private:
+	static std::optional<SfinaeCondition> inferSfinaeCondition(
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> pattern_args) {
+		// A dependent type-alias partial specialization whose result is void has
+		// the probe in its second argument after alias-template normalization.
+		// The probe metadata comes from parsing and is independent of any library
+		// spelling.
+		if (pattern_args.size() != 2) {
+			return std::nullopt;
+		}
+		const TemplateTypeArg& probe_arg = pattern_args[1];
+		if (probe_arg.is_dependent ||
+			probe_arg.category() != TypeCategory::Void ||
+			!probe_arg.dependent_name.isValid()) {
+			return std::nullopt;
+		}
+
+		const std::string_view dependent_name =
+			StringTable::getStringView(probe_arg.dependent_name);
+		const size_t first_scope = dependent_name.find("::");
+		if (first_scope == std::string_view::npos || first_scope == 0 ||
+			first_scope + 2 >= dependent_name.size()) {
+			return std::nullopt;
+		}
+
+		const StringHandle parameter_name =
+			StringTable::getOrInternStringHandle(
+				dependent_name.substr(0, first_scope));
+		for (size_t parameter_index = 0;
+			 parameter_index < template_params.size();
+			 ++parameter_index) {
+			if (template_params[parameter_index].nameHandle() != parameter_name) {
+				continue;
+			}
+
+			InlineVector<StringHandle, 4> member_chain;
+			std::string_view remaining = dependent_name.substr(first_scope + 2);
+			while (!remaining.empty()) {
+				const size_t next_scope = remaining.find("::");
+				const std::string_view member_name =
+					next_scope == std::string_view::npos
+						? remaining
+						: remaining.substr(0, next_scope);
+				if (member_name.empty()) {
+					return std::nullopt;
+				}
+				member_chain.push_back(
+					StringTable::getOrInternStringHandle(member_name));
+				if (next_scope == std::string_view::npos) {
+					break;
+				}
+				remaining = remaining.substr(next_scope + 2);
+			}
+			if (!member_chain.empty()) {
+				return SfinaeCondition(parameter_index, std::move(member_chain));
+			}
+			return std::nullopt;
+		}
+		return std::nullopt;
+	}
+
 	// Register a template specialization pattern under an already-normalized registry key.
 	void registerSpecializationPatternByName(StringHandle template_name,
 											 const InlineVector<TemplateParameterNode, 4>& template_params,
@@ -956,46 +1019,8 @@ private:
 		pattern.specialized_node = specialized_node;
 		pattern.sfinae_condition = sfinae_cond;
 
-		// Auto-detect void_t SFINAE patterns if no explicit condition provided.
-		// Patterns like has_member<T, void_t<typename T::value_type>> register as
-		// [T, void], with the second argument preserving the real dependent probe name.
-		if (!sfinae_cond.has_value() && pattern_args.size() == 2) {
-			const auto& second_arg = pattern_args[1];
-
-			// Check: second arg is void from a void_t-like alias expansion.
-			if (!second_arg.is_dependent &&
-				second_arg.category() == TypeCategory::Void) {
-				if (second_arg.dependent_name.isValid()) {
-					std::string_view dep_name = StringTable::getStringView(second_arg.dependent_name);
-					size_t scope_pos = dep_name.rfind("::");
-					if (scope_pos != std::string_view::npos && scope_pos > 0 && scope_pos + 2 < dep_name.size()) {
-						std::string_view first_component = dep_name.substr(0, dep_name.find("::"));
-						for (size_t i = 0; i < template_params.size(); ++i) {
-							if (StringTable::getStringView(template_params[i].nameHandle()) == first_component) {
-								InlineVector<StringHandle, 4> member_chain;
-								size_t start = first_component.size() + 2;
-								while (start < dep_name.size()) {
-									size_t sep = dep_name.find("::", start);
-									std::string_view component = sep == std::string_view::npos
-										? dep_name.substr(start)
-										: dep_name.substr(start, sep - start);
-									if (!component.empty()) {
-										member_chain.push_back(StringTable::getOrInternStringHandle(component));
-									}
-									if (sep == std::string_view::npos) {
-										break;
-									}
-									start = sep + 2;
-								}
-								pattern.sfinae_condition = SfinaeCondition(i, std::move(member_chain));
-								FLASH_LOG(Templates, Trace, "Auto-detected void_t SFINAE pattern: checking param[",
-										  i, "]::", dep_name.substr(first_component.size() + 2), " from dependent_name '", dep_name, "'");
-								break;
-							}
-						}
-					}
-				}
-			}
+		if (!pattern.sfinae_condition.has_value()) {
+			pattern.sfinae_condition = inferSfinaeCondition(template_params, pattern_args);
 		}
 
 		specialization_patterns_[template_name].push_back(std::move(pattern));
