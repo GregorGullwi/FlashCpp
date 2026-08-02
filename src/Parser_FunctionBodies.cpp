@@ -126,6 +126,13 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	FLASHCPP_PARSER_RUNTIME_PHASE(DelayedFunctionBody);
 #endif
 	out_body = std::nullopt;
+	auto restore_delayed_position = [this, &delayed](SaveHandle position) {
+		if (delayed.is_late_replay) {
+			restore_lexer_position_only(position);
+		} else {
+			restore_token_position(position);
+		}
+	};
 
 	const bool has_member_ctx = !delayed.is_free_function;
 
@@ -150,7 +157,7 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	// Parse constructor initializer list if present (for constructors with delayed parsing)
 	if (delayed.is_constructor && delayed.has_initializer_list && delayed.ctor_node) {
 		// Restore to the position of the initializer list (':')
-		restore_token_position(delayed.initializer_list_start);
+		restore_delayed_position(delayed.initializer_list_start);
 
 		// Parse the initializer list now that all class members are visible
 		if (peek() == ":"_tok) {
@@ -233,6 +240,21 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 					if (const TypeInfo* delayed_type_info = tryGetTypeInfo(delayed.struct_type_index)) {
 						delayed_struct_info = delayed_type_info->getStructInfo();
 					}
+					auto try_alias_base_initializer = [&]() {
+						if (is_base_init || delayed_struct_info == nullptr) {
+							return;
+						}
+						StringHandle alias_base_name = resolveAliasBaseInitializerName(
+							delayed_struct_info,
+							StringTable::getOrInternStringHandle(init_name),
+							delayed.struct_type_index);
+						if (alias_base_name.isValid()) {
+							is_base_init = true;
+							delayed.ctor_node->add_base_initializer(
+								alias_base_name,
+								std::move(init_args));
+						}
+					};
 					if (delayed.struct_node) {
 						for (const auto& base : delayed.struct_node->base_classes()) {
 							if (base.name == init_name) {
@@ -287,6 +309,7 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 							delayed.ctor_node->add_base_initializer(init_name_handle, std::move(init_args));
 						}
 					}
+					try_alias_base_initializer();
 
 					if (!is_base_init) {
 						auto make_initializer_list = [&](InitializerListNode::InitializationStyle style) -> ASTNode {
@@ -322,7 +345,7 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 
 	}
 
-	restore_token_position(delayed.body_start);
+	restore_delayed_position(delayed.body_start);
 
 	// Parse the function body. For normal functions or member functions with body_start at 'try',
 	// parse_function_body() handles everything.  For constructors/destructors with has_function_try

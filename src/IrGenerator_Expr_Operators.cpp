@@ -153,7 +153,7 @@ ExprResult AstToIr::materializeAddressResultForValueContext(
 		: target_size.value;
 	TempVar loaded_value = emitDereference(
 		target_category,
-		64,
+		loaded_size,
 		target_pointer_depth.value + 1,
 		toIrValue(result.value),
 		token);

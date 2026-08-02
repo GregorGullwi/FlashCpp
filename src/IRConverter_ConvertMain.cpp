@@ -12275,9 +12275,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		double double_value = std::get<double>(op.rhs.value);
 			// Allocate an XMM register and load the double into it
 		source_reg = allocateXMMRegisterWithSpilling();
-			// Convert double to uint64_t bit representation
-		uint64_t bits;
-		std::memcpy(&bits, &double_value, sizeof(bits));
+			// NumericLiteralNode stores floating values as double regardless of
+			// the literal's semantic type. Encode the destination width before
+			// moving the immediate into the XMM register.
+		uint64_t bits = encodeFloatingImmediateBits(double_value, op.rhs.size_in_bits.value);
 			// Load bits into a general-purpose register first
 		emitMovImm64(X64Register::RAX, bits);
 			// Move from RAX to XMM register using movq instruction

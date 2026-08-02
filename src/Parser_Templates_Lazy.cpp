@@ -170,6 +170,23 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		// parameters (args_0, args_1, ...) and populating pack_param_info_ so that
 		// pack expansions in initializers and the body resolve correctly.
 		size_t saved_ctor_pack_info = pack_param_info_.size();
+		auto template_arg_index_for_parameter = [&](size_t target_param_index) {
+			size_t arg_index = 0;
+			for (size_t param_index = 0; param_index < target_param_index; ++param_index) {
+				const TemplateParameterNode& template_param = lazy_info.template_params[param_index];
+				if (template_param.is_variadic()) {
+					arg_index += countTemplatePackArguments(
+						lazy_info.template_params,
+						lazy_info.template_args,
+						param_index,
+						arg_index);
+				} else if (arg_index < lazy_info.template_args.size()) {
+					++arg_index;
+				}
+			}
+			return arg_index;
+		};
+
 		for (const auto& param : ctor_decl.parameter_nodes()) {
 			if (param.is<DeclarationNode>()) {
 				const DeclarationNode& param_decl = param.as<DeclarationNode>();
@@ -178,40 +195,40 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				bool handled_as_pack = false;
 				if (param_decl.is_parameter_pack() && (param_type_spec.category() == TypeCategory::UserDefined || param_type_spec.category() == TypeCategory::TypeAlias || param_type_spec.category() == TypeCategory::Template)) {
 					std::string_view type_name = param_type_spec.token().value();
-					size_t non_variadic = 0;
-					size_t pack_size = 0;
-					bool found_pack = false;
-					for (size_t i = 0; i < lazy_info.template_params.size(); ++i) {
-						const TemplateParameterNode& tparam = lazy_info.template_params[i];
-						if (!tparam.is_variadic()) {
-							non_variadic++;
-							continue;
-						}
-						if (tparam.name() == type_name) {
-							pack_size = lazy_info.template_args.size() > non_variadic
-											? lazy_info.template_args.size() - non_variadic
-											: 0;
-							found_pack = true;
+					size_t pack_param_index = lazy_info.template_params.size();
+					for (size_t param_index = 0; param_index < lazy_info.template_params.size(); ++param_index) {
+						const TemplateParameterNode& template_param = lazy_info.template_params[param_index];
+						if (template_param.is_variadic() && template_param.name() == type_name) {
+							pack_param_index = param_index;
 							break;
 						}
 					}
-					if (found_pack) {
+					if (pack_param_index < lazy_info.template_params.size()) {
+						size_t pack_arg_index = template_arg_index_for_parameter(pack_param_index);
+						size_t pack_size = countTemplatePackArguments(
+							lazy_info.template_params,
+							lazy_info.template_args,
+							pack_param_index,
+							pack_arg_index);
 						if (pack_size == 0) {
 							handled_as_pack = true;
 						} else {
 							std::string_view orig_name = param_decl.identifier_token().value();
 							for (size_t pi = 0; pi < pack_size; ++pi) {
-								const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
+								const TemplateTypeArg& elem = lazy_info.template_args[pack_arg_index + pi];
 								TypeCategory elem_type = elem.typeEnum();
 								TypeIndex elem_type_index = elem.type_index;
 								TypeSpecifierNode sub_type(
 									elem_type, param_type_spec.qualifier(),
 									get_type_size_bits(elem_type),
-									param_decl.identifier_token(), param_type_spec.cv_qualifier());
+									param_decl.identifier_token(), elem.cv_qualifier);
 								sub_type.set_type_index(elem_type_index);
 								for (const auto& pl : param_type_spec.pointer_levels())
 									sub_type.add_pointer_level(pl.cv_qualifier);
-								sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+								sub_type.set_reference_qualifier(
+									collapseReferenceQualifiers(
+										elem.ref_qualifier,
+										param_type_spec.reference_qualifier()));
 								if (elem.function_signature.has_value()) {
 									sub_type.set_function_signature(*elem.function_signature);
 								}
@@ -243,7 +260,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						param_type_spec,
 						lazy_info.template_params,
 						lazy_info.template_args,
-						param_type_index);
+						param_type_index,
+						instantiated_owner_type_index);
 				}
 				resolve_self_type(param_type_index);
 				param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
@@ -276,7 +294,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				}
 				substituted_param_type.set_reference_qualifier(
 					direct_template_arg != nullptr
-						? direct_template_arg->ref_qualifier
+						? collapseReferenceQualifiers(
+							direct_template_arg->ref_qualifier,
+							param_type_spec.reference_qualifier())
 						: param_type_spec.reference_qualifier());
 				if (param_type_spec.has_function_signature()) {
 					substituted_param_type.set_function_signature(param_type_spec.function_signature());
@@ -328,53 +348,81 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				true);
 		};
 
-		{
+		auto substituteInitArg = [&](const ASTNode& arg, std::vector<ASTNode>& out) {
+			if (arg.is<ExpressionNode>()) {
+				const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+				if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+					ChunkedVector<ASTNode> expanded;
+					if (!expandPackExpansionArgs(
+							*pack_exp,
+							lazy_info.template_params,
+							converted_template_args,
+							expanded)) {
+						throw InternalError(
+							"Concrete constructor initializer pack expansion could not be materialized.");
+					}
+					for (size_t expansion_index = 0;
+						 expansion_index < expanded.size();
+						 ++expansion_index) {
+						out.push_back(expanded[expansion_index]);
+					}
+					return;
+				}
+			}
+			out.push_back(substituteInitExpr(arg));
+		};
+
+		auto substituteConstructorInitializers =
+			[&](const ConstructorDeclarationNode& source, ConstructorDeclarationNode& target) {
 			FlashCpp::SymbolTableScope ctor_initializer_scope(ScopeType::Function);
 			register_parameters_in_scope(new_ctor_ref.parameter_nodes());
 
-			for (const auto& init : ctor_decl.member_initializers()) {
-				new_ctor_ref.add_member_initializer(init.member_name, substituteInitExpr(init.initializer_expr));
+			std::vector<MemberInitializer> substituted_member_initializers;
+			substituted_member_initializers.reserve(source.member_initializers().size());
+			for (const MemberInitializer& init : source.member_initializers()) {
+				ASTNode substituted_initializer = substituteInitExpr(init.initializer_expr);
+				substituted_member_initializers.emplace_back(
+					init.member_name,
+					std::move(substituted_initializer));
 			}
-			// Helper: substitute a single initializer argument, expanding PackExpansionExprNode
-			// into multiple arguments when present.  Mirrors the eager path's substituteInitArg.
-			auto substituteInitArg = [&](const ASTNode& arg, std::vector<ASTNode>& out) {
-				if (arg.is<ExpressionNode>()) {
-					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-					if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-						ChunkedVector<ASTNode> expanded;
-						if (expandPackExpansionArgs(*pack_exp, lazy_info.template_params, converted_template_args, expanded)) {
-							for (size_t ei = 0; ei < expanded.size(); ++ei) {
-								out.push_back(expanded[ei]);
-							}
-							return;
-						}
-					}
-				}
-				out.push_back(substituteInitExpr(arg));
-			};
 
-			for (const auto& init : ctor_decl.base_initializers()) {
+			std::vector<BaseInitializer> substituted_base_initializers;
+			substituted_base_initializers.reserve(source.base_initializers().size());
+			for (const BaseInitializer& init : source.base_initializers()) {
 				std::vector<ASTNode> substituted_args;
 				substituted_args.reserve(init.arguments.size());
-				for (const auto& arg : init.arguments) {
+				for (const ASTNode& arg : init.arguments) {
 					substituteInitArg(arg, substituted_args);
 				}
-				new_ctor_ref.add_base_initializer(
+				substituted_base_initializers.emplace_back(
 					resolveBaseInitializerNameForTemplateArgs(
 						init.getBaseClassName(),
 						lazy_info.template_params,
 						converted_template_args),
 					std::move(substituted_args));
 			}
-			if (ctor_decl.delegating_initializer().has_value()) {
+
+			std::optional<DelegatingInitializer> substituted_delegating_initializer;
+			if (source.delegating_initializer().has_value()) {
 				std::vector<ASTNode> substituted_del_args;
-				substituted_del_args.reserve(ctor_decl.delegating_initializer()->arguments.size());
-				for (const auto& arg : ctor_decl.delegating_initializer()->arguments) {
+				substituted_del_args.reserve(source.delegating_initializer()->arguments.size());
+				for (const ASTNode& arg : source.delegating_initializer()->arguments) {
 					substituteInitArg(arg, substituted_del_args);
 				}
-				new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
+				substituted_delegating_initializer.emplace(std::move(substituted_del_args));
 			}
-		}
+
+			target.replace_initializers(
+				std::move(substituted_member_initializers),
+				std::move(substituted_base_initializers),
+				std::move(substituted_delegating_initializer));
+		};
+
+		// Constructor-template stubs retain parsed inline initializer AST even though
+		// their bodies are not materialized yet. Substitute that semantic initializer
+		// data for every specialization; out-of-line stubs simply contribute an empty
+		// list here and receive their initializers during delayed replay below.
+		substituteConstructorInitializers(ctor_decl, new_ctor_ref);
 		new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 		new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
 		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
@@ -426,7 +474,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 					{},
 					false,
 					false,
-					false
+					false,
+					true
 				};
 				if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 					struct_it != getTypesByNameMap().end()) {
@@ -439,13 +488,21 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				}
 			};
 
+			const bool had_initializers_before_replay =
+				!new_ctor_ref.member_initializers().empty() ||
+				!new_ctor_ref.base_initializers().empty() ||
+				new_ctor_ref.delegating_initializer().has_value();
 			parse_ctor_with_current_context();
+			if (body_to_substitute.has_value() && !had_initializers_before_replay) {
+				substituteConstructorInitializers(new_ctor_ref, new_ctor_ref);
+			}
 			restore_lexer_position_only(current_pos);
 			discard_saved_token(current_pos);
 		}
 
 		if (!body_to_substitute.has_value()) {
-			FLASH_LOG(Templates, Error, "Failed to obtain constructor body for lazy instantiation");
+			FLASH_LOG(Templates, Error,
+				"Failed to obtain constructor body for lazy instantiation");
 			return std::nullopt;
 		}
 

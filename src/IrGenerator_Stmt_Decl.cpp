@@ -336,7 +336,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		}
 	} full_expression_temp_flush_guard{flushFullExpressionTemps};
 	auto queue_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode* ctor) {
-		if (!ctor) {
+		if (!ctor || ctor->has_template_parameters()) {
+			// A constructor template is only a deduction candidate.  The concrete
+			// specialization is queued after constructor overload resolution has
+			// materialized it with the call's template arguments.
 			return;
 		}
 		const ConstructorDeclarationNode* ctor_to_queue = ctor;
@@ -357,10 +360,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// already visited during beginStructDeclarationCodegen are deduplicated by the
 		// emitted_constructor_nodes_ guard inside visitConstructorDeclarationNode, so
 		// double-emit is safe to ignore.
-		DeferredMemberFunctionInfo deferred_info;
-		deferred_info.struct_name = type_info_ref.name();
-		deferred_info.function_node = ASTNode(ctor_to_queue);
-		deferred_member_functions_.push_back(std::move(deferred_info));
+		queueDeferredMemberFunctionFromNode(
+			type_info_ref.name(),
+			ASTNode(ctor_to_queue),
+			type_info_ref.getStructInfo() != nullptr
+				? type_info_ref.getStructInfo()->namespace_handle
+				: NamespaceHandle{});
 	};
 	auto register_destructor_if_needed = [this](const DeclarationNode& inner_decl, const TypeInfo* type_info) {
 		if (!type_info || !type_info->getStructInfo() || !type_info->getStructInfo()->hasDestructor()) {

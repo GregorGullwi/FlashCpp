@@ -371,7 +371,6 @@ void AstToIr::generateDeferredMemberFunctions() {
 		current_struct_name_ = info.struct_name;
 		current_function_name_ = StringHandle();
 		current_namespace_stack_ = buildNamespaceStackFromHandle(info.namespace_handle);
-
 		try {
 			if (info.function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
@@ -386,6 +385,24 @@ void AstToIr::generateDeferredMemberFunctions() {
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
 				const ConstructorDeclarationNode& ctor = info.function_node.as<ConstructorDeclarationNode>();
+				bool has_unresolved_template_signature = ctor.has_template_parameters();
+				for (const ASTNode& parameter : ctor.parameter_nodes()) {
+					if (!parameter.is<DeclarationNode>()) {
+						continue;
+					}
+					const TypeSpecifierNode& parameter_type =
+						parameter.as<DeclarationNode>().type_specifier_node();
+					if (typeSpecStillUsesDependentPlaceholder(parameter_type)) {
+						has_unresolved_template_signature = true;
+						break;
+					}
+				}
+				if (has_unresolved_template_signature) {
+					// A constructor template pattern is an overload-resolution
+					// candidate, not a code-generation target.  Only its concrete
+					// materializations may enter the deferred emission queue.
+					continue;
+				}
 				if (!ctor.is_materialized()) {
 					throw InternalError("Deferred constructor queue received an unmaterialized constructor");
 				}

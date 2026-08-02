@@ -230,13 +230,6 @@ void appendMemberTemplateResolutionOuterBindings(
 	}
 }
 
-bool dependentQualifiedRecordHasMemberTemplateSegment(
-	const TypeInfo::DependentQualifiedNameRecord* dependent_record) {
-	return dependent_record != nullptr &&
-		std::ranges::any_of(
-			dependent_record->member_chain,
-			[](const auto& member) { return member.has_template_arguments; });
-}
 }
 
 bool Parser::tryAppendMemberDefaultTemplateArg(
@@ -610,8 +603,6 @@ InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplat
 	// is only meaningful for ordinary (namespace-scope) unqualified lookup of free
 	// functions, not for member lookup.  Applying it here would incorrectly drop
 	// candidates for same-class members declared after the calling member's body.
-	(void)0;
-
 	return candidates;
 }
 
@@ -912,21 +903,20 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 							resolved_alias.terminal_type_info->dependentQualifiedName();
 					}
 				}
-				if (dependent_record == nullptr ||
-					dependentQualifiedRecordHasMemberTemplateSegment(dependent_record)) {
+				if (dependent_record == nullptr) {
 					continue;
 				}
 
 				ASTNode concretized_param_type =
 					ASTNode::emplace_node<TypeSpecifierNode>(param_type);
 				if (resolveDependentMemberAlias(
-						concretized_param_type,
-						std::span<const TemplateParameterNode>(
-							resolution_params.data(),
-							resolution_params.size()),
-						std::span<const TemplateTypeArg>(
-							resolution_args.data(),
-							resolution_args.size())) ==
+					concretized_param_type,
+					std::span<const TemplateParameterNode>(
+						resolution_params.data(),
+						resolution_params.size()),
+					std::span<const TemplateTypeArg>(
+						resolution_args.data(),
+						resolution_args.size())) ==
 					DependentAliasResolutionStatus::Resolved) {
 					normalizeSubstitutedTypeSpec(concretized_param_type.as<TypeSpecifierNode>());
 					param_decl->set_type_node(concretized_param_type.as<TypeSpecifierNode>());
@@ -1200,11 +1190,11 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		}
 	}
 
-	auto deduction_candidate = deduceTemplateCandidateViability(
+		auto deduction_candidate = deduceTemplateCandidateViability(
 		template_params,
 		*materialization_source_ctor,
 		arg_types,
-		0);
+			0);
 	if (!deduction_candidate.has_value()) {
 		return std::nullopt;
 	}
@@ -1214,6 +1204,12 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	LazyMemberFunctionInfo lazy_info;
 	lazy_info.identity.original_member_node =
 		emplace_node<ConstructorDeclarationNode>(*materialization_source_ctor);
+	// The body source may be a declaration recovered from the owning class root.
+	// Preserve the selected constructor template's complete parameter list on the
+	// replay node; the body source alone is not the overload's template scope.
+	lazy_info.identity.original_member_node
+		.as<ConstructorDeclarationNode>()
+		.set_template_parameters(template_params);
 	lazy_info.identity.template_owner_name = instantiated_struct_name;
 	lazy_info.identity.instantiated_owner_name = instantiated_struct_name;
 	lazy_info.identity.original_lookup_name = materialization_source_ctor->name();
@@ -1346,7 +1342,8 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 				return false;
 			}
 			const auto& param_type = ctor.parameter_nodes()[i].as<DeclarationNode>().type_specifier_node();
-			if (!can_convert_type(arg_types[i], param_type).is_valid) {
+			const TypeConversionResult conversion = can_convert_type(arg_types[i], param_type);
+			if (!conversion.is_valid) {
 				return false;
 			}
 		}
@@ -1383,7 +1380,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			}
 		}
 
-		auto try_materialize_candidate =
+			auto try_materialize_candidate =
 			[&](const ConstructorDeclarationNode& template_ctor) {
 			auto instantiated = try_instantiate_constructor_template(
 				instantiated_struct_name,
@@ -1397,7 +1394,8 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			// Only publish specializations that actually match the call. Failed
 			// probes must not enter the overload set (they would poison arity
 			// fallback and displace later, better specializations).
-			if (!matches_call_arguments(concrete_ctor_ref)) {
+			const bool matches = matches_call_arguments(concrete_ctor_ref);
+			if (!matches) {
 				return;
 			}
 			const ConstructorDeclarationNode* concrete_ctor =
@@ -1412,8 +1410,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 		}
 
 		const bool should_probe_other_templates =
-			preferred_template_ctor == nullptr ||
-			template_ctor_candidates.size() > 1;
+			preferred_template_ctor == nullptr;
 
 		if (should_probe_other_templates) {
 			for (const ConstructorDeclarationNode* ctor_decl : template_ctor_candidates) {

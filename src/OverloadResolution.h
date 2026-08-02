@@ -447,7 +447,10 @@ struct DerivedBaseConversionInfo {
 // is recorded by type rather than by path because a virtual base subobject is
 // shared by a diamond.  A non-virtual path and a virtual path still describe
 // different possible subobjects and are therefore ambiguous.
-inline DerivedBaseConversionInfo classifyDerivedBaseConversion(TypeIndex derived_idx, TypeIndex base_idx) {
+inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
+	TypeIndex derived_idx,
+	TypeIndex base_idx,
+	TypeIndex access_context_idx) {
 	if (!derived_idx.is_valid() || !base_idx.is_valid())
 		return {};
 	if (derived_idx == base_idx)
@@ -474,6 +477,25 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(TypeIndex derived
 		return std::find(inaccessible_virtual_subobjects.begin(), inaccessible_virtual_subobjects.end(), type_index) !=
 			inaccessible_virtual_subobjects.end();
 	};
+	auto base_edge_is_accessible = [&](const StructTypeInfo& owner, AccessSpecifier access) {
+		if (access == AccessSpecifier::Public) {
+			return true;
+		}
+		if (!access_context_idx.is_valid() || !owner.own_type_index_.has_value()) {
+			return false;
+		}
+
+		const TypeIndex owner_type_idx = *owner.own_type_index_;
+		if (access_context_idx.index() == owner_type_idx.index()) {
+			return true;
+		}
+		if (const TypeInfo* access_context_info = tryGetTypeInfo(access_context_idx);
+			access_context_info != nullptr && owner.isFriendClass(access_context_info->name())) {
+			return true;
+		}
+		return access == AccessSpecifier::Protected &&
+			isTransitivelyDerivedFromAnyAccess(access_context_idx, owner_type_idx);
+	};
 
 	auto visit = [&](const auto& self,
 					const StructTypeInfo* current_struct,
@@ -483,7 +505,8 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(TypeIndex derived
 		if (!current_struct)
 			return;
 		for (const auto& base : current_struct->base_classes) {
-			const bool next_public_path = public_path && base.access == AccessSpecifier::Public;
+			const bool next_public_path =
+				public_path && base_edge_is_accessible(*current_struct, base.access);
 			const bool next_virtual_path = virtual_path || base.is_virtual;
 			const int64_t base_offset = current_offset + static_cast<int64_t>(base.offset);
 			if (base.type_index == base_idx) {
@@ -537,6 +560,12 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(TypeIndex derived
 	if (saw_inaccessible)
 		return {DerivedBaseConversionKind::Inaccessible, 0, std::nullopt};
 	return {};
+}
+
+inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
+	TypeIndex derived_idx,
+	TypeIndex base_idx) {
+	return classifyDerivedBaseConversion(derived_idx, base_idx, TypeIndex{});
 }
 
 inline bool hasUsablePublicDerivedBaseConversion(TypeIndex derived_idx, TypeIndex base_idx) {

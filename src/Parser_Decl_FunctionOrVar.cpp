@@ -26,6 +26,50 @@ bool Parser::isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info
 	return false;
 }
 
+StringHandle Parser::resolveAliasBaseInitializerName(
+	const StructTypeInfo* struct_info,
+	StringHandle candidate_name,
+	TypeIndex owner_type_index) {
+	if (struct_info == nullptr || !candidate_name.isValid() || !owner_type_index.is_valid()) {
+		return {};
+	}
+
+	const TypeInfo* owner_type_info = tryGetTypeInfo(owner_type_index);
+	if (owner_type_info == nullptr) {
+		return {};
+	}
+
+	const TypeInfo* alias_type_info = lookup_inherited_type_alias(
+		owner_type_info->name(),
+		candidate_name);
+	if (alias_type_info == nullptr || !alias_type_info->isTypeAlias()) {
+		return {};
+	}
+
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+		alias_type_info->registeredTypeIndex().withCategory(alias_type_info->typeEnum()));
+	if (!resolved_alias.type_index.is_valid()) {
+		return {};
+	}
+
+	auto canonical_type_index = [](TypeIndex type_index) {
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(type_index);
+		return resolved.type_index.is_valid() ? resolved.type_index : type_index;
+	};
+	const TypeIndex canonical_alias_index = canonical_type_index(resolved_alias.type_index);
+
+	for (const auto& base : struct_info->base_classes) {
+		const TypeIndex canonical_base_index = canonical_type_index(base.type_index);
+		if (canonical_alias_index.is_valid() && canonical_base_index.is_valid() &&
+			canonical_alias_index.index() == canonical_base_index.index() &&
+			canonical_alias_index.category() == canonical_base_index.category()) {
+			return StringTable::getOrInternStringHandle(base.name);
+		}
+	}
+
+	return {};
+}
+
 // Consumes the constructor/destructor prefix at the current position:
 //   ClassName [<...>] :: [~]                 (advances past these tokens)
 // and checks that the next token is ClassName followed by (.
@@ -1377,6 +1421,16 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 							StringHandle base_name_handle = StringTable::getOrInternStringHandle(init_name);
 							ctor_ref->add_base_initializer(base_name_handle, std::move(init_args));
 							break;
+						}
+					}
+					if (!is_base_init) {
+						StringHandle alias_base_name = resolveAliasBaseInitializerName(
+							struct_info,
+							StringTable::getOrInternStringHandle(init_name),
+							type_info->type_index_);
+						if (alias_base_name.isValid()) {
+							is_base_init = true;
+							ctor_ref->add_base_initializer(alias_base_name, std::move(init_args));
 						}
 					}
 					if (!is_base_init && isReachableVirtualBaseInitializer(struct_info, init_name)) {

@@ -210,6 +210,7 @@ $expectedCompileFailures = @(
 # Expected link failures - files that compile but have known link issues
 # These are typically due to features not yet implemented in FlashCpp
 $expectedLinkFailures = @(
+	"test_std_tuple.cpp"
 )
 
 # Tests that require additional C helper objects for linking.

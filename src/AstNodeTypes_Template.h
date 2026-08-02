@@ -564,6 +564,15 @@ public:
 		delegating_initializer_.emplace(std::move(args));
 	}
 
+	void replace_initializers(
+		std::vector<MemberInitializer> member_initializers,
+		std::vector<BaseInitializer> base_initializers,
+		std::optional<DelegatingInitializer> delegating_initializer) {
+		member_initializers_ = std::move(member_initializers);
+		base_initializers_ = std::move(base_initializers);
+		delegating_initializer_ = std::move(delegating_initializer);
+	}
+
 	void set_is_implicit(bool implicit) {
 		is_implicit_ = implicit;
 	}

@@ -2,10 +2,11 @@
 
 ## Deferred `<tuple>` member emission and `swap` gaps
 
-The full `<tuple>` header still fails during deferred member emission after the
-reduced alias/materialization cases have completed. Constructor emission and
-some `swap` overload probes remain incomplete. The reduced partial-spec nested
-typedef shape (`using Ttype = Tuple<This, Rest...>`) is covered by
+The full `<tuple>` test still reaches link time with a small set of concrete
+tuple constructors unresolved after deferred member materialization. The
+standard-header test is therefore listed as an expected link failure in
+`tests/run_all_tests.ps1` until those constructor definitions are emitted.
+The reduced partial-spec nested typedef shape (`using Ttype = Tuple<This, Rest...>`) is covered by
 `tests/test_dependent_alias_tuple_element_get_ret0.cpp` and now materializes.
 The regression models an MSVC `tuple_element` / `get` chain with a dependent
 `ElemT = typename Elem<I, T>::type` alias and an index-zero partial
@@ -15,8 +16,9 @@ through a pointer cast so a dependent placeholder cannot survive into IR.
 Reference-returning member access through `static_cast<Ttype&>` is covered
 separately by `tests/test_static_cast_ref_member_address_ret0.cpp`.
 
-These remaining failures are generic deferred-member and overload-probe gaps,
-not library-name problems.
+The remaining failure is a generic deferred-constructor emission gap, not a
+library-name problem. The recursive constructor/swap and SFINAE regressions
+cover the generic mechanisms that are now working.
 
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp

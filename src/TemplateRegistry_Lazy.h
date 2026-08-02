@@ -47,30 +47,23 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 	InlineVector<StringHandle, 4> param_names;
 	param_names.reserve(template_params.size());
 	size_t arg_index = 0;
-	for (size_t param_index = 0; param_index < template_params.size() && arg_index < typed_args.size(); ++param_index) {
+	for (size_t param_index = 0; param_index < template_params.size(); ++param_index) {
 		const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_params[param_index]);
 		if (typed_param == nullptr) {
 			continue;
 		}
 		if (typed_param->is_variadic()) {
-			size_t remaining_args = typed_args.size() - arg_index;
-			size_t required_after = 0;
-			for (size_t after = param_index + 1; after < template_params.size(); ++after) {
-				const TemplateParameterNode* after_param = tryGetTemplateParameterNode(template_params[after]);
-				if (after_param == nullptr) {
-					continue;
-				}
-				if (after_param->is_variadic() || after_param->has_default()) {
-					continue;
-				}
-				++required_after;
-			}
-			size_t pack_size = remaining_args > required_after
-				? remaining_args - required_after
-				: 0;
+			size_t pack_size = countTemplatePackArguments(
+				template_params,
+				typed_args,
+				param_index,
+				arg_index);
 			for (size_t pack_index = 0; pack_index < pack_size && arg_index < typed_args.size(); ++pack_index, ++arg_index) {
 				param_names.push_back(typed_param->nameHandle());
 			}
+			continue;
+		}
+		if (arg_index >= typed_args.size()) {
 			continue;
 		}
 		param_names.push_back(typed_param->nameHandle());

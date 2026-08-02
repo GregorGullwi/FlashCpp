@@ -4673,7 +4673,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 					deduction_info.param_name_to_pack_args.find(param.nameHandle());
 				if (deduced_pack_it != deduction_info.param_name_to_pack_args.end()) {
 					for (const TemplateTypeArg& deduced_arg : deduced_pack_it->second) {
-						template_args.push_back(deduced_arg);
+						TemplateTypeArg pack_arg = deduced_arg;
+						pack_arg.is_pack = true;
+						template_args.push_back(std::move(pack_arg));
 					}
 					continue;
 				}
@@ -4682,6 +4684,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 				// Node<int, float>). Only fall back to a function-parameter-pack
 				// call-arg slice for true packs like Wrap<Ts>... xs.
 				if (tryAppendPreDeducedArg(param.nameHandle())) {
+					template_args.back().is_pack = true;
 					continue;
 				}
 				// Gate call-arg consumption on the function-parameter pack.
@@ -4707,11 +4710,15 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 							deduction_info.function_pack_element_type_index,
 							ca_type.type_index(),
 							param.nameHandle())) {
-						template_args.push_back(*extracted_arg);
+						TemplateTypeArg pack_arg = *extracted_arg;
+						pack_arg.is_pack = true;
+						template_args.push_back(std::move(pack_arg));
 						pushed = true;
 					}
 					if (!pushed) {
-						template_args.push_back(TemplateTypeArg::makeTypeSpecifier(ca_type));
+						TemplateTypeArg pack_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
+						pack_arg.is_pack = true;
+						template_args.push_back(std::move(pack_arg));
 					}
 					++arg_index;
 				}

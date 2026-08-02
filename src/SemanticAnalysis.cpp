@@ -6982,7 +6982,12 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		}
 
 		const DerivedBaseConversionInfo base_conversion =
-			classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
+			classifyDerivedBaseConversion(
+				from_desc.type_index,
+				to_desc.type_index,
+				getCurrentMemberContext() != nullptr
+					? getCurrentMemberContext()->type_index
+					: TypeIndex{});
 		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
 			throw CompileError("Ambiguous derived-to-base conversion");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
@@ -7358,7 +7363,12 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	if (!best_non_explicit) {
 		if (is_struct_object_derived_to_base) {
 			const DerivedBaseConversionInfo base_conversion =
-				classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
+				classifyDerivedBaseConversion(
+					from_desc.type_index,
+					to_desc.type_index,
+					getCurrentMemberContext() != nullptr
+						? getCurrentMemberContext()->type_index
+						: TypeIndex{});
 			if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous) {
 				throw CompileError("Ambiguous derived-to-base conversion");
 			}
@@ -7436,7 +7446,12 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	cast_info.target_type_id = target_type_id;
 	const DerivedBaseConversionInfo selected_base_conversion =
 		is_struct_object_derived_to_base
-			? classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index)
+			? classifyDerivedBaseConversion(
+				from_desc.type_index,
+				to_desc.type_index,
+				getCurrentMemberContext() != nullptr
+					? getCurrentMemberContext()->type_index
+					: TypeIndex{})
 			: DerivedBaseConversionInfo{};
 	const bool selected_same_type_ctor =
 		is_struct_object_derived_to_base &&
@@ -8604,6 +8619,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 																		TypeIndex fallback_owner_type_index) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
 	const DeclarationNode& callee_decl = requireCallDeclaration(call_info, "resolveCallArgAnnotationTarget");
+	const bool is_indirect_call = call_info.is_indirect;
+	const bool has_receiver = call_info.has_receiver;
+	const bool is_direct_free_call = !is_indirect_call && !has_receiver;
 	const bool normalized_call =
 		call_key != nullptr &&
 		normalized_ast_nodes_.count(call_key) > 0;
@@ -8656,6 +8674,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	const bool has_deferred_qualified_template_metadata =
 		!call_info.template_arguments.empty() ||
 		call_info.dependent_qualified_lookup_record != nullptr;
+	const bool has_dependent_qualified_lookup =
+		call_info.dependent_qualified_lookup_record != nullptr;
+	const bool allows_spelling_based_lookup = !has_dependent_qualified_lookup;
 	struct QualifiedLookupTarget {
 		NamespaceHandle namespace_handle;
 		std::string_view identifier;
@@ -8870,14 +8891,12 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		call_info.qualified_name.isValid() &&
 		!qualified_name_has_type_owner &&
 		resolveQualifiedLookupTarget(call_info.qualified_name.view()).has_value();
-	const bool is_ordinary_nonmember_call =
-		!call_info.is_indirect && !call_info.has_receiver;
-	const bool is_unqualified_or_namespace_lookup =
+	const bool is_unqualified_or_namespace_call =
 		!call_info.qualified_name.isValid() || qualified_name_targets_namespace;
 	const bool can_use_ordinary_definition_lookup =
-		is_ordinary_nonmember_call && is_unqualified_or_namespace_lookup;
+		is_direct_free_call && is_unqualified_or_namespace_call;
 	auto resolveLocalCallableStructInfo = [&]() -> const StructTypeInfo* {
-		if (call_info.has_receiver) {
+		if (has_receiver) {
 			return nullptr;
 		}
 		return tryResolveLocalCallableStructInfo(callee_decl.identifier_token().handle());
@@ -8927,10 +8946,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	// 5. qualified deferred template resolution
 	// 6. mangled-name compatibility fallback
 	// 7. fresh overload lookup + ranking
-	if (call_info.is_indirect) {
+	if (is_indirect_call) {
 		return nullptr;
 	}
-	if (call_info.has_receiver) {
+	if (has_receiver) {
 		if (const TypeInfo* receiver_owner_type_info =
 				tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
 			receiver_owner_type_info != nullptr &&
@@ -9015,11 +9034,13 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 
 		return nullptr;
 	}
-	if (const FunctionDeclarationNode* parser_selected_target =
-			useParserResolvedDirectTarget();
-		parser_selected_target != nullptr &&
-		isTemplateDerivedFreeFunctionTarget(parser_selected_target)) {
-		return parser_selected_target;
+	if (allows_spelling_based_lookup) {
+		if (const FunctionDeclarationNode* parser_selected_target =
+				useParserResolvedDirectTarget();
+			parser_selected_target != nullptr &&
+			isTemplateDerivedFreeFunctionTarget(parser_selected_target)) {
+			return parser_selected_target;
+		}
 	}
 	const bool normalized_call_has_concrete_argument_types = normalized_call && [&]() {
 		InlineVector<TypeSpecifierNode, 6> normalized_arg_types;
@@ -9053,19 +9074,22 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 	ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(call_key);
 	const FunctionDeclarationNode* func_decl = op_call_query.hasValue() ? op_call_query.function : nullptr;
-	if (!func_decl && op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+	if (allows_spelling_based_lookup &&
+		!func_decl &&
+		op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
 		tryResolveCallableOperatorImpl(call_info, call_key);
 		op_call_query = getResolvedOpCallQuery(call_key);
 		func_decl = op_call_query.hasValue() ? op_call_query.function : nullptr;
 	}
-	if (func_decl)
+	if (func_decl && allows_spelling_based_lookup)
 		return func_decl;
-	if (resolveLocalCallableStructInfo() != nullptr &&
+	if (allows_spelling_based_lookup &&
+		resolveLocalCallableStructInfo() != nullptr &&
 		op_call_query.state != ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
 		return nullptr;
 	}
 
-	if (is_ordinary_nonmember_call &&
+	if (is_direct_free_call &&
 		call_info.dependent_unqualified_lookup_record != nullptr &&
 		call_info.dependent_unqualified_lookup_record->has_value()) {
 		const DependentUnqualifiedCallLookupRecord& dependent_record =
@@ -9104,8 +9128,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return nullptr;
 	}
-	if (is_ordinary_nonmember_call &&
-		call_info.function_declaration == nullptr &&
+	if (is_direct_free_call &&
+		(call_info.function_declaration == nullptr ||
+			has_dependent_qualified_lookup) &&
 		call_info.qualified_name.isValid()) {
 		if (qualified_name_targets_namespace ||
 			has_deferred_qualified_template_metadata) {
@@ -9178,7 +9203,11 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 
-	if (is_unqualified_or_namespace_lookup &&
+	if (has_dependent_qualified_lookup) {
+		return nullptr;
+	}
+
+	if (is_unqualified_or_namespace_call &&
 		(!normalized_call || !normalized_call_has_concrete_argument_types)) {
 		if (const FunctionDeclarationNode* mangled_candidate =
 				lookupFunctionByMangledName(call_info.mangled_name)) {
@@ -9236,7 +9265,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 	if (overloads.empty()) {
-		if (is_ordinary_nonmember_call &&
+		if (is_direct_free_call &&
 			!call_info.qualified_name.isValid() &&
 			call_info.function_declaration != nullptr &&
 			call_info.function_declaration->namespace_handle().isValid()) {
@@ -9281,7 +9310,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
-		if (!call_info.is_indirect) {
+		if (is_direct_free_call) {
 			++stats_.direct_call_unresolved_after_lookup;
 		}
 		return nullptr;
@@ -9298,7 +9327,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 	if (normalized_call) {
-		if (!call_info.is_indirect) {
+		if (is_direct_free_call) {
 			++stats_.direct_call_unresolved_after_overload;
 		}
 		return nullptr;
@@ -9332,7 +9361,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 
-	if (!func_decl && !call_info.is_indirect) {
+	if (!func_decl && is_direct_free_call) {
 		++stats_.direct_call_unresolved_after_overload;
 	}
 	return func_decl;
