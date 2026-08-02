@@ -883,17 +883,40 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		}
 		return carriesSemanticTypeIndex(semantic_type);
 	};
+	auto adjustStaticCastDerivedReference = [&]() {
+		if (!source_type_index.isStruct() || !target_type_index.isStruct() ||
+			source_type_index == target_type_index) {
+			return;
+		}
+		const DerivedBaseConversionInfo base_conversion =
+			classifyDerivedBaseConversion(source_type_index, target_type_index);
+		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+			throw CompileError("Ambiguous derived-to-base reference cast");
+		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+			throw CompileError("Cannot cast to an inaccessible base class");
+		if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+			base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+			expr_operands = adjustDerivedToBaseAddress(
+				std::move(expr_operands),
+				source_type_index,
+				target_type_index,
+				SizeInBits{target_size},
+				staticCastNode.cast_token());
+		}
+	};
 
-		// Special handling for rvalue reference casts: static_cast<T&&>(expr)
-		// This produces an xvalue - has identity but can be moved from
+	// Special handling for rvalue reference casts: static_cast<T&&>(expr)
+	// This produces an xvalue - has identity but can be moved from
 	// Equivalent to std::move
 	if (target_type_node.is_rvalue_reference()) {
+		adjustStaticCastDerivedReference();
 		return handleRValueReferenceCast(expr_operands, target_size, target_type_index, staticCastNode.cast_token(), "static_cast");
 	}
 
-		// Special handling for lvalue reference casts: static_cast<T&>(expr)
+	// Special handling for lvalue reference casts: static_cast<T&>(expr)
 	// This produces an lvalue
 	if (target_type_node.is_lvalue_reference()) {
+		adjustStaticCastDerivedReference();
 		return handleLValueReferenceCast(expr_operands, target_size, target_type_index, staticCastNode.cast_token(), "static_cast");
 	}
 
@@ -913,8 +936,38 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 				throw CompileError("Ambiguous derived-to-base pointer cast");
 			if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 				throw CompileError("Cannot cast to an inaccessible base class");
-			if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-				throw CompileError("Pointer cast through a virtual base class is not supported");
+			if ((base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+				 base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) &&
+				target_pointer_depth != 1) {
+				throw CompileError("Derived-to-base pointer casts require a single pointer level");
+			}
+			if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+				if (!base_conversion.virtual_base_index.has_value()) {
+					throw InternalError("Finalized virtual-base pointer cast is missing its runtime table index");
+				}
+				if (!std::holds_alternative<TempVar>(expr_operands.value) &&
+					!std::holds_alternative<StringHandle>(expr_operands.value)) {
+					throw InternalError("Virtual-base pointer cast requires a pointer value");
+				}
+				TempVar adjusted_ptr = var_counter.next();
+				VirtualBaseAdjustOp adjust_op;
+				adjust_op.result = adjusted_ptr;
+				adjust_op.source = std::visit(
+					[](const auto& value) -> std::variant<StringHandle, TempVar> {
+						using Value = std::decay_t<decltype(value)>;
+						if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle>) {
+							return value;
+						}
+						throw InternalError("Unsupported virtual-base pointer cast operand");
+					},
+					expr_operands.value);
+				adjust_op.source_is_address = false;
+				adjust_op.source_type_index = source_type_index;
+				adjust_op.target_type_index = target_type_index;
+				adjust_op.virtual_base_index = *base_conversion.virtual_base_index;
+				ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), staticCastNode.cast_token()));
+				return makeExprResult(target_type_index, SizeInBits{64}, IrOperand{adjusted_ptr}, PointerDepth{static_cast<int>(target_pointer_depth)}, ValueStorage::ContainsData);
+			}
 			if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual &&
 				base_conversion.offset > 0) {
 				TempVar adjusted_ptr = var_counter.next();

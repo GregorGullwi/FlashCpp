@@ -6884,6 +6884,46 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		return true;
 	}
 
+	// C++20 [conv.ptr] permits a pointer to a public derived class to convert
+	// to a pointer to its base class.  Check this before looking for a
+	// user-defined conversion operator: a pointer-to-struct descriptor has the
+	// same category shape as an operator returning a struct pointer, but an
+	// inheritance conversion is a standard conversion and must win here.
+	if (from_desc.category() == TypeCategory::Struct &&
+		to_desc.category() == TypeCategory::Struct &&
+		!from_desc.pointer_levels.empty() &&
+		!to_desc.pointer_levels.empty() &&
+		from_desc.array_dimensions.empty() &&
+		to_desc.array_dimensions.empty() &&
+		from_desc.pointer_levels.size() == 1 &&
+		to_desc.pointer_levels.size() == 1 &&
+		from_desc.type_index.is_valid() &&
+		to_desc.type_index.is_valid() &&
+		from_desc.type_index != to_desc.type_index) {
+		const DerivedBaseConversionInfo base_conversion =
+			classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
+		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+			throw CompileError("Ambiguous derived-to-base pointer conversion");
+		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+			throw CompileError("Cannot convert to an inaccessible base class");
+		if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+			base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+			ImplicitCastInfo cast_info;
+			cast_info.source_type_id = expr_type_id;
+			cast_info.target_type_id = target_type_id;
+			cast_info.cast_kind = StandardConversionKind::DerivedToBase;
+			cast_info.value_category_after = ValueCategory::PRValue;
+			const CastInfoIndex idx = allocateCastInfo(cast_info);
+			SemanticSlot slot;
+			slot.type_id = target_type_id;
+			slot.cast_info_index = idx;
+			slot.value_category = ValueCategory::PRValue;
+			setSlot(getExpressionKey(expr_node), slot);
+			stats_.slots_filled++;
+			return true;
+		}
+	}
+
 	if (from_desc.category() == TypeCategory::Struct &&
 		!to_desc.pointer_levels.empty() &&
 		to_desc.array_dimensions.empty()) {
@@ -6924,6 +6964,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// constructor; a raw byte slice would skip user-defined special-member logic.
 	if (from_desc.category() == TypeCategory::Struct &&
 		to_desc.category() == TypeCategory::Struct &&
+		from_desc.pointer_levels.empty() &&
+		to_desc.pointer_levels.empty() &&
 		from_desc.type_index.is_valid() &&
 		to_desc.type_index.is_valid() &&
 		from_desc.type_index != to_desc.type_index) {
@@ -6945,9 +6987,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 			throw CompileError("Ambiguous derived-to-base conversion");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 			throw CompileError("Cannot convert to an inaccessible base class");
-		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-			throw CompileError("Implicit conversion through a virtual base class is not supported");
-		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
+			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 			return false;
 
 		// Reference conversions do not construct a new Base object, so the
@@ -7324,10 +7365,8 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 			if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
 				throw CompileError("Cannot convert to an inaccessible base class");
 			}
-			if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
-				throw CompileError("Implicit conversion through a virtual base class is not supported");
-			}
-			if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual) {
+			if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+				base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
 				const bool prefer_move_ctor = !arg_type.is_lvalue_reference();
 				const StructMemberFunction* same_type_ctor =
 					struct_info->findPreferredSameTypeConstructor(prefer_move_ctor, true);
@@ -7537,11 +7576,11 @@ void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, con
 	if (isSameTypeConstructorCallInitialization(expr_node, *ctx.current_function_return_type_id)) {
 		return;
 	}
-	if (!tryAnnotateCopyInitConvertingConstructor(expr_node, *ctx.current_function_return_type_id,
-												  " in return statement")) {
+	if (!tryAnnotateCopyInitConvertingConstructor(
+			expr_node, *ctx.current_function_return_type_id, " in return statement")) {
 		tryAnnotateConversion(expr_node, *ctx.current_function_return_type_id);
 		diagnoseScopedEnumConversion(expr_node, *ctx.current_function_return_type_id,
-									 " in return statement");
+										 " in return statement");
 	}
 }
 

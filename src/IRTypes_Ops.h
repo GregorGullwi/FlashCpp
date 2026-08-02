@@ -1,5 +1,6 @@
 #pragma once
 #include "IRTypes_Registers.h"
+#include "InlineVector.h"
 
 class ConstructorDeclarationNode;
 
@@ -550,6 +551,8 @@ struct MemberStoreOp {
 	const TypeInfo* struct_type_info;				  // Parent struct type (nullptr if not available)
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Member declaration reference qualifier (not access kind)
 	StringHandle vtable_symbol;		// For vptr initialization - stores vtable symbol name
+	StringHandle virtual_base_table_symbol;	// For hidden virtual-base table initialization
+	InlineVector<int32_t, 1> virtual_base_table_offsets;
 	bool is_pointer_to_member = false;			   // True if accessing through pointer (ptr->member), false for direct (obj.member)
 	std::optional<size_t> bitfield_width;			  // Width in bits for bitfield members
 	size_t bitfield_bit_offset = 0;					// Bit offset within the storage unit for bitfield members
@@ -664,6 +667,19 @@ struct ComputeAddressOp {
 	TypeIndex result_type_index{};				   // Type of final address (TypeCategory embedded)
 	TypeCategory resultType() const { return result_type_index.category(); }
 	SizeInBits result_size_bits;							 // Size in bits
+};
+
+// Runtime derived-to-virtual-base adjustment. The source is either an object
+// address (source_is_address=true) or an already-valued pointer. The backend
+// obtains the object-dependent displacement from the source type's vtable or
+// hidden virtual-base table.
+struct VirtualBaseAdjustOp {
+	TempVar result;
+	std::variant<StringHandle, TempVar> source;
+	bool source_is_address = false;
+	TypeIndex source_type_index{};
+	TypeIndex target_type_index{};
+	size_t virtual_base_index = 0;
 };
 
 // Dereference operator (*ptr)

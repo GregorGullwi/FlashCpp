@@ -301,6 +301,9 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 				result.final_size_bits = SizeInBits{static_cast<int>(struct_info->sizeInBits().value)};
 			}
 		}
+		result.base_storage = (type_node->is_reference() || type_node->is_rvalue_reference())
+			? ValueStorage::ContainsAddress
+			: ValueStorage::ContainsData;
 		result.pointer_depth = PointerDepth{static_cast<int>(type_node->pointer_depth())};
 		return result;
 	}
@@ -503,24 +506,33 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 	if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
 		throw CompileError("Cannot convert to an inaccessible base class");
 	}
-	if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
-		throw CompileError("Implicit conversion through a virtual base class is not supported");
-	}
-	if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual) {
+	if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
+		base_conversion.kind != DerivedBaseConversionKind::PublicVirtual) {
 		throw InternalError("Missing finalized layout for public derived-to-base conversion");
-	}
-	if (base_conversion.offset > std::numeric_limits<int>::max()) {
-		throw InternalError("Derived-to-base subobject offset exceeds IR range");
 	}
 	if (!std::holds_alternative<TempVar>(source_address.value) &&
 		!std::holds_alternative<StringHandle>(source_address.value)) {
 		throw InternalError("Derived-to-base address adjustment requires addressable storage");
 	}
+	if (const auto* source_name = std::get_if<StringHandle>(&source_address.value)) {
+		// A named lvalue denotes the object, not an address value.  Emit the
+		// language-level address operation so ordinary objects use LEA while
+		// references and `this` load their already-materialized address.
+		const TempVar address_temp = emitAddressOf(
+			source_address.category(),
+			source_address.size_in_bits.value,
+			IrValue(*source_name),
+			source_token);
+		source_address = makeExprResult(
+			source_address.type_index,
+			SizeInBits{POINTER_SIZE_BITS},
+			IrOperand{address_temp},
+			PointerDepth{},
+			ValueStorage::ContainsAddress);
+	}
 
 	TempVar adjusted_address = var_counter.next();
-	ComputeAddressOp address_op;
-	address_op.result = adjusted_address;
-	address_op.base = std::visit(
+	const std::variant<StringHandle, TempVar> source = std::visit(
 		[](const auto& value) -> std::variant<StringHandle, TempVar> {
 			using Value = std::decay_t<decltype(value)>;
 			if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle>) {
@@ -529,11 +541,31 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 			throw InternalError("Unsupported derived-to-base address operand");
 		},
 		source_address.value);
-	address_op.base_storage = ValueStorage::ContainsAddress;
-	address_op.total_member_offset = static_cast<int>(base_conversion.offset);
-	address_op.result_type_index = target_type_index;
-	address_op.result_size_bits = target_size_bits;
-	ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), source_token));
+	if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+		if (!base_conversion.virtual_base_index.has_value()) {
+			throw InternalError("Finalized virtual-base conversion is missing its runtime table index");
+		}
+		VirtualBaseAdjustOp adjust_op;
+		adjust_op.result = adjusted_address;
+		adjust_op.source = source;
+		adjust_op.source_is_address = true;
+		adjust_op.source_type_index = source_type_index;
+		adjust_op.target_type_index = target_type_index;
+		adjust_op.virtual_base_index = *base_conversion.virtual_base_index;
+		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), source_token));
+	} else {
+		if (base_conversion.offset > std::numeric_limits<int>::max()) {
+			throw InternalError("Derived-to-base subobject offset exceeds IR range");
+		}
+		ComputeAddressOp address_op;
+		address_op.result = adjusted_address;
+		address_op.base = source;
+		address_op.base_storage = ValueStorage::ContainsAddress;
+		address_op.total_member_offset = static_cast<int>(base_conversion.offset);
+		address_op.result_type_index = target_type_index;
+		address_op.result_size_bits = target_size_bits;
+		ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), source_token));
+	}
 	setTempVarMetadata(
 		adjusted_address,
 		TempVarMetadata::makeAddressOnly(
@@ -547,6 +579,84 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 		IrOperand{adjusted_address},
 		PointerDepth{},
 		ValueStorage::ContainsAddress);
+}
+
+ExprResult AstToIr::adjustDerivedToBasePointer(
+	ExprResult source_pointer,
+	TypeIndex source_type_index,
+	TypeIndex target_type_index,
+	PointerDepth target_pointer_depth,
+	const Token& source_token) {
+	if (!source_type_index.isStruct() || !target_type_index.isStruct()) {
+		throw InternalError("Derived-to-base pointer adjustment requires struct type identity");
+	}
+	if (target_pointer_depth.value != 1) {
+		throw InternalError("Derived-to-base pointer adjustment requires a single target pointer level");
+	}
+	const DerivedBaseConversionInfo base_conversion =
+		classifyDerivedBaseConversion(source_type_index, target_type_index);
+	if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous) {
+		throw CompileError("Ambiguous derived-to-base pointer conversion");
+	}
+	if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
+		throw CompileError("Cannot convert to an inaccessible base class");
+	}
+	if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
+		base_conversion.kind != DerivedBaseConversionKind::PublicVirtual) {
+		throw InternalError("Missing finalized layout for public derived-to-base pointer conversion");
+	}
+
+	IrOperand adjusted_value = source_pointer.value;
+	if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+		if (!base_conversion.virtual_base_index.has_value()) {
+			throw InternalError("Finalized virtual-base pointer conversion is missing its runtime table index");
+		}
+		const std::variant<StringHandle, TempVar> source = std::visit(
+			[](const auto& value) -> std::variant<StringHandle, TempVar> {
+				using Value = std::decay_t<decltype(value)>;
+				if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle>) {
+					return value;
+				}
+				throw InternalError("Virtual-base pointer conversion requires a runtime pointer value");
+			},
+			source_pointer.value);
+		VirtualBaseAdjustOp adjust_op;
+		adjust_op.result = var_counter.next();
+		adjust_op.source = source;
+		adjust_op.source_is_address = false;
+		adjust_op.source_type_index = source_type_index;
+		adjust_op.target_type_index = target_type_index;
+		adjust_op.virtual_base_index = *base_conversion.virtual_base_index;
+		const TempVar adjusted_pointer = adjust_op.result;
+		ir_.addInstruction(IrInstruction(IrOpcode::VirtualBaseAdjust, std::move(adjust_op), source_token));
+		adjusted_value = adjusted_pointer;
+	} else if (base_conversion.offset != 0) {
+		if (!std::holds_alternative<TempVar>(source_pointer.value) &&
+			!std::holds_alternative<StringHandle>(source_pointer.value) &&
+			!std::holds_alternative<unsigned long long>(source_pointer.value)) {
+			throw InternalError("Derived-to-base pointer conversion has an unsupported pointer value");
+		}
+		BinaryOp add_offset;
+		add_offset.lhs = makeTypedValue(
+			TypeCategory::UnsignedLongLong,
+			SizeInBits{POINTER_SIZE_BITS},
+			toIrValue(source_pointer.value));
+		add_offset.rhs = makeTypedValue(
+			TypeCategory::UnsignedLongLong,
+			SizeInBits{POINTER_SIZE_BITS},
+			static_cast<unsigned long long>(base_conversion.offset));
+		add_offset.result = var_counter.next();
+		const TempVar adjusted_pointer = std::get<TempVar>(add_offset.result);
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), source_token));
+		adjusted_value = adjusted_pointer;
+	}
+
+	return makeExprResult(
+		target_type_index,
+		SizeInBits{POINTER_SIZE_BITS},
+		std::move(adjusted_value),
+		target_pointer_depth,
+		ValueStorage::ContainsData);
 }
 
 std::optional<AstToIr::AddressComponents> AstToIr::makeAddressComponentsFromEvaluatedResult(
@@ -2760,9 +2870,8 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 					throw CompileError("Ambiguous derived-to-base conversion");
 				if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 					throw CompileError("Cannot convert to an inaccessible base class");
-				if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-					throw CompileError("Implicit conversion through a virtual base class is not supported");
-				if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+				if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
+					base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 					throw InternalError("Sema annotated an unrelated derived-to-base constructor argument");
 
 				if (param_type.is_reference() || param_type.is_rvalue_reference()) {
@@ -2957,9 +3066,6 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			throw CompileError("Ambiguous derived-to-base reference binding");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 			throw CompileError("Cannot bind a reference to an inaccessible base class");
-		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-			throw CompileError("Reference binding through a virtual base class is not supported");
-
 		int target_size_bits = static_cast<int>(param_type.size_in_bits());
 		if (target_size_bits <= 0) {
 			const TypeInfo* target_type_info = tryGetTypeInfo(target_type_index);
@@ -3040,9 +3146,8 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 				throw CompileError("Ambiguous derived-to-base conversion");
 			if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 				throw CompileError("Cannot convert to an inaccessible base class");
-			if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-				throw CompileError("Implicit conversion through a virtual base class is not supported");
-			if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+			if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
+				base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 				throw InternalError("Sema annotated an unrelated derived-to-base reference binding");
 
 			TypeSpecifierNode target_object_type = param_type;
@@ -3135,8 +3240,8 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	}
 
 	std::optional<int64_t> effective_source_base_class_offset = source_base_class_offset;
-	if (!effective_source_base_class_offset.has_value() &&
-		source_result.category() == TypeCategory::Struct &&
+	std::optional<DerivedBaseConversionInfo> virtual_base_conversion;
+	if (source_result.category() == TypeCategory::Struct &&
 		source_result.type_index.is_valid() &&
 		source_result.type_index != target_type.type_index() &&
 		isSameTypeCopyOrMoveConstructorCandidate(*target_struct_info, selected_ctor)) {
@@ -3146,16 +3251,67 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 			throw CompileError("Ambiguous derived-to-base conversion");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 			throw CompileError("Cannot convert to an inaccessible base class");
-		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-			throw CompileError("Implicit conversion through a virtual base class is not supported");
-		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
+			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 			throw InternalError("Selected copy/move constructor has an unrelated source type");
-		effective_source_base_class_offset = base_conversion.offset;
+		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+			virtual_base_conversion = base_conversion;
+			effective_source_base_class_offset.reset();
+		} else if (!effective_source_base_class_offset.has_value()) {
+			effective_source_base_class_offset = base_conversion.offset;
+		}
 	}
 
 	int actual_size_bits = static_cast<int>(target_type.size_in_bits());
 	if (target_struct_info->sizeInBytes().is_set()) {
 		actual_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
+	}
+
+	if (virtual_base_conversion.has_value()) {
+		if (!virtual_base_conversion->virtual_base_index.has_value()) {
+			throw InternalError("Finalized virtual-base conversion is missing its runtime table index");
+		}
+		ExprResult source_address = source_result;
+		if (source_address.storage != ValueStorage::ContainsAddress) {
+			if (source_expr.is<ExpressionNode>()) {
+				source_address = materializeAddressResult(
+					source_expr.as<ExpressionNode>(),
+					std::move(source_address),
+					source_token);
+			} else if (const auto* source_name = std::get_if<StringHandle>(&source_address.value)) {
+				TempVar address_temp = emitAddressOf(
+					source_address.category(),
+					source_address.size_in_bits.value,
+					IrValue(*source_name),
+					source_token);
+				source_address = makeExprResult(
+					source_address.type_index,
+					SizeInBits{POINTER_SIZE_BITS},
+					IrOperand{address_temp},
+					PointerDepth{},
+					ValueStorage::ContainsAddress);
+			} else if (const auto* source_temp = std::get_if<TempVar>(&source_address.value)) {
+				TempVar address_temp = emitAddressOf(
+					source_address.category(),
+					source_address.size_in_bits.value,
+					IrValue(*source_temp),
+					source_token);
+				source_address = makeExprResult(
+					source_address.type_index,
+					SizeInBits{POINTER_SIZE_BITS},
+					IrOperand{address_temp},
+					PointerDepth{},
+					ValueStorage::ContainsAddress);
+			} else {
+				throw InternalError("Virtual-base copy/move source is not addressable");
+			}
+		}
+		source_result = adjustDerivedToBaseAddress(
+			std::move(source_address),
+			source_result.type_index,
+			target_type.type_index(),
+			SizeInBits{actual_size_bits},
+			source_token);
 	}
 
 	TempVar result_var = var_counter.next();
@@ -3181,7 +3337,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 			throw InternalError("Derived-to-base constructor argument offset exceeds IR range");
 		}
 		ctor_op.source_base_class_offset = static_cast<int>(*effective_source_base_class_offset);
-	} else {
+	} else if (!virtual_base_conversion.has_value()) {
 		source_result = applyConstructorArgConversion(source_result, source_expr, param_type, source_token);
 	}
 
@@ -3261,9 +3417,8 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 			throw CompileError("Ambiguous derived-to-base conversion");
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 			throw CompileError("Cannot convert to an inaccessible base class");
-		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-			throw CompileError("Implicit conversion through a virtual base class is not supported");
-		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
+			base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 			throw InternalError("Sema selected a derived-to-base constructor for unrelated types");
 		source_base_class_offset = base_conversion.offset;
 	}

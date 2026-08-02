@@ -2078,9 +2078,29 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 						// Check if source and target types differ and source is a struct
 					bool need_conversion = (init_type != type_node.type()) ||
-										   (init_cat == TypeCategory::Struct && init_type_index != type_node.type_index());
+											   (init_cat == TypeCategory::Struct && init_type_index != type_node.type_index());
 
 					bool conv_op_applied = false;
+					if (need_conversion && init_cat == TypeCategory::Struct &&
+						(type_node.is_reference() || type_node.is_rvalue_reference()) &&
+						init_type_index.isStruct() && type_node.type_index().isStruct()) {
+						const DerivedBaseConversionInfo base_conversion =
+							classifyDerivedBaseConversion(init_type_index, type_node.type_index());
+						if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+							throw CompileError("Ambiguous derived-to-base reference binding");
+						if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+							throw CompileError("Cannot bind a reference to an inaccessible base class");
+						if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+							base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+							init_operands = adjustDerivedToBaseAddress(
+								std::move(init_operands),
+								init_type_index,
+								type_node.type_index(),
+								SizeInBits{static_cast<int>(type_node.size_in_bits())},
+								decl.identifier_token());
+							conv_op_applied = true;
+						}
+					}
 					if (need_conversion && init_cat == TypeCategory::Struct) {
 							// First check for a sema-annotated user-defined conversion
 						if (init_node.is<ExpressionNode>()) {
@@ -2139,8 +2159,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							classifyDerivedBaseConversion(init_type_index, type_node.type_index());
 						if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
 							throw CompileError("Ambiguous derived-to-base pointer conversion");
-						if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-							throw CompileError("Implicit conversion through a virtual base class is not supported");
 						if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
 							const TypeInfo* src_info = tryGetTypeInfo(init_type_index);
 							const TypeInfo* tgt_info = tryGetTypeInfo(type_node.type_index());
@@ -2788,6 +2806,21 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							bool same_type_copy_init_source = false;
+							std::optional<DerivedBaseConversionInfo> derived_base_copy_init;
+							if (init_cat == TypeCategory::Struct &&
+								init_type_index.is_valid() &&
+								type_node.type_index().is_valid() &&
+								init_type_index != type_node.type_index()) {
+								const DerivedBaseConversionInfo base_conversion =
+									classifyDerivedBaseConversion(init_type_index, type_node.type_index());
+								if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+									throw CompileError("Ambiguous derived-to-base conversion");
+								if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+									throw CompileError("Cannot convert to an inaccessible base class");
+								if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+									base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+									derived_base_copy_init = base_conversion;
+							}
 							if (auto same_type_ctor_preference = getSameTypeConstructorPreference(init_node, type_node);
 								same_type_ctor_preference.has_value()) {
 								same_type_copy_init_source = true;
@@ -2801,6 +2834,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										isSameStructTypeForInitialization(init_desc.type_index, type_node.type_index());
 								}
 							}
+							if (derived_base_copy_init.has_value())
+								same_type_copy_init_source = false;
 
 								// Check if types differ
 							is_converting_ctor = !same_type_copy_init_source &&
@@ -2831,11 +2866,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 													throw CompileError("Ambiguous derived-to-base conversion");
 												if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
 													throw CompileError("Cannot convert to an inaccessible base class");
-												if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-													throw CompileError("Implicit conversion through a virtual base class is not supported");
-												if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+												if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual &&
+													base_conversion.kind != DerivedBaseConversionKind::PublicVirtual)
 													throw InternalError("Sema selected an unrelated derived-to-base constructor");
-												sema_source_base_class_offset = base_conversion.offset;
+												if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual)
+													sema_source_base_class_offset = base_conversion.offset;
 											}
 											const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
 												if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {

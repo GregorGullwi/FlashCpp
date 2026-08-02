@@ -1380,30 +1380,55 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// so they need the same treatment as pointer access for virtual dispatch.
 		vcall_op.is_pointer_access = (object_type.pointer_depth() > 0) || object_type.is_reference() || object_type.is_rvalue_reference();
 
-		// Generate IR for function arguments
+		// Generate IR for function arguments through the same semantic conversion
+		// path as direct and non-virtual calls. Virtual dispatch changes only the
+		// call target; it does not change C++ argument conversion rules.
+		const FunctionDeclarationNode* actual_func_decl = &func_decl;
+		if (called_member_func &&
+			called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
+		}
+		size_t arg_index = 0;
 		callExprNode.arguments().visit([&](ASTNode argument) {
-			ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+			const CallParamView param_view = resolveCallParamView(
+				actual_func_decl->parameter_nodes(),
+				arg_index,
+				nullptr,
+				nullptr);
+			const TypeSpecifierNode* param_type = param_view.type();
+			const CallArgReferenceBindingInfo* sema_ref_binding = param_type
+				? sema_.getCallRefBinding(sema_call_key, arg_index)
+				: nullptr;
+			const CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
+			const ExpressionContext arg_context =
+				param_ref_qualifier != CVReferenceQualifier::None &&
+				(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly())
+					? ExpressionContext::LValueAddress
+					: ExpressionContext::Load;
+			ExprResult argument_result = visitExpressionNode(
+				argument.as<ExpressionNode>(),
+				arg_context);
 
-			// For variables, we need to add the type and size
-			if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
-				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				StringHandle identifier_name = identifier.nameHandle();
-				const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-				const auto& decl_node = symbol->as<DeclarationNode>();
-				const auto& type_node = decl_node.type_specifier_node();
-
-				TypedValue tv;
-				tv.setType(type_node.type());
-				tv.ir_type = toIrType(type_node.type());
-				tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
-				tv.value = identifier_name;
-				vcall_op.arguments.push_back(tv);
+			if (param_type) {
+				if (auto sema_bound_arg = tryBuildSemaBoundCallArgument(
+						argument_result,
+						argument,
+						*param_type,
+						sema_ref_binding,
+						callExprNode.called_from())) {
+					vcall_op.arguments.push_back(std::move(*sema_bound_arg));
+					arg_index++;
+					return;
+				}
+				vcall_op.arguments.push_back(buildOrdinaryCallArgument(
+					argument,
+					param_type,
+					argument_result,
+					callExprNode.called_from()));
 			} else {
-				// Convert from IrOperand to TypedValue
-				// Format: [type, size, value]
-				TypedValue tv = toTypedValue(argument_result);
-				vcall_op.arguments.push_back(tv);
+				vcall_op.arguments.push_back(toTypedValue(argument_result));
 			}
+			arg_index++;
 		});
 
 		// Add the virtual call instruction

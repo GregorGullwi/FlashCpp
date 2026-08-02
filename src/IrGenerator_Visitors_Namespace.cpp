@@ -377,6 +377,24 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 								}
 							}
 						}
+					} else if (cast_info.cast_kind == StandardConversionKind::DerivedToBase &&
+						annotated_source_type == TypeCategory::Struct &&
+						to_type == TypeCategory::Struct &&
+						!sema_.typeContext().get(cast_info.source_type_id).pointer_levels.empty() &&
+						!sema_.typeContext().get(cast_info.target_type_id).pointer_levels.empty()) {
+						const TypeIndex source_type_index =
+							sema_.typeContext().get(cast_info.source_type_id).type_index;
+						const TypeIndex target_type_index =
+							sema_.typeContext().get(cast_info.target_type_id).type_index;
+						const size_t target_pointer_depth =
+							sema_.typeContext().get(cast_info.target_type_id).pointer_levels.size();
+						operands = adjustDerivedToBasePointer(
+							std::move(operands),
+							source_type_index,
+							target_type_index,
+							PointerDepth{static_cast<int>(target_pointer_depth)},
+							node.return_token());
+						sema_applied_conversion = true;
 					} else if (cast_info.cast_kind == StandardConversionKind::ArrayToPointer) {
 						if (std::holds_alternative<TempVar>(operands.value)) {
 							TempVar return_temp = std::get<TempVar>(operands.value);

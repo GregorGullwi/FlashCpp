@@ -436,6 +436,11 @@ enum class DerivedBaseConversionKind : uint8_t {
 struct DerivedBaseConversionInfo {
 	DerivedBaseConversionKind kind = DerivedBaseConversionKind::NotRelated;
 	int64_t offset = 0;
+	// Index in the derived type's finalized virtual_bases collection.  The
+	// offset of a virtual base is object-dependent, so callers must use this
+	// index with the runtime virtual-base table/vtable rather than treating
+	// offset as a fixed adjustment.
+	std::optional<size_t> virtual_base_index;
 };
 
 // Classify all inheritance paths from derived_idx to base_idx.  A virtual base
@@ -446,7 +451,7 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(TypeIndex derived
 	if (!derived_idx.is_valid() || !base_idx.is_valid())
 		return {};
 	if (derived_idx == base_idx)
-		return {DerivedBaseConversionKind::UniquePublicNonVirtual, 0};
+		return {DerivedBaseConversionKind::UniquePublicNonVirtual, 0, std::nullopt};
 
 	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_idx);
 	const StructTypeInfo* derived_struct =
@@ -512,14 +517,25 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(TypeIndex derived
 	if (non_virtual_path_count > 1 ||
 		(!public_virtual_subobjects.empty() &&
 		 (non_virtual_path_count != 0 || !inaccessible_virtual_subobjects.empty()))) {
-		return {DerivedBaseConversionKind::Ambiguous, 0};
+		return {DerivedBaseConversionKind::Ambiguous, 0, std::nullopt};
 	}
 	if (public_non_virtual_path_count == 1 && non_virtual_path_count == 1)
-		return {DerivedBaseConversionKind::UniquePublicNonVirtual, public_non_virtual_offset};
-	if (!public_virtual_subobjects.empty())
-		return {DerivedBaseConversionKind::PublicVirtual, 0};
+		return {DerivedBaseConversionKind::UniquePublicNonVirtual, public_non_virtual_offset, std::nullopt};
+	if (!public_virtual_subobjects.empty()) {
+		DerivedBaseConversionInfo result{DerivedBaseConversionKind::PublicVirtual, 0, std::nullopt};
+		const auto virtual_base_it = std::find_if(
+			derived_struct->virtual_bases.begin(),
+			derived_struct->virtual_bases.end(),
+			[&](const BaseClassSpecifier& base) { return base.type_index == base_idx; });
+		if (virtual_base_it != derived_struct->virtual_bases.end()) {
+			result.virtual_base_index = static_cast<size_t>(
+				std::distance(derived_struct->virtual_bases.begin(), virtual_base_it));
+			result.offset = static_cast<int64_t>(virtual_base_it->offset);
+		}
+		return result;
+	}
 	if (saw_inaccessible)
-		return {DerivedBaseConversionKind::Inaccessible, 0};
+		return {DerivedBaseConversionKind::Inaccessible, 0, std::nullopt};
 	return {};
 }
 
@@ -803,7 +819,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
 				// Derived* → Base* is a valid pointer conversion (C++20 [conv.ptr]/3).
-				if (hasUsablePublicDerivedBaseConversion(from_resolved_index, to_resolved_index)) {
+				if (from.pointer_depth() == 1 && to.pointer_depth() == 1 &&
+					hasUsablePublicDerivedBaseConversion(from_resolved_index, to_resolved_index)) {
 					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 				}
 				return ConversionPlan::no_match();
@@ -818,7 +835,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
 				// Derived* → Base* is valid with const qualification adjustment too.
-				if (pointee_qualification_is_added &&
+				if (from.pointer_depth() == 1 && to.pointer_depth() == 1 &&
+					pointee_qualification_is_added &&
 					hasUsablePublicDerivedBaseConversion(from_resolved_index, to_resolved_index)) {
 					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 				}
@@ -891,6 +909,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 						// Per C++20 [conv.ref]/4: derived lvalue ref binds to base lvalue ref
 						// (standard derived-to-base reference conversion).
 						if (!from_is_rvalue && !to_is_rvalue &&
+							from.pointer_depth() == 0 && to.pointer_depth() == 0 &&
 							hasUsablePublicDerivedBaseConversion(from_base_index, to_base_index)) {
 							return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 						}
