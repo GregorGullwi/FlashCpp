@@ -1,34 +1,5 @@
 # Known Issues
 
-## Virtual-base derived-to-base conversions (implemented)
-
-Virtual inheritance itself is implemented and covered by the existing positive
-tests, including `tests/test_virtual_base_classes_ret160.cpp`, which constructs
-a virtual diamond and verifies the single shared base subobject. RTTI and
-exception matching through virtual bases are covered separately by the
-`test_eh_*virtual_base*` tests. These tests exercise virtual-base layout,
-member access, vtables, RTTI, and exception handling. The standard implicit
-derived-to-base conversion forms are now covered by the positive regression
-`tests/test_virtual_base_derived_to_base_ret0.cpp`, including:
-
-- reference binding to a virtual base;
-- pointer conversion through the complete object and through intermediate
-  virtual-base subobjects, including the null-pointer rule;
-- copy-initialization of a base object from a derived object;
-- passing and returning a base object by value.
-
-Semantic analysis classifies public, inaccessible, and ambiguous inheritance
-paths according to C++20 [conv.ptr] and [conv]. The IR carries a dedicated
-virtual-base adjustment operation. The backend resolves the actual subobject
-address at runtime from the object's virtual-base metadata, while non-virtual
-paths continue to use their fixed subobject offset. By-value conversion invokes
-the selected base copy/move constructor after forming the adjusted base
-subobject address; it does not use a raw byte-copy shortcut.
-
-The runtime metadata is an implementation detail of FlashCpp's object model.
-Missing or inconsistent finalized metadata is diagnosed as an internal compiler
-error; no conversion is synthesized without the required metadata.
-
 ## Deferred `<tuple>` member emission and `swap` gaps
 
 The full `<tuple>` header still fails during deferred member emission after the
