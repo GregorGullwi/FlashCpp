@@ -143,6 +143,7 @@ enum class IrOpcode : int_fast16_t {
 	AddressOf,
 	AddressOfMember,	 // Calculate address of struct member: &obj.member
 	ComputeAddress,		// One-pass address computation for complex expressions: &arr[i].member1.member2
+	VirtualBaseAdjust,	// Runtime adjustment from a derived object/address to a virtual base
 	Dereference,
 	DereferenceStore,	  // Store through a pointer: *ptr = value
 	// Struct operations

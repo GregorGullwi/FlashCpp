@@ -826,7 +826,12 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 
 		if (arg_decl) {
 			const auto& arg_type = arg_decl->type_specifier_node();
-			if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
+			if (argument_result.storage == ValueStorage::ContainsAddress) {
+				// A conversion such as derived-to-virtual-base reference binding may
+				// already have produced the final subobject address.  Preserve it;
+				// taking the identifier's address again would discard the adjustment.
+				value = toTypedValue(argument_result);
+			} else if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
 				value = toTypedValue(argument_result);
 			} else {
 				TempVar addr_var = var_counter.next();

@@ -511,6 +511,11 @@ private:
 	// Does nothing when the types are unrelated or the offset is 0.
 	void emitDerivedToBasePointerAdjust(X64Register ptr_reg, TypeIndex base_type, TypeIndex derived_type);
 
+	void emitVirtualBasePointerAdjust(X64Register ptr_reg,
+		TypeIndex base_type,
+		TypeIndex derived_type,
+		size_t virtual_base_index);
+
 	uint16_t getX64RegisterCodeViewCode(X64Register reg);
 
 	// Reset per-function state between function declarations
@@ -776,6 +781,8 @@ private:
 	void handleAddressOfMember(const IrInstruction& instruction);
 
 	void handleComputeAddress(const IrInstruction& instruction);
+
+	void handleVirtualBaseAdjust(const IrInstruction& instruction);
 
 	void handleDereference(const IrInstruction& instruction);
 
@@ -1054,6 +1061,7 @@ private:
 		std::vector<std::string> function_symbols;  // Mangled function names in vtable order
 		std::vector<std::string> base_class_names;  // Base class names for RTTI (legacy)
 		std::vector<ObjectFileWriter::BaseClassDescriptorInfo> base_class_info; // Detailed base class info for RTTI
+		std::vector<int64_t> virtual_base_offsets; // Runtime offsets indexed by the source subobject's virtual-base order
 		const RTTITypeInfo* rtti_info;  // Pointer to RTTI information for this class (nullptr if not polymorphic)
 	};
 	std::vector<VTableInfo> vtables_;

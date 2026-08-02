@@ -531,6 +531,19 @@ public:
 			}
 		} break;
 
+		case IrOpcode::VirtualBaseAdjust: {
+			assert(hasTypedPayload() && "VirtualBaseAdjust instruction must use typed payload");
+			const auto& op = getTypedPayload<VirtualBaseAdjustOp>();
+			oss << '%' << op.result.var_number << " = virtual_base_adjust ";
+			if (const auto* string = std::get_if<StringHandle>(&op.source)) {
+				oss << "%" << StringTable::getStringView(*string);
+			} else {
+				oss << '%' << std::get<TempVar>(op.source).var_number;
+			}
+			oss << (op.source_is_address ? " (address)" : " (pointer)")
+				<< ", base_index: " << op.virtual_base_index;
+		} break;
+
 		case IrOpcode::Dereference: {
 			assert(hasTypedPayload() && "Dereference instruction must use typed payload");
 			const auto& op = getTypedPayload<DereferenceOp>();

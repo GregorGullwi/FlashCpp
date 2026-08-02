@@ -1403,6 +1403,25 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						throw InternalError(
 							"Sema selected a derived-to-base object conversion without materializing its constructor");
 					}
+					if (cast_info.cast_kind == StandardConversionKind::DerivedToBase &&
+						from_type == TypeCategory::Struct &&
+						to_type == TypeCategory::Struct &&
+						param_ref_qualifier == CVReferenceQualifier::None &&
+						param_type->pointer_depth() > 0) {
+						const CanonicalTypeDesc& source_desc =
+							sema_.typeContext().get(cast_info.source_type_id);
+						const CanonicalTypeDesc& target_desc =
+							sema_.typeContext().get(cast_info.target_type_id);
+						argumentIrOperands = adjustDerivedToBasePointer(
+							std::move(argumentIrOperands),
+							source_desc.type_index,
+							target_desc.type_index,
+							PointerDepth{static_cast<int>(target_desc.pointer_levels.size())},
+							callExprNode.called_from());
+						arg_type = argumentIrOperands.typeEnum();
+						arg_type_index = argumentIrOperands.type_index;
+						return true;
+					}
 					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 						from_type == TypeCategory::Struct) {
 						TypeIndex source_type_idx =

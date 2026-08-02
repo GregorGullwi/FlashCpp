@@ -435,6 +435,7 @@ void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_
 void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols,
 								  std::string_view class_name, std::span<const std::string_view> base_class_names,
 								  std::span<const BaseClassDescriptorInfo> base_class_info,
+								  std::span<const int64_t> virtual_base_offsets,
 								  [[maybe_unused]] const RTTITypeInfo* rtti_info,
 								  [[maybe_unused]] TypeIndex subobject_type_index,
 								  [[maybe_unused]] int64_t offset_to_top) {
@@ -677,19 +678,25 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 				  << col_offset << std::endl;
 
 	// Step 2: Emit vtable structure
-	// Layout: [COL pointer (8 bytes), function pointers...]
+	// Layout: [vbase offsets in reverse order][COL pointer][function pointers...]
 	uint32_t vtable_offset = static_cast<uint32_t>(rdata_section->get_data_size());
 
-	// Add COL pointer + function pointers
-	size_t vtable_size = (1 + function_symbols.size()) * 8;	// 1 COL ptr + N function ptrs
+	// The vptr points at the first function. Keeping the entries in reverse
+	// order makes virtual-base index zero the closest entry, matching the
+	// Itanium prefix convention and the backend's vtable[-(2+i)] lookup.
+	size_t vtable_size = (virtual_base_offsets.size() + 1 + function_symbols.size()) * 8;
 	std::vector<char> vtable_data(vtable_size, 0);
+	for (size_t i = 0; i < virtual_base_offsets.size(); ++i) {
+		const int64_t offset = virtual_base_offsets[virtual_base_offsets.size() - 1 - i];
+		std::memcpy(vtable_data.data() + i * sizeof(int64_t), &offset, sizeof(offset));
+	}
 
 	// Add the vtable data to .rdata section
 	add_data(vtable_data, SectionType::RDATA);
 
 	// Add relocation for COL (Complete Object Locator) pointer at vtable[0] (before actual vtable)
 	{
-		uint32_t col_reloc_offset = vtable_offset;
+		uint32_t col_reloc_offset = vtable_offset + static_cast<uint32_t>(virtual_base_offsets.size() * 8);
 
 		if (g_enable_debug_output)
 			std::cerr << "  DEBUG: Creating COL relocation at offset " << col_reloc_offset
@@ -706,8 +713,8 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 			std::cerr << "  Added COL pointer relocation at vtable[-1]" << std::endl;
 	}
 
-	// Step 3: Add a symbol for vtable (points to first virtual function, AFTER RTTI pointer)
-	uint32_t vtable_symbol_offset = vtable_offset + 8;  // Skip RTTI pointer
+	// Step 3: Add a symbol for vtable (points to first virtual function, AFTER COL)
+	uint32_t vtable_symbol_offset = vtable_offset + static_cast<uint32_t>((virtual_base_offsets.size() + 1) * 8);
 	auto symbol = coffi_.add_symbol(std::string(vtable_symbol));
 	symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 	symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);	 // Vtables are external
@@ -721,7 +728,7 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 			continue;
 		}
 
-		uint32_t reloc_offset = vtable_offset + 8 + static_cast<uint32_t>(i * 8);  // +8 to skip RTTI ptr
+		uint32_t reloc_offset = vtable_symbol_offset + static_cast<uint32_t>(i * 8);
 
 		// Get the symbol index (COFFI handles aux entries automatically)
 		uint32_t func_symbol_index = get_or_create_symbol_index(std::string(function_symbols[i]));

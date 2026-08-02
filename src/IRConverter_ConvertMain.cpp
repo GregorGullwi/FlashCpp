@@ -351,6 +351,9 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 			case IrOpcode::ComputeAddress:
 				handleComputeAddress(instruction);
 				break;
+			case IrOpcode::VirtualBaseAdjust:
+				handleVirtualBaseAdjust(instruction);
+				break;
 			case IrOpcode::Dereference:
 				handleDereference(instruction);
 				break;
@@ -6726,14 +6729,85 @@ void IrToObjConverter<TWriterClass>::emitDerivedToBasePointerAdjust(X64Register 
 		throw CompileError("Ambiguous derived-to-base pointer conversion");
 	if (conversion.kind == DerivedBaseConversionKind::Inaccessible)
 		throw CompileError("Cannot convert to an inaccessible base class");
-	if (conversion.kind == DerivedBaseConversionKind::PublicVirtual)
-		throw CompileError("Implicit conversion through a virtual base class is not supported");
+	if (conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+		if (!conversion.virtual_base_index.has_value()) {
+			throw InternalError("Finalized virtual-base pointer conversion is missing its runtime table index");
+		}
+		emitVirtualBasePointerAdjust(ptr_reg, base_type, derived_type, *conversion.virtual_base_index);
+		return;
+	}
 	if (auto offset = findBaseOffsetWithinDerived(base_type, derived_type)) {
-		if (*offset > 0) {
+		if (*offset != 0) {
 			FLASH_LOG(Codegen, Debug, "Derived-to-base pointer adjustment: +", *offset, " bytes");
+			emitTestRegReg(ptr_reg);
+			const uint32_t skip_adjustment_patch = emitJumpIfZeroRel32Placeholder();
 			emitAddImmToReg(textSectionData, ptr_reg, static_cast<int64_t>(*offset));
+			patchRel32(skip_adjustment_patch, static_cast<uint32_t>(textSectionData.size()));
 		}
 	}
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitVirtualBasePointerAdjust(
+	X64Register ptr_reg,
+	TypeIndex base_type,
+	TypeIndex derived_type,
+	size_t virtual_base_index) {
+	if (!base_type.isStruct() || !derived_type.isStruct() || base_type == derived_type) {
+		throw InternalError("Virtual-base pointer adjustment requires distinct struct types");
+	}
+	const DerivedBaseConversionInfo conversion =
+		classifyDerivedBaseConversion(derived_type, base_type);
+	if (conversion.kind == DerivedBaseConversionKind::Ambiguous)
+		throw CompileError("Ambiguous derived-to-base pointer conversion");
+	if (conversion.kind == DerivedBaseConversionKind::Inaccessible)
+		throw CompileError("Cannot convert to an inaccessible base class");
+	if (conversion.kind != DerivedBaseConversionKind::PublicVirtual)
+		throw InternalError("Virtual-base pointer adjustment reached a non-virtual conversion");
+
+	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_type);
+	const StructTypeInfo* derived_struct_info =
+		derived_type_info ? derived_type_info->getStructInfo() : nullptr;
+	if (!derived_struct_info) {
+		throw InternalError("Virtual-base pointer adjustment is missing derived struct metadata");
+	}
+	if (virtual_base_index >= derived_struct_info->virtual_bases.size() ||
+		derived_struct_info->virtual_bases[virtual_base_index].type_index != base_type) {
+		throw InternalError("Virtual-base pointer adjustment has an invalid runtime table index");
+	}
+
+	// [conv.ptr] preserves a null pointer during a derived-to-base conversion.
+	// The runtime table is only consulted for a non-null object pointer.
+	emitTestRegReg(ptr_reg);
+	const uint32_t skip_adjustment_patch = emitJumpIfZeroRel32Placeholder();
+	X64Register table_reg = allocateRegisterWithSpilling(ptr_reg);
+	// Polymorphic objects use the ABI vtable prefix.  Non-polymorphic objects
+	// use the compiler-owned table pointer stored at the runtime-dispatch slot.
+	emitMovFromMemory(table_reg, ptr_reg, 0, sizeof(void*));
+	int32_t table_entry_offset = 0;
+	if (derived_struct_info->has_vtable) {
+		// Itanium: vbase[i] is vtable[-(3+i)].
+		// MSVC: the COL pointer occupies vtable[-1], so vbase[i] is
+		// vtable[-(2+i)].
+		const int64_t entry_offset = std::is_same_v<TWriterClass, ElfFileWriter>
+			? -static_cast<int64_t>((3 + virtual_base_index) * sizeof(void*))
+			: -static_cast<int64_t>((2 + virtual_base_index) * sizeof(void*));
+		if (entry_offset < std::numeric_limits<int32_t>::min() ||
+			entry_offset > std::numeric_limits<int32_t>::max()) {
+			throw InternalError("Virtual-base vtable entry offset exceeds codegen range");
+		}
+		table_entry_offset = static_cast<int32_t>(entry_offset);
+	} else {
+		const uint64_t entry_offset = static_cast<uint64_t>(virtual_base_index) * sizeof(void*);
+		if (entry_offset > std::numeric_limits<int32_t>::max()) {
+			throw InternalError("Virtual-base table entry offset exceeds codegen range");
+		}
+		table_entry_offset = static_cast<int32_t>(entry_offset);
+	}
+	emitMovFromMemory(table_reg, table_reg, table_entry_offset, sizeof(void*));
+	emitAddRegs(textSectionData, ptr_reg, table_reg);
+	regAlloc.release(table_reg);
+	patchRel32(skip_adjustment_patch, static_cast<uint32_t>(textSectionData.size()));
 }
 
 template <class TWriterClass>
@@ -7780,6 +7854,36 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						}
 						return "_purecall"sv;
 					}();
+					auto collectVirtualBaseOffsets = [&](TypeIndex subobject_type_index,
+						int64_t offset_to_top) {
+						std::vector<int64_t> offsets;
+						const StructTypeInfo* source_struct_info = struct_info;
+						size_t source_offset = 0;
+						if (subobject_type_index.is_valid()) {
+							const TypeInfo* source_type_info = tryGetTypeInfo(subobject_type_index);
+							source_struct_info = source_type_info ? source_type_info->getStructInfo() : nullptr;
+							if (offset_to_top < 0) {
+								source_offset = static_cast<size_t>(-offset_to_top);
+							}
+						}
+						if (!source_struct_info || source_struct_info->virtual_bases.empty()) {
+							return offsets;
+						}
+						for (const auto& virtual_base : source_struct_info->virtual_bases) {
+							const auto most_derived_virtual_base = std::find_if(
+								struct_info->virtual_bases.begin(),
+								struct_info->virtual_bases.end(),
+								[&](const BaseClassSpecifier& candidate) {
+									return candidate.type_index == virtual_base.type_index;
+								});
+							if (most_derived_virtual_base == struct_info->virtual_bases.end() ||
+								most_derived_virtual_base->offset < source_offset) {
+								throw InternalError("Vtable registration cannot resolve a virtual-base offset");
+							}
+							offsets.push_back(static_cast<int64_t>(most_derived_virtual_base->offset - source_offset));
+						}
+						return offsets;
+					};
 					auto getVirtualFunctionSymbol = [&](const StructMemberFunction* vfunc) -> std::string {
 						if (!vfunc) {
 							return {};
@@ -7809,6 +7913,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						VTableInfo vtable_info;
 						vtable_info.vtable_symbol = StringTable::getOrInternStringHandle(vtable_symbol);
 						vtable_info.class_name = StringTable::getOrInternStringHandle(struct_name);
+						vtable_info.virtual_base_offsets = collectVirtualBaseOffsets({}, 0);
 
 						// Reserve space for vtable entries
 					vtable_info.function_symbols.resize(struct_info->vtable.size());
@@ -7897,6 +8002,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						secondary_vtable_info.class_name = StringTable::getOrInternStringHandle(struct_name);
 						secondary_vtable_info.subobject_type_index = base.type_index;
 						secondary_vtable_info.offset_to_top = -static_cast<int64_t>(base.offset);
+						secondary_vtable_info.virtual_base_offsets =
+							collectVirtualBaseOffsets(base.type_index, secondary_vtable_info.offset_to_top);
 						secondary_vtable_info.function_symbols.resize(base_struct_info->vtable.size());
 						for (size_t i = 0; i < base_struct_info->vtable.size(); ++i) {
 							const StructMemberFunction* vfunc = base_struct_info->vtable[i];
@@ -13629,9 +13736,42 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 	// Extract typed payload - all MemberStore instructions use typed payloads
 	const MemberStoreOp& op = std::any_cast<const MemberStoreOp&>(instruction.getTypedPayload());
 
-	// Check if this is a vtable pointer initialization (vptr)
-	if (op.vtable_symbol.isValid()) {
-		// This is a vptr initialization - load vtable address and store to offset 0
+	// Check if this is a vptr or hidden virtual-base table initialization.
+	if (op.vtable_symbol.isValid() || op.virtual_base_table_symbol.isValid()) {
+		if (op.virtual_base_table_symbol.isValid()) {
+			if (op.virtual_base_table_offsets.empty()) {
+				throw InternalError("Virtual-base table initialization has no entries");
+			}
+			std::vector<char> table_data(op.virtual_base_table_offsets.size() * sizeof(int64_t));
+			for (size_t i = 0; i < op.virtual_base_table_offsets.size(); ++i) {
+				const int64_t table_offset = op.virtual_base_table_offsets[i];
+				std::memcpy(
+					table_data.data() + i * sizeof(int64_t),
+					&table_offset,
+					sizeof(int64_t));
+			}
+			const auto existing_table = std::find_if(
+				global_variables_.begin(),
+				global_variables_.end(),
+				[&](const GlobalVariableInfo& global) {
+					return global.name == op.virtual_base_table_symbol;
+				});
+			if (existing_table == global_variables_.end()) {
+				GlobalVariableInfo table_info;
+				table_info.name = op.virtual_base_table_symbol;
+				table_info.size_in_bytes = table_data.size();
+				table_info.is_initialized = true;
+				table_info.init_data = std::move(table_data);
+				table_info.is_rodata = true;
+				table_info.is_selectany = true;
+				global_variables_.push_back(std::move(table_info));
+			} else if (existing_table->init_data != table_data) {
+				throw InternalError("Virtual-base table symbol was assigned conflicting offsets");
+			}
+		}
+
+		// This is a runtime dispatch pointer initialization - load its symbol
+		// address and store it at the selected subobject offset.
 		// Get the object's base stack offset
 		int32_t object_base_offset = 0;
 		const StackVariableScope& current_scope = variable_scopes.back();
@@ -13652,8 +13792,11 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		// So we just need a standard PC-relative relocation with the default addend
 		uint32_t relocation_offset = emitLeaRipRelative(X64Register::RAX);
 
-		// Add a relocation for the vtable symbol
-		writer.add_relocation(relocation_offset, StringTable::getStringView(op.vtable_symbol));
+		// Add a relocation for the vtable/table symbol
+		const StringHandle dispatch_symbol = op.vtable_symbol.isValid()
+			? op.vtable_symbol
+			: op.virtual_base_table_symbol;
+		writer.add_relocation(relocation_offset, StringTable::getStringView(dispatch_symbol));
 
 		// Store vtable pointer to [RCX + op.offset] (this pointer is in RCX)
 		// First load 'this' pointer into RCX
@@ -14468,6 +14611,64 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 		op.result_type_index,
 		op.result_size_bits.value,
 		op.result);
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::handleVirtualBaseAdjust(const IrInstruction& instruction) {
+	const VirtualBaseAdjustOp& op =
+		std::any_cast<const VirtualBaseAdjustOp&>(instruction.getTypedPayload());
+	X64Register source_reg = allocateRegisterWithSpilling();
+
+	if (const auto* source_name = std::get_if<StringHandle>(&op.source)) {
+		const auto& current_scope = variable_scopes.back();
+		const auto source_it = current_scope.variables.find(*source_name);
+		if (source_it == current_scope.variables.end()) {
+			throw InternalError("Virtual-base adjustment source variable is not in the current scope");
+		}
+		const int32_t source_offset = source_it->second.offset;
+		const bool source_holds_pointer =
+			!op.source_is_address || isPointerBaseStorage(source_offset);
+		if (source_holds_pointer) {
+			emitMovFromFrame(source_reg, source_offset);
+		} else {
+			emitLeaFromFrame(source_reg, source_offset);
+		}
+	} else {
+		const TempVar source_temp = std::get<TempVar>(op.source);
+		const int32_t source_offset = getStackOffsetFromTempVar(source_temp);
+		const bool source_holds_pointer =
+			!op.source_is_address || isPointerBaseStorage(source_offset, source_temp);
+		if (source_holds_pointer) {
+			emitMovFromFrame(source_reg, source_offset);
+		} else {
+			emitLeaFromFrame(source_reg, source_offset);
+		}
+	}
+
+	emitVirtualBasePointerAdjust(
+		source_reg,
+		op.target_type_index,
+		op.source_type_index,
+		op.virtual_base_index);
+
+	const int32_t result_offset = getStackOffsetFromTempVar(op.result);
+	emitMovToFrameSized(
+		SizedRegister{source_reg, 64, false},
+		SizedStackSlot{result_offset, 64, false});
+	if (op.source_is_address) {
+		const TypeInfo* target_type_info = tryGetTypeInfo(op.target_type_index);
+		const StructTypeInfo* target_struct_info =
+			target_type_info ? target_type_info->getStructInfo() : nullptr;
+		if (!target_struct_info || !target_struct_info->sizeInBits().is_set()) {
+			throw InternalError("Virtual-base address adjustment is missing target size metadata");
+		}
+		setAddressOnlyInfo(
+			result_offset,
+			op.target_type_index,
+			static_cast<int>(target_struct_info->sizeInBits().value),
+			op.result);
+	}
+	regAlloc.release(source_reg);
 }
 
 template <class TWriterClass>
@@ -16885,7 +17086,8 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		}
 
 		writer.add_vtable(StringTable::getStringView(vtable.vtable_symbol), func_symbols_sv, StringTable::getStringView(vtable.class_name),
-						  base_class_names_sv, vtable.base_class_info, vtable.rtti_info, vtable.subobject_type_index, vtable.offset_to_top);
+						  base_class_names_sv, vtable.base_class_info, vtable.virtual_base_offsets,
+						  vtable.rtti_info, vtable.subobject_type_index, vtable.offset_to_top);
 	}
 
 		// Now add pending global variable relocations (after symbols are created)

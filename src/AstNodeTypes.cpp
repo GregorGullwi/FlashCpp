@@ -2239,22 +2239,8 @@ BasePlacementDecision decideBasePlacement(const BaseClassSpecifier& base,
 struct LayoutBaseCollections {
 	std::vector<BaseClassSpecifier*> non_virtual_bases;
 	std::vector<BaseClassSpecifier> virtual_bases;
-	bool non_virtual_base_has_vtable = false;
+	bool primary_non_virtual_base_has_runtime_pointer = false;
 };
-
-bool structIntroducesVirtualMembers(const StructTypeInfo& struct_info) {
-	if (struct_info.has_vtable) {
-		return true;
-	}
-
-	for (const auto& member_function : struct_info.member_functions) {
-		if (member_function.is_virtual || member_function.is_override) {
-			return true;
-		}
-	}
-
-	return false;
-}
 
 bool hasReachableVirtualBase(const StructTypeInfo* struct_info, std::set<const StructTypeInfo*>& visited) {
 	if (!struct_info || !visited.insert(struct_info).second) {
@@ -2279,6 +2265,20 @@ bool hasReachableVirtualBase(const StructTypeInfo& struct_info) {
 	return hasReachableVirtualBase(&struct_info, visited);
 }
 
+bool structIntroducesVirtualMembers(const StructTypeInfo& struct_info) {
+	if (struct_info.has_vtable || hasReachableVirtualBase(struct_info)) {
+		return true;
+	}
+
+	for (const auto& member_function : struct_info.member_functions) {
+		if (member_function.is_virtual || member_function.is_override) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) {
 	LayoutBaseCollections collections;
 	collections.non_virtual_bases.reserve(struct_info.base_classes.size());
@@ -2290,10 +2290,17 @@ LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) 
 			continue;
 		}
 
+		const bool is_primary_non_virtual_base = collections.non_virtual_bases.empty();
 		collections.non_virtual_bases.push_back(&base);
-		if (!collections.non_virtual_base_has_vtable) {
-			if (const StructTypeInfo* base_info = getBaseStructInfo(base); base_info && base_info->has_vtable) {
-				collections.non_virtual_base_has_vtable = true;
+		if (is_primary_non_virtual_base) {
+			if (const StructTypeInfo* base_info = getBaseStructInfo(base)) {
+				// A polymorphic derived object can reuse only a primary
+				// polymorphic base's vptr.  A hidden virtual-base table is a
+				// different runtime pointer when the derived object introduces
+				// virtual functions.
+				collections.primary_non_virtual_base_has_runtime_pointer =
+					base_info->has_vtable ||
+					(!struct_info.has_vtable && !base_info->virtual_bases.empty());
 			}
 		}
 	}
@@ -2332,13 +2339,13 @@ LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) 
 	return collections;
 }
 
-void initializeBaseAwareLayout(bool has_virtual_members,
-							   bool non_virtual_base_has_vtable,
+void initializeBaseAwareLayout(bool has_runtime_pointer,
+							   bool primary_non_virtual_base_has_runtime_pointer,
 							   size_t& current_offset,
 							   size_t& max_alignment) {
 	current_offset = 0;
 	max_alignment = 1;
-	if (has_virtual_members && !non_virtual_base_has_vtable) {
+	if (has_runtime_pointer && !primary_non_virtual_base_has_runtime_pointer) {
 		current_offset = sizeof(void*);
 		max_alignment = sizeof(void*);
 	}
@@ -2441,7 +2448,10 @@ void StructTypeInfo::recalculateLayout() {
 
 	size_t current_offset = 0;
 	size_t max_alignment = 1;
-	initializeBaseAwareLayout(has_virtual_members, base_collections.non_virtual_base_has_vtable, current_offset, max_alignment);
+	initializeBaseAwareLayout(has_virtual_members,
+		base_collections.primary_non_virtual_base_has_runtime_pointer,
+		current_offset,
+		max_alignment);
 	placeBaseSubobjects(base_collections.non_virtual_bases, current_offset, max_alignment);
 
 	total_size = toSizeInBytes(current_offset);
@@ -2503,7 +2513,11 @@ bool StructTypeInfo::finalizeWithBases() {
 	LayoutBaseCollections base_collections = collectLayoutBaseCollections(*this);
 	size_t current_offset = 0;
 	size_t max_alignment = 1;
-	initializeBaseAwareLayout(has_vtable, base_collections.non_virtual_base_has_vtable, current_offset, max_alignment);
+	initializeBaseAwareLayout(
+		has_vtable || hasReachableVirtualBase(*this),
+		base_collections.primary_non_virtual_base_has_runtime_pointer,
+		current_offset,
+		max_alignment);
 
 	// Step 1: Layout non-virtual base class subobjects
 	placeBaseSubobjects(base_collections.non_virtual_bases, current_offset, max_alignment);

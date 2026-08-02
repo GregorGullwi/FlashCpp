@@ -1,37 +1,5 @@
 # Known Issues
 
-## Virtual-base derived-to-base conversions
-
-Virtual inheritance itself is implemented and covered by the existing positive
-tests, including `tests/test_virtual_base_classes_ret160.cpp`, which constructs
-a virtual diamond and verifies the single shared base subobject. RTTI and
-exception matching through virtual bases are covered separately by the
-`test_eh_*virtual_base*` tests. These tests exercise virtual-base layout,
-member access, vtables, RTTI, and exception handling; they do not exercise every
-implicit conversion form.
-
-The remaining gap is the standard-required conversion from a complete derived
-object to a virtual base when a base subobject address must be formed, including
-cases such as:
-
-- `Base& reference = derived;`
-- `Base* pointer = &derived;`
-- `Base value = derived;`
-- passing or returning `Base` by value from a `Derived` expression.
-
-The first two require ABI-specific runtime adjustment for the actual complete
-object (for example, a vtable/vbptr lookup); a layout-time byte offset is not
-valid for arbitrary subobjects. The by-value forms additionally require the
-selected Base copy/move constructor after that adjustment. The current
-compiler therefore stops with an unsupported-conversion diagnostic at
-this boundary instead of silently emitting an incorrect fixed-offset or raw
-byte-copy implementation.
-
-This is a compiler limitation, not an intended compile-time rule. A future
-positive regression test should be added when ABI-aware virtual-base lowering
-is implemented. Until then, the existing virtual-inheritance tests remain
-positive coverage for the functionality they describe.
-
 ## Deferred `<tuple>` member emission and `swap` gaps
 
 The full `<tuple>` header still fails during deferred member emission after the
