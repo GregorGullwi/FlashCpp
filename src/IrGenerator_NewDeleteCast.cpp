@@ -855,7 +855,12 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// Get the target type from the type specifier first
 	const auto& target_type_node = staticCastNode.target_type();
 	TypeCategory target_type = target_type_node.type();
-	int target_size = static_cast<int>(target_type_node.size_in_bits());
+	// A reference's stored size is the pointer size, but the xvalue produced by
+	// a reference cast denotes the referred-to object.  Keep the object size in
+	// the reference metadata so later loads use the referred type's width.
+	int target_size = target_type_node.is_reference()
+		? getTypeSpecSizeBits(target_type_node)
+		: static_cast<int>(target_type_node.size_in_bits());
 	size_t target_pointer_depth = target_type_node.pointer_depth();
 	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
 

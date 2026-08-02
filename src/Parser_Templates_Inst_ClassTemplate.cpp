@@ -30,6 +30,47 @@ static bool g_template_inst_depth_warned = false;
 // budget once function templates participate in the same counters.
 static constexpr size_t kMaxTemplateInstantiationNestingDepth = 128;
 
+static void preserveMissingTypeSpecifierModifiers(
+	TypeSpecifierNode& target,
+	const TypeSpecifierNode& source) {
+	target.add_cv_qualifier(source.cv_qualifier());
+	const size_t existing_pointer_depth = target.pointer_depth();
+	for (size_t pointer_index = existing_pointer_depth;
+		 pointer_index < source.pointer_depth();
+		 ++pointer_index) {
+		const CVQualifier pointer_cv =
+			pointer_index < source.pointer_levels().size()
+				? source.pointer_levels()[pointer_index].cv_qualifier
+				: CVQualifier::None;
+		target.add_pointer_level(pointer_cv);
+	}
+	if (target.reference_qualifier() == ReferenceQualifier::None &&
+		source.reference_qualifier() != ReferenceQualifier::None) {
+		target.set_reference_qualifier(source.reference_qualifier());
+	}
+	if (!target.is_array() && source.is_array()) {
+		target.set_array_dimensions(source.array_dimensions());
+	}
+}
+
+static void preserveMissingResolvedAliasModifiers(
+	TypeSpecifierNode& target,
+	const ResolvedAliasTypeInfo& source) {
+	target.add_cv_qualifier(source.cv_qualifier);
+	for (size_t pointer_index = target.pointer_depth();
+		 pointer_index < source.pointer_depth;
+		 ++pointer_index) {
+		target.add_pointer_level(CVQualifier::None);
+	}
+	if (target.reference_qualifier() == ReferenceQualifier::None &&
+		source.reference_qualifier != ReferenceQualifier::None) {
+		target.set_reference_qualifier(source.reference_qualifier);
+	}
+	if (!target.is_array() && !source.array_dimensions.empty()) {
+		target.set_array_dimensions(source.array_dimensions);
+	}
+}
+
 FunctionSignature Parser::substituteTemplateFunctionSignature(
 	FunctionSignature signature,
 	std::span<const TemplateParameterNode> template_params,
@@ -682,21 +723,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			bool handled_as_pack = false;
 			if (param_decl.is_parameter_pack() && (param_type_spec.category() == TypeCategory::UserDefined || param_type_spec.category() == TypeCategory::TypeAlias || param_type_spec.category() == TypeCategory::Template)) {
 				std::string_view type_name = param_type_spec.token().value();
-				size_t non_variadic = 0;
+				size_t pack_arg_index = 0;
 				size_t pack_size = 0;
 				bool found_pack = false;
 				for (size_t i = 0; i < tmpl_params.size(); ++i) {
 					const TemplateParameterNode* tparam = tryGetTemplateParameterNode(tmpl_params[i]);
 					if (tparam == nullptr)
 						continue;
-					if (!tparam->is_variadic()) {
-						non_variadic++;
-						continue;
-					}
-					if (tparam->name() == type_name) {
-						pack_size = tmpl_args.size() > non_variadic ? tmpl_args.size() - non_variadic : 0;
-						found_pack = true;
-						break;
+					if (tparam->is_variadic()) {
+						if (tparam->name() == type_name) {
+							pack_size = countTemplatePackArguments(
+								tmpl_params,
+								tmpl_args,
+								i,
+								pack_arg_index);
+							found_pack = true;
+							break;
+						}
+						pack_arg_index += countTemplatePackArguments(
+							tmpl_params,
+							tmpl_args,
+							i,
+							pack_arg_index);
+					} else if (pack_arg_index < tmpl_args.size()) {
+						++pack_arg_index;
 					}
 				}
 				if (found_pack) {
@@ -705,7 +755,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Expand into N parameters: args_0, args_1, ...
 					std::string_view orig_name = param_decl.identifier_token().value();
 					for (size_t pi = 0; pi < pack_size; ++pi) {
-						const TemplateTypeArg& elem = tmpl_args[non_variadic + pi];
+						const TemplateTypeArg& elem = tmpl_args[pack_arg_index + pi];
 						TypeCategory elem_type = elem.typeEnum();
 						TypeIndex elem_type_index = elem.type_index;
 						TypeSpecifierNode sub_type(
@@ -748,14 +798,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				original_param_type_node, tmpl_params, tmpl_args);
 			TypeIndex param_type_index = substitute_template_parameter(
 				param_type_spec, tmpl_params, tmpl_args);
+			if (!preserve_dependent_member_template_identity &&
+				full_substituted_param_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& full_substituted_param_type =
+					full_substituted_param_node.as<TypeSpecifierNode>();
+				const TypeIndex full_substituted_param_type_index =
+					full_substituted_param_type.type_index();
+				if (full_substituted_param_type_index.is_valid() &&
+					(full_substituted_param_type_index != param_type_spec.type_index() ||
+					 !param_type_index.is_valid() ||
+					 typeIndexContainsDependentPlaceholder(param_type_index))) {
+					param_type_index = full_substituted_param_type_index.withCategory(
+						full_substituted_param_type.category());
+				}
+			}
 			if (current_instantiation_rewrite.has_value() &&
 				param_type_index == current_instantiation_rewrite->from_type_index) {
 				param_type_index = current_instantiation_rewrite->to_type_index;
 			}
-			param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
-				original_param_type_node,
-				param_type_spec,
-				param_type_index);
 			param_type_index = resolveDependentMemberTemplateArtifactsForParam(
 				*this,
 				&original_param_type_node,
@@ -1138,6 +1198,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			type_alias.type_node.as<TypeSpecifierNode>();
 		TypeSpecifierNode substituted_type_spec = alias_decl_pattern_spec;
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
+		// The terminal TypeIndex carries the underlying type, while aliases can
+		// carry cv/ref/pointer/array modifiers in their TypeSpecifierNode. Keep
+		// modifiers that are not already present on the rebuilt specifier so a
+		// dependent alias such as `iterator_of<typename maybe_const<true, T>::type>::type`
+		// remains const without duplicating alias indirection.
+		preserveMissingResolvedAliasModifiers(
+			substituted_type_spec,
+			resolved_alias_target);
 		std::optional<TemplateTypeArg> rebound_arg;
 		// Function-pointer aliases carry their dependent parameter use inside the
 		// signature; the existing alias-resolution path below preserves that full
@@ -1884,7 +1952,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					FLASH_LOG(Templates, Trace, "Base class instantiation: ", base_template_name, " with ", base_template_args.size(), " args");
-					base_name_str = std::string(instantiateAndResolveBaseName(base_template_name, base_template_args, false));
+					base_name_str = std::string(instantiateAndResolveBaseName(base_template_name, base_template_args, true));
 					FLASH_LOG(Templates, Trace, "Base class resolved to: ", base_name_str);
 				}
 
@@ -2074,7 +2142,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									ASTNode substituted_expr = substituteTemplateParameters(
 										arg_info.node,
 										template_params,
-										template_args);
+										template_args_for_member_copy);
 									auto evaluated_value = try_evaluate_constant_expression(substituted_expr);
 									if (evaluated_value.has_value()) {
 										resolved_args.push_back(makeValueArg(evaluated_value->value, evaluated_value->type_index));
@@ -2285,6 +2353,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			SourceMemberStructInfoIndexMaps struct_info_member_identity_maps;
+			struct DeferredMemberBodySubstitution {
+				ASTNode target;
+				ASTNode source;
+				bool is_static = false;
+				bool is_constructor = false;
+			};
+			struct DeferredMemberSignatureSubstitution {
+				ASTNode source;
+				size_t target_index = 0;
+				OverloadableOperator operator_kind = OverloadableOperator::None;
+				bool is_const = false;
+				bool is_volatile = false;
+			};
+			std::vector<DeferredMemberBodySubstitution> deferred_member_body_substitutions;
+			std::vector<DeferredMemberSignatureSubstitution> deferred_member_signature_substitutions;
 
 			// Copy member functions from pattern
 			for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
@@ -2295,7 +2378,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 						instantiated_name, orig_ctor.name());
 					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_for_member_copy);
-					if (!orig_ctor.is_materialized() || orig_ctor.has_template_body_position()) {
+					if (orig_ctor.has_template_parameters()) {
 						new_ctor_ref.set_template_parameters(orig_ctor.template_parameters());
 					}
 					if (orig_ctor.has_template_body_position()) {
@@ -2324,12 +2407,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ctor_pack_param_info.data(),
 							ctor_pack_param_info.size()));
 					if (orig_ctor.is_materialized()) {
-						new_ctor_ref.set_definition(substituteTemplateParameters(
+						deferred_member_body_substitutions.push_back({
+							new_ctor_node,
 							*orig_ctor.get_definition(),
-							template_params,
-							template_args_for_member_copy,
-							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
-							true));
+							false,
+							true});
 					}
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
@@ -2386,14 +2468,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						template_params,
 						template_args_for_member_copy,
-						nullptr,
-						TypeIndex{}, // No self-owner rewrite for this specialization member-copy path
+						&pattern_struct,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						TypeIndex{}, // No pre-resolved return TypeIndex override
 						mem_func.operator_kind,
 						StringHandle{},	   // Compute effective lookup name from substituted return type/operator kind
 						pattern_struct.name(), // Enable partial-pattern pointer-depth clamp
 						false,				   // Do not re-apply bound metadata to full substitution
-						false);			   // Do not force resolved TypeIndex onto full AST substitutions
+						true);			   // Force the owner-alias-resolved TypeIndex onto full AST substitutions
 					ASTNode new_func_node = shell.function_node;
 					FunctionDeclarationNode& new_func_ref = *shell.function;
 
@@ -2403,7 +2485,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_func_ref,
 						template_params,
 						template_args_for_member_copy,
-						nullptr,
+						&pattern_struct,
 						TypeIndex{},
 						TypeIndex{},
 						TypeIndex{},
@@ -2418,19 +2500,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.set_is_const_member_function(mem_func.is_const());
 					new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 					if (orig_func.is_materialized()) {
-						ASTNode substituted_body = substituteTemplateParameters(
+						deferred_member_body_substitutions.push_back({
+							new_func_node,
 							*orig_func.get_definition(),
-							template_params,
-							template_args_for_member_copy,
-							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
-							!orig_func.is_static());
-						if (orig_func.is_static()) {
-							substituted_body = rebindStaticMemberInitializerFunctionCalls(
-								substituted_body,
-								struct_info,
-								true);
-						}
-						new_func_ref.set_definition(substituted_body);
+							orig_func.is_static(),
+							false});
 					}
 					pack_param_info_.resize(saved_pack_info);
 
@@ -2443,6 +2517,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_pure_virtual,
 						mem_func.is_override,
 						mem_func.is_final);
+					deferred_member_signature_substitutions.push_back({
+						mem_func.function_declaration,
+						struct_info->member_functions.size() - 1,
+						mem_func.operator_kind,
+						mem_func.is_const(),
+						mem_func.is_volatile()});
 					registerSourceMemberStructInfoIndex(
 						struct_info_member_identity_maps,
 						mem_func.function_declaration,
@@ -3160,7 +3240,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Finalize the struct layout
 			bool finalize_success;
-			if (!pattern_struct.base_classes().empty()) {
+			if (!struct_info->base_classes.empty()) {
 				finalize_success = struct_info->finalizeWithBases();
 			} else {
 				finalize_success = struct_info->finalize();
@@ -3207,6 +3287,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeCategory substituted_type = alias_type_spec.type();
 				TypeIndex substituted_type_index = alias_type_spec.type_index();
 				int substituted_size = alias_type_spec.size_in_bits();
+				TypeIndex parameter_substituted_type_index =
+					substitute_template_parameter(
+						alias_type_spec,
+						template_params,
+						template_args_for_pattern);
+				if (parameter_substituted_type_index.is_valid()) {
+					substituted_type_index = parameter_substituted_type_index;
+					substituted_type = parameter_substituted_type_index.category();
+					if (const TypeInfo* parameter_substituted_type_info =
+							tryGetTypeInfo(parameter_substituted_type_index);
+						parameter_substituted_type_info != nullptr) {
+						substituted_size =
+							parameter_substituted_type_info->sizeInBits().value;
+					}
+				}
 
 				trySubstituteIntrinsicTypeAlias(
 					alias_type_spec,
@@ -3303,14 +3398,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					alias_semantic_source = nullptr;
 				}
 
-				if (const TypeInfo* alias_target_info = tryGetTypeInfo(TypeIndex{substituted_type_index});
-					alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
+				const TypeInfo* alias_template_pattern_info =
+					tryGetTypeInfo(alias_type_spec.type_index());
+				if (!resolved_alias_type_spec_override.has_value() &&
+					alias_template_pattern_info != nullptr &&
+					alias_template_pattern_info->isTemplateInstantiation()) {
 					// Substitute pattern parameters (including pack expansion) the same way
 					// partial-spec base-class materialization does. Bare toTemplateTypeArg
 					// leaves This/Rest... dependent and skips Tuple<This, Rest...> lookup.
 					std::vector<TemplateTypeArg> concrete_alias_args =
 						materializeTemplateArgsExpandingPacks(
-							*alias_target_info,
+							*alias_template_pattern_info,
 							template_params,
 							template_args_for_pattern);
 					bool has_unresolved_alias_arg = false;
@@ -3338,8 +3436,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					if (!has_unresolved_alias_arg) {
+						StringHandle alias_template_name_handle =
+							alias_template_pattern_info->baseTemplateName();
+						if (alias_template_name_handle.isValid() &&
+							alias_template_pattern_info->sourceNamespace().isValid()) {
+							alias_template_name_handle =
+								gNamespaceRegistry.buildQualifiedIdentifier(
+									alias_template_pattern_info->sourceNamespace(),
+									alias_template_name_handle);
+						}
 						std::string_view alias_template_name =
-							StringTable::getStringView(alias_target_info->baseTemplateName());
+							StringTable::getStringView(alias_template_name_handle);
 						if (!alias_template_name.empty()) {
 							AliasTemplateMaterializationResult materialized_alias_target =
 								materializeTemplateInstantiationForLookup(
@@ -3362,6 +3469,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Register the type alias globally with its qualified name
 				std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
 					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_for_pattern, instantiated_name);
+				if (substituted_alias_type_spec.has_value() &&
+					alias_semantic_source != nullptr &&
+					alias_semantic_source->isTypeAlias()) {
+					preserveMissingResolvedAliasModifiers(
+						*substituted_alias_type_spec,
+						resolveAliasTypeInfo(
+							alias_semantic_source->registeredTypeIndex().withCategory(
+								alias_semantic_source->typeEnum())));
+				}
 				bool use_resolved_alias_override =
 					resolved_alias_type_spec_override.has_value();
 				if (use_resolved_alias_override) {
@@ -3379,12 +3495,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						use_resolved_alias_override = false;
 					}
 				}
-				const TypeSpecifierNode& alias_registration_type_spec =
+				TypeSpecifierNode alias_registration_type_spec =
 					use_resolved_alias_override
 						? resolved_alias_type_spec_override.value()
 						: (substituted_alias_type_spec.has_value()
 							   ? substituted_alias_type_spec.value()
 							   : alias_type_spec);
+				if (use_resolved_alias_override) {
+					preserveMissingTypeSpecifierModifiers(
+						alias_registration_type_spec,
+						alias_type_spec);
+				}
 				FLASH_LOG(
 					Parser,
 					Debug,
@@ -3445,6 +3566,111 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			struct_type_info.bindStructInfoOwnership();
 			if (struct_type_info.getStructInfo()) {
 				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
+			}
+
+			const TypeIndex instantiated_owner_type_index =
+				struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct);
+			for (const DeferredMemberSignatureSubstitution& deferred_signature :
+				 deferred_member_signature_substitutions) {
+				if (deferred_signature.target_index >= struct_info->member_functions.size()) {
+					throw InternalError("Deferred member signature index is out of range");
+				}
+				const FunctionDeclarationNode& original_function =
+					deferred_signature.source.as<FunctionDeclarationNode>();
+				const DeclarationNode& original_declaration = original_function.decl_node();
+				const TypeSpecifierNode& original_return_type =
+					original_declaration.type_specifier_node();
+				TypeIndex return_type_index = substitute_template_parameter(
+					original_return_type,
+					template_params,
+					template_args_for_member_copy);
+				return_type_index = resolveOwnerAliasTypeIndex(
+					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+						return substitute_template_parameter(type_spec, params, args);
+					},
+					pattern_struct,
+					original_return_type,
+					template_params,
+					template_args_for_member_copy,
+					return_type_index,
+					instantiated_owner_type_index);
+				SubstitutedMemberFunctionShell shell = createSubstitutedMemberFunctionShell(
+					original_function,
+					original_declaration.type_node(),
+					original_declaration.identifier_token(),
+					instantiated_name,
+					template_params,
+					template_args_for_member_copy,
+					&pattern_struct,
+					instantiated_owner_type_index,
+					return_type_index,
+					deferred_signature.operator_kind,
+					StringHandle{},
+					pattern_struct.name(),
+					false,
+					true);
+				FunctionDeclarationNode& replacement_function = *shell.function;
+				size_t saved_pack_info = pack_param_info_.size();
+				substituteAndCopyMemberFunctionParameters(
+					original_function.parameter_nodes(),
+					replacement_function,
+					template_params,
+					template_args_for_member_copy,
+					&pattern_struct,
+					instantiated_owner_type_index,
+					TypeIndex{},
+					TypeIndex{},
+					SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters,
+					true,
+					false,
+					true,
+					true);
+				copy_function_properties(replacement_function, original_function);
+				replacement_function.set_is_const_member_function(deferred_signature.is_const);
+				replacement_function.set_is_volatile_member_function(deferred_signature.is_volatile);
+				pack_param_info_.resize(saved_pack_info);
+
+				StructMemberFunction& member_function =
+					struct_info->member_functions[deferred_signature.target_index];
+				const void* previous_target = member_function.function_decl.raw_pointer();
+				member_function.function_decl = shell.function_node;
+				member_function.name = shell.effective_name;
+				member_function.cv_qualifier =
+					deferred_signature.is_const
+						? static_cast<CVQualifier>(static_cast<uint8_t>(member_function.cv_qualifier) |
+							static_cast<uint8_t>(CVQualifier::Const))
+						: member_function.cv_qualifier;
+				for (DeferredMemberBodySubstitution& deferred_body :
+					 deferred_member_body_substitutions) {
+					if (deferred_body.target.raw_pointer() == previous_target) {
+						deferred_body.target = shell.function_node;
+					}
+				}
+			}
+
+			for (DeferredMemberBodySubstitution& deferred_body :
+				 deferred_member_body_substitutions) {
+				ASTNode substituted_body = substituteTemplateParameters(
+					deferred_body.source,
+					template_params,
+					template_args_for_member_copy,
+					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+					!deferred_body.is_constructor && !deferred_body.is_static);
+				if (deferred_body.is_static) {
+					substituted_body = rebindStaticMemberInitializerFunctionCalls(
+						substituted_body,
+						struct_info,
+						true);
+				}
+				if (deferred_body.target.is<ConstructorDeclarationNode>()) {
+					deferred_body.target.as<ConstructorDeclarationNode>().set_definition(
+						substituted_body);
+				} else if (deferred_body.target.is<FunctionDeclarationNode>()) {
+					deferred_body.target.as<FunctionDeclarationNode>().set_definition(
+						substituted_body);
+				} else {
+					throw InternalError("Deferred member body has an unsupported declaration kind");
+				}
 			}
 
 			// Create an AST node for the instantiated struct so member functions can be code-generated
@@ -3540,7 +3766,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						orig_ctor.name() // Constructor name (same as template name)
 					);
 					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_for_pattern);
-					if (!orig_ctor.is_materialized() || orig_ctor.has_template_body_position()) {
+					if (orig_ctor.has_template_parameters()) {
 						new_ctor_ref.set_template_parameters(orig_ctor.template_parameters());
 					}
 					if (orig_ctor.has_template_body_position()) {
@@ -3728,7 +3954,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							return_type_spec,
 							template_params,
 							template_args_for_pattern,
-							ret_type_index);
+							ret_type_index,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 
 						ASTNode new_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
 							? substituted_return_type_node
@@ -3780,7 +4007,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_params,
 							template_args_for_pattern,
 							&pattern_struct,
-							TypeIndex{},
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 							TypeIndex{},
 							TypeIndex{},
 							SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters,
@@ -3930,7 +4157,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						orig_return_type,
 						template_params,
 						template_args_for_pattern,
-						return_type_index);
+						return_type_index,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 
 					SubstitutedMemberFunctionShell shell = createSubstitutedMemberFunctionShell(
 						orig_func,
@@ -3940,7 +4168,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						template_params,
 						template_args_for_pattern,
 						&pattern_struct,
-						TypeIndex{},		 // No self-owner rewrite for this path
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						return_type_index,	 // Return TypeIndex already alias-resolved above
 						mem_func.operator_kind,
 						StringHandle{},	   // Compute effective lookup name from substituted return type/operator kind
@@ -3958,7 +4186,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						template_params,
 						template_args_for_pattern,
 						&pattern_struct,
-						TypeIndex{},
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						TypeIndex{},
 						TypeIndex{},
 						SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters,
@@ -6922,6 +7150,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Substitute template parameter if the member type is a template parameter
 		TypeIndex member_type_index = substitute_template_parameter(
 			type_spec, effective_template_params, effective_template_args);
+		if (full_substituted_type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& full_substituted_type_spec =
+				full_substituted_type_node.as<TypeSpecifierNode>();
+			const TypeIndex full_substituted_type_index =
+				full_substituted_type_spec.type_index();
+			const ResolvedAliasTypeInfo existing_member_alias =
+				resolveAliasTypeInfo(member_type_index);
+			if (!existing_member_alias.isArray() &&
+				full_substituted_type_spec.cv_qualifier() == CVQualifier::None &&
+				full_substituted_type_index.is_valid() &&
+				(full_substituted_type_index != type_spec.type_index() ||
+				 !member_type_index.is_valid() ||
+				 typeIndexContainsDependentPlaceholder(member_type_index))) {
+				member_type_index = full_substituted_type_index.withCategory(
+					full_substituted_type_spec.category());
+			}
+		}
 
 		// WORKAROUND: If member type is a Struct or UserDefined that is actually a template (not an instantiation),
 		// try to instantiate it with the current template arguments.
@@ -8062,6 +8307,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl.type_node(), template_params, template_args_to_use);
 				TypeIndex substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
+				if (full_substituted_type_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& full_substituted_type_spec =
+						full_substituted_type_node.as<TypeSpecifierNode>();
+					const TypeIndex full_substituted_type_index =
+						full_substituted_type_spec.type_index();
+					const ResolvedAliasTypeInfo existing_nested_member_alias =
+						resolveAliasTypeInfo(substituted_type_index);
+					if (!existing_nested_member_alias.isArray() &&
+						full_substituted_type_spec.cv_qualifier() == CVQualifier::None &&
+						full_substituted_type_index.is_valid() &&
+						(full_substituted_type_index != type_spec.type_index() ||
+						 !substituted_type_index.is_valid() ||
+						 typeIndexContainsDependentPlaceholder(substituted_type_index))) {
+						substituted_type_index = full_substituted_type_index.withCategory(
+							full_substituted_type_spec.category());
+					}
+				}
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_to_use);
@@ -8230,7 +8492,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_ctor,
 						template_params,
 						template_args_to_use);
-					if (!original_ctor.is_materialized() || original_ctor.has_template_body_position()) {
+					if (original_ctor.has_template_parameters()) {
 						substituted_ctor.set_template_parameters(
 							original_ctor.template_parameters());
 					}
@@ -9104,6 +9366,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Register the type alias in getTypesByNameMap()
 		std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
 			type_alias, TypeIndex{substituted_type_index}, substituted_type, effective_template_params, effective_template_args, instantiated_name);
+		if (substituted_alias_type_spec.has_value() &&
+			alias_semantic_source != nullptr &&
+			alias_semantic_source->isTypeAlias()) {
+			preserveMissingResolvedAliasModifiers(
+				*substituted_alias_type_spec,
+				resolveAliasTypeInfo(
+					alias_semantic_source->registeredTypeIndex().withCategory(
+						alias_semantic_source->typeEnum())));
+		}
 		bool use_resolved_alias_override =
 			resolved_alias_type_spec_override.has_value();
 		if (use_resolved_alias_override) {
@@ -9121,12 +9392,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				use_resolved_alias_override = false;
 			}
 		}
-		const TypeSpecifierNode& alias_registration_type_spec =
+		TypeSpecifierNode alias_registration_type_spec =
 			use_resolved_alias_override
 				? resolved_alias_type_spec_override.value()
 				: (substituted_alias_type_spec.has_value()
 					   ? substituted_alias_type_spec.value()
 					   : alias_type_spec);
+		if (use_resolved_alias_override) {
+			preserveMissingTypeSpecifierModifiers(
+				alias_registration_type_spec,
+				alias_type_spec);
+		}
 		FLASH_LOG(
 			Parser,
 			Debug,
@@ -10415,7 +10691,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return_type_spec,
 					template_params,
 					template_args_to_use,
-					ret_type_index);
+					ret_type_index,
+					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 				ret_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
 					return_type_spec,
 					ret_type_index);
@@ -11746,6 +12023,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						true);
 					ctor.set_definition(substituted_body);
+					auto copy_constructor_initializers = [](
+						const ConstructorDeclarationNode& source,
+						ConstructorDeclarationNode& target) {
+						if (&source == &target ||
+							!target.member_initializers().empty() ||
+							!target.base_initializers().empty() ||
+							target.delegating_initializer().has_value()) {
+							return;
+						}
+						for (const auto& [member_name, initializer] : source.member_initializers()) {
+							target.add_member_initializer(member_name, initializer);
+						}
+						for (const auto& initializer : source.base_initializers()) {
+							target.add_base_initializer(
+								initializer.getBaseClassName(),
+								initializer.arguments);
+						}
+						if (source.delegating_initializer().has_value()) {
+							target.set_delegating_initializer(
+								source.delegating_initializer()->arguments);
+						}
+					};
 					// Also update the StructTypeInfo's copy (used by codegen)
 					if (struct_type_info.getStructInfo()) {
 						OutOfLineConstructorStubResolution info_ctor_resolution =
@@ -11761,6 +12060,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							copyDefinitionParameterIdentifiers(
 								info_ctor_resolution.ctor->parameter_nodes(),
 								func_decl.parameter_nodes());
+							copy_constructor_initializers(ctor, *info_ctor_resolution.ctor);
 							info_ctor_resolution.ctor->set_definition(substituted_body);
 						} else if (info_ctor_resolution.ambiguous) {
 							std::string error_msg = std::string(StringBuilder()

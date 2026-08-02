@@ -504,10 +504,8 @@ TypeIndex resolveOwnerAliasTypeIndex(
 	const TypeSpecifierNode& original_type_spec,
 	const TParams& tmpl_params,
 	const TArgs& tmpl_args,
-	TypeIndex current_type_index) {
-	if (current_type_index.is_valid()) {
-		return current_type_index.withCategory(current_type_index.category());
-	}
+	TypeIndex current_type_index,
+	TypeIndex instantiated_owner_type_index) {
 	if (original_type_spec.type() != TypeCategory::UserDefined &&
 		original_type_spec.type() != TypeCategory::TypeAlias &&
 		original_type_spec.type() != TypeCategory::Template) {
@@ -516,6 +514,26 @@ TypeIndex resolveOwnerAliasTypeIndex(
 	StringHandle type_name_handle = original_type_spec.token().handle();
 	if (!type_name_handle.isValid()) {
 		return current_type_index;
+	}
+	if (instantiated_owner_type_index.is_valid()) {
+		if (const TypeInfo* owner_type_info = tryGetTypeInfo(instantiated_owner_type_index)) {
+			StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(StringTable::getStringView(owner_type_info->name()))
+					.append("::")
+					.append(StringTable::getStringView(type_name_handle))
+					.commit());
+			if (const TypeInfo* instantiated_alias = findTypeByName(qualified_alias_name);
+				instantiated_alias != nullptr && instantiated_alias->isTypeAlias()) {
+				const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					instantiated_alias->registeredTypeIndex().withCategory(
+						instantiated_alias->typeEnum()));
+				if (resolved_alias.type_index.is_valid() &&
+					!typeIndexContainsDependentPlaceholder(resolved_alias.type_index)) {
+					return resolved_alias.type_index.withCategory(resolved_alias.typeEnum());
+				}
+			}
+		}
 	}
 	for (const auto& type_alias : owner_decl.type_aliases()) {
 		if (type_alias.alias_name != type_name_handle ||
@@ -1359,6 +1377,7 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 	TypeIndex substituted_type_index = override_type_index.is_valid()
 		? override_type_index
 		: substitute_type_index(original_type_spec, template_params, template_args);
+	bool resolved_from_instantiated_owner_alias = false;
 	if (owner_decl != nullptr) {
 		substituted_type_index = resolveOwnerAliasTypeIndex(
 			substitute_type_index,
@@ -1366,17 +1385,48 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 			original_type_spec,
 			template_params,
 			template_args,
-			substituted_type_index);
+			substituted_type_index,
+			instantiated_owner_type_index);
+		if (instantiated_owner_type_index.is_valid()) {
+			const StringHandle type_name_handle = original_type_spec.token().handle();
+			if (type_name_handle.isValid()) {
+				for (const auto& type_alias : owner_decl->type_aliases()) {
+					if (type_alias.alias_name != type_name_handle) {
+						continue;
+					}
+					if (const TypeInfo* owner_type_info = tryGetTypeInfo(instantiated_owner_type_index)) {
+						StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(StringTable::getStringView(owner_type_info->name()))
+								.append("::")
+								.append(StringTable::getStringView(type_name_handle))
+								.commit());
+						if (const TypeInfo* instantiated_alias = findTypeByName(qualified_alias_name);
+							instantiated_alias != nullptr && instantiated_alias->isTypeAlias()) {
+							const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+								instantiated_alias->registeredTypeIndex().withCategory(
+									instantiated_alias->typeEnum()));
+							resolved_from_instantiated_owner_alias =
+								resolved_alias.type_index.is_valid() &&
+								!typeIndexContainsDependentPlaceholder(resolved_alias.type_index);
+						}
+					}
+					break;
+				}
+			}
+		}
 	}
 	if (instantiated_owner_type_index.is_valid()) {
 		substituted_type_index = resolveSelfRefParamIndex(
 			substituted_type_index,
 			instantiated_owner_type_index);
 	}
-	substituted_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
-		original_type_node,
-		original_type_spec,
-		substituted_type_index);
+	if (!resolved_from_instantiated_owner_alias) {
+		substituted_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+			original_type_node,
+			original_type_spec,
+			substituted_type_index);
+	}
 
 	TypeSpecifierNode substituted_type = full_substituted_node.is<TypeSpecifierNode>()
 		? full_substituted_node.as<TypeSpecifierNode>()

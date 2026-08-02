@@ -1000,7 +1000,8 @@ private:
 														  // as opposed to a regular member of a template class
 		bool is_free_function = false;			   // True for non-member friend functions defined inside a class body
 		bool has_function_try = false;			   // True when body_start is at '{' inside a function-try-block
-														  // (i.e. 'try' was already consumed; catch clauses follow the body)
+												  // (i.e. 'try' was already consumed; catch clauses follow the body)
+		bool is_late_replay = false;				   // Restore lexer state without rolling back committed top-level AST nodes
 	};
 	std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
@@ -2649,6 +2650,10 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		return substituted_arg;
 	}
 	bool isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const;
+	StringHandle resolveAliasBaseInitializerName(
+		const StructTypeInfo* struct_info,
+		StringHandle candidate_name,
+		TypeIndex owner_type_index);
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode& spec_node);  // Instantiate full specialization
 	std::optional<ASTNode> try_instantiate_variable_template(

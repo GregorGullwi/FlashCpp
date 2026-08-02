@@ -180,18 +180,6 @@ TemplateParameterKind inferBindingKind(const TypeInfo::TemplateArgInfo& arg) {
 	return TemplateParameterKind::Type;
 }
 
-size_t countRequiredTemplateArgsAfter(
-	std::span<const TemplateParameterNode> params,
-	size_t start_index) {
-	size_t count = 0;
-	for (size_t i = start_index; i < params.size(); ++i) {
-		if (!params[i].is_variadic()) {
-			++count;
-		}
-	}
-	return count;
-}
-
 TemplateParameterKind inferBindingKind(const TemplateTypeArg& arg) {
 	if (arg.is_template_template_arg) {
 		return TemplateParameterKind::Template;
@@ -401,9 +389,11 @@ TemplateEnvironment buildTemplateEnvironment(
 		binding.is_pack = param.is_variadic();
 
 		if (binding.is_pack) {
-			const size_t remaining_args = arg_index < args.size() ? args.size() - arg_index : 0;
-			const size_t required_after = countRequiredTemplateArgsAfter(params, i + 1);
-			const size_t pack_size = remaining_args > required_after ? remaining_args - required_after : 0;
+			const size_t pack_size = countTemplatePackArguments(
+				params,
+				args,
+				i,
+				arg_index);
 			binding.args.reserve(pack_size);
 			for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < args.size(); ++pack_index) {
 				binding.args.push_back(args[arg_index + pack_index]);

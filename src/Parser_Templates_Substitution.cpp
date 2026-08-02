@@ -561,14 +561,11 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			const auto& tparam = template_params[i];
 			template_param_order.push_back(tparam.name());
 			if (tparam.is_variadic()) {
-				size_t remaining_args = arg_index < template_args.size()
-											? template_args.size() - arg_index
-											: 0;
-				size_t required_after = countRequiredTemplateArgsAfter(
-					template_params, i + 1);
-				size_t pack_size = remaining_args > required_after
-									   ? remaining_args - required_after
-									   : 0;
+				size_t pack_size = countTemplatePackArguments(
+					template_params,
+					template_args,
+					i,
+					arg_index);
 				std::vector<TemplateTypeArg> pack_args;
 				pack_args.reserve(pack_size);
 				for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < template_args.size(); ++pack_index) {
@@ -2442,30 +2439,29 @@ bool Parser::expandPackExpansionArgs(
 	template_param_arg_ranges.reserve(template_params.size());
 	size_t variadic_template_param_count = 0;
 
-	size_t total_non_variadic = 0;
-	for (const TemplateParameterNode& param : template_params) {
-		if (!param.is_variadic()) {
-			++total_non_variadic;
-		} else {
-			++variadic_template_param_count;
-		}
-	}
-
+	// Keep the argument boundary recorded by deduction. In particular, a
+	// deduced pack followed by a defaulted template parameter is represented as
+	// one flat argument sequence, so counting all remaining arguments here can
+	// incorrectly consume the default as another pack element.
 	size_t arg_cursor = 0;
-	size_t non_variadic_seen = 0;
-	for (const TemplateParameterNode& param : template_params) {
+	for (size_t param_index = 0; param_index < template_params.size(); ++param_index) {
+		const TemplateParameterNode& param = template_params[param_index];
 		if (!param.is_variadic()) {
-			template_param_arg_ranges.push_back({arg_cursor, arg_cursor < template_args.size() ? 1u : 0u});
+			template_param_arg_ranges.push_back({
+				arg_cursor,
+				arg_cursor < template_args.size() ? 1u : 0u});
 			if (arg_cursor < template_args.size()) {
 				++arg_cursor;
 			}
-			++non_variadic_seen;
 			continue;
 		}
 
-		size_t required_after = total_non_variadic - non_variadic_seen;
-		size_t remaining = arg_cursor < template_args.size() ? template_args.size() - arg_cursor : 0;
-		size_t pack_size = remaining > required_after ? remaining - required_after : 0;
+		++variadic_template_param_count;
+		const size_t pack_size = countTemplatePackArguments(
+			template_params,
+			template_args,
+			param_index,
+			arg_cursor);
 		template_param_arg_ranges.push_back({arg_cursor, pack_size});
 		arg_cursor += pack_size;
 	}

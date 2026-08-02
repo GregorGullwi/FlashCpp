@@ -833,6 +833,15 @@ inline StringHandle registerLazyConstructorStub(
 	std::span<const TemplateParameterNode> outer_template_params,
 	std::span<const TemplateTypeArg> outer_template_args,
 	const TemplateEnvironmentSnapshot* outer_parent_snapshot) {
+	// A constructor template is an overload-resolution pattern.  Its concrete
+	// template arguments are supplied by the call site, so it cannot be
+	// represented by a class-only lazy-member entry.  Registering that entry
+	// would replay the body with only the enclosing class bindings and leave
+	// constructor parameters such as U unresolved.
+	if (ctor_decl.has_template_parameters()) {
+		return StringHandle{};
+	}
+
 	LazyMemberFunctionInfo lazy_ctor_info;
 	{
 		auto& id = lazy_ctor_info.identity;
@@ -1061,11 +1070,17 @@ inline void buildTemplateArgSubstitutionMaps(
 
 		if (tparam->is_variadic()) {
 			std::vector<TemplateTypeArg> pack_args;
-			for (size_t j = arg_index; j < template_args.size(); ++j) {
-				pack_args.push_back(template_args[j]);
+			const size_t pack_size = countTemplatePackArguments(
+				template_params,
+				template_args,
+				i,
+				arg_index);
+			for (size_t j = 0; j < pack_size; ++j) {
+				pack_args.push_back(template_args[arg_index + j]);
 			}
 			pack_substitution_map[StringTable::getOrInternStringHandle(param_name)] = std::move(pack_args);
-			break;
+			arg_index += pack_size;
+			continue;
 		}
 
 		if (arg_index < template_args.size()) {
@@ -1566,7 +1581,8 @@ inline bool typeSpecifiersMatchForSignatureValidation(
 	const SignatureValidationIndirection rhs_effective_indirection =
 		computeSignatureValidationIndirection(rhs);
 	if (lhs_effective_type.category() != rhs_effective_type.category() ||
-		lhs_effective_type != rhs_effective_type ||
+		(!is_primitive_type(lhs_effective_type.category()) &&
+			lhs_effective_type != rhs_effective_type) ||
 		lhs_effective_indirection.pointer_depth != rhs_effective_indirection.pointer_depth ||
 		lhs_effective_indirection.reference_qualifier !=
 			rhs_effective_indirection.reference_qualifier) {
@@ -3552,7 +3568,6 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			rewritten_owner_type = self_type_to_index;
 		} else if (instantiated_owner_type_index.is_valid() &&
 				   owner_decl != nullptr &&
-				   !substituted_param_type.type_index().is_valid() &&
 				   typeTokenNamesOwnerClass(substituted_param_type, *owner_decl)) {
 			rewritten_owner_type = instantiated_owner_type_index;
 		}

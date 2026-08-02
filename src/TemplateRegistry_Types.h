@@ -827,6 +827,50 @@ inline size_t countRequiredTemplateArgsAfter(
 	return countRequiredTemplateArgsAfter<ParamContainer>(template_params, start_index);
 }
 
+// A deduced template argument list can contain both the elements of a
+// parameter pack and arguments for parameters that follow that pack.  The
+// is_pack bit preserves that boundary when a pack is followed by a defaulted
+// parameter; without it, a flat list cannot distinguish an omitted pack
+// element from the explicitly materialized default argument.
+template <typename ParamContainer, typename ArgContainer>
+inline size_t countTemplatePackArguments(
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	size_t pack_param_index,
+	size_t arg_index) {
+	if (arg_index >= template_args.size()) {
+		return 0;
+	}
+
+	if (template_args[arg_index].is_pack) {
+		size_t pack_size = 0;
+		while (arg_index + pack_size < template_args.size() &&
+			template_args[arg_index + pack_size].is_pack) {
+			++pack_size;
+		}
+		return pack_size;
+	}
+
+	bool has_pack_metadata = false;
+	for (size_t i = arg_index; i < template_args.size(); ++i) {
+		if (template_args[i].is_pack) {
+			has_pack_metadata = true;
+			break;
+		}
+	}
+	if (has_pack_metadata) {
+		return 0;
+	}
+
+	const size_t remaining_args = template_args.size() - arg_index;
+	const size_t required_after = countRequiredTemplateArgsAfter(
+		template_params,
+		pack_param_index + 1);
+	return remaining_args > required_after
+		? remaining_args - required_after
+		: 0;
+}
+
 template <typename ParamContainer, typename ArgContainer, typename Callback>
 inline void forEachNonPackTemplateParamArgBinding(
 	const ParamContainer& template_params,
@@ -838,14 +882,11 @@ inline void forEachNonPackTemplateParamArgBinding(
 		if (param == nullptr)
 			continue;
 		if (param->is_variadic()) {
-			size_t remaining_args = arg_index < template_args.size()
-										? template_args.size() - arg_index
-										: 0;
-			size_t required_after = countRequiredTemplateArgsAfter<ParamContainer, ArgContainer>(
-				template_params, i + 1);
-			size_t pack_size = remaining_args > required_after
-								   ? remaining_args - required_after
-								   : 0;
+			size_t pack_size = countTemplatePackArguments(
+				template_params,
+				template_args,
+				i,
+				arg_index);
 			arg_index += pack_size;
 			continue;
 		}

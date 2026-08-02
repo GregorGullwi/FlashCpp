@@ -848,8 +848,11 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 		const std::string_view member_name = qualified_name.substr(scope_sep + 2);
 		ResolvedQualifiedOwner resolved_owner =
 			resolveQualifiedOwnerForLookup(owner_name);
-		if (!resolved_owner.resolved_from_current_context ||
-			resolved_owner.resolved_as_nested_owner_extension) {
+		if (!resolved_owner.lookup_name.empty() &&
+			(!resolved_owner.resolved_from_current_context ||
+			 resolved_owner.resolved_as_nested_owner_extension ||
+			 (resolved_owner.type_info != nullptr &&
+			  resolved_owner.type_info->getStructInfo() != nullptr))) {
 			owner_name = resolved_owner.lookup_name;
 		}
 
@@ -1260,6 +1263,17 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveQual
 
 			return std::nullopt;
 		};
+
+	if (active_template_body_substitution_ != nullptr &&
+		active_template_body_substitution_->owner_type_index.is_valid()) {
+		if (std::optional<AliasTemplateMaterializationResult> active_owner =
+			try_resolve_from_current_owner(
+				tryGetTypeInfo(
+					active_template_body_substitution_->owner_type_index));
+		active_owner.has_value()) {
+			return active_owner;
+		}
+	}
 
 	for (auto member_ctx_it = member_function_context_stack_.rbegin();
 		 member_ctx_it != member_function_context_stack_.rend();
@@ -4475,6 +4489,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Create function call node with the qualified identifier
 			auto function_call_node = emplace_node<ExpressionNode>(
 				makeCallExprFromNode(*identifierType, std::move(args), qual_id.identifier_token()));
+			if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+					qual_id.dependentQualifiedName();
+				dependent_record != nullptr) {
+				setCallDependentQualifiedLookupRecord(
+					function_call_node.as<ExpressionNode>(),
+					*dependent_record);
+			}
 			if (has_explicit_template_args) {
 				if (template_arg_nodes.empty()) {
 					template_arg_nodes = materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
@@ -4672,6 +4693,140 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Create a QualifiedIdentifierNode (stack-local; copied into ExpressionNode before returning)
 			NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
 			QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
+			if (!namespaces.empty()) {
+				StringHandle owner_handle =
+					StringTable::getOrInternStringHandle(namespaces.front().c_str());
+				TypeIndex owner_type_index{};
+				bool owner_is_dependent = false;
+				auto owner_resolves_in_current_context = [&]() -> bool {
+					std::string_view current_owner_name;
+					if (!member_function_context_stack_.empty()) {
+						current_owner_name = StringTable::getStringView(
+							member_function_context_stack_.back().struct_name);
+					} else if (!struct_parsing_context_stack_.empty()) {
+						current_owner_name = struct_parsing_context_stack_.back().struct_name;
+					}
+					if (current_owner_name.empty()) {
+						return false;
+					}
+					std::vector<QualifiedTypeMemberAccess> owner_member_chain;
+					owner_member_chain.reserve(namespaces.size());
+					for (const auto& namespace_part : namespaces) {
+						QualifiedTypeMemberAccess member_access;
+						member_access.member_name =
+							StringTable::getOrInternStringHandle(
+								namespace_part.c_str());
+						owner_member_chain.push_back(std::move(member_access));
+					}
+					return resolveBaseClassMemberTypeChain(
+						current_owner_name,
+						owner_member_chain) != nullptr;
+				};
+				if (currentTemplateParamKind(owner_handle).has_value() ||
+					std::find(
+						currentTemplateParamNames().begin(),
+						currentTemplateParamNames().end(),
+						owner_handle) != currentTemplateParamNames().end()) {
+					owner_is_dependent = true;
+				}
+				if (!owner_is_dependent &&
+					!owner_resolves_in_current_context()) {
+					auto owner_type_it = getTypesByNameMap().find(owner_handle);
+					const TypeInfo* owner_type_info =
+						owner_type_it != getTypesByNameMap().end()
+							? owner_type_it->second
+							: nullptr;
+					const bool owner_has_dependent_template_args =
+						owner_type_info != nullptr &&
+						std::any_of(
+							owner_type_info->templateArgs().begin(),
+							owner_type_info->templateArgs().end(),
+							[](const TypeInfo::TemplateArgInfo& arg) {
+								return arg.dependent_name.isValid() ||
+									arg.dependent_expr().has_value() ||
+									typeIndexContainsDependentPlaceholder(arg.type_index);
+							});
+					if (owner_type_info != nullptr &&
+						(owner_type_info->isDependentPlaceholder() ||
+						 (owner_type_info->is_incomplete_instantiation_ &&
+						  (!owner_type_info->isTemplateInstantiation() ||
+						   owner_type_info->templateArgs().empty() ||
+						   owner_has_dependent_template_args)))) {
+						owner_is_dependent = true;
+						owner_type_index = owner_type_info->registeredTypeIndex();
+					}
+				}
+				if (!owner_is_dependent) {
+					std::string_view current_owner_name;
+					if (!member_function_context_stack_.empty()) {
+						const auto& member_ctx = member_function_context_stack_.back();
+						current_owner_name =
+							StringTable::getStringView(member_ctx.struct_name);
+						owner_type_index = member_ctx.struct_type_index;
+					} else if (!struct_parsing_context_stack_.empty()) {
+						const auto& struct_ctx = struct_parsing_context_stack_.back();
+						current_owner_name = struct_ctx.struct_name;
+						if (auto owner_type_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(current_owner_name));
+							owner_type_it != getTypesByNameMap().end() &&
+							owner_type_it->second != nullptr) {
+							owner_type_index = owner_type_it->second->registeredTypeIndex();
+						}
+					}
+					if (!current_owner_name.empty()) {
+						std::vector<QualifiedTypeMemberAccess> owner_member_chain;
+						owner_member_chain.reserve(namespaces.size());
+						for (const auto& namespace_part : namespaces) {
+							QualifiedTypeMemberAccess member_access;
+							member_access.member_name =
+								StringTable::getOrInternStringHandle(
+									namespace_part.c_str());
+							owner_member_chain.push_back(std::move(member_access));
+						}
+						if (resolveBaseClassMemberTypeChain(
+								current_owner_name,
+								owner_member_chain) != nullptr) {
+							std::vector<StringHandle> dependent_member_names;
+							dependent_member_names.reserve(namespaces.size() + 1);
+							for (const auto& namespace_part : namespaces) {
+								dependent_member_names.push_back(
+									StringTable::getOrInternStringHandle(
+										namespace_part.c_str()));
+							}
+							dependent_member_names.push_back(final_identifier.handle());
+							qual_id.setDependentQualifiedName(
+								makeExpressionDependentQualifiedNameRecord(
+									StringTable::getOrInternStringHandle(
+										current_owner_name),
+									owner_type_index,
+									TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+										CurrentInstantiation,
+									{},
+									dependent_member_names));
+						}
+					}
+				}
+				if (owner_is_dependent) {
+					std::vector<StringHandle> dependent_member_names;
+					dependent_member_names.reserve(namespaces.size());
+					for (size_t namespace_index = 1;
+						namespace_index < namespaces.size();
+						++namespace_index) {
+						dependent_member_names.push_back(
+							StringTable::getOrInternStringHandle(
+								namespaces[namespace_index].c_str()));
+					}
+					dependent_member_names.push_back(final_identifier.handle());
+					qual_id.setDependentQualifiedName(
+						makeExpressionDependentQualifiedNameRecord(
+							owner_handle,
+							owner_type_index,
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+								UnknownSpecialization,
+							{},
+							dependent_member_names));
+				}
+			}
 
 			// Check for std::forward intrinsic
 			// std::forward<T>(arg) is a compiler intrinsic for perfect forwarding
@@ -5592,6 +5747,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Create function call node with the qualified identifier
 				result = emplace_node<ExpressionNode>(
 					makeCallExprFromNode(*identifierType, std::move(args), qual_id.identifier_token()));
+				if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+						qual_id.dependentQualifiedName();
+					dependent_record != nullptr) {
+					setCallDependentQualifiedLookupRecord(
+						result->as<ExpressionNode>(),
+						*dependent_record);
+				}
 
 				// If explicit template arguments were provided, store them in the call expression
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
@@ -6261,6 +6423,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				TypeIndex owner_type_index{};
 				InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arg_infos;
 				bool owner_is_dependent = false;
+				std::string_view current_owner_name;
+				if (!member_function_context_stack_.empty()) {
+					const auto& member_ctx = member_function_context_stack_.back();
+					current_owner_name =
+						StringTable::getStringView(member_ctx.struct_name);
+					owner_type_index = member_ctx.struct_type_index;
+				} else if (!struct_parsing_context_stack_.empty()) {
+					const auto& struct_ctx = struct_parsing_context_stack_.back();
+					current_owner_name = struct_ctx.struct_name;
+					auto current_owner_it = getTypesByNameMap().find(
+						StringTable::getOrInternStringHandle(current_owner_name));
+					if (current_owner_it != getTypesByNameMap().end() &&
+						current_owner_it->second != nullptr) {
+						owner_type_index =
+							current_owner_it->second->registeredTypeIndex();
+					}
+				}
 				if (auto param_kind = currentTemplateParamKind(owner_handle);
 					param_kind.has_value() &&
 					*param_kind == TemplateParameterKind::Type) {
@@ -6271,74 +6450,69 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						std::find(active_template_params.begin(), active_template_params.end(), owner_handle) !=
 						active_template_params.end();
 				}
-				if (!owner_is_dependent) {
-					auto owner_type_it = getTypesByNameMap().find(owner_handle);
-					if (owner_type_it != getTypesByNameMap().end() &&
-						owner_type_it->second != nullptr &&
-						(owner_type_it->second->isDependentPlaceholder() ||
-						 owner_type_it->second->is_incomplete_instantiation_)) {
+				if (!owner_is_dependent && !current_owner_name.empty()) {
+					std::vector<QualifiedTypeMemberAccess> namespace_member_chain;
+					namespace_member_chain.reserve(namespaces.size());
+					for (const auto& namespace_part : namespaces) {
+						QualifiedTypeMemberAccess member_access;
+						member_access.member_name =
+							StringTable::getOrInternStringHandle(
+								namespace_part.c_str());
+						namespace_member_chain.push_back(std::move(member_access));
+					}
+					if (resolveBaseClassMemberTypeChain(
+							current_owner_name,
+							namespace_member_chain) != nullptr) {
 						owner_is_dependent = true;
-						owner_kind = owner_type_it->second->isTemplateInstantiation()
-							? TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation
-							: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization;
-						owner_type_index = owner_type_it->second->registeredTypeIndex();
-						owner_template_arg_infos = owner_type_it->second->templateArgs();
+						owner_handle =
+							StringTable::getOrInternStringHandle(current_owner_name);
+						owner_kind =
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+								CurrentInstantiation;
 					}
 				}
 				if (!owner_is_dependent) {
-					std::string_view current_owner_name;
-					if (!member_function_context_stack_.empty()) {
-						const auto& member_ctx = member_function_context_stack_.back();
-						current_owner_name =
-							StringTable::getStringView(member_ctx.struct_name);
-						owner_type_index = member_ctx.struct_type_index;
-					} else if (!struct_parsing_context_stack_.empty()) {
-						const auto& struct_ctx = struct_parsing_context_stack_.back();
-						current_owner_name = struct_ctx.struct_name;
-						auto current_owner_it = getTypesByNameMap().find(
-							StringTable::getOrInternStringHandle(current_owner_name));
-						if (current_owner_it != getTypesByNameMap().end() &&
-							current_owner_it->second != nullptr) {
-							owner_type_index =
-								current_owner_it->second->registeredTypeIndex();
-						}
-					}
-					if (!current_owner_name.empty()) {
-						std::vector<QualifiedTypeMemberAccess> namespace_member_chain;
-						namespace_member_chain.reserve(namespaces.size());
-						for (const auto& namespace_part : namespaces) {
-							QualifiedTypeMemberAccess member_access;
-							member_access.member_name =
-								StringTable::getOrInternStringHandle(
-									namespace_part.c_str());
-							namespace_member_chain.push_back(std::move(member_access));
-						}
-						if (resolveBaseClassMemberTypeChain(
-								current_owner_name,
-								namespace_member_chain) != nullptr) {
-							std::vector<StringHandle> dependent_member_names;
-							dependent_member_names.reserve(namespaces.size() + 1);
-							for (const auto& namespace_part : namespaces) {
-								dependent_member_names.push_back(
-									StringTable::getOrInternStringHandle(
-										namespace_part.c_str()));
-							}
-							dependent_member_names.push_back(final_identifier.handle());
-							qual_id.setDependentQualifiedName(
-								makeExpressionDependentQualifiedNameRecord(
-									StringTable::getOrInternStringHandle(
-										current_owner_name),
-									owner_type_index,
-									TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation,
-									{},
-									dependent_member_names));
-						}
+					auto owner_type_it = getTypesByNameMap().find(owner_handle);
+					const TypeInfo* owner_type_info =
+						owner_type_it != getTypesByNameMap().end()
+							? owner_type_it->second
+							: nullptr;
+					const bool owner_has_dependent_template_args =
+						owner_type_info != nullptr &&
+						std::any_of(
+							owner_type_info->templateArgs().begin(),
+							owner_type_info->templateArgs().end(),
+							[](const TypeInfo::TemplateArgInfo& arg) {
+								return arg.dependent_name.isValid() ||
+									arg.dependent_expr().has_value() ||
+									typeIndexContainsDependentPlaceholder(arg.type_index);
+							});
+					if (owner_type_info != nullptr &&
+						(owner_type_info->isDependentPlaceholder() ||
+						 (owner_type_info->is_incomplete_instantiation_ &&
+						  (!owner_type_info->isTemplateInstantiation() ||
+						   owner_type_info->templateArgs().empty() ||
+						   owner_has_dependent_template_args)))) {
+						owner_is_dependent = true;
+						owner_kind = owner_type_info->isTemplateInstantiation()
+							? TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation
+							: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization;
+						owner_type_index = owner_type_info->registeredTypeIndex();
+						owner_template_arg_infos = owner_type_info->templateArgs();
 					}
 				}
 				if (owner_is_dependent) {
 					std::vector<StringHandle> dependent_member_names;
 					dependent_member_names.reserve(namespaces.size());
-					for (size_t ns_index = 1; ns_index < namespaces.size(); ++ns_index) {
+					const size_t first_member_index =
+						owner_kind ==
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+								CurrentInstantiation
+							? 0
+							: 1;
+					for (size_t ns_index = first_member_index;
+						ns_index < namespaces.size();
+						++ns_index) {
 						dependent_member_names.push_back(
 							StringTable::getOrInternStringHandle(namespaces[ns_index].c_str()));
 					}
@@ -6592,6 +6766,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Create function call node with the qualified identifier
 				auto function_call_node = emplace_node<ExpressionNode>(
 					makeCallExprFromNode(*identifierType, std::move(args), final_identifier));
+				if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+						qual_id.dependentQualifiedName();
+					dependent_record != nullptr) {
+					setCallDependentQualifiedLookupRecord(
+						function_call_node.as<ExpressionNode>(),
+						*dependent_record);
+				}
 
 				// If explicit template arguments were provided, store them in the call expression
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))

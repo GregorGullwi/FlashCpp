@@ -82,6 +82,11 @@ void AstToIr::queueDeferredMemberFunctionFromNode(
 	StringHandle struct_name,
 	ASTNode function_node,
 	NamespaceHandle namespace_handle) {
+	const void* function_node_key = function_node.raw_pointer();
+	if (function_node_key == nullptr ||
+		!deferred_member_function_nodes_.insert(function_node_key).second) {
+		return;
+	}
 	DeferredMemberFunctionInfo deferred_info;
 	deferred_info.struct_name = struct_name;
 	deferred_info.function_node = function_node;

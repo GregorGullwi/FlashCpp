@@ -1507,12 +1507,11 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 								ctor_has_auto = true;
 								break;
 							}
-							// Skip constructors whose parameter types are still TypeCategory::UserDefined:
-							// this indicates the parser failed to record the constructor's own
-							// template parameters (e.g. template<_U1,_U2> pair(_U1&&, _U2&&) where
-							// _U1/_U2 remain unresolved).  Generating code for such a constructor would
-							// crash in reference-identifier load lowering with "Type with no runtime size".
-							if (pt.category() == TypeCategory::UserDefined) {
+							// A concrete class or alias may legitimately retain UserDefined in its
+							// source category.  Only defer a constructor when the type index still
+							// contains dependent placeholder state; category alone is not evidence
+							// that the signature needs template materialization.
+							if (typeSpecStillNeedsTemplateMaterialization(pt)) {
 								ctor_has_unresolved_param = true;
 								break;
 							}
@@ -2915,6 +2914,58 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					// Check for explicit initializer first (highest precedence)
 					auto explicit_it = explicit_inits.find(std::string(StringTable::getStringView(member.getName())));
 					if (explicit_it != explicit_inits.end()) {
+						// A member initializer for a class type constructs the member
+						// subobject; it is not a raw store of the initializer expression.
+						// This distinction matters for reference-valued expressions such
+						// as static_cast<T&&>(value), whose IR operand is an address until
+						// it is bound to a constructor parameter.
+						if (!member.is_reference() && !member.is_rvalue_reference()) {
+							const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+							const StructTypeInfo* member_struct_info =
+								member_type_info ? member_type_info->getStructInfo() : nullptr;
+							if (member_struct_info && member_struct_info->hasUserDefinedConstructor()) {
+								const ASTNode& init_expr = explicit_it->second->initializer_expr;
+								std::vector<ASTNode> constructor_args;
+								const ConstructorDeclarationNode* resolved_ctor = nullptr;
+
+								if (init_expr.is<InitializerListNode>()) {
+									const InitializerListNode& init_list = init_expr.as<InitializerListNode>();
+									if (const ConstructorDeclarationNode* sema_ctor = init_list.resolved_constructor();
+										sema_ctor && resolvedConstructorMatchesTargetType(*sema_ctor, member.type_index)) {
+										resolved_ctor = sema_ctor;
+									}
+									for (const ASTNode& argument : init_list.initializers()) {
+										constructor_args.push_back(argument);
+									}
+								} else if (init_expr.is<ExpressionNode>()) {
+									constructor_args.push_back(init_expr);
+								} else {
+									throw InternalError("Class member initializer is not an expression or initializer list");
+								}
+
+								if (!resolved_ctor) {
+									resolved_ctor = resolveCodegenConstructorFromArgs(*member_struct_info, constructor_args);
+								}
+								if (!resolved_ctor) {
+									throw CompileError(
+										"No matching constructor for member '" +
+										std::string(StringTable::getStringView(member.getName())) + "'");
+								}
+
+								ConstructorCallOp ctor_op;
+								ctor_op.object = StringTable::getOrInternStringHandle("this");
+								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+									"Member offset exceeds int range");
+								ctor_op.base_class_offset = static_cast<int>(member.offset);
+								appendConstructorCallArguments(
+									ctor_op, resolved_ctor, constructor_args, node.name_token());
+								finalizeConstructorCallOp(ctor_op, *member_struct_info, node.name_token());
+								ir_.addInstruction(
+									IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+								continue;
+							}
+						}
+
 						// Special handling for reference members initialized with reference variables/parameters
 						// When initializing a reference member (int& ref) with a reference parameter (int& r),
 						// we need to use the pointer value that the parameter holds, not dereference it

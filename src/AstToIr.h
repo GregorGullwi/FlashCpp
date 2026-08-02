@@ -1,5 +1,6 @@
 #pragma once
 #include <unordered_map>
+#include <unordered_set>
 #include "IrGenerator.h"
 #include "InlineVector.h"
 
@@ -877,7 +878,19 @@ private:
 	template <typename ArgRange>
 	const ConstructorDeclarationNode* resolveCodegenConstructorFromArgs(
 		const StructTypeInfo& target_struct_info,
-		const ArgRange& args) const {
+		const ArgRange& args) {
+		auto queueResolvedConstructor = [this, &target_struct_info](
+			const ConstructorDeclarationNode* constructor) {
+			if (constructor != nullptr &&
+				!constructor->has_template_parameters() &&
+				constructor->is_materialized()) {
+				queueDeferredMemberFunctionFromNode(
+					target_struct_info.name,
+					ASTNode(constructor),
+					target_struct_info.namespace_handle);
+			}
+			return constructor;
+		};
 		const size_t num_args = args.size();
 		std::vector<TypeSpecifierNode> arg_types;
 		arg_types.reserve(num_args);
@@ -896,8 +909,23 @@ private:
 			if (resolution.is_ambiguous) {
 				throw CompileError("Ambiguous constructor call");
 			}
-			if (resolution.selected_overload) {
-				return resolution.selected_overload;
+			bool template_ctor_ambiguous = false;
+			const ConstructorDeclarationNode* materialized_ctor =
+				parser_.materializeMatchingConstructorTemplate(
+					target_struct_info.name,
+					target_struct_info,
+					std::span<const TypeSpecifierNode>(arg_types.data(), arg_types.size()),
+					resolution.selected_overload,
+					template_ctor_ambiguous);
+			if (template_ctor_ambiguous) {
+				throw CompileError("Ambiguous constructor call");
+			}
+			if (materialized_ctor) {
+				return queueResolvedConstructor(materialized_ctor);
+			}
+			if (resolution.selected_overload &&
+				!resolution.selected_overload->has_template_parameters()) {
+				return queueResolvedConstructor(resolution.selected_overload);
 			}
 		}
 
@@ -906,7 +934,7 @@ private:
 		}
 
 		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);
-		return arity_resolution.selected_overload;
+		return queueResolvedConstructor(arity_resolution.selected_overload);
 	}
 	// Materialize explicit constructor arguments for an already-selected constructor.
 	// resolved_ctor may be null, in which case arguments are lowered without parameter-
@@ -1455,6 +1483,7 @@ private:
 		NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
 	};
 	std::vector<DeferredMemberFunctionInfo> deferred_member_functions_;
+	std::unordered_set<const void*> deferred_member_function_nodes_;
 	size_t deferred_member_functions_processed_ = 0;
 
 	// Free inline/__inline definitions deferred until ODR-use (call / address-of).

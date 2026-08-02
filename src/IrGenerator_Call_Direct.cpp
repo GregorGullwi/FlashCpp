@@ -408,9 +408,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		parser_resolved_direct_target != nullptr) {
 		sema_.ensureCallArgConversionsAnnotated(callExprNode);
 	}
+	const bool has_dependent_qualified_lookup =
+		callExprNode.has_dependent_qualified_lookup_record();
 	const ResolvedFunctionQueryResult sema_resolved_direct_query =
 		sema_services.getResolvedDirectCallQuery(sema_call_key);
 	const FunctionDeclarationNode* const sema_resolved_direct_target =
+		!has_dependent_qualified_lookup &&
 		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available
 			? sema_resolved_direct_query.function
 			: nullptr;
@@ -854,7 +857,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		function_name = "memcpy";
 	}
 
-	bool has_precomputed_mangled = callExprNode.has_mangled_name();
+	bool has_precomputed_mangled =
+		callExprNode.has_mangled_name() && !has_dependent_qualified_lookup;
 	const FunctionDeclarationNode* matched_func_decl = nullptr;
 
 		// Helper: resolve mangled name from a matched function declaration
@@ -960,6 +964,31 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 								member_func.is_const())) {
 						function_node = *materialized;
 					}
+				}
+			} else if (function_node.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& ctor_decl =
+					function_node.as<ConstructorDeclarationNode>();
+				if (ctor_decl.has_template_parameters()) {
+					// Constructor templates are overload-resolution patterns.  Only a
+					// concrete specialization may enter the deferred emission queue.
+					continue;
+				}
+				if (!ctor_decl.is_materialized() && ctor_decl.has_any_body_source()) {
+					if (std::optional<ASTNode> materialized =
+							sema_.ensureMemberFunctionMaterialized(
+								struct_name,
+								ctor_decl);
+						materialized.has_value() &&
+						materialized->is<ConstructorDeclarationNode>()) {
+						function_node = *materialized;
+					}
+				}
+				// The deferred queue only accepts complete declarations. Implicit
+				// constructors without a body are emitted through the normal
+				// constructor-call path when they are actually used.
+				if (function_node.is<ConstructorDeclarationNode>() &&
+					!function_node.as<ConstructorDeclarationNode>().is_materialized()) {
+					continue;
 				}
 			}
 			DeferredMemberFunctionInfo deferred_info;

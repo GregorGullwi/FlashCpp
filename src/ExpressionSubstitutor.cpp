@@ -1233,6 +1233,13 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 			if (owner_name.empty() || owner_name == current_owner_name) {
 				return true;
 			}
+			if (std::optional<StringHandle> owner_pattern_handle =
+					gTemplateRegistry.get_instantiation_pattern(
+						current_owner_type_name_);
+				owner_pattern_handle.has_value() &&
+				owner_name == StringTable::getStringView(*owner_pattern_handle)) {
+				return true;
+			}
 
 			const TypeInfo* current_owner_type_info =
 				findTypeByName(current_owner_type_name_);
@@ -1259,6 +1266,22 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 			return !qualified_base_template_name.empty() &&
 				owner_name == qualified_base_template_name;
 		};
+	if (dependent_name.owner_template_arguments.empty()) {
+		if (auto owner_subst_it = param_map_.find(owner_name);
+			owner_subst_it != param_map_.end()) {
+			const TemplateTypeArg& owner_arg = owner_subst_it->second;
+			if (owner_arg.is_value || !owner_arg.type_index.is_valid()) {
+				return materialized_owner;
+			}
+			materialized_owner =
+				parser_.materializeCanonicalOwnerTypeForLookup(owner_arg);
+			if (materialized_owner.instantiated_name.empty() &&
+				materialized_owner.resolved_type_info == nullptr) {
+				assign_owner_type(tryGetTypeInfo(owner_arg.type_index));
+			}
+			return materialized_owner;
+		}
+	}
 	switch (dependent_name.owner_kind) {
 	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
 		if (prefer_current_owner_type_name &&
@@ -1312,18 +1335,6 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 		break;
 	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
 		if (dependent_name.owner_template_arguments.empty()) {
-			if (auto owner_subst_it = param_map_.find(owner_name);
-				owner_subst_it != param_map_.end()) {
-				if (const TypeInfo* owner_type_info =
-						tryGetTypeInfo(owner_subst_it->second.type_index)) {
-					materialized_owner =
-						parser_.materializeCanonicalOwnerTypeForLookup(*owner_type_info, {});
-					if (materialized_owner.instantiated_name.empty() &&
-						materialized_owner.resolved_type_info == nullptr) {
-						assign_owner_type(owner_type_info);
-					}
-				}
-			}
 			break;
 		}
 		[[fallthrough]];
@@ -2058,6 +2069,27 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		? call.qualified_name()
 		: std::string_view{};
 	auto wrapOriginalCall = [&]() -> ASTNode {
+		if (call.has_dependent_qualified_lookup_record()) {
+			CallExprNode unresolved_call(
+				CalleeDescriptor::freeFunction(call.callee().declaration()),
+				substituteCallArgumentsPreservingPackExpansion(call.arguments()),
+				call.called_from());
+			CallMetadataCopyOptions copy_options;
+			copy_options.copy_mangled_name = false;
+			copy_options.copy_parser_return_type_hint = false;
+			copy_options.copy_definition_lookup_record = false;
+			copyCallMetadataWithTransformedTemplateArguments(
+				unresolved_call,
+				call,
+				[this](const ASTNode& template_arg) {
+					return substitute(template_arg);
+				},
+				copy_options);
+			ExpressionNode& new_expr =
+				gChunkedAnyStorage.emplace_back<ExpressionNode>(
+					std::move(unresolved_call));
+			return ASTNode(&new_expr);
+		}
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
 		return ASTNode(&new_expr);
 	};
@@ -2235,17 +2267,30 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		return &instantiated_member_template->as<FunctionDeclarationNode>();
 	};
 	auto materializeSubstitutedUnresolvedCall = [&](ChunkedVector<ASTNode>&& substituted_args) -> ASTNode {
+		const bool preserves_dependent_qualified_lookup =
+			call.has_dependent_qualified_lookup_record();
+		const CalleeDescriptor unresolved_callee =
+			preserves_dependent_qualified_lookup
+				? CalleeDescriptor::freeFunction(call.callee().declaration())
+				: call.callee();
 		CallExprNode substituted_call(
-			call.callee(),
+			unresolved_callee,
 			std::move(substituted_args),
 			call.called_from());
+		CallMetadataCopyOptions copy_options;
+		copy_options.copy_mangled_name =
+			!preserves_dependent_qualified_lookup;
+		copy_options.copy_parser_return_type_hint =
+			!preserves_dependent_qualified_lookup;
+		copy_options.copy_definition_lookup_record =
+			!preserves_dependent_qualified_lookup;
 		copyCallMetadataWithTransformedTemplateArguments(
 			substituted_call,
 			call,
 			[this](const ASTNode& template_arg) {
 				return substitute(template_arg);
 			},
-			CallMetadataCopyOptions{});
+			copy_options);
 		const FunctionDeclarationNode* hint_target =
 			getBestEffortDirectCallTarget(call);
 		tryAttachSubstitutedReturnTypeHint(substituted_call, hint_target);
@@ -3111,7 +3156,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			materializeDependentQualifiedRecordOwner(
 				dependent_record,
 				kInitialDependentMemberTypeResolutionDepth,
-				/*prefer_current_owner_type_name=*/false,
+				/*prefer_current_owner_type_name=*/
+					dependent_record.owner_kind ==
+						TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+							CurrentInstantiation,
 				/*allow_current_context_dependent_owner_materialization=*/false);
 		std::string_view materialized_owner_name =
 			materialized_owner.canonicalName();
@@ -4019,7 +4067,13 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						std::move(explicit_template_arg_nodes));
 				}
 			}
-			if (!preserved_dependent_member_template_record) {
+			// Once the owner has been substituted to a different concrete type, the
+			// original dependent-qualified record must not survive on the rebound
+			// identifier.  Keeping it would make a later evaluator reinterpret the
+			// already-materialized `B::v` through the surrounding template context
+			// (for example as `A::v` while instantiating g<A>).
+			if (!preserved_dependent_member_template_record &&
+				materialized_owner_name == recorded_owner_name) {
 				new_qual_id.setDependentQualifiedName(*dependent_name);
 			}
 			FLASH_LOG(Templates, Trace, "  Record-substituted qualified-id: ",
