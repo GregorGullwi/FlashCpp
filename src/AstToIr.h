@@ -1080,10 +1080,20 @@ private:
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const EnumTypeInfo& enum_info, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryApplySemaCallArgReferenceBinding(ExprResult arg_result,
-																  const ASTNode& arg_expr,
-																  const TypeSpecifierNode& param_type,
-																  const CallArgReferenceBindingInfo* binding_info,
-																  const Token& source_token);
+																			  const ASTNode& arg_expr,
+																			  const TypeSpecifierNode& param_type,
+																			  const CallArgReferenceBindingInfo* binding_info,
+																			  const Token& source_token);
+	ExprResult adjustDerivedToBaseAddress(ExprResult source_address,
+												 TypeIndex source_type_index,
+												 TypeIndex target_type_index,
+												 SizeInBits target_size_bits,
+												 const Token& source_token);
+	ExprResult materializeDerivedToBaseValue(ExprResult source_result,
+													 TypeIndex source_type_index,
+													 TypeIndex target_type_index,
+													 SizeInBits target_size_bits,
+													 const Token& source_token);
 	const FunctionDeclarationNode* findCurrentStructStaticMemberFunction(StringHandle member_name) const {
 		if (!current_struct_name_.isValid()) {
 			return nullptr;
