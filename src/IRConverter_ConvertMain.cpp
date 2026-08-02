@@ -6709,38 +6709,25 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 
 template <class TWriterClass>
 std::optional<int64_t> IrToObjConverter<TWriterClass>::findBaseOffsetWithinDerived(TypeIndex base_type, TypeIndex derived_type) const {
-	if (!base_type.is_valid() || !derived_type.is_valid())
+	const DerivedBaseConversionInfo conversion =
+		classifyDerivedBaseConversion(derived_type, base_type);
+	if (conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
 		return std::nullopt;
-	if (base_type == derived_type)
-		return 0;
-	const TypeInfo* derived_info = tryGetTypeInfo(derived_type);
-	const StructTypeInfo* derived_struct = derived_info ? derived_info->getStructInfo() : nullptr;
-	if (!derived_struct)
-		return std::nullopt;
-	// Recursively search public non-virtual base classes for base_type.
-	auto findOffset = [&](const auto& self, const StructTypeInfo* cur, int64_t cur_offset) -> std::optional<int64_t> {
-		if (!cur)
-			return std::nullopt;
-		for (const auto& base : cur->base_classes) {
-			if (base.access != AccessSpecifier::Public || base.is_virtual)
-				continue;
-			int64_t off = cur_offset + static_cast<int64_t>(base.offset);
-			if (base.type_index == base_type)
-				return off;
-			const TypeInfo* b_info = tryGetTypeInfo(base.type_index);
-			const StructTypeInfo* b_struct = b_info ? b_info->getStructInfo() : nullptr;
-			if (auto nested = self(self, b_struct, off))
-				return nested;
-		}
-		return std::nullopt;
-	};
-	return findOffset(findOffset, derived_struct, 0);
+	return conversion.offset;
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitDerivedToBasePointerAdjust(X64Register ptr_reg, TypeIndex base_type, TypeIndex derived_type) {
 	if (!base_type.isStruct() || !derived_type.isStruct() || base_type == derived_type)
 		return;
+	const DerivedBaseConversionInfo conversion =
+		classifyDerivedBaseConversion(derived_type, base_type);
+	if (conversion.kind == DerivedBaseConversionKind::Ambiguous)
+		throw CompileError("Ambiguous derived-to-base pointer conversion");
+	if (conversion.kind == DerivedBaseConversionKind::Inaccessible)
+		throw CompileError("Cannot convert to an inaccessible base class");
+	if (conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+		throw CompileError("Implicit conversion through a virtual base class is not supported");
 	if (auto offset = findBaseOffsetWithinDerived(base_type, derived_type)) {
 		if (*offset > 0) {
 			FLASH_LOG(Codegen, Debug, "Derived-to-base pointer adjustment: +", *offset, " bytes");

@@ -2128,24 +2128,28 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 
-						// Pointer derived-to-base conversion in variable init: verify the
-						// base is publicly accessible per C++20 [conv.ptr]/3. Overload
-						// resolution already enforces this via isTransitivelyDerivedFrom,
-						// but direct variable initialization bypasses overload resolution
-						// and silently emits the pointer adjustment in the back end.
+					// Pointer derived-to-base conversion in variable init: verify the
+					// relationship before the backend emits an adjustment. Direct variable
+					// initialization can bypass overload-resolution diagnostics.
 					if (need_conversion && init_cat == TypeCategory::Struct &&
 						type_node.pointer_depth() > 0 && init_operands.pointer_depth.is_pointer() &&
 						init_type_index.is_valid() && type_node.type_index().is_valid() &&
-						init_type_index != type_node.type_index() &&
-						!isTransitivelyDerivedFrom(init_type_index, type_node.type_index()) &&
-						isTransitivelyDerivedFromAnyAccess(init_type_index, type_node.type_index())) {
-						const TypeInfo* src_info = tryGetTypeInfo(init_type_index);
-						const TypeInfo* tgt_info = tryGetTypeInfo(type_node.type_index());
-						std::string src_name = src_info ? std::string(StringTable::getStringView(src_info->name())) : std::string("<unknown>");
-						std::string tgt_name = tgt_info ? std::string(StringTable::getStringView(tgt_info->name())) : std::string("<unknown>");
-						throw CompileError(
-							"Cannot initialize '" + tgt_name + "*' with pointer to '" + src_name +
-								"': '" + tgt_name + "' is an inaccessible base of '" + src_name + "' [conv.ptr]/3");
+						init_type_index != type_node.type_index()) {
+						const DerivedBaseConversionInfo base_conversion =
+							classifyDerivedBaseConversion(init_type_index, type_node.type_index());
+						if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+							throw CompileError("Ambiguous derived-to-base pointer conversion");
+						if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+							throw CompileError("Implicit conversion through a virtual base class is not supported");
+						if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
+							const TypeInfo* src_info = tryGetTypeInfo(init_type_index);
+							const TypeInfo* tgt_info = tryGetTypeInfo(type_node.type_index());
+							std::string src_name = src_info ? std::string(StringTable::getStringView(src_info->name())) : std::string("<unknown>");
+							std::string tgt_name = tgt_info ? std::string(StringTable::getStringView(tgt_info->name())) : std::string("<unknown>");
+							throw CompileError(
+								"Cannot initialize '" + tgt_name + "*' with pointer to '" + src_name +
+									"': '" + tgt_name + "' is an inaccessible base of '" + src_name + "' [conv.ptr]/3");
+						}
 					}
 				}
 
@@ -2765,10 +2769,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// Generate copy constructor call or converting constructor call
 							const ASTNode& init_node = *node.initializer();
 							ExprResult init_operands = cached_copy_init_expr_result.has_value()
-														  ? *cached_copy_init_expr_result
-														  : visitExpressionNode(init_node.as<ExpressionNode>());
+															  ? *cached_copy_init_expr_result
+															  : visitExpressionNode(init_node.as<ExpressionNode>());
 							const ConstructorDeclarationNode* sema_selected_converting_ctor = nullptr;
 							const TypeSpecifierNode* sema_selected_param_type = nullptr;
+							std::optional<int64_t> sema_source_base_class_offset;
 							TypeCategory init_category_for_copy_init = init_operands.category();
 
 							// Check if this is a converting constructor case (initializer type != target type)
@@ -2808,17 +2813,31 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								if (slot.has_value() && slot->has_cast()) {
 									const ImplicitCastInfo& cast_info =
 										sema_.castInfoTable()[slot->cast_info_index.value - 1];
-									if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-										cast_info.selected_constructor) {
-										const CanonicalTypeDesc& target_desc =
-											sema_.typeContext().get(cast_info.target_type_id);
-										if (target_desc.category() == TypeCategory::Struct &&
-											isSameStructTypeForInitialization(target_desc.type_index, type_node.type_index())) {
-											const CanonicalTypeDesc& source_desc =
-												sema_.typeContext().get(cast_info.source_type_id);
-											if (source_desc.category() != TypeCategory::Invalid) {
-												sema_selected_converting_ctor = cast_info.selected_constructor;
-												const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
+									if ((cast_info.cast_kind == StandardConversionKind::UserDefined ||
+										 cast_info.cast_kind == StandardConversionKind::DerivedToBase) &&
+									cast_info.selected_constructor) {
+									const CanonicalTypeDesc& target_desc =
+										sema_.typeContext().get(cast_info.target_type_id);
+									if (target_desc.category() == TypeCategory::Struct &&
+										isSameStructTypeForInitialization(target_desc.type_index, type_node.type_index())) {
+										const CanonicalTypeDesc& source_desc =
+											sema_.typeContext().get(cast_info.source_type_id);
+										if (source_desc.category() != TypeCategory::Invalid) {
+											sema_selected_converting_ctor = cast_info.selected_constructor;
+											if (cast_info.cast_kind == StandardConversionKind::DerivedToBase) {
+												const DerivedBaseConversionInfo base_conversion =
+													classifyDerivedBaseConversion(source_desc.type_index, target_desc.type_index);
+												if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+													throw CompileError("Ambiguous derived-to-base conversion");
+												if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+													throw CompileError("Cannot convert to an inaccessible base class");
+												if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+													throw CompileError("Implicit conversion through a virtual base class is not supported");
+												if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+													throw InternalError("Sema selected an unrelated derived-to-base constructor");
+												sema_source_base_class_offset = base_conversion.offset;
+											}
+											const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
 												if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
 													const ASTNode& param_type_node =
 														ctor_params[0].as<DeclarationNode>().type_node();
@@ -3011,7 +3030,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 							// Add initializer as constructor parameter
 						{
-							if (sema_selected_param_type) {
+							if (sema_source_base_class_offset.has_value()) {
+								if (*sema_source_base_class_offset < std::numeric_limits<int>::min() ||
+									*sema_source_base_class_offset > std::numeric_limits<int>::max()) {
+									throw InternalError("Derived-to-base constructor argument offset exceeds IR range");
+								}
+								ctor_op.source_base_class_offset = static_cast<int>(*sema_source_base_class_offset);
+							} else if (sema_selected_param_type) {
 								init_operands = applyConstructorArgConversion(
 									init_operands, init_node, *sema_selected_param_type, decl.identifier_token());
 							}

@@ -6920,15 +6920,40 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	}
 
 	// C++20 [conv] permits a public derived class object to initialize a base
-	// class object by value.  Keep this as a semantic cast even though both
-	// descriptors have TypeCategory::Struct; otherwise the later normalized-call
-	// completeness check mistakes the slicing conversion for a missing annotation.
+	// class object by value.  This must select and invoke the base copy/move
+	// constructor; a raw byte slice would skip user-defined special-member logic.
 	if (from_desc.category() == TypeCategory::Struct &&
 		to_desc.category() == TypeCategory::Struct &&
 		from_desc.type_index.is_valid() &&
 		to_desc.type_index.is_valid() &&
-		from_desc.type_index != to_desc.type_index &&
-		isTransitivelyDerivedFrom(from_desc.type_index, to_desc.type_index)) {
+		from_desc.type_index != to_desc.type_index) {
+		const bool has_reference_qualifier =
+			from_desc.ref_qualifier != ReferenceQualifier::None ||
+			to_desc.ref_qualifier != ReferenceQualifier::None;
+		if (!has_reference_qualifier &&
+			tryAnnotateCopyInitConvertingConstructor(
+				expr_node,
+				target_type_id,
+				" in derived-to-base conversion",
+				expr_type_id)) {
+			return true;
+		}
+
+		const DerivedBaseConversionInfo base_conversion =
+			classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
+		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+			throw CompileError("Ambiguous derived-to-base conversion");
+		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+			throw CompileError("Cannot convert to an inaccessible base class");
+		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+			throw CompileError("Implicit conversion through a virtual base class is not supported");
+		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+			return false;
+
+		// Reference conversions do not construct a new Base object, so the
+		// selected offset is consumed by reference binding in codegen.
+		if (!has_reference_qualifier)
+			return false;
 		ImplicitCastInfo cast_info;
 		cast_info.source_type_id = expr_type_id;
 		cast_info.target_type_id = target_type_id;
@@ -7210,7 +7235,15 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		return false;
 
 	const StructTypeInfo* struct_info = to_type_info->getStructInfo();
-	if (!struct_info || !struct_info->hasAnyConstructor())
+	if (!struct_info)
+		return false;
+	const bool is_struct_object_derived_to_base =
+		from_desc.category() == TypeCategory::Struct &&
+		to_desc.category() == TypeCategory::Struct &&
+		from_desc.type_index.is_valid() &&
+		to_desc.type_index.is_valid() &&
+		from_desc.type_index != to_desc.type_index;
+	if (!is_struct_object_derived_to_base && !struct_info->hasAnyConstructor())
 		return false;
 
 	auto arg_type_opt = buildOverloadResolutionArgType(expr_node, nullptr);
@@ -7282,6 +7315,44 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		throw CompileError("Ambiguous constructor call");
 	}
 	if (!best_non_explicit) {
+		if (is_struct_object_derived_to_base) {
+			const DerivedBaseConversionInfo base_conversion =
+				classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
+			if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous) {
+				throw CompileError("Ambiguous derived-to-base conversion");
+			}
+			if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
+				throw CompileError("Cannot convert to an inaccessible base class");
+			}
+			if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+				throw CompileError("Implicit conversion through a virtual base class is not supported");
+			}
+			if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual) {
+				const bool prefer_move_ctor = !arg_type.is_lvalue_reference();
+				const StructMemberFunction* same_type_ctor =
+					struct_info->findPreferredSameTypeConstructor(prefer_move_ctor, true);
+				if (same_type_ctor &&
+					same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+					ImplicitCastInfo cast_info;
+					cast_info.source_type_id = expr_type_id;
+					cast_info.target_type_id = target_type_id;
+					cast_info.cast_kind = StandardConversionKind::DerivedToBase;
+					cast_info.value_category_after = ValueCategory::PRValue;
+					cast_info.selected_constructor =
+						&same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+
+					const CastInfoIndex idx = allocateCastInfo(cast_info);
+					SemanticSlot slot;
+					slot.type_id = target_type_id;
+					slot.cast_info_index = idx;
+					slot.value_category = ValueCategory::PRValue;
+					const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+					setSlot(key, slot);
+					stats_.slots_filled++;
+					return true;
+				}
+			}
+		}
 		if (found_explicit_viable || best_any) {
 			// Special case: don't error for integer -> comparison category conversions.
 			// In deferred template bodies, inferExpressionType may not fully resolve
@@ -7324,7 +7395,18 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = expr_type_id;
 	cast_info.target_type_id = target_type_id;
-	cast_info.cast_kind = StandardConversionKind::UserDefined;
+	const DerivedBaseConversionInfo selected_base_conversion =
+		is_struct_object_derived_to_base
+			? classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index)
+			: DerivedBaseConversionInfo{};
+	const bool selected_same_type_ctor =
+		is_struct_object_derived_to_base &&
+		(selected_base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+		 selected_base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) &&
+		isSameTypeCopyOrMoveConstructorCandidate(*struct_info, *best_non_explicit);
+	cast_info.cast_kind = selected_same_type_ctor
+		? StandardConversionKind::DerivedToBase
+		: StandardConversionKind::UserDefined;
 	cast_info.value_category_after = ValueCategory::PRValue;
 	cast_info.selected_constructor = best_non_explicit;
 
@@ -9831,7 +9913,13 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 			++i;
 			return;
 		}
-		tryAnnotateConversion(arg, param_type_id, arg_type_id);
+		if (!tryAnnotateCopyInitConvertingConstructor(
+				arg,
+				param_type_id,
+				" in constructor argument",
+				arg_type_id)) {
+			tryAnnotateConversion(arg, param_type_id, arg_type_id);
+		}
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
 		++i;
 	});
@@ -10228,7 +10316,13 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		FLASH_LOG(General, Debug, "SemanticAnalysis: init-list arg param_type=", param_type_id.value, " arg_type=", arg_type_id.value, " match=", (arg_type_id && canonical_types_match(arg_type_id, param_type_id)));
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id))
 			continue;
-		tryAnnotateConversion(arg, param_type_id, arg_type_id);
+		if (!tryAnnotateCopyInitConvertingConstructor(
+				arg,
+				param_type_id,
+				" in constructor argument",
+				arg_type_id)) {
+			tryAnnotateConversion(arg, param_type_id, arg_type_id);
+		}
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
 	}
 }

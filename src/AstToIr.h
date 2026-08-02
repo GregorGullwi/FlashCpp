@@ -325,7 +325,8 @@ private:
 		const TypeSpecifierNode& target_type,
 		const ConstructorDeclarationNode& selected_ctor,
 		const Token& source_token,
-		bool use_return_slot = false);
+		bool use_return_slot,
+		std::optional<int64_t> source_base_class_offset);
 	std::optional<ExprResult> tryMaterializeSemaSelectedConvertingConstructor(
 		ExprResult source_result,
 		const ASTNode& source_expr,
@@ -1085,15 +1086,10 @@ private:
 																			  const CallArgReferenceBindingInfo* binding_info,
 																			  const Token& source_token);
 	ExprResult adjustDerivedToBaseAddress(ExprResult source_address,
-												 TypeIndex source_type_index,
-												 TypeIndex target_type_index,
-												 SizeInBits target_size_bits,
-												 const Token& source_token);
-	ExprResult materializeDerivedToBaseValue(ExprResult source_result,
-													 TypeIndex source_type_index,
-													 TypeIndex target_type_index,
-													 SizeInBits target_size_bits,
-													 const Token& source_token);
+														 TypeIndex source_type_index,
+														 TypeIndex target_type_index,
+														 SizeInBits target_size_bits,
+														 const Token& source_token);
 	const FunctionDeclarationNode* findCurrentStructStaticMemberFunction(StringHandle member_name) const {
 		if (!current_struct_name_.isValid()) {
 			return nullptr;

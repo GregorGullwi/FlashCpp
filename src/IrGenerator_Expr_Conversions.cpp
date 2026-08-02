@@ -495,12 +495,21 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 	if (!source_type_index.isStruct() || !target_type_index.isStruct()) {
 		throw InternalError("Derived-to-base address adjustment requires struct type identity");
 	}
-	const std::optional<int64_t> base_offset =
-		findPublicBaseSubobjectOffset(target_type_index, source_type_index);
-	if (!base_offset.has_value()) {
+	const DerivedBaseConversionInfo base_conversion =
+		classifyDerivedBaseConversion(source_type_index, target_type_index);
+	if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous) {
+		throw CompileError("Ambiguous derived-to-base conversion");
+	}
+	if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible) {
+		throw CompileError("Cannot convert to an inaccessible base class");
+	}
+	if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
+		throw CompileError("Implicit conversion through a virtual base class is not supported");
+	}
+	if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual) {
 		throw InternalError("Missing finalized layout for public derived-to-base conversion");
 	}
-	if (*base_offset > std::numeric_limits<int>::max()) {
+	if (base_conversion.offset > std::numeric_limits<int>::max()) {
 		throw InternalError("Derived-to-base subobject offset exceeds IR range");
 	}
 	if (!std::holds_alternative<TempVar>(source_address.value) &&
@@ -521,7 +530,7 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 		},
 		source_address.value);
 	address_op.base_storage = ValueStorage::ContainsAddress;
-	address_op.total_member_offset = static_cast<int>(*base_offset);
+	address_op.total_member_offset = static_cast<int>(base_conversion.offset);
 	address_op.result_type_index = target_type_index;
 	address_op.result_size_bits = target_size_bits;
 	ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), source_token));
@@ -538,65 +547,6 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 		IrOperand{adjusted_address},
 		PointerDepth{},
 		ValueStorage::ContainsAddress);
-}
-
-ExprResult AstToIr::materializeDerivedToBaseValue(
-	ExprResult source_result,
-	TypeIndex source_type_index,
-	TypeIndex target_type_index,
-	SizeInBits target_size_bits,
-	const Token& source_token) {
-	if (!source_type_index.isStruct() || !target_type_index.isStruct()) {
-		throw InternalError("Derived-to-base value conversion requires struct type identity");
-	}
-	ExprResult source_address;
-	if (source_result.storage == ValueStorage::ContainsAddress) {
-		if (!std::holds_alternative<TempVar>(source_result.value) &&
-			!std::holds_alternative<StringHandle>(source_result.value)) {
-			throw InternalError("Derived-to-base value conversion requires addressable storage");
-		}
-		source_address = makeExprResult(
-			source_type_index,
-			SizeInBits{POINTER_SIZE_BITS},
-			source_result.value,
-			PointerDepth{},
-			ValueStorage::ContainsAddress);
-	} else {
-		if (!std::holds_alternative<TempVar>(source_result.value) &&
-			!std::holds_alternative<StringHandle>(source_result.value)) {
-			throw InternalError("Derived-to-base value conversion requires addressable storage");
-		}
-		const TempVar source_address_temp = emitAddressOf(
-			source_result.category(),
-			source_result.size_in_bits.value,
-			toIrValue(source_result.value),
-			source_token);
-		source_address = makeExprResult(
-			source_type_index,
-			SizeInBits{POINTER_SIZE_BITS},
-			IrOperand{source_address_temp},
-			PointerDepth{},
-			ValueStorage::ContainsAddress);
-	}
-
-	const ExprResult base_address = adjustDerivedToBaseAddress(
-		std::move(source_address),
-		source_type_index,
-		target_type_index,
-		target_size_bits,
-		source_token);
-	const TempVar base_value = emitDereference(
-		TypeCategory::Struct,
-		target_size_bits.value,
-		1,
-		toIrValue(base_address.value),
-		source_token);
-	return makeExprResult(
-		target_type_index,
-		target_size_bits,
-		IrOperand{base_value},
-		PointerDepth{},
-		ValueStorage::ContainsData);
 }
 
 std::optional<AstToIr::AddressComponents> AstToIr::makeAddressComponentsFromEvaluatedResult(
@@ -2801,7 +2751,63 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 			const CanonicalTypeDesc& to_desc = sema_.typeContext().get(ci.target_type_id);
 			TypeCategory from_t = from_desc.category();
 			const TypeCategory to_t = to_desc.category();
-			if (ci.cast_kind == StandardConversionKind::UserDefined &&
+			if (ci.cast_kind == StandardConversionKind::DerivedToBase &&
+				from_desc.category() == TypeCategory::Struct &&
+				to_desc.category() == TypeCategory::Struct) {
+				const DerivedBaseConversionInfo base_conversion =
+					classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
+				if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+					throw CompileError("Ambiguous derived-to-base conversion");
+				if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+					throw CompileError("Cannot convert to an inaccessible base class");
+				if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+					throw CompileError("Implicit conversion through a virtual base class is not supported");
+				if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+					throw InternalError("Sema annotated an unrelated derived-to-base constructor argument");
+
+				if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+					ExprResult address_result = arg_result;
+					if (address_result.storage != ValueStorage::ContainsAddress) {
+						address_result = materializeAddressResult(
+							arg_expr.as<ExpressionNode>(),
+							address_result,
+							source_token);
+					}
+					int target_size_bits = static_cast<int>(param_type.size_in_bits());
+					if (target_size_bits <= 0) {
+						const TypeInfo* target_type_info = tryGetTypeInfo(to_desc.type_index);
+						const StructTypeInfo* target_struct_info =
+							target_type_info ? target_type_info->getStructInfo() : nullptr;
+						if (!target_struct_info || !target_struct_info->sizeInBits().is_set())
+							throw InternalError("Derived-to-base reference binding is missing target struct size");
+						target_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
+					}
+					arg_result = adjustDerivedToBaseAddress(
+						std::move(address_result),
+						from_desc.type_index,
+						to_desc.type_index,
+						SizeInBits{target_size_bits},
+						source_token);
+					sema_applied = true;
+				} else {
+					if (!ci.selected_constructor)
+						throw InternalError("Sema missed the selected base copy/move constructor");
+					TypeSpecifierNode target_object_type = param_type;
+					target_object_type.set_reference_qualifier(ReferenceQualifier::None);
+					auto materialized = materializeSelectedConvertingConstructor(
+						arg_result,
+						arg_expr,
+						target_object_type,
+						*ci.selected_constructor,
+						source_token,
+						false,
+						base_conversion.offset);
+					if (!materialized)
+						throw InternalError("Failed to materialize derived-to-base constructor argument");
+					arg_result = *materialized;
+					sema_applied = true;
+				}
+			} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
 				from_desc.category() == TypeCategory::Struct) {
 				TypeIndex source_type_idx = from_desc.type_index;
 				if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
@@ -2940,10 +2946,19 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 		const TypeIndex source_type_index = address_result.type_index;
 		const TypeIndex target_type_index = param_type.type_index().withCategory(TypeCategory::Struct);
 		if (!source_type_index.isStruct() || !target_type_index.isStruct() ||
-			source_type_index == target_type_index ||
-			!isTransitivelyDerivedFrom(source_type_index, target_type_index)) {
+			source_type_index == target_type_index) {
 			return address_result;
 		}
+		const DerivedBaseConversionInfo base_conversion =
+			classifyDerivedBaseConversion(source_type_index, target_type_index);
+		if (base_conversion.kind == DerivedBaseConversionKind::NotRelated)
+			return address_result;
+		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+			throw CompileError("Ambiguous derived-to-base reference binding");
+		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+			throw CompileError("Cannot bind a reference to an inaccessible base class");
+		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+			throw CompileError("Reference binding through a virtual base class is not supported");
 
 		int target_size_bits = static_cast<int>(param_type.size_in_bits());
 		if (target_size_bits <= 0) {
@@ -3015,6 +3030,49 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 		const CanonicalTypeDesc& to_desc = sema_.typeContext().get(cast_info.target_type_id);
 		TypeCategory from_t = from_desc.category();
 		const TypeCategory to_t = to_desc.category();
+		if (cast_info.cast_kind == StandardConversionKind::DerivedToBase &&
+			from_t == TypeCategory::Struct && to_t == TypeCategory::Struct) {
+			if (!cast_info.selected_constructor)
+				throw InternalError("Sema missed the selected base copy/move constructor for reference binding");
+			const DerivedBaseConversionInfo base_conversion =
+				classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
+			if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+				throw CompileError("Ambiguous derived-to-base conversion");
+			if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+				throw CompileError("Cannot convert to an inaccessible base class");
+			if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+				throw CompileError("Implicit conversion through a virtual base class is not supported");
+			if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+				throw InternalError("Sema annotated an unrelated derived-to-base reference binding");
+
+			TypeSpecifierNode target_object_type = param_type;
+			target_object_type.set_reference_qualifier(ReferenceQualifier::None);
+			auto materialized = materializeSelectedConvertingConstructor(
+				arg_result,
+				arg_expr,
+				target_object_type,
+				*cast_info.selected_constructor,
+				source_token,
+				false,
+				base_conversion.offset);
+			if (!materialized)
+				throw InternalError("Failed to materialize derived-to-base reference temporary");
+			registerStructTempDestructorIfNeeded(*materialized);
+			if (const auto* temp_var = std::get_if<TempVar>(&materialized->value)) {
+				const TempVar address_temp = emitAddressOf(
+					materialized->category(),
+					materialized->size_in_bits.value,
+					IrValue(*temp_var),
+					source_token);
+				return makeExprResult(
+					materialized->type_index,
+					SizeInBits{POINTER_SIZE_BITS},
+					IrOperand{address_temp},
+					PointerDepth{},
+					ValueStorage::ContainsAddress);
+			}
+			return materializeTemporaryAndTakeAddress(*materialized);
+		}
 		if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
 			from_t = arg_result.typeEnum();
 		}
@@ -3061,7 +3119,8 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	const TypeSpecifierNode& target_type,
 	const ConstructorDeclarationNode& selected_ctor,
 	const Token& source_token,
-	bool use_return_slot) {
+	bool use_return_slot,
+	std::optional<int64_t> source_base_class_offset) {
 	if (!is_struct_type(target_type.category()) || !target_type.type_index().is_valid()) {
 		return std::nullopt;
 	}
@@ -3073,6 +3132,25 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	const StructTypeInfo* target_struct_info = target_type_info->getStructInfo();
 	if (!target_struct_info) {
 		return std::nullopt;
+	}
+
+	std::optional<int64_t> effective_source_base_class_offset = source_base_class_offset;
+	if (!effective_source_base_class_offset.has_value() &&
+		source_result.category() == TypeCategory::Struct &&
+		source_result.type_index.is_valid() &&
+		source_result.type_index != target_type.type_index() &&
+		isSameTypeCopyOrMoveConstructorCandidate(*target_struct_info, selected_ctor)) {
+		const DerivedBaseConversionInfo base_conversion =
+			classifyDerivedBaseConversion(source_result.type_index, target_type.type_index());
+		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+			throw CompileError("Ambiguous derived-to-base conversion");
+		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+			throw CompileError("Cannot convert to an inaccessible base class");
+		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+			throw CompileError("Implicit conversion through a virtual base class is not supported");
+		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+			throw InternalError("Selected copy/move constructor has an unrelated source type");
+		effective_source_base_class_offset = base_conversion.offset;
 	}
 
 	int actual_size_bits = static_cast<int>(target_type.size_in_bits());
@@ -3097,7 +3175,15 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	}
 
 	const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
-	source_result = applyConstructorArgConversion(source_result, source_expr, param_type, source_token);
+	if (effective_source_base_class_offset.has_value()) {
+		if (*effective_source_base_class_offset < std::numeric_limits<int>::min() ||
+			*effective_source_base_class_offset > std::numeric_limits<int>::max()) {
+			throw InternalError("Derived-to-base constructor argument offset exceeds IR range");
+		}
+		ctor_op.source_base_class_offset = static_cast<int>(*effective_source_base_class_offset);
+	} else {
+		source_result = applyConstructorArgConversion(source_result, source_expr, param_type, source_token);
+	}
 
 	// applyConstructorArgConversion may already have performed the pre-bind scalar conversion
 	// for reference parameters (e.g. int→double for const double&). Reuse the shared
@@ -3154,7 +3240,9 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 	}
 
 	const ImplicitCastInfo& cast_info = sema_.castInfoTable()[slot->cast_info_index.value - 1];
-	if (cast_info.cast_kind != StandardConversionKind::UserDefined || !cast_info.selected_constructor) {
+	if ((cast_info.cast_kind != StandardConversionKind::UserDefined &&
+		 cast_info.cast_kind != StandardConversionKind::DerivedToBase) ||
+		!cast_info.selected_constructor) {
 		return std::nullopt;
 	}
 
@@ -3164,11 +3252,28 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 		return std::nullopt;
 	}
 
+	std::optional<int64_t> source_base_class_offset;
+	if (cast_info.cast_kind == StandardConversionKind::DerivedToBase) {
+		const CanonicalTypeDesc& source_desc = sema_.typeContext().get(cast_info.source_type_id);
+		const DerivedBaseConversionInfo base_conversion =
+			classifyDerivedBaseConversion(source_desc.type_index, target_desc.type_index);
+		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
+			throw CompileError("Ambiguous derived-to-base conversion");
+		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
+			throw CompileError("Cannot convert to an inaccessible base class");
+		if (base_conversion.kind == DerivedBaseConversionKind::PublicVirtual)
+			throw CompileError("Implicit conversion through a virtual base class is not supported");
+		if (base_conversion.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+			throw InternalError("Sema selected a derived-to-base constructor for unrelated types");
+		source_base_class_offset = base_conversion.offset;
+	}
+
 	return materializeSelectedConvertingConstructor(
 		source_result,
 		source_expr,
 		target_type,
 		*cast_info.selected_constructor,
 		source_token,
-		use_return_slot);
+		use_return_slot,
+		source_base_class_offset);
 }

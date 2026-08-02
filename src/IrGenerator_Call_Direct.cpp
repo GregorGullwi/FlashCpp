@@ -1400,29 +1400,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						to_type == TypeCategory::Struct &&
 						param_ref_qualifier == CVReferenceQualifier::None &&
 						param_type->pointer_depth() == 0) {
-						const CanonicalTypeDesc& source_desc =
-							sema_.typeContext().get(cast_info.source_type_id);
-						const CanonicalTypeDesc& target_desc =
-							sema_.typeContext().get(cast_info.target_type_id);
-						int target_size_bits = static_cast<int>(param_type->size_in_bits());
-						if (target_size_bits <= 0) {
-							const TypeInfo* target_type_info = tryGetTypeInfo(target_desc.type_index);
-							const StructTypeInfo* target_struct_info =
-								target_type_info ? target_type_info->getStructInfo() : nullptr;
-							if (!target_struct_info || !target_struct_info->sizeInBits().is_set()) {
-								throw InternalError("Derived-to-base call argument is missing target struct size");
-							}
-							target_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
-						}
-						argumentIrOperands = materializeDerivedToBaseValue(
-							argumentIrOperands,
-							source_desc.type_index,
-							target_desc.type_index,
-							SizeInBits{target_size_bits},
-							callExprNode.called_from());
-						arg_type = argumentIrOperands.typeEnum();
-						arg_type_index = argumentIrOperands.type_index;
-						return true;
+						throw InternalError(
+							"Sema selected a derived-to-base object conversion without materializing its constructor");
 					}
 					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 						from_type == TypeCategory::Struct) {
