@@ -56,48 +56,48 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5525ms (`TOTAL`) / ~6.1s wall (retested 2026-07-29, Windows/MSVC STL 14.44). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1461ms (`TOTAL`) / ~1.5s wall (retested 2026-07-29, Windows/MSVC STL 14.44). |
-| `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
-| `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
-| `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
+| `<limits>` | `test_std_limits.cpp` | ✅ Runs | 9.13s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Runs | 4.56s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
+| `<compare>` | `test_std_compare_ret42.cpp` | ✅ Runs | 3.07s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
+| `<version>` | `test_std_version.cpp` | ✅ Runs | 3.14s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
+| `<source_location>` | `test_std_source_location.cpp` | ✅ Runs | 3.11s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
-| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~5.4–5.7s (`TOTAL`/wall, retested 2026-07-29, Windows/MSVC STL 14.44). Definition-context lookup now preserves namespace-scope constexpr calls during template replay, and deferred base aliases resolve in their declaration namespace. Regressions: `tests/test_dependent_base_static_member_multi_expr_ret0.cpp` and `tests/std/test_std_ratio_equal_only.cpp`. |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~12.3s runner wall (retested 2026-08-01, Windows/MSVC STL 14.44). Structural class-type NTTP parsing and identity now pass; the first hard stops are late aggregate-layout diagnostics followed by a missing inherited member `_Has_value` in an instantiated `optional` specialization. |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~12.8s runner wall (retested 2026-08-01, Windows/MSVC STL 14.44). Stops on aggregate-layout metadata, then a missing resolved tuple constructor and an unresolved callable `swap` operation. |
-| `<utility>` | `test_std_utility.cpp` | ✅ Runs | ~1.8–2.0s (`TOTAL`/wall, retested 2026-07-29, Windows/MSVC STL 14.44). `pair<int, float>` now links and returns 0. Address-valued IR copies use the 64-bit GPR path even when the pointee is floating-point, fixing out-of-line `float&&` returns. Explicit-template-argument materialization marks only structurally proven single-parameter reference identities for the `inline_always` address rewrite; both `forward` calls inline, while unrelated reference returns retain their C++ semantics. Regressions: `tests/test_float_rvalue_ref_return_ret0.cpp`, `tests/test_float_rvalue_ref_cast_noinline_ret0.cpp`, `tests/test_template_pure_expr_rvalue_ref_ret0.cpp`, `tests/test_template_pure_expr_non_identity_ref_ret0.cpp`, and `tests/test_inline_member_template_non_identity_ref_ret0.cpp`. Header probe: `tests/std/test_std_utility.cpp`. |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1.4–1.5s (`TOTAL`/wall, retested 2026-07-29, Windows/MSVC STL 14.44). |
-| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~15.0s runner wall (retested 2026-08-01, Windows/MSVC STL 14.44). Dependent `noexcept` evaluation now gets past the previous hard stop; the first remaining error is lazy replay of `_String_view_iterator::operator+`, with non-fatal `_Hash_array_representation` overload-probe noise. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~6.19s (`TOTAL`) / ~6.68s wall (retested 2026-05-27, Linux/libstdc++-14). Completed class-template cache hits no longer consume template-depth budget; current first hard error is now depth-guarded recursive `basic_string` instantiation. |
-| `<array>` | `test_std_array.cpp` | ✅ Compiled | ~2.64s (retested 2026-05-23, Linux/libstdc++-14). |
-| `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
-| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | ~12.1s runner wall (retested 2026-08-01, Windows/MSVC STL 14.44). Stops on aggregate-layout metadata during code generation. |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | ~5.7s runner wall (retested 2026-08-01, Windows/MSVC STL 14.44). Stops on missing resolved constructors and a deferred function queue entry that remains unmaterialized. |
-| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~12.9s runner wall (retested 2026-08-01, Windows/MSVC STL 14.44). Stops while instantiating `_Pocca` at `vector:1537:15`. |
-| `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
-| `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
-| `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~6.64s (`TOTAL`) / ~7.15s wall (retested 2026-05-27, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded recursive `basic_string` instantiation. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.76s (`TOTAL`) / ~5.13s wall (retested 2026-05-27, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded `rebind`. |
-| `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
-| `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~14.96s runner wall (retested 2026-07-31, Windows/MSVC STL 14.44). Stops at the existing sticky template-instantiation iteration limit. |
-| `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4559ms (retested 2026-04-11). |
-| `<sstream>` | `test_std_sstream.cpp` | 💥 Crash | ~4565ms (retested 2026-04-11). |
-| `<fstream>` | `test_std_fstream.cpp` | 💥 Crash | ~4642ms (retested 2026-04-11). |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | ~6638ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<atomic>` | `test_std_atomic.cpp` | ✅ Compiled | ~838ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** Previous deferred member function codegen errors are resolved. |
-| `<new>` | `test_std_new.cpp` | ✅ Compiled | ~56ms |
-| `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~368ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `exception_ptr` copy-vs-move-constructor ambiguity is resolved by the rvalue overload-rank fix. Regression: `tests/test_rvalue_ref_overload_preference_ret0.cpp`. |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | ~5.95s (`TOTAL`) / ~6.42s wall (retested 2026-05-25, Linux/libstdc++-14). First hard error now matches `<memory>/<string>`: `Could not evaluate non-type template default for parameter 1 of '__hash_enum'`. |
-| `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
-| `<typeindex>` | `test_std_typeindex.cpp` | ✅ Compiled (compile-only) | ~2348ms wall / ~2285ms compiler total (retested 2026-08-01, Windows/MSVC STL 14.44). Sema now models the array-to-pointer conditional in `exception::what()` and supplies codegen's exact ternary result type. The compile-only probe exits 0; a linked `main` probe is separately blocked by missing MSVC RTTI/exception runtime symbols. |
-| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~7529ms (retested 2026-05-25, Linux/libstdc++-14). **NOW WORKS**: ternary common-type fix resolved `numeric_limits` member constexpr folding. Builtin `__builtin_huge_val`/`__builtin_nan` families now handled in constexpr evaluator. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | ~12.2s runner wall (retested 2026-08-01, Windows/MSVC STL 14.44). Stops on aggregate-layout metadata during code generation. |
-| `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
+| `<ratio>` | `test_std_ratio.cpp` | ✅ Runs | 8.55s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 13.34s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Late aggregate-layout diagnostics followed by missing inherited member `_Has_value`. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 14.45s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Deferred function queue received an unmaterialized function. |
+| `<utility>` | `test_std_utility.cpp` | ❌ Link Error | 4.84s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Duplicate `std::greater`, `std::less`, and `std::equivalent` definitions. |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Runs | 4.53s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
+| `<bit>` | `test_std_bit.cpp` | ✅ Runs | 5.18s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | 16.30s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `_Hash_array_representation` overload set fails during template replay. |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | 16.86s wall (retested 2026-08-02, Windows/MSVC STL 14.44). MSVC `<xstring>` stops with an expected identifier token diagnostic. |
+| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | 12.07s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `view_interface` comparison and incomplete canonical aggregate layout. |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | 12.38s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `_Stack_space` array bound cannot find `_Optimistic_count` in constant expression. |
+| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | 11.80s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `view_interface` comparison and incomplete canonical aggregate layout. |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | 5.49s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Ambiguous constructor and unmaterialized deferred function. |
+| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 12.72s wall (retested 2026-08-02, Windows/MSVC STL 14.44). First parser stop is in the MSVC allocator/vector implementation. |
+| `<deque>` | `test_std_deque.cpp` | ❌ Compile Error | 12.37s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<list>` | `test_std_list.cpp` | ❌ Compile Error | 12.41s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 12.54s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<stack>` | `test_std_stack.cpp` | ❌ Compile Error | 12.38s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | 12.66s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 13.26s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<map>` | `test_std_map.cpp` | ❌ Compile Error | 13.01s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Dependent `_Seek_to` overloads fail; instantiated `noexcept` is not a constant expression. |
+| `<set>` | `test_std_set.cpp` | ❌ Compile Error | 12.66s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC/UCRT implementation. |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | 13.13s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Sticky template-instantiation iteration limit. |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Compile Error | 6.29s wall (retested 2026-08-02, Windows/MSVC STL 14.44). MSVC `<cmath>` `__ceilf` overload is unresolved. |
+| `<sstream>` | `test_std_sstream.cpp` | ❌ Compile Error | 6.32s wall (retested 2026-08-02, Windows/MSVC STL 14.44). MSVC `<cmath>` `__ceilf` overload is unresolved. |
+| `<fstream>` | `test_std_fstream.cpp` | ❌ Compile Error | 16.68s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | 18.31s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<atomic>` | `test_std_atomic.cpp` | ❌ Compile Error | 4.87s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<new>` | `test_std_new.cpp` | ❌ Link Error | 4.77s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Missing MSVC exception-runtime symbols. |
+| `<exception>` | `test_std_exception.cpp` | ❌ Link Error | 4.91s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Missing `__ExceptionPtrCompare` and `terminate`. |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 16.33s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
+| `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ❌ Link Error | 4.98s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Missing RTTI/exception-runtime symbols. |
+| `<typeindex>` | `test_std_typeindex.cpp` | ✅ Compiled (compile-only) | 2.28s wall / 2.22s compiler total (retested 2026-08-02, Windows/MSVC STL 14.44). No `main`; direct compile-only probe exits 0. |
+| `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 11.76s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `view_interface` comparison and incomplete canonical aggregate layout. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | 12.25s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `view_interface` comparison and incomplete canonical aggregate layout. |
+| `<variant>` | `test_std_variant.cpp` | ❌ Compile Error | 12.32s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `begin` overload deduction fails during template replay. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~16ms (C++23) |
@@ -108,8 +108,8 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~1.90s wall (retested 2026-05-28, Linux/libstdc++-14). Variadic fixed-parameter conversion annotation still applies (the prior `int -> long` direct-call Phase 15 miss in `__platform_wait`/`__platform_notify` remains gone); current first stops are unchanged deferred constructor materialization / receiver-normalization gaps around `_Spin`, `std::__mutex_base`, and `_EntersWait::value`. |
-| `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~2733ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'". |
+| `<latch>` | `test_std_latch.cpp` | ❌ Compile Error | 5.05s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Ambiguous call to `__iso_volatile_store32` in MSVC `<atomic>`. |
+| `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Compile Error | 13.44s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Ambiguous call to `__iso_volatile_store32` in MSVC `<atomic>`. |
 | `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~70ms |
 | `<cstring>` | N/A | ✅ Compiled | ~64ms |
@@ -128,7 +128,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<ctime>` | N/A | ✅ Compiled | ~58ms |
 | `<climits>` | N/A | ✅ Compiled | ~30ms |
 | `<cfloat>` | N/A | ✅ Compiled | ~32ms |
-| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | ~16.55s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses and special-function replay goes much deeper; current first fatal stop is `std::__numeric_limits_base::has_denorm` unresolved constexpr initialization. |
+| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | 4.69s wall (retested 2026-08-02, Windows/MSVC STL 14.44). No matching function for `__ceilf` in MSVC `<cmath>`. |
 | `<system_error>` | N/A | 💥 Crash | ~4400ms (retested 2026-04-11). |
 | `<scoped_allocator>` | N/A | ❌ Compile Error | ~1868ms (retested 2026-04-11). "unsupported PackExpansionExprNode". |
 | `<charconv>` | N/A | ✅ Compiled | ~930ms |
@@ -147,7 +147,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<execution>` | N/A | ❌ Compile Error | ~3331ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. |
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
-**Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+**Legend:** ✅ Runs / Compiled | ❌ Compile/Link/Parse/Include Error | 💥 Crash
 
 ## Current blockers (Windows/MSVC)
 
