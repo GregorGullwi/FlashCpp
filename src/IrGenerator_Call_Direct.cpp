@@ -400,6 +400,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	auto sema_services = sema_.parserSemanticServices();
 	const FunctionDeclarationNode* const parser_resolved_direct_target =
 		getParserStoredDirectCallTarget(callExprNode);
+	// Normalization may have changed a child expression's value category after
+	// the parser cached an overload target. Refresh sema before reading its
+	// query, but keep synthesized calls without a parser target on the legacy
+	// recovery path used for template/codegen-generated wrappers.
+	if (sema_normalized_current_function_ &&
+		parser_resolved_direct_target != nullptr) {
+		sema_.ensureCallArgConversionsAnnotated(callExprNode);
+	}
 	const ResolvedFunctionQueryResult sema_resolved_direct_query =
 		sema_services.getResolvedDirectCallQuery(sema_call_key);
 	const FunctionDeclarationNode* const sema_resolved_direct_target =
@@ -1089,6 +1097,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
 	};
 
+	// Once semantic analysis has normalized the body, its overload choice is
+	// authoritative. A parser-time target may have been selected before a
+	// conditional operand's final value category was known.
+	if (sema_normalized_current_function_) {
+		consumeResolvedDirectCallTarget(sema_resolved_direct_target, "sema-resolved");
+	}
+
 	// Template substitution can preserve stale member-call descriptors from the
 	// template pattern. Still trust pre-resolved free/static callees and concrete
 	// instantiated members; only gate pattern-owned member descriptors.
@@ -1260,10 +1275,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Function returns (by value) produce temporaries with no persistent identity
 	setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
-	if (sema_normalized_current_function_) {
-		sema_.ensureCallArgConversionsAnnotated(callExprNode);
-	}
-
 	const std::vector<CachedParamInfo>* cached_param_list = nullptr;
 	{
 		StringHandle cache_key = callExprNode.has_mangled_name()
@@ -1384,6 +1395,35 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						sema_.typeContext().get(cast_info.source_type_id).category();
 					const TypeCategory to_type =
 						sema_.typeContext().get(cast_info.target_type_id).category();
+					if (cast_info.cast_kind == StandardConversionKind::DerivedToBase &&
+						from_type == TypeCategory::Struct &&
+						to_type == TypeCategory::Struct &&
+						param_ref_qualifier == CVReferenceQualifier::None &&
+						param_type->pointer_depth() == 0) {
+						const CanonicalTypeDesc& source_desc =
+							sema_.typeContext().get(cast_info.source_type_id);
+						const CanonicalTypeDesc& target_desc =
+							sema_.typeContext().get(cast_info.target_type_id);
+						int target_size_bits = static_cast<int>(param_type->size_in_bits());
+						if (target_size_bits <= 0) {
+							const TypeInfo* target_type_info = tryGetTypeInfo(target_desc.type_index);
+							const StructTypeInfo* target_struct_info =
+								target_type_info ? target_type_info->getStructInfo() : nullptr;
+							if (!target_struct_info || !target_struct_info->sizeInBits().is_set()) {
+								throw InternalError("Derived-to-base call argument is missing target struct size");
+							}
+							target_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
+						}
+						argumentIrOperands = materializeDerivedToBaseValue(
+							argumentIrOperands,
+							source_desc.type_index,
+							target_desc.type_index,
+							SizeInBits{target_size_bits},
+							callExprNode.called_from());
+						arg_type = argumentIrOperands.typeEnum();
+						arg_type_index = argumentIrOperands.type_index;
+						return true;
+					}
 					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 						from_type == TypeCategory::Struct) {
 						TypeIndex source_type_idx =

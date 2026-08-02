@@ -421,6 +421,48 @@ inline bool isTransitivelyDerivedFromAnyAccess(TypeIndex source_idx, TypeIndex b
 	return isTransitivelyDerivedFromImpl(source_idx, base_idx, /*public_only=*/false);
 }
 
+// Return the byte offset of a public base subobject within a complete object.
+// This is the layout counterpart of isTransitivelyDerivedFrom(): callers use
+// it after overload resolution has already established that the conversion is
+// accessible.  The compiler's finalized StructTypeInfo contains the offsets
+// for both direct and nested base classes, so the same walk also handles
+// multi-level inheritance.
+inline std::optional<int64_t> findPublicBaseSubobjectOffset(TypeIndex base_idx, TypeIndex derived_idx) {
+	if (!base_idx.is_valid() || !derived_idx.is_valid())
+		return std::nullopt;
+	if (base_idx == derived_idx)
+		return int64_t{0};
+
+	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_idx);
+	const StructTypeInfo* derived_struct =
+		derived_type_info ? derived_type_info->getStructInfo() : nullptr;
+	if (!derived_struct)
+		return std::nullopt;
+
+	auto find_offset = [&](const auto& self,
+						   const StructTypeInfo* current_struct,
+						   int64_t current_offset) -> std::optional<int64_t> {
+		if (!current_struct)
+			return std::nullopt;
+		for (const auto& base : current_struct->base_classes) {
+			if (base.access != AccessSpecifier::Public)
+				continue;
+			const int64_t base_offset =
+				current_offset + static_cast<int64_t>(base.offset);
+			if (base.type_index == base_idx)
+				return base_offset;
+			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct =
+				base_type_info ? base_type_info->getStructInfo() : nullptr;
+			if (auto nested_offset = self(self, base_struct, base_offset))
+				return nested_offset;
+		}
+		return std::nullopt;
+	};
+
+	return find_offset(find_offset, derived_struct, 0);
+}
+
 inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {
 	size_t min_required = params.size();
 	size_t i = params.size();

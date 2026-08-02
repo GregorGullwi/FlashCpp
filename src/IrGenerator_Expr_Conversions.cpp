@@ -486,6 +486,119 @@ bool AstToIr::exprResultAlreadyHoldsRuntimeAddress(const ExprResult& expr_result
 			metadata.lvalue_info->kind == LValueInfo::Kind::ReferenceDeref);
 }
 
+ExprResult AstToIr::adjustDerivedToBaseAddress(
+	ExprResult source_address,
+	TypeIndex source_type_index,
+	TypeIndex target_type_index,
+	SizeInBits target_size_bits,
+	const Token& source_token) {
+	if (!source_type_index.isStruct() || !target_type_index.isStruct()) {
+		throw InternalError("Derived-to-base address adjustment requires struct type identity");
+	}
+	const std::optional<int64_t> base_offset =
+		findPublicBaseSubobjectOffset(target_type_index, source_type_index);
+	if (!base_offset.has_value()) {
+		throw InternalError("Missing finalized layout for public derived-to-base conversion");
+	}
+	if (*base_offset > std::numeric_limits<int>::max()) {
+		throw InternalError("Derived-to-base subobject offset exceeds IR range");
+	}
+	if (!std::holds_alternative<TempVar>(source_address.value) &&
+		!std::holds_alternative<StringHandle>(source_address.value)) {
+		throw InternalError("Derived-to-base address adjustment requires addressable storage");
+	}
+
+	TempVar adjusted_address = var_counter.next();
+	ComputeAddressOp address_op;
+	address_op.result = adjusted_address;
+	address_op.base = std::visit(
+		[](const auto& value) -> std::variant<StringHandle, TempVar> {
+			using Value = std::decay_t<decltype(value)>;
+			if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle>) {
+				return value;
+			}
+			throw InternalError("Unsupported derived-to-base address operand");
+		},
+		source_address.value);
+	address_op.base_storage = ValueStorage::ContainsAddress;
+	address_op.total_member_offset = static_cast<int>(*base_offset);
+	address_op.result_type_index = target_type_index;
+	address_op.result_size_bits = target_size_bits;
+	ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), source_token));
+	setTempVarMetadata(
+		adjusted_address,
+		TempVarMetadata::makeAddressOnly(
+			target_type_index,
+			target_size_bits,
+			ValueCategory::LValue));
+
+	return makeExprResult(
+		target_type_index,
+		SizeInBits{POINTER_SIZE_BITS},
+		IrOperand{adjusted_address},
+		PointerDepth{},
+		ValueStorage::ContainsAddress);
+}
+
+ExprResult AstToIr::materializeDerivedToBaseValue(
+	ExprResult source_result,
+	TypeIndex source_type_index,
+	TypeIndex target_type_index,
+	SizeInBits target_size_bits,
+	const Token& source_token) {
+	if (!source_type_index.isStruct() || !target_type_index.isStruct()) {
+		throw InternalError("Derived-to-base value conversion requires struct type identity");
+	}
+	ExprResult source_address;
+	if (source_result.storage == ValueStorage::ContainsAddress) {
+		if (!std::holds_alternative<TempVar>(source_result.value) &&
+			!std::holds_alternative<StringHandle>(source_result.value)) {
+			throw InternalError("Derived-to-base value conversion requires addressable storage");
+		}
+		source_address = makeExprResult(
+			source_type_index,
+			SizeInBits{POINTER_SIZE_BITS},
+			source_result.value,
+			PointerDepth{},
+			ValueStorage::ContainsAddress);
+	} else {
+		if (!std::holds_alternative<TempVar>(source_result.value) &&
+			!std::holds_alternative<StringHandle>(source_result.value)) {
+			throw InternalError("Derived-to-base value conversion requires addressable storage");
+		}
+		const TempVar source_address_temp = emitAddressOf(
+			source_result.category(),
+			source_result.size_in_bits.value,
+			toIrValue(source_result.value),
+			source_token);
+		source_address = makeExprResult(
+			source_type_index,
+			SizeInBits{POINTER_SIZE_BITS},
+			IrOperand{source_address_temp},
+			PointerDepth{},
+			ValueStorage::ContainsAddress);
+	}
+
+	const ExprResult base_address = adjustDerivedToBaseAddress(
+		std::move(source_address),
+		source_type_index,
+		target_type_index,
+		target_size_bits,
+		source_token);
+	const TempVar base_value = emitDereference(
+		TypeCategory::Struct,
+		target_size_bits.value,
+		1,
+		toIrValue(base_address.value),
+		source_token);
+	return makeExprResult(
+		target_type_index,
+		target_size_bits,
+		IrOperand{base_value},
+		PointerDepth{},
+		ValueStorage::ContainsData);
+}
+
 std::optional<AstToIr::AddressComponents> AstToIr::makeAddressComponentsFromEvaluatedResult(
 	const ExprResult& expr_result,
 	int accumulated_offset) const {
@@ -2823,6 +2936,33 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 		return makeExprResult(value_result.type_index, SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 	};
 
+	auto adjustDirectDerivedToBaseBinding = [&](ExprResult address_result) -> ExprResult {
+		const TypeIndex source_type_index = address_result.type_index;
+		const TypeIndex target_type_index = param_type.type_index().withCategory(TypeCategory::Struct);
+		if (!source_type_index.isStruct() || !target_type_index.isStruct() ||
+			source_type_index == target_type_index ||
+			!isTransitivelyDerivedFrom(source_type_index, target_type_index)) {
+			return address_result;
+		}
+
+		int target_size_bits = static_cast<int>(param_type.size_in_bits());
+		if (target_size_bits <= 0) {
+			const TypeInfo* target_type_info = tryGetTypeInfo(target_type_index);
+			const StructTypeInfo* target_struct_info =
+				target_type_info ? target_type_info->getStructInfo() : nullptr;
+			if (!target_struct_info || !target_struct_info->sizeInBits().is_set()) {
+				throw InternalError("Derived-to-base reference binding is missing target struct size");
+			}
+			target_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
+		}
+		return adjustDerivedToBaseAddress(
+			std::move(address_result),
+			source_type_index,
+			target_type_index,
+			SizeInBits{target_size_bits},
+			source_token);
+	};
+
 	if (binding_info->binds_directly()) {
 		if (arg_expr.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg_expr.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(arg_expr.as<ExpressionNode>());
@@ -2830,7 +2970,13 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			if (decl) {
 				const auto& type_node = decl->type_specifier_node();
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-					return makeExprResult(type_node.type_index(), SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(identifier.name())}, PointerDepth{}, ValueStorage::ContainsData);
+					ExprResult reference_address = makeExprResult(
+						type_node.type_index(),
+						SizeInBits{64},
+						IrOperand{StringTable::getOrInternStringHandle(identifier.name())},
+						PointerDepth{},
+						ValueStorage::ContainsAddress);
+					return adjustDirectDerivedToBaseBinding(std::move(reference_address));
 				}
 
 				TempVar addr_var = emitAddressOf(
@@ -2838,15 +2984,22 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 					static_cast<int>(type_node.size_in_bits()),
 					IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 					source_token);
-				return makeExprResult(type_node.type_index(), SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
+				ExprResult object_address = makeExprResult(
+					type_node.type_index(),
+					SizeInBits{64},
+					IrOperand{addr_var},
+					PointerDepth{},
+					ValueStorage::ContainsAddress);
+				return adjustDirectDerivedToBaseBinding(std::move(object_address));
 			}
 		}
 
 		if (arg_expr.is<ExpressionNode>()) {
-			return materializeAddressResult(
+			ExprResult address_result = materializeAddressResult(
 				arg_expr.as<ExpressionNode>(),
 				arg_result,
 				source_token);
+			return adjustDirectDerivedToBaseBinding(std::move(address_result));
 		}
 
 		return std::nullopt;

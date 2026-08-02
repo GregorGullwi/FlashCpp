@@ -525,6 +525,91 @@ TypeSpecifierNode materializeTypeSpecifierWithMaxPointerDepth(
 	return type_node;
 }
 
+// [expr.cond] applies the array-to-pointer conversion before choosing a
+// common pointer result.  Keep this canonical so string literals and ordinary
+// array expressions follow the same path; their parser-facing expression
+// types are not necessarily already decayed.
+std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDesc& desc) {
+	if (desc.array_dimensions.empty()) {
+		return std::nullopt;
+	}
+
+	CanonicalTypeDesc decayed = desc;
+	decayed.array_dimensions.erase(decayed.array_dimensions.begin());
+	decayed.pointer_levels.push_back(PointerLevel{});
+	decayed.ref_qualifier = ReferenceQualifier::None;
+	return decayed;
+}
+
+std::optional<TypeSpecifierNode> tryGetIndirectCallReturnType(const CallExprNode& call) {
+	if (call.has_parser_return_type_hint()) {
+		return call.parser_return_type_hint();
+	}
+	return FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+		call.callee().declaration().type_specifier_node(),
+		call.called_from());
+}
+
+// Return the common pointer type for a conditional expression whose operands
+// are pointers and/or arrays.  Conversion-plan selection keeps qualification
+// and alias rules in the shared overload/conversion layer instead of copying a
+// second pointer-compatibility policy into semantic analysis.
+std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
+	const CanonicalTypeDesc& lhs,
+	const CanonicalTypeDesc& rhs,
+	bool lhs_is_null_pointer_constant,
+	bool rhs_is_null_pointer_constant) {
+	auto asPointer = [](const CanonicalTypeDesc& desc) -> std::optional<CanonicalTypeDesc> {
+		if (auto decayed = decayArrayForConditional(desc)) {
+			return decayed;
+		}
+		if (!desc.pointer_levels.empty()) {
+			CanonicalTypeDesc pointer = desc;
+			pointer.ref_qualifier = ReferenceQualifier::None;
+			return pointer;
+		}
+		return std::nullopt;
+	};
+
+	const auto lhs_pointer = asPointer(lhs);
+	const auto rhs_pointer = asPointer(rhs);
+	if (!lhs_pointer && lhs_is_null_pointer_constant && rhs_pointer) {
+		return *rhs_pointer;
+	}
+	if (!rhs_pointer && rhs_is_null_pointer_constant && lhs_pointer) {
+		return *lhs_pointer;
+	}
+	if (!lhs_pointer || !rhs_pointer) {
+		return std::nullopt;
+	}
+
+	const TypeSpecifierNode lhs_type = materializeTypeSpecifier(*lhs_pointer);
+	const TypeSpecifierNode rhs_type = materializeTypeSpecifier(*rhs_pointer);
+	const ConversionPlan lhs_to_rhs = buildConversionPlan(lhs_type, rhs_type);
+	const ConversionPlan rhs_to_lhs = buildConversionPlan(rhs_type, lhs_type);
+	// The ternary lowering has one branch-cast slot. It can represent array
+	// decay and qualification-only pointer changes, but not a derived-to-base
+	// adjustment that needs a byte offset. Leave those cases unresolved until
+	// that richer lowering exists rather than selecting a wrong result type.
+	auto isRepresentablePointerConversion = [](const ConversionPlan& plan) {
+		return plan.is_valid &&
+			(plan.kind == StandardConversionKind::None ||
+			 plan.kind == StandardConversionKind::QualificationAdjustment);
+	};
+	const bool lhs_to_rhs_supported = isRepresentablePointerConversion(lhs_to_rhs);
+	const bool rhs_to_lhs_supported = isRepresentablePointerConversion(rhs_to_lhs);
+	if (lhs_to_rhs_supported && rhs_to_lhs_supported) {
+		return *lhs_pointer;
+	}
+	if (lhs_to_rhs_supported) {
+		return *rhs_pointer;
+	}
+	if (rhs_to_lhs_supported) {
+		return *lhs_pointer;
+	}
+	return std::nullopt;
+}
+
 struct PointerConversionInfo {
 	CanonicalTypeId target_type_id;
 	CanonicalTypeId element_type_id;
@@ -3814,6 +3899,12 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				}
 				normalizeExpression(e.get_lhs(), ctx);
 				normalizeExpression(e.get_rhs(), ctx);
+				if (is_assignment &&
+					!e.has_resolved_member_operator_overload() &&
+					!e.has_resolved_free_function_operator_overload() &&
+					inferExpressionValueCategory(e.get_lhs()) != ValueCategory::LValue) {
+					throw CompileError("Assignment requires a modifiable lvalue");
+				}
 				if (needs_binary_type_inference) {
 					lhs_type_id = inferExpressionType(e.get_lhs());
 					rhs_type_id = inferExpressionType(e.get_rhs());
@@ -3877,6 +3968,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				normalizeExpression(e.get_operand(), ctx);
 				if (e.op() == "&" && !e.is_builtin_addressof()) {
 					tryResolveUnaryAddressOfOperator(e);
+					if (!getResolvedUnaryAddressOfOperator(&e) &&
+						inferExpressionValueCategory(e.get_operand()) != ValueCategory::LValue) {
+						throw CompileError("Address-of operand must be an lvalue");
+					}
 				}
 			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				// C++20 [expr.cond]/1: the condition is contextually converted to bool.
@@ -4210,7 +4305,7 @@ std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	return std::nullopt;
 }
 
-void SemanticAnalysis::ensureCallArgConversionsAnnotated(
+	void SemanticAnalysis::ensureCallArgConversionsAnnotated(
 	const CallExprNode& call_node) {
 	tryAnnotateCallArgConversions(call_node);
 	const FunctionDeclarationNode* parser_target =
@@ -4676,13 +4771,30 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 				return ValueCategory::LValue;
 			}
 			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+			// C++20 [expr.cond]/5: a conditional expression keeps its glvalue
+			// category only when both selected operands have the same type and
+			// value category. Array operands are converted to pointers before
+			// this rule can apply, so an array branch always makes the result a
+			// prvalue in the pointer case.
+			const CanonicalTypeId true_type_id = inferExpressionType(inner.true_expr());
+			const CanonicalTypeId false_type_id = inferExpressionType(inner.false_expr());
+			if (!true_type_id || !false_type_id) {
+				return ValueCategory::PRValue;
+			}
+
+			const ValueCategory true_category = inferExpressionValueCategory(inner.true_expr());
+			const ValueCategory false_category = inferExpressionValueCategory(inner.false_expr());
+			const bool same_glvalue_type_and_category =
+				canonical_types_match(true_type_id, false_type_id) &&
+				true_category == false_category &&
+				true_category != ValueCategory::PRValue;
+			return same_glvalue_type_and_category ? true_category : ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
-			const FunctionDeclarationNode* func_decl = getParserStoredDirectCallTarget(inner);
-			if (!func_decl) {
-				const ResolvedFunctionQueryResult direct_call_query = getResolvedDirectCallQuery(&inner);
-				if (direct_call_query.hasValue()) {
-					func_decl = direct_call_query.function;
-				}
+			const FunctionDeclarationNode* func_decl = nullptr;
+			const ResolvedFunctionQueryResult direct_call_query = getResolvedDirectCallQuery(&inner);
+			if (direct_call_query.hasValue()) {
+				func_decl = direct_call_query.function;
 			}
 			if (!func_decl) {
 				const ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(&inner);
@@ -4690,10 +4802,23 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 					func_decl = op_call_query.function;
 				}
 			}
+			if (!func_decl) {
+				func_decl = getParserStoredDirectCallTarget(inner);
+			}
 			if (func_decl) {
 				if (auto category = getReferenceQualifiedValueCategory(func_decl->decl_node().type_node());
 					category.has_value()) {
 					return *category;
+				}
+			}
+			if (inner.call_kind() == CalleeKind::IndirectCall) {
+				if (auto return_type = tryGetIndirectCallReturnType(inner); return_type.has_value()) {
+					if (return_type->is_rvalue_reference()) {
+						return ValueCategory::XValue;
+					}
+					if (return_type->is_reference()) {
+						return ValueCategory::LValue;
+					}
 				}
 			}
 			return ValueCategory::PRValue;
@@ -5946,15 +6071,22 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeId f_id = inferExpressionType(e.false_expr());
 				if (!t_id || !f_id)
 					return {};
-				if (canonical_types_match(t_id, f_id))
-					return t_id;
 				const CanonicalTypeDesc& t_desc = type_context_.get(t_id);
 				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
+				if (canonical_types_match(t_id, f_id))
+					return t_id;
+				if (auto pointer_result = tryGetConditionalPointerType(
+					t_desc,
+					f_desc,
+					isIntegerLiteralZeroNullPointerConstant(e.true_expr()) ||
+						t_desc.category() == TypeCategory::Nullptr,
+					isIntegerLiteralZeroNullPointerConstant(e.false_expr()) ||
+						f_desc.category() == TypeCategory::Nullptr))
+					return type_context_.intern(*pointer_result);
 				if (t_desc.category() == TypeCategory::Struct || f_desc.category() == TypeCategory::Struct)
 					return {};
-					// If both branches are pointers and they canonicalize to the same
-					// type (handled above), we already returned. Mixed pointer/non-pointer
-					// or pointer-to-different types still fall back to nullopt for now.
+				// Mixed pointer/non-pointer branches do not have a built-in
+				// conditional result type.
 				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty())
 					return {};
 				const TypeCategory common_cat = get_common_type(t_desc.category(), f_desc.category());
@@ -6185,6 +6317,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					CanonicalTypeDesc desc;
 					desc.type_index = nativeTypeIndex(*builtin_return_type);
 					return type_context_.intern(desc);
+				}
+
+				if (e.call_kind() == CalleeKind::IndirectCall) {
+					if (auto return_type = tryGetIndirectCallReturnType(e); return_type.has_value()) {
+						return canonicalizeType(*return_type);
+					}
 				}
 
 				const DeclarationNode& decl = e.callee().declaration();
@@ -6668,6 +6806,28 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
+	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member
+	// pointer type. The null value is already represented as zero in the IR, so
+	// sema only needs to preserve the target pointer type for codegen.
+	if ((from_desc.category() == TypeCategory::Nullptr ||
+		 isIntegerLiteralZeroNullPointerConstant(expr_node)) &&
+		(!to_desc.pointer_levels.empty() ||
+		 to_desc.category() == TypeCategory::FunctionPointer ||
+		 to_desc.category() == TypeCategory::MemberFunctionPointer ||
+		 to_desc.category() == TypeCategory::MemberObjectPointer)) {
+		SemanticSlot slot;
+		slot.type_id = target_type_id;
+		slot.cast_info_index = allocateNonUserDefinedCastInfo(
+			expr_type_id,
+			target_type_id,
+			StandardConversionKind::PointerConversion);
+		slot.value_category = ValueCategory::PRValue;
+		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+		setSlot(key, slot);
+		stats_.slots_filled++;
+		return true;
+	}
+
 	// C++20 [conv.array] p1: Array-to-pointer decay.
 	// An lvalue or rvalue of type "array of N T" or "array of unknown bound of T" can be
 	// converted to a prvalue of type "pointer to T".
@@ -6687,16 +6847,25 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	//
 	// Both cases are handled here and annotated with StandardConversionKind::ArrayToPointer
 	// so that codegen can emit an AddressOf instruction instead of inspecting the raw
-	// DeclarationNode::is_array() flag.
+	// DeclarationNode::is_array() flag. For multidimensional arrays, the target retains
+	// the inner dimensions (e.g. int[2][3] decays to int (*)[3]).
+	const bool remaining_array_dimensions_match =
+		!from_desc.array_dimensions.empty() &&
+		from_desc.array_dimensions.size() == to_desc.array_dimensions.size() + 1 &&
+		std::ranges::equal(
+			from_desc.array_dimensions.begin() + 1,
+			from_desc.array_dimensions.end(),
+			to_desc.array_dimensions.begin(),
+			to_desc.array_dimensions.end());
 	const bool direct_array_decay =
 		to_desc.category() == from_desc.category() &&
-		to_desc.pointer_levels.size() == from_desc.pointer_levels.size() + 1;
+		to_desc.pointer_levels.size() == from_desc.pointer_levels.size() + 1 &&
+		remaining_array_dimensions_match;
 	const bool decay_followed_by_void_pointer_conversion =
 		to_desc.category() == TypeCategory::Void &&
 		from_desc.pointer_levels.empty() &&
 		to_desc.pointer_levels.size() == 1;
 	if (!from_desc.array_dimensions.empty() &&
-		to_desc.array_dimensions.empty() &&
 		!to_desc.pointer_levels.empty() &&
 		(direct_array_decay || decay_followed_by_void_pointer_conversion)) {
 		ImplicitCastInfo cast_info;
@@ -6740,6 +6909,32 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		cast_info.selected_conversion_function = pointer_conversion->function;
 		const CastInfoIndex idx = allocateCastInfo(cast_info);
 
+		SemanticSlot slot;
+		slot.type_id = target_type_id;
+		slot.cast_info_index = idx;
+		slot.value_category = ValueCategory::PRValue;
+		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+		setSlot(key, slot);
+		stats_.slots_filled++;
+		return true;
+	}
+
+	// C++20 [conv] permits a public derived class object to initialize a base
+	// class object by value.  Keep this as a semantic cast even though both
+	// descriptors have TypeCategory::Struct; otherwise the later normalized-call
+	// completeness check mistakes the slicing conversion for a missing annotation.
+	if (from_desc.category() == TypeCategory::Struct &&
+		to_desc.category() == TypeCategory::Struct &&
+		from_desc.type_index.is_valid() &&
+		to_desc.type_index.is_valid() &&
+		from_desc.type_index != to_desc.type_index &&
+		isTransitivelyDerivedFrom(from_desc.type_index, to_desc.type_index)) {
+		ImplicitCastInfo cast_info;
+		cast_info.source_type_id = expr_type_id;
+		cast_info.target_type_id = target_type_id;
+		cast_info.cast_kind = StandardConversionKind::DerivedToBase;
+		cast_info.value_category_after = ValueCategory::PRValue;
+		const CastInfoIndex idx = allocateCastInfo(cast_info);
 		SemanticSlot slot;
 		slot.type_id = target_type_id;
 		slot.cast_info_index = idx;
@@ -8284,8 +8479,8 @@ void SemanticAnalysis::ensureResolvedCallArgConversionsComplete(
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
-																				const void* call_key,
-																				TypeIndex fallback_owner_type_index) {
+																		const void* call_key,
+																		TypeIndex fallback_owner_type_index) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
 	const DeclarationNode& callee_decl = requireCallDeclaration(call_info, "resolveCallArgAnnotationTarget");
 	const bool normalized_call =
@@ -8554,6 +8749,12 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		call_info.qualified_name.isValid() &&
 		!qualified_name_has_type_owner &&
 		resolveQualifiedLookupTarget(call_info.qualified_name.view()).has_value();
+	const bool is_ordinary_nonmember_call =
+		!call_info.is_indirect && !call_info.has_receiver;
+	const bool is_unqualified_or_namespace_lookup =
+		!call_info.qualified_name.isValid() || qualified_name_targets_namespace;
+	const bool can_use_ordinary_definition_lookup =
+		is_ordinary_nonmember_call && is_unqualified_or_namespace_lookup;
 	auto resolveLocalCallableStructInfo = [&]() -> const StructTypeInfo* {
 		if (call_info.has_receiver) {
 			return nullptr;
@@ -8699,17 +8900,15 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		isTemplateDerivedFreeFunctionTarget(parser_selected_target)) {
 		return parser_selected_target;
 	}
-	if (!call_info.is_indirect &&
-		!call_info.has_receiver &&
-		(!call_info.qualified_name.isValid() ||
-		 qualified_name_targets_namespace) &&
+	const bool normalized_call_has_concrete_argument_types = normalized_call && [&]() {
+		InlineVector<TypeSpecifierNode, 6> normalized_arg_types;
+		return tryCollectOverloadResolutionArgTypes(arguments, normalized_arg_types);
+	}();
+	if (can_use_ordinary_definition_lookup &&
 		definition_lookup_record_target != nullptr) {
 		return definition_lookup_record_target;
 	}
-	if (!call_info.is_indirect &&
-		!call_info.has_receiver &&
-		(!call_info.qualified_name.isValid() ||
-		 qualified_name_targets_namespace) &&
+	if (can_use_ordinary_definition_lookup &&
 		!has_deferred_qualified_template_metadata &&
 		definition_lookup_record_target == nullptr &&
 		call_info.definition_lookup_record != nullptr &&
@@ -8745,7 +8944,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 
-	if (!call_info.has_receiver &&
+	if (is_ordinary_nonmember_call &&
 		call_info.dependent_unqualified_lookup_record != nullptr &&
 		call_info.dependent_unqualified_lookup_record->has_value()) {
 		const DependentUnqualifiedCallLookupRecord& dependent_record =
@@ -8784,7 +8983,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return nullptr;
 	}
-	if (!call_info.has_receiver &&
+	if (is_ordinary_nonmember_call &&
 		call_info.function_declaration == nullptr &&
 		call_info.qualified_name.isValid()) {
 		if (qualified_name_targets_namespace ||
@@ -8858,8 +9057,8 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 
-	if (!call_info.qualified_name.isValid() ||
-		qualified_name_targets_namespace) {
+	if (is_unqualified_or_namespace_lookup &&
+		(!normalized_call || !normalized_call_has_concrete_argument_types)) {
 		if (const FunctionDeclarationNode* mangled_candidate =
 				lookupFunctionByMangledName(call_info.mangled_name)) {
 			return mangled_candidate;
@@ -8916,7 +9115,24 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 	if (overloads.empty()) {
-		overloads = symbols_.lookup_all(name);
+		if (is_ordinary_nonmember_call &&
+			!call_info.qualified_name.isValid() &&
+			call_info.function_declaration != nullptr &&
+			call_info.function_declaration->namespace_handle().isValid()) {
+			// Semantic normalization runs after parsing has restored the symbol
+			// table to its outer scope.  For an ordinary unqualified call, recover
+			// the namespace-scope declaration set that was visible at the call
+			// site before considering the outer lookup path.  This is the
+			// namespace portion of C++20 [basic.lookup.unqual]; it prevents a
+			// same-named global declaration from replacing a declaration found in
+			// the current namespace.
+			overloads = symbols_.lookup_qualified_all(
+				call_info.function_declaration->namespace_handle(),
+				decl.identifier_token().handle());
+		}
+		if (overloads.empty()) {
+			overloads = symbols_.lookup_all(name);
+		}
 	}
 	if (overloads.empty() && call_info.qualified_name.isValid()) {
 		const std::string_view unqualified_name = decl.identifier_token().value();
@@ -10024,11 +10240,25 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	const CanonicalTypeId false_type_id = inferExpressionType(ternary_node.false_expr());
 	if (!true_type_id || !false_type_id)
 		return;
-	if (canonical_types_match(true_type_id, false_type_id))
-		return;
 
 	const auto& true_desc = type_context_.get(true_type_id);
 	const auto& false_desc = type_context_.get(false_type_id);
+	if (canonical_types_match(true_type_id, false_type_id))
+		return;
+	if (auto pointer_result = tryGetConditionalPointerType(
+		true_desc,
+		false_desc,
+		isIntegerLiteralZeroNullPointerConstant(ternary_node.true_expr()) ||
+			true_desc.category() == TypeCategory::Nullptr,
+		isIntegerLiteralZeroNullPointerConstant(ternary_node.false_expr()) ||
+			false_desc.category() == TypeCategory::Nullptr)) {
+		const CanonicalTypeId common_type_id = type_context_.intern(*pointer_result);
+		if (!canonical_types_match(true_type_id, common_type_id))
+			tryAnnotateConversion(ternary_node.true_expr(), common_type_id, true_type_id);
+		if (!canonical_types_match(false_type_id, common_type_id))
+			tryAnnotateConversion(ternary_node.false_expr(), common_type_id, false_type_id);
+		return;
+	}
 
 	// Only handle primitive arithmetic types (not structs, pointers, etc.)
 	if (true_desc.category() == TypeCategory::Struct || false_desc.category() == TypeCategory::Struct)

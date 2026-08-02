@@ -3550,7 +3550,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Apply integer promotions and find common type
 	// BUT: Skip type promotion for pointer assignments (ptr = ptr_expr)
 	// Pointers should not be converted to common types
-	if (op == "=" && lhsSize == 64 && lhs_pointer_depth > 0) {
+	if (op == "=" && lhsSize == 64 && lhs_pointer_depth > 0 &&
+		!(lhsExprResult.storage == ValueStorage::ContainsAddress && resultHoldsAddressOnlyValue(lhsExprResult))) {
 		// This is a pointer assignment - no type conversions needed
 		// Just assign the RHS to the LHS directly
 		FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_ARITH_DEBUG] Pointer assignment: lhsSize={}, pointer_depth={}", lhsSize, lhs_pointer_depth);
@@ -3616,6 +3617,43 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsCat, lhsCat, binaryOperatorNode.get_token());
 			}
 		}
+
+		// A conditional glvalue evaluated in LValueAddress context carries the
+		// selected object's address in an address-only temporary. Store through
+		// that address; assigning to the temporary itself would only overwrite
+		// the selector slot and would violate [expr.cond]'s glvalue semantics.
+		if (lhsExprResult.storage == ValueStorage::ContainsAddress &&
+			resultHoldsAddressOnlyValue(lhsExprResult)) {
+			const auto* lhs_address = std::get_if<TempVar>(&lhsExprResult.value);
+			if (!lhs_address) {
+				throw InternalError("Address-only assignment LHS must be held in a temporary");
+			}
+			if (getTempVarMetadata(*lhs_address).category != ValueCategory::LValue) {
+				throw CompileError("Assignment requires a modifiable lvalue");
+			}
+
+			ExprResult materialized_rhs = materializeAddressResultForValueContext(
+				rhsExprResult,
+				lhsExprResult.type_index,
+				lhsCat,
+				SizeInBits{lhsSize},
+				lhsExprResult.pointer_depth,
+				ReferenceQualifier::None,
+				binaryOperatorNode.get_token());
+			TypedValue value = toTypedValue(materialized_rhs);
+			value.type_index = lhsExprResult.type_index.withCategory(lhsCat);
+			value.setType(lhsCat);
+			value.size_in_bits = SizeInBits{lhsSize};
+			value.pointer_depth = lhsExprResult.pointer_depth;
+			emitDereferenceStore(
+				value,
+				lhsCat,
+				lhsSize,
+				*lhs_address,
+				binaryOperatorNode.get_token());
+			return rhsExprResult;
+		}
+
 		// Now both are the same type, create assignment
 		AssignmentOp assign_op;
 		// Extract the LHS value directly (it's either StringHandle or TempVar)
