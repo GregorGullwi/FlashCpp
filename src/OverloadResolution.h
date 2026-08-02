@@ -7,6 +7,7 @@
 #include "ChunkedString.h"
 #include "TemplateTypes.h" // For FunctionSignatureKey
 #include "InlineVector.h"
+#include <algorithm>
 #include <array>
 #include <vector>
 #include <optional>
@@ -421,46 +422,121 @@ inline bool isTransitivelyDerivedFromAnyAccess(TypeIndex source_idx, TypeIndex b
 	return isTransitivelyDerivedFromImpl(source_idx, base_idx, /*public_only=*/false);
 }
 
-// Return the byte offset of a public base subobject within a complete object.
-// This is the layout counterpart of isTransitivelyDerivedFrom(): callers use
-// it after overload resolution has already established that the conversion is
-// accessible.  The compiler's finalized StructTypeInfo contains the offsets
-// for both direct and nested base classes, so the same walk also handles
-// multi-level inheritance.
-inline std::optional<int64_t> findPublicBaseSubobjectOffset(TypeIndex base_idx, TypeIndex derived_idx) {
-	if (!base_idx.is_valid() || !derived_idx.is_valid())
-		return std::nullopt;
-	if (base_idx == derived_idx)
-		return int64_t{0};
+// Relationship between a complete derived object and a requested base subobject.
+// Keep this classification separate from the byte-offset lookup: a first-match
+// walk is incorrect for ambiguous diamonds and for virtual bases.
+enum class DerivedBaseConversionKind : uint8_t {
+	NotRelated,
+	Inaccessible,
+	UniquePublicNonVirtual,
+	PublicVirtual,
+	Ambiguous,
+};
+
+struct DerivedBaseConversionInfo {
+	DerivedBaseConversionKind kind = DerivedBaseConversionKind::NotRelated;
+	int64_t offset = 0;
+};
+
+// Classify all inheritance paths from derived_idx to base_idx.  A virtual base
+// is recorded by type rather than by path because a virtual base subobject is
+// shared by a diamond.  A non-virtual path and a virtual path still describe
+// different possible subobjects and are therefore ambiguous.
+inline DerivedBaseConversionInfo classifyDerivedBaseConversion(TypeIndex derived_idx, TypeIndex base_idx) {
+	if (!derived_idx.is_valid() || !base_idx.is_valid())
+		return {};
+	if (derived_idx == base_idx)
+		return {DerivedBaseConversionKind::UniquePublicNonVirtual, 0};
 
 	const TypeInfo* derived_type_info = tryGetTypeInfo(derived_idx);
 	const StructTypeInfo* derived_struct =
 		derived_type_info ? derived_type_info->getStructInfo() : nullptr;
 	if (!derived_struct)
-		return std::nullopt;
+		return {};
 
-	auto find_offset = [&](const auto& self,
-						   const StructTypeInfo* current_struct,
-						   int64_t current_offset) -> std::optional<int64_t> {
+	bool saw_inaccessible = false;
+	uint32_t non_virtual_path_count = 0;
+	uint32_t public_non_virtual_path_count = 0;
+	int64_t public_non_virtual_offset = 0;
+	std::vector<TypeIndex> public_virtual_subobjects;
+	std::vector<TypeIndex> inaccessible_virtual_subobjects;
+
+	auto contains_virtual_subobject = [&](TypeIndex type_index) {
+		return std::find(public_virtual_subobjects.begin(), public_virtual_subobjects.end(), type_index) !=
+			public_virtual_subobjects.end();
+	};
+	auto contains_inaccessible_virtual_subobject = [&](TypeIndex type_index) {
+		return std::find(inaccessible_virtual_subobjects.begin(), inaccessible_virtual_subobjects.end(), type_index) !=
+			inaccessible_virtual_subobjects.end();
+	};
+
+	auto visit = [&](const auto& self,
+					const StructTypeInfo* current_struct,
+					int64_t current_offset,
+					bool public_path,
+					bool virtual_path) -> void {
 		if (!current_struct)
-			return std::nullopt;
+			return;
 		for (const auto& base : current_struct->base_classes) {
-			if (base.access != AccessSpecifier::Public)
-				continue;
-			const int64_t base_offset =
-				current_offset + static_cast<int64_t>(base.offset);
-			if (base.type_index == base_idx)
-				return base_offset;
+			const bool next_public_path = public_path && base.access == AccessSpecifier::Public;
+			const bool next_virtual_path = virtual_path || base.is_virtual;
+			const int64_t base_offset = current_offset + static_cast<int64_t>(base.offset);
+			if (base.type_index == base_idx) {
+				if (!next_public_path) {
+					saw_inaccessible = true;
+					if (next_virtual_path) {
+						if (!contains_inaccessible_virtual_subobject(base_idx))
+							inaccessible_virtual_subobjects.push_back(base_idx);
+					} else {
+						++non_virtual_path_count;
+					}
+				} else if (next_virtual_path) {
+					if (!contains_virtual_subobject(base_idx))
+						public_virtual_subobjects.push_back(base_idx);
+				} else {
+					++non_virtual_path_count;
+					++public_non_virtual_path_count;
+					public_non_virtual_offset = base_offset;
+				}
+			}
+
 			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 			const StructTypeInfo* base_struct =
 				base_type_info ? base_type_info->getStructInfo() : nullptr;
-			if (auto nested_offset = self(self, base_struct, base_offset))
-				return nested_offset;
+			self(self, base_struct, base_offset, next_public_path, next_virtual_path);
 		}
-		return std::nullopt;
 	};
 
-	return find_offset(find_offset, derived_struct, 0);
+	visit(visit, derived_struct, 0, true, false);
+
+	if (non_virtual_path_count > 1 ||
+		(!public_virtual_subobjects.empty() &&
+		 (non_virtual_path_count != 0 || !inaccessible_virtual_subobjects.empty()))) {
+		return {DerivedBaseConversionKind::Ambiguous, 0};
+	}
+	if (public_non_virtual_path_count == 1 && non_virtual_path_count == 1)
+		return {DerivedBaseConversionKind::UniquePublicNonVirtual, public_non_virtual_offset};
+	if (!public_virtual_subobjects.empty())
+		return {DerivedBaseConversionKind::PublicVirtual, 0};
+	if (saw_inaccessible)
+		return {DerivedBaseConversionKind::Inaccessible, 0};
+	return {};
+}
+
+inline bool hasUsablePublicDerivedBaseConversion(TypeIndex derived_idx, TypeIndex base_idx) {
+	const DerivedBaseConversionKind kind =
+		classifyDerivedBaseConversion(derived_idx, base_idx).kind;
+	return kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+		kind == DerivedBaseConversionKind::PublicVirtual;
+}
+
+// Return the byte offset only for a unique, public, non-virtual base.  Callers
+// that need diagnostics must use classifyDerivedBaseConversion() first.
+inline std::optional<int64_t> findPublicBaseSubobjectOffset(TypeIndex base_idx, TypeIndex derived_idx) {
+	const DerivedBaseConversionInfo info = classifyDerivedBaseConversion(derived_idx, base_idx);
+	if (info.kind != DerivedBaseConversionKind::UniquePublicNonVirtual)
+		return std::nullopt;
+	return info.offset;
 }
 
 inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {
@@ -517,7 +593,7 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	if (!target)
 		return false;
 	// Check if source is a (transitively) derived class of target (derived-to-base conversion)
-	if (isTransitivelyDerivedFrom(source_idx, target_idx))
+	if (hasUsablePublicDerivedBaseConversion(source_idx, target_idx))
 		return true;
 	// Check constructors whose first argument consumes the source and whose
 	// remaining arguments are defaulted.
@@ -727,7 +803,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
 				// Derived* → Base* is a valid pointer conversion (C++20 [conv.ptr]/3).
-				if (isTransitivelyDerivedFrom(from_resolved_index, to_resolved_index)) {
+				if (hasUsablePublicDerivedBaseConversion(from_resolved_index, to_resolved_index)) {
 					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 				}
 				return ConversionPlan::no_match();
@@ -743,7 +819,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				from_resolved_index != to_resolved_index) {
 				// Derived* → Base* is valid with const qualification adjustment too.
 				if (pointee_qualification_is_added &&
-					isTransitivelyDerivedFrom(from_resolved_index, to_resolved_index)) {
+					hasUsablePublicDerivedBaseConversion(from_resolved_index, to_resolved_index)) {
 					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 				}
 				return ConversionPlan::no_match();
@@ -815,7 +891,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 						// Per C++20 [conv.ref]/4: derived lvalue ref binds to base lvalue ref
 						// (standard derived-to-base reference conversion).
 						if (!from_is_rvalue && !to_is_rvalue &&
-							isTransitivelyDerivedFrom(from.type_index(), to.type_index())) {
+							hasUsablePublicDerivedBaseConversion(from_base_index, to_base_index)) {
 							return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 						}
 						return ConversionPlan::no_match();
@@ -1261,10 +1337,10 @@ inline size_t countMinRequiredArgs(const ConstructorDeclarationNode& ctor) {
 	return min_required;
 }
 
-inline bool isImplicitCopyOrMoveConstructorCandidate(
+inline bool isSameTypeCopyOrMoveConstructorCandidate(
 	const StructTypeInfo& struct_info,
 	const ConstructorDeclarationNode& ctor_decl) {
-	if (!ctor_decl.is_implicit() || !struct_info.own_type_index_.has_value()) {
+	if (!struct_info.own_type_index_.has_value()) {
 		return false;
 	}
 
@@ -1288,6 +1364,13 @@ inline bool isImplicitCopyOrMoveConstructorCandidate(
 
 	return param_type.type_index().is_valid() &&
 		   param_type.type_index() == *struct_info.own_type_index_;
+}
+
+inline bool isImplicitCopyOrMoveConstructorCandidate(
+	const StructTypeInfo& struct_info,
+	const ConstructorDeclarationNode& ctor_decl) {
+	return ctor_decl.is_implicit() &&
+		isSameTypeCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
 }
 
 inline int compareConstructorTemplatePreference(

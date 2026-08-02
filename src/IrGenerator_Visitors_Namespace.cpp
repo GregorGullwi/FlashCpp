@@ -303,7 +303,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							}
 							if (auto materialized = materializeSelectedConvertingConstructor(
 									operands, *expr_opt, return_type_spec, *ctor,
-									node.return_token(), use_return_slot_for_ctor)) {
+									node.return_token(), use_return_slot_for_ctor, std::nullopt)) {
 								operands = *materialized;
 								expr_type = operands.typeEnum();
 								expr_category = operands.category();
