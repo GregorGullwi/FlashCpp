@@ -662,6 +662,7 @@ private:
 	std::vector<ImplicitCastInfo> cast_info_table_;
 	SemanticPassStats stats_;
 	LifecycleState lifecycle_state_ = LifecycleState::ParserDetached;
+	NamespaceHandle current_definition_namespace_ = NamespaceRegistry::GLOBAL_NAMESPACE;
 
 	// Side table: expression node pointer → semantic slot.
 	std::unordered_map<const void*, SemanticSlot> semantic_slots_;

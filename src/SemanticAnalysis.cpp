@@ -2789,6 +2789,13 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	}
 
 	SemanticContext ctx;
+	const NamespaceHandle saved_definition_namespace = current_definition_namespace_;
+	current_definition_namespace_ = func.namespace_handle().isValid()
+		? func.namespace_handle()
+		: NamespaceRegistry::GLOBAL_NAMESPACE;
+	auto definition_namespace_cleanup = ScopeGuard([this, saved_definition_namespace]() {
+		current_definition_namespace_ = saved_definition_namespace;
+	});
 
 	std::optional<MemberContext> member_context;
 	const std::string_view semantic_owner_name = func.semantic_owner_name().isValid()
@@ -5614,6 +5621,24 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (const CanonicalTypeId symbol_type_id = inferResolvedSymbolType(*symbol)) {
 						return symbol_type_id;
 					}
+				}
+
+				// C++20 [basic.lookup.unqual]: a function body can refer to names in
+				// its declaration namespace and each enclosing namespace. The sema-local
+				// scope stack contains parameters and locals, while namespace declarations
+				// live in the global symbol table's qualified registry.
+				NamespaceHandle lookup_namespace = current_definition_namespace_;
+				while (lookup_namespace.isValid()) {
+					if (auto namespace_symbol = symbols_.lookup_qualified(lookup_namespace, e.nameHandle());
+						namespace_symbol.has_value()) {
+						if (const CanonicalTypeId symbol_type_id = inferResolvedSymbolType(*namespace_symbol)) {
+							return symbol_type_id;
+						}
+					}
+					if (lookup_namespace.isGlobal()) {
+						break;
+					}
+					lookup_namespace = gNamespaceRegistry.getParent(lookup_namespace);
 				}
 
 			if (e.binding() == IdentifierBinding::StaticMember) {

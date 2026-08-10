@@ -1212,7 +1212,10 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	}
 	if (sema_normalized_current_function_ &&
 		!exact_ternary_result_type.has_value()) {
-		throw InternalError("Sema-normalized ternary expression missing exact result type");
+		throw InternalError(
+			"Sema-normalized ternary expression missing exact result type" +
+			formatTokenLocationSuffix(ternaryNode.get_token()) + " in '" +
+			std::string(getCurrentFunctionName()) + "'");
 	}
 	// Check sema annotations: if either branch has a conversion annotation, that
 	// tells us the target (common) type.
