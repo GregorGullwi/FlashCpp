@@ -1,5 +1,34 @@
 # Known Issues
 
+## Deduced-return function-template shells lose value category before sema
+
+A function-template call can select a specialization shell whose body has not
+yet been materialized even though its declared return type is `auto` or
+`decltype(auto)`. Semantic assignment checking then sees no concrete return
+type or value category. A reduced example is:
+
+```cpp
+template <class T>
+decltype(auto) dereference(T* pointer) {
+	return *pointer;
+}
+
+int main() {
+	long long value;
+	dereference(&value) = 42; // currently diagnosed as a non-lvalue
+}
+```
+
+The non-template rule is covered by
+`tests/test_decltype_auto_deref_return_ret0.cpp`: both parser-time and semantic
+return deduction preserve the lvalue category of `*pointer` and produce a
+reference, including for aggregates. The remaining template failure requires
+materializing a selected deduced-return specialization before its return type
+or call value category is queried. Do not infer a return from the callable
+object's own type or fabricate aggregate layout in codegen. This is also the
+next reduced mechanism behind the MSVC ranges CPO calls used by
+`view_interface::empty`, `front`, and `back`.
+
 ## Deferred `<tuple>` member emission and `swap` gaps
 
 The full `<tuple>` test still reaches link time with a small set of concrete
