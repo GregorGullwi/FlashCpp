@@ -3862,6 +3862,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	std::optional<TypeSpecifierNode> deduced_type;
 	std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
 	bool has_still_dependent_return = false;
+	bool has_unresolved_return_expression = false;
 
 	auto make_void_return_type = [&]() {
 		TypeSpecifierNode void_type(TypeCategory::Void, TypeQualifier::None, 0, decl_node.identifier_token(), CVQualifier::None);
@@ -3926,6 +3927,8 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					}
 				} else if (isDependentTemplateContext() && expression_is_dependent) {
 					has_still_dependent_return = true;
+				} else {
+					has_unresolved_return_expression = true;
 				}
 			} else {
 				TypeSpecifierNode void_type = make_void_return_type();
@@ -4024,6 +4027,14 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 		// after substitution. Validate the complete set when the specialization
 		// is instantiated instead of comparing a partially materialized set.
 		FLASH_LOG(Parser, Debug, "  Keeping auto return type unresolved in dependent template context");
+		return;
+	}
+	if (has_unresolved_return_expression && !deduced_type.has_value()) {
+		// Parser-time template-body replay can run before semantic parameter
+		// bindings are available. Preserve the placeholder so sema can deduce the
+		// return from the materialized body when no return type was available at
+		// all; absence of parser type information is not equivalent to a function
+		// with no value-return statements.
 		return;
 	}
 
