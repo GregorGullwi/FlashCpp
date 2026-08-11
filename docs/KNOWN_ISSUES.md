@@ -1,21 +1,35 @@
 # Known Issues
 
-## Constructor-template pack replay in `<tuple>`
+## Constructor-template partial ordering in `<tuple>`
 
-The full `<tuple>` test no longer sends unrelated bodyless members to the
-deferred emission queue. Cross-struct calls now retain C++20 ODR semantics:
-only definitions that can be materialized are queued, and an undefined member
-that is never ODR-used remains valid. The generic regression is
-`tests/test_deferred_emission_skips_unreferenced_bodyless_member_ret42.cpp`.
+Reproducer: `pwsh ./tests/run_all_tests.ps1 std/test_std_tuple.cpp`. The file is
+listed in `$expectedLinkFailures` in `tests/run_all_tests.ps1`; remove that entry
+while working on the issue so the runner exposes the failure.
 
-The standard-header test remains an expected link failure for a separate
-constructor-template replay defect. A selected recursive tuple constructor
-combines an outer class pack with an inner constructor-function pack in legacy
-positional storage. The concrete initializer can consequently duplicate the
-first argument while expanding the inner pack, and codegen cannot emit the
-selected constructor. This must be fixed in normalized template-environment
-binding and pack replay; codegen must not guess parameter types or recognize
-library names.
+The delegating tuple constructor produces two viable constructor-template
+specializations whose argument conversion sequences compare equal. The source
+templates have different parameter patterns, but after
+`Parser::materializeMatchingConstructorTemplate(...)` materializes them,
+`selectBestConstructorCandidate(...)` sees only the concrete constructors and
+reports ambiguity. Code generation consequently skips the selected tuple
+constructor, and the linker reports its mangled constructor symbol as
+unresolved from `main`.
+
+Start in `src/Parser_Templates_Inst_MemberFunc.cpp` around
+`materialize_template_ctor_candidates` and in `src/OverloadResolution.h` around
+`selectBestConstructorCandidate`. Preserve or associate each concrete
+specialization with its source constructor-template pattern, then implement
+C++20 function-template partial ordering by bidirectional deduction before the
+conversion-sequence tie is declared ambiguous. Do not rank candidates by a
+specificity score, fixed-parameter count, standard-library spelling, or vendor
+helper name.
+
+First add a reduced non-`std` regression with two viable variadic constructor
+templates that have equal conversions but different source patterns, including
+the recursive delegating-constructor shape. The fix is complete when that
+regression and `tests/std/test_std_tuple.cpp` compile, link, and run, the tuple
+entry is removed from `$expectedLinkFailures`, and existing ambiguous-template
+tests remain ambiguous.
 
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp

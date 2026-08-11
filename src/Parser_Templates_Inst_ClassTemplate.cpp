@@ -750,8 +750,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 				if (found_pack) {
-					if (pack_size == 0)
+					if (pack_size == 0) {
+						// Preserve the declared function pack so its expansions consume
+						// zero elements instead of being attributed to an outer pack.
+						pack_param_info_.push_back({
+							param_decl.identifier_token().value(), 0, 0});
 						continue; // Empty pack — omit this parameter entirely.
+					}
 					// Expand into N parameters: args_0, args_1, ...
 					std::string_view orig_name = param_decl.identifier_token().value();
 					for (size_t pi = 0; pi < pack_size; ++pi) {
