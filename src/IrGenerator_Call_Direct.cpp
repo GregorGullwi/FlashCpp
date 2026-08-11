@@ -965,6 +965,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						function_node = *materialized;
 					}
 				}
+				// A cross-struct call only makes the selected definition reachable.
+				// Do not feed unrelated declaration-only members into codegen: C++20
+				// permits them to remain undefined until they are ODR-used.
+				if (!function_node.as<FunctionDeclarationNode>().is_materialized()) {
+					continue;
+				}
 			} else if (function_node.is<ConstructorDeclarationNode>()) {
 				const ConstructorDeclarationNode& ctor_decl =
 					function_node.as<ConstructorDeclarationNode>();

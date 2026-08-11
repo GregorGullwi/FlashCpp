@@ -1,24 +1,21 @@
 # Known Issues
 
-## Deferred `<tuple>` member emission and `swap` gaps
+## Constructor-template pack replay in `<tuple>`
 
-The full `<tuple>` test still reaches link time with a small set of concrete
-tuple constructors unresolved after deferred member materialization. The
-standard-header test is therefore listed as an expected link failure in
-`tests/run_all_tests.ps1` until those constructor definitions are emitted.
-The reduced partial-spec nested typedef shape (`using Ttype = Tuple<This, Rest...>`) is covered by
-`tests/test_dependent_alias_tuple_element_get_ret0.cpp` and now materializes.
-The regression models an MSVC `tuple_element` / `get` chain with a dependent
-`ElemT = typename Elem<I, T>::type` alias and an index-zero partial
-specialization whose nested `Ttype = Tuple<This, Rest...>` must expand the
-pack and materialize a concrete `Tuple` specialization. It ODR-uses `Ttype`
-through a pointer cast so a dependent placeholder cannot survive into IR.
-Reference-returning member access through `static_cast<Ttype&>` is covered
-separately by `tests/test_static_cast_ref_member_address_ret0.cpp`.
+The full `<tuple>` test no longer sends unrelated bodyless members to the
+deferred emission queue. Cross-struct calls now retain C++20 ODR semantics:
+only definitions that can be materialized are queued, and an undefined member
+that is never ODR-used remains valid. The generic regression is
+`tests/test_deferred_emission_skips_unreferenced_bodyless_member_ret42.cpp`.
 
-The remaining failure is a generic deferred-constructor emission gap, not a
-library-name problem. The recursive constructor/swap and SFINAE regressions
-cover the generic mechanisms that are now working.
+The standard-header test remains an expected link failure for a separate
+constructor-template replay defect. A selected recursive tuple constructor
+combines an outer class pack with an inner constructor-function pack in legacy
+positional storage. The concrete initializer can consequently duplicate the
+first argument while expanding the inner pack, and codegen cannot emit the
+selected constructor. This must be fixed in normalized template-environment
+binding and pack replay; codegen must not guess parameter types or recognize
+library names.
 
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
