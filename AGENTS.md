@@ -5,6 +5,7 @@
 - Generated binaries belong in `x64/` or `Sharded/` and stay untracked.
 - Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workflows.
 - Use `pwsh tests/run_all_tests.ps1` to verify that your changes didn't break any existing functionality, but never run it in parallell with build_flashcpp.bat! Expect it to take 5 minutes to run all tests.
+- When creating PRs, use descriptive language to highlight what problems it solves. If you want to highlight testing, mension added test files and problems they protect against, don't just list test commands you (always) run.
 
 ## Build, Test, and Development Commands
 - You are most likely running in a powershell (pwsh), plan your calls accordingly.
@@ -24,7 +25,6 @@
 - Never use default parameter values in function or method signatures in the codebase, tests are excluded from this rule. Every argument must be passed explicitly by the caller. Default parameters hide misuse (e.g., forgetting to propagate a flag) and make call sites silently wrong instead of producing a compile error.
 - Multi-line comments should have the same indentation as the code it describes.
 - Avoid shared_ptr and unique_ptr, use a ChunkedVector<Type> instead since it has stable pointer guarantees.
-
 
 ## Debugging & Reference Tips
 Use `dumpbin.exe`, locate the path with `where.exe`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `x64/Debug/FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source. Output file will end up in the working folder.
