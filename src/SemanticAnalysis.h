@@ -92,6 +92,9 @@ public:
 
 	TypeSpecifierQueryResult getExpressionTypeQuery(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	TypeSpecifierNode applyDecltypeAutoReturnValueCategory(
+		const ASTNode& expression,
+		TypeSpecifierNode type);
 	TypeSpecifierQueryResult getOverloadResolutionArgTypeQuery(const ASTNode& arg) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg) const;
 
@@ -428,6 +431,9 @@ private:
 	// was a lazy stub at annotation time is correctly annotated.
 	void resolvePendingCopyInitAnnotations();
 	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type);
+	TypeSpecifierNode applyDecltypeAutoReturnValueCategory(
+		const ASTNode& expression,
+		TypeSpecifierNode type);
 	TypeSpecifierNode finalizePlaceholderDeduction(TypeCategory placeholder_type, const TypeSpecifierNode& deduced_type) const;
 	std::optional<TypeSpecifierNode> resolveCallableReturnType(const FunctionDeclarationNode& callable);
 	std::optional<TypeSpecifierNode> resolveCallReturnType(

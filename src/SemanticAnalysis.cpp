@@ -1668,6 +1668,15 @@ std::optional<TypeSpecifierNode> ParserSemanticServices::getExpressionType(const
 	return owner_->getExpressionType(node);
 }
 
+TypeSpecifierNode ParserSemanticServices::applyDecltypeAutoReturnValueCategory(
+	const ASTNode& expression,
+	TypeSpecifierNode type) {
+	requireParserSemanticServicesAttachment(
+		*owner_,
+		"applyDecltypeAutoReturnValueCategory");
+	return owner_->applyDecltypeAutoReturnValueCategory(expression, std::move(type));
+}
+
 TypeSpecifierQueryResult ParserSemanticServices::getExpressionTypeQuery(const ASTNode& node) const {
 	return owner_->getExpressionTypeQuery(node);
 }
@@ -2529,9 +2538,15 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		// sema-resolved operator() target when available.
 		const CanonicalTypeId inferred_type_id = inferExpressionType(expr_node);
 		if (inferred_type_id) {
-			return materializeTypeSpecifier(type_context_.get(inferred_type_id));
+			TypeSpecifierNode inferred_type =
+				materializeTypeSpecifier(type_context_.get(inferred_type_id));
+			if (placeholder_type == TypeCategory::DeclTypeAuto) {
+				inferred_type = applyDecltypeAutoReturnValueCategory(
+					expr_node,
+					std::move(inferred_type));
+			}
+			return inferred_type;
 		}
-
 		// Function and lambda callers seed parameter and outer-template bindings
 		// before auto-return deduction, so this path now relies on sema-owned
 		// inference only.
@@ -2703,6 +2718,37 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		get_type_size_bits(TypeCategory::Void),
 		Token{},
 		CVQualifier::None));
+}
+
+TypeSpecifierNode SemanticAnalysis::applyDecltypeAutoReturnValueCategory(
+	const ASTNode& expression_node,
+	TypeSpecifierNode type) {
+	if (type.reference_qualifier() != ReferenceQualifier::None ||
+		!expression_node.is<ExpressionNode>()) {
+		return type;
+	}
+
+	const ExpressionNode& expression = expression_node.as<ExpressionNode>();
+	if (std::holds_alternative<IdentifierNode>(expression) ||
+		std::holds_alternative<QualifiedIdentifierNode>(expression) ||
+		std::holds_alternative<MemberAccessNode>(expression)) {
+		return type;
+	}
+
+	switch (inferExpressionValueCategory(expression_node)) {
+	case ValueCategory::LValue:
+		type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		break;
+	case ValueCategory::XValue:
+		type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+		break;
+	case ValueCategory::PRValue:
+		break;
+	default:
+		throw InternalError(
+			"Unexpected expression value category during decltype(auto) return deduction");
+	}
+	return type;
 }
 
 TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(TypeCategory placeholder_type, const TypeSpecifierNode& deduced_type) const {

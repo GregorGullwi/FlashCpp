@@ -3898,6 +3898,13 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					// Store this return type for validation
 					TypeSpecifierNode normalized_type =
 						finalizePlaceholderTypeDeduction(return_type.type(), *expr_type_opt);
+					if (return_type.type() == TypeCategory::DeclTypeAuto) {
+						normalized_type = semantic_analysis_
+							.parserSemanticServices()
+							.applyDecltypeAutoReturnValueCategory(
+								*ret.expression(),
+								std::move(normalized_type));
+					}
 					if (isPlaceholderAutoType(normalized_type.type()) ||
 						typeSpecStillUsesDependentPlaceholder(normalized_type) ||
 						(isDependentTemplateContext() &&
