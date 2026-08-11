@@ -2437,7 +2437,6 @@ bool Parser::expandPackExpansionArgs(
 	const ASTNode& pattern = pack_expansion.pattern();
 	InlineVector<std::pair<size_t, size_t>, 4> template_param_arg_ranges;
 	template_param_arg_ranges.reserve(template_params.size());
-	size_t variadic_template_param_count = 0;
 
 	// Keep the argument boundary recorded by deduction. In particular, a
 	// deduced pack followed by a defaulted template parameter is represented as
@@ -2456,7 +2455,6 @@ bool Parser::expandPackExpansionArgs(
 			continue;
 		}
 
-		++variadic_template_param_count;
 		const size_t pack_size = countTemplatePackArguments(
 			template_params,
 			template_args,
@@ -2479,15 +2477,6 @@ bool Parser::expandPackExpansionArgs(
 			throw InternalError("Mismatched template parameter pack sizes while expanding call arguments");
 		}
 	}
-	if (!num_pack_elements.has_value() && variadic_template_param_count == 1) {
-		for (size_t p = 0; p < template_params.size(); ++p) {
-			if (template_params[p].is_variadic()) {
-				num_pack_elements = template_param_arg_ranges[p].second;
-				break;
-			}
-		}
-	}
-
 	// Also check pack_param_info_ for function parameter packs. Match the pack
 	// name against the pattern so empty packs are still recognized and consumed
 	// instead of leaking a PackExpansionExprNode across the parser/sema boundary.

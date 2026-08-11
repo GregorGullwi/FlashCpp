@@ -210,10 +210,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 							lazy_info.template_args,
 							pack_param_index,
 							pack_arg_index);
+						std::string_view orig_name = param_decl.identifier_token().value();
 						if (pack_size == 0) {
 							handled_as_pack = true;
 						} else {
-							std::string_view orig_name = param_decl.identifier_token().value();
 							for (size_t pi = 0; pi < pack_size; ++pi) {
 								const TemplateTypeArg& elem = lazy_info.template_args[pack_arg_index + pi];
 								TypeCategory elem_type = elem.typeEnum();
@@ -241,9 +241,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 								new_ctor_ref.add_parameter_node(emplace_node<DeclarationNode>(
 									emplace_node<TypeSpecifierNode>(sub_type), elem_token));
 							}
-							pack_param_info_.push_back({orig_name, 0, pack_size});
 							handled_as_pack = true;
 						}
+						// Empty packs still own expansion patterns in the initializer.
+						pack_param_info_.push_back({orig_name, 0, pack_size});
 					}
 				}
 				if (handled_as_pack)
