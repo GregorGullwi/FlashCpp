@@ -2225,7 +2225,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								if (sema_normalized_current_function_ &&
 									is_standard_arithmetic_type(init_type) &&
 									is_standard_arithmetic_type(decl_type))
-									throw InternalError(std::string("Phase 15: sema missed variable init conversion (") + std::string(getTypeName(init_type)) + " -> " + std::string(getTypeName(decl_type)) + ")");
+									throw InternalError(std::string("Phase 15: sema missed variable init conversion for '") +
+										std::string(decl.identifier_token().value()) + "' in '" +
+										std::string(getCurrentFunctionName()) + "' (" +
+										std::string(getTypeName(init_type)) + " -> " +
+										std::string(getTypeName(decl_type)) + ")");
 								init_operands = generateTypeConversion(init_operands, init_type, decl_type, decl.identifier_token());
 							}
 						}
