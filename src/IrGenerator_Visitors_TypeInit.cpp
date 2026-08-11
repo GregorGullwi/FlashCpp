@@ -378,7 +378,13 @@ void AstToIr::generateDeferredMemberFunctions() {
 				// Queue feeders normalize/materialize them before enqueue, so reaching
 				// this path with a stub indicates a broken sema/codegen contract.
 				if (!func.is_materialized()) {
-					throw InternalError("Deferred function queue received an unmaterialized function");
+					throw InternalError(std::string(StringBuilder()
+						.append("Deferred function queue received unmaterialized function '")
+						.append(func.parent_struct_name())
+						.append("::")
+						.append(func.decl_node().identifier_token().value())
+						.append("'")
+						.commit()));
 				}
 				parser_.enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
