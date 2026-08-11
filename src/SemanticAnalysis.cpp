@@ -2495,6 +2495,15 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallableReturnType(con
 	if (isPlaceholderAutoType(return_type.type())) {
 		return std::nullopt;
 	}
+	if (callable.has_outer_template_bindings() &&
+		callable.parent_struct_name().empty() &&
+		callable.is_materialized()) {
+		// Function-template specializations whose parser-time return deduction
+		// stayed unresolved were not eligible for late-root registration then.
+		// Once sema has supplied the concrete signature, register the existing
+		// specialization so normal semantic draining and codegen can emit it.
+		parser().registerLateMaterializedTopLevelNode(mutable_callable_node);
+	}
 	return return_type;
 }
 
