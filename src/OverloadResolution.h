@@ -1435,7 +1435,7 @@ inline int compareConstructorTemplatePreference(
 inline bool tryBuildConstructorConversionInfos(
 	const ConstructorDeclarationNode& ctor_decl,
 	std::span<const TypeSpecifierNode> argument_types,
-	std::vector<ArgumentConversionInfo>& conversion_infos) {
+	InlineVector<ArgumentConversionInfo, 4>& conversion_infos) {
 	const auto& parameters = ctor_decl.parameter_nodes();
 	size_t min_required = countMinRequiredArgs(ctor_decl);
 	if (argument_types.size() < min_required || argument_types.size() > parameters.size()) {
@@ -1460,32 +1460,54 @@ inline bool tryBuildConstructorConversionInfos(
 	return true;
 }
 
+template <typename CompareSourceTemplates>
 inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 	std::span<const ConstructorDeclarationNode* const> candidates,
 	std::span<const TypeSpecifierNode> argument_types,
+	std::span<const ConstructorDeclarationNode* const> source_templates,
+	CompareSourceTemplates&& compare_source_templates,
 	bool& is_ambiguous) {
+	if (!source_templates.empty() && source_templates.size() != candidates.size()) {
+		throw InternalError("Constructor candidate/source-template metadata size mismatch");
+	}
+
+	auto compareTemplatePartialOrdering = [&](size_t lhs_index, size_t rhs_index) {
+		if (source_templates.empty()) {
+			return 0;
+		}
+		const ConstructorDeclarationNode* lhs_source = source_templates[lhs_index];
+		const ConstructorDeclarationNode* rhs_source = source_templates[rhs_index];
+		if (lhs_source == nullptr || rhs_source == nullptr || lhs_source == rhs_source) {
+			return 0;
+		}
+		return compare_source_templates(*lhs_source, *rhs_source);
+	};
+
 	const ConstructorDeclarationNode* best_match = nullptr;
-	std::vector<ArgumentConversionInfo> best_infos;
+	size_t best_index = SIZE_MAX;
+	InlineVector<ArgumentConversionInfo, 4> best_infos;
 	int num_best_matches = 0;
-	std::vector<const ConstructorDeclarationNode*> tied_candidates;
+	InlineVector<size_t, 4> tied_candidate_indices;
 	is_ambiguous = false;
 
-	for (const ConstructorDeclarationNode* candidate : candidates) {
+	for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
+		const ConstructorDeclarationNode* candidate = candidates[candidate_index];
 		if (candidate == nullptr) {
 			continue;
 		}
 
-		std::vector<ArgumentConversionInfo> conversion_infos;
+		InlineVector<ArgumentConversionInfo, 4> conversion_infos;
 		if (!tryBuildConstructorConversionInfos(*candidate, argument_types, conversion_infos)) {
 			continue;
 		}
 
 		if (!best_match) {
 			best_match = candidate;
+			best_index = candidate_index;
 			best_infos = conversion_infos;
 			num_best_matches = 1;
-			tied_candidates.clear();
-			tied_candidates.push_back(candidate);
+			tied_candidate_indices.clear();
+			tied_candidate_indices.push_back(candidate_index);
 			continue;
 		}
 
@@ -1500,50 +1522,61 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 				this_is_better = true;
 			} else if (template_preference > 0) {
 				this_is_worse = true;
+			} else {
+				const int partial_order = compareTemplatePartialOrdering(candidate_index, best_index);
+				this_is_better = partial_order < 0;
+				this_is_worse = partial_order > 0;
 			}
 		}
 
 		if (this_is_better && !this_is_worse) {
-			std::vector<const ConstructorDeclarationNode*> old_tied = std::move(tied_candidates);
+			InlineVector<size_t, 4> old_tied = std::move(tied_candidate_indices);
 			best_match = candidate;
+			best_index = candidate_index;
 			best_infos = conversion_infos;
 			num_best_matches = 1;
-			tied_candidates.clear();
-			tied_candidates.push_back(candidate);
-			for (const auto* prev : old_tied) {
-				if (prev == candidate) {
+			tied_candidate_indices.clear();
+			tied_candidate_indices.push_back(candidate_index);
+			for (size_t previous_index : old_tied) {
+				const ConstructorDeclarationNode* previous = candidates[previous_index];
+				if (previous_index == candidate_index) {
 					continue;
 				}
-				std::vector<ArgumentConversionInfo> prev_infos;
-				if (!tryBuildConstructorConversionInfos(*prev, argument_types, prev_infos)) {
+				InlineVector<ArgumentConversionInfo, 4> previous_infos;
+				if (!tryBuildConstructorConversionInfos(*previous, argument_types, previous_infos)) {
 					continue;
 				}
 
-				const ConversionInfoComparison prev_vs_best =
-					compareConversionInfoLists(argument_types, prev_infos, best_infos);
-				bool prev_better = prev_vs_best.lhs_is_better;
-				bool prev_worse = prev_vs_best.lhs_is_worse;
-				if (!prev_better && !prev_worse) {
+				const ConversionInfoComparison previous_vs_best =
+					compareConversionInfoLists(argument_types, previous_infos, best_infos);
+				bool previous_better = previous_vs_best.lhs_is_better;
+				bool previous_worse = previous_vs_best.lhs_is_worse;
+				if (!previous_better && !previous_worse) {
 					const int template_preference =
-						compareConstructorTemplatePreference(*prev, *best_match);
+						compareConstructorTemplatePreference(*previous, *best_match);
 					if (template_preference < 0) {
-						prev_better = true;
+						previous_better = true;
 					} else if (template_preference > 0) {
-						prev_worse = true;
+						previous_worse = true;
+					} else {
+						const int partial_order =
+							compareTemplatePartialOrdering(previous_index, best_index);
+						previous_better = partial_order < 0;
+						previous_worse = partial_order > 0;
 					}
 				}
-				if (!prev_better && prev_worse) {
+				if (!previous_better && previous_worse) {
 					continue;
 				}
 
 				num_best_matches++;
-				tied_candidates.push_back(prev);
+				tied_candidate_indices.push_back(previous_index);
 			}
 		} else if (!this_is_better && this_is_worse) {
 			continue;
 		} else {
 			num_best_matches++;
-			tied_candidates.push_back(candidate);
+			tied_candidate_indices.push_back(candidate_index);
 		}
 	}
 
@@ -1552,6 +1585,18 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 		return nullptr;
 	}
 	return best_match;
+}
+
+inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
+	std::span<const ConstructorDeclarationNode* const> candidates,
+	std::span<const TypeSpecifierNode> argument_types,
+	bool& is_ambiguous) {
+	return selectBestConstructorCandidate(
+		candidates,
+		argument_types,
+		std::span<const ConstructorDeclarationNode* const>{},
+		[](const ConstructorDeclarationNode&, const ConstructorDeclarationNode&) { return 0; },
+		is_ambiguous);
 }
 
 inline ConstructorOverloadResolutionResult resolve_constructor_overload(

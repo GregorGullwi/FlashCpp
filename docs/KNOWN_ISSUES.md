@@ -1,35 +1,28 @@
 # Known Issues
 
-## Constructor-template partial ordering in `<tuple>`
+## Remaining `<tuple>` link failures after constructor-template partial ordering
 
 Reproducer: `pwsh ./tests/run_all_tests.ps1 std/test_std_tuple.cpp`. The file is
 listed in `$expectedLinkFailures` in `tests/run_all_tests.ps1`; remove that entry
 while working on the issue so the runner exposes the failure.
 
-The delegating tuple constructor produces two viable constructor-template
-specializations whose argument conversion sequences compare equal. The source
-templates have different parameter patterns, but after
-`Parser::materializeMatchingConstructorTemplate(...)` materializes them,
-`selectBestConstructorCandidate(...)` sees only the concrete constructors and
-reports ambiguity. Code generation consequently skips the selected tuple
-constructor, and the linker reports its mangled constructor symbol as
-unresolved from `main`.
+Constructor-template partial ordering now preserves each specialization's source
+pattern and uses bidirectional deduction after equal conversion sequences. The
+reduced recursive delegating-constructor regression is
+`tests/test_constructor_template_partial_order_delegating_ret0.cpp`; existing
+incomparable constructor templates remain ambiguous.
 
-Start in `src/Parser_Templates_Inst_MemberFunc.cpp` around
-`materialize_template_ctor_candidates` and in `src/OverloadResolution.h` around
-`selectBestConstructorCandidate`. Preserve or associate each concrete
-specialization with its source constructor-template pattern, then implement
-C++20 function-template partial ordering by bidirectional deduction before the
-conversion-sequence tie is declared ambiguous. Do not rank candidates by a
-specificity score, fixed-parameter count, standard-library spelling, or vendor
-helper name.
+Removing the expected-link-failure entry now exposes two later generic compiler
+defects: out-of-class inline static data-member definitions with the same
+unqualified member name collide, reduced by
+`tests/test_inline_static_members_same_name_ret0.cpp`, and the explicitly
+defaulted zero-argument constructor of the empty recursive base remains
+unresolved. Fix both through C++ linkage/member ownership and defaulted special
+member emission respectively; do not special-case standard-library names.
 
-First add a reduced non-`std` regression with two viable variadic constructor
-templates that have equal conversions but different source patterns, including
-the recursive delegating-constructor shape. The fix is complete when that
-regression and `tests/std/test_std_tuple.cpp` compile, link, and run, the tuple
-entry is removed from `$expectedLinkFailures`, and existing ambiguous-template
-tests remain ambiguous.
+The issue is complete when the reduced regressions and
+`tests/std/test_std_tuple.cpp` compile, link, and run, the tuple entry is removed
+from `$expectedLinkFailures`, and this section is removed.
 
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp

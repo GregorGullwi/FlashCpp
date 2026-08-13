@@ -1054,7 +1054,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	StringHandle instantiated_struct_name,
 	const ConstructorDeclarationNode& ctor_decl,
-	std::span<const TypeSpecifierNode> arg_types) {
+	std::span<const TypeSpecifierNode> arg_types,
+	bool materialize_body) {
 	const auto& template_params = ctor_decl.template_parameters();
 	if (template_params.empty()) {
 		return std::nullopt;
@@ -1250,7 +1251,7 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		lazy_info.template_args.push_back(template_arg);
 	}
 
-	return instantiateLazyMemberFunction(lazy_info);
+	return instantiateLazyMemberFunction(lazy_info, materialize_body);
 }
 
 const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate(
@@ -1260,6 +1261,44 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	const ConstructorDeclarationNode* preferred_ctor,
 	bool& is_ambiguous) {
 	is_ambiguous = false;
+	auto fixed_parameter_count = [](const ConstructorDeclarationNode& constructor_template) {
+		size_t count = constructor_template.parameter_nodes().size();
+		if (count != 0 &&
+			constructor_template.parameter_nodes().back().is<DeclarationNode>() &&
+			constructor_template.parameter_nodes().back().as<DeclarationNode>().is_parameter_pack()) {
+			--count;
+		}
+		return count;
+	};
+	auto can_deduce_source_pattern = [&](const ConstructorDeclarationNode& parameter_template,
+									   const ConstructorDeclarationNode& argument_template) {
+		if (fixed_parameter_count(parameter_template) > fixed_parameter_count(argument_template)) {
+			return false;
+		}
+		InlineVector<TypeSpecifierNode, 4> transformed_argument_types;
+		transformed_argument_types.reserve(argument_template.parameter_nodes().size());
+		for (const ASTNode& parameter_node : argument_template.parameter_nodes()) {
+			if (!parameter_node.is<DeclarationNode>()) {
+				throw InternalError("Constructor template parameter is not a declaration");
+			}
+			transformed_argument_types.push_back(
+				parameter_node.as<DeclarationNode>().type_specifier_node());
+		}
+		return deduceTemplateCandidateViability(
+			parameter_template.template_parameters(),
+			parameter_template,
+			transformed_argument_types,
+			0).has_value();
+	};
+	auto compare_source_patterns = [&](const ConstructorDeclarationNode& lhs,
+								   const ConstructorDeclarationNode& rhs) {
+		const bool lhs_from_rhs = can_deduce_source_pattern(lhs, rhs);
+		const bool rhs_from_lhs = can_deduce_source_pattern(rhs, lhs);
+		if (lhs_from_rhs == rhs_from_lhs) {
+			return 0;
+		}
+		return lhs_from_rhs ? 1 : -1;
+	};
 
 	auto findExistingMaterializedCtor = [&](std::string_view mangled_name) -> const ConstructorDeclarationNode* {
 		if (mangled_name.empty()) {
@@ -1350,24 +1389,15 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 		return true;
 	};
 
-	auto select_best_concrete_ctor =
-		[&](std::span<const ConstructorDeclarationNode* const> concrete_candidates)
-			-> const ConstructorDeclarationNode* {
-		bool concrete_ctor_is_ambiguous = false;
-		const ConstructorDeclarationNode* best_match =
-			selectBestConstructorCandidate(concrete_candidates, arg_types, concrete_ctor_is_ambiguous);
-		if (concrete_ctor_is_ambiguous) {
-			is_ambiguous = true;
-			return nullptr;
-		}
-		return best_match;
-	};
-
 	auto materialize_template_ctor_candidates =
 		[&](const ConstructorDeclarationNode* preferred_template_ctor)
 			-> const ConstructorDeclarationNode* {
+		InlineVector<ASTNode, 4> instantiated_matches;
+		instantiated_matches.reserve(struct_info.member_functions.size());
 		InlineVector<const ConstructorDeclarationNode*, 4> concrete_matches;
 		concrete_matches.reserve(struct_info.member_functions.size());
+		InlineVector<const ConstructorDeclarationNode*, 4> source_template_matches;
+		source_template_matches.reserve(struct_info.member_functions.size());
 		InlineVector<const ConstructorDeclarationNode*, 4> template_ctor_candidates;
 		template_ctor_candidates.reserve(struct_info.member_functions.size());
 		for (const auto& member_func : struct_info.member_functions) {
@@ -1385,7 +1415,8 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			auto instantiated = try_instantiate_constructor_template(
 				instantiated_struct_name,
 				template_ctor,
-				arg_types);
+				arg_types,
+				false);
 			if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
 				return;
 			}
@@ -1398,40 +1429,63 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			if (!matches) {
 				return;
 			}
-			const ConstructorDeclarationNode* concrete_ctor =
-				attachInstantiatedCtor(template_ctor, *instantiated);
-			if (concrete_ctor != nullptr) {
-				concrete_matches.push_back(concrete_ctor);
-			}
+			instantiated_matches.push_back(*instantiated);
+			concrete_matches.push_back(
+				&instantiated_matches.back().as<ConstructorDeclarationNode>());
+			source_template_matches.push_back(&template_ctor);
 		};
 
 		if (preferred_template_ctor != nullptr) {
 			try_materialize_candidate(*preferred_template_ctor);
 		}
 
-		const bool should_probe_other_templates =
-			preferred_template_ctor == nullptr;
-
-		if (should_probe_other_templates) {
-			for (const ConstructorDeclarationNode* ctor_decl : template_ctor_candidates) {
-				if (preferred_template_ctor != nullptr && ctor_decl == preferred_template_ctor) {
-					continue;
-				}
-
-				try_materialize_candidate(*ctor_decl);
+		for (const ConstructorDeclarationNode* ctor_decl : template_ctor_candidates) {
+			if (preferred_template_ctor != nullptr && ctor_decl == preferred_template_ctor) {
+				continue;
 			}
+
+			try_materialize_candidate(*ctor_decl);
 		}
 
 		if (concrete_matches.empty()) {
 			return nullptr;
 		}
 		if (concrete_matches.size() == 1) {
-			return concrete_matches.front();
+			auto materialized = try_instantiate_constructor_template(
+				instantiated_struct_name,
+				*source_template_matches.front(),
+				arg_types,
+				true);
+			return materialized.has_value()
+				? attachInstantiatedCtor(*source_template_matches.front(), *materialized)
+				: nullptr;
 		}
-		return select_best_concrete_ctor(
+		bool concrete_ctor_is_ambiguous = false;
+		const ConstructorDeclarationNode* best_match = selectBestConstructorCandidate(
 			std::span<const ConstructorDeclarationNode* const>(
-				concrete_matches.data(),
-				concrete_matches.size()));
+				concrete_matches.data(), concrete_matches.size()),
+			arg_types,
+			std::span<const ConstructorDeclarationNode* const>(
+				source_template_matches.data(), source_template_matches.size()),
+			compare_source_patterns,
+			concrete_ctor_is_ambiguous);
+		if (concrete_ctor_is_ambiguous) {
+			is_ambiguous = true;
+			return nullptr;
+		}
+		for (size_t match_index = 0; match_index < concrete_matches.size(); ++match_index) {
+			if (concrete_matches[match_index] == best_match) {
+				auto materialized = try_instantiate_constructor_template(
+					instantiated_struct_name,
+					*source_template_matches[match_index],
+					arg_types,
+					true);
+				return materialized.has_value()
+					? attachInstantiatedCtor(*source_template_matches[match_index], *materialized)
+					: nullptr;
+			}
+		}
+		throw InternalError("Selected constructor template specialization is not a materialization candidate");
 	};
 
 	if (preferred_ctor != nullptr) {
