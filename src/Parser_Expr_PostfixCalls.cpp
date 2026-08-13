@@ -42,6 +42,43 @@ bool postfixExplicitTemplateArgsRequireDeferredInstantiation(
 	});
 }
 
+bool typeSpecifierObjectIsConst(const TypeSpecifierNode& type) {
+	if (!type.pointer_levels().empty()) {
+		return hasCVQualifier(type.pointer_levels().back().cv_qualifier, CVQualifier::Const);
+	}
+	return type.is_const();
+}
+
+bool concreteStructHasConstIncompatibleNamedMember(
+	const StructTypeInfo* struct_info,
+	StringHandle member_name_handle,
+	bool receiver_is_const) {
+	if (struct_info == nullptr || !receiver_is_const || !member_name_handle.isValid()) {
+		return false;
+	}
+	auto accept_candidate = [](const StructMemberFunction&, const FunctionDeclarationNode& func_decl) {
+		return !func_decl.failed_substitution();
+	};
+	const ConstAwareMemberCandidateSet const_compatible =
+		collectConstAwareVisibleMemberFunctionCandidates(
+			struct_info,
+			member_name_handle,
+			true,
+			true,
+			accept_candidate);
+	if (!const_compatible.compatible.empty()) {
+		return false;
+	}
+	const ConstAwareMemberCandidateSet any_named =
+		collectConstAwareVisibleMemberFunctionCandidates(
+			struct_info,
+			member_name_handle,
+			false,
+			true,
+			accept_candidate);
+	return !any_named.compatible.empty();
+}
+
 TypeIndex lookupPostfixRecordedDependentOwnerType(StringHandle owner_handle) {
 	if (!owner_handle.isValid()) {
 		return {};
@@ -313,40 +350,30 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 		return nullptr;
 
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-	const FunctionDeclarationNode* match = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.is_constructor || member_func.is_destructor)
-			continue;
-		if (member_func.getName() != member_name_handle)
-			continue;
-		if (!member_func.function_decl.is<FunctionDeclarationNode>())
-			continue;
+	const bool receiver_is_const = typeSpecifierObjectIsConst(*type_opt);
+	const ConstAwareMemberCandidateSet candidates =
+		collectConstAwareVisibleMemberFunctionCandidates(
+			struct_info,
+			member_name_handle,
+			receiver_is_const,
+			true,
+			[](const StructMemberFunction&, const FunctionDeclarationNode& func_decl) {
+				return !func_decl.failed_substitution();
+			});
 
-		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-		// Keep deferred-body concrete members viable for overload selection.
-		// Their bodies are materialized lazily via LazyMemberInstantiationRegistry.
-		if (candidate.failed_substitution()) {
-			continue;
-		}
-		if (match) {
+	auto unique_candidate = [](const InlineVector<const StructMemberFunction*, 8>& list)
+		-> const FunctionDeclarationNode* {
+		if (list.size() != 1 || list[0] == nullptr ||
+			!list[0]->function_decl.is<FunctionDeclarationNode>()) {
 			return nullptr;
 		}
-		match = &candidate;
-	}
+		return &list[0]->function_decl.as<FunctionDeclarationNode>();
+	};
 
-	if (!match) {
-		auto [base_member_func, owner_struct] = struct_info->findMemberFunctionRecursive(member_name_handle);
-		if (base_member_func != nullptr && owner_struct != nullptr && owner_struct != struct_info &&
-			!base_member_func->is_constructor && !base_member_func->is_destructor &&
-			base_member_func->function_decl.is<FunctionDeclarationNode>()) {
-			const auto& candidate = base_member_func->function_decl.as<FunctionDeclarationNode>();
-			if (!candidate.failed_substitution()) {
-				match = &candidate;
-			}
-		}
+	if (const FunctionDeclarationNode* preferred = unique_candidate(candidates.preferred)) {
+		return preferred;
 	}
-
-	return match;
+	return unique_candidate(candidates.compatible);
 }
 
 Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
@@ -925,6 +952,15 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 						if (const StructTypeInfo* object_struct_info = object_type_info->getStructInfo()) {
 							const StringHandle operator_name_handle =
 								StringTable::getOrInternStringHandle(operator_name);
+							if (concreteStructHasConstIncompatibleNamedMember(
+									object_struct_info,
+									operator_name_handle,
+									typeSpecifierObjectIsConst(*object_type_opt))) {
+								return ParseResult::error(
+									"member function '" + std::string(operator_name) +
+										"' cannot be called through a const receiver",
+									member_operator_name_token);
+							}
 							auto [known_operator, owner_struct] =
 								object_struct_info->findMemberFunctionRecursive(operator_name_handle);
 							if (!known_operator || !owner_struct) {
@@ -1422,6 +1458,27 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 					if (has_any_local_overload && !has_arity_match) {
 						return ParseResult::error(
 							"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
+							member_name_token);
+					}
+				}
+			}
+		}
+
+		if (!known_member_func && !instantiated_func.has_value() &&
+			isHardUseLikeInstantiationMode()) {
+			if (auto type_opt = get_expression_type(*result); type_opt.has_value()) {
+				if (const TypeInfo* owner_type_info =
+						tryResolveConcreteStructOwnerType(*type_opt, true);
+					owner_type_info != nullptr &&
+					!owner_type_info->is_incomplete_instantiation_ &&
+					!owner_type_info->isDependentPlaceholder()) {
+					if (concreteStructHasConstIncompatibleNamedMember(
+							owner_type_info->getStructInfo(),
+							StringTable::getOrInternStringHandle(member_name_token.value()),
+							typeSpecifierObjectIsConst(*type_opt))) {
+						return ParseResult::error(
+							"member function '" + std::string(member_name_token.value()) +
+								"' cannot be called through a const receiver",
 							member_name_token);
 					}
 				}

@@ -137,6 +137,9 @@ public:
 	bool has_else() const { return else_statement_.has_value(); }
 	bool has_init() const { return init_statement_.has_value(); }
 	bool is_constexpr() const { return is_constexpr_; }
+	bool has_constexpr_condition_value() const { return constexpr_condition_value_.has_value(); }
+	bool constexpr_condition_value() const { return *constexpr_condition_value_; }
+	void set_constexpr_condition_value(bool value) const { constexpr_condition_value_ = value; }
 
 private:
 	ASTNode condition_;
@@ -144,6 +147,7 @@ private:
 	std::optional<ASTNode> else_statement_;
 	std::optional<ASTNode> init_statement_; // C++20 if (init; condition)
 	bool is_constexpr_; // C++17 if constexpr
+	mutable std::optional<bool> constexpr_condition_value_{};
 };
 
 class ForStatementNode {

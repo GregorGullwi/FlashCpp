@@ -17,6 +17,7 @@
 #include "NameMangling.h"
 #include "MemberFunctionLookupShared.h"
 #include "TemplateTypes.h"
+#include "AstTraversal.h"
 #include <algorithm>
 #include <limits>
 
@@ -252,6 +253,36 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 	}
 
 	return true;
+}
+
+ConstExpr::EvaluationContext makePlaceholderReturnEvalContext(
+	SemanticAnalysis& sema,
+	SymbolTable& symbols,
+	Parser* parser,
+	std::unordered_map<std::string_view, ConstExpr::EvalResult>* constexpr_locals) {
+	ConstExpr::EvaluationContext eval_ctx = parser != nullptr
+		? ConstExpr::EvaluationContext(symbols, *parser)
+		: ConstExpr::EvaluationContext(symbols, sema);
+	eval_ctx.local_bindings = constexpr_locals;
+	return eval_ctx;
+}
+
+// C++17 [stmt.if]/4: the discarded if constexpr branch is not instantiated.
+// Auto return deduction therefore considers only the taken branch once the
+// condition is a converted constant expression of type bool.
+std::optional<bool> tryEvaluateIfConstexprCondition(
+	const IfStatementNode& stmt,
+	ConstExpr::EvaluationContext& eval_ctx) {
+	if (!stmt.is_constexpr()) {
+		return std::nullopt;
+	}
+	ConstExpr::EvalResult cond_result = ConstExpr::Evaluator::evaluate(stmt.get_condition(), eval_ctx);
+	if (!cond_result.success()) {
+		FLASH_LOG(General, Debug, "SemanticAnalysis: if constexpr condition eval failed: ",
+				  cond_result.error_message);
+		return std::nullopt;
+	}
+	return cond_result.as_bool();
 }
 
 // Mark the lazily-registered member that matches the preferred constness, falling back to the
@@ -2393,12 +2424,24 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 		return;
 	}
 
-	if (node.is<FunctionDeclarationNode>()) {
-		FunctionDeclarationNode& func = node.as<FunctionDeclarationNode>();
+	if (FunctionDeclarationNode* func_ptr = get_function_decl_node_mut(node)) {
+		FunctionDeclarationNode& func = *func_ptr;
 		const ASTNode type_node = func.decl_node().type_node();
 		if (type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
-			if (isPlaceholderAutoType(return_type.type())) {
+			const bool is_placeholder = isPlaceholderAutoType(return_type.type());
+			const ASTNode body = func.get_definition().value_or(ASTNode{});
+			const bool was_placeholder =
+				isPlaceholderAutoType(func.deduced_placeholder_return_type());
+			const bool should_rededuce =
+				is_placeholder ||
+				was_placeholder ||
+				(func.is_materialized() &&
+				 AstTraversal::visitASTUntil(body, [](const ASTNode& current) {
+					return current.is<IfStatementNode>() &&
+						current.as<IfStatementNode>().is_constexpr();
+				 }));
+			if (should_rededuce) {
 				pushScope();
 				auto cleanup = ScopeGuard([this]() { popScope(); });
 				registerOuterTemplateBindingsInScope(func);
@@ -2419,7 +2462,10 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 						addLocalType(name, tid);
 					}
 				}
-				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.type());
+				const TypeCategory placeholder_type =
+					is_placeholder ? return_type.type() :
+					(was_placeholder ? func.deduced_placeholder_return_type() : TypeCategory::Auto);
+				if (auto deduced_type = deducePlaceholderReturnType(body, placeholder_type);
 					deduced_type.has_value()) {
 					func.decl_node().set_type_node(*deduced_type);
 					parser().compute_and_set_mangled_name(func, true);
@@ -2541,6 +2587,15 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 
 	std::optional<TypeSpecifierNode> deduced_type;
 	bool has_unresolved_return_expression = false;
+	std::unordered_map<std::string_view, ConstExpr::EvalResult> constexpr_locals;
+
+	auto make_eval_ctx = [&]() {
+		return makePlaceholderReturnEvalContext(
+			*this,
+			symbols_,
+			parser_,
+			&constexpr_locals);
+	};
 
 	auto get_expression_type_for_return = [&](const ASTNode& expr_node) -> std::optional<TypeSpecifierNode> {
 		// Prefer semantic inference so callable-object return deduction uses the
@@ -2593,6 +2648,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		if (node.is<BlockNode>()) {
 			pushScope();
 			auto guard = ScopeGuard([this]() { popScope(); });
+			auto saved_constexpr_locals = constexpr_locals;
+			auto restore_locals = ScopeGuard([&]() { constexpr_locals = std::move(saved_constexpr_locals); });
 			for (const auto& stmt : node.as<BlockNode>().get_statements()) {
 				if (stmt.is<VariableDeclarationNode>()) {
 					const auto& var = stmt.as<VariableDeclarationNode>();
@@ -2603,6 +2660,20 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 						const StringHandle name = var.declaration().identifier_token().handle();
 						if (name.isValid()) {
 							addLocalType(name, tid);
+						}
+					}
+					if (var.is_constexpr() && var.initializer().has_value()) {
+						ConstExpr::EvaluationContext eval_ctx = make_eval_ctx();
+						ConstExpr::EvalResult init_result =
+							ConstExpr::Evaluator::evaluate(*var.initializer(), eval_ctx);
+						if (init_result.success()) {
+							constexpr_locals[var.declaration().identifier_token().value()] =
+								std::move(init_result);
+						} else {
+							FLASH_LOG(General, Debug, "SemanticAnalysis: constexpr local '",
+									  var.declaration().identifier_token().value(),
+									  "' initializer not constant during auto-return deduction: ",
+									  init_result.error_message);
 						}
 					}
 				}
@@ -2620,6 +2691,18 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			if (stmt.has_init() && !visit_returns(stmt.get_init_statement().value())) {
 				return false;
 			}
+			ConstExpr::EvaluationContext eval_ctx = make_eval_ctx();
+			if (const std::optional<bool> taken = tryEvaluateIfConstexprCondition(stmt, eval_ctx)) {
+				stmt.set_constexpr_condition_value(*taken);
+				if (*taken) {
+					return visit_returns(stmt.get_then_statement());
+				}
+				if (stmt.has_else()) {
+					return visit_returns(stmt.get_else_statement().value());
+				}
+				return true;
+			}
+			FLASH_LOG(General, Debug, "SemanticAnalysis: if constexpr condition not constant during auto-return deduction");
 			return visit_returns(stmt.get_then_statement()) &&
 				   (!stmt.has_else() || visit_returns(stmt.get_else_statement().value()));
 		}

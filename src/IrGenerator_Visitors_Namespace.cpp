@@ -507,8 +507,28 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 										"sema must annotate struct-to-non-struct return conversions");
 								} else {
 									if (sema_normalized_current_function_) {
-										throw InternalError(
-											"sema-normalized return lowering should not require struct-without-conversion-operator fallback");
+										StringBuilder err;
+										err.append("sema-normalized return lowering should not require struct-without-conversion-operator fallback: func=");
+										if (current_function_mangled_name_.isValid()) {
+											err.append(StringTable::getStringView(current_function_mangled_name_));
+										} else if (current_function_name_.isValid()) {
+											err.append(StringTable::getStringView(current_function_name_));
+										} else {
+											err.append("<unknown>");
+										}
+										err.append(" expr=");
+										if (source_type_info) {
+											err.append(StringTable::getStringView(source_type_info->name()));
+										} else {
+											err.append(getTypeName(expr_type));
+										}
+										err.append(" return=");
+										if (const TypeInfo* ret_info = tryGetTypeInfo(ret_type_idx)) {
+											err.append(StringTable::getStringView(ret_info->name()));
+										} else {
+											err.append(getTypeName(return_type));
+										}
+										throw InternalError(std::string(err.commit()));
 									}
 									// Legacy parser-only paths (e.g. direct parser-driven codegen
 									// without sema normalization) can still reach this conversion

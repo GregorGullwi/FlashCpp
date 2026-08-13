@@ -6,6 +6,7 @@
 
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "ConstExprEvalHelpers.h"
 #include "BuiltinListInitNarrowing.h"
 #include "CallNodeHelpers.h"
 #include "SemanticAnalysis.h"
@@ -3606,12 +3607,16 @@ EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, c
 }
 
 EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context) {
+	std::string_view var_name = identifier.name();
+	if (const EvalResult* local = findLocalBinding(var_name, context)) {
+		return *local;
+	}
+
 	// Look up the identifier in the symbol table
 	if (!context.symbols) {
 		return EvalResult::error("Cannot evaluate variable reference: no symbol table provided");
 	}
 
-	std::string_view var_name = identifier.name();
 	StringHandle name_handle = identifier.getOrInternNameHandle();
 
 	if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(name_handle, context)) {
