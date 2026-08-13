@@ -324,7 +324,8 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 				return !func_decl.failed_substitution();
 			});
 
-	auto unique_candidate = [](const auto& list) -> const FunctionDeclarationNode* {
+	auto unique_candidate = [](const InlineVector<const StructMemberFunction*, 8>& list)
+		-> const FunctionDeclarationNode* {
 		if (list.size() != 1 || list[0] == nullptr ||
 			!list[0]->function_decl.is<FunctionDeclarationNode>()) {
 			return nullptr;
