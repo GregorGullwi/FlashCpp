@@ -595,6 +595,7 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	dest.set_is_volatile_member_function(src.is_volatile_member_function());
 	dest.set_is_implicit(src.is_implicit());
 	dest.set_inline_always(src.is_inline_always());
+	dest.set_deduced_placeholder_return_type(src.deduced_placeholder_return_type());
 	dest.set_linkage(src.linkage());
 	dest.set_calling_convention(src.calling_convention());
 	if (src.has_template_body_position()) {

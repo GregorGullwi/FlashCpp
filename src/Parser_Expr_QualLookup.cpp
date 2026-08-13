@@ -5,6 +5,7 @@
 #include "ExpressionSubstitutor.h"
 #include "MemberFunctionLookupShared.h"
 #include <span>
+#include <unordered_map>
 #include <unordered_set>
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -3835,6 +3836,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	if (!isPlaceholderAutoType(return_type.type())) {
 		return;	// Not an auto return type, nothing to do
 	}
+	func_decl.set_deduced_placeholder_return_type(return_type.type());
 
 	// Prevent infinite recursion: check if we're already deducing this function's type
 	if (functions_being_deduced_.count(&func_decl) > 0) {
@@ -3863,6 +3865,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
 	bool has_still_dependent_return = false;
 	bool has_unresolved_return_expression = false;
+	std::unordered_map<std::string_view, ConstExpr::EvalResult> constexpr_locals;
 
 	auto make_void_return_type = [&]() {
 		TypeSpecifierNode void_type(TypeCategory::Void, TypeQualifier::None, 0, decl_node.identifier_token(), CVQualifier::None);
@@ -3938,21 +3941,37 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 				}
 			}
 		} else if (node.is<BlockNode>()) {
-			// Recursively search nested blocks
+			auto saved_constexpr_locals = constexpr_locals;
 			const BlockNode& block = node.as<BlockNode>();
 			block.get_statements().visit([&](const ASTNode& stmt) {
+				if (stmt.is<VariableDeclarationNode>()) {
+					const auto& var = stmt.as<VariableDeclarationNode>();
+					if (var.is_constexpr() && var.initializer().has_value()) {
+						ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+						eval_ctx.local_bindings = &constexpr_locals;
+						ConstExpr::EvalResult init_result =
+							ConstExpr::Evaluator::evaluate(*var.initializer(), eval_ctx);
+						if (init_result.success()) {
+							constexpr_locals[var.declaration().identifier_token().value()] =
+								std::move(init_result);
+						}
+					}
+				}
 				self(self, stmt);
 			});
+			constexpr_locals = std::move(saved_constexpr_locals);
 		} else if (node.is<IfStatementNode>()) {
 			const IfStatementNode& if_stmt = node.as<IfStatementNode>();
 			if (if_stmt.is_constexpr()) {
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+				eval_ctx.local_bindings = &constexpr_locals;
 				ConstExpr::EvalResult eval_result =
 					ConstExpr::Evaluator::evaluate(if_stmt.get_condition(), eval_ctx);
 				const bool condition_is_dependent =
 					eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression ||
 					expressionTypeDeductionIsStillDependent(if_stmt.get_condition());
 				if (eval_result.success()) {
+					if_stmt.set_constexpr_condition_value(eval_result.as_bool());
 					if (eval_result.as_bool()) {
 						if (if_stmt.get_then_statement().has_value()) {
 							self(self, if_stmt.get_then_statement());

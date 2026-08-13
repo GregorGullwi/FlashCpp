@@ -56,7 +56,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Runs | 9.13s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
+| `<limits>` | `test_std_limits.cpp` | ✅ Runs | 5.66s wall (retested 2026-08-13, Windows/MSVC STL 14.44). |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Runs | 4.56s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Runs | 3.07s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
 | `<version>` | `test_std_version.cpp` | ✅ Runs | 3.14s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
@@ -64,16 +64,16 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Runs | 8.55s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 11.75s wall (retested 2026-08-11, Windows/MSVC STL 14.44). Namespace-scope ternary typing succeeds; late `view_interface` aggregate-layout diagnostics are followed by missing inherited member `_Has_value`. |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 12.44s wall (retested 2026-08-11, Windows/MSVC STL 14.44). Namespace-scope ternary typing succeeds; deferred function queue still receives an unmaterialized function after `view_interface` layout failures. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 10.36s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Shared first stop: `begin`/`end` lowering sees `std::ranges::_Begin::_Cpo` against a declared `int` return. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 10.82s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Same `begin`/`end` CPO-object vs `int` return stop as `<iterator>`. |
 | `<utility>` | `test_std_utility.cpp` | ❌ Link Error | 4.84s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Duplicate `std::greater`, `std::less`, and `std::equivalent` definitions. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Runs | 4.53s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Runs | 5.18s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | 16.30s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `_Hash_array_representation` overload set fails during template replay. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | 16.86s wall (retested 2026-08-02, Windows/MSVC STL 14.44). MSVC `<xstring>` stops with an expected identifier token diagnostic. |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | 11.55s wall (retested 2026-08-11, Windows/MSVC STL 14.44). `view_interface::empty` has untyped `begin`/`end` equality operands; `front`/`back` then lower unknown aggregate results without canonical layout metadata. |
+| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | 9.76s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Same `begin`/`end` CPO-object vs `int` return stop as `<iterator>`. |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | 12.38s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `_Stack_space` array bound cannot find `_Optimistic_count` in constant expression. |
-| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | 11.51s wall (retested 2026-08-11, Windows/MSVC STL 14.44). `view_interface::empty` has untyped `begin`/`end` equality operands; `front`/`back` then lower unknown aggregate results without canonical layout metadata. |
+| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | 9.58s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Same `begin`/`end` CPO-object vs `int` return stop as `<iterator>`. |
 | `<tuple>` | `test_std_tuple.cpp` | ✅ Runs | Retested 2026-08-13 with Windows/MSVC STL 14.44. Constructor-template partial ordering, implicit base-constructor overload resolution, zero-argument default-template deduction, and static-member definition ownership are covered by reduced non-`std` regressions. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 12.72s wall (retested 2026-08-02, Windows/MSVC STL 14.44). First parser stop is in the MSVC allocator/vector implementation. |
 | `<deque>` | `test_std_deque.cpp` | ❌ Compile Error | 12.37s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
@@ -95,8 +95,8 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 16.33s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ❌ Link Error | 4.98s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Missing RTTI/exception-runtime symbols. |
 | `<typeindex>` | `test_std_typeindex.cpp` | ✅ Compiled (compile-only) | 2.28s wall / 2.22s compiler total (retested 2026-08-02, Windows/MSVC STL 14.44). No `main`; direct compile-only probe exits 0. |
-| `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 11.54s wall (retested 2026-08-11, Windows/MSVC STL 14.44). `view_interface::empty` has untyped `begin`/`end` equality operands; `front`/`back` then lower unknown aggregate results without canonical layout metadata. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | 11.75s wall (retested 2026-08-11, Windows/MSVC STL 14.44). CPO `begin`/`end` results still do not provide the exact iterator types/layout required by `view_interface`. |
+| `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 10.17s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Same `begin`/`end` CPO-object vs `int` return stop as `<iterator>`. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | 12.08s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `begin`/`end` lowering sees `std::ranges::_Begin::_Cpo` against a declared `int` return. |
 | `<variant>` | `test_std_variant.cpp` | ❌ Compile Error | 12.32s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `begin` overload deduction fails during template replay. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
@@ -155,17 +155,23 @@ First stop and the language mechanism to fix. Not a session work-log.
 
 | Header | Stop | Mechanism to fix |
 |--------|------|------------------|
-| `<optional>` | Sema/codegen: late aggregate layout followed by missing inherited member `_Has_value` | Complete deferred/inherited base materialization and canonical aggregate layout metadata |
-| `<any>` | Codegen: Phase 15 init conversion / unique-id / pack-expansion IR | Exact result types, complete aggregate layout, and pack expansion before codegen |
-| `<span>` | Codegen: `view_interface::empty` comparison and `_Cast` aggregate layout | Exact CPO `begin`/`end` result types and complete canonical aggregate layout |
+| `<optional>` | Codegen: `begin`/`end` return `std::ranges::_Begin::_Cpo` while the function return is `int` | Deduce/materialize the CPO `begin`/`end` callable so the declared return matches the CPO object or the selected `operator()` result, not a substituted `int` |
+| `<any>` | Same `begin`/`end` CPO-object vs `int` stop | Same as `<iterator>` |
+| `<array>` | Same `begin`/`end` CPO-object vs `int` stop | Same as `<iterator>` |
+| `<span>` | Same `begin`/`end` CPO-object vs `int` stop | Same as `<iterator>` |
+| `<numeric>` | Same `begin`/`end` CPO-object vs `int` stop | Same as `<iterator>` |
 | `<vector>` | Sema: `_Pocca(_Al, _Right_al)` overload/template instantiation fails | Preserve and resolve definition-bound dependent overload sets through allocator-trait member replay |
 | `<string_view>` | Sema: lazy replay of `_String_view_iterator::operator+` fails after dependent `noexcept` evaluation | Complete generic lazy member-body replay for self-referential class-template members; investigate the associated dependent `_Hash_array_representation` deduction failures |
-| `<iterator>` | Codegen: `view_interface::empty` comparison and `_Cast` aggregate layout | Complete types for CPO/`auto` results in ranges interface members |
+| `<iterator>` | Codegen: `std::begin`/`std::end` on an instantiated `subrange` (`?begin@std@@YAH...subrange$...`) return `std::ranges::_Begin::_Cpo` while the trailing-decltype return is `int` | Materialize the concrete `begin`/`end` members on the class-template instantiation before trailing-`decltype` and body typing; do not synthesize an `int`-returning member call when lookup fails |
 | `<ranges>` | Template-instantiation iteration limit (sticky abort) | Variadic `invoke` / CPO instantiation without SoftProbe retry storms |
 
 The 2026-07-28 CRTP `auto&` / `view_interface::_Cast` regression is `tests/test_crtp_auto_ref_from_member_call_ret0.cpp`. Eager and lazy class-template member-body substitution now rebind pattern member-call returns (e.g. `Derived&` / `_Derived&`) through the active substitution map, attach a concrete `parser_return_type_hint`, and allow `get_expression_type` to type POI-completed dependent-unqualified calls. Local `auto`/`auto&` deduction then runs `applyPlaceholderDeclaratorDeduction` instead of leaving `TypeCategory::Auto` for the hard-use audit. This clears the shared `view_interface::empty` stop across `<optional>`, `<vector>`, `<string_view>`, `<any>`, `<span>`, `<iterator>`, and `<ranges>` without recognizing any STL helper name.
 
-The 2026-08-11 `decltype(auto)` value-category regression is `tests/test_decltype_auto_deref_return_ret0.cpp`. Parser-time and semantic late return deduction now share sema's expression value-category result: dereferencing a pointer deduces `T&` (including aggregate references) instead of copying only the expression's object type and producing `T`. This supplies exact reference semantics before lowering rather than repairing an aggregate in codegen. The refreshed standard-header probes do not advance yet: their CPO member-template calls can still select an unmaterialized deduced-return signature shell, so `view_interface::empty`, `front`, and `back` lack a concrete `operator()` result before the new rule can apply. That separate blocker is reduced in `docs/KNOWN_ISSUES.md`.
+The 2026-08-11 `decltype(auto)` value-category regression is `tests/test_decltype_auto_deref_return_ret0.cpp`. Parser-time and semantic late return deduction now share sema's expression value-category result: dereferencing a pointer deduces `T&` (including aggregate references) instead of copying only the expression's object type and producing `T`. This supplies exact reference semantics before lowering rather than repairing an aggregate in codegen. Late re-deduction of placeholder returns must replay `decltype(auto)` rather than plain `auto`, or the reference is stripped again.
+
+The 2026-08-13 member-template `auto` return regression is `tests/test_member_operator_auto_begin_struct_return_ret0.cpp`, with `if constexpr` coverage in `tests/test_if_constexpr_auto_return_discards_else_struct_ret0.cpp`, `tests/test_if_constexpr_member_operator_auto_struct_return_ret0.cpp`, and the CPO-shaped `tests/test_cpo_consteval_choice_auto_struct_return_ret0.cpp`. Instantiating a member function template used `resolve_template_type` on the `auto` return's TypeIndex, which could alias template parameter `T` and freeze the return as the range argument (16-byte struct) while the body returned an 8-byte iterator — same-size structs hid the mismatch. Placeholder `auto`/`decltype(auto)` returns are now left unsubstituted until deduction; constexpr function-local bindings feed `if constexpr` pruning; sema re-deduces placeholder returns and records the taken `if constexpr` branch for codegen.
+
+Const/non-const `begin()` overloads on a class type must not be treated as an unresolvable member (which previously synthesized an `int` return for trailing `decltype(c.begin())`). Parser member lookup now reuses `collectConstAwareVisibleMemberFunctionCandidates`: `tests/test_trailing_decltype_const_overload_begin_not_cpo_ret0.cpp`, `tests/test_trailing_decltype_requires_begin_not_cpo_ret0.cpp`, `tests/test_trailing_decltype_member_begin_not_cpo_ret0.cpp`, and `tests/test_crtp_cpo_trailing_decltype_begin_ret0.cpp`. The shared header stop is `std::begin`/`std::end` of an instantiated `subrange`: the body is a member call named `begin`/`end` with no parent struct and a fake `int` return, while codegen types the call as `std::ranges::_Begin::_Cpo`. Reduced non-`std` copies with explicit members succeed; the remaining gap is materializing lazy/constrained `begin`/`end` on the STL `subrange` instantiation so trailing `decltype` and the body see the iterator, not a placeholder `int` or the CPO object.
 
 The 2026-07-31 structural class-type NTTP regression is `tests/test_structural_class_nttp_ret0.cpp`. Template arguments now retain a recursive structural value identity, including nested object members, through evaluation, substitution, environment replay, specialization lookup, and mangling. The old diagnostic was a false positive caused by treating concrete class metadata as an unsupported placeholder; the reduced test now compiles, links, and runs. `tests/test_structural_class_nttp_unsupported_fail.cpp` remains an expected failure because constexpr member access on the substituted structural object is a separate unresolved evaluator path. The fresh `<optional>` probe now reaches late inherited-member/layout work instead of failing at `optional:269`.
 

@@ -7,6 +7,7 @@
 #include "OverloadResolution.h"
 #include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
+#include <unordered_map>
 
 namespace {
 
@@ -460,6 +461,14 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			template_params,
 			template_args,
 			state);
+	};
+	auto bind_constexpr_locals = [&]() {
+		std::unordered_map<std::string_view, ConstExpr::EvalResult> bindings;
+		bindings.reserve(state.constexpr_locals.size());
+		for (const auto& local : state.constexpr_locals) {
+			bindings.emplace(local.name, ConstExpr::EvalResult::from_int(local.value));
+		}
+		return bindings;
 	};
 	const StringHandle current_owner_type_name = state.owner_type_name;
 	// Helper function to get type name as string
@@ -2013,6 +2022,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		const BlockNode& block = node.as<BlockNode>();
 		const bool introduces_scope = !block.is_synthetic_decl_list();
 		const size_t saved_binding_count = state.local_bindings.size();
+		const size_t saved_constexpr_count = state.constexpr_locals.size();
 
 		auto new_block = emplace_node<BlockNode>();
 		BlockNode& new_block_ref = new_block.as<BlockNode>();
@@ -2024,6 +2034,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 
 		if (introduces_scope) {
 			state.local_bindings.resize(saved_binding_count);
+			state.constexpr_locals.resize(saved_constexpr_count);
 		}
 
 		return new_block;
@@ -2032,6 +2043,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		// Handle for statements — init is in scope for condition/update/body.
 		const ForStatementNode& for_stmt = node.as<ForStatementNode>();
 		const size_t saved_binding_count = state.local_bindings.size();
+		const size_t saved_constexpr_count = state.constexpr_locals.size();
 
 		auto init_stmt = for_stmt.get_init_statement().has_value()
 			? std::optional<ASTNode>(substitute_nested(*for_stmt.get_init_statement()))
@@ -2045,6 +2057,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		auto body_stmt = substitute_nested(for_stmt.get_body_statement());
 
 		state.local_bindings.resize(saved_binding_count);
+		state.constexpr_locals.resize(saved_constexpr_count);
 		return emplace_node<ForStatementNode>(init_stmt, condition, update_expr, body_stmt);
 
 	} else if (node.is<UnaryOperatorNode>()) {
@@ -2172,6 +2185,14 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		if (var_decl.is_constexpr() && initializer.has_value()) {
 			std::string_view var_name = var_decl.declaration().identifier_token().value();
 			gSymbolTable.insert(var_name, new_var_node);
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+			auto constexpr_bindings = bind_constexpr_locals();
+			eval_ctx.local_bindings = &constexpr_bindings;
+			ConstExpr::EvalResult init_result =
+				ConstExpr::Evaluator::evaluate(*initializer, eval_ctx);
+			if (init_result.success()) {
+				state.constexpr_locals.push_back({var_name, init_result.as_int()});
+			}
 		}
 
 		return new_var_node;
@@ -2189,6 +2210,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		// and introduces a scope spanning the whole if ([stmt.if]/2).
 		const IfStatementNode& if_stmt = node.as<IfStatementNode>();
 		const size_t saved_binding_count = state.local_bindings.size();
+		const size_t saved_constexpr_count = state.constexpr_locals.size();
 
 		auto substituted_init = if_stmt.get_init_statement().has_value()
 			? std::optional<ASTNode>(substitute_nested(*if_stmt.get_init_statement()))
@@ -2198,9 +2220,11 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		// For if constexpr, evaluate the condition at compile time and eliminate the dead branch
 		if (if_stmt.is_constexpr()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+			auto constexpr_bindings = bind_constexpr_locals();
+			eval_ctx.local_bindings = &constexpr_bindings;
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_condition, eval_ctx);
 			if (eval_result.success()) {
-				bool condition_value = eval_result.as_int() != 0;
+				bool condition_value = eval_result.as_bool();
 				FLASH_LOG(Templates, Trace, "if constexpr condition evaluated to ", condition_value ? "true" : "false");
 				ASTNode selected;
 				if (condition_value) {
@@ -2211,6 +2235,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 					selected = emplace_node<BlockNode>();
 				}
 				state.local_bindings.resize(saved_binding_count);
+				state.constexpr_locals.resize(saved_constexpr_count);
 				return selected;
 			}
 		}
@@ -2221,6 +2246,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			: std::nullopt;
 
 		state.local_bindings.resize(saved_binding_count);
+		state.constexpr_locals.resize(saved_constexpr_count);
 		return emplace_node<IfStatementNode>(
 			substituted_condition,
 			substituted_then,

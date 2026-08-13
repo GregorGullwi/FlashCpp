@@ -3171,6 +3171,12 @@ public:
 	// When true, this function should always be inlined and never generate a call
 	void set_inline_always(bool inline_always) { inline_always_ = inline_always; }
 	bool is_inline_always() const { return inline_always_; }
+	void set_deduced_placeholder_return_type(TypeCategory placeholder_type) {
+		deduced_placeholder_return_type_ = placeholder_type;
+	}
+	TypeCategory deduced_placeholder_return_type() const {
+		return deduced_placeholder_return_type_;
+	}
 
 	// Pre-computed mangled name for consistent access across all compiler stages
 	// Generated once during parsing, reused by CodeGen and ObjFileWriter
@@ -3253,6 +3259,7 @@ private:
 	bool is_const_member_function_ = false;	// True if this function is a const member function (K qualifier)
 	bool is_volatile_member_function_ = false;  // True if this function is a volatile member function (V qualifier)
 	bool inline_always_ = false;	 // True if function should always be inlined (e.g., template pure expressions)
+	TypeCategory deduced_placeholder_return_type_ = TypeCategory::Invalid;
 	std::optional<ExpressionHandle> noexcept_expression_; // Optional noexcept(expr) expression
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	std::vector<int64_t> non_type_template_args_;  // Non-type template arguments (e.g., 0 for get<0>)

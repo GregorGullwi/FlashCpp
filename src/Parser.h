@@ -1189,8 +1189,13 @@ private:
 		StringHandle name{};
 		DeclarationNode* declaration = nullptr;
 	};
+	struct SubstitutedConstexprLocal {
+		std::string_view name{};
+		long long value = 0;
+	};
 	struct TemplateBodySubstitutionState {
 		InlineVector<SubstitutedLocalBinding, 8> local_bindings;
+		InlineVector<SubstitutedConstexprLocal, 8> constexpr_locals;
 		TypeIndex owner_type_index{};
 		StringHandle owner_type_name{};
 		bool has_implicit_this = false;

@@ -2431,24 +2431,30 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		normalizeSubstitutedTypeSpec(concrete_alias_spec);
 		return concrete_alias_spec;
 	};
-	// Substitute the return type if it's a template parameter
+	// Substitute the return type if it's a template parameter. Placeholder
+	// auto / decltype(auto) is not a template parameter; substituting its
+	// TypeIndex can accidentally bind it to T and freeze the return as the
+	// argument type before deduction sees the body.
 	const TypeSpecifierNode& return_type_spec = orig_decl.type_specifier_node();
-	auto [return_type_index, return_resolved_arg] = resolve_template_type(return_type_spec.type_index());
-	return_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
-		orig_decl.type_node(),
-		return_type_spec,
-		return_type_index);
+	ASTNode substituted_return_type;
+	if (isPlaceholderAutoType(return_type_spec.type())) {
+		substituted_return_type = emplace_node<TypeSpecifierNode>(return_type_spec);
+	} else {
+		auto [return_type_index, return_resolved_arg] = resolve_template_type(return_type_spec.type_index());
+		return_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+			orig_decl.type_node(),
+			return_type_spec,
+			return_type_index);
 
-	// Create mangled token
+		substituted_return_type = rebuildResolvedSubstitutedTypeSpec(
+			return_type_spec,
+			return_type_index,
+			return_resolved_arg);
+	}
+
 	Token mangled_token(Token::Type::Identifier, mangled_name,
 						orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
 						orig_decl.identifier_token().file_index());
-
-	// Create return type node
-	ASTNode substituted_return_type = rebuildResolvedSubstitutedTypeSpec(
-		return_type_spec,
-		return_type_index,
-		return_resolved_arg);
 
 	// Create the new function declaration
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);

@@ -313,40 +313,29 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 		return nullptr;
 
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-	const FunctionDeclarationNode* match = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.is_constructor || member_func.is_destructor)
-			continue;
-		if (member_func.getName() != member_name_handle)
-			continue;
-		if (!member_func.function_decl.is<FunctionDeclarationNode>())
-			continue;
+	const bool receiver_is_const = type_opt->is_const();
+	const ConstAwareMemberCandidateSet candidates =
+		collectConstAwareVisibleMemberFunctionCandidates(
+			struct_info,
+			member_name_handle,
+			receiver_is_const,
+			true,
+			[](const StructMemberFunction&, const FunctionDeclarationNode& func_decl) {
+				return !func_decl.failed_substitution();
+			});
 
-		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-		// Keep deferred-body concrete members viable for overload selection.
-		// Their bodies are materialized lazily via LazyMemberInstantiationRegistry.
-		if (candidate.failed_substitution()) {
-			continue;
-		}
-		if (match) {
+	auto unique_candidate = [](const auto& list) -> const FunctionDeclarationNode* {
+		if (list.size() != 1 || list[0] == nullptr ||
+			!list[0]->function_decl.is<FunctionDeclarationNode>()) {
 			return nullptr;
 		}
-		match = &candidate;
-	}
+		return &list[0]->function_decl.as<FunctionDeclarationNode>();
+	};
 
-	if (!match) {
-		auto [base_member_func, owner_struct] = struct_info->findMemberFunctionRecursive(member_name_handle);
-		if (base_member_func != nullptr && owner_struct != nullptr && owner_struct != struct_info &&
-			!base_member_func->is_constructor && !base_member_func->is_destructor &&
-			base_member_func->function_decl.is<FunctionDeclarationNode>()) {
-			const auto& candidate = base_member_func->function_decl.as<FunctionDeclarationNode>();
-			if (!candidate.failed_substitution()) {
-				match = &candidate;
-			}
-		}
+	if (const FunctionDeclarationNode* preferred = unique_candidate(candidates.preferred)) {
+		return preferred;
 	}
-
-	return match;
+	return unique_candidate(candidates.compatible);
 }
 
 Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
