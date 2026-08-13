@@ -397,6 +397,14 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// This must be checked BEFORE assuming it's a function definition
 		StringHandle member_name_handle = function_name_token.handle();
 		StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle);
+		if (static_member != nullptr) {
+			decl_node.set_mangled_name(
+				StringBuilder()
+					.append(StringTable::getStringView(struct_info->getName()))
+					.append("::"sv)
+					.append(function_name_token.value())
+					.commit());
+		}
 		if (static_member != nullptr && peek() == "("_tok) {
 			// This is a static member variable definition with parenthesized initializer
 			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition: ",
@@ -1549,6 +1557,9 @@ ParseResult Parser::finalize_static_member_init(StructStaticMember* static_membe
 												ScopedTokenPosition& saved_position) {
 	ASTNode return_type_node = decl_node.type_node();
 	auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, name_token);
+	if (decl_node.has_mangled_name()) {
+		var_decl_ref.set_mangled_name(decl_node.mangled_name());
+	}
 
 	if (init_expr.has_value()) {
 		static_member->initializer = *init_expr;

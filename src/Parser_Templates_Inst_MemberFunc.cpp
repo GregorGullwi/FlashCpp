@@ -1251,7 +1251,13 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		lazy_info.template_args.push_back(template_arg);
 	}
 
-	return instantiateLazyMemberFunction(lazy_info, materialize_body);
+	std::optional<ASTNode> instantiated =
+		instantiateLazyMemberFunction(lazy_info, materialize_body);
+	if (instantiated.has_value() && instantiated->is<ConstructorDeclarationNode>()) {
+		instantiated->as<ConstructorDeclarationNode>()
+			.set_template_specialization_source(&ctor_decl);
+	}
+	return instantiated;
 }
 
 const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate(
@@ -1495,6 +1501,10 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			// (e.g. Inner(T*,U) kept with dependent T*) can suppress probing the
 			// correct constructor template overload.
 			if (matches_call_arguments(*preferred_ctor)) {
+				if (const ConstructorDeclarationNode* source_template =
+						preferred_ctor->template_specialization_source()) {
+					return materialize_template_ctor_candidates(source_template);
+				}
 				return preferred_ctor;
 			}
 			preferred_ctor = nullptr;

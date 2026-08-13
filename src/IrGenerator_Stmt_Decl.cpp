@@ -444,7 +444,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		}
 		std::string_view var_name_view = sb.commit();
 			// Phase 3: Intern the string using StringTable
-		StringHandle var_name = StringTable::getOrInternStringHandle(var_name_view);
+			StringHandle var_name = StringTable::getOrInternStringHandle(var_name_view);
+		if (is_global && decl.has_mangled_name()) {
+			if (emitted_static_members_.contains(var_name)) {
+				return;
+			}
+			emitted_static_members_.insert(var_name);
+		}
 
 			// Store mapping from simple name to mangled name for later lookups
 			// This is needed for anonymous namespace variables

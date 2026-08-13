@@ -711,6 +711,12 @@ public:
 	void set_lazy_member_registry_key(StringHandle key) { lazy_member_registry_key_ = key; }
 	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
 	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
+	void set_template_specialization_source(const ConstructorDeclarationNode* source) {
+		template_specialization_source_ = source;
+	}
+	const ConstructorDeclarationNode* template_specialization_source() const {
+		return template_specialization_source_;
+	}
 
 private:
 	StringHandle struct_name_;
@@ -739,6 +745,7 @@ private:
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 	StringHandle lazy_member_registry_key_;
+	const ConstructorDeclarationNode* template_specialization_source_ = nullptr;
 };
 
 // Destructor declaration node

@@ -2397,8 +2397,13 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						// Only call base default constructor if the base class actually has constructors
 						// This avoids link errors when inheriting from classes without constructors
 						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
-							// Call default constructor with no arguments
-							fillInDefaultConstructorArguments(ctor_op, *base_struct_info);
+							const std::span<const ASTNode> no_arguments;
+							ctor_op.resolved_constructor =
+								resolveCodegenConstructorFromArgs(*base_struct_info, no_arguments);
+							if (ctor_op.resolved_constructor == nullptr &&
+								base_struct_info->needs_default_constructor) {
+								fillInDefaultConstructorArguments(ctor_op, *base_struct_info);
+							}
 							finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 						}
