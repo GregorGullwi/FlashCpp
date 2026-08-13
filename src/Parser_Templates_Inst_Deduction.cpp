@@ -4780,17 +4780,6 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 	std::span<const TypeSpecifierNode> arg_types,
 	NamespaceHandle source_namespace,
 	int recursion_depth) {
-	bool all_variadic = true;
-	for (const TemplateParameterNode& template_param : template_params) {
-		if (!template_param.is_variadic()) {
-			all_variadic = false;
-			break;
-		}
-	}
-	if (arg_types.empty() && !all_variadic) {
-		return std::nullopt;
-	}
-
 	size_t min_required_args = 0;
 	size_t non_pack_params = 0;
 	bool has_function_parameter_pack = false;

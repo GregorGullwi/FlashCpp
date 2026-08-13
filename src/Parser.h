@@ -3064,9 +3064,9 @@ public:
 			enqueuePendingSemanticRoot(*symbol);
 		}
 	}
-	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
+	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info, bool materialize_body);  // NEW: Instantiate lazy member function on-demand
 	std::optional<ASTNode> instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key);
-	std::optional<ASTNode> try_instantiate_constructor_template(StringHandle instantiated_struct_name, const ConstructorDeclarationNode& ctor_decl, std::span<const TypeSpecifierNode> arg_types);
+	std::optional<ASTNode> try_instantiate_constructor_template(StringHandle instantiated_struct_name, const ConstructorDeclarationNode& ctor_decl, std::span<const TypeSpecifierNode> arg_types, bool materialize_body);
 	const ConstructorDeclarationNode* materializeMatchingConstructorTemplate(
 		StringHandle instantiated_struct_name,
 		const StructTypeInfo& struct_info,

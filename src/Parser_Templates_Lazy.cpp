@@ -95,7 +95,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey
 		return std::nullopt;
 	}
 
-	auto instantiated = instantiateLazyMemberFunction(*lazy_info_opt);
+	auto instantiated = instantiateLazyMemberFunction(*lazy_info_opt, true);
 	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
@@ -108,7 +108,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey
 	return instantiated;
 }
 
-std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info) {
+std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
+	const LazyMemberFunctionInfo& lazy_info,
+	bool materialize_body) {
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ",
 			  lazy_info.identity.instantiated_owner_name, "::", effectiveLookupName(lazy_info.identity));
 
@@ -328,6 +330,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			} else {
 				new_ctor_ref.add_parameter_node(param);
 			}
+		}
+		if (!materialize_body) {
+			pack_param_info_.resize(saved_ctor_pack_info);
+			return new_ctor_node;
 		}
 
 		// Build converted_template_args early so member/base initializer expressions

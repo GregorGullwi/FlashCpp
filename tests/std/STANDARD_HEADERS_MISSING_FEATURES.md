@@ -17,7 +17,6 @@ Heavy template instantiation still causes >10s timeouts on many headers.
 - `tests/std/test_std_string.cpp`
 - `tests/std/test_std_vector.cpp`
 - `tests/std/test_std_array.cpp`
-- `tests/std/test_std_tuple.cpp`
 - `tests/std/test_std_optional.cpp`
 - `tests/std/test_std_variant.cpp`
 - `tests/std/test_std_memory.cpp`
