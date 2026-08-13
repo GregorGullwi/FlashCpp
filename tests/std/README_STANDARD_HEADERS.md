@@ -53,6 +53,8 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 ## Current Status
 
 > **Notes** column = current first stop. Blockers section below lists the mechanism to fix.
+>
+> The 2026-08-13 Windows/MSVC STL 14.44 sweep reran every previously failing `test_std_*.cpp` probe and the documented compile-only headers with the installed MSVC include tree. Compile-only rows use a temporary `int main()` translation unit; executable rows use `tests/run_all_tests.ps1` and MSVC `link.exe`.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -64,40 +66,40 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Runs | 8.55s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 10.36s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Shared first stop: `begin`/`end` lowering sees `std::ranges::_Begin::_Cpo` against a declared `int` return. |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 10.82s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Same `begin`/`end` CPO-object vs `int` return stop as `<iterator>`. |
-| `<utility>` | `test_std_utility.cpp` | ❌ Link Error | 4.84s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Duplicate `std::greater`, `std::less`, and `std::equivalent` definitions. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 13.29s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `three_way_comparable_with` is not constant; `view_interface` comparison operands then fail to resolve and `_Has_value` is missing. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 13.00s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve. |
+| `<utility>` | `test_std_utility.cpp` | ✅ Runs | 4.74s wall (retested 2026-08-13, Windows/MSVC STL 14.44). MSVC compile, link, and runtime probe now succeed. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Runs | 4.53s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Runs | 5.18s wall (retested 2026-08-02, Windows/MSVC STL 14.44). |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | 16.30s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `_Hash_array_representation` overload set fails during template replay. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | 16.86s wall (retested 2026-08-02, Windows/MSVC STL 14.44). MSVC `<xstring>` stops with an expected identifier token diagnostic. |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | 9.76s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Same `begin`/`end` CPO-object vs `int` return stop as `<iterator>`. |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | 12.38s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `_Stack_space` array bound cannot find `_Optimistic_count` in constant expression. |
-| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | 9.58s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Same `begin`/`end` CPO-object vs `int` return stop as `<iterator>`. |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | 14.73s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `_Hash_array_representation` overload replay still fails while reparsing `_String_view_iterator::operator+`. |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | 16.14s wall (retested 2026-08-13, Windows/MSVC STL 14.44). MSVC `<xstring>` still stops with an expected identifier token diagnostic. |
+| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | 11.95s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve. |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | 12.42s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `_Stack_space` array bound still cannot find `_Optimistic_count` in constant expression. |
+| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | 11.77s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve. |
 | `<tuple>` | `test_std_tuple.cpp` | ✅ Runs | Retested 2026-08-13 with Windows/MSVC STL 14.44. Constructor-template partial ordering, implicit base-constructor overload resolution, zero-argument default-template deduction, and static-member definition ownership are covered by reduced non-`std` regressions. |
-| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 12.72s wall (retested 2026-08-02, Windows/MSVC STL 14.44). First parser stop is in the MSVC allocator/vector implementation. |
-| `<deque>` | `test_std_deque.cpp` | ❌ Compile Error | 12.37s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<list>` | `test_std_list.cpp` | ❌ Compile Error | 12.41s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 12.54s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<stack>` | `test_std_stack.cpp` | ❌ Compile Error | 12.38s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | 12.66s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 13.26s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<map>` | `test_std_map.cpp` | ❌ Compile Error | 13.01s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Dependent `_Seek_to` overloads fail; instantiated `noexcept` is not a constant expression. |
-| `<set>` | `test_std_set.cpp` | ❌ Compile Error | 12.66s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC/UCRT implementation. |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | 13.13s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Sticky template-instantiation iteration limit. |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Compile Error | 6.29s wall (retested 2026-08-02, Windows/MSVC STL 14.44). MSVC `<cmath>` `__ceilf` overload is unresolved. |
-| `<sstream>` | `test_std_sstream.cpp` | ❌ Compile Error | 6.32s wall (retested 2026-08-02, Windows/MSVC STL 14.44). MSVC `<cmath>` `__ceilf` overload is unresolved. |
-| `<fstream>` | `test_std_fstream.cpp` | ❌ Compile Error | 16.68s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | 18.31s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<atomic>` | `test_std_atomic.cpp` | ❌ Compile Error | 4.87s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<new>` | `test_std_new.cpp` | ❌ Link Error | 4.77s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Missing MSVC exception-runtime symbols. |
-| `<exception>` | `test_std_exception.cpp` | ❌ Link Error | 4.91s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Missing `__ExceptionPtrCompare` and `terminate`. |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 16.33s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Parser stop in the MSVC implementation. |
-| `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ❌ Link Error | 4.98s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Missing RTTI/exception-runtime symbols. |
+| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 12.74s wall (retested 2026-08-13, Windows/MSVC STL 14.44). First parser stop remains in the MSVC allocator/vector implementation. |
+| `<deque>` | `test_std_deque.cpp` | ❌ Compile Error | 12.35s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<list>` | `test_std_list.cpp` | ❌ Compile Error | 13.02s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 13.09s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<stack>` | `test_std_stack.cpp` | ❌ Compile Error | 12.76s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | 12.73s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 12.86s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<map>` | `test_std_map.cpp` | ❌ Compile Error | 13.37s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Dependent `_Seek_to` overloads still fail; instantiated `noexcept` is not a constant expression. |
+| `<set>` | `test_std_set.cpp` | ❌ Compile Error | 12.60s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC/UCRT implementation. |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | 13.65s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Sticky template-instantiation iteration limit remains. |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Compile Error | 7.71s wall (retested 2026-08-13, Windows/MSVC STL 14.44). MSVC `<cmath>` `__ceilf` overload remains unresolved. |
+| `<sstream>` | `test_std_sstream.cpp` | ❌ Compile Error | 7.25s wall (retested 2026-08-13, Windows/MSVC STL 14.44). MSVC `<cmath>` `__ceilf` overload remains unresolved. |
+| `<fstream>` | `test_std_fstream.cpp` | ❌ Compile Error | 21.52s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | 19.61s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<atomic>` | `test_std_atomic.cpp` | ❌ Compile Error | 5.55s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<new>` | `test_std_new.cpp` | ❌ Link Error | 5.34s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Missing MSVC exception-runtime symbols remains. |
+| `<exception>` | `test_std_exception.cpp` | ❌ Link Error | 5.42s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Missing `__ExceptionPtrCompare` and `terminate` remains. |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 17.17s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ❌ Link Error | 4.75s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Missing RTTI/exception-runtime symbols remains. |
 | `<typeindex>` | `test_std_typeindex.cpp` | ✅ Compiled (compile-only) | 2.28s wall / 2.22s compiler total (retested 2026-08-02, Windows/MSVC STL 14.44). No `main`; direct compile-only probe exits 0. |
-| `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 10.17s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Same `begin`/`end` CPO-object vs `int` return stop as `<iterator>`. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | 12.08s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `begin`/`end` lowering sees `std::ranges::_Begin::_Cpo` against a declared `int` return. |
-| `<variant>` | `test_std_variant.cpp` | ❌ Compile Error | 12.32s wall (retested 2026-08-02, Windows/MSVC STL 14.44). `begin` overload deduction fails during template replay. |
+| `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 11.62s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | 12.45s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve. |
+| `<variant>` | `test_std_variant.cpp` | ❌ Compile Error | 11.91s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `begin` overload deduction and dependent `_Seek_to` replay still fail. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~16ms (C++23) |
@@ -106,10 +108,10 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<expected>` | N/A | ✅ Compiled | ~62ms (C++23) |
 | `<text_encoding>` | N/A | ✅ Compiled | ~45ms (C++26) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
-| `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
-| `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Compile Error | 5.05s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Ambiguous call to `__iso_volatile_store32` in MSVC `<atomic>`. |
-| `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Compile Error | 13.44s wall (retested 2026-08-02, Windows/MSVC STL 14.44). Ambiguous call to `__iso_volatile_store32` in MSVC `<atomic>`. |
+| `<barrier>` | N/A | ❌ Compile Error | 2.77s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion; no crash in this probe. |
+| `<coroutine>` | N/A | ✅ Compiled | 0.12s (retested 2026-08-13, Windows/MSVC STL 14.44). Direct MSVC include probe exits 0. |
+| `<latch>` | `test_std_latch.cpp` | ❌ Compile Error | 4.84s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Ambiguous call to `__iso_volatile_store32` in MSVC `<atomic>`. |
+| `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Compile Error | 13.43s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Ambiguous call to `__iso_volatile_store32` in MSVC `<atomic>`. |
 | `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~70ms |
 | `<cstring>` | N/A | ✅ Compiled | ~64ms |
@@ -128,24 +130,24 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<ctime>` | N/A | ✅ Compiled | ~58ms |
 | `<climits>` | N/A | ✅ Compiled | ~30ms |
 | `<cfloat>` | N/A | ✅ Compiled | ~32ms |
-| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | 4.69s wall (retested 2026-08-02, Windows/MSVC STL 14.44). No matching function for `__ceilf` in MSVC `<cmath>`. |
-| `<system_error>` | N/A | 💥 Crash | ~4400ms (retested 2026-04-11). |
-| `<scoped_allocator>` | N/A | ❌ Compile Error | ~1868ms (retested 2026-04-11). "unsupported PackExpansionExprNode". |
+| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | 4.63s wall (retested 2026-08-13, Windows/MSVC STL 14.44). No matching function for `__ceilf` in MSVC `<cmath>`. |
+| `<system_error>` | N/A | ❌ Compile Error | 13.34s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion; no crash in this probe. |
+| `<scoped_allocator>` | N/A | ❌ Compile Error | 10.00s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
 | `<charconv>` | N/A | ✅ Compiled | ~930ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
-| `<mdspan>` | N/A | ❌ Compile Error | ~12ms (retested 2026-04-11). |
-| `<flat_map>` | N/A | ❌ Compile Error | ~12ms (retested 2026-04-11). |
-| `<flat_set>` | N/A | ❌ Compile Error | ~13ms (retested 2026-04-11). |
-| `<unordered_set>` | N/A | ❌ Compile Error | ~2801ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<unordered_map>` | N/A | ❌ Compile Error | ~2801ms (retested 2026-04-11). Call to deleted function 'swap'. |
-| `<mutex>` | N/A | ❌ Compile Error | ~3690ms (retested 2026-04-11). "unsupported PackExpansionExprNode" — previously was a parse error, now gets further. |
-| `<condition_variable>` | N/A | ❌ Compile Error | ~5581ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a crash, now parses successfully. |
-| `<thread>` | N/A | ❌ Compile Error | ~2801ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. |
-| `<semaphore>` | N/A | ❌ Codegen Error | ~3207ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'" — previously was a parse error, now parses successfully. |
-| `<stop_token>` | N/A | 💥 Crash | ~6254ms (retested 2026-04-11). |
-| `<bitset>` | N/A | 💥 Crash | ~4850ms (retested 2026-04-11). |
-| `<execution>` | N/A | ❌ Compile Error | ~3331ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. |
-| `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
+| `<mdspan>` | N/A | ✅ Compiled | 0.16s (retested 2026-08-13, Windows/MSVC STL 14.44). Direct MSVC include probe exits 0. |
+| `<flat_map>` | N/A | ❌ Include Error | 0.03s (retested 2026-08-13, Windows/MSVC STL 14.44). Header is not present in the installed MSVC STL. |
+| `<flat_set>` | N/A | ❌ Include Error | 0.03s (retested 2026-08-13, Windows/MSVC STL 14.44). Header is not present in the installed MSVC STL. |
+| `<unordered_set>` | N/A | ❌ Compile Error | 2.77s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<unordered_map>` | N/A | ❌ Compile Error | 2.74s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<mutex>` | N/A | ❌ Compile Error | 14.27s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<condition_variable>` | N/A | ❌ Compile Error | 10.62s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<thread>` | N/A | ❌ Compile Error | 10.33s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<semaphore>` | N/A | ❌ Compile Error | 7.57s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<stop_token>` | N/A | ❌ Compile Error | 2.73s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<bitset>` | N/A | ❌ Compile Error | 13.26s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<execution>` | N/A | ❌ Compile Error | 9.87s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
+| `<generator>` | N/A | ✅ Compiled | 0.12s (retested 2026-08-13, Windows/MSVC STL 14.44; C++23 header). Direct MSVC include probe exits 0. |
 
 **Legend:** ✅ Runs / Compiled | ❌ Compile/Link/Parse/Include Error | 💥 Crash
 
@@ -155,14 +157,14 @@ First stop and the language mechanism to fix. Not a session work-log.
 
 | Header | Stop | Mechanism to fix |
 |--------|------|------------------|
-| `<optional>` | Codegen: `begin`/`end` return `std::ranges::_Begin::_Cpo` while the function return is `int` | Deduce/materialize the CPO `begin`/`end` callable so the declared return matches the CPO object or the selected `operator()` result, not a substituted `int` |
-| `<any>` | Same `begin`/`end` CPO-object vs `int` stop | Same as `<iterator>` |
-| `<array>` | Same `begin`/`end` CPO-object vs `int` stop | Same as `<iterator>` |
-| `<span>` | Same `begin`/`end` CPO-object vs `int` stop | Same as `<iterator>` |
-| `<numeric>` | Same `begin`/`end` CPO-object vs `int` stop | Same as `<iterator>` |
+| `<optional>` | Codegen: `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve and `_Has_value` is missing | Evaluate dependent concept/value expressions and materialize CRTP comparison members only after their concrete operands and owning layout are available |
+| `<any>` | Same `three_way_comparable_with` / `view_interface` comparison stop | Same generic dependent-concept and CRTP-member materialization mechanism as `<optional>` |
+| `<array>` | Same `three_way_comparable_with` / `view_interface` comparison stop | Same generic dependent-concept and CRTP-member materialization mechanism as `<optional>` |
+| `<span>` | Same `three_way_comparable_with` / `view_interface` comparison stop | Same generic dependent-concept and CRTP-member materialization mechanism as `<optional>` |
+| `<numeric>` | Same `three_way_comparable_with` / `view_interface` comparison stop | Same generic dependent-concept and CRTP-member materialization mechanism as `<optional>` |
 | `<vector>` | Sema: `_Pocca(_Al, _Right_al)` overload/template instantiation fails | Preserve and resolve definition-bound dependent overload sets through allocator-trait member replay |
 | `<string_view>` | Sema: lazy replay of `_String_view_iterator::operator+` fails after dependent `noexcept` evaluation | Complete generic lazy member-body replay for self-referential class-template members; investigate the associated dependent `_Hash_array_representation` deduction failures |
-| `<iterator>` | Codegen: `std::begin`/`std::end` on an instantiated `subrange` (`?begin@std@@YAH...subrange$...`) return `std::ranges::_Begin::_Cpo` while the trailing-decltype return is `int` | Materialize the concrete `begin`/`end` members on the class-template instantiation before trailing-`decltype` and body typing; do not synthesize an `int`-returning member call when lookup fails |
+| `<iterator>` | Codegen: `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve | Evaluate dependent concept/value expressions and materialize CRTP comparison members only after their concrete operands and owning layout are available |
 | `<ranges>` | Template-instantiation iteration limit (sticky abort) | Variadic `invoke` / CPO instantiation without SoftProbe retry storms |
 
 The 2026-07-28 CRTP `auto&` / `view_interface::_Cast` regression is `tests/test_crtp_auto_ref_from_member_call_ret0.cpp`. Eager and lazy class-template member-body substitution now rebind pattern member-call returns (e.g. `Derived&` / `_Derived&`) through the active substitution map, attach a concrete `parser_return_type_hint`, and allow `get_expression_type` to type POI-completed dependent-unqualified calls. Local `auto`/`auto&` deduction then runs `applyPlaceholderDeclaratorDeduction` instead of leaving `TypeCategory::Auto` for the hard-use audit. This clears the shared `view_interface::empty` stop across `<optional>`, `<vector>`, `<string_view>`, `<any>`, `<span>`, `<iterator>`, and `<ranges>` without recognizing any STL helper name.
