@@ -2446,10 +2446,30 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	return ConstraintEvaluationResult::success();
 }
 
+inline void appendDefaultConceptTemplateArguments(
+	std::span<const TemplateParameterNode> concept_params,
+	InlineVector<TemplateTypeArg, 4>& args) {
+	for (size_t i = args.size(); i < concept_params.size(); ++i) {
+		const TemplateParameterNode& param = concept_params[i];
+		if (param.is_variadic() || !param.has_default()) {
+			break;
+		}
+		const ASTNode default_node = param.default_value();
+		if (param.kind() == TemplateParameterKind::Type &&
+			default_node.is<TypeSpecifierNode>()) {
+			args.emplace_back(default_node.as<TypeSpecifierNode>());
+			continue;
+		}
+		break;
+	}
+}
+
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ConceptDeclarationNode& concept_node,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
 	Parser* parser) {
+	InlineVector<TemplateTypeArg, 4> filled_args = template_args;
+	appendDefaultConceptTemplateArguments(concept_node.template_params(), filled_args);
 	InlineVector<std::string_view, 4> derived_param_names;
 	derived_param_names.reserve(concept_node.template_params().size());
 	for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
@@ -2457,7 +2477,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	}
 	return evaluateConstraint(
 		concept_node.constraint_expr(),
-		template_args,
+		filled_args,
 		derived_param_names,
 		parser,
 		concept_node.template_params());
