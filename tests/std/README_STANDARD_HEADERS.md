@@ -77,24 +77,24 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | 12.42s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `_Stack_space` array bound still cannot find `_Optimistic_count` in constant expression. |
 | `<span>` | `test_std_span.cpp` | ❌ Codegen Error | 11.77s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve. |
 | `<tuple>` | `test_std_tuple.cpp` | ✅ Runs | Retested 2026-08-13 with Windows/MSVC STL 14.44. Constructor-template partial ordering, implicit base-constructor overload resolution, zero-argument default-template deduction, and static-member definition ownership are covered by reduced non-`std` regressions. |
-| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 12.74s wall (retested 2026-08-13, Windows/MSVC STL 14.44). First parser stop remains in the MSVC allocator/vector implementation. |
-| `<deque>` | `test_std_deque.cpp` | ❌ Compile Error | 12.35s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
-| `<list>` | `test_std_list.cpp` | ❌ Compile Error | 13.02s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
-| `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 13.09s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
-| `<stack>` | `test_std_stack.cpp` | ❌ Compile Error | 12.76s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | 12.73s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 12.86s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 12.74s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `vector:1537:15`: Failed to instantiate template function at `_Pocca(_Al, _Right_al)`. |
+| `<deque>` | `test_std_deque.cpp` | ❌ Compile Error | 12.35s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `deque:1834:6`: Missing `typename` before dependent qualified type name. |
+| `<list>` | `test_std_list.cpp` | ❌ Compile Error | 13.02s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `list:951:23`: Failed to instantiate template function. |
+| `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 13.09s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Included `<deque>` stops at `deque:1834:6`: Missing `typename` before dependent qualified type name. |
+| `<stack>` | `test_std_stack.cpp` | ❌ Compile Error | 12.76s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Included `<deque>` stops at `deque:1834:6`: Missing `typename` before dependent qualified type name. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | 12.73s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Included `<atomic>` stops at `atomic:491:84`: Ambiguous call to overloaded function `__iso_volatile_store32`. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 12.86s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Included `<cmath>` stops at `cmath:1671:24`: Failed to instantiate template function. |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | 13.37s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Dependent `_Seek_to` overloads still fail; instantiated `noexcept` is not a constant expression. |
-| `<set>` | `test_std_set.cpp` | ❌ Compile Error | 12.60s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC/UCRT implementation. |
+| `<set>` | `test_std_set.cpp` | ❌ Compile Error | 12.60s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `set:256:4`: Missing `typename` before dependent qualified type name. |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | 13.65s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Sticky template-instantiation iteration limit remains. |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Compile Error | 7.71s wall (retested 2026-08-13, Windows/MSVC STL 14.44). MSVC `<cmath>` `__ceilf` overload remains unresolved. |
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Compile Error | 7.25s wall (retested 2026-08-13, Windows/MSVC STL 14.44). MSVC `<cmath>` `__ceilf` overload remains unresolved. |
-| `<fstream>` | `test_std_fstream.cpp` | ❌ Compile Error | 21.52s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | 19.61s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
-| `<atomic>` | `test_std_atomic.cpp` | ❌ Compile Error | 5.55s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<fstream>` | `test_std_fstream.cpp` | ❌ Compile Error | 21.52s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Included `<xstring>` stops at `xstring:3125:23`: Expected identifier token. |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | 19.61s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Included `<xstring>` stops at `xstring:3125:23`: Expected identifier token. |
+| `<atomic>` | `test_std_atomic.cpp` | ❌ Compile Error | 5.55s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `atomic:491:84`: Ambiguous call to overloaded function `__iso_volatile_store32`. |
 | `<new>` | `test_std_new.cpp` | ❌ Link Error | 5.34s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Missing MSVC exception-runtime symbols remains. |
 | `<exception>` | `test_std_exception.cpp` | ❌ Link Error | 5.42s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Missing `__ExceptionPtrCompare` and `terminate` remains. |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 17.17s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Parser stop remains in the MSVC implementation. |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 17.17s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Included `<xstring>` stops at `xstring:3125:23`: Expected identifier token. |
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ❌ Link Error | 4.75s wall (retested 2026-08-13, Windows/MSVC STL 14.44). Missing RTTI/exception-runtime symbols remains. |
 | `<typeindex>` | `test_std_typeindex.cpp` | ✅ Compiled (compile-only) | 2.28s wall / 2.22s compiler total (retested 2026-08-02, Windows/MSVC STL 14.44). No `main`; direct compile-only probe exits 0. |
 | `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 11.62s wall (retested 2026-08-13, Windows/MSVC STL 14.44). `three_way_comparable_with` is not constant; `view_interface` comparison operands fail to resolve. |
