@@ -130,6 +130,48 @@ inline bool isSameTypeIgnoringTopLevelCvAndRef(
 	return true;
 }
 
+// C++20 [over.ics.rank]/3.2.1: when two conversion sequences have the same rank
+// and convert similar pointer types, the destination that adds fewer cv-qualifiers
+// is a proper subsequence of the other and is therefore better.  This prefers
+// volatile T* over const volatile T* for a T* argument (MSVC <atomic>
+// __iso_volatile_store32).
+inline int compareQualificationConversionDestinations(
+	const TypeSpecifierNode& argument_type,
+	const TypeSpecifierNode& lhs_param,
+	const TypeSpecifierNode& rhs_param) {
+	if (lhs_param.pointer_depth() == 0 ||
+		lhs_param.pointer_depth() != rhs_param.pointer_depth() ||
+		argument_type.pointer_depth() != lhs_param.pointer_depth()) {
+		return 0;
+	}
+
+	const CanonicalTypeAlias lhs_canonical = canonicalize_type_alias(lhs_param.type_index());
+	const CanonicalTypeAlias rhs_canonical = canonicalize_type_alias(rhs_param.type_index());
+	const TypeIndex lhs_resolved = lhs_canonical.resolvedTypeIndex();
+	const TypeIndex rhs_resolved = rhs_canonical.resolvedTypeIndex();
+	if (lhs_param.type() != rhs_param.type()) {
+		return 0;
+	}
+	if (lhs_resolved.isStruct() && rhs_resolved.isStruct() && lhs_resolved != rhs_resolved) {
+		return 0;
+	}
+
+	const uint8_t from_cv = static_cast<uint8_t>(argument_type.pointee_cv_for_pointer_conversion());
+	const uint8_t lhs_cv = static_cast<uint8_t>(lhs_param.pointee_cv_for_pointer_conversion());
+	const uint8_t rhs_cv = static_cast<uint8_t>(rhs_param.pointee_cv_for_pointer_conversion());
+	const uint8_t lhs_extra = static_cast<uint8_t>(lhs_cv & ~from_cv);
+	const uint8_t rhs_extra = static_cast<uint8_t>(rhs_cv & ~from_cv);
+	const bool lhs_is_subset = (lhs_extra & ~rhs_extra) == 0;
+	const bool rhs_is_subset = (rhs_extra & ~lhs_extra) == 0;
+	if (lhs_is_subset && !rhs_is_subset) {
+		return -1;
+	}
+	if (rhs_is_subset && !lhs_is_subset) {
+		return 1;
+	}
+	return 0;
+}
+
 inline bool isRvalueLikeArgumentForReferenceBinding(const TypeSpecifierNode& argument_type) {
 	return !argument_type.is_reference() || argument_type.is_rvalue_reference();
 }
@@ -143,6 +185,16 @@ inline int compareArgumentConversionInfo(
 	}
 	if (lhs.rank > rhs.rank) {
 		return 1;
+	}
+
+	if (lhs.parameter_type != nullptr && rhs.parameter_type != nullptr) {
+		const int qualification_comparison = compareQualificationConversionDestinations(
+			argument_type,
+			*lhs.parameter_type,
+			*rhs.parameter_type);
+		if (qualification_comparison != 0) {
+			return qualification_comparison;
+		}
 	}
 
 	if (lhs.rank != ConversionRank::ExactMatch ||

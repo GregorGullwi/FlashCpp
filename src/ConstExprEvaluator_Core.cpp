@@ -5141,6 +5141,28 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		return *helper_eval;
 	}
 
+	if (call_expr.has_template_arguments() && context.parser != nullptr) {
+		auto concept_opt = gConceptRegistry.lookupConcept(qualified_name);
+		if (!concept_opt.has_value()) {
+			concept_opt = gConceptRegistry.lookupConcept(func_name);
+		}
+		if (!concept_opt.has_value()) {
+			concept_opt = gConceptRegistry.lookupConcept(
+				getUnqualifiedFunctionName(qualified_name.empty() ? func_name : qualified_name));
+		}
+		if (concept_opt.has_value() && concept_opt->is<ConceptDeclarationNode>()) {
+			std::optional<InlineVector<TemplateTypeArg, 4>> concrete_args =
+				context.parser->materializeConcreteCallTemplateArguments(call_expr.template_arguments());
+			if (concrete_args.has_value()) {
+				const ConstraintEvaluationResult constraint_result = evaluateConstraint(
+					concept_opt->as<ConceptDeclarationNode>(),
+					*concrete_args,
+					context.parser);
+				return EvalResult::from_bool(constraint_result.satisfied);
+			}
+		}
+	}
+
 	// If we have a struct context, prefer static member functions from the current struct.
 	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.

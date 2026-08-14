@@ -2931,6 +2931,13 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
 				return ASTNode(&new_expr);
 			} else {
+				const bool is_concept_id =
+					gConceptRegistry.hasConcept(func_name) ||
+					(!qualified_name.empty() && gConceptRegistry.hasConcept(qualified_name));
+				if (is_concept_id) {
+					return materializeSubstitutedUnresolvedCall(
+						substituteCallArgumentsPreservingPackExpansion(call.arguments()));
+				}
 				FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", func_name);
 				if (has_variable_template_candidate) {
 					FLASH_LOG(Templates, Trace,

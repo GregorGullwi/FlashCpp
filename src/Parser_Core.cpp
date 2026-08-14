@@ -1970,6 +1970,17 @@ void Parser::register_builtin_functions() {
 	for (std::string_view name : unary_math_base) {
 		register_extern_c_builtin(name, float_type, {float_type});
 	}
+	// MSVC <cmath> uses compiler intrinsics (__ceilf, __floor, ...) when
+	// _HAS_CMATH_INTRINSICS is set. These are the same operations as the
+	// __builtin_* names already registered above.
+	for (std::string_view name : {"__ceilf", "__floorf", "__roundf", "__truncf"}) {
+		register_extern_c_builtin(name, float_type, {float_type});
+	}
+	for (std::string_view name : {"__ceil", "__floor", "__round", "__trunc"}) {
+		register_extern_c_builtin(name, double_type, {double_type});
+	}
+	register_extern_c_builtin("__copysignf", float_type, {float_type, float_type});
+	register_extern_c_builtin("__copysign", double_type, {double_type, double_type});
 	for (std::string_view name : {
 		"__builtin_acos", "__builtin_acosh", "__builtin_asin", "__builtin_asinh",
 		"__builtin_atan", "__builtin_atanh", "__builtin_cbrt", "__builtin_ceil",

@@ -2,78 +2,27 @@
 
 This document summarizes the remaining gaps that block full standard header compilation. It intentionally stays compact; detailed implementation history has been removed.
 
-For current header status and timings, see `tests/std/README_STANDARD_HEADERS.md`.
+For current header status, first stops, and timings, see `tests/std/README_STANDARD_HEADERS.md`.
 
 ## Primary Blockers
 
-### 1. Template Instantiation Volume (Timeouts)
-Heavy template instantiation still causes >10s timeouts on many headers.
+### 1. `subrange` `begin`/`end` CPO materialization (codegen)
+`std::begin`/`std::end` of an instantiated `subrange` still lower as `std::ranges::_Begin::_Cpo` with a fake `int` return. This is now the shared stop for `<optional>`, `<any>`, `<array>`, `<span>`, `<numeric>`, and `<iterator>` after concept-id evaluation started working.
 
-**Affected tests:**
-- `tests/std/test_std_type_traits.cpp`
-- `tests/std/test_std_concepts.cpp`
-- `tests/std/test_std_utility.cpp`
-- `tests/std/test_std_string_view.cpp`
-- `tests/std/test_std_string.cpp`
-- `tests/std/test_std_vector.cpp`
-- `tests/std/test_std_array.cpp`
-- `tests/std/test_std_optional.cpp`
-- `tests/std/test_std_variant.cpp`
-- `tests/std/test_std_memory.cpp`
-- `tests/std/test_std_functional.cpp`
-- `tests/std/test_std_algorithm.cpp`
-- `tests/std/test_std_map.cpp`
-- `tests/std/test_std_set.cpp`
-- `tests/std/test_std_span.cpp`
-- `tests/std/test_std_ranges.cpp`
-- `tests/std/test_std_iostream.cpp`
-- `tests/std/test_std_chrono.cpp`
-- `tests/std/test_std_any.cpp`
+### 2. Exception / RTTI runtime symbols (link)
+`<new>`, `<exception>`, and `<typeinfo>` now compile, but link still misses `__ExceptionPtrCompare`, `terminate`, `type_info`, and related CRT symbols.
 
-### 2. Exception Handling Infrastructure
-Incomplete exception runtime support blocks headers that rely on exceptions.
-
-**Affected tests:**
-- `tests/std/test_std_string.cpp`
-- `tests/std/test_std_vector.cpp`
-- `tests/std/test_std_iostream.cpp`
-- `tests/std/test_std_memory.cpp`
-
-**Related doc:** `docs/EXCEPTION_HANDLING.md`
-
-### 3. Allocator Support
-Allocator infrastructure is not implemented, blocking most containers.
-
-**Affected tests:**
-- `tests/std/test_std_vector.cpp`
-- `tests/std/test_std_string.cpp`
-- `tests/std/test_std_map.cpp`
-- `tests/std/test_std_set.cpp`
-- `tests/std/test_std_memory.cpp`
+### 3. Allocator / container instantiation
+`<vector>` still fails instantiating `_Pocca`. `<deque>` / `<set>` still reject dependent qualified type names without `typename`.
 
 ### 4. Iterator + Ranges Concepts
-Iterator traits, concepts, and ranges are still incomplete.
+`<ranges>` still hits the template-instantiation iteration limit. `<algorithm>` still cannot find `_Optimistic_count` as a constant array bound.
 
-**Affected tests:**
-- `tests/std/test_std_algorithm.cpp`
-- `tests/std/test_std_ranges.cpp`
-- `tests/std/test_std_concepts.cpp`
+### 5. MSVC atomic / math lowering
+`<atomic>` family is past `__iso_volatile_store32` and stops on `_InterlockedCompareExchange128`. `<cmath>` is past `__ceilf` and stops in `_Bit_cast` IR.
 
-### 5. Type Erasure + RTTI
-Type erasure patterns for `std::any` and `std::function` are incomplete.
-
-**Affected tests:**
-- `tests/std/test_std_any.cpp`
-- `tests/std/test_std_functional.cpp`
-- `tests/std/test_std_variant.cpp`
-
-### 6. `std::initializer_list` Compiler Magic
-Initializer-list construction still lacks compiler magic for brace-init overloads.
-
-**Affected tests:**
-- `tests/std/test_std_vector.cpp`
-- `tests/std/test_std_string.cpp`
-- `tests/std/test_std_array.cpp`
+### 6. Alias-template recursion
+`<variant>` currently stack-overflows in `materializeAliasTemplateInstantiation`.
 
 ## Tracking Files
 

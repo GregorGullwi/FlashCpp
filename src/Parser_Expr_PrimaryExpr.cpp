@@ -5020,17 +5020,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						// Evaluate the concept constraint with the provided template arguments
 						const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-						InlineVector<std::string_view, 4> concept_param_names;
-						concept_param_names.reserve(concept_node.template_params().size());
-						for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
-							concept_param_names.push_back(concept_param.name());
-						}
 						auto constraint_result = evaluateConstraint(
-							concept_node.constraint_expr(),
+							concept_node,
 							*template_args,
-							concept_param_names,
-							this,
-							concept_node.template_params()
+							this
 						);
 
 						// Create a BoolLiteralNode with the result
@@ -8956,17 +8949,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								// Evaluate the concept constraint with the provided template arguments
 								const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-								InlineVector<std::string_view, 4> concept_param_names;
-								concept_param_names.reserve(concept_node.template_params().size());
-								for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
-									concept_param_names.push_back(concept_param.name());
-								}
 								auto constraint_result = evaluateConstraint(
-									concept_node.constraint_expr(),
+									concept_node,
 									*explicit_template_args,
-									concept_param_names,
-									this,
-									concept_node.template_params()
+									this
 								);
 
 								// Create a BoolLiteralNode with the result
