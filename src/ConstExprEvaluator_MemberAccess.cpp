@@ -32,6 +32,23 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		return EvalResult::error("Cannot evaluate qualified identifier: no symbol table provided");
 	}
 
+	StringHandle qualified_lookup_key = StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle()))
+			.append("::")
+			.append(qualified_id.name())
+			.commit());
+	if (!context.qualified_lookup_in_progress.insert(qualified_lookup_key).second) {
+		return EvalResult::error("Recursive constexpr qualified lookup");
+	}
+	struct QualifiedLookupGuard {
+		std::unordered_set<StringHandle>& in_progress;
+		StringHandle key;
+		~QualifiedLookupGuard() {
+			in_progress.erase(key);
+		}
+	} qualified_lookup_guard{context.qualified_lookup_in_progress, qualified_lookup_key};
+
 	struct QualifiedVariableTemplateArgsResult {
 		std::vector<TemplateTypeArg> template_args;
 		std::optional<EvalResult> error;

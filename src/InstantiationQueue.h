@@ -214,7 +214,7 @@ public:
 		key.template_name = StringTable::getOrInternStringHandle(template_name);
 		key.arguments.reserve(template_args.size());
 		for (const auto& arg : template_args) {
-			key.arguments.push_back(arg);
+			key.arguments.push_back(arg.canonicalizeForInstantiationIdentity());
 		}
 		return key;
 	}

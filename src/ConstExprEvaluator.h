@@ -485,6 +485,16 @@ struct EvaluationContext {
 
 	// Track current recursion depth
 	size_t current_depth = 0;
+	// Track nested evaluate() dispatches separately. current_depth is also used
+	// to identify the outermost constexpr function call, so incrementing it for
+	// every expression suppresses end-of-evaluation checks such as leaked-new
+	// detection.
+	size_t evaluation_depth = 0;
+
+	// Qualified T::member lookups currently being evaluated. Re-entering the same
+	// lookup while its initializer is still being folded is a cycle, not a new
+	// constant expression.
+	std::unordered_set<StringHandle> qualified_lookup_in_progress;
 
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;

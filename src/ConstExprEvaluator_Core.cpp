@@ -1098,6 +1098,19 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	if (++context.step_count > context.max_steps) {
 		return EvalResult::error("Constexpr evaluation exceeded complexity limit (infinite loop?)");
 	}
+	if (context.evaluation_depth >= context.max_recursion_depth) {
+		return EvalResult::error("Constexpr evaluation exceeded recursion depth");
+	}
+	struct EvalDepthGuard {
+		EvaluationContext& context;
+		explicit EvalDepthGuard(EvaluationContext& eval_context)
+			: context(eval_context) {
+			++context.evaluation_depth;
+		}
+		~EvalDepthGuard() {
+			--context.evaluation_depth;
+		}
+	} eval_depth_guard(context);
 
 	// Evaluate a constant expression
 	// Returns the result or an error if not a constant expression

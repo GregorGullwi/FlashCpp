@@ -3417,11 +3417,15 @@ ParseResult Parser::parse_type_specifier() {
 			const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
 			const auto& template_params = template_class.template_parameters();
 
-			// Check if all parameters have defaults
-			bool all_have_defaults = true;
+			// Check if all parameters have defaults (C++ allows naming such a
+			// template without an argument list). Parameters without defaults,
+			// unknown parameter nodes, and empty parameter lists must not be
+			// treated as "all defaulted" — that used to instantiate class
+			// templates such as Selector<Tp, bool = ..., bool = ...> with 0 args.
+			bool all_have_defaults = !template_params.empty();
 			for (const auto& param_node : template_params) {
 				const TemplateParameterNode* param = tryGetTemplateParameterNode(param_node);
-				if (param != nullptr && !param->has_default()) {
+				if (param == nullptr || !param->has_default()) {
 					all_have_defaults = false;
 					break;
 				}
