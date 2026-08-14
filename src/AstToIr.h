@@ -370,6 +370,7 @@ private:
 	ExprResult generateBuiltinAbsFloatIntrinsic(const CallExprNode& callExprNode, std::string_view func_name);
 	bool isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const;
 	ExprResult generateVaArgIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateBuiltinBitCastIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateVaStartIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateBuiltinNoOpIntrinsic(const CallExprNode& callExprNode, std::string_view func_name);
 	ExprResult generateBuiltinUnreachableIntrinsic(const CallExprNode& callExprNode);

@@ -1677,6 +1677,31 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 		return findTypeByName(StringTable::getOrInternStringHandle(base_class_name));
 	}
 
+	// An unqualified base can be a function-local alias rebound independently in
+	// each template instantiation. Resolve that scoped alias to its concrete owner
+	// before forming Owner::member keys; the process-wide type-name map retains the
+	// first unqualified alias spelling and is not authoritative for block scope.
+	if (base_class_name.find("::") == std::string_view::npos) {
+		StringHandle base_handle = StringTable::getOrInternStringHandle(base_class_name);
+		const TypeInfo* contextual_base = lookupTypeInCurrentContext(base_handle);
+		if (contextual_base != nullptr) {
+			const TypeInfo* concrete_base = tryGetTypeInfo(contextual_base->type_index_);
+			ResolvedAliasTypeInfo resolved_base;
+			if (concrete_base == nullptr || concrete_base == contextual_base ||
+				!concrete_base->name().isValid()) {
+				resolved_base = resolveAliasTypeInfo(
+					contextual_base->registeredTypeIndex().withCategory(contextual_base->typeEnum()));
+				concrete_base = resolved_base.terminal_type_info;
+			}
+			if (concrete_base == nullptr && resolved_base.type_index.is_valid()) {
+				concrete_base = tryGetTypeInfo(resolved_base.type_index);
+			}
+			if (concrete_base != nullptr && concrete_base->name().isValid()) {
+				base_class_name = StringTable::getStringView(concrete_base->name());
+			}
+		}
+	}
+
 	auto normalizeResolvedMemberOwner =
 		[&](const TypeInfo*& type_info, std::string_view& owner_name) {
 		const std::string_view resolved_name =
@@ -3726,8 +3751,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 			}
 
-			if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isStruct()) {
+			if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second != nullptr &&
+				(struct_type_it->second->isStruct() || struct_type_it->second->isTemplateInstantiation())) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+				if (struct_info == nullptr) {
+					struct_info = tryGetStructTypeInfo(
+						struct_type_it->second->registeredTypeIndex());
+				}
 				if (struct_info) {
 					// Trigger lazy static member instantiation if needed
 					StringHandle member_name_handle = StringTable::getOrInternStringHandle(std::string(member_name));
@@ -3890,6 +3920,15 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 		return resolveTypeInfoToTypeSpec(*resolved_alias.terminal_type_info, type);
 	};
 
+	FlashCpp::SymbolTableScope deduction_function_scope(ScopeType::Function);
+	for (const ASTNode& parameter : func_decl.parameter_nodes()) {
+		if (const DeclarationNode* parameter_decl = get_decl_from_symbol(parameter)) {
+			gSymbolTable.insert(
+				parameter_decl->identifier_token().handle(),
+				parameter);
+		}
+	}
+
 	// Recursive lambda to search for return statements
 	auto find_return_statements = [&](const auto& self, const ASTNode& node) -> void {
 		if (node.is<ReturnStatementNode>()) {
@@ -3941,11 +3980,15 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 				}
 			}
 		} else if (node.is<BlockNode>()) {
+			FlashCpp::SymbolTableScope block_scope(ScopeType::Block);
 			auto saved_constexpr_locals = constexpr_locals;
 			const BlockNode& block = node.as<BlockNode>();
 			block.get_statements().visit([&](const ASTNode& stmt) {
 				if (stmt.is<VariableDeclarationNode>()) {
 					const auto& var = stmt.as<VariableDeclarationNode>();
+					gSymbolTable.insert(
+						var.declaration().identifier_token().handle(),
+						stmt);
 					if (var.is_constexpr() && var.initializer().has_value()) {
 						ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 						eval_ctx.local_bindings = &constexpr_locals;

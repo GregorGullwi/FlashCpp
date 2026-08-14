@@ -154,6 +154,42 @@ TypeIndex lookupRecordedDependentOwnerType(StringHandle owner_handle) {
 	return owner_it->second->registeredTypeIndex();
 }
 
+NamespaceHandle rebindConcreteQualifiedExpressionOwner(
+	std::span<const StringType<32>> owner_components,
+	NamespaceHandle original_owner) {
+	if (owner_components.size() != 1) {
+		return original_owner;
+	}
+	StringHandle owner_handle = StringTable::getOrInternStringHandle(
+		owner_components.front().c_str());
+	const TypeInfo* owner_type = lookupTypeInCurrentContext(owner_handle);
+	if (owner_type == nullptr || !owner_type->isTypeAlias()) {
+		return original_owner;
+	}
+	ResolvedAliasTypeInfo resolved_owner = resolveAliasTypeInfo(
+		owner_type->registeredTypeIndex().withCategory(owner_type->typeEnum()));
+	const TypeInfo* concrete_owner = resolved_owner.terminal_type_info;
+	if (concrete_owner == nullptr && resolved_owner.type_index.is_valid()) {
+		concrete_owner = tryGetTypeInfo(resolved_owner.type_index);
+	}
+	const bool owner_has_dependent_template_args =
+		concrete_owner != nullptr &&
+		std::any_of(
+			concrete_owner->templateArgs().begin(),
+			concrete_owner->templateArgs().end(),
+			[](const TypeInfo::TemplateArgInfo& arg) {
+				return templateArgInfoContainsDependentPlaceholder(arg);
+			});
+	if (concrete_owner == nullptr || !concrete_owner->name().isValid() ||
+		concrete_owner->isDependentPlaceholder() ||
+		owner_has_dependent_template_args) {
+		return original_owner;
+	}
+	return gNamespaceRegistry.getOrCreateNamespace(
+		NamespaceRegistry::GLOBAL_NAMESPACE,
+		concrete_owner->name());
+}
+
 void appendDependentTemplateArgSpelling(
 	StringBuilder& builder,
 	const TypeInfo::TemplateArgInfo& template_arg) {
@@ -4691,7 +4727,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// current_token_ is now the token after the final identifier
 
 			// Create a QualifiedIdentifierNode (stack-local; copied into ExpressionNode before returning)
-			NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+			NamespaceHandle ns_handle = rebindConcreteQualifiedExpressionOwner(
+				namespaces,
+				gSymbolTable.resolve_namespace_handle(namespaces));
 			QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 			if (!namespaces.empty()) {
 				StringHandle owner_handle =
@@ -6406,7 +6444,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			}
 
 			// Create a QualifiedIdentifierNode with namespace handle (stack-local; copied into ExpressionNode before returning)
-			NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+			NamespaceHandle ns_handle = rebindConcreteQualifiedExpressionOwner(
+				namespaces,
+				gSymbolTable.resolve_namespace_handle(namespaces));
 			QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 			if (!namespaces.empty()) {
 				StringHandle owner_handle =

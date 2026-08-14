@@ -1352,7 +1352,9 @@ int get_type_size_bits(TypeCategory cat) {
 	case TypeCategory::Double:
 		return 64;
 	case TypeCategory::LongDouble:
-		return 80; // x87 extended precision
+		// The Microsoft x64 ABI represents long double exactly like double.
+		// SysV targets retain the compiler's x87 extended-precision model.
+		return g_target_data_model == TargetDataModel::LLP64 ? 64 : 80;
 	case TypeCategory::Enum:
 		// Fallback only: when code still carries TypeCategory::Enum but lost the concrete
 		// enum metadata, assume the common default underlying type (int, 32 bits).

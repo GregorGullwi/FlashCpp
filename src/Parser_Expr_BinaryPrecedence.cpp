@@ -1063,7 +1063,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 			typeInfo.sizeInBits = 32;
 		} else if (is_long_double) {
 			typeInfo.type = TypeCategory::LongDouble;
-			typeInfo.sizeInBits = 80;
+			typeInfo.sizeInBits = get_type_size_bits(TypeCategory::LongDouble);
 		} else {
 			typeInfo.type = TypeCategory::Double;
 			typeInfo.sizeInBits = 64;
