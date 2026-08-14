@@ -267,17 +267,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				is_nested_member_class_template = true;
 			}
 		}
-		bool can_use_raw_cache_key = true;
-		if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-			template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-			const auto& raw_params = template_opt->as<TemplateClassDeclarationNode>().template_parameters();
-			if (template_args.size() < raw_params.size()) {
-				can_use_raw_cache_key = false;
-			}
-		}
-		if (is_nested_member_class_template) {
-			can_use_raw_cache_key = false;
-		}
+		bool can_use_raw_cache_key = !is_nested_member_class_template;
 		if (can_use_raw_cache_key) {
 			StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
 			FlashCpp::TemplateInstantiationKey cache_key =
@@ -480,18 +470,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
 	FlashCpp::TemplateInstantiationKey cache_key =
 		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
+	const FlashCpp::TemplateInstantiationKey unfilled_cache_key = cache_key;
 	bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
-	bool can_use_raw_cache_key = true;
-	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-		template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-		const auto& raw_params = template_opt->as<TemplateClassDeclarationNode>().template_parameters();
-		if (template_args.size() < raw_params.size()) {
-			can_use_raw_cache_key = false;
-		}
-	}
-	if (is_nested_member_class_template) {
-		can_use_raw_cache_key = false;
-	}
+	bool can_use_raw_cache_key = !is_nested_member_class_template;
 	if (can_use_raw_cache_key) {
 		auto cached = gTemplateRegistry.getInstantiation(cache_key);
 		if (cached.has_value()) {
@@ -1322,8 +1303,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		std::string_view resolved_name = get_instantiated_class_name(base_template_name, base_args);
 		if (!base_template_name.empty()) {
-			auto registry_hit = gTemplateRegistry.getInstantiation(
-				StringTable::getOrInternStringHandle(base_template_name), base_args);
+			auto lookup_cached_instantiation = [&](std::string_view lookup_name) -> std::optional<ASTNode> {
+				return gTemplateRegistry.getInstantiation(
+					StringTable::getOrInternStringHandle(lookup_name), base_args);
+			};
+			auto registry_hit = lookup_cached_instantiation(base_template_name);
+			if (!registry_hit.has_value()) {
+				if (size_t last_colon = base_template_name.rfind("::");
+					last_colon != std::string_view::npos) {
+					registry_hit = lookup_cached_instantiation(base_template_name.substr(last_colon + 2));
+				}
+			}
 			if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
 				resolved_name = StringTable::getStringView(
 					registry_hit->as<StructDeclarationNode>().name());
@@ -1397,7 +1387,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const TypeInfo* candidate_info = type_it->second;
 		if (candidate_info->isTemplateInstantiation()) {
 			std::string_view base_template_name = StringTable::getStringView(candidate_info->baseTemplateName());
-			if (!base_template_name.empty()) {
+			auto unqualified_template_name = [](std::string_view name) {
+				size_t last_colon = name.rfind("::");
+				return last_colon == std::string_view::npos ? name : name.substr(last_colon + 2);
+			};
+			if (!base_template_name.empty() &&
+				unqualified_template_name(base_template_name) != unqualified_template_name(template_name)) {
 				std::vector<TemplateTypeArg> concrete_args =
 					materializeTemplateArgs(*candidate_info, params, current_args);
 				std::string_view instantiated_name =
@@ -4946,6 +4941,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Register in cache for O(1) lookup on future instantiations
 			gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
+			if (unfilled_cache_key != cache_key) {
+				gTemplateRegistry.registerInstantiation(unfilled_cache_key, instantiated_struct);
+			}
 
 			return instantiated_struct; // Return the struct node for code generation
 		}
@@ -12918,6 +12916,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Register in cache for O(1) lookup on future instantiations
 	gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
+	if (unfilled_cache_key != cache_key) {
+		gTemplateRegistry.registerInstantiation(unfilled_cache_key, instantiated_struct);
+	}
 
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;

@@ -4506,26 +4506,42 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	// Empty pack expansion case: pack expanded to 0 elements, instantiate base template with 0 args
 	if (materialized_had_substitution && inst_args.empty() && !base_template_name.empty()) {
-		FLASH_LOG(Templates, Trace, "  Empty pack expansion for '", base_template_name, "', instantiating with 0 args");
-		Parser::AliasTemplateMaterializationResult materialized_namespace =
-			parser_.materializeTemplateInstantiationForLookup(base_template_name, {});
-		std::string_view instantiated_name = canonicalizeLookupOwnerForMember(
-			materialized_namespace,
-			qual_id.name());
-		if (!instantiated_name.empty()) {
-			FLASH_LOG(Templates, Trace, "  Empty-pack substituted namespace: ", ns_name, " -> ", instantiated_name);
-			StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
-			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
-				NamespaceRegistry::GLOBAL_NAMESPACE,
-				instantiated_name_handle);
-			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-				new_ns_handle,
-				qual_id.identifier_token());
-			if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
-				new_qual_id.setDependentQualifiedName(*dependent_record);
+		bool can_instantiate_with_zero_args = false;
+		if (auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
+			template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+			can_instantiate_with_zero_args =
+				countRequiredTemplateArgsAfter(
+					template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+					0) == 0;
+		} else if (auto alias_opt = gTemplateRegistry.lookup_alias_template(base_template_name);
+				   alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
+			can_instantiate_with_zero_args =
+				countRequiredTemplateArgsAfter(
+					alias_opt->as<TemplateAliasNode>().template_parameters(),
+					0) == 0;
+		}
+		if (can_instantiate_with_zero_args) {
+			FLASH_LOG(Templates, Trace, "  Empty pack expansion for '", base_template_name, "', instantiating with 0 args");
+			Parser::AliasTemplateMaterializationResult materialized_namespace =
+				parser_.materializeTemplateInstantiationForLookup(base_template_name, {});
+			std::string_view instantiated_name = canonicalizeLookupOwnerForMember(
+				materialized_namespace,
+				qual_id.name());
+			if (!instantiated_name.empty()) {
+				FLASH_LOG(Templates, Trace, "  Empty-pack substituted namespace: ", ns_name, " -> ", instantiated_name);
+				StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+				NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+					NamespaceRegistry::GLOBAL_NAMESPACE,
+					instantiated_name_handle);
+				QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+					new_ns_handle,
+					qual_id.identifier_token());
+				if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+					new_qual_id.setDependentQualifiedName(*dependent_record);
+				}
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+				return ASTNode(&new_expr);
 			}
-			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
-			return ASTNode(&new_expr);
 		}
 	}
 
