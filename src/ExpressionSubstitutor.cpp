@@ -408,6 +408,13 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return substituteTernaryOp(expr.as<TernaryOperatorNode>());
 	} else if (expr.is<IdentifierNode>()) {
 		return substituteIdentifier(expr.as<IdentifierNode>());
+	} else if (expr.is<TemplateParameterReferenceNode>()) {
+		// NTTP defaults such as `bool = (Sz <= Tp::size)` parse earlier parameters
+		// as TemplateParameterReferenceNode. Reuse identifier substitution so the
+		// bound value becomes a literal before constant evaluation.
+		const TemplateParameterReferenceNode& tparam_ref =
+			expr.as<TemplateParameterReferenceNode>();
+		return substituteIdentifier(IdentifierNode(tparam_ref.token()));
 	} else if (expr.is<QualifiedIdentifierNode>()) {
 		return substituteQualifiedIdentifier(expr.as<QualifiedIdentifierNode>());
 	} else if (expr.is<TypeSpecifierNode>()) {

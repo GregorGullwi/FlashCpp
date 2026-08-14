@@ -1318,9 +1318,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (shouldCommitTemplateInstantiationArtifacts()) {
 				registerAndNormalizeLateMaterializedTopLevelNode(*result);
 			}
+			return StringTable::getStringView(result->as<StructDeclarationNode>().name());
 		}
 		std::string_view resolved_name = get_instantiated_class_name(base_template_name, base_args);
-		if ((!result.has_value() || !result->is<StructDeclarationNode>()) && !base_template_name.empty()) {
+		if (!base_template_name.empty()) {
 			auto registry_hit = gTemplateRegistry.getInstantiation(
 				StringTable::getOrInternStringHandle(base_template_name), base_args);
 			if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
@@ -1696,16 +1697,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Regenerate instantiated name with filled-in defaults
 	// This is needed when defaults are dependent types that get resolved (e.g., typename wrapper<T>::type -> int)
+	StringHandle name_before_default_fill = instantiated_name;
 	if (filled_args_for_pattern_match.size() > template_args.size()) {
-		StringHandle original_instantiated_name = instantiated_name;
 		instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, filled_args_for_pattern_match));
 		FLASH_LOG(Templates, Trace, "Regenerated instantiated name with defaults: ", StringTable::getStringView(instantiated_name));
 
 		// Check again if we already have this instantiation (with filled-in defaults)
 		auto existing_type_with_defaults = getTypesByNameMap().find(instantiated_name);
 		if (existing_type_with_defaults != getTypesByNameMap().end()) {
-			if (original_instantiated_name != instantiated_name) {
-				getTypesByNameMap()[original_instantiated_name] = existing_type_with_defaults->second;
+			if (name_before_default_fill != instantiated_name) {
+				getTypesByNameMap()[name_before_default_fill] = existing_type_with_defaults->second;
 			}
 			auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 			const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
@@ -1798,6 +1799,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					break;
 				}
 				if (!found_pack_pattern) {
+					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size(); ++pattern_idx) {
+						if (pattern_idx >= filled_args_for_pattern_match.size()) {
+							break;
+						}
+						if (TemplatePattern::tryAppendNestedTrailingPack(
+								pattern_args[pattern_idx],
+								filled_args_for_pattern_match[pattern_idx],
+								parameter_name,
+								matched_pattern.getTemplateParamNames(),
+								template_args_for_member_copy_storage)) {
+							found_pack_pattern = true;
+							break;
+						}
+					}
+				}
+				if (!found_pack_pattern) {
 					auto binding = pattern_match_opt->substitutions.find(parameter_name);
 					if (binding != pattern_match_opt->substitutions.end()) {
 						template_args_for_member_copy_storage.push_back(binding->second);
@@ -1852,6 +1869,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Create struct type info first
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name, spec_decl_ns);
+			if (name_before_default_fill != instantiated_name) {
+				getTypesByNameMap()[name_before_default_fill] = &struct_type_info;
+			}
 
 			// Store template instantiation metadata for O(1) lookup (Phase 6)
 			auto template_args_info = toTemplateArgInfoList(template_args);
