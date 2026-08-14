@@ -382,14 +382,16 @@ struct TemplateTypeArg {
 		if (canonical.is_value || canonical.is_template_template_arg || !canonical.is_dependent) {
 			return canonical;
 		}
-		bool concrete = is_primitive_type(canonical.category());
-		if (!concrete && canonical.type_index.is_valid()) {
-			if (const TypeInfo* type_info = tryGetTypeInfo(canonical.type_index);
-				type_info != nullptr &&
-				!type_info->isDependentPlaceholder() &&
-				!type_info->is_incomplete_instantiation_) {
-				concrete = true;
+		bool concrete = false;
+		if (canonical.type_index.is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(canonical.type_index)) {
+				concrete = !type_info->isDependentPlaceholder() &&
+					!type_info->is_incomplete_instantiation_;
+			} else {
+				concrete = is_primitive_type(canonical.category());
 			}
+		} else {
+			concrete = is_primitive_type(canonical.category());
 		}
 		if (concrete) {
 			canonical.is_dependent = false;

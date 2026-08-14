@@ -30,6 +30,22 @@ static bool g_template_inst_depth_warned = false;
 // budget once function templates participate in the same counters.
 static constexpr size_t kMaxTemplateInstantiationNestingDepth = 128;
 
+static bool canUseRawClassTemplateCacheKey(
+	std::string_view template_name,
+	size_t provided_arg_count,
+	bool is_nested_member_class_template) {
+	if (is_nested_member_class_template) {
+		return false;
+	}
+	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+	if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+		return true;
+	}
+	const auto& raw_params = template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+	return provided_arg_count >= raw_params.size() ||
+		countRequiredTemplateArgsAfter(raw_params, provided_arg_count) == 0;
+}
+
 static void preserveMissingTypeSpecifierModifiers(
 	TypeSpecifierNode& target,
 	const TypeSpecifierNode& source) {
@@ -267,7 +283,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				is_nested_member_class_template = true;
 			}
 		}
-		bool can_use_raw_cache_key = !is_nested_member_class_template;
+		bool can_use_raw_cache_key = canUseRawClassTemplateCacheKey(
+			template_name,
+			template_args.size(),
+			is_nested_member_class_template);
 		if (can_use_raw_cache_key) {
 			StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
 			FlashCpp::TemplateInstantiationKey cache_key =
@@ -472,7 +491,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
 	const FlashCpp::TemplateInstantiationKey unfilled_cache_key = cache_key;
 	bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
-	bool can_use_raw_cache_key = !is_nested_member_class_template;
+	bool can_use_raw_cache_key = canUseRawClassTemplateCacheKey(
+		template_name,
+		template_args.size(),
+		is_nested_member_class_template);
 	if (can_use_raw_cache_key) {
 		auto cached = gTemplateRegistry.getInstantiation(cache_key);
 		if (cached.has_value()) {
@@ -4941,7 +4963,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Register in cache for O(1) lookup on future instantiations
 			gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
-			if (unfilled_cache_key != cache_key) {
+			if (can_use_raw_cache_key && unfilled_cache_key != cache_key) {
 				gTemplateRegistry.registerInstantiation(unfilled_cache_key, instantiated_struct);
 			}
 
@@ -12916,7 +12938,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Register in cache for O(1) lookup on future instantiations
 	gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
-	if (unfilled_cache_key != cache_key) {
+	if (can_use_raw_cache_key && unfilled_cache_key != cache_key) {
 		gTemplateRegistry.registerInstantiation(unfilled_cache_key, instantiated_struct);
 	}
 
