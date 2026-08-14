@@ -3448,10 +3448,10 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			std::vector<StringHandle> ordered_lookup_names;
 		};
 
-		explicit StructuredBindingTupleProtocolLookup(const Parser& parser_ref, NamespaceHandle owner_ns, StringHandle struct_type_name)
+		explicit StructuredBindingTupleProtocolLookup(const Parser& parser_ref, NamespaceHandle owner_ns, StringHandle type_name_handle)
 			: parser(parser_ref),
 			  owner_namespace(owner_ns),
-			  struct_type_name(struct_type_name),
+			  struct_type_name(type_name_handle),
 			  tuple_size_name(tupleSizeNameHandle()),
 			  tuple_element_name(tupleElementNameHandle()),
 			  get_name(getNameHandle()),
@@ -5250,8 +5250,8 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 					if (const StructTypeInfo* struct_info =
 						tryGetStructTypeInfo(member_context->type_index)) {
 						InlineVector<const TypeInfo*, 2> nested_enum_matches;
-						visitStructHierarchyDepthFirst(struct_info, [&](const StructTypeInfo& current) {
-							for (TypeIndex nested_enum_index : current.getNestedEnumIndices()) {
+						visitStructHierarchyDepthFirst(struct_info, [&](const StructTypeInfo& visited_struct) {
+							for (TypeIndex nested_enum_index : visited_struct.getNestedEnumIndices()) {
 								const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
 								const EnumTypeInfo* nested_enum_info =
 									nested_enum_type_info ? nested_enum_type_info->getEnumInfo() : nullptr;
@@ -8965,9 +8965,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 							1));
 				};
 
-				if (const TypeInfo* resolved_owner =
+				if (const TypeInfo* resolved_nested_owner =
 						resolve_from_owner(base_owner_handle)) {
-					return resolved_owner;
+					return resolved_nested_owner;
 				}
 
 				if (std::optional<StringHandle> pattern_owner_handle =
@@ -9402,8 +9402,8 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 						decl.identifier_token().handle(),
 						false,
 						true,
-						[](const StructMemberFunction&, const FunctionDeclarationNode& func_decl) {
-							return func_decl.is_static();
+						[](const StructMemberFunction&, const FunctionDeclarationNode& member_func_decl) {
+							return member_func_decl.is_static();
 						});
 				if (!member_candidates.compatible.empty()) {
 					for (const StructMemberFunction* member_candidate :

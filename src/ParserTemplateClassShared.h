@@ -648,11 +648,11 @@ inline TypeIndex resolveDependentMemberTemplateSubstitutionArtifacts(
 		template_args,
 		[&parser](
 			std::string_view template_name,
-			std::span<const TemplateTypeArg> template_args,
+			std::span<const TemplateTypeArg> instantiation_args,
 			bool force_eager) {
 			return parser.try_instantiate_class_template(
 				template_name,
-				template_args,
+				instantiation_args,
 				force_eager);
 		},
 		[&parser](

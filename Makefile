@@ -144,11 +144,13 @@ $(MODULAR_TARGET): $(MODULAR_OBJS) | $(MODULAR_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MODULAR_OBJS)
 	@echo "Built: $@"
 
-$(SHARDED_DIR)/%.o: $(SRCDIR)/%.cpp $(UNITY_SOURCES)
+$(SHARDED_DIR):
 	@$(MKDIR) $(SHARDED_DIR) 2>nul || $(MKDIR) $(SHARDED_DIR) || true
+
+$(SHARDED_DIR)/%.o: $(SRCDIR)/%.cpp $(UNITY_SOURCES) | $(SHARDED_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -c $< -o $@
 
-$(SHARDED_TARGET): $(SHARDED_OBJS)
+$(SHARDED_TARGET): $(SHARDED_OBJS) | $(SHARDED_DIR)
 	@echo "Building sharded unity executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(SHARDED_DIR) 2>nul || $(MKDIR) $(SHARDED_DIR) || true
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(SHARDED_OBJS)
