@@ -4,7 +4,7 @@ struct integral_constant {
 };
 
 template<typename T>
-struct is_location_invariant : integral_constant<bool, false> {};
+struct is_location_invariant : integral_constant<bool, true> {};
 
 struct NocopyTypes {
 	int payload;
