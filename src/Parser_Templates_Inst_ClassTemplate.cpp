@@ -7462,8 +7462,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto try_reparse_in_class_static_initializer =
 		[&](
 			const auto& static_member,
-			const auto& template_params,
-			std::span<const TemplateTypeArg> template_args,
+			const auto& replay_template_params,
+			std::span<const TemplateTypeArg> replay_template_args,
 			StringHandle owning_instantiated_name,
 			TypeIndex owning_type_index,
 			NamespaceHandle fallback_definition_namespace,
@@ -7489,8 +7489,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		TemplateInstantiationContext substitution_context =
 			buildTemplateInstantiationContext(
-				template_params,
-				template_args,
+				replay_template_params,
+				replay_template_args,
 				nullptr,
 				currentTemplateSubstitutionFailurePolicy());
 		substitution_context.current_instantiation_type =
@@ -7519,7 +7519,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		InlineVector<TemplateParameterKind, 4> template_param_kinds;
 		InlineVector<TypeCategory, 4> non_type_categories;
 		buildTemplateParameterReplayState(
-			template_params,
+			replay_template_params,
 			template_param_names,
 			template_param_kinds,
 			non_type_categories);
@@ -7588,8 +7588,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto substitute_in_class_static_initializer_replay_first =
 		[&](
 			const auto& static_member,
-			const auto& template_params,
-			std::span<const TemplateTypeArg> template_args,
+			const auto& replay_template_params,
+			std::span<const TemplateTypeArg> replay_template_args,
 			StringHandle owning_instantiated_name,
 			TypeIndex owning_type_index,
 			NamespaceHandle fallback_definition_namespace,
@@ -7602,8 +7602,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_initializer_requires_replay_metadata(
 				static_member.initializer,
 				std::span<const TemplateParameterNode>(
-					template_params.data(),
-					template_params.size()));
+					replay_template_params.data(),
+					replay_template_params.size()));
 		const bool has_replay_metadata =
 			static_member.initializer_position.has_value() &&
 			static_member.declaration.has_value();
@@ -7612,8 +7612,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_initializer =
 				try_reparse_in_class_static_initializer(
 					static_member,
-					template_params,
-					template_args,
+					replay_template_params,
+					replay_template_args,
 					owning_instantiated_name,
 					owning_type_index,
 					fallback_definition_namespace,
@@ -7634,7 +7634,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			substituted_initializer = substituteTemplateParameters(
 				*static_member.initializer,
-				template_params,
+				replay_template_params,
 				fallback_template_args,
 				owning_type_index,
 				false);
