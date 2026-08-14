@@ -5053,7 +5053,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 
 		InlineVector<TemplateTypeArg, 4> pattern_args = *pattern_args_opt;
-		auto is_exact_primary_parameter_pattern =
+		const auto& primary_template_params =
+			class_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+		auto is_bare_echo_of_partial_parameters =
 			[&template_param_nodes](std::span<const TemplateTypeArg> args) -> bool {
 				if (args.size() != template_param_nodes.size()) {
 					return false;
@@ -5105,15 +5107,19 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				return false;
 			};
-		// C++20 [temp.class.spec.mfunc] allows a partial specialization whose
-		// argument list matches the primary template parameter list when either
-		// a requires-clause or a constrained template parameter makes it more
-		// specialized than the primary. The MSVC STL relies on the constrained
-		// parameter form for transform_view::_Category_base. Only reject the
-		// unconstrained echo pattern; a constrained same-arg specialization is
-		// valid and is disambiguated via the constrained-pattern counter below.
+		// C++20 [temp.class.spec] forbids a partial specialization whose
+		// argument list is identical to the primary's implicit argument list.
+		// A bare echo of the *partial's* parameters is that identity only when
+		// the partial has the same arity as the primary. Pack-peeling forms
+		// such as libstdc++ `_List<_Tp, _Up...>` for `template<typename...>
+		// struct _List` list the partial parameters but are more specialized
+		// (they require at least one argument) and must be accepted.
+		// [temp.class.spec.mfunc] still allows a same-arity echo when a
+		// requires-clause or constrained template parameter makes it more
+		// specialized (MSVC STL `transform_view::_Category_base`).
 		if (!requires_clause.has_value() &&
-			is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size())) &&
+			pattern_args.size() == primary_template_params.size() &&
+			is_bare_echo_of_partial_parameters(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size())) &&
 			!has_constrained_template_parameter()) {
 			return ParseResult::error("Partial specialization argument list cannot match the primary template parameter list", current_token_);
 		}
