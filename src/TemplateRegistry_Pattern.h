@@ -137,6 +137,50 @@ struct TemplatePattern {
 		return deduced;
 	}
 
+	// If pattern_arg is a nested template-id whose trailing inner argument is
+	// pack_parameter_name (e.g. List<Head, Tail...>), append the remaining
+	// concrete inner arguments to out_args. Returns true when this pattern
+	// slot owns that pack, including when the pack is empty.
+	static bool tryAppendNestedTrailingPack(
+		const TemplateTypeArg& pattern_arg,
+		const TemplateTypeArg& concrete_arg,
+		StringHandle pack_parameter_name,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::vector<TemplateTypeArg>& out_args) {
+		const TypeInfo* pattern_type_info = tryGetTypeInfo(pattern_arg.type_index);
+		if (pattern_type_info == nullptr || !pattern_type_info->isTemplateInstantiation()) {
+			return false;
+		}
+		const auto& pattern_inner_args = pattern_type_info->templateArgs();
+		if (pattern_inner_args.empty() || !pattern_inner_args.back().is_pack) {
+			return false;
+		}
+		auto inner_pack_name =
+			getPatternParameterName(pattern_inner_args.back(), template_param_names);
+		if (!inner_pack_name.has_value() || *inner_pack_name != pack_parameter_name) {
+			return false;
+		}
+
+		ResolvedAliasTypeInfo concrete_alias = resolveAliasTypeInfo(concrete_arg.type_index);
+		const TypeInfo* concrete_type_info = concrete_alias.terminal_type_info;
+		if (concrete_type_info == nullptr && concrete_arg.type_index.is_valid()) {
+			concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
+		}
+		if (concrete_type_info == nullptr) {
+			return false;
+		}
+
+		const auto& concrete_inner_args = concrete_type_info->templateArgs();
+		const size_t fixed_inner_count = pattern_inner_args.size() - 1;
+		if (concrete_inner_args.size() < fixed_inner_count) {
+			return false;
+		}
+		for (size_t pack_idx = fixed_inner_count; pack_idx < concrete_inner_args.size(); ++pack_idx) {
+			out_args.push_back(createDeducedArgFromConcrete(concrete_inner_args[pack_idx]));
+		}
+		return true;
+	}
+
 	// Records a deduction for a single template parameter name, checking consistency
 	// if the parameter was already deduced. Returns false on inconsistency.
 	static bool recordDeduction(
@@ -214,14 +258,13 @@ struct TemplatePattern {
 		if (has_trailing_pack) {
 			StringHandle pack_name =
 				*getPatternParameterName(pattern_inner_args.back(), template_param_names);
-			TemplateTypeArg pack_representative;
 			if (fixed_inner_count < concrete_inner_args.size()) {
-				pack_representative =
+				TemplateTypeArg pack_representative =
 					createDeducedArgFromConcrete(concrete_inner_args[fixed_inner_count]);
-			}
-			pack_representative.is_pack = true;
-			if (!recordDeduction(pack_name, pack_representative, param_substitutions)) {
-				return false;
+				pack_representative.is_pack = true;
+				if (!recordDeduction(pack_name, pack_representative, param_substitutions)) {
+					return false;
+				}
 			}
 		}
 		return true;

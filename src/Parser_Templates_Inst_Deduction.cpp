@@ -865,6 +865,12 @@ bool Parser::tryAppendDefaultTemplateArg(
 		clearCurrentTemplateParameters();
 		template_param_substitutions_.clear();
 		populateTemplateParamSubstitutions(template_param_substitutions_, default_arg_environment);
+		// Keep parameter names active so earlier NTTPs in defaults such as
+		// `bool = (Sz <= Tp::size)` are recognized and value-substituted,
+		// matching trailing-return reparse.
+		for (const TemplateParameterNode& template_param : template_params) {
+			pushCurrentTemplateParamName(template_param.nameHandle());
+		}
 		sfinae_type_map_.clear();
 
 		SaveHandle sfinae_pos = save_token_position();

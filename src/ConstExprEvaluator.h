@@ -583,6 +583,23 @@ struct EvaluationContext {
 	EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner);
 };
 
+// Temporarily replace template bindings with those of a class-template
+// instantiation while evaluating that type's static constexpr members.
+// Restores the caller's bindings (e.g. an enclosing NTTP default) on exit.
+struct ScopedTemplateBindingsFromType {
+	explicit ScopedTemplateBindingsFromType(EvaluationContext& context, const TypeInfo* owner_type);
+	~ScopedTemplateBindingsFromType();
+
+	ScopedTemplateBindingsFromType(const ScopedTemplateBindingsFromType&) = delete;
+	ScopedTemplateBindingsFromType& operator=(const ScopedTemplateBindingsFromType&) = delete;
+
+private:
+	EvaluationContext& context_;
+	InlineVector<std::string_view, 4> saved_param_names_;
+	InlineVector<TemplateTypeArg, 4> saved_args_;
+	TemplateEnvironment saved_environment_;
+};
+
 struct MemberPointerTarget {
 	StringHandle member_name;
 	int64_t offset = 0;

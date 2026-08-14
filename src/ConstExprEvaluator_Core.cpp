@@ -5619,6 +5619,23 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	return EvalResult::error("Identifier is not a function or callable object: " + std::string(func_name));
 }
 
+ScopedTemplateBindingsFromType::ScopedTemplateBindingsFromType(
+	EvaluationContext& context, const TypeInfo* owner_type)
+	: context_(context)
+	, saved_param_names_(context.template_param_names)
+	, saved_args_(context.template_args)
+	, saved_environment_(context.template_environment) {
+	if (owner_type != nullptr) {
+		Evaluator::load_template_bindings_from_type(owner_type, context_);
+	}
+}
+
+ScopedTemplateBindingsFromType::~ScopedTemplateBindingsFromType() {
+	context_.template_param_names = std::move(saved_param_names_);
+	context_.template_args = std::move(saved_args_);
+	context_.template_environment = std::move(saved_environment_);
+}
+
 void Evaluator::load_template_bindings_from_type(const TypeInfo* source_type, EvaluationContext& context) {
 	if (!source_type) {
 		return;

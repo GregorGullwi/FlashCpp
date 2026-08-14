@@ -14,6 +14,17 @@
 
 namespace ConstExpr {
 
+const TypeInfo* typeInfoForStaticMemberOwner(
+	const StructTypeInfo* owner_struct,
+	const TypeInfo* fallback_type) {
+	if (owner_struct != nullptr && owner_struct->own_type_index_.has_value()) {
+		if (const TypeInfo* owner_type = tryGetTypeInfo(*owner_struct->own_type_index_)) {
+			return owner_type;
+		}
+	}
+	return fallback_type;
+}
+
 // Evaluate qualified identifier (e.g., Namespace::var or Template<T>::member)
 EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context) {
 	// Look up the qualified name in the symbol table
@@ -1070,6 +1081,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							!static_member_decl.initializer.has_value()) {
 							continue;
 						}
+						ScopedTemplateBindingsFromType owner_bindings(context, resolved_type_info);
 						return evaluate(*static_member_decl.initializer, context);
 					}
 
@@ -1272,6 +1284,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
 							if (relookup_result.first && relookup_result.first->initializer.has_value()) {
 								FLASH_LOG(ConstExpr, Debug, "After lazy instantiation, evaluating initializer");
+								ScopedTemplateBindingsFromType owner_bindings(
+									context,
+									typeInfoForStaticMemberOwner(relookup_result.second, resolved_type_info));
 								return evaluate(relookup_result.first->initializer.value(), context);
 							}
 						}
@@ -1374,6 +1389,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 									alternate_owner == nullptr) {
 									return std::nullopt;
 								}
+								ScopedTemplateBindingsFromType owner_bindings(
+									context,
+									typeInfoForStaticMemberOwner(alternate_owner, resolved_owner));
 								return tryReadStaticMemberConstant(*alternate_member, context);
 							};
 							InlineVector<StringHandle, 6> owner_candidates;
@@ -1406,6 +1424,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 					}
 
+					ScopedTemplateBindingsFromType owner_bindings(
+						context,
+						typeInfoForStaticMemberOwner(owner_struct, resolved_type_info));
 					return tryReadStaticMemberConstant(*static_member, context);
 				}
 			}
@@ -1537,6 +1558,9 @@ EvalResult Evaluator::evaluate_arrow_member_from_pointer_var(
 					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 					if (static_member && owner_struct) {
+						ScopedTemplateBindingsFromType owner_bindings(
+							context,
+							typeInfoForStaticMemberOwner(owner_struct, type_info));
 						return evaluate_static_member_initializer_or_default(*static_member, context);
 					}
 				}
@@ -1777,7 +1801,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 					if (static_member && owner_struct) {
 						FLASH_LOG(ConstExpr, Debug, "Accessing static member through instance: ", member_name);
 
-						// Found a static member - evaluate its initializer if available
+						ScopedTemplateBindingsFromType owner_bindings(
+							context,
+							typeInfoForStaticMemberOwner(owner_struct, var_type_info));
 						return evaluate_static_member_initializer_or_default(*static_member, context);
 					}
 				}
@@ -3116,6 +3142,9 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 	}
 
 	if (static_member->initializer.has_value()) {
+		ScopedTemplateBindingsFromType owner_bindings(
+			context,
+			typeInfoForStaticMemberOwner(owner_struct, &type_info));
 		context.current_depth++;
 		EvalResult result = static_member->is_array && static_member->initializer->is<InitializerListNode>()
 								? materializeArrayInitializer(
@@ -3140,6 +3169,9 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 		if (member_node.is<VariableDeclarationNode>()) {
 			const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
 			if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
+				ScopedTemplateBindingsFromType owner_bindings(
+					context,
+					typeInfoForStaticMemberOwner(owner_struct, &type_info));
 				context.current_depth++;
 				EvalResult result =
 					var_decl.initializer()->is<InitializerListNode>() &&
