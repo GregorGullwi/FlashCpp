@@ -6431,6 +6431,14 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
+				const FunctionDeclarationNode* syntactic_callee =
+					e.callee().function_declaration_or_null();
+				if (syntactic_callee &&
+					syntactic_callee->decl_node().identifier_token().value() == "__builtin_bit_cast"sv &&
+					e.arguments().size() == 2 && e.arguments()[0].template is<TypeSpecifierNode>()) {
+					return canonicalizeType(e.arguments()[0].template as<TypeSpecifierNode>());
+				}
+
 				auto inferCallReturnType = [this, &e](const FunctionDeclarationNode* resolved_callable) -> CanonicalTypeId {
 					if (!resolved_callable) {
 						return {};

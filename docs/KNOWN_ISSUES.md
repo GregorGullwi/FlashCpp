@@ -69,9 +69,11 @@ current backend return-register abstraction cannot represent yet. Aggregate
 parameters containing `long double` are still classified as MEMORY as required.
 
 This gap is specific to `long double` (not `float`/`double` SSE aggregates). Closing
-it is blocked on broader `long double` codegen support: FlashCpp currently has type
-identity, some constexpr/overload/builtin coverage, and inconsistent sizing (80-bit
-x87 extended in places, Windows-style 8-byte `double` alias elsewhere), but no real
-x87 load/store/`%st0` emission path. Constexpr evaluation often collapses
+it is blocked on broader `long double` codegen support. LLP64 sizing and literals
+now consistently use the Microsoft x64 64-bit `double` representation, including
+bit-preserving builtin bit-casts, but direct `long double` floating comparisons
+still have an LLP64 lowering discrepancy. LP64 has type identity and some
+constexpr/overload/builtin coverage, but no real x87 load/store/`%st0` emission
+path. Constexpr evaluation often collapses
 `long double` to `double`. Do not paper over return ABI with size guesses or INTEGER
 fallbacks; wait until `long double` lowering can emit the SysV x87 convention.

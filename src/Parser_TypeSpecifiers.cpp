@@ -1168,6 +1168,37 @@ ParseResult Parser::parse_type_specifier() {
 		// Commit the StringBuilder to get a persistent string_view
 		std::string_view type_name = type_name_builder.commit();
 
+		// Resolve a concrete qualified member through an active local alias before
+		// consulting process-wide qualified-name entries. Each function-template
+		// specialization may bind the same alias spelling to a different owner.
+		if (peek() != "<"_tok) {
+			const size_t first_scope_pos = type_name.find("::");
+			if (first_scope_pos != std::string_view::npos) {
+				std::string_view base_part = type_name.substr(0, first_scope_pos);
+				StringHandle base_handle = StringTable::getOrInternStringHandle(base_part);
+				const TypeInfo* base_info = lookupTypeInCurrentContext(base_handle);
+				if (base_info != nullptr && !base_info->isDependentPlaceholder()) {
+					std::string_view member_chain = type_name.substr(first_scope_pos + 2);
+					if (const TypeInfo* member_info = resolveBaseClassMemberTypeChain(
+							base_part,
+							buildQualifiedTypeMemberChain(member_chain));
+						member_info != nullptr && !member_info->is_incomplete_instantiation_) {
+						TypeSpecifierNode outer_spec(
+							member_info->registeredTypeIndex().withCategory(member_info->typeEnum()),
+							member_info->sizeInBits(),
+							last_qualified_token,
+							cv_qualifier,
+							ReferenceQualifier::None);
+						TypeSpecifierNode resolved_type = resolveTypeInfoToTypeSpec(*member_info, outer_spec);
+						if (const int resolved_size_bits = getTypeSpecSizeBits(resolved_type); resolved_size_bits > 0) {
+							resolved_type.set_size_in_bits(resolved_size_bits);
+						}
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(resolved_type));
+					}
+				}
+			}
+		}
+
 		// Preserve dependent qualified member types whose leftmost qualifier is a
 		// member alias of the current class template.  For example:
 		//
@@ -3729,7 +3760,7 @@ ParseResult Parser::parse_type_specifier() {
 		// entry is safe to resolve via the alias-chain follower.
 		constexpr size_t scope_resolution_len = std::string_view{"::"}.size();
 		const size_t first_scope = type_name.find("::");
-		if (!type_info_ctx && first_scope != std::string_view::npos) {
+		if (first_scope != std::string_view::npos) {
 			std::string_view base_part = type_name.substr(0, first_scope);
 			std::string_view member_chain_str = type_name.substr(first_scope + scope_resolution_len);
 			StringHandle base_handle = StringTable::getOrInternStringHandle(base_part);
@@ -3738,7 +3769,11 @@ ParseResult Parser::parse_type_specifier() {
 				base_info = findTypeByName(base_handle);
 			}
 			if (base_info != nullptr && !base_info->isDependentPlaceholder()) {
-				type_info_ctx = resolveBaseClassMemberTypeChain(base_part, buildQualifiedTypeMemberChain(member_chain_str));
+				if (const TypeInfo* resolved_member = resolveBaseClassMemberTypeChain(
+						base_part,
+						buildQualifiedTypeMemberChain(member_chain_str))) {
+					type_info_ctx = resolved_member;
+				}
 			}
 		}
 

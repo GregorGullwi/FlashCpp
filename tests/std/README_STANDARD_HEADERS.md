@@ -54,7 +54,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 
 > **Notes** column = current first stop. Blockers section below lists the mechanism to fix.
 >
-> The 2026-08-13 evening Windows/MSVC STL 14.44 sweep retested executable `Runs` rows with `tests/run_all_tests.ps1` (compile + MSVC `link.exe` + run) and failing/compile-only rows with `x64\Sharded\FlashCppMSVC.exe` directly. Recent frontend changes moved several first stops; wall times below replace the earlier 2026-08-13 morning numbers.
+> The 2026-08-13 evening Windows/MSVC STL 14.44 sweep retested executable `Runs` rows with `tests/run_all_tests.ps1` (compile + MSVC `link.exe` + run) and failing/compile-only rows with `x64\Sharded\FlashCppMSVC.exe` directly. The `<cmath>`, `<functional>`, `<optional>`, and `<iterator>` rows were refreshed on 2026-08-14 after the native `bit_cast`, dependent local-alias lookup, and LLP64 `long double` fixes.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -66,7 +66,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Runs | 8.00s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 8.79s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Sema now passes the old `three_way_comparable_with` stop; codegen still types `std::begin`/`std::end` of `subrange` as the `_Begin` CPO with a fake `int` return, and `_Has_value` is missing from the `optional` layout. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 9.14s compile (retested 2026-08-14, Windows/MSVC STL 14.44). Sema passes the old `three_way_comparable_with` stop; codegen still types `std::begin`/`std::end` of `subrange` as the `_Begin` CPO with a fake `int` return, and `_Has_value` is missing from the `optional` layout. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 9.90s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop, plus pack-expansion nodes surviving into codegen for `_Construct_in_place` / `construct_at`. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Runs | 4.76s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Runs | 4.21s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
@@ -83,7 +83,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 12.35s wall (retested 2026-08-13 morning; still blocked on included `<deque>`). Included `<deque>` stops at `deque:1834:6`: Missing `typename` before dependent qualified type name. |
 | `<stack>` | `test_std_stack.cpp` | ❌ Compile Error | 12.76s wall (retested 2026-08-13 morning; still blocked on included `<deque>`). Included `<deque>` stops at `deque:1834:6`: Missing `typename` before dependent qualified type name. |
 | `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | 9.49s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Included `<atomic>` now gets past `__iso_volatile_store32` and stops at `atomic:537:42`: No matching function for `_InterlockedCompareExchange128`. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 9.87s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Included `<cmath>` now gets past `__ceilf` and stops at `cmath:1671:24`: Failed to instantiate template function. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 11.55s compile (retested 2026-08-14, Windows/MSVC STL 14.44). Included `<cmath>` now completes; included `<list>` stops at `list:951:23` while instantiating `_Pocma(_Al, _Right_al)`. |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | 9.60s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Instantiated `noexcept` is not a constant expression. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | 9.25s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). `set:256:4`: Missing `typename` before dependent qualified type name. |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | 9.70s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Sticky template-instantiation iteration limit remains. |
@@ -98,7 +98,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ❌ Link Error | 4.92s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Frontend compile now succeeds; link still misses RTTI/exception-runtime symbols (`type_info` dtor, `__type_info_root_node`, exception-ptr helpers). |
 | `<typeindex>` | `test_std_typeindex.cpp` | ✅ Compiled (compile-only) | 2.28s wall / 2.22s compiler total (retested 2026-08-02, Windows/MSVC STL 14.44). No `main`; direct compile-only probe exits 0. |
 | `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 8.77s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | 9.04s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>` (now reaches IR, not a compile-time concept failure). |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | 9.42s compile (retested 2026-08-14, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>` (reaches IR, not a compile-time concept failure). |
 | `<variant>` | `test_std_variant.cpp` | 💥 Crash | 8.75s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Stack overflow in alias-template materialization (`Parser::materializeAliasTemplateInstantiation` recursion). |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
@@ -130,7 +130,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<ctime>` | N/A | ✅ Compiled | ~58ms |
 | `<climits>` | N/A | ✅ Compiled | ~30ms |
 | `<cfloat>` | N/A | ✅ Compiled | ~32ms |
-| `<cmath>` | `test_std_cmath.cpp` | ❌ Codegen Error | 2.82s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Past `__ceilf` lookup; IR of `_Bit_cast` specializations fails with missing `unsigned int` / `float` / `double` / `long double` symbols. |
+| `<cmath>` | `test_std_cmath.cpp` | ✅ Runs | 2.99s compiler wall / 6.1s runner wall including link and execution (retested 2026-08-14, Windows/MSVC STL 14.44). Native `__builtin_bit_cast`, dependent block-scope alias ownership, static-member typing, and LLP64 `long double` sizing now carry `_Bit_cast` specializations through codegen. |
 | `<system_error>` | N/A | ❌ Compile Error | 13.34s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion; no crash in this probe. |
 | `<scoped_allocator>` | N/A | ❌ Compile Error | 10.00s (retested 2026-08-13, Windows/MSVC STL 14.44). `swap` overload deduction fails during header inclusion. |
 | `<charconv>` | N/A | ✅ Compiled | ~930ms |
@@ -160,13 +160,34 @@ First stop and the language mechanism to fix. Not a session work-log.
 | `<optional>` | Codegen: `std::begin`/`std::end` of instantiated `subrange` still lower as the `_Begin` CPO with a fake `int` return; `_Has_value` is missing from the `optional` layout | Materialize lazy/constrained `begin`/`end` on the concrete `subrange` instantiation so trailing `decltype` and the body see the iterator; complete inherited-member/layout materialization for `optional` |
 | `<any>` | Same `subrange` `begin`/`end` CPO lowering; pack-expansion nodes survive into codegen for `_Construct_in_place` / `construct_at` | Same `begin`/`end` materialization as `<optional>`; expand pack-expansion call arguments before IR |
 | `<array>` / `<span>` / `<numeric>` / `<iterator>` | Same `subrange` `begin`/`end` CPO lowering stop | Same generic CRTP/CPO member materialization as `<optional>` |
-| `<cmath>` | Codegen: `_Bit_cast` specializations missing builtin type symbols | Emit IR for `bit_cast` / `_Bit_cast` against native types without requiring those types as named codegen symbols |
 | `<atomic>` / `<memory>` / `<latch>` / `<shared_mutex>` | Sema: no matching `_InterlockedCompareExchange128` (`long long*`, two `long long` values, `long long[2]`) | Model the MSVC 128-bit CAS intrinsic, including array-to-pointer decay of the comparand result |
 | `<iostream>` / `<sstream>` | Sema: instantiated `noexcept` is not a constant expression | Evaluate dependent `noexcept` specifications after substitution the same way other instantiated exception specs are |
 | `<vector>` | Sema: `_Pocca(_Al, _Right_al)` overload/template instantiation fails | Preserve and resolve definition-bound dependent overload sets through allocator-trait member replay |
 | `<string_view>` | Sema: lazy replay of `_String_view_iterator::operator+` fails | Complete generic lazy member-body replay for self-referential class-template members |
 | `<ranges>` | Template-instantiation iteration limit (sticky abort) | Variadic `invoke` / CPO instantiation without SoftProbe retry storms |
 | `<variant>` | Crash: stack overflow in `materializeAliasTemplateInstantiation` | Bound alias-template materialization recursion / detect cyclic alias instantiation |
+
+The 2026-08-14 `<cmath>` codegen work added a genuine compiler intrinsic path for
+`__builtin_bit_cast(type-id, expression)`: parsing retains the destination type,
+semantic analysis supplies the exact result type, and IR generation preserves the
+source bits while enforcing equal source/destination sizes. It does not recognize
+`std::bit_cast`, `_Bit_cast`, or any MSVC STL helper spelling. Reduced coverage is
+`tests/test_builtin_bit_cast_template_native_types_ret0.cpp`.
+
+The same probe exposed two higher-layer type-loss bugs. A concrete block-scope
+alias used as a qualified expression owner is now rebound before the qualified-id
+enters template substitution, so separate function-template instantiations do not
+reuse the first specialization's static member. Auto-return deduction recreates
+the function/block lexical scopes from the materialized body, allowing preceding
+local declarations and qualified static members to participate in the usual
+arithmetic type result. These rules are covered by
+`tests/test_nested_dependent_member_alias_bit_cast_ret0.cpp`.
+
+Finally, LLP64 `long double` size and literal metadata now consistently use 64
+bits, matching the Microsoft x64 ABI, while LP64 keeps the existing x87 model.
+`tests/test_windows_long_double_abi_bit_cast_ret0.cpp` checks the size and a
+bit-preserving round trip. This clears `<cmath>` itself and moves `<functional>`
+to its next independent `<list>` allocator-propagation stop.
 
 The 2026-08-13 evening semantic-analysis sweep cleared three language-mechanism stops that were blocking several headers at once:
 

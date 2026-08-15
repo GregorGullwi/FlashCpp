@@ -1747,6 +1747,11 @@ void Parser::register_builtin_functions() {
 	// The second parameter is the type identifier, but we just register it as int for parsing
 	register_two_param_builtin("__builtin_va_arg", TypeCategory::Int, TypeCategory::UnsignedLongLong, TypeCategory::Int);
 
+	// __builtin_bit_cast(type, value) has a type operand followed by an expression.
+	// The parser records the concrete type operand on the call; the dummy signature
+	// only makes the intrinsic available to ordinary call infrastructure.
+	register_two_param_builtin("__builtin_bit_cast", TypeCategory::Int, TypeCategory::Int, TypeCategory::Int);
+
 	// Register integer abs builtins
 	register_builtin("__builtin_labs", TypeCategory::Long, TypeCategory::Long);
 	register_builtin("__builtin_llabs", TypeCategory::LongLong, TypeCategory::LongLong);

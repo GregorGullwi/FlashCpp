@@ -4281,6 +4281,9 @@ std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_
 	if (func_name == "__builtin_va_arg") {
 		return generateVaArgIntrinsic(callExprNode);
 	}
+	if (func_name == "__builtin_bit_cast") {
+		return generateBuiltinBitCastIntrinsic(callExprNode);
+	}
 
 	// Integer abs intrinsics
 	if (func_name == "__builtin_labs" || func_name == "__builtin_llabs") {
@@ -4372,6 +4375,43 @@ std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_
 	}
 
 	return std::nullopt; // Not an intrinsic
+}
+
+ExprResult AstToIr::generateBuiltinBitCastIntrinsic(const CallExprNode& callExprNode) {
+	if (callExprNode.arguments().size() != 2 ||
+		!callExprNode.arguments()[0].is<TypeSpecifierNode>() ||
+		!callExprNode.arguments()[1].is<ExpressionNode>()) {
+		throw InternalError("Sema-normalized __builtin_bit_cast requires a type operand and a value operand");
+	}
+
+	const TypeSpecifierNode& target_type = callExprNode.arguments()[0].as<TypeSpecifierNode>();
+	if (target_type.is_reference() || target_type.is_rvalue_reference()) {
+		throw CompileError("__builtin_bit_cast destination type cannot be a reference");
+	}
+
+	ExprResult source = visitExpressionNode(callExprNode.arguments()[1].as<ExpressionNode>());
+	int target_size_bits = target_type.pointer_depth() > 0
+		? POINTER_SIZE_BITS
+		: queryConcreteAliasResolvedTypeSizeBits(target_type).size_bits;
+	if (target_size_bits <= 0) {
+		target_size_bits = static_cast<int>(target_type.size_in_bits());
+	}
+	if (target_size_bits <= 0 || source.size_in_bits.value != target_size_bits) {
+		throw CompileError(
+			"__builtin_bit_cast source and destination types must have the same size (source=" +
+			std::to_string(source.size_in_bits.value) + ", destination=" +
+			std::to_string(target_size_bits) + ")");
+	}
+
+	const TypeIndex target_type_index = canonicalize_conversion_target_type(
+		target_type.type_index(),
+		target_type.type());
+	return makeExprResult(
+		target_type_index,
+		SizeInBits{target_size_bits},
+		source.value,
+		PointerDepth{static_cast<int>(target_type.pointer_depth())},
+		ValueStorage::ContainsData);
 }
 
 ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const CallExprNode& callExprNode) {

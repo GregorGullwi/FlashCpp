@@ -1138,6 +1138,48 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		return ParseResult::success(result_node);
 	}
 
+	// Check for '__builtin_bit_cast' intrinsic. Its first operand is a type-id,
+	// not an expression, so it must be parsed before the ordinary call path.
+	if (current_token_.type() == Token::Type::Identifier && current_token_.value() == "__builtin_bit_cast"sv) {
+		Token builtin_token = current_token_;
+		advance();
+
+		if (!consume("("_tok)) {
+			return ParseResult::error("Expected '(' after '__builtin_bit_cast'", current_token_);
+		}
+
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error() || !type_result.node().has_value()) {
+			return ParseResult::error("Expected destination type as first argument to __builtin_bit_cast", current_token_);
+		}
+		if (!consume(","_tok)) {
+			return ParseResult::error("Expected ',' after destination type in __builtin_bit_cast", current_token_);
+		}
+
+		ParseResult value_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (value_result.is_error() || !value_result.node().has_value()) {
+			return ParseResult::error("Expected value as second argument to __builtin_bit_cast", current_token_);
+		}
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after __builtin_bit_cast arguments", current_token_);
+		}
+
+		auto builtin_symbol = gSymbolTable.lookup("__builtin_bit_cast");
+		if (!builtin_symbol.has_value()) {
+			return ParseResult::error("__builtin_bit_cast not found in symbol table", builtin_token);
+		}
+
+		ChunkedVector<ASTNode> args;
+		args.push_back(*type_result.node());
+		args.push_back(*value_result.node());
+		CallExprNode builtin_call = makeResolvedCallExpr(
+			builtin_symbol->as<FunctionDeclarationNode>(),
+			std::move(args),
+			builtin_token);
+		builtin_call.set_parser_return_type_hint(type_result.node()->as<TypeSpecifierNode>());
+		return ParseResult::success(emplace_node<ExpressionNode>(std::move(builtin_call)));
+	}
+
 	// Check for '__builtin_va_arg' intrinsic
 	// Special handling needed because second argument is a type, not an expression
 	// Syntax: __builtin_va_arg(va_list_var, type)
