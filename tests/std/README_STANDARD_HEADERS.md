@@ -54,7 +54,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 
 > **Notes** column = current first stop. Blockers section below lists the mechanism to fix.
 >
-> The 2026-08-15 parser sweep retested failing rows and several previously-passing compile totals with `x64\Sharded\FlashCppMSVC.exe` directly (compiler TOTAL). Earlier `Runs` wall times included MSVC `link.exe` and execution; those rows still run, but the compile totals below reflect the faster frontend after recent work. The `<cmath>`, `<functional>`, `<optional>`, and `<iterator>` rows were last execution-tested on 2026-08-14 after the native `bit_cast`, dependent local-alias lookup, and LLP64 `long double` fixes.
+> The 2026-08-15 parser sweep retested failing rows and several previously-passing compile totals with `x64\Sharded\FlashCppMSVC.exe` directly (compiler TOTAL). Earlier `Runs` wall times included MSVC `link.exe` and execution; those rows still run, but the compile totals below reflect the faster frontend after recent work. The `<cmath>`, `<functional>`, `<optional>`, and `<iterator>` rows were last execution-tested on 2026-08-14 after the native `bit_cast`, dependent local-alias lookup, and LLP64 `long double` fixes. The late receiver-call rows were refreshed on 2026-08-15 after semantic recovery of instantiated trailing-`decltype` wrappers.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
@@ -66,16 +66,16 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Runs | 8.00s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 9.14s compile (retested 2026-08-14, Windows/MSVC STL 14.44). Sema passes the old `three_way_comparable_with` stop; codegen still types `std::begin`/`std::end` of `subrange` as the `_Begin` CPO with a fake `int` return, and `_Has_value` is missing from the `optional` layout. |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 9.90s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop, plus pack-expansion nodes surviving into codegen for `_Construct_in_place` / `construct_at`. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 9.35s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Instantiated `std::begin`/`std::end` wrappers now reach IR with recovered member return types; `_Has_value` is still missing from the `optional` layout. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 10.02s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past the shared wrapper-return stop; pack-expansion nodes still survive into codegen for `_Construct_in_place` / `construct_at`, a binary expression lacks an exact semantic slot, and `_Cast` reaches a missing `operator!=`. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Runs | 1.76s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Runs | 1.31s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Runs | 4.66s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | 12.06s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past `_Found_at` auto deduction; lazy replay of `_String_view_iterator::operator+` still fails. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | 13.41s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past the `explicit` deduction-guide identifier stop; `sizeof` of `_Ty` in `_String_val` is still incomplete after substitution. |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | 8.77s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
+| `<array>` | `test_std_array.cpp` | ❌ Link Error | 9.07s frontend compile (retested 2026-08-15, Windows/MSVC STL 14.44). Parsing, sema, and IR complete; link exposes unresolved CRTP/view calls, array-iterator members, and `std::move`. The concrete `subrange::begin` return still substitutes `_It` as the CPO type. |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | 9.33s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). `_Stack_space` array bound still cannot find `_Optimistic_count` in constant expression. |
-| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | 8.74s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
+| `<span>` | `test_std_span.cpp` | ❌ Link Error | 9.16s frontend compile (retested 2026-08-15, Windows/MSVC STL 14.44). Parsing, sema, and IR complete; link exposes unresolved CRTP/view calls, reverse-iterator construction, range verification, and `std::move`. The concrete `subrange::begin` return still substitutes `_It` as the CPO type. |
 | `<tuple>` | `test_std_tuple.cpp` | ✅ Runs | 2.82s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). Constructor-template partial ordering, implicit base-constructor overload resolution, zero-argument default-template deduction, and static-member definition ownership are covered by reduced non-`std` regressions. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 11.68s compile (retested 2026-08-15, Windows/MSVC STL 14.44). `vector:1537:15`: Failed to instantiate template function at `_Pocca(_Al, _Right_al)`. |
 | `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | 11.52s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past C++20 omitted-`typename` `erase`/`erase_if`; same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
@@ -97,8 +97,8 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 13.91s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Included `<xstring>` now shares the incomplete `sizeof(_Ty)` stop with `<string>`. |
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ❌ Link Error | 4.92s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Frontend compile now succeeds; link still misses RTTI/exception-runtime symbols (`type_info` dtor, `__type_info_root_node`, exception-ptr helpers). |
 | `<typeindex>` | `test_std_typeindex.cpp` | ✅ Compiled (compile-only) | 2.28s wall / 2.22s compiler total (retested 2026-08-02, Windows/MSVC STL 14.44). No `main`; direct compile-only probe exits 0. |
-| `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 8.77s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | 9.42s compile (retested 2026-08-14, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>` (reaches IR, not a compile-time concept failure). |
+| `<numeric>` | `test_std_numeric.cpp` | ❌ Link Error | 9.04s frontend compile (retested 2026-08-15, Windows/MSVC STL 14.44). Parsing, sema, and IR complete; link exposes unresolved CRTP/view calls and `std::move`. The concrete `subrange::begin` return still substitutes `_It` as the CPO type. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Link Error | 9.32s frontend compile (retested 2026-08-15, Windows/MSVC STL 14.44). Parsing, sema, and IR complete; link exposes unresolved CRTP/view calls and `std::move`. The concrete `subrange::begin` return still substitutes `_It` as the CPO type. |
 | `<variant>` | `test_std_variant.cpp` | 💥 Crash | 8.75s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Stack overflow in alias-template materialization (`Parser::materializeAliasTemplateInstantiation` recursion). |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
@@ -157,9 +157,10 @@ First stop and the language mechanism to fix. Not a session work-log.
 
 | Header | Stop | Mechanism to fix |
 |--------|------|------------------|
-| `<optional>` | Codegen: `std::begin`/`std::end` of instantiated `subrange` still lower as the `_Begin` CPO with a fake `int` return; `_Has_value` is missing from the `optional` layout | Materialize lazy/constrained `begin`/`end` on the concrete `subrange` instantiation so trailing `decltype` and the body see the iterator; complete inherited-member/layout materialization for `optional` |
-| `<any>` | Same `subrange` `begin`/`end` CPO lowering; pack-expansion nodes survive into codegen for `_Construct_in_place` / `construct_at` | Same `begin`/`end` materialization as `<optional>`; expand pack-expansion call arguments before IR |
-| `<array>` / `<span>` / `<numeric>` / `<iterator>` / `<deque>` / `<stack>` | Same `subrange` `begin`/`end` CPO lowering stop | Same generic CRTP/CPO member materialization as `<optional>` |
+| `<optional>` | Codegen: `_Has_value` is missing from the `optional` layout | Complete inherited-member/layout materialization for `optional` |
+| `<any>` | Pack-expansion nodes survive into codegen for `_Construct_in_place` / `construct_at`; a binary expression lacks an exact sema slot; `_Cast` reaches a missing `operator!=` | Expand pack-expansion call arguments and complete generic dependent operator/member resolution before IR |
+| `<array>` / `<span>` / `<numeric>` / `<iterator>` | Link: unresolved generic CRTP/view and iterator calls; concrete `subrange::begin` still has `_It` substituted as the CPO type | Correct the concrete class-template argument environment for constrained member materialization, then emit/reach the resolved generic member definitions |
+| `<deque>` / `<stack>` | Codegen: shared `subrange` `begin`/`end` CPO lowering stop | Apply the same generic deferred receiver-call recovery, then complete the concrete `subrange` template argument environment |
 | `<atomic>` / `<memory>` / `<latch>` / `<shared_mutex>` | Sema: no matching `_InterlockedCompareExchange128` (`long long*`, two `long long` values, `long long[2]`) | Model the MSVC 128-bit CAS intrinsic, including array-to-pointer decay of the comparand result |
 | `<iostream>` / `<sstream>` / `<map>` / `<set>` | Sema: instantiated `noexcept` is not a constant expression | Evaluate dependent `noexcept` specifications after substitution the same way other instantiated exception specs are |
 | `<vector>` / `<queue>` | Sema: `_Pocca(_Al, _Right_al)` overload/template instantiation fails | Preserve and resolve definition-bound dependent overload sets through allocator-trait member replay |
@@ -173,6 +174,19 @@ The 2026-08-15 parser sweep implemented C++20 P0634R3 implied `typename` in decl
 The same sweep recognized `explicit` on class-template deduction guides. Reduced by `tests/test_explicit_deduction_guide_unnamed_tmpl_param_ret0.cpp`. This clears `xstring:3125` (`explicit basic_string(basic_string_view<...>, ...)`) for `<string>`, `<fstream>`, `<chrono>`, and `<stdexcept>`; the shared next stop is `sizeof` of `_Ty` remaining incomplete in `_String_val`.
 
 Dependent `Traits::find` auto deduction is now deferred at template definition ([temp.dep.expr]) and qualified static lookup uses `template_param_substitutions_` plus the existing `foldInstantiatedNoexceptSpecification` / `lookupSubstitutedTypeParameter` helpers. Reduced by `tests/test_auto_deduce_traits_static_find_ret0.cpp`. `<string_view>` moves past `_Found_at` and again exposes lazy `_String_view_iterator::operator+` replay.
+
+The 2026-08-15 late receiver-call regression is
+`tests/test_deferred_constrained_range_member_call_ret0.cpp`. A dependent receiver
+call could be normalized before the concrete class metadata and its constrained
+members were registered, freezing an ownerless placeholder declaration and fake
+return type into an instantiated trailing-`decltype` wrapper. Semantic analysis
+now defers that annotation, retries it after the lazy-member drain, replaces the
+stale expression type with the exact member result, and propagates that result to
+a matching direct return in the instantiated wrapper. This clears the shared
+frontend IR stop for `<array>`, `<span>`, `<numeric>`, and `<iterator>` without
+recognizing any standard-library name. Their link failures expose two later,
+independent gaps: the concrete `subrange` member still receives the wrong `_It`
+template argument, and several generic CRTP/iterator definitions are not emitted.
 
 The 2026-08-14 `<cmath>` codegen work added a genuine compiler intrinsic path for
 `__builtin_bit_cast(type-id, expression)`: parsing retains the destination type,

@@ -430,6 +430,8 @@ private:
 	// drain and auto-return resolution so every call to an auto-return function that
 	// was a lazy stub at annotation time is correctly annotated.
 	void resolvePendingCopyInitAnnotations();
+	void queuePendingReceiverCallAnnotation(const CallExprNode& call);
+	size_t resolvePendingReceiverCallAnnotations();
 	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type);
 	TypeSpecifierNode applyDecltypeAutoReturnValueCategory(
 		const ASTNode& expression,
@@ -715,6 +717,12 @@ private:
 		CanonicalTypeId target_type_id;
 	};
 	std::vector<PendingCopyInitAnnotation> pending_copy_init_annotations_;
+	struct PendingReceiverCallAnnotation {
+		const CallExprNode* call = nullptr;
+		const FunctionDeclarationNode* owning_function = nullptr;
+	};
+	std::vector<PendingReceiverCallAnnotation> pending_receiver_call_annotations_;
+	std::vector<const FunctionDeclarationNode*> current_function_stack_;
 
 	// Track which function body ASTNode pointers sema has normalized.
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited
