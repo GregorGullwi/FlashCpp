@@ -2687,19 +2687,47 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				auto resolveQualifiedStaticMemberFromOwner =
 					[&]() -> const FunctionDeclarationNode* {
 						class_owner_return_hint = nullptr;
-						instantiateLazyClassToPhase(
-							class_name_handle,
-							ClassInstantiationPhase::Full);
-						auto class_type_it = getTypesByNameMap().find(class_name_handle);
-						if (class_type_it == getTypesByNameMap().end() ||
-							class_type_it->second == nullptr) {
+						const TypeInfo* owner_type_info =
+							lookupSubstitutedTypeParameter(class_name_handle);
+						if (owner_type_info == nullptr) {
+							owner_type_info = lookupTypeInCurrentContext(class_name_handle);
+						}
+						if (owner_type_info == nullptr) {
+							auto class_type_it = getTypesByNameMap().find(class_name_handle);
+							if (class_type_it != getTypesByNameMap().end()) {
+								owner_type_info = class_type_it->second;
+							}
+						}
+						if (owner_type_info == nullptr) {
 							return nullptr;
 						}
-						const StructTypeInfo* struct_info =
-							class_type_it->second->getStructInfo();
+						if (owner_type_info->isTypeAlias() &&
+							owner_type_info->type_index_.is_valid()) {
+							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+								owner_type_info->registeredTypeIndex().withCategory(
+									owner_type_info->typeEnum()));
+							if (resolved_alias.terminal_type_info != nullptr) {
+								owner_type_info = resolved_alias.terminal_type_info;
+							} else if (resolved_alias.type_index.is_valid()) {
+								if (const TypeInfo* resolved_type =
+										tryGetTypeInfo(resolved_alias.type_index)) {
+									owner_type_info = resolved_type;
+								}
+							}
+						}
+						instantiateLazyClassToPhase(
+							owner_type_info->name(),
+							ClassInstantiationPhase::Full);
+						std::string_view owner_name =
+							StringTable::getStringView(owner_type_info->name());
+						instantiateLazyMemberForCanonicalOwner(
+							owner_name,
+							final_identifier.value(),
+							std::span<const TemplateTypeArg>{});
+						const StructTypeInfo* struct_info = owner_type_info->getStructInfo();
 						if (struct_info == nullptr) {
 							struct_info = tryGetStructTypeInfo(
-								class_type_it->second->registeredTypeIndex());
+								owner_type_info->registeredTypeIndex());
 						}
 						if (struct_info == nullptr) {
 							return nullptr;
@@ -2765,37 +2793,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
 				if (!decl_ptr) {
-					const TypeInfo* class_type_info = lookupTypeInCurrentContext(class_name_handle);
-					if (class_type_info == nullptr) {
-						auto class_type_it = getTypesByNameMap().find(class_name_handle);
-						if (class_type_it != getTypesByNameMap().end()) {
-							class_type_info = class_type_it->second;
-						}
-					}
-					if (class_type_info != nullptr) {
-						if (class_type_info->isTypeAlias() && class_type_info->type_index_.is_valid()) {
-							ResolvedAliasTypeInfo resolved_alias =
-								resolveAliasTypeInfo(class_type_info->registeredTypeIndex().withCategory(class_type_info->typeEnum()));
-							if (resolved_alias.terminal_type_info != nullptr) {
-								class_type_info = resolved_alias.terminal_type_info;
-							} else if (resolved_alias.type_index.is_valid()) {
-								if (const TypeInfo* resolved_type = tryGetTypeInfo(resolved_alias.type_index)) {
-									class_type_info = resolved_type;
-								}
-							}
-						}
-						const StructTypeInfo* struct_info = class_type_info->getStructInfo();
-						if (struct_info == nullptr) {
-							struct_info = tryGetStructTypeInfo(class_type_info->registeredTypeIndex());
-						}
-						if (struct_info != nullptr) {
-							if (const FunctionDeclarationNode* resolved_member =
-									resolveQualifiedStaticMemberFromOwner();
-								resolved_member != nullptr) {
-								qualified_symbol = ASTNode(resolved_member);
-								decl_ptr = &resolved_member->decl_node();
-							}
-						}
+					if (const FunctionDeclarationNode* resolved_member =
+							resolveQualifiedStaticMemberFromOwner();
+						resolved_member != nullptr) {
+						qualified_symbol = ASTNode(resolved_member);
+						decl_ptr = &resolved_member->decl_node();
 					}
 				}
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {

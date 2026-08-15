@@ -968,6 +968,12 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		"parse_explicit_template_arguments called, sfinae_probe={}",
 		template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe);
 
+	// Template arguments are not a C++20 implied-`typename` context.  A
+	// decl-specifier-seq may surround this list (e.g. `Box<T::type> x;`), so
+	// suppress the outer implicit-typename flag while parsing arguments.
+	FlashCpp::ScopedState implicit_typename_guard(parsing_implicit_typename_context_);
+	parsing_implicit_typename_context_ = false;
+
 	// Save position in case this isn't template arguments
 	auto saved_pos = save_token_position();
 

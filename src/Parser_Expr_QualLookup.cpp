@@ -129,6 +129,38 @@ std::optional<TypeSpecifierNode> Parser::lookupSubstitutedLocalBindingType(
 	return std::nullopt;
 }
 
+const TypeInfo* Parser::lookupSubstitutedTypeParameter(StringHandle name) const {
+	if (!name.isValid()) {
+		return nullptr;
+	}
+	for (const auto& subst : template_param_substitutions_) {
+		if (!subst.is_type_param || subst.param_name != name) {
+			continue;
+		}
+		if (subst.substituted_type.is_dependent) {
+			return nullptr;
+		}
+		TypeIndex substituted_index = subst.substituted_type.type_index;
+		if (!substituted_index.is_valid()) {
+			return nullptr;
+		}
+		const TypeInfo* substituted_info = tryGetTypeInfo(substituted_index);
+		if (substituted_info != nullptr && substituted_info->isTypeAlias()) {
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(substituted_index);
+			if (resolved_alias.terminal_type_info != nullptr) {
+				return resolved_alias.terminal_type_info;
+			}
+			if (resolved_alias.type_index.is_valid()) {
+				if (const TypeInfo* resolved_info = tryGetTypeInfo(resolved_alias.type_index)) {
+					return resolved_info;
+				}
+			}
+		}
+		return substituted_info;
+	}
+	return nullptr;
+}
+
 bool Parser::isTypeDependentExpression(const ASTNode& expr) {
 	// C++20 [temp.dep.expr]-oriented classification for placeholder deduction.
 	return AstTraversal::visitASTWithDecisions(expr, [&](const ASTNode& current) {
@@ -234,6 +266,31 @@ bool Parser::isTypeDependentExpression(const ASTNode& expr) {
 			// Member type is non-dependent; do not treat `this` dependence alone
 			// as making the access type-dependent ([temp.dep.expr]).
 			return AstTraversal::VisitDecision::SkipChildren;
+		}
+
+		if (current.is<CallExprNode>()) {
+			const CallExprNode& call = current.as<CallExprNode>();
+			if (call.has_dependent_qualified_lookup_record() ||
+				call.has_dependent_unqualified_lookup_record()) {
+				return AstTraversal::VisitDecision::Stop;
+			}
+			if (call.has_parser_return_type_hint() &&
+				typeSpecStillUsesDependentPlaceholder(
+					call.parser_return_type_hint().value())) {
+				return AstTraversal::VisitDecision::Stop;
+			}
+			if (call.has_qualified_name()) {
+				std::string_view qualified_name = call.qualified_name();
+				const size_t scope_pos = qualified_name.find("::");
+				std::string_view owner_name = scope_pos == std::string_view::npos
+					? qualified_name
+					: qualified_name.substr(0, scope_pos);
+				if (identifierRefersToActiveTemplateParam(
+						StringTable::getOrInternStringHandle(owner_name),
+						currentTemplateParamNames())) {
+					return AstTraversal::VisitDecision::Stop;
+				}
+			}
 		}
 
 		if (current.is<IdentifierNode>()) {
@@ -3332,12 +3389,20 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	} else if (auto call_info_opt = CallInfo::tryFrom(expr)) {
 		if (const auto* call_expr = std::get_if<CallExprNode>(&expr);
 			call_expr != nullptr) {
-			if (call_expr->has_dependent_qualified_lookup_record()) {
+			auto has_concrete_return_hint = [&]() {
+				return call_expr->has_parser_return_type_hint() &&
+					!typeSpecStillUsesDependentPlaceholder(
+						call_expr->parser_return_type_hint().value()) &&
+					!isPlaceholderAutoType(
+						call_expr->parser_return_type_hint().value().category()) &&
+					call_expr->parser_return_type_hint().value().category() !=
+						TypeCategory::Invalid;
+			};
+			if (call_expr->has_dependent_qualified_lookup_record() &&
+				!has_concrete_return_hint()) {
 				// A dependent qualified call's return type is not fixed until
-				// instantiation. Using a parser hint here can freeze the first
-				// same-name overload seen during template parsing, which is
-				// wrong for decltype(...) and other dependent unevaluated
-				// contexts.
+				// instantiation. A concrete parser hint is the same signal used
+				// for dependent-unqualified calls after POI completion.
 				return std::nullopt;
 			}
 			if (call_expr->has_dependent_unqualified_lookup_record()) {
@@ -3345,15 +3410,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					*call_expr->dependent_unqualified_lookup_record();
 				const bool has_completed_poi =
 					dependent_record.point_of_instantiation_function != nullptr;
-				const bool has_concrete_return_hint =
-					call_expr->has_parser_return_type_hint() &&
-					!typeSpecStillUsesDependentPlaceholder(
-						call_expr->parser_return_type_hint().value()) &&
-					!isPlaceholderAutoType(
-						call_expr->parser_return_type_hint().value().category()) &&
-					call_expr->parser_return_type_hint().value().category() !=
-						TypeCategory::Invalid;
-				if (!has_completed_poi && !has_concrete_return_hint) {
+				if (!has_completed_poi && !has_concrete_return_hint()) {
 					// Still definition-bound only; return type is not fixed yet.
 					return std::nullopt;
 				}

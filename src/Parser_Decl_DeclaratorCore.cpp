@@ -33,7 +33,12 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 
 	// Parse the type specifier
 	FLASH_LOG(Parser, Debug, "parse_type_and_name: About to parse type_specifier, current token: ", !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-	auto type_specifier_result = parse_type_specifier();
+	ParseResult type_specifier_result;
+	{
+		FlashCpp::ScopedState implicit_typename_guard(parsing_implicit_typename_context_);
+		parsing_implicit_typename_context_ = true;
+		type_specifier_result = parse_type_specifier();
+	}
 	if (type_specifier_result.is_error()) {
 		FLASH_LOG(Parser, Debug, "parse_type_and_name: parse_type_specifier failed: ", type_specifier_result.error_message());
 		return type_specifier_result;

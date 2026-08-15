@@ -54,12 +54,12 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 
 > **Notes** column = current first stop. Blockers section below lists the mechanism to fix.
 >
-> The 2026-08-13 evening Windows/MSVC STL 14.44 sweep retested executable `Runs` rows with `tests/run_all_tests.ps1` (compile + MSVC `link.exe` + run) and failing/compile-only rows with `x64\Sharded\FlashCppMSVC.exe` directly. The `<cmath>`, `<functional>`, `<optional>`, and `<iterator>` rows were refreshed on 2026-08-14 after the native `bit_cast`, dependent local-alias lookup, and LLP64 `long double` fixes.
+> The 2026-08-15 parser sweep retested failing rows and several previously-passing compile totals with `x64\Sharded\FlashCppMSVC.exe` directly (compiler TOTAL). Earlier `Runs` wall times included MSVC `link.exe` and execution; those rows still run, but the compile totals below reflect the faster frontend after recent work. The `<cmath>`, `<functional>`, `<optional>`, and `<iterator>` rows were last execution-tested on 2026-08-14 after the native `bit_cast`, dependent local-alias lookup, and LLP64 `long double` fixes.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Runs | 7.96s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Runs | 4.30s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
+| `<limits>` | `test_std_limits.cpp` | ✅ Runs | 5.46s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Runs | 1.29s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Runs | 3.04s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
 | `<version>` | `test_std_version.cpp` | ✅ Runs | 3.14s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Runs | 3.16s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
@@ -68,33 +68,33 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Runs | 8.00s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 9.14s compile (retested 2026-08-14, Windows/MSVC STL 14.44). Sema passes the old `three_way_comparable_with` stop; codegen still types `std::begin`/`std::end` of `subrange` as the `_Begin` CPO with a fake `int` return, and `_Has_value` is missing from the `optional` layout. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 9.90s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop, plus pack-expansion nodes surviving into codegen for `_Construct_in_place` / `construct_at`. |
-| `<utility>` | `test_std_utility.cpp` | ✅ Runs | 4.76s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Runs | 4.21s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
+| `<utility>` | `test_std_utility.cpp` | ✅ Runs | 1.76s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Runs | 1.31s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Runs | 4.66s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | 11.66s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Lazy replay of `_String_view_iterator::operator+` still fails. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | 13.17s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). MSVC `<xstring>:3125:23` still stops with an expected identifier token diagnostic. |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | 12.06s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past `_Found_at` auto deduction; lazy replay of `_String_view_iterator::operator+` still fails. |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | 13.41s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past the `explicit` deduction-guide identifier stop; `sizeof` of `_Ty` in `_String_val` is still incomplete after substitution. |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | 8.77s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | 9.33s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). `_Stack_space` array bound still cannot find `_Optimistic_count` in constant expression. |
 | `<span>` | `test_std_span.cpp` | ❌ Codegen Error | 8.74s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
-| `<tuple>` | `test_std_tuple.cpp` | ✅ Runs | 5.60s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Constructor-template partial ordering, implicit base-constructor overload resolution, zero-argument default-template deduction, and static-member definition ownership are covered by reduced non-`std` regressions. |
-| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 9.80s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). `vector:1537:15`: Failed to instantiate template function at `_Pocca(_Al, _Right_al)`. |
-| `<deque>` | `test_std_deque.cpp` | ❌ Compile Error | 9.15s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). `deque:1834:6`: Missing `typename` before dependent qualified type name. |
-| `<list>` | `test_std_list.cpp` | ❌ Compile Error | 9.23s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). `list:951:23`: Failed to instantiate template function. |
-| `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 12.35s wall (retested 2026-08-13 morning; still blocked on included `<deque>`). Included `<deque>` stops at `deque:1834:6`: Missing `typename` before dependent qualified type name. |
-| `<stack>` | `test_std_stack.cpp` | ❌ Compile Error | 12.76s wall (retested 2026-08-13 morning; still blocked on included `<deque>`). Included `<deque>` stops at `deque:1834:6`: Missing `typename` before dependent qualified type name. |
+| `<tuple>` | `test_std_tuple.cpp` | ✅ Runs | 2.82s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). Constructor-template partial ordering, implicit base-constructor overload resolution, zero-argument default-template deduction, and static-member definition ownership are covered by reduced non-`std` regressions. |
+| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 11.68s compile (retested 2026-08-15, Windows/MSVC STL 14.44). `vector:1537:15`: Failed to instantiate template function at `_Pocca(_Al, _Right_al)`. |
+| `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | 11.52s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past C++20 omitted-`typename` `erase`/`erase_if`; same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
+| `<list>` | `test_std_list.cpp` | ❌ Compile Error | 10.87s compile (retested 2026-08-15, Windows/MSVC STL 14.44). `list:951:23`: Failed to instantiate template function at `_Pocma(_Al, _Right_al)`. |
+| `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 12.29s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past included `<deque>` omitted-`typename`; now blocked on included `<vector>` `_Pocca`. |
+| `<stack>` | `test_std_stack.cpp` | ❌ Codegen Error | 10.91s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past included `<deque>` omitted-`typename`; same `subrange` `begin`/`end` CPO lowering stop as `<deque>`. |
 | `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | 9.49s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Included `<atomic>` now gets past `__iso_volatile_store32` and stops at `atomic:537:42`: No matching function for `_InterlockedCompareExchange128`. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 11.55s compile (retested 2026-08-14, Windows/MSVC STL 14.44). Included `<cmath>` now completes; included `<list>` stops at `list:951:23` while instantiating `_Pocma(_Al, _Right_al)`. |
-| `<map>` | `test_std_map.cpp` | ❌ Compile Error | 9.60s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Instantiated `noexcept` is not a constant expression. |
-| `<set>` | `test_std_set.cpp` | ❌ Compile Error | 9.25s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). `set:256:4`: Missing `typename` before dependent qualified type name. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 11.72s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Included `<list>` still stops at `list:951:23` while instantiating `_Pocma(_Al, _Right_al)`. |
+| `<map>` | `test_std_map.cpp` | ❌ Compile Error | 11.81s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Instantiated `noexcept` is not a constant expression. |
+| `<set>` | `test_std_set.cpp` | ❌ Compile Error | 11.87s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past omitted-`typename` `erase_if`; instantiated `noexcept` is not a constant expression (same as `<map>`). |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | 9.70s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Sticky template-instantiation iteration limit remains. |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Compile Error | 12.77s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Past MSVC `<cmath>` `__ceilf`; instantiated `noexcept` is not a constant expression. |
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Compile Error | 11.99s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same instantiated-`noexcept` stop as `<iostream>`. |
-| `<fstream>` | `test_std_fstream.cpp` | ❌ Compile Error | 21.52s wall (retested 2026-08-13 morning; still blocked on `<xstring>`). Included `<xstring>` stops at `xstring:3125:23`: Expected identifier token. |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | 14.40s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Included `<xstring>` via `<system_error>` stops at `xstring:3125:23`: Expected identifier token. |
+| `<fstream>` | `test_std_fstream.cpp` | ❌ Compile Error | 14.27s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past the `explicit` deduction-guide stop; same incomplete `sizeof(_Ty)` in `_String_val` as `<string>`. |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | 15.63s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Included `<xstring>` via `<system_error>` now shares the incomplete `sizeof(_Ty)` stop with `<string>`. |
 | `<atomic>` | `test_std_atomic.cpp` | ❌ Compile Error | 1.86s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Past `__iso_volatile_store32`; `atomic:537:42`: No matching function for `_InterlockedCompareExchange128`. |
 | `<new>` | `test_std_new.cpp` | ❌ Link Error | 4.81s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Frontend compile now succeeds; link still misses `__ExceptionPtrCompare` / `terminate` / exception-ptr runtime symbols. |
 | `<exception>` | `test_std_exception.cpp` | ❌ Link Error | 4.80s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Frontend compile now succeeds; same missing exception-runtime symbols as `<new>`. |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 12.68s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Included `<xstring>` stops at `xstring:3125:23`: Expected identifier token. |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | 13.91s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Included `<xstring>` now shares the incomplete `sizeof(_Ty)` stop with `<string>`. |
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ❌ Link Error | 4.92s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Frontend compile now succeeds; link still misses RTTI/exception-runtime symbols (`type_info` dtor, `__type_info_root_node`, exception-ptr helpers). |
 | `<typeindex>` | `test_std_typeindex.cpp` | ✅ Compiled (compile-only) | 2.28s wall / 2.22s compiler total (retested 2026-08-02, Windows/MSVC STL 14.44). No `main`; direct compile-only probe exits 0. |
 | `<numeric>` | `test_std_numeric.cpp` | ❌ Codegen Error | 8.77s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
@@ -159,13 +159,20 @@ First stop and the language mechanism to fix. Not a session work-log.
 |--------|------|------------------|
 | `<optional>` | Codegen: `std::begin`/`std::end` of instantiated `subrange` still lower as the `_Begin` CPO with a fake `int` return; `_Has_value` is missing from the `optional` layout | Materialize lazy/constrained `begin`/`end` on the concrete `subrange` instantiation so trailing `decltype` and the body see the iterator; complete inherited-member/layout materialization for `optional` |
 | `<any>` | Same `subrange` `begin`/`end` CPO lowering; pack-expansion nodes survive into codegen for `_Construct_in_place` / `construct_at` | Same `begin`/`end` materialization as `<optional>`; expand pack-expansion call arguments before IR |
-| `<array>` / `<span>` / `<numeric>` / `<iterator>` | Same `subrange` `begin`/`end` CPO lowering stop | Same generic CRTP/CPO member materialization as `<optional>` |
+| `<array>` / `<span>` / `<numeric>` / `<iterator>` / `<deque>` / `<stack>` | Same `subrange` `begin`/`end` CPO lowering stop | Same generic CRTP/CPO member materialization as `<optional>` |
 | `<atomic>` / `<memory>` / `<latch>` / `<shared_mutex>` | Sema: no matching `_InterlockedCompareExchange128` (`long long*`, two `long long` values, `long long[2]`) | Model the MSVC 128-bit CAS intrinsic, including array-to-pointer decay of the comparand result |
-| `<iostream>` / `<sstream>` | Sema: instantiated `noexcept` is not a constant expression | Evaluate dependent `noexcept` specifications after substitution the same way other instantiated exception specs are |
-| `<vector>` | Sema: `_Pocca(_Al, _Right_al)` overload/template instantiation fails | Preserve and resolve definition-bound dependent overload sets through allocator-trait member replay |
+| `<iostream>` / `<sstream>` / `<map>` / `<set>` | Sema: instantiated `noexcept` is not a constant expression | Evaluate dependent `noexcept` specifications after substitution the same way other instantiated exception specs are |
+| `<vector>` / `<queue>` | Sema: `_Pocca(_Al, _Right_al)` overload/template instantiation fails | Preserve and resolve definition-bound dependent overload sets through allocator-trait member replay |
+| `<string>` / `<fstream>` / `<chrono>` / `<stdexcept>` | Sema: `sizeof` operand `_Ty` is incomplete after `_String_val` / `basic_string` substitution | Keep class-template member `sizeof` operands bound to the instantiated argument, not the pattern parameter |
 | `<string_view>` | Sema: lazy replay of `_String_view_iterator::operator+` fails | Complete generic lazy member-body replay for self-referential class-template members |
 | `<ranges>` | Template-instantiation iteration limit (sticky abort) | Variadic `invoke` / CPO instantiation without SoftProbe retry storms |
 | `<variant>` | Crash: stack overflow in `materializeAliasTemplateInstantiation` | Bound alias-template materialization recursion / detect cyclic alias instantiation |
+
+The 2026-08-15 parser sweep implemented C++20 P0634R3 implied `typename` in decl-specifier-seq and trailing-return-type contexts (not in nested template arguments). Reduced by `tests/test_implicit_typename_decl_specifier_ret0.cpp` and `tests/test_template_unknown_specialization_implicit_typename_ret0.cpp`. This moves `<deque>` and `<stack>` to the shared `subrange` `begin`/`end` CPO codegen stop, `<set>` onto the instantiated-`noexcept` stop with `<map>`, and `<queue>` onto included `<vector>` `_Pocca`.
+
+The same sweep recognized `explicit` on class-template deduction guides. Reduced by `tests/test_explicit_deduction_guide_unnamed_tmpl_param_ret0.cpp`. This clears `xstring:3125` (`explicit basic_string(basic_string_view<...>, ...)`) for `<string>`, `<fstream>`, `<chrono>`, and `<stdexcept>`; the shared next stop is `sizeof` of `_Ty` remaining incomplete in `_String_val`.
+
+Dependent `Traits::find` auto deduction is now deferred at template definition ([temp.dep.expr]) and qualified static lookup uses `template_param_substitutions_` plus the existing `foldInstantiatedNoexceptSpecification` / `lookupSubstitutedTypeParameter` helpers. Reduced by `tests/test_auto_deduce_traits_static_find_ret0.cpp`. `<string_view>` moves past `_Found_at` and again exposes lazy `_String_view_iterator::operator+` replay.
 
 The 2026-08-14 `<cmath>` codegen work added a genuine compiler intrinsic path for
 `__builtin_bit_cast(type-id, expression)`: parsing retains the destination type,

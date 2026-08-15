@@ -281,7 +281,12 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	const bool out_of_line_decl_is_constinit = declaration_specs.is_constinit();
 
 	// Try to parse return type
-	auto return_type_result = parse_type_specifier();
+	ParseResult return_type_result;
+	{
+		FlashCpp::ScopedState implicit_typename_guard(parsing_implicit_typename_context_);
+		parsing_implicit_typename_context_ = true;
+		return_type_result = parse_type_specifier();
+	}
 	if (return_type_result.is_error() || !return_type_result.node().has_value()) {
 		restore_token_position(saved_pos);
 		return std::nullopt;
@@ -689,6 +694,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	if (peek() == "->"_tok) {
 		advance(); // consume '->'
 		// Parse and discard the trailing return type
+		FlashCpp::ScopedState implicit_typename_guard(parsing_implicit_typename_context_);
+		parsing_implicit_typename_context_ = true;
 		auto trailing_type = parse_type_specifier();
 		if (trailing_type.node().has_value() && trailing_type.node()->is<TypeSpecifierNode>()) {
 			TypeSpecifierNode& trailing_ts = trailing_type.node()->as<TypeSpecifierNode>();

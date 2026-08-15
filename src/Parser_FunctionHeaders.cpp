@@ -1041,6 +1041,8 @@ ParseResult Parser::parse_trailing_return_type_with_params(std::span<const ASTNo
 	FlashCpp::SymbolTableScope param_scope(ScopeType::Function);
 	register_parameters_in_scope(params);
 
+	FlashCpp::ScopedState implicit_typename_guard(parsing_implicit_typename_context_);
+	parsing_implicit_typename_context_ = true;
 	auto trailing_result = parse_type_specifier();
 	if (trailing_result.is_error())
 		return trailing_result;
