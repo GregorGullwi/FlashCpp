@@ -1634,6 +1634,11 @@ public:
 		if (owner_.drainLazyMemberRegistry() > 0) {
 			normalizePendingSemanticRoots();
 		}
+		owner_.resolvePendingReceiverCallAnnotations();
+		if (owner_.drainLazyMemberRegistry() > 0) {
+			normalizePendingSemanticRoots();
+			owner_.resolvePendingReceiverCallAnnotations();
+		}
 
 		owner_.resolveRemainingAutoReturns();
 
@@ -2419,6 +2424,85 @@ void SemanticAnalysis::resolvePendingCopyInitAnnotations() {
 	}
 }
 
+void SemanticAnalysis::queuePendingReceiverCallAnnotation(
+	const CallExprNode& call) {
+	if (std::ranges::any_of(
+			pending_receiver_call_annotations_,
+			[&](const PendingReceiverCallAnnotation& pending) {
+				return pending.call == &call;
+			})) {
+		return;
+	}
+	pending_receiver_call_annotations_.push_back({
+		&call,
+		current_function_stack_.empty()
+			? nullptr
+			: current_function_stack_.back()});
+}
+
+size_t SemanticAnalysis::resolvePendingReceiverCallAnnotations() {
+	std::vector<PendingReceiverCallAnnotation> pending =
+		std::move(pending_receiver_call_annotations_);
+	pending_receiver_call_annotations_.clear();
+
+	size_t resolved_count = 0;
+	for (const PendingReceiverCallAnnotation& pending_call : pending) {
+		const CallExprNode* call = pending_call.call;
+		if (call == nullptr) {
+			continue;
+		}
+		resolved_direct_call_table_.erase(call);
+		analyzed_direct_call_queries_.erase(call);
+		tryAnnotateCallArgConversions(*call);
+		if (const ResolvedFunctionQueryResult resolved =
+				getResolvedDirectCallQuery(call);
+			resolved.hasValue() &&
+			!resolved.function->parent_struct_name().empty()) {
+			const TypeSpecifierNode& resolved_return_type =
+				resolved.function->decl_node().type_specifier_node();
+			const bool call_is_direct_return_expression =
+				pending_call.owning_function != nullptr &&
+				pending_call.owning_function->get_definition().has_value() &&
+				AstTraversal::visitASTUntil(
+					*pending_call.owning_function->get_definition(),
+					[&](const ASTNode& current) {
+						if (!current.is<ReturnStatementNode>()) {
+							return false;
+						}
+						const std::optional<ASTNode>& expression =
+							current.as<ReturnStatementNode>().expression();
+						if (!expression.has_value() ||
+							!expression->is<ExpressionNode>()) {
+							return false;
+						}
+						const ExpressionNode& return_expression =
+							expression->as<ExpressionNode>();
+						const CallExprNode* returned_call =
+							std::get_if<CallExprNode>(&return_expression);
+						return returned_call == call;
+					});
+			if (pending_call.owning_function != nullptr &&
+				pending_call.owning_function->has_trailing_return_type_position() &&
+				call_is_direct_return_expression) {
+				FunctionDeclarationNode& owning_function =
+					*const_cast<FunctionDeclarationNode*>(
+						pending_call.owning_function);
+				owning_function.decl_node().set_type_node(resolved_return_type);
+				parser().compute_and_set_mangled_name(owning_function, true);
+			}
+			SemanticSlot call_slot =
+				getSlot(call).value_or(SemanticSlot{});
+			call_slot.type_id = canonicalizeType(resolved_return_type);
+			call_slot.cast_info_index = {};
+			call_slot.value_category = inferExpressionValueCategory(
+				ASTNode(call));
+			setSlot(call, call_slot);
+			++resolved_count;
+		}
+	}
+	return resolved_count;
+}
+
 void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 	if (!node.has_value()) {
 		return;
@@ -2981,6 +3065,10 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	// Push a scope for this function's parameters
 	pushScope();
 	setupNormalizedParameterScope(func, ctx);
+	current_function_stack_.push_back(&func);
+	auto current_function_cleanup = ScopeGuard([this]() {
+		current_function_stack_.pop_back();
+	});
 
 	normalizeStatement(*def, ctx);
 	popScope();
@@ -4148,6 +4236,12 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				if (e.has_receiver()) {
 					normalizeExpression(e.receiver(), ctx);
+					const FunctionDeclarationNode* syntactic_callee =
+						e.callee().function_declaration_or_null();
+					if (syntactic_callee != nullptr &&
+						syntactic_callee->parent_struct_name().empty()) {
+						queuePendingReceiverCallAnnotation(e);
+					}
 				}
 				for (const auto& template_arg : e.template_arguments()) {
 					normalizeExpression(template_arg, ctx);
@@ -9676,6 +9770,15 @@ const TypeInfo* SemanticAnalysis::tryResolveStructOwnerTypeInfo(const TypeInfo* 
 		if (type_info->getStructInfo()) {
 			return type_info;
 		}
+		if (type_info->name().isValid()) {
+			const TypeInfo* materialized_type_info =
+				findTypeByName(type_info->name());
+			if (materialized_type_info != nullptr &&
+				materialized_type_info != type_info &&
+				materialized_type_info->getStructInfo() != nullptr) {
+				return materialized_type_info;
+			}
+		}
 		const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
 		if (!underlying || underlying == type_info) {
 			break;
@@ -9906,6 +10009,40 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 		}
 		resolved_direct_call_table_.erase(call_key);
 		return;
+	}
+	if (call_info.has_receiver &&
+		!call_info.is_indirect &&
+		call_info.function_declaration != nullptr &&
+		call_info.function_declaration->parent_struct_name().empty()) {
+		const TypeInfo* receiver_owner_type_info =
+			tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
+		bool has_visible_named_member = false;
+		if (receiver_owner_type_info != nullptr &&
+			receiver_owner_type_info->getStructInfo() != nullptr) {
+			const std::optional<TypeSpecifierNode> receiver_arg_type =
+				buildOverloadResolutionArgType(call_info.receiver, nullptr);
+			const bool receiver_is_const =
+				receiver_arg_type.has_value() && receiver_arg_type->is_const();
+			const ConstAwareMemberCandidateSet member_candidates =
+				collectConstAwareVisibleMemberFunctionCandidates(
+					receiver_owner_type_info->getStructInfo(),
+					func_decl->decl_node().identifier_token().handle(),
+					receiver_is_const,
+					true,
+					[](const StructMemberFunction&,
+					   const FunctionDeclarationNode&) {
+						return true;
+					});
+			has_visible_named_member =
+				!member_candidates.compatible.empty();
+		}
+		if (!has_visible_named_member) {
+			const CallExprNode* pending_call =
+				static_cast<const CallExprNode*>(call_key);
+			queuePendingReceiverCallAnnotation(*pending_call);
+			resolved_direct_call_table_.erase(call_key);
+			return;
+		}
 	}
 	auto localCallableReceiverIsConst = [&]() -> bool {
 		if (call_info.has_receiver || call_info.is_indirect) {
