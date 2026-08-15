@@ -3038,14 +3038,19 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				!func_decl.is_static());
 		}
 		new_func_ref.set_noexcept_expression(ExpressionHandle(substituted_noexcept));
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
-		auto eval = ConstExpr::Evaluator::evaluate(substituted_noexcept, eval_ctx);
-		if (eval.success()) {
-			new_func_ref.set_noexcept(eval.as_bool());
+		FunctionSignature exception_specification;
+		exception_specification.is_noexcept = func_decl.is_noexcept();
+		exception_specification.noexcept_expression = *new_func_ref.noexcept_expression();
+		foldInstantiatedNoexceptSpecification(
+			exception_specification,
+			template_params,
+			inline_template_args);
+		new_func_ref.set_noexcept(exception_specification.is_noexcept);
+		if (exception_specification.noexcept_expression.has_value()) {
+			new_func_ref.set_noexcept_expression(
+				*exception_specification.noexcept_expression);
+		} else {
 			new_func_ref.clear_noexcept_expression();
-		} else if (!anyTemplateArgIsStructurallyDependent(inline_template_args)) {
-			throw CompileError(
-				"Instantiated noexcept specification is not a constant expression");
 		}
 	}
 

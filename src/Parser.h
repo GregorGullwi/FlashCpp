@@ -1227,6 +1227,9 @@ private:
 	size_t parsing_depth_ = 0;
 	bool parsing_alias_type_id_ = false;
 	bool parsing_parameter_declaration_type_id_ = false;
+	// C++20 [temp.res.general]: omitted `typename` is valid in decl-specifier-seq
+	// and trailing-return-type contexts (P0634R3).
+	bool parsing_implicit_typename_context_ = false;
 	static constexpr size_t MAX_PARSING_DEPTH = 500;	 // Reasonable limit for nested parsing
 	std::vector<std::string_view> template_param_names_;	 // Template parameter names in current scope
 
@@ -3266,6 +3269,10 @@ public:	// Public methods for template instantiation
 		FunctionSignature signature,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
+	void foldInstantiatedNoexceptSpecification(
+		FunctionSignature& signature,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 
 	// Helper to substitute template parameters in lazy member function/constructor/destructor bodies
 	// Uses the stored outer template environment snapshot from lazy_info
@@ -3416,6 +3423,7 @@ private:	 // Resume private methods
 	bool expressionTypeDeductionIsStillDependent(const ASTNode& expr);
 	std::optional<TypeSpecifierNode> lookupSubstitutedLocalBindingType(
 		StringHandle name) const;
+	const TypeInfo* lookupSubstitutedTypeParameter(StringHandle name) const;
 	TemplateBodySubstitutionState makeTemplateBodySubstitutionState(
 		TypeIndex owner_type_index,
 		bool has_implicit_this) const;

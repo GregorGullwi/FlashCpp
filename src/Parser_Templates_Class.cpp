@@ -4194,7 +4194,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		bool is_deduction_guide = false;
 		std::string_view guide_class_name;
 
-		// Try to peek: if we see Identifier ( ... ) ->, it's likely a deduction guide
+		// Try to peek: if we see [explicit] Identifier ( ... ) ->, it's a deduction guide
+		if (peek() == "explicit"_tok) {
+			advance();
+		}
 		if (peek().is_identifier()) {
 			guide_class_name = peek_info().value();
 			advance();
@@ -4218,7 +4221,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		restore_token_position(deduction_guide_check_pos);
 
 		if (is_deduction_guide) {
-			// Parse: ClassName(params) -> ClassName<args>;
+			// Parse: [explicit] ClassName(params) -> ClassName<args>;
+			if (peek() == "explicit"_tok) {
+				advance();
+			}
 			// class name
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected class name in deduction guide", current_token_);

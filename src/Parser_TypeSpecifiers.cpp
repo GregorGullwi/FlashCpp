@@ -625,6 +625,7 @@ ParseResult Parser::parse_type_specifier() {
 		if (saw_typename_keyword ||
 			parsing_alias_type_id_ ||
 			parsing_parameter_declaration_type_id_ ||
+			parsing_implicit_typename_context_ ||
 			allow_member_template_type_id ||
 			!dependentQualifiedOwnerNeedsTypename(owner_kind)) {
 			return std::nullopt;

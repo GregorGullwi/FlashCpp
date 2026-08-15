@@ -100,33 +100,44 @@ FunctionSignature Parser::substituteTemplateFunctionSignature(
 	ASTNode substituted_expression = substituteTemplateParameters(
 		signature.noexcept_expression->node(), template_params, template_args);
 	signature.noexcept_expression = ExpressionHandle(substituted_expression);
+	foldInstantiatedNoexceptSpecification(signature, template_params, template_args);
+	return signature;
+}
+
+void Parser::foldInstantiatedNoexceptSpecification(
+	FunctionSignature& signature,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	if (!signature.noexcept_expression.has_value()) {
+		return;
+	}
+
 	ConstExpr::EvaluationContext evaluation_context(gSymbolTable, *this);
 	evaluation_context.template_args = template_args;
 	for (const TemplateParameterNode& template_param : template_params) {
 		evaluation_context.template_param_names.push_back(template_param.name());
 	}
 	const ConstExpr::EvalResult value = ConstExpr::Evaluator::evaluate(
-		substituted_expression, evaluation_context);
+		signature.noexcept_expression->node(), evaluation_context);
 	if (value.success()) {
 		signature.is_noexcept = value.as_bool();
 		signature.noexcept_expression.reset();
-		return signature;
+		return;
 	}
 	if (const auto parser_value =
-		try_evaluate_constant_expression(substituted_expression);
+		try_evaluate_constant_expression(signature.noexcept_expression->node());
 		parser_value.has_value()) {
 		signature.is_noexcept = parser_value->value != 0;
 		signature.noexcept_expression.reset();
-		return signature;
+		return;
 	}
 	if (value.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
-		return signature;
+		return;
 	}
 	if (!anyTemplateArgIsStructurallyDependent(template_args)) {
 		throw CompileError(
 			"Instantiated noexcept specification is not a constant expression");
 	}
-	return signature;
 }
 
 void resetTemplateInstantiationCounters() {
