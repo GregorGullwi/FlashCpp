@@ -750,6 +750,33 @@ public:
 			return it->second;
 		}
 
+		// A cv-qualified type argument can reach a trait-like template through a
+		// dependent default before its cv-preserving helper is considered.  If the
+		// template has an exact specialization for the same unqualified type, use
+		// that specialization as the canonical match.  Keep references, pointers,
+		// arrays, and value arguments structural; only top-level type cv is removed.
+		InlineVector<TemplateTypeArg, 4> unqualified_args = key.template_args;
+		bool removed_top_level_cv = false;
+		for (TemplateTypeArg& arg : unqualified_args) {
+			if (!arg.is_value &&
+				arg.pointer_depth == 0 &&
+				arg.ref_qualifier == ReferenceQualifier::None &&
+				!arg.is_array &&
+				arg.cv_qualifier != CVQualifier::None) {
+				arg.cv_qualifier = CVQualifier::None;
+				removed_top_level_cv = true;
+			}
+		}
+		if (removed_top_level_cv) {
+			SpecializationKey unqualified_key{
+				StringTable::getOrInternStringHandle(template_name),
+				std::move(unqualified_args)};
+			auto unqualified_it = specializations_.find(unqualified_key);
+			if (unqualified_it != specializations_.end()) {
+				return unqualified_it->second;
+			}
+		}
+
 		return std::nullopt;
 	}
 

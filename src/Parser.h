@@ -2714,6 +2714,16 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::span<const TemplateTypeArg> template_args,
 		const Token& source_token,
 		CVQualifier cv_qualifier);
+	// Like buildDependentDirectAliasTypeSpecifier, but for any alias template
+	// (including deferred `conditional_t`-style aliases). Preserves call-site
+	// template arguments on a DependentArgs placeholder so later class-template
+	// instantiation can rematerialize the alias.
+	TypeSpecifierNode buildDependentAliasTemplateTypeSpecifier(
+		std::string_view alias_name,
+		const TemplateAliasNode& alias_node,
+		std::span<const TemplateTypeArg> template_args,
+		const Token& source_token,
+		CVQualifier cv_qualifier);
 	std::optional<TypeSpecifierNode> tryMaterializeDependentAliasTypeSpecifier(
 		const TypeSpecifierNode& type_spec,
 		std::span<const TemplateParameterNode> template_params,
@@ -3166,6 +3176,21 @@ private:
 		const Token& source_token);
 	const TypeInfo* materializeInstantiatedMemberAliasTarget(
 		const TypeSpecifierNode& alias_type_spec,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
+	// Materialize a class-member typedef/alias whose pattern is an alias-template
+	// specialization (e.g. `using Selected = conditional_t<Trait_v<T>, A, B>`).
+	// Evaluates dependent NTTP arguments against the active class-template
+	// substitution before selecting the alias target.
+	const TypeInfo* tryMaterializeMemberAliasTemplateSpecialization(
+		const TypeSpecifierNode& alias_type_spec,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		const StructTypeInfo* instantiated_struct_info);
+	// Fold `Owner$hash::static_member` dependent NTTP markers against the
+	// active class-template substitution (e.g. `IsSimpleAlloc$...::value`).
+	std::optional<TemplateTypeArg> tryFoldDependentQualifiedStaticMemberNTTP(
+		StringHandle dependent_name,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
 	AliasTemplateMaterializationResult materializeAliasTemplateInstantiation(

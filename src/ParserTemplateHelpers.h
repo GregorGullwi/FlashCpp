@@ -1276,11 +1276,12 @@ inline std::optional<TemplateTypeArg> tryResolveDeferredBaseTypeArgFromMap(
 	return resolved_type_arg;
 }
 
-template <typename ParamContainer, typename ArgContainer>
+template <typename ParamContainer, typename ArgContainer, typename EvalFn>
 inline std::vector<TemplateTypeArg> materializeTemplateArgsExpandingPacks(
 	const TypeInfo& type_info,
 	const ParamContainer& template_params,
-	const ArgContainer& template_args) {
+	const ArgContainer& template_args,
+	EvalFn&& eval_dependent_expr) {
 	std::vector<TemplateTypeArg> result;
 	result.reserve(type_info.templateArgs().size());
 	for (const auto& arg_info : type_info.templateArgs()) {
@@ -1310,10 +1311,26 @@ inline std::vector<TemplateTypeArg> materializeTemplateArgsExpandingPacks(
 		}
 
 		if (!expanded_pack) {
-			result.push_back(materializeTemplateArg(arg_info, template_params, template_args));
+			result.push_back(materializeTemplateArg(
+				arg_info,
+				template_params,
+				template_args,
+				std::forward<EvalFn>(eval_dependent_expr)));
 		}
 	}
 	return result;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline std::vector<TemplateTypeArg> materializeTemplateArgsExpandingPacks(
+	const TypeInfo& type_info,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	return materializeTemplateArgsExpandingPacks(
+		type_info,
+		template_params,
+		template_args,
+		nullptr);
 }
 
 inline const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param) {
@@ -3990,10 +4007,16 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 		if (std::optional<StringHandle> invalid_type =
 				SemanticValidation::findInvalidConcreteSizeofTypeOperand(*initializer);
 			invalid_type.has_value()) {
-			throw CompileError(
-				std::string("sizeof operand '") +
-				std::string(StringTable::getStringView(*invalid_type)) +
-				"' is incomplete or unresolved after template substitution");
+			StringBuilder diagnostic;
+			diagnostic.append("sizeof operand '")
+				.append(StringTable::getStringView(*invalid_type))
+				.append("' is incomplete or unresolved after template substitution");
+			if (struct_info != nullptr) {
+				diagnostic.append(" while normalizing static member of '")
+					.append(StringTable::getStringView(struct_info->getName()))
+					.append("'");
+			}
+			throw CompileError(std::string(diagnostic.commit()));
 		}
 	}
 

@@ -241,6 +241,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// template (e.g., "MyVec").  Look up the substitution and redirect.
 	// Must be done before the early cache check so the cache key uses the resolved name.
 	StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
+	auto template_arg_is_unresolved = [](const TemplateTypeArg& arg) {
+		if (arg.is_dependent || arg.dependent_name.isValid()) {
+			return true;
+		}
+		if (arg.is_value || !arg.type_index.is_valid()) {
+			return false;
+		}
+		const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
+		return type_info != nullptr &&
+			(type_info->isDependentPlaceholder() || type_info->isTemplatePlaceholder());
+	};
+	auto template_args_are_unresolved = [&]() {
+		return std::any_of(template_args.begin(), template_args.end(), template_arg_is_unresolved);
+	};
 	for (const auto& subst : template_param_substitutions_) {
 		if (subst.is_template_template_param && subst.param_name == name_handle &&
 			subst.concrete_template_name.isValid()) {
@@ -306,7 +320,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				is_nested_member_class_template = true;
 			}
 		}
-		bool can_use_raw_cache_key = canUseRawClassTemplateCacheKey(
+		bool can_use_raw_cache_key = !template_args_are_unresolved() &&
+			canUseRawClassTemplateCacheKey(
 			template_name,
 			template_args.size(),
 			is_nested_member_class_template);
@@ -449,7 +464,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Check if any template arguments are dependent (contain template parameters)
 	// If so, we cannot instantiate the template yet - it's a dependent type
 	for (const auto& arg : template_args) {
-		if (arg.is_dependent) {
+		if (template_arg_is_unresolved(arg)) {
 			FLASH_LOG_FORMAT(Templates, Trace, "Skipping instantiation of {} - template arguments are dependent", template_name);
 
 			// Register a placeholder TypeInfo for the dependent instantiated name
@@ -514,7 +529,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
 	const FlashCpp::TemplateInstantiationKey unfilled_cache_key = cache_key;
 	bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
-	bool can_use_raw_cache_key = canUseRawClassTemplateCacheKey(
+	bool can_use_raw_cache_key = !template_args_are_unresolved() &&
+		canUseRawClassTemplateCacheKey(
 		template_name,
 		template_args.size(),
 		is_nested_member_class_template);
@@ -1604,7 +1620,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 							std::string_view member_name = qual_id.name();
 							if (!filled_args_for_pattern_match.empty()) {
-								if (tryAppendStaticMemberValueFromTypeName(
+								StringHandle dependent_member_name =
+									StringTable::getOrInternStringHandle(
+										StringBuilder()
+											.append(type_name)
+											.append("::")
+											.append(member_name)
+											.commit());
+								std::optional<TemplateTypeArg> folded =
+									tryFoldDependentQualifiedStaticMemberNTTP(
+										dependent_member_name,
+										std::span<const TemplateParameterNode>(
+											primary_params.data(),
+											primary_params.size()),
+										filled_args_for_pattern_match);
+								if (folded.has_value()) {
+									filled_args_for_pattern_match.push_back(*folded);
+								} else if (tryAppendStaticMemberValueFromTypeName(
 										filled_args_for_pattern_match,
 										type_name,
 										member_name,
@@ -2204,13 +2236,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										makeDeferredBaseValueTypeIndex(TypeCategory::Bool, TypeIndex{})));
 									resolved = true;
 								} else {
-									ASTNode substituted_expr = substituteTemplateParameters(
-										arg_info.node,
-										template_params,
-										template_args_for_member_copy);
-									auto evaluated_value = try_evaluate_constant_expression(substituted_expr);
-									if (evaluated_value.has_value()) {
-										resolved_args.push_back(makeValueArg(evaluated_value->value, evaluated_value->type_index));
+									std::optional<TemplateTypeArg> evaluated_template_arg =
+										evaluateDependentNTTPExpression(
+											arg_info.node,
+											std::span<const TemplateParameterNode>(
+												template_params.data(), template_params.size()),
+											template_args_for_member_copy);
+									if (evaluated_template_arg.has_value()) {
+										resolved_args.push_back(makeValueArg(
+											evaluated_template_arg->value,
+											evaluated_template_arg->type_index));
 										resolved = true;
 									} else {
 										// Unresolvable expression argument - cannot safely instantiate
@@ -3463,71 +3498,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					alias_semantic_source = nullptr;
 				}
 
-				const TypeInfo* alias_template_pattern_info =
-					tryGetTypeInfo(alias_type_spec.type_index());
-				if (!resolved_alias_type_spec_override.has_value() &&
-					alias_template_pattern_info != nullptr &&
-					alias_template_pattern_info->isTemplateInstantiation()) {
-					// Substitute pattern parameters (including pack expansion) the same way
-					// partial-spec base-class materialization does. Bare toTemplateTypeArg
-					// leaves This/Rest... dependent and skips Tuple<This, Rest...> lookup.
-					std::vector<TemplateTypeArg> concrete_alias_args =
-						materializeTemplateArgsExpandingPacks(
-							*alias_template_pattern_info,
-							template_params,
-							template_args_for_pattern);
-					bool has_unresolved_alias_arg = false;
-					for (auto& concrete_arg : concrete_alias_args) {
-						if (concrete_arg.is_value && concrete_arg.is_dependent && concrete_arg.dependent_name.isValid()) {
-							const StructStaticMember* referenced_static_member =
-								instantiated_struct_info ? instantiated_struct_info->findStaticMember(concrete_arg.dependent_name) : nullptr;
-							if (referenced_static_member && referenced_static_member->initializer.has_value()) {
-								ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
-								eval_ctx.struct_info = instantiated_struct_info;
-								eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
-								auto eval_result = ConstExpr::Evaluator::evaluate(
-									*referenced_static_member->initializer,
-									eval_ctx);
-								if (eval_result.success()) {
-									concrete_arg.value = eval_result.as_int();
-									concrete_arg.is_dependent = false;
-									concrete_arg.dependent_name = StringHandle{};
-									concrete_arg.dependent_expr.reset();
-								}
-							}
-						}
-						if (concrete_arg.is_dependent) {
-							has_unresolved_alias_arg = true;
-						}
-					}
-					if (!has_unresolved_alias_arg) {
-						StringHandle alias_template_name_handle =
-							alias_template_pattern_info->baseTemplateName();
-						if (alias_template_name_handle.isValid() &&
-							alias_template_pattern_info->sourceNamespace().isValid()) {
-							alias_template_name_handle =
-								gNamespaceRegistry.buildQualifiedIdentifier(
-									alias_template_pattern_info->sourceNamespace(),
-									alias_template_name_handle);
-						}
-						std::string_view alias_template_name =
-							StringTable::getStringView(alias_template_name_handle);
-						if (!alias_template_name.empty()) {
-							AliasTemplateMaterializationResult materialized_alias_target =
-								materializeTemplateInstantiationForLookup(
-									alias_template_name,
-									concrete_alias_args);
-							if (materialized_alias_target.resolved_type_info) {
-								const TypeInfo* concrete_alias_target =
-									materialized_alias_target.resolved_type_info;
-								substituted_type = concrete_alias_target->typeEnum();
-								substituted_type_index =
-									concrete_alias_target->registeredTypeIndex().withCategory(
-										concrete_alias_target->typeEnum());
-								substituted_size = concrete_alias_target->sizeInBits().value;
-								alias_semantic_source = concrete_alias_target;
-							}
-						}
+				// Keep a previously resolved alias override (e.g. pack-expanded
+				// `using Base = Recursive<Tail...>`) unless rematerialization is needed.
+				if (!resolved_alias_type_spec_override.has_value()) {
+					if (const TypeInfo* concrete_alias_target =
+							tryMaterializeMemberAliasTemplateSpecialization(
+								alias_type_spec,
+								template_params,
+								template_args_for_pattern,
+								instantiated_struct_info);
+						concrete_alias_target != nullptr) {
+						substituted_type = concrete_alias_target->typeEnum();
+						substituted_type_index =
+							concrete_alias_target->registeredTypeIndex().withCategory(
+								concrete_alias_target->typeEnum());
+						substituted_size = concrete_alias_target->sizeInBits().value;
+						alias_semantic_source = concrete_alias_target;
 					}
 				}
 
@@ -5552,7 +5538,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						if (is_dependent && !filled_template_args.empty()) {
-							if (tryAppendStaticMemberValueFromTypeName(
+							StringHandle dependent_member_name =
+								StringTable::getOrInternStringHandle(
+									StringBuilder()
+										.append(type_name)
+										.append("::")
+										.append(member_name)
+										.commit());
+							std::optional<TemplateTypeArg> folded =
+								tryFoldDependentQualifiedStaticMemberNTTP(
+									dependent_member_name,
+									std::span<const TemplateParameterNode>(
+										template_params.data(),
+										template_params.size()),
+									filled_template_args);
+							if (folded.has_value()) {
+								filled_template_args.push_back(*folded);
+				} else if (tryAppendStaticMemberValueFromTypeName(
 									filled_template_args,
 									type_name,
 									member_name,
@@ -5605,7 +5607,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Try looking up as a dependent template instantiation
 							// Build the instantiated name using filled_template_args
 							if (!filled_template_args.empty()) {
-								if (tryAppendStaticMemberValueFromTypeName(
+								StringHandle dependent_member_name =
+									StringTable::getOrInternStringHandle(
+										StringBuilder()
+											.append(obj_name)
+											.append("::")
+											.append(member_name)
+											.commit());
+								std::optional<TemplateTypeArg> folded =
+									tryFoldDependentQualifiedStaticMemberNTTP(
+										dependent_member_name,
+										std::span<const TemplateParameterNode>(
+											template_params.data(),
+											template_params.size()),
+									filled_template_args);
+								if (folded.has_value()) {
+									filled_template_args.push_back(*folded);
+								} else if (tryAppendStaticMemberValueFromTypeName(
 										filled_template_args,
 										obj_name,
 										member_name,
@@ -7427,7 +7445,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_size *= dim_size;
 			}
 		} else if (substituted_array_size.has_value()) {
-			throw InternalError("Array dimensions should be resolved before layout substitution");
+			// resolve_array_dimensions may miss bounds that were rewritten in-place as
+			// substituted_array_size (e.g. static constexpr members used as array bounds).
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+			eval_ctx.struct_info = struct_info;
+			eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+			auto eval_result =
+				ConstExpr::Evaluator::evaluate(*substituted_array_size, eval_ctx);
+			if (!eval_result.success()) {
+				throw InternalError(
+					"Array dimensions should be resolved before layout substitution");
+			}
+			const size_t bound = static_cast<size_t>(eval_result.as_int());
+			member_size = calculateResolvedMemberSizeAndAlignment(
+				substituted_type_spec, member_size_type_index).size;
+			member_size *= bound;
+			resolved_array_dimensions = {bound};
+			is_array_member = true;
 		} else {
 			member_size = calculateResolvedMemberSizeAndAlignment(substituted_type_spec, member_size_type_index).size;
 			if (!substituted_type_spec.is_pointer() && !substituted_type_spec.is_reference() && !substituted_type_spec.is_rvalue_reference() && member_type_index.category() == TypeCategory::Struct) {
@@ -9421,6 +9455,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		if (!isConcreteAliasSemanticSource(alias_semantic_source)) {
 			alias_semantic_source = nullptr;
+		}
+
+		if (const TypeInfo* concrete_alias_target =
+				tryMaterializeMemberAliasTemplateSpecialization(
+					alias_type_spec,
+					effective_template_params,
+					effective_template_args,
+					struct_info);
+			concrete_alias_target != nullptr) {
+			substituted_type = concrete_alias_target->typeEnum();
+			substituted_type_index =
+				concrete_alias_target->registeredTypeIndex().withCategory(
+					concrete_alias_target->typeEnum());
+			substituted_size = concrete_alias_target->sizeInBits().value;
+			alias_semantic_source = concrete_alias_target;
+			// Drop a stale dependent-member override only when rematerializing an
+			// alias template (conditional_t). Pack typedefs such as
+			// `using Base = Recursive<Tail...>` may already have a correct override.
+			const std::string_view alias_surface_name = alias_type_spec.token().value();
+			if (!alias_surface_name.empty() &&
+				gTemplateRegistry.lookup_alias_template(alias_surface_name).has_value()) {
+				resolved_alias_type_spec_override.reset();
+			}
 		}
 
 		// Ensure size is computed for primitive type aliases that were substituted from template parameters.

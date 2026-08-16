@@ -2487,6 +2487,45 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 								const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
 								dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id.full_name());
+							} else if (std::holds_alternative<MemberAccessNode>(expr)) {
+								// `Trait<T>::value` often arrives as MemberAccess. Prefer a
+								// reconstructible Owner::member marker so later rematerialization
+								// can fold the static member against concrete template arguments
+								// even if expression re-evaluation fails.
+								const auto& member_access = std::get<MemberAccessNode>(expr);
+								std::string_view member_name = member_access.member_name();
+								std::string_view owner_name;
+								ASTNode object_node = member_access.object();
+								if (object_node.is<ExpressionNode>()) {
+									const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+									if (const auto* object_id = std::get_if<IdentifierNode>(&object_expr)) {
+										owner_name = object_id->name();
+									} else if (const auto* object_qual =
+												   std::get_if<QualifiedIdentifierNode>(&object_expr)) {
+										owner_name = object_qual->full_name();
+									}
+								}
+								if (owner_name.empty()) {
+									if (auto object_type = get_expression_type(object_node);
+										object_type.has_value()) {
+										if (const TypeInfo* object_type_info =
+												tryGetTypeInfo(object_type->type_index());
+											object_type_info != nullptr &&
+											object_type_info->name().isValid()) {
+											owner_name = StringTable::getStringView(
+												object_type_info->name());
+										}
+									}
+								}
+								if (!owner_name.empty() && !member_name.empty()) {
+									dependent_arg.dependent_name =
+										StringTable::getOrInternStringHandle(
+											StringBuilder()
+												.append(owner_name)
+												.append("::")
+												.append(member_name)
+												.commit());
+								}
 							}
 
 							// Check for pack expansion (...)

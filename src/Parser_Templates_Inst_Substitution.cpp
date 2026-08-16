@@ -5,6 +5,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
+#include "ParserTemplateHelpers.h"
 #include "TypeTraitEvaluator.h"
 
 static void buildVariableTemplateParameterReplayState(
@@ -580,7 +581,7 @@ namespace {
 		std::span<const std::string_view> template_param_names,
 		EvaluateDependentExprFn&& evaluate_dependent_expr) {
 		(void)template_param_names;
-		ASTNode substituted_default_node = substituteNonTypeDefaultExpressionImpl(
+	ASTNode substituted_default_node = substituteNonTypeDefaultExpressionImpl(
 		parser,
 		default_node,
 		template_params,
@@ -1002,11 +1003,22 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 						template_parameters,
 						template_args,
 						[this, owner_name = source_type_info.name()](
+							StringHandle dependent_name,
 							const ASTNode& expr,
 							std::span<const ASTNode> params,
 							std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
 							InlineVector<TemplateParameterNode, 4> typed_params =
 								collectTemplateParameterNodes(params);
+							if (dependent_name.isValid()) {
+								if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+										dependent_name,
+										std::span<const TemplateParameterNode>(
+											typed_params.data(), typed_params.size()),
+										args);
+									folded.has_value()) {
+									return folded;
+								}
+							}
 							return this->evaluateDependentNTTPExpression(
 								expr,
 								std::span<const TemplateParameterNode>(
@@ -1113,16 +1125,21 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		// rather than a concrete (wrong) one. When the outer template is later
 		// instantiated with a concrete type (e.g. FinalHead), this function will
 		// be called again with non-dependent args and will evaluate correctly.
-		const auto unresolved_dependent_anchor = [](const TemplateTypeArg& candidate) -> StringHandle {
+		const auto unresolved_dependent_anchor = [this](const TemplateTypeArg& candidate) -> StringHandle {
 			if (candidate.dependent_name.isValid()) {
 				return candidate.dependent_name;
 			}
 			if (!candidate.is_value &&
-				candidate.type_index.is_valid() &&
-				typeIndexContainsDependentPlaceholder(candidate.type_index)) {
+				candidate.type_index.is_valid()) {
 				if (const TypeInfo* type_info = tryGetTypeInfo(candidate.type_index);
 					type_info != nullptr &&
-					type_info->name().isValid()) {
+					type_info->name().isValid() &&
+					(typeIndexContainsDependentPlaceholder(candidate.type_index) ||
+					 type_info->isDependentPlaceholder() ||
+					 type_info->isTemplatePlaceholder() ||
+					 type_info->is_incomplete_instantiation_ ||
+					 is_template_parameter(
+						 StringTable::getStringView(type_info->name())))) {
 					return type_info->name();
 				}
 			}
@@ -1591,21 +1608,38 @@ std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(
 		TemplateTypeArg(alias_node.target_type_node()));
 }
 
-TypeSpecifierNode Parser::buildDependentDirectAliasTypeSpecifier(
+TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 	std::string_view alias_name,
 	const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> template_args,
 	const Token& source_token,
 	CVQualifier cv_qualifier) {
-	if (!findDirectAliasTargetParameterIndex(alias_node).has_value()) {
-		throw InternalError(
-			"Dependent direct-alias placeholder requested for a non-direct alias target");
-	}
-
+	// Dependent NTTPs currently hash like placeholder value 0, so a concrete
+	// ConditionalT<false, ...> can occupy the same mangled name. Always keep
+	// call-site dependent args on a distinct DependentArgs placeholder.
 	StringHandle dependent_alias_handle =
 		StringTable::getOrInternStringHandle(
-			get_instantiated_class_name(alias_name, template_args));
+			StringBuilder()
+				.append(get_instantiated_class_name(alias_name, template_args))
+				.append("#dep")
+				.commit());
 	const TypeInfo* dependent_alias_info = findTypeByName(dependent_alias_handle);
+	const bool existing_is_reusable_dependent_args =
+		dependent_alias_info != nullptr &&
+		dependent_alias_info->isTemplateInstantiation() &&
+		dependent_alias_info->placeholder_kind_ == DependentPlaceholderKind::DependentArgs &&
+		dependent_alias_info->templateArgs().size() == template_args.size();
+	if (dependent_alias_info != nullptr && !existing_is_reusable_dependent_args) {
+		dependent_alias_handle = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(StringTable::getStringView(dependent_alias_handle))
+				.append("#")
+				.append(std::to_string(
+					static_cast<unsigned long long>(
+						reinterpret_cast<uintptr_t>(&alias_node))))
+				.commit());
+		dependent_alias_info = findTypeByName(dependent_alias_handle);
+	}
 	if (dependent_alias_info == nullptr) {
 		TypeInfo& placeholder_type = add_empty_type_entry();
 		placeholder_type.fallback_size_bits_ = 0;
@@ -1634,7 +1668,7 @@ TypeSpecifierNode Parser::buildDependentDirectAliasTypeSpecifier(
 
 	if (!dependent_alias_info->isTemplateInstantiation()) {
 		throw InternalError(
-			"Dependent direct-alias placeholder collided with a non-template type");
+			"Dependent alias-template placeholder collided with a non-template type");
 	}
 
 	return TypeSpecifierNode(
@@ -1644,6 +1678,24 @@ TypeSpecifierNode Parser::buildDependentDirectAliasTypeSpecifier(
 		source_token,
 		cv_qualifier,
 		ReferenceQualifier::None);
+}
+
+TypeSpecifierNode Parser::buildDependentDirectAliasTypeSpecifier(
+	std::string_view alias_name,
+	const TemplateAliasNode& alias_node,
+	std::span<const TemplateTypeArg> template_args,
+	const Token& source_token,
+	CVQualifier cv_qualifier) {
+	if (!findDirectAliasTargetParameterIndex(alias_node).has_value()) {
+		throw InternalError(
+			"Dependent direct-alias placeholder requested for a non-direct alias target");
+	}
+	return buildDependentAliasTemplateTypeSpecifier(
+		alias_name,
+		alias_node,
+		template_args,
+		source_token,
+		cv_qualifier);
 }
 
 
@@ -1920,13 +1972,24 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				nested_source_type_info,
 				effective_template_params,
 				effective_template_args,
-				[this, owner_name = nested_source_type_info.name()](
-					const ASTNode& expr,
-					std::span<const ASTNode> params,
-					std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-					InlineVector<TemplateParameterNode, 4> typed_params =
-						collectTemplateParameterNodes(params);
-					return this->evaluateDependentNTTPExpression(
+			[this, owner_name = nested_source_type_info.name()](
+				StringHandle dependent_name,
+				const ASTNode& expr,
+				std::span<const ASTNode> params,
+				std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+			InlineVector<TemplateParameterNode, 4> typed_params =
+				collectTemplateParameterNodes(params);
+			if (dependent_name.isValid()) {
+				if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+						dependent_name,
+						std::span<const TemplateParameterNode>(
+							typed_params.data(), typed_params.size()),
+						args);
+					folded.has_value()) {
+					return folded;
+				}
+			}
+			return this->evaluateDependentNTTPExpression(
 						expr,
 						std::span<const TemplateParameterNode>(
 							typed_params.data(),
@@ -1989,6 +2052,28 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 
 		std::vector<TemplateTypeArg> concrete_target_args =
 			materializeTemplateArgsForLookup(*target_type_info);
+		if (templateArgsStillNeedAliasLookupMaterialization(concrete_target_args)) {
+			// Preserve the alias boundary while its target still contains an
+			// unresolved nested template argument.  Returning the target's raw
+			// placeholder here loses the alias parameter-to-outer-argument
+			// relationship between an outer argument and an intermediate alias, so a
+			// later concrete rematerialization can still replace the outer argument.
+			TypeSpecifierNode dependent_alias_spec =
+				buildDependentAliasTemplateTypeSpecifier(
+					alias_template_name,
+					*alias_node,
+					template_args,
+					alias_node->target_type_node().token(),
+					alias_node->target_type_node().cv_qualifier());
+			const TypeInfo* dependent_alias_info =
+				tryGetTypeInfo(dependent_alias_spec.type_index());
+			if (dependent_alias_info != nullptr) {
+				result.resolved_type_info = dependent_alias_info;
+				result.instantiated_name =
+					StringTable::getStringView(dependent_alias_info->name());
+				return true;
+			}
+		}
 		StringHandle qualified_target_template_name =
 			gNamespaceRegistry.buildQualifiedIdentifier(
 				target_type_info->sourceNamespace(),
@@ -2206,12 +2291,16 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 	}
 	if (alias_node != nullptr &&
-		result.resolved_type_info != nullptr &&
-		!templateArgsStillNeedAliasLookupMaterialization(template_args)) {
+		result.resolved_type_info != nullptr) {
 		// Prefer a direct alias target over the helper instantiation itself.
 		// Member-alias targets are checked after this because an alias target like
 		// `Owner<B>::template type<T, F>` must first select `Owner<B>` and then
 		// instantiate the selected member alias with its own `<T, F>` arguments.
+		// Do not gate this on templateArgsStillNeedAliasLookupMaterialization:
+		// NTTP expressions such as `is_simple_alloc_v<Alloc>` may still carry a
+		// dependent_expr marker even after the selected branch is concrete, and
+		// skipping `::type` leaves the `conditional` specialization itself as the
+		// alias target (breaking later `Selected::value_type` lookup).
 		tryResolveDirectAliasTarget();
 		if (const TypeInfo* concrete_member_alias =
 				materializeInstantiatedMemberAliasTarget(
@@ -2818,6 +2907,571 @@ std::optional<ASTNode> Parser::instantiateLazyMemberForCanonicalOwner(
 		normalizePendingSemanticRoots();
 	}
 	return instantiated;
+}
+
+std::optional<TemplateTypeArg> Parser::tryFoldDependentQualifiedStaticMemberNTTP(
+	StringHandle dependent_name,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	if (!dependent_name.isValid()) {
+		return std::nullopt;
+	}
+	std::string_view full_name = StringTable::getStringView(dependent_name);
+	const size_t sep = full_name.rfind("::");
+	if (sep == std::string_view::npos || sep == 0 || sep + 2 >= full_name.size()) {
+		return std::nullopt;
+	}
+	std::string_view owner_name = full_name.substr(0, sep);
+	std::string_view member_name = full_name.substr(sep + 2);
+	StringHandle owner_handle = StringTable::getOrInternStringHandle(owner_name);
+	const TypeInfo* owner_info = findTypeByName(owner_handle);
+	if (owner_info == nullptr) {
+		return std::nullopt;
+	}
+	if (owner_info->isTemplateInstantiation()) {
+		std::vector<TemplateTypeArg> active_type_args;
+		for (size_t index = 0;
+			index < template_params.size() && index < template_args.size();
+			++index) {
+			if (template_params[index].kind() == TemplateParameterKind::Type &&
+				!template_args[index].is_value) {
+				active_type_args.push_back(template_args[index]);
+			}
+		}
+		const auto& stored_owner_args = owner_info->templateArgs();
+		bool stored_args_are_types = !stored_owner_args.empty();
+		for (const TypeInfo::TemplateArgInfo& stored_arg : stored_owner_args) {
+			if (stored_arg.is_value) {
+				stored_args_are_types = false;
+				break;
+			}
+		}
+		if (stored_args_are_types &&
+			active_type_args.size() == stored_owner_args.size()) {
+			const StringHandle base_template_name = owner_info->baseTemplateName();
+			if (base_template_name.isValid()) {
+				AliasTemplateMaterializationResult active_owner =
+					materializeTemplateInstantiationForLookup(
+						StringTable::getStringView(base_template_name),
+						active_type_args);
+				const TypeInfo* active_owner_info = active_owner.resolved_type_info;
+				if (active_owner_info == nullptr &&
+					!active_owner.instantiated_name.empty()) {
+					active_owner_info = findTypeByName(
+						StringTable::getOrInternStringHandle(
+							active_owner.instantiated_name));
+				}
+				if (active_owner_info != nullptr && active_owner_info != owner_info) {
+					owner_info = active_owner_info;
+				}
+			}
+		}
+	}
+	ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(
+		owner_info->registeredTypeIndex().withCategory(owner_info->typeEnum()));
+	if (resolved_owner_alias.terminal_type_info != nullptr &&
+		resolved_owner_alias.terminal_type_info != owner_info) {
+		StringHandle terminal_member_name = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(resolved_owner_alias.terminal_type_info->name())
+				.append("::")
+				.append(member_name)
+				.commit());
+		if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+				terminal_member_name,
+				template_params,
+				template_args);
+			folded.has_value()) {
+			return folded;
+		}
+	}
+
+	if (owner_info->isTemplateInstantiation() ||
+		owner_info->isDependentPlaceholder() ||
+		owner_info->is_incomplete_instantiation_) {
+		auto evaluate_owner_arg =
+			[this, owner_info, owner_name = owner_info->name()](
+				StringHandle dependent_name,
+				const ASTNode& expr,
+				std::span<const ASTNode> params,
+				std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+			if (dependent_name.isValid()) {
+				InlineVector<TemplateParameterNode, 4> typed_params =
+					collectTemplateParameterNodes(params);
+				if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+						dependent_name,
+						std::span<const TemplateParameterNode>(
+							typed_params.data(), typed_params.size()),
+						args);
+					folded.has_value()) {
+					return folded;
+				}
+			}
+			InlineVector<TemplateParameterNode, 4> typed_params =
+				collectTemplateParameterNodes(params);
+			std::vector<TemplateTypeArg> extended_eval_args;
+			if (expr.is<ExpressionNode>() &&
+				std::holds_alternative<TypeTraitExprNode>(expr.as<ExpressionNode>())) {
+				const TypeTraitExprNode& trait =
+					std::get<TypeTraitExprNode>(expr.as<ExpressionNode>());
+				if (trait.has_type() && trait.type_node().is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& operand =
+						trait.type_node().as<TypeSpecifierNode>();
+					StringHandle operand_name = operand.token().handle();
+					bool operand_is_bound = false;
+					for (const TemplateParameterNode& param : typed_params) {
+						if (param.nameHandle() == operand_name) {
+							operand_is_bound = true;
+							break;
+						}
+					}
+					const TemplateTypeArg* sole_type_arg = nullptr;
+					bool ambiguous_type_arg = false;
+					for (size_t arg_index = 0;
+						 arg_index < typed_params.size() && arg_index < args.size();
+						 ++arg_index) {
+						bool is_owner_parameter = false;
+						if (owner_info->hasInstantiationContext()) {
+							TemplateEnvironment owner_environment = buildTemplateEnvironment(
+								*owner_info->instantiationContext());
+							for (const TemplateBinding& owner_binding : owner_environment.bindings) {
+								if (owner_binding.name == typed_params[arg_index].nameHandle()) {
+									is_owner_parameter = true;
+									break;
+								}
+							}
+						}
+						if (is_owner_parameter ||
+							typed_params[arg_index].kind() != TemplateParameterKind::Type ||
+							args[arg_index].is_value) {
+							continue;
+						}
+						if (sole_type_arg != nullptr) {
+							ambiguous_type_arg = true;
+							break;
+						}
+						sole_type_arg = &args[arg_index];
+					}
+					if (!operand_is_bound &&
+						operand_name.isValid() &&
+						!ambiguous_type_arg &&
+						sole_type_arg != nullptr) {
+						typed_params.push_back(
+							TemplateParameterNode(operand_name, operand.token()));
+						extended_eval_args.assign(args.begin(), args.end());
+						extended_eval_args.push_back(*sole_type_arg);
+						if (!trait.has_second_type() && !trait.is_variadic_trait()) {
+							TypeSpecifierNode concrete_operand =
+								makeTypeSpecifierFromTemplateTypeArg(
+									*sole_type_arg,
+									operand.token());
+							ASTNode directly_substituted =
+								ASTNode::emplace_node<ExpressionNode>(
+									TypeTraitExprNode(
+										trait.kind(),
+										ASTNode::emplace_node<TypeSpecifierNode>(
+											std::move(concrete_operand)),
+										trait.trait_token()));
+							if (auto value = try_evaluate_constant_expression(
+									directly_substituted);
+								value.has_value()) {
+								return TemplateTypeArg(value->value, value->type);
+							}
+						}
+						args = std::span<const TemplateTypeArg>(
+							extended_eval_args.data(), extended_eval_args.size());
+					}
+				}
+			}
+			return this->evaluateDependentNTTPExpression(
+				expr,
+				std::span<const TemplateParameterNode>(
+					typed_params.data(), typed_params.size()),
+				args,
+				owner_name);
+		};
+		std::vector<TemplateTypeArg> concrete_owner_args =
+			materializeTemplateArgs(
+				*owner_info,
+				template_params,
+				template_args,
+				evaluate_owner_arg);
+		std::vector<TemplateTypeArg> active_type_args;
+		for (size_t active_index = 0;
+			 active_index < template_params.size() && active_index < template_args.size();
+			 ++active_index) {
+			if (template_params[active_index].kind() == TemplateParameterKind::Type &&
+				!template_args[active_index].is_value) {
+				active_type_args.push_back(template_args[active_index]);
+			}
+		}
+		for (TemplateTypeArg& concrete_owner_arg : concrete_owner_args) {
+			if (concrete_owner_arg.is_value ||
+				!concrete_owner_arg.type_index.is_valid()) {
+				continue;
+			}
+			const TypeInfo* nested_info = tryGetTypeInfo(concrete_owner_arg.type_index);
+			if (nested_info == nullptr ||
+				!nested_info->isTemplateInstantiation() ||
+				!nested_info->baseTemplateName().isValid() ||
+				nested_info->templateArgs().size() != active_type_args.size()) {
+				continue;
+			}
+			bool nested_arg_needs_materialization =
+				nested_info->isDependentPlaceholder() ||
+				nested_info->is_incomplete_instantiation_ ||
+				typeIndexContainsDependentPlaceholder(concrete_owner_arg.type_index);
+			if (!nested_arg_needs_materialization) {
+				continue;
+			}
+			AliasTemplateMaterializationResult materialized_nested =
+				materializeTemplateInstantiationForLookup(
+					StringTable::getStringView(nested_info->baseTemplateName()),
+					active_type_args);
+			if (materialized_nested.resolved_type_info != nullptr) {
+				TypeIndex resolved_index =
+					materialized_nested.resolved_type_info->registeredTypeIndex().withCategory(
+						materialized_nested.resolved_type_info->typeEnum());
+				concrete_owner_arg = makeTemplateTypeArgFromResolvedAlias(
+					resolveAliasTypeInfo(resolved_index),
+					resolved_index);
+			}
+		}
+		bool owner_args_still_dependent = false;
+		for (const TemplateTypeArg& owner_arg : concrete_owner_args) {
+			if (owner_arg.is_dependent ||
+				owner_arg.dependent_name.isValid() ||
+				owner_arg.dependent_expr.has_value()) {
+				owner_args_still_dependent = true;
+				break;
+			}
+		}
+		if (owner_args_still_dependent) {
+			return std::nullopt;
+		}
+		StringHandle base_template_name = owner_info->baseTemplateName();
+		if (owner_info->sourceNamespace().isValid() && base_template_name.isValid()) {
+			base_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				owner_info->sourceNamespace(),
+				base_template_name);
+		}
+		std::string_view base_template_name_view =
+			StringTable::getStringView(base_template_name);
+		if (base_template_name_view.empty()) {
+			return std::nullopt;
+		}
+		AliasTemplateMaterializationResult materialized_owner =
+			materializeTemplateInstantiationForLookup(
+				base_template_name_view,
+				concrete_owner_args);
+		if (materialized_owner.resolved_type_info != nullptr) {
+			owner_info = materialized_owner.resolved_type_info;
+		} else if (!materialized_owner.instantiated_name.empty()) {
+			if (const TypeInfo* resolved_owner = findTypeByName(
+					StringTable::getOrInternStringHandle(
+						materialized_owner.instantiated_name));
+				resolved_owner != nullptr) {
+				owner_info = resolved_owner;
+			}
+		}
+		std::optional<ASTNode> instantiated_owner = try_instantiate_class_template(
+			base_template_name_view,
+			concrete_owner_args,
+			false);
+		if (instantiated_owner.has_value() &&
+			instantiated_owner->is<StructDeclarationNode>()) {
+			owner_info = findTypeByName(
+				instantiated_owner->as<StructDeclarationNode>().name());
+		}
+		StringHandle concrete_owner_handle = StringTable::getOrInternStringHandle(
+			get_instantiated_class_name(base_template_name_view, concrete_owner_args));
+		if (owner_info == nullptr ||
+			owner_info->isDependentPlaceholder() ||
+			owner_info->is_incomplete_instantiation_) {
+			if (const TypeInfo* concrete_owner = findTypeByName(concrete_owner_handle);
+				concrete_owner != nullptr) {
+				owner_info = concrete_owner;
+			}
+		}
+	}
+
+	auto tryFoldInheritedAliasMember = [&]() -> std::optional<TemplateTypeArg> {
+		if (owner_info == nullptr) {
+			return std::nullopt;
+		}
+		if (const TypeInfo* inherited_type = lookup_inherited_type_alias(
+				owner_info->name(),
+				StringTable::getOrInternStringHandle("type"));
+			inherited_type != nullptr && inherited_type != owner_info) {
+			StringHandle inherited_member_name = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(inherited_type->name())
+					.append("::")
+					.append(member_name)
+					.commit());
+			if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+					inherited_member_name,
+					template_params,
+					template_args);
+				folded.has_value()) {
+				return folded;
+			}
+		}
+		return std::nullopt;
+	};
+	const StructTypeInfo* owner_struct = owner_info->getStructInfo();
+	if (owner_struct == nullptr) {
+		return tryFoldInheritedAliasMember();
+	}
+	StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+	auto [found_member, found_owner] =
+		owner_struct->findStaticMemberRecursive(member_handle);
+	if (found_member == nullptr || !found_member->initializer.has_value()) {
+		return tryFoldInheritedAliasMember();
+	}
+
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+	eval_ctx.struct_info = found_owner != nullptr ? found_owner : owner_struct;
+	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+	eval_ctx.template_environment = buildTemplateEnvironment(
+		template_params,
+		template_args,
+		nullptr);
+	ConstExpr::EvalResult eval_result =
+		ConstExpr::Evaluator::evaluate(*found_member->initializer, eval_ctx);
+	if (!eval_result.success()) {
+		return std::nullopt;
+	}
+	return templateTypeArgFromEvalResult(eval_result);
+}
+
+const TypeInfo* Parser::tryMaterializeMemberAliasTemplateSpecialization(
+	const TypeSpecifierNode& alias_type_spec,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	const StructTypeInfo* instantiated_struct_info) {
+	const TypeInfo* alias_template_pattern_info =
+		tryGetTypeInfo(alias_type_spec.type_index());
+	if (alias_template_pattern_info == nullptr) {
+		return nullptr;
+	}
+
+	// Prefer the typedef's surface spelling (ConditionalT) over the deferred
+	// helper specialization it currently points at (Conditional$...::type).
+	std::string_view alias_template_name = alias_type_spec.token().value();
+	if (alias_template_name.empty() ||
+		!gTemplateRegistry.lookup_alias_template(alias_template_name).has_value()) {
+		alias_template_name = {};
+		StringHandle base_name = alias_template_pattern_info->baseTemplateName();
+		if (base_name.isValid() &&
+			gTemplateRegistry.lookup_alias_template(
+				StringTable::getStringView(base_name)).has_value()) {
+			alias_template_name = StringTable::getStringView(base_name);
+		}
+	}
+	if (alias_template_name.empty() &&
+		alias_template_pattern_info->sourceNamespace().isValid()) {
+		StringHandle qualified_base =
+			gNamespaceRegistry.buildQualifiedIdentifier(
+				alias_template_pattern_info->sourceNamespace(),
+				alias_template_pattern_info->baseTemplateName());
+		if (qualified_base.isValid() &&
+			gTemplateRegistry.lookup_alias_template(
+				StringTable::getStringView(qualified_base)).has_value()) {
+			alias_template_name = StringTable::getStringView(qualified_base);
+		}
+	}
+
+	const TypeInfo* args_source_info = alias_template_pattern_info;
+	if (args_source_info->isDependentMemberType() &&
+		args_source_info->hasDependentQualifiedName()) {
+		const TypeInfo::DependentQualifiedNameRecord* dependent_name =
+			args_source_info->dependentQualifiedName();
+		if (dependent_name != nullptr) {
+			const TypeInfo* owner_info = nullptr;
+			if (dependent_name->owner_type.is_valid()) {
+				owner_info = tryGetTypeInfo(dependent_name->owner_type);
+			}
+			if (owner_info == nullptr && dependent_name->owner_name.isValid()) {
+				owner_info = findTypeByName(dependent_name->owner_name);
+			}
+			if (owner_info != nullptr &&
+				owner_info->isTemplateInstantiation() &&
+				!owner_info->templateArgs().empty()) {
+				args_source_info = owner_info;
+			}
+		}
+	}
+	if (!args_source_info->isTemplateInstantiation() ||
+		args_source_info->templateArgs().empty()) {
+		return nullptr;
+	}
+
+	// Expand parameter packs (e.g. `using Base = Recursive<Tail...>`) the same way
+	// partial-spec / base-class materialization does. Bare materializeTemplateArgs
+	// leaves Rest... dependent and can rematerialize the wrong Recursive arity.
+	std::vector<TemplateTypeArg> concrete_alias_args =
+		materializeTemplateArgsExpandingPacks(
+			*args_source_info,
+			template_params,
+			template_args,
+		[this](
+			StringHandle dependent_name,
+			const ASTNode& expr,
+			std::span<const ASTNode> params,
+			std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+			if (dependent_name.isValid()) {
+				InlineVector<TemplateParameterNode, 4> typed_params =
+					collectTemplateParameterNodes(params);
+				if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+						dependent_name,
+						std::span<const TemplateParameterNode>(
+							typed_params.data(), typed_params.size()),
+						args);
+					folded.has_value()) {
+					return folded;
+				}
+			}
+			return this->evaluateDependentNTTPExpression(expr, params, args);
+		});
+	bool has_unresolved_alias_arg = false;
+	for (TemplateTypeArg& concrete_arg : concrete_alias_args) {
+		if (concrete_arg.is_value && concrete_arg.is_dependent) {
+			if (concrete_arg.dependent_name.isValid() &&
+				instantiated_struct_info != nullptr) {
+				const StructStaticMember* referenced_static_member =
+					instantiated_struct_info->findStaticMember(
+						concrete_arg.dependent_name);
+				if (referenced_static_member != nullptr &&
+					referenced_static_member->initializer.has_value()) {
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+					eval_ctx.struct_info = instantiated_struct_info;
+					eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+					auto eval_result = ConstExpr::Evaluator::evaluate(
+						*referenced_static_member->initializer,
+						eval_ctx);
+					if (eval_result.success()) {
+						concrete_arg.value = eval_result.as_int();
+						concrete_arg.is_dependent = false;
+						concrete_arg.dependent_name = StringHandle{};
+						concrete_arg.dependent_expr.reset();
+					}
+				}
+			}
+			// Qualified static-member NTTP markers such as
+			// `IsSimpleAlloc$...::value` are not members of the enclosing class.
+			if (concrete_arg.is_dependent &&
+				concrete_arg.dependent_name.isValid()) {
+				std::string_view dependent_name_view =
+					StringTable::getStringView(concrete_arg.dependent_name);
+				if (dependent_name_view.find("::") != std::string_view::npos) {
+					if (std::optional<TemplateTypeArg> folded =
+							tryFoldDependentQualifiedStaticMemberNTTP(
+								concrete_arg.dependent_name,
+								template_params,
+								template_args);
+						folded.has_value()) {
+						concrete_arg = *folded;
+						concrete_arg.is_dependent = false;
+						concrete_arg.dependent_name = StringHandle{};
+						concrete_arg.dependent_expr.reset();
+					}
+				}
+			}
+			if (concrete_arg.is_dependent &&
+				concrete_arg.dependent_expr.has_value()) {
+				if (std::optional<TemplateTypeArg> folded =
+						evaluateDependentNTTPExpression(
+							*concrete_arg.dependent_expr,
+							template_params,
+							template_args);
+					folded.has_value()) {
+					concrete_arg = *folded;
+					concrete_arg.is_dependent = false;
+					concrete_arg.dependent_name = StringHandle{};
+					concrete_arg.dependent_expr.reset();
+				}
+			}
+		}
+		if (concrete_arg.is_dependent ||
+			concrete_arg.dependent_name.isValid() ||
+			concrete_arg.dependent_expr.has_value()) {
+			has_unresolved_alias_arg = true;
+		}
+	}
+	if (has_unresolved_alias_arg) {
+		return nullptr;
+	}
+
+	if (!alias_template_name.empty()) {
+		AliasTemplateMaterializationResult materialized_alias_target =
+			materializeAliasTemplateInstantiation(
+				alias_template_name,
+				concrete_alias_args);
+		if (materialized_alias_target.resolved_type_info == nullptr &&
+			!materialized_alias_target.instantiated_name.empty()) {
+			materialized_alias_target.resolved_type_info =
+				findTypeByName(StringTable::getOrInternStringHandle(
+					materialized_alias_target.instantiated_name));
+		}
+		if (materialized_alias_target.resolved_type_info != nullptr) {
+			return materialized_alias_target.resolved_type_info;
+		}
+	}
+
+	// Deferred aliases like ConditionalT often rewrite the typedef token to the
+	// helper class name (Conditional). Materialize that class with the folded
+	// call-site arguments and then select the dependent member (usually ::type).
+	StringHandle class_template_name = args_source_info->baseTemplateName();
+	if (args_source_info->sourceNamespace().isValid() && class_template_name.isValid()) {
+		class_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
+			args_source_info->sourceNamespace(),
+			class_template_name);
+	}
+	std::string_view class_template_name_view =
+		StringTable::getStringView(class_template_name);
+	if (class_template_name_view.empty()) {
+		return nullptr;
+	}
+	AliasTemplateMaterializationResult materialized_class =
+		materializeTemplateInstantiationForLookup(
+			class_template_name_view,
+			concrete_alias_args);
+	if (materialized_class.resolved_type_info == nullptr &&
+		!materialized_class.instantiated_name.empty()) {
+		materialized_class.resolved_type_info =
+			findTypeByName(StringTable::getOrInternStringHandle(
+				materialized_class.instantiated_name));
+	}
+	if (materialized_class.resolved_type_info == nullptr) {
+		return nullptr;
+	}
+	if (alias_template_pattern_info->isDependentMemberType() &&
+		alias_template_pattern_info->hasDependentQualifiedName()) {
+		const TypeInfo::DependentQualifiedNameRecord* dependent_name =
+			alias_template_pattern_info->dependentQualifiedName();
+		if (dependent_name != nullptr && !dependent_name->member_chain.empty()) {
+			StringHandle member_handle = dependent_name->member_chain.back().name;
+			StringHandle qualified_member = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(materialized_class.instantiated_name)
+					.append("::")
+					.append(StringTable::getStringView(member_handle))
+					.commit());
+			if (const TypeInfo* member_info = findTypeByName(qualified_member);
+				member_info != nullptr) {
+				ResolvedAliasTypeInfo resolved_member =
+					resolveAliasTypeInfo(
+						member_info->registeredTypeIndex().withCategory(
+							member_info->typeEnum()));
+				if (resolved_member.terminal_type_info != nullptr) {
+					return resolved_member.terminal_type_info;
+				}
+				return member_info;
+			}
+		}
+	}
+	return materialized_class.resolved_type_info;
 }
 
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
@@ -3548,13 +4202,24 @@ std::string_view Parser::instantiate_and_register_base_template(
 						*alias_target_info,
 						alias_node.template_parameters(),
 						template_args,
-						[this, owner_name = alias_target_info->name()](
-							const ASTNode& expr,
-							std::span<const ASTNode> params,
-							std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-							InlineVector<TemplateParameterNode, 4> typed_params =
-								collectTemplateParameterNodes(params);
-							return this->evaluateDependentNTTPExpression(
+					[this, owner_name = alias_target_info->name()](
+						StringHandle dependent_name,
+						const ASTNode& expr,
+						std::span<const ASTNode> params,
+						std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+						InlineVector<TemplateParameterNode, 4> typed_params =
+							collectTemplateParameterNodes(params);
+						if (dependent_name.isValid()) {
+							if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+									dependent_name,
+									std::span<const TemplateParameterNode>(
+										typed_params.data(), typed_params.size()),
+									args);
+								folded.has_value()) {
+								return folded;
+							}
+						}
+						return this->evaluateDependentNTTPExpression(
 								expr,
 								std::span<const TemplateParameterNode>(
 									typed_params.data(),
@@ -5443,6 +6108,42 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle explicit_substitution_owner) {
+	if (dependent_expr.is<ExpressionNode>()) {
+		const ExpressionNode& expression = dependent_expr.as<ExpressionNode>();
+		if (std::holds_alternative<QualifiedIdentifierNode>(expression)) {
+			const QualifiedIdentifierNode& qualified_identifier =
+				std::get<QualifiedIdentifierNode>(expression);
+			std::string_view owner_name = gNamespaceRegistry.getQualifiedName(
+				qualified_identifier.namespace_handle());
+			const TypeInfo* owner_info = owner_name.empty()
+				? nullptr
+				: findTypeByName(StringTable::getOrInternStringHandle(owner_name));
+			bool owner_has_type_argument = false;
+			if (owner_info != nullptr) {
+				for (const TypeInfo::TemplateArgInfo& owner_arg : owner_info->templateArgs()) {
+					if (!owner_arg.is_value) {
+						owner_has_type_argument = true;
+						break;
+					}
+				}
+			}
+			if (owner_has_type_argument && qualified_identifier.nameHandle().isValid()) {
+				StringHandle dependent_member_name = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(owner_name)
+						.append("::")
+						.append(qualified_identifier.nameHandle())
+						.commit());
+				if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
+						dependent_member_name,
+						template_params,
+						template_args);
+					folded.has_value()) {
+					return folded;
+				}
+			}
+		}
+	}
 	StringHandle substitution_owner;
 	if (explicit_substitution_owner.isValid()) {
 		substitution_owner = explicit_substitution_owner;
