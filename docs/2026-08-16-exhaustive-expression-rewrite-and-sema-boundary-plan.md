@@ -2,7 +2,8 @@
 
 ## Status
 
-Phase 0 and Phase 1 are complete as of 2026-08-16. Phases 2-5 remain pending.
+Phase 0, Phase 1, and Phase 2 are complete as of 2026-08-16. Phases 3-5
+remain pending.
 This document describes follow-up work after PR #1871, which added the missing
 `NewExpressionNode` template-substitution path. The plan is intentionally
 broader than that fix: its goal is to make the same class of omission difficult
@@ -39,6 +40,34 @@ the `ExpressionSubstitutor` fallback, consolidate parser substitution
 ownership, or introduce lifecycle ownership states. In particular,
 `has_template_body_position()`-based boundary skips remain a Phase 4 finding,
 not a Phase 1 behavior change.
+
+### Completed Phase 2 implementation record
+
+- Added `src/ExpressionRewriter.h` as an exhaustive structural reconstruction
+  layer over the canonical `ExpressionStructure` schema.
+- Added role-aware one-to-one child rewriting and zero-to-many flat-map
+  rewriting for call, constructor, placement, and new-expression argument
+  sequences.
+- Reused `copyCallMetadataWithTransformedTemplateArguments` and preserved
+  constructor resolution, call lookup/name/return-type metadata, source
+  tokens, operator metadata, lambda metadata, and new-expression flags during
+  structural rebuilding.
+- Migrated `ExpressionSubstitutor` constructor/new/operator and remaining
+  structural expression families onto the rewriter; its unknown-expression
+  fallback now fails at the dynamic boundary, while non-expression statement
+  and declaration children remain owned by their existing parser passes.
+- Added reduced metadata and pack-sequence regressions in
+  `test_expression_rewriter_metadata_ret42.cpp` and
+  `test_expression_rewriter_pack_sequences_ret42.cpp`.
+
+Validation for this stage: the MSVC build completed with 0 warnings/errors;
+all focused regressions passed; the `<any>` and `<deque>` probes reached the
+same documented out-of-scope `_Seek_to`/`view_interface::operator==` stops;
+the full suite passed 2,889 regular tests and 247 expected-failure tests; and
+the compiler-source audit found no standard-library or vendor-name behavior
+special cases. The non-dependent receiver lookup gap remains documented and
+unchanged. Parser-side expression dispatch consolidation remains Phase 3, and
+explicit lifecycle ownership remains Phase 4.
 
 ## Problem statement
 
@@ -474,7 +503,7 @@ alternative declares its structure or explicit leaf status.
 
 ### Phase 2: Add the exhaustive rewriter
 
-**Status: Next.**
+**Status: Complete as of 2026-08-16.**
 
 Start by inventorying the existing reconstruction and metadata-copy helpers in
 `ExpressionSubstitutor.cpp`, then introduce one-to-one and zero-to-many child

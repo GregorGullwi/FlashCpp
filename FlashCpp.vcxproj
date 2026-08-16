@@ -475,6 +475,7 @@
     <ClInclude Include="src\DwarfCFI.h" />
     <ClInclude Include="src\ElfFileWriter.h" />
     <ClInclude Include="src\ExpressionSubstitutor.h" />
+    <ClInclude Include="src\ExpressionRewriter.h" />
     <ClInclude Include="src\FileReader.h" />
     <ClInclude Include="src\FileTree.h" />
     <ClInclude Include="src\IRConverter.h" />

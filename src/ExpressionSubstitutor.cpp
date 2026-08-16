@@ -369,6 +369,27 @@ void ExpressionSubstitutor::rebuildEnvironmentFromCurrentBindings() {
 	}
 }
 
+ASTNode ExpressionSubstitutor::rewriteStructurally(const ASTNode& expression) {
+	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
+		// Lambda parameters and bodies are statement/declaration surfaces.  The
+		// expression rewriter preserves those structural nodes here; their own
+		// substitution remains owned by the parser's declaration/statement pass.
+		if (!child.is<ExpressionNode>() && !child.is<TypeSpecifierNode>()) {
+			return child;
+		}
+		return substitute(child);
+	};
+	auto rewrite_zero_to_many = [this](
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole,
+		std::vector<ASTNode>& output) {
+		ChunkedVector<ASTNode> expanded;
+		substituteCallArgumentPreservingPackExpansion(child, expanded);
+		expanded.visit([&](ASTNode argument) { output.push_back(argument); });
+	};
+	return expression_rewriter_.rewrite(expression, rewrite_one_to_one, rewrite_zero_to_many);
+}
+
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
 		return expr;
@@ -448,9 +469,16 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(expr.as<StringLiteralNode>());
 		return ASTNode(&new_expr);
 	} else {
-		// For any other node type, return as-is
-		FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Unknown expression type: ", expr.type_name());
-		return expr;
+		// Declaration and statement children (for example a lambda body) are
+		// intentionally outside the expression rewriter's structural surface.
+		// Preserve those nodes for their owning parser pass.  Direct expression
+		// alternatives are dispatched exhaustively by ExpressionRewriter.
+		if (!ExpressionStructure::visitExpressionChildren(
+				expr,
+				[](ExpressionStructure::ExpressionChildRole, const ASTNode&) {})) {
+			return expr;
+		}
+		return rewriteStructurally(expr);
 	}
 }
 
@@ -461,69 +489,35 @@ TypeSpecifierNode ExpressionSubstitutor::substituteTypeSpecifier(
 
 ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNode& ctor) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing constructor call");
-
-	// Get the type being constructed
-	const TypeSpecifierNode& type_spec = ctor.type_node();
-
-	// Substitute template parameters in the type
-	TypeSpecifierNode substituted_type = substituteInType(type_spec);
-
-	// Create new ConstructorCallNode with substituted type
-	// First, we need to copy the arguments
-	ChunkedVector<ASTNode> substituted_args =
-		substituteCallArgumentsPreservingPackExpansion(ctor.arguments());
-
-	// Create new TypeSpecifierNode and ConstructorCallNode
-	TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
-	ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
-		new_type,
-		std::move(substituted_args),
-		ctor.called_from());
-
-	// Wrap in ExpressionNode
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
-	return ASTNode(&new_expr);
+	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
+		return substitute(child);
+	};
+	auto rewrite_zero_to_many = [this](
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole,
+		std::vector<ASTNode>& output) {
+		ChunkedVector<ASTNode> expanded;
+		substituteCallArgumentPreservingPackExpansion(child, expanded);
+		expanded.visit([&](ASTNode argument) { output.push_back(argument); });
+	};
+	ASTNode root = ASTNode::emplace_node<ExpressionNode>(ctor);
+	return expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
 }
 
 ASTNode ExpressionSubstitutor::substituteNewExpression(const NewExpressionNode& new_expression) {
-	TypeSpecifierNode substituted_type = substituteInType(
-		new_expression.type_node().as<TypeSpecifierNode>());
-	TypeSpecifierNode& stored_type =
-		gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(substituted_type));
-
-	std::optional<ASTNode> substituted_size;
-	if (new_expression.size_expr().has_value()) {
-		substituted_size = substitute(*new_expression.size_expr());
-	}
-
-	auto appendSubstitutedArgument = [this](const ASTNode& argument, auto& output) {
-		ChunkedVector<ASTNode> expanded_arguments;
-		substituteCallArgumentPreservingPackExpansion(argument, expanded_arguments);
-		for (const ASTNode& expanded_argument : expanded_arguments) {
-			output.push_back(expanded_argument);
-		}
+	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
+		return substitute(child);
 	};
-	ChunkedVector<ASTNode, 128, 256> substituted_constructor_args;
-	for (const ASTNode& constructor_arg : new_expression.constructor_args()) {
-		appendSubstitutedArgument(constructor_arg, substituted_constructor_args);
-	}
-	InlineVector<ASTNode, 2> substituted_placement_args;
-	for (const ASTNode& placement_arg : new_expression.placement_args()) {
-		appendSubstitutedArgument(placement_arg, substituted_placement_args);
-	}
-
-	NewExpressionNode& stored_new_expression =
-		gChunkedAnyStorage.emplace_back<NewExpressionNode>(
-			ASTNode(&stored_type),
-			new_expression.is_array(),
-			std::move(substituted_size),
-			std::move(substituted_constructor_args),
-			std::move(substituted_placement_args),
-			new_expression.has_value_init(),
-			new_expression.is_brace_init());
-	ExpressionNode& stored_expression =
-		gChunkedAnyStorage.emplace_back<ExpressionNode>(stored_new_expression);
-	return ASTNode(&stored_expression);
+	auto rewrite_zero_to_many = [this](
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole,
+		std::vector<ASTNode>& output) {
+		ChunkedVector<ASTNode> expanded;
+		substituteCallArgumentPreservingPackExpansion(child, expanded);
+		expanded.visit([&](ASTNode argument) { output.push_back(argument); });
+	};
+	ASTNode root = ASTNode::emplace_node<ExpressionNode>(new_expression);
+	return expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
 }
 
 void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
@@ -3751,59 +3745,50 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 
 ASTNode ExpressionSubstitutor::substituteBinaryOp(const BinaryOperatorNode& binop) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing binary operator");
-
-	// Recursively substitute in left and right operands
-	ASTNode substituted_lhs = substitute(binop.get_lhs());
-	ASTNode substituted_rhs = substitute(binop.get_rhs());
-
-	// Create new BinaryOperatorNode with substituted operands
-	BinaryOperatorNode new_binop_value(
-		binop.get_token(),
-		substituted_lhs,
-		substituted_rhs);
+	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
+		return substitute(child);
+	};
+	auto rewrite_zero_to_many = [this](
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole,
+		std::vector<ASTNode>& output) {
+		output.push_back(substitute(child));
+	};
+	ASTNode root = ASTNode::emplace_node<ExpressionNode>(binop);
+	ASTNode rewritten = expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
+	BinaryOperatorNode& new_binop_value = std::get<BinaryOperatorNode>(rewritten.as<ExpressionNode>());
 	parser_.annotateConcreteBinaryOperatorOverload(new_binop_value);
-
-	// Wrap in ExpressionNode so it can be evaluated by try_evaluate_constant_expression
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_binop_value);
-	return ASTNode(&new_expr);
+	return rewritten;
 }
 
 ASTNode ExpressionSubstitutor::substituteUnaryOp(const UnaryOperatorNode& unop) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing unary operator");
-
-	// Recursively substitute in operand
-	ASTNode substituted_operand = substitute(unop.get_operand());
-
-	// Create new UnaryOperatorNode with substituted operand
-	UnaryOperatorNode new_unop_value(
-		unop.get_token(),
-		substituted_operand,
-		unop.is_prefix(),
-		unop.is_builtin_addressof());
-
-	// Wrap in ExpressionNode so it can be evaluated by try_evaluate_constant_expression
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_unop_value);
-	return ASTNode(&new_expr);
+	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
+		return substitute(child);
+	};
+	auto rewrite_zero_to_many = [this](
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole,
+		std::vector<ASTNode>& output) {
+		output.push_back(substitute(child));
+	};
+	ASTNode root = ASTNode::emplace_node<ExpressionNode>(unop);
+	return expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
 }
 
 ASTNode ExpressionSubstitutor::substituteTernaryOp(const TernaryOperatorNode& ternary) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing ternary operator");
-
-	// Recursively substitute in condition, true_expr, and false_expr
-	ASTNode substituted_condition = substitute(ternary.condition());
-	ASTNode substituted_true = substitute(ternary.true_expr());
-	ASTNode substituted_false = substitute(ternary.false_expr());
-
-	// Create new TernaryOperatorNode with substituted operands
-	TernaryOperatorNode new_ternary(
-		substituted_condition,
-		substituted_true,
-		substituted_false,
-		ternary.get_token());
-
-	// Wrap in ExpressionNode so it can be evaluated by try_evaluate_constant_expression
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ternary);
-	return ASTNode(&new_expr);
+	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
+		return substitute(child);
+	};
+	auto rewrite_zero_to_many = [this](
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole,
+		std::vector<ASTNode>& output) {
+		output.push_back(substitute(child));
+	};
+	ASTNode root = ASTNode::emplace_node<ExpressionNode>(ternary);
+	return expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
 }
 
 ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
@@ -4596,20 +4581,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 ASTNode ExpressionSubstitutor::substituteMemberAccess(const MemberAccessNode& member_access) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing member access on member: ", member_access.member_name());
-
-	// Recursively substitute in the object expression
-	// For expressions like "R1<T>::num", the object might be a template instantiation
-	ASTNode substituted_object = substitute(member_access.object());
-
-	// Create new MemberAccessNode with substituted object
-	MemberAccessNode new_member_value(
-		substituted_object,
-		member_access.member_token(),
-		member_access.is_arrow());
-
-	// Wrap in ExpressionNode
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_member_value);
-	return ASTNode(&new_expr);
+	return rewriteStructurally(
+		ASTNode::emplace_node<ExpressionNode>(member_access));
 }
 
 ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof_expr) {
@@ -4706,86 +4679,20 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 
 ASTNode ExpressionSubstitutor::substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing type trait expression");
-
-	auto substitute_trait_type = [this](const ASTNode& type_node) {
-		if (!type_node.is<TypeSpecifierNode>()) {
-			return type_node;
-		}
-
-		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			substituteInType(type_node.as<TypeSpecifierNode>()));
-		return ASTNode(&new_type);
-	};
-
-	if (trait_expr.is_no_arg_trait()) {
-		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-			TypeTraitExprNode(trait_expr.kind(), trait_expr.trait_token()));
-		return ASTNode(&new_expr);
-	}
-
-	ASTNode substituted_type = substitute_trait_type(trait_expr.type_node());
-
-	if (trait_expr.has_second_type()) {
-		ASTNode substituted_second_type = substitute_trait_type(trait_expr.second_type_node());
-
-		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-			TypeTraitExprNode(trait_expr.kind(), substituted_type, substituted_second_type, trait_expr.trait_token()));
-		return ASTNode(&new_expr);
-	}
-
-	if (trait_expr.is_variadic_trait()) {
-		std::vector<ASTNode> substituted_additional_types;
-		substituted_additional_types.reserve(trait_expr.additional_type_nodes().size());
-		for (const ASTNode& additional_type : trait_expr.additional_type_nodes()) {
-			substituted_additional_types.push_back(substitute_trait_type(additional_type));
-		}
-
-		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-			TypeTraitExprNode(trait_expr.kind(), substituted_type, std::move(substituted_additional_types), trait_expr.trait_token()));
-		return ASTNode(&new_expr);
-	}
-
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-		TypeTraitExprNode(trait_expr.kind(), substituted_type, trait_expr.trait_token()));
-	return ASTNode(&new_expr);
+	return rewriteStructurally(
+		ASTNode::emplace_node<ExpressionNode>(trait_expr));
 }
 
 ASTNode ExpressionSubstitutor::substituteStaticCast(const StaticCastNode& cast_node) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing static_cast/functional cast expression");
-
-	// Recursively substitute in the inner expression
-	ASTNode substituted_expr = substitute(cast_node.expr());
-
-	// The target type typically doesn't need substitution for built-in functional casts
-	// like bool(x), int(x), but handle it for completeness
-	TypeSpecifierNode substituted_type = substituteInType(cast_node.target_type());
-
-	// Create new StaticCastNode with substituted expression
-	StaticCastNode& new_cast = gChunkedAnyStorage.emplace_back<StaticCastNode>(
-		substituted_type, substituted_expr, cast_node.cast_token());
-
-	// Wrap in ExpressionNode
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_cast);
-	return ASTNode(&new_expr);
+	return rewriteStructurally(
+		ASTNode::emplace_node<ExpressionNode>(cast_node));
 }
 
 ASTNode ExpressionSubstitutor::substituteInitializerListConstruction(
 	const InitializerListConstructionNode& init_list) {
-	ASTNode substituted_element_type = substitute(init_list.element_type());
-	ASTNode substituted_target_type = substitute(init_list.target_type());
-	std::vector<ASTNode> substituted_elements;
-	substituted_elements.reserve(init_list.size());
-	for (const ASTNode& element : init_list.elements()) {
-		substituted_elements.push_back(substitute(element));
-	}
-
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-		InitializerListConstructionNode(
-			substituted_element_type,
-			substituted_target_type,
-			std::move(substituted_elements),
-			init_list.called_from()));
-	return ASTNode(&new_expr);
+	return rewriteStructurally(
+		ASTNode::emplace_node<ExpressionNode>(init_list));
 }
 
 ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {

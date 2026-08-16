@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "ExpressionRewriter.h"
 #include "Parser.h"
 #include "TemplateEnvironment.h"
 #include "TemplateRegistry.h"
@@ -144,6 +145,7 @@ private:
 	ASTNode substituteInitializerListConstruction(const InitializerListConstructionNode& init_list);
 	ASTNode substituteLiteral(const ASTNode& literal);
 	void captureParserPackState();
+	ASTNode rewriteStructurally(const ASTNode& expression);
 	void substituteCallArgumentPreservingPackExpansion(
 		const ASTNode& arg,
 		ChunkedVector<ASTNode>& out);
@@ -200,6 +202,7 @@ private:
 	TemplateEnvironment environment_;
 	std::vector<Parser::PackParamInfo> captured_pack_param_info_;
 	StringHandle current_owner_type_name_{};
+	ExpressionRewriter expression_rewriter_;
 	// Cycle-detection guard for materializeStoredTemplateArgs:
 	// tracks TypeInfo pointers currently being materialized to prevent
 	// infinite mutual recursion with substituteQualifiedIdentifier.
