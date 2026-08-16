@@ -1429,106 +1429,20 @@ private:
 	}
 
 	void visitExpression(const ExpressionNode& expr) {
-		std::visit([this](const auto& e) {
-			using T = std::decay_t<decltype(e)>;
-			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-				visit(e.get_lhs());
-				visit(e.get_rhs());
-			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-				visit(e.get_operand());
-			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
-				visit(e.condition());
-				visit(e.true_expr());
-				visit(e.false_expr());
-			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				for (const auto& arg : e.arguments()) {
-					visit(arg);
-				}
-			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-				visit(e.object());
-			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
-				visit(e.object());
-				visit(e.member_pointer());
-			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-				visit(e.array_expr());
-				visit(e.index_expr());
-			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
-				if (!e.is_type()) {
-					visit(e.type_or_expr());
-				}
-			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
-				if (!e.is_type()) {
-					visit(e.type_or_expr());
-				}
-			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
-				if (e.size_expr().has_value()) {
-					visit(*e.size_expr());
-				}
-				for (const auto& arg : e.constructor_args()) {
-					visit(arg);
-				}
-				for (const auto& arg : e.placement_args()) {
-					visit(arg);
-				}
-			} else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
-				visit(e.expr());
-			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
-								 std::is_same_v<T, DynamicCastNode> ||
-								 std::is_same_v<T, ConstCastNode> ||
-								 std::is_same_v<T, ReinterpretCastNode>) {
-				visit(e.expr());
-			} else if constexpr (std::is_same_v<T, TypeidNode>) {
-				if (!e.is_type()) {
-					visit(e.operand());
-				}
-			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
-				for (const auto& capture : e.captures()) {
-					if (capture.has_initializer()) {
-						visit(*capture.initializer());
-					}
-				}
-				for (const auto& param : e.parameters()) {
-					visit(param);
-				}
-				visit(e.body());
-			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
-				report_.recordFold(e.get_token(), currentContextPath());
-				if (e.init_expr().has_value()) {
-					visit(*e.init_expr());
-				}
-				if (e.pack_expr().has_value()) {
-					visit(*e.pack_expr());
-				}
-			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
-				report_.recordPackExpansion(e.get_token(), currentContextPath());
-				visit(e.pattern());
-			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
-				visit(e.expr());
-			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
-				for (const auto& element : e.elements()) {
-					visit(element);
-				}
-			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
-				if (e.expression().has_value()) {
-					visit(*e.expression());
-				}
-			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				// Recurse into receiver, template arguments, and arguments
-				// like the other call nodes.
-				if (e.has_receiver()) {
-					visit(e.receiver());
-				}
-				for (const auto& template_arg : e.template_arguments()) {
-					visit(template_arg);
-				}
-				for (const auto& arg : e.arguments()) {
-					visit(arg);
-				}
-			} else {
-				// Leaf expressions intentionally do not recurse.
+		std::visit([this](const auto& expression) {
+			using ExpressionType = std::decay_t<decltype(expression)>;
+			if constexpr (std::is_same_v<ExpressionType, FoldExpressionNode>) {
+				report_.recordFold(expression.get_token(), currentContextPath());
+			} else if constexpr (std::is_same_v<ExpressionType, PackExpansionExprNode>) {
+				report_.recordPackExpansion(expression.get_token(), currentContextPath());
 			}
-		},
-				   expr);
+		}, expr);
+
+		ExpressionStructure::visitExpressionChildren(
+			expr,
+			[this](ExpressionStructure::ExpressionChildRole, const ASTNode& child) {
+				visit(child);
+			});
 	}
 
 	PostParseBoundaryReport report_;

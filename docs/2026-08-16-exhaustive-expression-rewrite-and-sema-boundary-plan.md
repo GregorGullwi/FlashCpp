@@ -2,11 +2,43 @@
 
 ## Status
 
-Proposed architecture plan. This document describes follow-up work after PR
-#1871, which added the missing `NewExpressionNode` template-substitution path.
-The plan is intentionally broader than that fix: its goal is to make the same
-class of omission difficult to compile, easy to diagnose, and impossible to
-reach code generation silently.
+Phase 0 and Phase 1 are complete as of 2026-08-16. Phases 2-5 remain pending.
+This document describes follow-up work after PR #1871, which added the missing
+`NewExpressionNode` template-substitution path. The plan is intentionally
+broader than that fix: its goal is to make the same class of omission difficult
+to compile, easy to diagnose, and impossible to reach code generation silently.
+
+### Completed Phase 0/1 implementation record
+
+- Added `src/ExpressionStructure.h` as the canonical structural schema for all
+  current `ExpressionNode` alternatives.
+- Classified leaves explicitly and described named children with stable roles,
+  including type children, receivers, optional array bounds, template
+  arguments, call/constructor/placement arguments, lambda structure, folds,
+  and pack patterns.
+- Used exhaustive `std::visit` dispatch with a dependent `static_assert` for
+  undeclared alternatives. The variant-size value is used only for legacy
+  direct-node dispatch; it is not the exhaustiveness mechanism.
+- Migrated expression recursion in `AstTraversal` and
+  `PostParseBoundaryChecker` to the schema. Statement/declaration traversal
+  and ownership/provenance decisions were left unchanged.
+- Registered the new header in both Visual Studio project/filter pairs.
+- Added `tests/test_expression_child_surfaces_ret42.cpp` and retained the
+  existing new-expression, member-call, constructor, empty-pack, aggregate,
+  and delegating-constructor regressions.
+
+Validation for this stage: the MSVC build completed with 0 warnings/errors;
+all focused regressions passed; the `<any>` and `<deque>` probes reached their
+documented out-of-scope `_Seek_to`/`view_interface::operator==` stops; the full
+suite passed 2,887 regular tests and 247 expected-failure tests; and
+`git diff --check` passed. The known non-dependent-receiver pack-call lookup
+gap is recorded in `docs/KNOWN_ISSUES.md`.
+
+This stage intentionally did not add the general expression rewriter, remove
+the `ExpressionSubstitutor` fallback, consolidate parser substitution
+ownership, or introduce lifecycle ownership states. In particular,
+`has_template_body_position()`-based boundary skips remain a Phase 4 finding,
+not a Phase 1 behavior change.
 
 ## Problem statement
 
@@ -405,6 +437,8 @@ expansion based on names or argument counts.
 
 ### Phase 0: Characterize and lock current behavior
 
+**Status: Complete (2026-08-16).**
+
 - Keep `tests/test_new_expression_pack_expansion_ret0.cpp` as the initial
   regression for allocating and placement `new`.
 - Add focused regressions for packs in each arity-changing child position:
@@ -416,10 +450,16 @@ expansion based on names or argument counts.
 - Record the current boundary-check skip behavior with a reduced concrete
   materialized-body regression before changing lifecycle flags.
 
-Exit criterion: every behavior the migration intends to preserve or reject has
-a reduced non-`std` test.
+Exit criterion met for the Phase 1 surfaces. Existing focused regressions plus
+`tests/test_expression_child_surfaces_ret42.cpp` cover ordinary/member calls,
+constructor and placement arguments, allocating `new`, array bounds, braced
+initializers, empty packs, and delegating constructors. A concrete
+materialized-body lifecycle regression remains deferred with the lifecycle
+state work because this stage does not change ownership flags.
 
 ### Phase 1: Add the canonical expression child schema
+
+**Status: Complete (2026-08-16).**
 
 - Create `ExpressionStructure.h`.
 - Implement explicit leaf/child classifications for every `ExpressionNode`
@@ -428,10 +468,17 @@ a reduced non-`std` test.
 - Migrate `PostParseBoundaryChecker::visitExpression` to the shared traversal.
 - Add compile-time exhaustiveness enforcement.
 
-Exit criterion: there is one expression child list, and adding a dummy variant
-locally causes a build failure until its schema is supplied.
+Exit criterion met: there is one canonical expression child list, and the
+schema's dependent `static_assert` causes a build failure until a new variant
+alternative declares its structure or explicit leaf status.
 
 ### Phase 2: Add the exhaustive rewriter
+
+**Status: Next.**
+
+Start by inventorying the existing reconstruction and metadata-copy helpers in
+`ExpressionSubstitutor.cpp`, then introduce one-to-one and zero-to-many child
+rewriting without changing lifecycle ownership.
 
 - Introduce the one-to-one rewrite and argument flat-map APIs.
 - Reuse existing node reconstruction and metadata-copy helpers.
