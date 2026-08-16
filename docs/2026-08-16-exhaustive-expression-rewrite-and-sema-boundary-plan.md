@@ -2,8 +2,8 @@
 
 ## Status
 
-Phase 0, Phase 1, and Phase 2 are complete as of 2026-08-16. Phases 3-5
-remain pending.
+Phase 0, Phase 1, Phase 2, and Phase 3 are complete as of 2026-08-16.
+Phases 4-5 remain pending.
 This document describes follow-up work after PR #1871, which added the missing
 `NewExpressionNode` template-substitution path. The plan is intentionally
 broader than that fix: its goal is to make the same class of omission difficult
@@ -66,8 +66,36 @@ same documented out-of-scope `_Seek_to`/`view_interface::operator==` stops;
 the full suite passed 2,889 regular tests and 247 expected-failure tests; and
 the compiler-source audit found no standard-library or vendor-name behavior
 special cases. The non-dependent receiver lookup gap remains documented and
-unchanged. Parser-side expression dispatch consolidation remains Phase 3, and
-explicit lifecycle ownership remains Phase 4.
+unchanged. Parser-side expression dispatch consolidation was completed in
+Phase 3; explicit lifecycle ownership remains Phase 4.
+
+### Completed Phase 3 implementation record
+
+- Added the complete `TemplateEnvironment` to `TemplateBodySubstitutionState`.
+  Context-based substitution now passes its existing environment, while legacy
+  parameter/argument entry points build the equivalent environment once.
+- Routed wrapped and direct expression surfaces through one
+  `ExpressionSubstitutor` entry point, preserving the current owner type and
+  parser substitution scope.
+- Removed the parser's per-alternative expression routing and retained parser
+  ownership only for declarations, types, statements, and scope-sensitive
+  reconstruction.
+- Moved `SizeofPackNode` and `FoldExpressionNode` materialization into the
+  substitutor so pack counts, empty identities, non-type folds, and complex
+  pack expressions continue to normalize before sema.
+- Rebuilt parser pack-identifier replacement through the exhaustive
+  `ExpressionRewriter`; type children remain structural leaves for this
+  identifier-only operation.
+- Kept rebuilt dependent alias specifiers and their registered source
+  `TypeIndex` aligned. This preserves each syntactic array layer exactly once
+  when canonical expression substitution resolves a current-instantiation
+  member type, including `sizeof` over a dependent alias.
+
+Phase 4 findings remain intentionally deferred: `has_template_body_position()`
+continues to describe provenance rather than lifecycle ownership, pending-root
+registration and boundary checking are unchanged, and no `SemaNormalized`
+state or IR root ownership assertion was added in this phase. The documented
+non-dependent receiver lookup gap is also unchanged.
 
 ## Problem statement
 
@@ -520,6 +548,8 @@ Exit criterion: `ExpressionSubstitutor` cannot compile with an unhandled
 expression alternative, and all pack child-position regressions pass.
 
 ### Phase 3: Remove parser-side expression dispatch duplication
+
+**Status: Complete (2026-08-16).**
 
 - Give `ExpressionSubstitutor` the complete environment and substitution state.
 - Delegate every `ExpressionNode` from

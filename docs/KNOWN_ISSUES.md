@@ -11,6 +11,18 @@ or overload-materialization gap, not a Phase 1 expression-structure issue; the
 canonical schema preserves the receiver and call-argument roles for the later
 substitution/lookup phase.
 
+## Parser type-materialization fallback during expression substitution
+
+`ExpressionSubstitutor::substituteTypeSpecifier` retains a narrow fallback to
+`Parser::substituteTemplateParameters` when canonical type substitution leaves a
+type unchanged. This is an implementation-boundary compatibility path for
+parser-materialized concrete type spellings; it is not required by C++20
+semantics and is not a substitute for canonical type identity and metadata.
+Direct template-parameter identities are handled by the canonical path, which
+preserves pointer, reference, array, and qualifier metadata. The fallback should
+be removed only after parser type materialization supplies that same canonical
+identity and metadata for all deferred expression surfaces.
+
 ## Current `<any>` / `<deque>` integration stops
 
 The 2026-08-16 standard-header probes still fail outside this Phase 1 scope.

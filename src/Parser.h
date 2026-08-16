@@ -1196,6 +1196,7 @@ private:
 	struct TemplateBodySubstitutionState {
 		InlineVector<SubstitutedLocalBinding, 8> local_bindings;
 		InlineVector<SubstitutedConstexprLocal, 8> constexpr_locals;
+		TemplateEnvironment environment;
 		TypeIndex owner_type_index{};
 		StringHandle owner_type_name{};
 		bool has_implicit_this = false;

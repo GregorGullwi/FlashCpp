@@ -87,6 +87,18 @@ static void preserveMissingResolvedAliasModifiers(
 	}
 }
 
+static TypeIndex selectAliasRegistrationSourceIndex(
+	TypeIndex substituted_type_index,
+	const std::optional<TypeSpecifierNode>& substituted_alias_type_spec,
+	const TypeSpecifierNode& alias_registration_type_spec) {
+	if (!substituted_alias_type_spec.has_value() ||
+		!alias_registration_type_spec.type_index().is_valid()) {
+		return substituted_type_index;
+	}
+	return alias_registration_type_spec.type_index().withCategory(
+		alias_registration_type_spec.type());
+}
+
 FunctionSignature Parser::substituteTemplateFunctionSignature(
 	FunctionSignature signature,
 	std::span<const TemplateParameterNode> template_params,
@@ -3559,6 +3571,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						alias_registration_type_spec,
 						alias_type_spec);
 				}
+				TypeIndex alias_registration_source_index =
+					selectAliasRegistrationSourceIndex(
+						substituted_type_index,
+						substituted_alias_type_spec,
+						alias_registration_type_spec);
 				FLASH_LOG(
 					Parser,
 					Debug,
@@ -3576,13 +3593,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					alias_semantic_source != nullptr
 						? add_type_alias_copy(
 							  qualified_alias_name,
-							  TypeIndex{substituted_type_index},
+							  alias_registration_source_index,
 							  substituted_size,
 							  alias_registration_type_spec,
 							  *alias_semantic_source)
 						: add_type_alias_copy(
 							  qualified_alias_name,
-							  TypeIndex{substituted_type_index},
+							  alias_registration_source_index,
 							  substituted_size,
 							  alias_registration_type_spec);
 				if (alias_registration_type_spec.is_array()) {
@@ -9459,6 +9476,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				alias_registration_type_spec,
 				alias_type_spec);
 		}
+		TypeIndex alias_registration_source_index =
+			selectAliasRegistrationSourceIndex(
+				substituted_type_index,
+				substituted_alias_type_spec,
+				alias_registration_type_spec);
 		FLASH_LOG(
 			Parser,
 			Debug,
@@ -9504,13 +9526,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			alias_semantic_source != nullptr
 				? add_type_alias_copy(
 					  qualified_alias_name,
-					  TypeIndex{substituted_type_index},
+					  alias_registration_source_index,
 					  substituted_size,
 					  alias_registration_type_spec,
 					  *alias_semantic_source)
 				: add_type_alias_copy(
 					  qualified_alias_name,
-					  TypeIndex{substituted_type_index},
+					  alias_registration_source_index,
 					  substituted_size,
 					  alias_registration_type_spec);
 		if (alias_registration_type_spec.is_array()) {
