@@ -127,6 +127,7 @@ private:
 
 	// Handlers for different expression types
 	ASTNode substituteConstructorCall(const ConstructorCallNode& ctor);
+	ASTNode substituteNewExpression(const NewExpressionNode& new_expression);
 
 	ASTNode substituteCallExpr(const CallExprNode& call);
 	ASTNode substituteFunctionCallImpl(const CallExprNode& call);
