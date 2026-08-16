@@ -369,25 +369,45 @@ void ExpressionSubstitutor::rebuildEnvironmentFromCurrentBindings() {
 	}
 }
 
+ASTNode ExpressionSubstitutor::rewriteOneToOne(
+	const ASTNode& child,
+	ExpressionStructure::ExpressionChildRole) {
+	return substitute(child);
+}
+
+void ExpressionSubstitutor::rewriteZeroToMany(
+	const ASTNode& child,
+	ExpressionStructure::ExpressionChildRole,
+	std::vector<ASTNode>& output) {
+	output.push_back(substitute(child));
+}
+
+ASTNode ExpressionSubstitutor::rewriteStructuralChild(
+	const ASTNode& child,
+	ExpressionStructure::ExpressionChildRole role) {
+	// Lambda parameters and bodies are statement/declaration surfaces.  The
+	// expression rewriter preserves those structural nodes here; their own
+	// substitution remains owned by the parser's declaration/statement pass.
+	if (!child.is<ExpressionNode>() && !child.is<TypeSpecifierNode>()) {
+		return child;
+	}
+	return rewriteOneToOne(child, role);
+}
+
+void ExpressionSubstitutor::rewriteStructuralZeroToMany(
+	const ASTNode& child,
+	ExpressionStructure::ExpressionChildRole,
+	std::vector<ASTNode>& output) {
+	ChunkedVector<ASTNode> expanded;
+	substituteCallArgumentPreservingPackExpansion(child, expanded);
+	expanded.visit([&](ASTNode argument) { output.push_back(argument); });
+}
+
 ASTNode ExpressionSubstitutor::rewriteStructurally(const ASTNode& expression) {
-	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
-		// Lambda parameters and bodies are statement/declaration surfaces.  The
-		// expression rewriter preserves those structural nodes here; their own
-		// substitution remains owned by the parser's declaration/statement pass.
-		if (!child.is<ExpressionNode>() && !child.is<TypeSpecifierNode>()) {
-			return child;
-		}
-		return substitute(child);
-	};
-	auto rewrite_zero_to_many = [this](
-		const ASTNode& child,
-		ExpressionStructure::ExpressionChildRole,
-		std::vector<ASTNode>& output) {
-		ChunkedVector<ASTNode> expanded;
-		substituteCallArgumentPreservingPackExpansion(child, expanded);
-		expanded.visit([&](ASTNode argument) { output.push_back(argument); });
-	};
-	return expression_rewriter_.rewrite(expression, rewrite_one_to_one, rewrite_zero_to_many);
+	return expression_rewriter_.rewrite(
+		expression,
+		std::bind_front(&ExpressionSubstitutor::rewriteStructuralChild, this),
+		std::bind_front(&ExpressionSubstitutor::rewriteStructuralZeroToMany, this));
 }
 
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
@@ -489,35 +509,19 @@ TypeSpecifierNode ExpressionSubstitutor::substituteTypeSpecifier(
 
 ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNode& ctor) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing constructor call");
-	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
-		return substitute(child);
-	};
-	auto rewrite_zero_to_many = [this](
-		const ASTNode& child,
-		ExpressionStructure::ExpressionChildRole,
-		std::vector<ASTNode>& output) {
-		ChunkedVector<ASTNode> expanded;
-		substituteCallArgumentPreservingPackExpansion(child, expanded);
-		expanded.visit([&](ASTNode argument) { output.push_back(argument); });
-	};
 	ASTNode root = ASTNode::emplace_node<ExpressionNode>(ctor);
-	return expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
+	return expression_rewriter_.rewrite(
+		root,
+		std::bind_front(&ExpressionSubstitutor::rewriteOneToOne, this),
+		std::bind_front(&ExpressionSubstitutor::rewriteStructuralZeroToMany, this));
 }
 
 ASTNode ExpressionSubstitutor::substituteNewExpression(const NewExpressionNode& new_expression) {
-	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
-		return substitute(child);
-	};
-	auto rewrite_zero_to_many = [this](
-		const ASTNode& child,
-		ExpressionStructure::ExpressionChildRole,
-		std::vector<ASTNode>& output) {
-		ChunkedVector<ASTNode> expanded;
-		substituteCallArgumentPreservingPackExpansion(child, expanded);
-		expanded.visit([&](ASTNode argument) { output.push_back(argument); });
-	};
 	ASTNode root = ASTNode::emplace_node<ExpressionNode>(new_expression);
-	return expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
+	return expression_rewriter_.rewrite(
+		root,
+		std::bind_front(&ExpressionSubstitutor::rewriteOneToOne, this),
+		std::bind_front(&ExpressionSubstitutor::rewriteStructuralZeroToMany, this));
 }
 
 void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
@@ -3745,17 +3749,11 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 
 ASTNode ExpressionSubstitutor::substituteBinaryOp(const BinaryOperatorNode& binop) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing binary operator");
-	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
-		return substitute(child);
-	};
-	auto rewrite_zero_to_many = [this](
-		const ASTNode& child,
-		ExpressionStructure::ExpressionChildRole,
-		std::vector<ASTNode>& output) {
-		output.push_back(substitute(child));
-	};
 	ASTNode root = ASTNode::emplace_node<ExpressionNode>(binop);
-	ASTNode rewritten = expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
+	ASTNode rewritten = expression_rewriter_.rewrite(
+		root,
+		std::bind_front(&ExpressionSubstitutor::rewriteOneToOne, this),
+		std::bind_front(&ExpressionSubstitutor::rewriteZeroToMany, this));
 	BinaryOperatorNode& new_binop_value = std::get<BinaryOperatorNode>(rewritten.as<ExpressionNode>());
 	parser_.annotateConcreteBinaryOperatorOverload(new_binop_value);
 	return rewritten;
@@ -3763,32 +3761,20 @@ ASTNode ExpressionSubstitutor::substituteBinaryOp(const BinaryOperatorNode& bino
 
 ASTNode ExpressionSubstitutor::substituteUnaryOp(const UnaryOperatorNode& unop) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing unary operator");
-	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
-		return substitute(child);
-	};
-	auto rewrite_zero_to_many = [this](
-		const ASTNode& child,
-		ExpressionStructure::ExpressionChildRole,
-		std::vector<ASTNode>& output) {
-		output.push_back(substitute(child));
-	};
 	ASTNode root = ASTNode::emplace_node<ExpressionNode>(unop);
-	return expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
+	return expression_rewriter_.rewrite(
+		root,
+		std::bind_front(&ExpressionSubstitutor::rewriteOneToOne, this),
+		std::bind_front(&ExpressionSubstitutor::rewriteZeroToMany, this));
 }
 
 ASTNode ExpressionSubstitutor::substituteTernaryOp(const TernaryOperatorNode& ternary) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing ternary operator");
-	auto rewrite_one_to_one = [this](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
-		return substitute(child);
-	};
-	auto rewrite_zero_to_many = [this](
-		const ASTNode& child,
-		ExpressionStructure::ExpressionChildRole,
-		std::vector<ASTNode>& output) {
-		output.push_back(substitute(child));
-	};
 	ASTNode root = ASTNode::emplace_node<ExpressionNode>(ternary);
-	return expression_rewriter_.rewrite(root, rewrite_one_to_one, rewrite_zero_to_many);
+	return expression_rewriter_.rewrite(
+		root,
+		std::bind_front(&ExpressionSubstitutor::rewriteOneToOne, this),
+		std::bind_front(&ExpressionSubstitutor::rewriteZeroToMany, this));
 }
 
 ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
