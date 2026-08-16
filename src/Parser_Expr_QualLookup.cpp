@@ -2144,7 +2144,79 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 	};
 	auto materializeConcretePlaceholderArgsBase = [&](const TypeInfo& placeholder_info) {
-		std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(placeholder_info);
+		// Prefer folding `Owner::static_member` NTTP markers before generic
+		// dependent-expression evaluation. Re-evaluating a stale MemberAccess
+		// against the wrong owner often "succeeds" as 0 and clears dependence,
+		// which then selects conditional_t's false branch.
+		std::vector<TemplateTypeArg> concrete_args;
+		concrete_args.reserve(placeholder_info.templateArgs().size());
+		StringHandle placeholder_owner_handle;
+		if (placeholder_info.name().isValid()) {
+			std::string_view placeholder_name = StringTable::getStringView(placeholder_info.name());
+			if (const size_t owner_sep = placeholder_name.rfind("::");
+				owner_sep != std::string_view::npos && owner_sep > 0) {
+				placeholder_owner_handle = StringTable::getOrInternStringHandle(
+					placeholder_name.substr(0, owner_sep));
+			}
+		}
+		if (!placeholder_owner_handle.isValid()) {
+			if (!struct_parsing_context_stack_.empty()) {
+				placeholder_owner_handle = StringTable::getOrInternStringHandle(
+					struct_parsing_context_stack_.back().struct_name);
+			} else if (!member_function_context_stack_.empty()) {
+				placeholder_owner_handle = member_function_context_stack_.back().struct_name;
+			}
+		}
+		auto eval_dependent_expr =
+			[this, placeholder_owner_handle](
+				const ASTNode& expr,
+				std::span<const ASTNode> params,
+				std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+				InlineVector<TemplateParameterNode, 4> typed_params;
+				typed_params.reserve(params.size());
+				for (const ASTNode& param_node : params) {
+					if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+						typed_param != nullptr) {
+						typed_params.push_back(*typed_param);
+					}
+				}
+				return this->evaluateDependentNTTPExpression(
+					expr,
+					std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+					args,
+					placeholder_owner_handle);
+			};
+		for (const TypeInfo::TemplateArgInfo& arg_info : placeholder_info.templateArgs()) {
+			TemplateTypeArg preliminary = toTemplateTypeArg(arg_info);
+			if (preliminary.is_value && preliminary.dependent_name.isValid()) {
+				std::string_view dependent_name_view =
+					StringTable::getStringView(preliminary.dependent_name);
+				if (dependent_name_view.find("::") != std::string_view::npos) {
+					if (std::optional<TemplateTypeArg> folded =
+							tryFoldDependentQualifiedStaticMemberNTTP(
+								preliminary.dependent_name,
+								template_params,
+								template_args);
+						folded.has_value()) {
+						concrete_args.push_back(*folded);
+						continue;
+					}
+					// Keep the dependent Owner::member marker. Falling through to
+					// generic expression evaluation often "succeeds" as 0 against a
+					// still-dependent owner and wrongly selects conditional_t's false
+					// branch.
+					preliminary.is_dependent = true;
+					concrete_args.push_back(std::move(preliminary));
+					continue;
+				}
+			}
+			concrete_args.push_back(
+				materializeTemplateArg(
+					arg_info,
+					template_params,
+					template_args,
+					eval_dependent_expr));
+		}
 		rebindConcretePlaceholderArgsByTypeName(concrete_args);
 		return concrete_args;
 	};
@@ -2156,7 +2228,9 @@ TypeIndex Parser::substitute_template_parameter(
 	};
 	auto areTemplateArgsConcrete = [&](std::span<const TemplateTypeArg> args) {
 		for (const TemplateTypeArg& arg : args) {
-			if (arg.is_dependent) {
+			if (arg.is_dependent ||
+				arg.dependent_name.isValid() ||
+				arg.dependent_expr.has_value()) {
 				return false;
 			}
 			if (arg.is_value || !arg.type_index.is_valid()) {

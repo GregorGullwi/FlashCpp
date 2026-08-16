@@ -144,6 +144,17 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 	return normalized_type;
 }
 
+bool isDependentTypeTraitOperand(const TypeSpecifierNode& type_spec) {
+	if (type_spec.has_template_parameter_identity()) {
+		return true;
+	}
+	if (!type_spec.type_index().is_valid()) {
+		return type_spec.category() == TypeCategory::Template ||
+			   type_spec.category() == TypeCategory::Invalid;
+	}
+	return typeIndexContainsDependentPlaceholder(type_spec.type_index());
+}
+
 bool functionSignaturesMatch(
 	const FunctionSignature& lhs,
 	const FunctionSignature& rhs) {
@@ -934,6 +945,10 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		return TypeTraitResult::failure();
 	}
 
+	if (isDependentTypeTraitOperand(
+			trait_expr.type_node().as<TypeSpecifierNode>())) {
+		return TypeTraitResult::failure();
+	}
 	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(
 		trait_expr.type_node().as<TypeSpecifierNode>());
 	if (trait_expr.is_variadic_trait()) {
@@ -941,6 +956,10 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		additional_types.reserve(trait_expr.additional_type_nodes().size());
 		for (const ASTNode& additional_type_node : trait_expr.additional_type_nodes()) {
 			if (!additional_type_node.is<TypeSpecifierNode>()) {
+				return TypeTraitResult::failure();
+			}
+			if (isDependentTypeTraitOperand(
+					additional_type_node.as<TypeSpecifierNode>())) {
 				return TypeTraitResult::failure();
 			}
 			additional_types.push_back(
@@ -1040,6 +1059,10 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 
 	if (trait_expr.has_second_type()) {
 		if (!trait_expr.second_type_node().is<TypeSpecifierNode>()) {
+			return TypeTraitResult::failure();
+		}
+		if (isDependentTypeTraitOperand(
+				trait_expr.second_type_node().as<TypeSpecifierNode>())) {
 			return TypeTraitResult::failure();
 		}
 		const TypeSpecifierNode second_type_spec = normalizeTypeTraitOperand(

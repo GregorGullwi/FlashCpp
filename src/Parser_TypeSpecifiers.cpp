@@ -2116,6 +2116,30 @@ ParseResult Parser::parse_type_specifier() {
 					}
 					if (has_dependent_alias_args && peek() != "::"_tok) {
 						if (!findDirectAliasTargetParameterIndex(alias_node).has_value()) {
+							// Deferred non-direct aliases with a dependent NTTP (e.g.
+							// conditional_t<Trait_v<T>, A, B>) must keep call-site arguments
+							// on a DependentArgs placeholder. Dependent type args alone can
+							// still rematerialize through the unresolved Conditional::type
+							// member path that already worked for literal bool NTTPs.
+							bool has_dependent_nttp = false;
+							for (const TemplateTypeArg& alias_arg : *template_args) {
+								if (alias_arg.is_value &&
+									(alias_arg.is_dependent ||
+									 alias_arg.dependent_name.isValid() ||
+									 alias_arg.dependent_expr.has_value())) {
+									has_dependent_nttp = true;
+									break;
+								}
+							}
+							if (has_dependent_nttp) {
+								return ParseResult::success(emplace_node<TypeSpecifierNode>(
+									buildDependentAliasTemplateTypeSpecifier(
+										type_name,
+										alias_node,
+										*template_args,
+										type_name_token,
+										cv_qualifier)));
+							}
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 						}
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(

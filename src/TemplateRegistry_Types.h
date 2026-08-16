@@ -1469,10 +1469,31 @@ inline TemplateTypeArg materializeTemplateArg(
 		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args.
 		// Only attempted when a non-null evaluator callback is provided.
 		if constexpr (!std::is_null_pointer_v<std::decay_t<EvalFn>>) {
+			auto evaluate_dependent_expression = [&](const ASTNode& expression,
+				std::span<const ASTNode> ast_template_params,
+				std::span<const TemplateTypeArg> concrete_template_args) {
+				if constexpr (std::is_invocable_v<
+					EvalFn,
+					StringHandle,
+					const ASTNode&,
+					std::span<const ASTNode>,
+					std::span<const TemplateTypeArg>>) {
+					return eval_dependent_expr(
+						arg_info.dependent_name,
+						expression,
+						ast_template_params,
+						concrete_template_args);
+				} else {
+					return eval_dependent_expr(
+						expression,
+						ast_template_params,
+						concrete_template_args);
+				}
+			};
 			using TemplateParamNodeType =
 				std::remove_cvref_t<decltype(*std::begin(template_params))>;
 			if constexpr (std::is_same_v<TemplateParamNodeType, ASTNode>) {
-				if (auto evaluated = eval_dependent_expr(
+				if (auto evaluated = evaluate_dependent_expression(
 						*arg_info.dependent_expr(),
 						std::span<const ASTNode>(std::data(template_params), std::size(template_params)),
 						std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
@@ -1491,7 +1512,7 @@ inline TemplateTypeArg materializeTemplateArg(
 							ASTNode::emplace_node<TemplateParameterNode>(*template_param));
 					}
 				}
-				if (auto evaluated = eval_dependent_expr(
+				if (auto evaluated = evaluate_dependent_expression(
 						*arg_info.dependent_expr(),
 						std::span<const ASTNode>(ast_template_params.data(), ast_template_params.size()),
 						std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
