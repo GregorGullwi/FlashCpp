@@ -290,6 +290,9 @@
     <ClInclude Include="src\ExpressionSubstitutor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\ExpressionRewriter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\FileReader.h">
       <Filter>Header Files</Filter>
     </ClInclude>

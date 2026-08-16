@@ -1,14 +1,17 @@
 #pragma once
 
+#include <functional>
+#include <optional>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
 #include "AstNodeTypes.h"
+#include "ExpressionRewriter.h"
 #include "Parser.h"
 #include "TemplateEnvironment.h"
 #include "TemplateRegistry.h"
-#include <unordered_map>
-#include <unordered_set>
-#include <optional>
-#include <string_view>
-#include <vector>
 
 // Forward declaration
 class Parser;
@@ -144,6 +147,21 @@ private:
 	ASTNode substituteInitializerListConstruction(const InitializerListConstructionNode& init_list);
 	ASTNode substituteLiteral(const ASTNode& literal);
 	void captureParserPackState();
+	ASTNode rewriteOneToOne(
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole role);
+	void rewriteZeroToMany(
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole role,
+		std::vector<ASTNode>& output);
+	ASTNode rewriteStructuralChild(
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole role);
+	void rewriteStructuralZeroToMany(
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole role,
+		std::vector<ASTNode>& output);
+	ASTNode rewriteStructurally(const ASTNode& expression);
 	void substituteCallArgumentPreservingPackExpansion(
 		const ASTNode& arg,
 		ChunkedVector<ASTNode>& out);
@@ -200,6 +218,7 @@ private:
 	TemplateEnvironment environment_;
 	std::vector<Parser::PackParamInfo> captured_pack_param_info_;
 	StringHandle current_owner_type_name_{};
+	ExpressionRewriter expression_rewriter_;
 	// Cycle-detection guard for materializeStoredTemplateArgs:
 	// tracks TypeInfo pointers currently being materialized to prevent
 	// infinite mutual recursion with substituteQualifiedIdentifier.
