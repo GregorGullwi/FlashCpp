@@ -1,5 +1,25 @@
 # Known Issues
 
+## Non-dependent receiver lookup with argument packs
+
+Inside a function template, a member call whose receiver has a non-template
+class type can fail during template-body materialization when the call uses a
+function-parameter pack (`receiver.method(args...)`). The equivalent dependent
+class-template receiver path is currently supported, as covered by
+`tests/test_member_call_pack_expansion_ret0.cpp`. This is a pre-existing lookup
+or overload-materialization gap, not a Phase 1 expression-structure issue; the
+canonical schema preserves the receiver and call-argument roles for the later
+substitution/lookup phase.
+
+## Current `<any>` / `<deque>` integration stops
+
+The 2026-08-16 standard-header probes still fail outside this Phase 1 scope.
+Both `tests/test_std_any.cpp` and `tests/test_std_deque.cpp` first report that
+all template overloads for `_Seek_to` failed, followed by codegen diagnostics in
+the MSVC `view_interface` implementation because `operator==` is unavailable.
+These are generic constrained iterator/member lookup and operator-materialization
+gaps; the compiler does not special-case those library names.
+
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
 suite stays green, even though they are not strictly standard-conforming under a

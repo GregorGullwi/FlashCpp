@@ -230,6 +230,9 @@
     <ClInclude Include="src\AstNodeTypes_Expr.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\ExpressionStructure.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\AstNodeTypes_Stmt.h">
       <Filter>Header Files</Filter>
     </ClInclude>

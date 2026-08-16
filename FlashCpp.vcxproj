@@ -456,6 +456,7 @@
     <ClInclude Include="src\AstNodeTypes_Core.h" />
     <ClInclude Include="src\AstNodeTypes_DeclNodes.h" />
     <ClInclude Include="src\AstNodeTypes_Expr.h" />
+    <ClInclude Include="src\ExpressionStructure.h" />
     <ClInclude Include="src\AstNodeTypes_Stmt.h" />
     <ClInclude Include="src\AstNodeTypes_Template.h" />
     <ClInclude Include="src\AstNodeTypes_TypeSystem.h" />

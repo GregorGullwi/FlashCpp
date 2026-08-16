@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes_Stmt.h"
 #include "AstNodeTypes_Template.h"
+#include "ExpressionStructure.h"
 #include <type_traits>
 
 namespace AstTraversal {
@@ -31,6 +32,17 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 		}
 		if (decision == VisitDecision::SkipChildren) {
 			return false;
+		}
+
+		bool expression_child_stop = false;
+		if (ExpressionStructure::visitExpressionChildren(
+				current,
+				[&](ExpressionStructure::ExpressionChildRole, const ASTNode& child) {
+					if (!expression_child_stop && visit_child(child)) {
+						expression_child_stop = true;
+					}
+				})) {
+			return expression_child_stop;
 		}
 
 		if (current.is<BlockNode>()) {
@@ -166,139 +178,6 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 				}
 			}
 			return false;
-		}
-
-		if (current.is<BinaryOperatorNode>()) {
-			const auto& binop = current.as<BinaryOperatorNode>();
-			return visit_child(binop.get_lhs()) ||
-				   visit_child(binop.get_rhs());
-		}
-
-		if (current.is<UnaryOperatorNode>()) {
-			return visit_child(current.as<UnaryOperatorNode>().get_operand());
-		}
-
-		if (current.is<TernaryOperatorNode>()) {
-			const auto& ternary = current.as<TernaryOperatorNode>();
-			return visit_child(ternary.condition()) ||
-				   visit_child(ternary.true_expr()) ||
-				   visit_child(ternary.false_expr());
-		}
-
-		if (current.is<StaticCastNode>()) {
-			const auto& cast = current.as<StaticCastNode>();
-			return visit_child(ASTNode(&cast.target_type())) ||
-				   visit_child(cast.expr());
-		}
-
-		if (current.is<DynamicCastNode>()) {
-			const auto& cast = current.as<DynamicCastNode>();
-			return visit_child(ASTNode(&cast.target_type())) ||
-				   visit_child(cast.expr());
-		}
-
-		if (current.is<ConstCastNode>()) {
-			const auto& cast = current.as<ConstCastNode>();
-			return visit_child(ASTNode(&cast.target_type())) ||
-				   visit_child(cast.expr());
-		}
-
-		if (current.is<ReinterpretCastNode>()) {
-			const auto& cast = current.as<ReinterpretCastNode>();
-			return visit_child(ASTNode(&cast.target_type())) ||
-				   visit_child(cast.expr());
-		}
-
-		if (current.is<SizeofExprNode>()) {
-			return visit_child(current.as<SizeofExprNode>().type_or_expr());
-		}
-
-		if (current.is<AlignofExprNode>()) {
-			return visit_child(current.as<AlignofExprNode>().type_or_expr());
-		}
-
-		if (current.is<TypeTraitExprNode>()) {
-			const auto& trait = current.as<TypeTraitExprNode>();
-			if (trait.type_node().has_value() && visit_child(trait.type_node())) {
-				return true;
-			}
-			if (trait.has_second_type() && visit_child(trait.second_type_node())) {
-				return true;
-			}
-			for (const auto& type_node : trait.additional_type_nodes()) {
-				if (visit_child(type_node)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		if (current.is<NewExpressionNode>()) {
-			const auto& new_expr = current.as<NewExpressionNode>();
-			if (visit_child(new_expr.type_node())) {
-				return true;
-			}
-			if (new_expr.size_expr().has_value() && visit_child(new_expr.size_expr().value())) {
-				return true;
-			}
-			for (const auto& constructor_arg : new_expr.constructor_args()) {
-				if (visit_child(constructor_arg)) {
-					return true;
-				}
-			}
-			for (const auto& placement_arg : new_expr.placement_args()) {
-				if (visit_child(placement_arg)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		if (current.is<TypeidNode>()) {
-			return visit_child(current.as<TypeidNode>().operand());
-		}
-
-		if (current.is<CallExprNode>()) {
-			const auto& call = current.as<CallExprNode>();
-			if (call.has_receiver() && visit_child(call.receiver())) {
-				return true;
-			}
-			for (const auto& template_argument : call.template_arguments()) {
-				if (visit_child(template_argument)) {
-					return true;
-				}
-			}
-			for (const auto& argument : call.arguments()) {
-				if (visit_child(argument)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		if (current.is<ConstructorCallNode>()) {
-			for (const auto& argument : current.as<ConstructorCallNode>().arguments()) {
-				if (visit_child(argument)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		if (current.is<MemberAccessNode>()) {
-			return visit_child(current.as<MemberAccessNode>().object());
-		}
-
-		if (current.is<ArraySubscriptNode>()) {
-			const auto& subscript = current.as<ArraySubscriptNode>();
-			return visit_child(subscript.array_expr()) ||
-				   visit_child(subscript.index_expr());
-		}
-
-		if (current.is<PointerToMemberAccessNode>()) {
-			const auto& member_access = current.as<PointerToMemberAccessNode>();
-			return visit_child(member_access.object()) ||
-				   visit_child(member_access.member_pointer());
 		}
 
 		return false;
