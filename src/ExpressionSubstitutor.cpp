@@ -282,6 +282,16 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
+	const TemplateEnvironment& environment,
+	Parser& parser,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args)
+	: ExpressionSubstitutor(environment, parser) {
+	template_params_ = template_params;
+	template_args_ = template_args;
+}
+
+ExpressionSubstitutor::ExpressionSubstitutor(
 	const TemplateInstantiationContext& context,
 	Parser& parser)
 	: ExpressionSubstitutor(context.environment, parser) {
@@ -457,12 +467,22 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		// bound value becomes a literal before constant evaluation.
 		const TemplateParameterReferenceNode& tparam_ref =
 			expr.as<TemplateParameterReferenceNode>();
+		auto structural_arg = param_map_.find(tparam_ref.param_name().view());
+		if (structural_arg != param_map_.end() &&
+			structural_arg->second.is_value &&
+			structural_arg->second.has_typed_value_identity &&
+			structural_arg->second.typed_value_identity.kind ==
+				FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
+			ExpressionNode& preserved_reference =
+				gChunkedAnyStorage.emplace_back<ExpressionNode>(tparam_ref);
+			return ASTNode(&preserved_reference);
+		}
 		return substituteIdentifier(IdentifierNode(tparam_ref.token()));
 	} else if (expr.is<QualifiedIdentifierNode>()) {
 		return substituteQualifiedIdentifier(expr.as<QualifiedIdentifierNode>());
 	} else if (expr.is<TypeSpecifierNode>()) {
-		TypeSpecifierNode substituted_type =
-			substituteInType(expr.as<TypeSpecifierNode>());
+		TypeSpecifierNode substituted_type = substituteTypeSpecifier(
+			expr.as<TypeSpecifierNode>());
 		TypeSpecifierNode& stored_type =
 			gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
 				std::move(substituted_type));
@@ -477,6 +497,10 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return substituteStaticCast(expr.as<StaticCastNode>());
 	} else if (expr.is<InitializerListConstructionNode>()) {
 		return substituteInitializerListConstruction(expr.as<InitializerListConstructionNode>());
+	} else if (expr.is<SizeofPackNode>()) {
+		return substituteSizeofPack(expr.as<SizeofPackNode>());
+	} else if (expr.is<FoldExpressionNode>()) {
+		return substituteFoldExpression(expr.as<FoldExpressionNode>());
 	} else if (expr.is<NumericLiteralNode>()) {
 		// Literals don't need content substitution, but always return wrapped in ExpressionNode
 		// so downstream evaluators (which require is<ExpressionNode>()) see a consistent result.
@@ -502,18 +526,347 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	}
 }
 
+ASTNode ExpressionSubstitutor::substituteSizeofPack(const SizeofPackNode& sizeof_pack) {
+	const auto find_context_pack_size = [&]() -> std::optional<size_t> {
+		if (template_params_.empty()) {
+			return std::nullopt;
+		}
+		size_t arg_index = 0;
+		for (size_t param_index = 0; param_index < template_params_.size(); ++param_index) {
+			const TemplateParameterNode& param = template_params_[param_index];
+			if (!param.is_variadic()) {
+				if (arg_index < template_args_.size()) {
+					++arg_index;
+				}
+				continue;
+			}
+			const size_t pack_size = parser_.get_template_param_pack_size(param.name()).value_or(
+				countTemplatePackArguments(
+					template_params_,
+					template_args_,
+					param_index,
+					arg_index));
+			if (param.name() == sizeof_pack.pack_name()) {
+				return pack_size;
+			}
+			arg_index += pack_size;
+		}
+		return std::nullopt;
+	};
+
+	std::optional<size_t> pack_size = find_context_pack_size();
+	if (!pack_size.has_value()) {
+		const StringHandle pack_name = StringTable::getOrInternStringHandle(sizeof_pack.pack_name());
+		if (const auto pack_it = pack_map_.find(pack_name); pack_it != pack_map_.end()) {
+			pack_size = pack_it->second.size();
+		}
+	}
+	if (!pack_size.has_value()) {
+		pack_size = parser_.resolveSizeofPackCount(sizeof_pack.pack_name());
+	}
+	if (!pack_size.has_value()) {
+		for (StringHandle param_name : parser_.currentTemplateParamNames()) {
+			if (StringTable::getStringView(param_name) == sizeof_pack.pack_name()) {
+				return ASTNode::emplace_node<ExpressionNode>(sizeof_pack);
+			}
+		}
+		throw CompileError(
+			"'" + std::string(sizeof_pack.pack_name()) +
+			"' does not refer to the name of a parameter pack");
+	}
+
+	StringBuilder size_builder;
+	std::string_view size_text = size_builder.append(*pack_size).commit();
+	Token literal_token(
+		Token::Type::Literal,
+		size_text,
+		sizeof_pack.sizeof_token().line(),
+		sizeof_pack.sizeof_token().column(),
+		sizeof_pack.sizeof_token().file_index());
+	return ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(
+		literal_token,
+		static_cast<unsigned long long>(*pack_size),
+		TypeCategory::Int,
+		TypeQualifier::None,
+		32));
+}
+
+ASTNode ExpressionSubstitutor::substituteFoldExpression(const FoldExpressionNode& fold) {
+	const auto find_context_pack = [&](std::string_view pack_name)
+		-> std::optional<std::span<const TemplateTypeArg>> {
+		if (template_params_.empty()) {
+			return std::nullopt;
+		}
+		size_t arg_index = 0;
+		for (size_t param_index = 0; param_index < template_params_.size(); ++param_index) {
+			const TemplateParameterNode& param = template_params_[param_index];
+			if (!param.is_variadic()) {
+				if (arg_index < template_args_.size()) {
+					++arg_index;
+				}
+				continue;
+			}
+			const size_t pack_count = parser_.get_template_param_pack_size(param.name()).value_or(
+				countTemplatePackArguments(
+					template_params_,
+					template_args_,
+					param_index,
+					arg_index));
+			if (param.name() == pack_name) {
+				return template_args_.subspan(arg_index, pack_count);
+			}
+			arg_index += pack_count;
+		}
+		return std::nullopt;
+	};
+	const auto find_pack = [&](std::string_view pack_name) -> const std::vector<TemplateTypeArg>* {
+		const StringHandle pack_handle = StringTable::getOrInternStringHandle(pack_name);
+		if (const auto pack_it = pack_map_.find(pack_handle); pack_it != pack_map_.end()) {
+			return &pack_it->second;
+		}
+		return nullptr;
+	};
+	const auto pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
+		if (const auto context_pack = find_context_pack(pack_name); context_pack.has_value()) {
+			return context_pack->size();
+		}
+		if (const auto* pack_args = find_pack(pack_name); pack_args != nullptr) {
+			return pack_args->size();
+		}
+		for (const Parser::PackParamInfo& pack_info : captured_pack_param_info_) {
+			if (pack_info.original_name == pack_name) {
+				return pack_info.pack_size;
+			}
+		}
+		return parser_.resolveSizeofPackCount(pack_name);
+	};
+
+	std::vector<ASTNode> pack_values;
+	if (fold.has_complex_pack_expr()) {
+		size_t expansion_count = 0;
+		bool found_pack = false;
+		if (!captured_pack_param_info_.empty()) {
+			expansion_count = captured_pack_param_info_.front().pack_size;
+			found_pack = true;
+		} else {
+			for (size_t param_index = 0; param_index < template_params_.size(); ++param_index) {
+				const TemplateParameterNode& param = template_params_[param_index];
+				if (!param.is_variadic()) {
+					continue;
+				}
+				if (const auto count = pack_size(param.name()); count.has_value()) {
+					expansion_count = *count;
+					found_pack = true;
+					break;
+				}
+			}
+		}
+		if (!found_pack) {
+			for (const TemplateBinding& binding : environment_.bindings) {
+				if (binding.is_pack) {
+					expansion_count = binding.args.size();
+					found_pack = true;
+					break;
+				}
+			}
+		}
+		if (found_pack && fold.pack_expr().has_value()) {
+			for (size_t index = 0; index < expansion_count; ++index) {
+				ASTNode expanded = *fold.pack_expr();
+				if (!captured_pack_param_info_.empty()) {
+					expanded = parser_.replacePackIdentifierInExpr(
+						expanded,
+						captured_pack_param_info_.front().original_name,
+						index);
+				}
+
+				if (!template_params_.empty()) {
+					InlineVector<TemplateParameterNode, 8> element_params;
+					InlineVector<TemplateTypeArg, 8> element_args;
+					size_t arg_index = 0;
+					for (size_t param_index = 0; param_index < template_params_.size(); ++param_index) {
+						const TemplateParameterNode& param = template_params_[param_index];
+						if (!param.is_variadic()) {
+							if (arg_index < template_args_.size()) {
+								element_params.push_back(param);
+								element_args.push_back(template_args_[arg_index]);
+								++arg_index;
+							}
+							continue;
+						}
+						const size_t pack_count = parser_.get_template_param_pack_size(param.name()).value_or(
+							countTemplatePackArguments(
+								template_params_,
+								template_args_,
+								param_index,
+								arg_index));
+						if (index < pack_count && arg_index + index < template_args_.size()) {
+							TemplateParameterNode scalar_param = param;
+							scalar_param.set_variadic(false);
+							element_params.push_back(std::move(scalar_param));
+							element_args.push_back(template_args_[arg_index + index]);
+						}
+						arg_index += pack_count;
+					}
+					TemplateEnvironment element_environment = buildTemplateEnvironment(
+						std::span<const TemplateParameterNode>(element_params.data(), element_params.size()),
+						std::span<const TemplateTypeArg>(element_args.data(), element_args.size()),
+						&environment_);
+					ExpressionSubstitutor element_substitutor(element_environment, parser_);
+					element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+					pack_values.push_back(element_substitutor.substitute(expanded));
+					continue;
+				}
+
+				ExpressionSubstitutor element_substitutor(environment_, parser_);
+				element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+				pack_values.push_back(element_substitutor.substitute(expanded));
+			}
+		}
+	} else if (const auto context_pack = find_context_pack(fold.pack_name()); context_pack.has_value()) {
+		if (!context_pack->empty()) {
+			bool all_values = true;
+			std::vector<int64_t> values;
+			values.reserve(context_pack->size());
+			for (const TemplateTypeArg& arg : *context_pack) {
+				if (!arg.is_value) {
+					all_values = false;
+					break;
+				}
+				values.push_back(arg.value);
+			}
+			if (all_values) {
+				if (std::optional<int64_t> result =
+						ConstExpr::evaluate_fold_expression(fold.op(), values)) {
+					const bool is_logical = fold.op() == "&&" || fold.op() == "||";
+					if (is_logical) {
+						Token token(Token::Type::Keyword, *result != 0 ? "true"sv : "false"sv, 0, 0, 0);
+						return ASTNode::emplace_node<ExpressionNode>(BoolLiteralNode(token, *result != 0));
+					}
+					Token token(Token::Type::Literal, StringBuilder().append(*result).commit(), 0, 0, 0);
+					return ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(
+						token,
+						static_cast<unsigned long long>(*result),
+						context_pack->front().typeEnum(),
+						TypeQualifier::None,
+						get_type_size_bits(context_pack->front().typeEnum())));
+				}
+			}
+		}
+		const size_t count = context_pack->size();
+		for (size_t index = 0; index < count; ++index) {
+			StringBuilder name_builder;
+			name_builder.append(fold.pack_name()).append('_').append(index);
+			Token token(Token::Type::Identifier, name_builder.commit(), fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+			pack_values.push_back(ASTNode::emplace_node<ExpressionNode>(
+				parser_.createBoundIdentifier(token)));
+		}
+	} else if (const auto* pack_args = find_pack(fold.pack_name()); pack_args != nullptr) {
+		for (size_t index = 0; index < pack_args->size(); ++index) {
+			StringBuilder name_builder;
+			name_builder.append(fold.pack_name()).append('_').append(index);
+			Token token(Token::Type::Identifier, name_builder.commit(), fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+			pack_values.push_back(ASTNode::emplace_node<ExpressionNode>(
+				parser_.createBoundIdentifier(token)));
+		}
+	} else if (const auto count = pack_size(fold.pack_name()); count.has_value() && *count != 0) {
+		for (size_t index = 0; index < *count; ++index) {
+			StringBuilder name_builder;
+			name_builder.append(fold.pack_name()).append('_').append(index);
+			Token token(Token::Type::Identifier, name_builder.commit(), fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+			pack_values.push_back(ASTNode::emplace_node<ExpressionNode>(
+				parser_.createBoundIdentifier(token)));
+		}
+	}
+
+	if (pack_values.empty()) {
+		if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
+			return substitute(*fold.init_expr());
+		}
+		if (fold.op() == "&&") {
+			Token token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+			return ASTNode::emplace_node<ExpressionNode>(BoolLiteralNode(token, true));
+		}
+		if (fold.op() == "||") {
+			Token token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+			return ASTNode::emplace_node<ExpressionNode>(BoolLiteralNode(token, false));
+		}
+		if (fold.op() == ",") {
+			Token token(Token::Type::Literal, "0"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
+			return ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(token, 0ULL, TypeCategory::Void, TypeQualifier::None, 0));
+		}
+		return ASTNode::emplace_node<ExpressionNode>(fold);
+	}
+
+	ASTNode result;
+	const Token op_token = fold.get_token();
+	if (fold.type() == FoldExpressionNode::Type::Unary) {
+		if (fold.direction() == FoldExpressionNode::Direction::Left) {
+			result = pack_values.front();
+			for (size_t index = 1; index < pack_values.size(); ++index) {
+				result = ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(op_token, result, pack_values[index]));
+			}
+		} else {
+			result = pack_values.back();
+			for (size_t index = pack_values.size() - 1; index-- > 0;) {
+				result = ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(op_token, pack_values[index], result));
+			}
+		}
+	} else {
+			ASTNode init = substitute(*fold.init_expr());
+			if (fold.direction() == FoldExpressionNode::Direction::Left) {
+				result = init;
+				for (const ASTNode& value : pack_values) {
+					result = ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(op_token, result, value));
+				}
+			} else {
+				result = init;
+				for (size_t index = pack_values.size(); index-- > 0;) {
+					result = ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(op_token, pack_values[index], result));
+				}
+			}
+	}
+	return result;
+}
+
 TypeSpecifierNode ExpressionSubstitutor::substituteTypeSpecifier(
 	const TypeSpecifierNode& type) {
-	return substituteInType(type);
+	TypeSpecifierNode canonical_substituted_type = substituteInType(type);
+	if (canonical_substituted_type.type() != type.type() ||
+		canonical_substituted_type.type_index() != type.type_index() ||
+		canonical_substituted_type.token().value() != type.token().value() ||
+		canonical_substituted_type.pointer_depth() != type.pointer_depth() ||
+		canonical_substituted_type.reference_qualifier() != type.reference_qualifier()) {
+		return canonical_substituted_type;
+	}
+	if (!template_params_.empty()) {
+		ASTNode parser_substituted = parser_.substituteTemplateParameters(
+			ASTNode(&type),
+			template_params_,
+			template_args_);
+		if (parser_substituted.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& substituted_type =
+				parser_substituted.as<TypeSpecifierNode>();
+			if (substituted_type.type() != type.type() ||
+				substituted_type.type_index() != type.type_index() ||
+				substituted_type.token().value() != type.token().value() ||
+				substituted_type.pointer_depth() != type.pointer_depth() ||
+				substituted_type.reference_qualifier() != type.reference_qualifier()) {
+				return substituted_type;
+			}
+		}
+	}
+	return canonical_substituted_type;
 }
 
 ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNode& ctor) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing constructor call");
 	ASTNode root = ASTNode::emplace_node<ExpressionNode>(ctor);
-	return expression_rewriter_.rewrite(
+	ASTNode result = expression_rewriter_.rewrite(
 		root,
 		std::bind_front(&ExpressionSubstitutor::rewriteOneToOne, this),
 		std::bind_front(&ExpressionSubstitutor::rewriteStructuralZeroToMany, this));
+	return result;
 }
 
 ASTNode ExpressionSubstitutor::substituteNewExpression(const NewExpressionNode& new_expression) {
@@ -4580,7 +4933,26 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 	if (sizeof_expr.is_type() && type_or_expr.is<TypeSpecifierNode>()) {
 		// This is sizeof(type) - substitute the type
 		const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
-		TypeSpecifierNode substituted_type = substituteInType(type_spec);
+		TypeSpecifierNode substituted_type = substituteTypeSpecifier(type_spec);
+		if (const std::optional<size_t> size_bytes =
+				ConstExpr::tryGetConstexprTypeSizeBytes(substituted_type);
+			size_bytes.has_value() && *size_bytes > 0) {
+			StringBuilder size_builder;
+			std::string_view size_str =
+				size_builder.append(*size_bytes).commit();
+			Token literal_token(
+				Token::Type::Literal,
+				size_str,
+				sizeof_expr.sizeof_token().line(),
+				sizeof_expr.sizeof_token().column(),
+				sizeof_expr.sizeof_token().file_index());
+			return ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(
+				literal_token,
+				static_cast<unsigned long long>(*size_bytes),
+				TypeCategory::UnsignedLongLong,
+				TypeQualifier::None,
+				64));
+		}
 
 		// Create new TypeSpecifierNode
 		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
@@ -4689,6 +5061,21 @@ ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {
 TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNode& type) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Substituting in type");
 	FLASH_LOG_FORMAT(Templates, Trace, "  Input type: base_type={}, type_index={}", (int)type.type(), type.type_index());
+
+	if (type.has_template_parameter_identity()) {
+		std::string_view parameter_name =
+			StringTable::getStringView(type.template_parameter_name());
+		auto parameter_it = param_map_.find(parameter_name);
+		if (parameter_it != param_map_.end()) {
+			if (parameter_it->second.is_value) {
+				throw CompileError("Template argument used in a type position did not resolve to a type");
+			}
+			TypeSpecifierNode substituted_type =
+				makeTypeSpecifierFromTemplateTypeArg(parameter_it->second, type.token());
+			applyOuterTypeModifiers(substituted_type, type);
+			return substituted_type;
+		}
+	}
 
 	if (type.type_index().is_valid()) {
 		const TypeInfo* type_info = tryGetTypeInfo(type.type_index());

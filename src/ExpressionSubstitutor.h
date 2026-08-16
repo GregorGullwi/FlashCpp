@@ -93,6 +93,11 @@ public:
 	ExpressionSubstitutor(
 		const TemplateEnvironment& environment,
 		Parser& parser);
+	ExpressionSubstitutor(
+		const TemplateEnvironment& environment,
+		Parser& parser,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 
 	ExpressionSubstitutor(
 		const TemplateInstantiationContext& context,
@@ -145,6 +150,8 @@ private:
 	ASTNode substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr);
 	ASTNode substituteStaticCast(const StaticCastNode& cast_node);
 	ASTNode substituteInitializerListConstruction(const InitializerListConstructionNode& init_list);
+	ASTNode substituteSizeofPack(const SizeofPackNode& sizeof_pack);
+	ASTNode substituteFoldExpression(const FoldExpressionNode& fold);
 	ASTNode substituteLiteral(const ASTNode& literal);
 	void captureParserPackState();
 	ASTNode rewriteOneToOne(
@@ -216,6 +223,8 @@ private:
 	Parser& parser_;
 	std::vector<std::string_view> template_param_order_;
 	TemplateEnvironment environment_;
+	std::span<const TemplateParameterNode> template_params_{};
+	std::span<const TemplateTypeArg> template_args_{};
 	std::vector<Parser::PackParamInfo> captured_pack_param_info_;
 	StringHandle current_owner_type_name_{};
 	ExpressionRewriter expression_rewriter_;

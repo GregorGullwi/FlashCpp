@@ -17,70 +17,6 @@ struct NamedPackBinding {
 	std::optional<std::vector<TemplateTypeArg>> template_args;
 };
 
-std::string buildMemberPointerOwnerReconstructionErrorMessage(
-	const TemplateTypeArg& arg,
-	std::string_view stage) {
-	return std::string(
-		StringBuilder()
-			.append("Failed to reconstruct member-pointer owner during ")
-			.append(stage)
-			.append(" substitution for ")
-			.append(StringTable::getStringView(arg.valueIdentity().member_class_name))
-			.append("::")
-			.append(StringTable::getStringView(arg.typed_value_identity.member_name))
-			.commit());
-}
-
-bool preserveStructuralClassTemplateParameterReference(
-	const TemplateTypeArg& arg,
-	StringHandle param_name,
-	const Token& source_token,
-	std::optional<ASTNode>& result) {
-	if (!arg.has_typed_value_identity ||
-		arg.typed_value_identity.kind !=
-			FlashCpp::NonTypeValueIdentityKind::StructuralClass) {
-		return false;
-	}
-	// Structural class members are resolved by constexpr evaluation from the
-	// canonical value. Replacing the reference with its legacy integer carrier
-	// would turn `K.member` into `0.member`.
-	result = ASTNode::emplace_node<ExpressionNode>(
-		TemplateParameterReferenceNode(param_name, source_token));
-	return true;
-}
-
-size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
-	if (arg.pointer_depth > 0 ||
-		arg.category() == TypeCategory::FunctionPointer ||
-		arg.category() == TypeCategory::MemberFunctionPointer ||
-		arg.category() == TypeCategory::MemberObjectPointer) {
-		return 8;
-	}
-
-	size_t size_in_bytes = get_type_size_bits(arg.category()) / 8;
-	if (size_in_bytes > 0) {
-		if (arg.is_array && !arg.array_dimensions.empty()) {
-			for (size_t dim : arg.array_dimensions) size_in_bytes *= dim;
-			return size_in_bytes;
-		}
-		return size_in_bytes;
-	}
-
-	if (arg.type_index.is_valid()) {
-		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(arg.type_index)) {
-			size_in_bytes = toSizeT(struct_info->sizeInBytes());
-		} else if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index); type_info && type_info->hasStoredSize()) {
-			size_in_bytes = toSizeT(type_info->sizeInBytes());
-		}
-	}
-
-	if (arg.is_array && !arg.array_dimensions.empty() && size_in_bytes > 0) {
-		for (size_t dim : arg.array_dimensions) size_in_bytes *= dim;
-		return size_in_bytes;
-	}
-	return size_in_bytes;
-}
-
 template <typename ParamContainer, typename ArgContainer, typename ExactPackSizeLookup>
 std::optional<std::vector<TemplateTypeArg>> extractNamedTemplateArgumentPack(
 	const ParamContainer& template_params,
@@ -140,71 +76,6 @@ std::optional<std::vector<TemplateTypeArg>> extractNamedTemplateArgumentPack(
 	}
 
 	return std::nullopt;
-}
-
-std::optional<ASTNode> tryFoldSubstitutedSizeofTypeNode(
-	const ASTNode& type_node,
-	const Token& sizeof_token) {
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return std::nullopt;
-	}
-
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	const std::optional<size_t> size_in_bytes =
-		ConstExpr::tryGetConstexprTypeSizeBytes(type_spec);
-	if (!size_in_bytes.has_value() || *size_in_bytes == 0) {
-		return std::nullopt;
-	}
-
-	StringBuilder size_builder;
-	std::string_view size_str = size_builder.append(*size_in_bytes).commit();
-	Token literal_token(
-		Token::Type::Literal,
-		size_str,
-		sizeof_token.line(),
-		sizeof_token.column(),
-		sizeof_token.file_index());
-	return ASTNode::emplace_node<ExpressionNode>(
-		NumericLiteralNode(
-			literal_token,
-		static_cast<unsigned long long>(*size_in_bytes),
-			TypeCategory::UnsignedLongLong,
-			TypeQualifier::None,
-			64));
-}
-
-ASTNode makeRebuiltConstructorCallNode(
-	const ConstructorCallNode& constructor_call,
-	const TypeSpecifierNode& substituted_type,
-	ChunkedVector<ASTNode>&& arguments,
-	bool wrap_in_expression) {
-	if (wrap_in_expression) {
-		return ASTNode::emplace_node<ExpressionNode>(
-			ConstructorCallNode(substituted_type, std::move(arguments), constructor_call.called_from()));
-	}
-	return ASTNode::emplace_node<ConstructorCallNode>(
-		substituted_type,
-		std::move(arguments),
-		constructor_call.called_from());
-}
-
-ASTNode makeRebuiltPointerToMemberAccessNode(
-	const PointerToMemberAccessNode& member_access,
-	ASTNode substituted_object,
-	ASTNode substituted_member_pointer,
-	bool wrap_in_expression) {
-	if (wrap_in_expression) {
-		return ASTNode::emplace_node<ExpressionNode>(PointerToMemberAccessNode(
-			substituted_object,
-			substituted_member_pointer,
-			member_access.operator_token(),
-			member_access.is_arrow()));
-	}
-	return ASTNode::emplace_node<PointerToMemberAccessNode>(
-		substituted_object,
-		substituted_member_pointer,
-		member_access.operator_token(),
-		member_access.is_arrow());
 }
 
 // Return true if the expression tree contains an IdentifierNode whose name equals pack_name.
@@ -370,6 +241,7 @@ ASTNode Parser::substituteTemplateParameters(
 	TemplateBodySubstitutionState state = makeTemplateBodySubstitutionState(
 		owner_type_index,
 		has_implicit_this);
+	state.environment = context.environment;
 	return substituteTemplateParametersWithState(
 		node,
 		context.template_parameters,
@@ -386,6 +258,7 @@ ASTNode Parser::substituteTemplateParameters(
 	TemplateBodySubstitutionState state = makeTemplateBodySubstitutionState(
 		current_owner_type_index,
 		has_implicit_this);
+	state.environment = buildTemplateEnvironment(template_params, template_args, nullptr);
 	return substituteTemplateParametersWithState(
 		node,
 		template_params,
@@ -462,6 +335,84 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			template_args,
 			state);
 	};
+	const bool is_expression_surface = node.is<ExpressionNode>() ||
+		ExpressionStructure::visitExpressionChildren(
+			node,
+			[](ExpressionStructure::ExpressionChildRole, const ASTNode&) {});
+	if (is_expression_surface) {
+		TemplateEnvironment expression_environment = state.environment;
+		std::optional<TemplateEnvironment> owner_environment;
+		if (state.owner_type_index.is_valid()) {
+			if (const TypeInfo* owner_type_info = tryGetTypeInfo(state.owner_type_index);
+				owner_type_info != nullptr && owner_type_info->hasInstantiationContext()) {
+				owner_environment = buildTemplateEnvironment(
+					*owner_type_info->instantiationContext());
+				owner_environment->parent = expression_environment.parent;
+				expression_environment.parent = &*owner_environment;
+			}
+		}
+		for (const TemplateParamSubstitution& substitution : template_param_substitutions_) {
+			bool already_bound = false;
+			for (const TemplateBinding& binding : expression_environment.bindings) {
+				if (binding.name == substitution.param_name) {
+					already_bound = true;
+					break;
+				}
+			}
+			if (already_bound) {
+				continue;
+			}
+			TemplateBinding binding;
+			binding.name = substitution.param_name;
+			binding.is_pack = substitution.is_pack;
+			if (substitution.is_pack) {
+				binding.kind = substitution.pack_args.empty() ||
+					substitution.pack_args.front().is_value
+					? TemplateParameterKind::NonType
+					: TemplateParameterKind::Type;
+				binding.args.assign(
+					substitution.pack_args.begin(),
+					substitution.pack_args.end());
+			} else if (substitution.is_type_param) {
+				binding.kind = TemplateParameterKind::Type;
+				binding.args.push_back(substitution.substituted_type);
+			} else if (substitution.is_value_param) {
+				binding.kind = TemplateParameterKind::NonType;
+				binding.args.emplace_back(substitution.value, substitution.value_type);
+			} else {
+				binding.kind = TemplateParameterKind::Template;
+			}
+			expression_environment.bindings.push_back(std::move(binding));
+		}
+		for (TemplateBinding& binding : expression_environment.bindings) {
+			for (const TemplateParameterNode& parameter : template_params) {
+				if (parameter.nameHandle() != binding.name) {
+					continue;
+				}
+				for (TemplateTypeArg& argument : binding.args) {
+					argument = enrichTemplateArgForParameter(parameter, std::move(argument));
+				}
+				break;
+			}
+		}
+		ExpressionSubstitutor substitutor(
+			expression_environment,
+			*this,
+			template_params,
+			template_args);
+		if (state.owner_type_name.isValid()) {
+			substitutor.setCurrentOwnerTypeName(state.owner_type_name);
+		}
+		ASTNode substituted = substitutor.substitute(node);
+		if (!node.is<ExpressionNode>() && substituted.is<ExpressionNode>()) {
+			return std::visit(
+				[](const auto& expression_node) -> ASTNode {
+					return ASTNode(&expression_node);
+				},
+				substituted.as<ExpressionNode>());
+		}
+		return substituted;
+	}
 	auto bind_constexpr_locals = [&]() {
 		std::unordered_map<std::string_view, ConstExpr::EvalResult> bindings;
 		bindings.reserve(state.constexpr_locals.size());
@@ -510,1208 +461,8 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			return "unknown";
 		}
 	};
-	auto exactPackSizeLookup = [this](std::string_view pack_name) {
-		return get_template_param_pack_size(pack_name);
-	};
-	auto resolveNamedPackBinding = [&](std::string_view pack_name) {
-		NamedPackBinding binding;
-
-		if (auto exact_size = exactPackSizeLookup(pack_name)) {
-			binding.found = true;
-			binding.count = *exact_size;
-			if (auto pack_args = extractNamedTemplateArgumentPack(
-					template_params,
-					template_args,
-					pack_name,
-					exactPackSizeLookup)) {
-				binding.template_args = std::move(*pack_args);
-				binding.count = binding.template_args->size();
-			}
-			return binding;
-		}
-
-		if (auto pack_args = extractNamedTemplateArgumentPack(
-				template_params,
-				template_args,
-				pack_name,
-				exactPackSizeLookup)) {
-			binding.found = true;
-			binding.count = pack_args->size();
-			binding.template_args = std::move(*pack_args);
-			return binding;
-		}
-
-		if (auto class_pack_size = get_class_template_pack_size(pack_name)) {
-			binding.found = true;
-			binding.count = *class_pack_size;
-			return binding;
-		}
-
-		if (auto function_pack_size = get_pack_size(pack_name)) {
-			binding.found = true;
-			binding.count = *function_pack_size;
-			return binding;
-		}
-
-		size_t symbol_table_pack_size = count_pack_elements(pack_name);
-		if (symbol_table_pack_size > 0) {
-			binding.found = true;
-			binding.count = symbol_table_pack_size;
-		}
-
-		return binding;
-	};
-	auto substituteWithExpressionSubstitutor = [&](const ASTNode& substituted_call_node) -> ASTNode {
-		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-		std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map;
-		std::vector<std::string_view> template_param_order;
-		size_t arg_index = 0;
-		for (size_t i = 0; i < template_params.size(); ++i) {
-			const auto& tparam = template_params[i];
-			template_param_order.push_back(tparam.name());
-			if (tparam.is_variadic()) {
-				size_t pack_size = countTemplatePackArguments(
-					template_params,
-					template_args,
-					i,
-					arg_index);
-				std::vector<TemplateTypeArg> pack_args;
-				pack_args.reserve(pack_size);
-				for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < template_args.size(); ++pack_index) {
-					pack_args.push_back(template_args[arg_index + pack_index]);
-				}
-				pack_map.emplace(tparam.nameHandle(), std::move(pack_args));
-				arg_index += pack_size;
-				continue;
-			}
-			if (arg_index >= template_args.size()) {
-				break;
-			}
-			TemplateTypeArg arg_to_insert = enrichTemplateArgForParameter(tparam, template_args[arg_index]);
-			param_map.emplace(tparam.name(), arg_to_insert);
-			++arg_index;
-		}
-
-		ExpressionSubstitutor substitutor(param_map, pack_map, *this, template_param_order);
-		if (current_owner_type_name.isValid()) {
-			substitutor.setCurrentOwnerTypeName(current_owner_type_name);
-		}
-		return substitutor.substitute(substituted_call_node);
-	};
-	auto substituteCallExprWithExpressionSubstitutor = [&](const CallExprNode& call) -> ASTNode {
-		std::optional<ASTNode> substituted_receiver;
-		if (call.has_receiver()) {
-			substituted_receiver = substitute_nested(call.receiver());
-		}
-		ChunkedVector<ASTNode> substituted_args;
-		for (const auto& arg : call.arguments()) {
-			substituteArgWithPackExpansion(
-				arg,
-				template_params,
-				template_args,
-				state,
-				substituted_args);
-		}
-		CallExprNode substituted_call = call.has_receiver()
-			? CallExprNode(
-				call.callee(),
-				*substituted_receiver,
-				std::move(substituted_args),
-				call.called_from())
-			: CallExprNode(
-				call.callee(),
-				std::move(substituted_args),
-				call.called_from());
-		copyCallMetadataWithTransformedTemplateArguments(
-			substituted_call,
-			call,
-			[&](const ASTNode& template_arg) {
-				return substitute_nested(template_arg);
-			},
-			CallMetadataCopyOptions{});
-		return substituteWithExpressionSubstitutor(ASTNode(&substituted_call));
-	};
-	auto substituteTernaryOperator = [&](const TernaryOperatorNode& ternary, bool wrap_in_expression) -> ASTNode {
-		ASTNode substituted_condition = substitute_nested(ternary.condition());
-		ASTNode substituted_true = substitute_nested(ternary.true_expr());
-		ASTNode substituted_false = substitute_nested(ternary.false_expr());
-		if (wrap_in_expression) {
-			return emplace_node<ExpressionNode>(TernaryOperatorNode(
-				substituted_condition,
-				substituted_true,
-				substituted_false,
-				ternary.get_token()));
-		}
-		return emplace_node<TernaryOperatorNode>(
-			substituted_condition,
-			substituted_true,
-			substituted_false,
-			ternary.get_token());
-	};
-
-	// Handle different node types
-	if (node.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = node.as<ExpressionNode>();
-		const auto& expr = expr_node;
-
-		// Check if this is a TemplateParameterReferenceNode
-		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-			std::string_view param_name = tparam_ref.param_name().view();
-			bool substituted_template_param_ref = false;
-			std::optional<ASTNode> substituted_node;
-
-			forEachNonPackTemplateParamArgBinding(
-				template_params,
-				template_args,
-				[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
-					if (substituted_template_param_ref || tparam.name() != param_name)
-						return;
-
-					// When a non-type param (e.g., _Size) receives a Type argument due to
-					// dependent expressions like sizeof(_Tp), skip the substitution to avoid
-					// creating broken identifiers like "user_defined".
-					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value)
-						return;
-
-					if (arg.isTypeArgument()) {
-						Token type_token = makeTemplateArgumentTypeToken(
-							arg,
-							tparam_ref.token());
-						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
-						substituted_template_param_ref = true;
-					} else if (arg.is_value) {
-						if (preserveStructuralClassTemplateParameterReference(
-								arg,
-								tparam_ref.param_name(),
-								tparam_ref.token(),
-								substituted_node)) {
-							substituted_template_param_ref = true;
-							return;
-						}
-						// Pointer/reference NTTP: emit &entity_name so *P works correctly.
-						// Callable F() still needs a follow-up fix after substitution.
-						if (arg.has_typed_value_identity) {
-							const auto kind = arg.typed_value_identity.kind;
-							const StringHandle entity_name = arg.typed_value_identity.entity_name;
-							if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
-								 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
-								 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
-								entity_name.isValid()) {
-								std::string_view entity_name_view = StringTable::getStringView(entity_name);
-								Token entity_token(Token::Type::Identifier, entity_name_view,
-												   tparam_ref.token().line(), tparam_ref.token().column(),
-												   tparam_ref.token().file_index());
-								Token amp_token(Token::Type::Operator, "&"sv,
-												tparam_ref.token().line(), tparam_ref.token().column(),
-												tparam_ref.token().file_index());
-								ASTNode entity_id = emplace_node<ExpressionNode>(IdentifierNode(entity_token));
-								substituted_node = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
-								substituted_template_param_ref = true;
-								return;
-							}
-							if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
-								arg.typed_value_identity.member_name.isValid() &&
-								arg.valueIdentity().member_class_name.isValid()) {
-								std::vector<std::string_view> owner_components =
-									splitQualifiedNamespace(
-										StringTable::getStringView(
-											arg.valueIdentity().member_class_name));
-								NamespaceHandle owner_scope = owner_components.empty()
-									? NamespaceRegistry::GLOBAL_NAMESPACE
-									: gNamespaceRegistry.getOrCreatePath(
-										NamespaceRegistry::GLOBAL_NAMESPACE,
-										std::span<const std::string_view>(
-											owner_components.data(),
-											owner_components.size()));
-								if (owner_scope.isValid() && !owner_scope.isGlobal()) {
-									Token member_token(
-										Token::Type::Identifier,
-										StringTable::getStringView(arg.typed_value_identity.member_name),
-										tparam_ref.token().line(),
-										tparam_ref.token().column(),
-										tparam_ref.token().file_index());
-									Token amp_token(
-										Token::Type::Operator,
-										"&"sv,
-										tparam_ref.token().line(),
-										tparam_ref.token().column(),
-										tparam_ref.token().file_index());
-									ASTNode qualified_member = emplace_node<ExpressionNode>(
-										QualifiedIdentifierNode(owner_scope, member_token));
-									substituted_node = emplace_node<ExpressionNode>(
-										UnaryOperatorNode(amp_token, qualified_member, true));
-									substituted_template_param_ref = true;
-									return;
-								}
-								throw InternalError(buildMemberPointerOwnerReconstructionErrorMessage(arg, "template"));
-							}
-						}
-						TypeCategory value_type = arg.typeEnum();
-						int size_bits = get_type_size_bits(value_type);
-						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
-										  tparam_ref.token().line(), tparam_ref.token().column(),
-										  tparam_ref.token().file_index());
-						substituted_node = emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
-						substituted_template_param_ref = true;
-					}
-				});
-			if (substituted_template_param_ref)
-				return *substituted_node;
-
-			// If we couldn't substitute, return the original node
-			return node;
-		}
-
-		// Check if this is an IdentifierNode that matches a template parameter name
-		// (This handles the case where template parameters are stored as IdentifierNode in the AST)
-		if (std::holds_alternative<IdentifierNode>(expr)) {
-			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-			std::string_view id_name = id_node.name();
-			bool substituted_identifier = false;
-			std::optional<ASTNode> substituted_node;
-
-			forEachNonPackTemplateParamArgBinding(
-				template_params,
-				template_args,
-				[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
-					if (substituted_identifier || tparam.name() != id_name)
-						return;
-					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value)
-						return;
-					if (arg.isTypeArgument()) {
-						Token type_token = makeTemplateArgumentTypeToken(
-							arg,
-							id_node.identifier_token());
-						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
-						substituted_identifier = true;
-					} else if (arg.is_value) {
-						if (preserveStructuralClassTemplateParameterReference(
-								arg,
-								StringTable::getOrInternStringHandle(id_name),
-								id_node.identifier_token(),
-								substituted_node)) {
-							substituted_identifier = true;
-							return;
-						}
-						// Pointer/reference NTTP: emit &entity_name so *P works correctly.
-						// Callable F() still needs a follow-up fix after substitution.
-						if (arg.has_typed_value_identity) {
-							const auto kind = arg.typed_value_identity.kind;
-							const StringHandle entity_name = arg.typed_value_identity.entity_name;
-							if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
-								 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
-								 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
-								entity_name.isValid()) {
-								std::string_view entity_name_view = StringTable::getStringView(entity_name);
-								Token entity_token(Token::Type::Identifier, entity_name_view, 0, 0, 0);
-								Token amp_token(Token::Type::Operator, "&"sv, 0, 0, 0);
-								ASTNode entity_id = emplace_node<ExpressionNode>(IdentifierNode(entity_token));
-								substituted_node = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
-								substituted_identifier = true;
-								return;
-							}
-							if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
-								arg.typed_value_identity.member_name.isValid() &&
-								arg.valueIdentity().member_class_name.isValid()) {
-								std::vector<std::string_view> owner_components =
-									splitQualifiedNamespace(
-										StringTable::getStringView(
-											arg.valueIdentity().member_class_name));
-								NamespaceHandle owner_scope = owner_components.empty()
-									? NamespaceRegistry::GLOBAL_NAMESPACE
-									: gNamespaceRegistry.getOrCreatePath(
-										NamespaceRegistry::GLOBAL_NAMESPACE,
-										std::span<const std::string_view>(
-											owner_components.data(),
-											owner_components.size()));
-								if (owner_scope.isValid() && !owner_scope.isGlobal()) {
-									Token member_token(
-										Token::Type::Identifier,
-										StringTable::getStringView(arg.typed_value_identity.member_name),
-										0,
-										0,
-										0);
-									Token amp_token(Token::Type::Operator, "&"sv, 0, 0, 0);
-									ASTNode qualified_member = emplace_node<ExpressionNode>(
-										QualifiedIdentifierNode(owner_scope, member_token));
-									substituted_node = emplace_node<ExpressionNode>(
-										UnaryOperatorNode(amp_token, qualified_member, true));
-									substituted_identifier = true;
-									return;
-								}
-								throw InternalError(buildMemberPointerOwnerReconstructionErrorMessage(arg, "identifier"));
-							}
-						}
-						TypeCategory value_type = arg.typeEnum();
-						int size_bits = get_type_size_bits(value_type);
-						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
-						substituted_node = emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
-						substituted_identifier = true;
-					}
-				});
-			if (substituted_identifier)
-				return *substituted_node;
-		}
-
-		// Check if this IdentifierNode is a dependent template placeholder (e.g., __cmp_cat_id$hash)
-		// These are created during template body parsing for variable template references like __cmp_cat_id<_Ts>
-		// We need to re-instantiate the variable template with the substituted type args
-		if (std::holds_alternative<IdentifierNode>(expr)) {
-			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-			std::string_view id_name = id_node.name();
-
-			// Only check for dependent placeholders if the name contains '$' (the hash separator)
-			if (id_name.find('$') != std::string_view::npos) {
-			// Look up the type info for this identifier
-				StringHandle id_handle = StringTable::getOrInternStringHandle(id_name);
-				auto type_it = getTypesByNameMap().find(id_handle);
-				if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
-					const TypeInfo* placeholder_type = type_it->second;
-					std::string_view base_template = StringTable::getStringView(placeholder_type->baseTemplateName());
-
-				// Check if this is a variable template
-					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(base_template);
-					if (var_template_opt.has_value()) {
-					// Get the template args from the placeholder and substitute them
-						const auto& placeholder_args = placeholder_type->templateArgs();
-						std::vector<TemplateTypeArg> new_args;
-						bool any_substituted = false;
-
-						for (const auto& parg : placeholder_args) {
-							TemplateTypeArg arg;
-							arg.setCategory(parg.category());
-							arg.type_index = parg.type_index;
-							arg.ref_qualifier = parg.ref_qualifier;
-							arg.pointer_depth = parg.pointer_depth;
-							arg.cv_qualifier = parg.cv_qualifier;
-
-						// Check if this arg is a template parameter that should be substituted
-							if (const TypeInfo* parg_type_info = tryGetTypeInfo(parg.type_index)) {
-								std::string_view arg_type_name = StringTable::getStringView(parg_type_info->name());
-								for (size_t p = 0; p < template_params.size() && p < template_args.size(); ++p) {
-									const TemplateParameterNode& tparam = template_params[p];
-									if (tparam.name() == arg_type_name) {
-									// Substitute with the concrete type
-										const TemplateTypeArg& concrete_arg = template_args[p];
-										if (concrete_arg.isTypeArgument()) {
-											arg.setCategory(concrete_arg.category());
-											arg.type_index = concrete_arg.type_index;
-											arg.is_dependent = false;
-											any_substituted = true;
-										}
-										break;
-									}
-								}
-							}
-							new_args.push_back(arg);
-						}
-
-						if (any_substituted) {
-							auto result = try_instantiate_variable_template(base_template, new_args, nullptr);
-							if (result.has_value()) {
-							// The variable template was instantiated. Return an IdentifierNode
-							// that references the instantiated variable (not the VariableDeclarationNode itself)
-								if (result->is<VariableDeclarationNode>()) {
-									const auto& var_decl = result->as<VariableDeclarationNode>();
-									Token ref_token = var_decl.declaration().identifier_token();
-									return emplace_node<ExpressionNode>(createBoundIdentifier(ref_token));
-								}
-								return *result;
-							}
-						}
-					}
-				}
-			} // end of '$' check
-		}
-		// Promote Unresolved identifiers to concrete bindings when possible.
-		// Phase 1 violations ([temp.res]/9) are checked earlier in
-		// reparse_template_function_body via createBoundIdentifier / checkPhase1.
-		if (std::holds_alternative<IdentifierNode>(expr)) {
-			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-			if (id_node.binding() == IdentifierBinding::Local) {
-				return node;
-			}
-			if (id_node.binding() == IdentifierBinding::Unresolved) {
-				IdentifierNode rebound = createBoundIdentifier(id_node.identifier_token());
-				IdentifierBinding new_binding = rebound.binding();
-				if (new_binding != IdentifierBinding::Unresolved) {
-					return emplace_node<ExpressionNode>(rebound);
-				}
-			}
-		}
-		if (const auto* binary_operator = std::get_if<BinaryOperatorNode>(&expr)) {
-			const BinaryOperatorNode& bin_op = *binary_operator;
-			ASTNode substituted_left = substitute_nested(bin_op.get_lhs());
-			ASTNode substituted_right = substitute_nested(bin_op.get_rhs());
-			BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
-			annotateConcreteBinaryOperatorOverload(substituted_binop);
-			return emplace_node<ExpressionNode>(substituted_binop);
-		} else if (const auto* ternary_operator = std::get_if<TernaryOperatorNode>(&expr)) {
-			return substituteTernaryOperator(*ternary_operator, true);
-		} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-			return substituteWithExpressionSubstitutor(node);
-		} else if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr)) {
-			const UnaryOperatorNode& unary_op = *unary_operator;
-			ASTNode substituted_operand = substitute_nested(unary_op.get_operand());
-			return emplace_node<ExpressionNode>(UnaryOperatorNode(
-				unary_op.get_token(),
-				substituted_operand,
-				unary_op.is_prefix(),
-				unary_op.is_builtin_addressof()));
-		} else if (std::holds_alternative<CallExprNode>(expr)) {
-			return substituteCallExprWithExpressionSubstitutor(std::get<CallExprNode>(expr));
-		} else if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
-			const MemberAccessNode& member_access = *member_access_ptr;
-			ASTNode substituted_object = substitute_nested(member_access.object());
-			return emplace_node<ExpressionNode>(MemberAccessNode(
-				substituted_object,
-				member_access.member_token(),
-				member_access.is_arrow()));
-		} else if (const auto* pointer_to_member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
-			const PointerToMemberAccessNode& member_access = *pointer_to_member_access;
-			ASTNode substituted_object = substitute_nested(member_access.object());
-			ASTNode substituted_member_pointer = substitute_nested(member_access.member_pointer());
-			return makeRebuiltPointerToMemberAccessNode(
-				member_access,
-				substituted_object,
-				substituted_member_pointer,
-				/*wrap_in_expression=*/true);
-		} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
-			const ConstructorCallNode& constructor_call = std::get<ConstructorCallNode>(expr);
-			ASTNode substituted_type =
-				substitute_nested(ASTNode(&constructor_call.type_node()));
-			ChunkedVector<ASTNode> substituted_args;
-			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
-				substituteArgWithPackExpansion(
-					constructor_call.arguments()[i],
-					template_params,
-					template_args,
-					state,
-					substituted_args);
-			}
-			return makeRebuiltConstructorCallNode(
-				constructor_call,
-				substituted_type.as<TypeSpecifierNode>(),
-				std::move(substituted_args),
-				/*wrap_in_expression=*/true);
-		} else if (std::holds_alternative<TypeTraitExprNode>(expr)) {
-			const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
-			ASTNode substituted_type = substitute_nested(trait_expr.type_node());
-			if (trait_expr.has_second_type()) {
-				ASTNode substituted_second_type =
-					substitute_nested(trait_expr.second_type_node());
-				return emplace_node<ExpressionNode>(
-					TypeTraitExprNode(trait_expr.kind(), substituted_type, substituted_second_type, trait_expr.trait_token()));
-			}
-			if (trait_expr.is_variadic_trait()) {
-				std::vector<ASTNode> substituted_additional_types;
-				substituted_additional_types.reserve(trait_expr.additional_type_nodes().size());
-				for (const auto& type_node : trait_expr.additional_type_nodes()) {
-					substituted_additional_types.push_back(
-						substitute_nested(type_node));
-				}
-				return emplace_node<ExpressionNode>(
-					TypeTraitExprNode(trait_expr.kind(), substituted_type, std::move(substituted_additional_types), trait_expr.trait_token()));
-			}
-			if (trait_expr.is_no_arg_trait()) {
-				return emplace_node<ExpressionNode>(
-					TypeTraitExprNode(trait_expr.kind(), trait_expr.trait_token()));
-			}
-			return emplace_node<ExpressionNode>(
-				TypeTraitExprNode(trait_expr.kind(), substituted_type, trait_expr.trait_token()));
-		} else if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr)) {
-			const ArraySubscriptNode& array_sub = *array_subscript;
-			ASTNode substituted_array = substitute_nested(array_sub.array_expr());
-			ASTNode substituted_index = substitute_nested(array_sub.index_expr());
-			return emplace_node<ExpressionNode>(ArraySubscriptNode(substituted_array, substituted_index, array_sub.bracket_token()));
-		} else if (std::holds_alternative<FoldExpressionNode>(expr)) {
-			// C++17 Fold expressions - expand into nested binary operations
-			const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
-
-			std::vector<ASTNode> pack_values;
-
-			// Handle complex pack expressions like (__cmp_cat_id<_Ts> | ...)
-			// where the pack is inside a variable template invocation, not a simple identifier
-			if (fold.has_complex_pack_expr()) {
-				// Find the variadic template parameter
-				size_t variadic_param_idx = SIZE_MAX;
-				size_t non_variadic_count = 0;
-				for (size_t p = 0; p < template_params.size(); ++p) {
-					const auto& tparam = template_params[p];
-					if (tparam.is_variadic()) {
-						variadic_param_idx = p;
-					} else {
-						non_variadic_count++;
-					}
-				}
-
-				size_t num_pack_elements = 0;
-				std::string_view func_pack_name;
-				if (variadic_param_idx != SIZE_MAX) {
-					NamedPackBinding primary_pack_binding = resolveNamedPackBinding(
-						template_params[variadic_param_idx].name());
-					if (primary_pack_binding.found) {
-						num_pack_elements = primary_pack_binding.count;
-					} else if (template_args.size() >= non_variadic_count) {
-						num_pack_elements = template_args.size() - non_variadic_count;
-					}
-				}
-				if (!pack_param_info_.empty()) {
-					func_pack_name = pack_param_info_[0].original_name;
-					// pack_param_info_ carries the exact function-parameter pack expansion
-					// count; always prefer it over template_args.size() - non_variadic_count,
-					// which overcounts for multi-dependent pack element types (e.g. Pair<Ts,Us>...
-					// where template_args holds args for both Ts and Us) and also handles
-					// the empty-pack case correctly when num_pack_elements was non-zero.
-					num_pack_elements = pack_param_info_[0].pack_size;
-				}
-
-				FLASH_LOG(Templates, Trace, "Complex fold expansion: num_pack_elements=", num_pack_elements);
-
-				if (num_pack_elements == 0) {
-					if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
-						return substitute_nested(*fold.init_expr());
-					}
-					// C++17: empty unary fold is allowed only for &&, || and comma
-					// For other operators, return identity values
-					std::string_view op = fold.op();
-					if (op == "&&") {
-						Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
-						return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, true));
-					} else if (op == "||") {
-						Token bool_token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
-						return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, false));
-					} else if (op == ",") {
-						Token void_token(Token::Type::Literal, "0"sv, 0, 0, 0);
-						return emplace_node<ExpressionNode>(NumericLiteralNode(
-							void_token, 0ULL, TypeCategory::Void, TypeQualifier::None, 0));
-					}
-					FLASH_LOG(Templates, Warning, "Complex fold expression with empty pack and operator '", op, "'");
-					return node;
-				}
-
-				// For each pack element, substitute the variadic parameter in the complex expression.
-				// When multiple variadic packs are present (e.g. Ts, Us in Pair<Ts,Us>...), each pack
-				// occupies a different slice of template_args.  We track a running template_arg_index
-				// (mirroring buildSubstitutionForPackElement) so each pack reads from its own slice.
-				for (size_t i = 0; i < num_pack_elements; ++i) {
-					// Also include the non-variadic parameters so they get substituted too
-					std::vector<TemplateParameterNode> subst_params;
-					std::vector<TemplateTypeArg> subst_args;
-					size_t template_arg_index = 0;
-					for (size_t p = 0; p < template_params.size(); ++p) {
-						const auto& tparam = template_params[p];
-						if (tparam.is_variadic()) {
-							// Determine this pack's size from template_param_pack_sizes_ if available;
-							// fall back to num_pack_elements (correct for single-pack functions).
-							size_t pack_size = num_pack_elements;
-							if (NamedPackBinding pack_binding = resolveNamedPackBinding(
-									tparam.name());
-								pack_binding.found) {
-								pack_size = pack_binding.count;
-							}
-							if (template_arg_index + i < template_args.size()) {
-								// Create a non-variadic version of this parameter for single substitution
-								TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
-								// Don't set variadic - we're substituting one element at a time
-								subst_params.push_back(single_tparam);
-								subst_args.push_back(template_args[template_arg_index + i]);
-							}
-							template_arg_index += pack_size;
-						} else {
-							if (template_arg_index < template_args.size()) {
-								subst_params.push_back(template_params[p]);
-								subst_args.push_back(template_args[template_arg_index]);
-							}
-							++template_arg_index;
-						}
-					}
-
-					ASTNode expanded_pack_expr = fold.pack_expr().has_value() ? *fold.pack_expr() : ASTNode();
-					if (!func_pack_name.empty() && expanded_pack_expr.has_value()) {
-						expanded_pack_expr = replacePackIdentifierInExpr(expanded_pack_expr, func_pack_name, i);
-					}
-					ASTNode substituted = substituteTemplateParametersWithState(
-						expanded_pack_expr,
-						subst_params,
-						subst_args,
-						state);
-					pack_values.push_back(substituted);
-				}
-			} else {
-				// Simple pack name case: pack_name refers to a function parameter pack (like "args")
-				// or a non-type template parameter pack (like "Bs" in (Bs && ...))
-				NamedPackBinding pack_binding = resolveNamedPackBinding(fold.pack_name());
-				size_t num_pack_elements = pack_binding.found ? pack_binding.count : 0;
-				std::optional<size_t> pack_param_idx;
-				for (size_t p = 0; p < template_params.size(); ++p) {
-					const auto& tparam = template_params[p];
-					if (tparam.is_variadic() && tparam.name() == fold.pack_name()) {
-						pack_param_idx = p;
-					}
-				}
-
-				FLASH_LOG(Templates, Trace, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
-
-				if (pack_param_idx.has_value()) {
-					size_t pack_size = pack_binding.found ? pack_binding.count : 0;
-
-					// Check if all pack elements are values (non-type parameters)
-					bool all_values = true;
-					std::vector<int64_t> pack_int_values;
-					if (pack_binding.template_args.has_value()) {
-						for (const auto& pack_arg : *pack_binding.template_args) {
-							if (pack_arg.is_value) {
-								pack_int_values.push_back(pack_arg.value);
-							} else {
-								all_values = false;
-								break;
-							}
-						}
-					} else {
-						all_values = false;
-					}
-
-					if (all_values && !pack_int_values.empty()) {
-						// Direct evaluation for non-type parameter pack folds
-						auto fold_result = ConstExpr::evaluate_fold_expression(fold.op(), pack_int_values);
-						if (fold_result.has_value()) {
-							std::string_view op = fold.op();
-							if (op == "&&" || op == "||") {
-								Token bool_token(Token::Type::Keyword, *fold_result ? "true"sv : "false"sv, 0, 0, 0);
-								return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
-							} else {
-								// Determine the result type from the variadic parameter's declared type
-								// e.g., template<unsigned... args> -> TypeCategory::UnsignedInt, 32 bits
-								TypeCategory result_type = TypeCategory::Int;
-								int result_size_bits = 32;
-								if (pack_param_idx.has_value()) {
-									const auto& tparam = template_params[*pack_param_idx];
-									if (tparam.has_type()) {
-										const TypeSpecifierNode& param_type_spec = tparam.type_specifier_node();
-										result_type = param_type_spec.type();
-										result_size_bits = get_type_size_bits(result_type);
-									}
-								}
-								std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*fold_result)).commit();
-								Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-								return emplace_node<ExpressionNode>(NumericLiteralNode(
-									num_token, static_cast<unsigned long long>(*fold_result), result_type, TypeQualifier::None, result_size_bits));
-							}
-						}
-					} else if (pack_size == 0) {
-						// Empty pack - return identity value per C++17
-						std::string_view op = fold.op();
-						if (op == "&&") {
-							Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
-							return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, true));
-						} else if (op == "||") {
-							Token bool_token(Token::Type::Keyword, "false"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
-							return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, false));
-						}
-					}
-				}
-
-				if (num_pack_elements == 0) {
-					FLASH_LOG(Templates, Warning, "Fold expression pack '", fold.pack_name(), "' has no elements");
-					return node;
-				}
-
-				// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
-				for (size_t i = 0; i < num_pack_elements; ++i) {
-					StringBuilder param_name_builder;
-					param_name_builder.append(fold.pack_name());
-					param_name_builder.append('_');
-					param_name_builder.append(i);
-					std::string_view param_name = param_name_builder.commit();
-
-					Token param_token(Token::Type::Identifier, param_name,
-									  fold.get_token().line(), fold.get_token().column(),
-									  fold.get_token().file_index());
-					pack_values.push_back(emplace_node<ExpressionNode>(createBoundIdentifier(param_token)));
-				}
-			}
-
-			if (pack_values.empty()) {
-				FLASH_LOG(Templates, Warning, "Fold expression pack is empty");
-				return node;
-			}
-
-			auto tryReduceConstexprLogicalFold = [&]() -> std::optional<ASTNode> {
-				std::string_view op = fold.op();
-				if (op != "&&" && op != "||") {
-					return std::nullopt;
-				}
-
-				bool folded_value = (op == "&&");
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
-				auto appendConstantOperand = [&](const ASTNode& operand) -> bool {
-					auto eval_result = ConstExpr::Evaluator::evaluate(operand, eval_ctx);
-					if (!eval_result.success()) {
-						return false;
-					}
-					bool operand_value = eval_result.as_bool();
-					folded_value = op == "&&"
-						? (folded_value && operand_value)
-						: (folded_value || operand_value);
-					return true;
-				};
-
-				if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
-					ASTNode init = substitute_nested(*fold.init_expr());
-					if (!appendConstantOperand(init)) {
-						return std::nullopt;
-					}
-				}
-
-				for (const ASTNode& pack_value : pack_values) {
-					if ((op == "&&" && !folded_value) ||
-						(op == "||" && folded_value)) {
-						break;
-					}
-					if (!appendConstantOperand(pack_value)) {
-						return std::nullopt;
-					}
-				}
-
-				Token bool_token(
-					Token::Type::Keyword,
-					folded_value ? "true"sv : "false"sv,
-					fold.get_token().line(),
-					fold.get_token().column(),
-					fold.get_token().file_index());
-				return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, folded_value));
-			};
-
-			if (std::optional<ASTNode> folded_logical = tryReduceConstexprLogicalFold()) {
-				return *folded_logical;
-			}
-
-			// Expand the fold expression based on type and direction
-			ASTNode result_expr;
-			Token op_token = fold.get_token();
-
-			if (fold.type() == FoldExpressionNode::Type::Unary) {
-				// Unary fold: (... op pack) or (pack op ...)
-				if (fold.direction() == FoldExpressionNode::Direction::Left) {
-					// Left fold: (... op pack) = ((pack[0] op pack[1]) op pack[2]) ...
-					result_expr = pack_values[0];
-					for (size_t i = 1; i < pack_values.size(); ++i) {
-						result_expr = emplace_node<ExpressionNode>(
-							BinaryOperatorNode(op_token, result_expr, pack_values[i]));
-					}
-				} else {
-					// Right fold: (pack op ...) = pack[0] op (pack[1] op (pack[2] op ...))
-					result_expr = pack_values[pack_values.size() - 1];
-					for (int i = static_cast<int>(pack_values.size()) - 2; i >= 0; --i) {
-						result_expr = emplace_node<ExpressionNode>(
-							BinaryOperatorNode(op_token, pack_values[i], result_expr));
-					}
-				}
-			} else {
-				// Binary fold with init expression
-				ASTNode init = substitute_nested(*fold.init_expr());
-
-				if (fold.direction() == FoldExpressionNode::Direction::Left) {
-					// Left binary fold: (init op ... op pack) = (((init op pack[0]) op pack[1]) op ...)
-					result_expr = init;
-					for (size_t i = 0; i < pack_values.size(); ++i) {
-						result_expr = emplace_node<ExpressionNode>(
-							BinaryOperatorNode(op_token, result_expr, pack_values[i]));
-					}
-				} else {
-					// Right binary fold: (pack op ... op init) = pack[0] op (pack[1] op (... op init))
-					result_expr = init;
-					for (int i = static_cast<int>(pack_values.size()) - 1; i >= 0; --i) {
-						result_expr = emplace_node<ExpressionNode>(
-							BinaryOperatorNode(op_token, pack_values[i], result_expr));
-					}
-				}
-			}
-
-			return result_expr;
-		} else if (std::holds_alternative<SizeofPackNode>(expr)) {
-			// sizeof... operator - replace with the pack size as a constant
-			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
-			std::string_view pack_name = sizeof_pack.pack_name();
-			FLASH_LOG(Templates, Trace, "*** SizeofPackNode handler entered for pack: '", pack_name, "'");
-
-			NamedPackBinding pack_binding = resolveNamedPackBinding(pack_name);
-			size_t num_pack_elements = pack_binding.found ? pack_binding.count : 0;
-			bool found_variadic = pack_binding.found;
-
-			// If pack name not found, check if it's a known template parameter from an enclosing
-			// class template context (e.g., sizeof...(_Elements) in a member function of tuple<_Elements...>).
-			// If so, treat as template-dependent and return unchanged.
-			// If truly unknown, throw an error.
-			if (!found_variadic) {
-				// Check if we're inside a template body and the pack name is a known template parameter
-				bool is_known_template_param = false;
-				if (parsing_template_depth_ > 0) {
-					for (const auto& param_name : currentTemplateParamNames()) {
-						if (StringTable::getStringView(param_name) == pack_name) {
-							is_known_template_param = true;
-							break;
-						}
-					}
-				}
-				// Also check if any class template in the registry has this pack name
-				if (!is_known_template_param) {
-					for (const auto& [key, infos] : class_template_pack_registry_) {
-						for (const auto& info : infos) {
-							if (info.pack_name == pack_name) {
-								is_known_template_param = true;
-								break;
-							}
-						}
-						if (is_known_template_param)
-							break;
-					}
-				}
-				// Also check if the pack name is a template parameter of an enclosing class template
-				// (e.g., sizeof...(_Elements) inside a member function template of tuple<_Elements...>)
-				if (!is_known_template_param && !struct_parsing_context_stack_.empty()) {
-					for (auto sit = struct_parsing_context_stack_.rbegin(); sit != struct_parsing_context_stack_.rend() && !is_known_template_param; ++sit) {
-						std::string_view struct_name = sit->struct_name;
-						// Try multiple lookup candidates following unqualified lookup rules:
-						// direct name, template base name for instantiated classes, and each enclosing namespace.
-						std::vector<std::string_view> base_names_to_try;
-						base_names_to_try.reserve(2);
-						std::vector<std::string_view> names_to_try;
-						names_to_try.reserve(8);
-						auto add_name_to_try = [&names_to_try](std::string_view name) {
-							if (name.empty()) {
-								return;
-							}
-							for (const auto existing : names_to_try) {
-								if (existing == name) {
-									return;
-								}
-							}
-							names_to_try.push_back(name);
-						};
-						auto add_base_name_to_try = [&base_names_to_try](std::string_view name) {
-							if (name.empty()) {
-								return;
-							}
-							for (const auto existing : base_names_to_try) {
-								if (existing == name) {
-									return;
-								}
-							}
-							base_names_to_try.push_back(name);
-						};
-
-						add_base_name_to_try(struct_name);
-						std::string_view base_tmpl_name = extractBaseTemplateName(struct_name);
-						if (!base_tmpl_name.empty()) {
-							add_base_name_to_try(base_tmpl_name);
-						}
-						for (std::string_view base_name : base_names_to_try) {
-							add_name_to_try(base_name);
-						}
-
-						NamespaceHandle ns = sit->namespace_handle.isValid() ? sit->namespace_handle : gSymbolTable.get_current_namespace_handle();
-						NamespaceHandle walk_ns = ns;
-						while (walk_ns.isValid() && !walk_ns.isGlobal()) {
-							for (std::string_view base_name : base_names_to_try) {
-								StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
-									walk_ns, StringTable::getOrInternStringHandle(base_name));
-								add_name_to_try(StringTable::getStringView(qualified));
-							}
-							walk_ns = gNamespaceRegistry.getParent(walk_ns);
-						}
-
-						for (size_t ni = 0; ni < names_to_try.size() && !is_known_template_param; ++ni) {
-							// Check ALL overloads, not just the first one
-							const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(names_to_try[ni]);
-							if (all_tmpls) {
-								for (const auto& tmpl_node : *all_tmpls) {
-									if (is_known_template_param)
-										break;
-									if (tmpl_node.is<TemplateClassDeclarationNode>()) {
-										const auto& tmpl_class = tmpl_node.as<TemplateClassDeclarationNode>();
-										for (const auto& param : tmpl_class.template_parameters()) {
-											if (param.is_variadic()) {
-												// Match by name, or match if the stored name is anonymous
-												// (from forward declarations like `template<typename...> class tuple;`)
-												if (param.name() == pack_name || param.name().starts_with("__anon_type_")) {
-													is_known_template_param = true;
-													break;
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-				if (is_known_template_param) {
-					FLASH_LOG(Templates, Trace, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
-					return node;
-				}
-				// Pack name is genuinely unknown — this is a C++ constraint violation.
-				FLASH_LOG(Parser, Error, "'", pack_name, "' does not refer to the name of a parameter pack");
-				throw CompileError("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
-			}
-
-			// Create an integer literal with the pack size
-			FLASH_LOG(Templates, Trace, "*** Replacing sizeof...(", pack_name, ") with literal: ", num_pack_elements);
-			StringBuilder pack_size_builder;
-			std::string_view pack_size_str = pack_size_builder.append(num_pack_elements).commit();
-			Token literal_token(Token::Type::Literal, pack_size_str,
-								sizeof_pack.sizeof_token().line(), sizeof_pack.sizeof_token().column(),
-								sizeof_pack.sizeof_token().file_index());
-			ASTNode result = emplace_node<ExpressionNode>(
-				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements),
-								   TypeCategory::Int, TypeQualifier::None, 32));
-			FLASH_LOG(Templates, Trace, "*** Created NumericLiteralNode, returning");
-			return result;
-		} else if (std::holds_alternative<NewExpressionNode>(expr)) {
-			return substituteWithExpressionSubstitutor(node);
-		} else if (std::holds_alternative<InitializerListConstructionNode>(expr)) {
-			return substituteWithExpressionSubstitutor(node);
-		} else if (const auto* noexcept_expr = std::get_if<NoexceptExprNode>(&expr)) {
-			ASTNode substituted_operand = substitute_nested(noexcept_expr->expr());
-			return emplace_node<ExpressionNode>(NoexceptExprNode(
-				substituted_operand,
-				noexcept_expr->noexcept_token()));
-		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
-			// static_cast<Type>(expr) - recursively substitute in both target type and expression
-			const StaticCastNode& cast_node = *static_cast_node;
-			ASTNode substituted_type =
-				substitute_nested(ASTNode(&cast_node.target_type()));
-			if (cast_node.expr().is<ExpressionNode>()) {
-				const ExpressionNode& cast_expr = cast_node.expr().as<ExpressionNode>();
-				if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&cast_expr)) {
-					ChunkedVector<ASTNode> expanded_args;
-					if (expandPackExpansionArgs(*pack_expansion_expr, template_params, template_args, expanded_args)) {
-						if (expanded_args.size() == 1) {
-							return emplace_node<ExpressionNode>(StaticCastNode(
-								substituted_type.as<TypeSpecifierNode>(),
-								expanded_args[0],
-								cast_node.cast_token()));
-						}
-					}
-				}
-			}
-			ASTNode substituted_expr = substitute_nested(cast_node.expr());
-			return emplace_node<ExpressionNode>(StaticCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
-		} else if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {
-			const DynamicCastNode& cast_node = *dynamic_cast_node;
-			ASTNode substituted_type =
-				substitute_nested(ASTNode(&cast_node.target_type()));
-			ASTNode substituted_expr = substitute_nested(cast_node.expr());
-			return emplace_node<ExpressionNode>(DynamicCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
-		} else if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
-			const ConstCastNode& cast_node = *const_cast_node;
-			ASTNode substituted_type =
-				substitute_nested(ASTNode(&cast_node.target_type()));
-			ASTNode substituted_expr = substitute_nested(cast_node.expr());
-			return emplace_node<ExpressionNode>(ConstCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
-		} else if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr)) {
-			const ReinterpretCastNode& cast_node = *reinterpret_cast_node;
-			ASTNode substituted_type =
-				substitute_nested(ASTNode(&cast_node.target_type()));
-			ASTNode substituted_expr = substitute_nested(cast_node.expr());
-			return emplace_node<ExpressionNode>(ReinterpretCastNode(substituted_type.as<TypeSpecifierNode>(), substituted_expr, cast_node.cast_token()));
-		} else if (std::holds_alternative<SizeofExprNode>(expr)) {
-			// sizeof operator - substitute template parameters in the operand and try to evaluate
-			const SizeofExprNode& sizeof_expr = std::get<SizeofExprNode>(expr);
-
-			if (sizeof_expr.is_type()) {
-				// sizeof(type) - substitute the type
-				ASTNode type_or_expr = sizeof_expr.type_or_expr();
-
-				// Check if the type is a TypeSpecifierNode
-				if (type_or_expr.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
-
-					// A direct template parameter carries an explicit scoped binding identity.
-					// Do not infer that identity from a matching terminal type index: aliases
-					// can denote the same element type while adding array or indirection shape.
-					if (type_spec.has_template_parameter_identity()) {
-						bool substituted_sizeof_type = false;
-						std::optional<ASTNode> substituted_sizeof_node;
-						forEachNonPackTemplateParamArgBinding(
-							template_params,
-							template_args,
-							[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
-								if (substituted_sizeof_type || !arg.isTypeArgument())
-									return;
-								if (tparam.nameHandle() != type_spec.template_parameter_name())
-									return;
-
-								size_t type_size = getSubstitutedTemplateArgumentSizeInBytes(arg);
-								if (type_size == 0)
-									return;
-								StringBuilder size_builder;
-								std::string_view size_str = size_builder.append(type_size).commit();
-								Token literal_token(Token::Type::Literal, size_str,
-													sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(),
-													sizeof_expr.sizeof_token().file_index());
-								substituted_sizeof_node = emplace_node<ExpressionNode>(
-									NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size),
-													   TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
-								substituted_sizeof_type = true;
-							});
-						if (substituted_sizeof_type)
-							return *substituted_sizeof_node;
-					}
-
-					// Otherwise, recursively substitute the type node
-					ASTNode substituted_type = substitute_nested(type_or_expr);
-					if (auto folded_sizeof = tryFoldSubstitutedSizeofTypeNode(substituted_type, sizeof_expr.sizeof_token());
-						folded_sizeof.has_value()) {
-						return *folded_sizeof;
-					}
-					return emplace_node<ExpressionNode>(SizeofExprNode(substituted_type, sizeof_expr.sizeof_token()));
-				}
-		} else {
-			// sizeof(expression) - substitute the expression
-			ASTNode substituted_expr = substitute_nested(sizeof_expr.type_or_expr());
-			if (sizeof_expr.type_or_expr().is<ExpressionNode>()) {
-				const ExpressionNode& original_expr = sizeof_expr.type_or_expr().as<ExpressionNode>();
-				std::string_view dependent_name;
-				if (const auto* ident = std::get_if<IdentifierNode>(&original_expr)) {
-					dependent_name = ident->name();
-				} else if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&original_expr)) {
-					dependent_name = tparam_ref->param_name().view();
-				}
-				if (!dependent_name.empty()) {
-					const TemplateTypeArg* bound_arg = findTemplateArgByName(
-						dependent_name,
-						template_params,
-						template_args);
-					if (bound_arg != nullptr && bound_arg->isTypeArgument()) {
-						TypeSpecifierNode bound_type = makeTypeSpecifierFromTemplateTypeArg(
-							*bound_arg,
-							sizeof_expr.sizeof_token());
-						int size_bits = getTypeSpecSizeBits(bound_type);
-						if (size_bits > 0) {
-							StringBuilder size_builder;
-							std::string_view size_str = size_builder.append(static_cast<size_t>(size_bits / 8)).commit();
-							Token literal_token(Token::Type::Literal, size_str,
-												sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(),
-												sizeof_expr.sizeof_token().file_index());
-							return emplace_node<ExpressionNode>(NumericLiteralNode(
-								literal_token,
-								static_cast<unsigned long long>(size_bits / 8),
-								TypeCategory::UnsignedLongLong,
-								TypeQualifier::None,
-								64));
-						}
-						return emplace_node<ExpressionNode>(SizeofExprNode(
-							ASTNode::emplace_node<TypeSpecifierNode>(bound_type),
-							sizeof_expr.sizeof_token()));
-					}
-				}
-			}
-			return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(substituted_expr, sizeof_expr.sizeof_token()));
-		}
-
-			// Return the original node if no substitution was possible
-			return node;
-		}
-
-		if (std::holds_alternative<CallExprNode>(expr)) {
-			return substituteCallExprWithExpressionSubstitutor(std::get<CallExprNode>(expr));
-		}
-
-		if (std::holds_alternative<ConstructorCallNode>(expr)) {
-			return substitute_nested(
-				ASTNode(&std::get<ConstructorCallNode>(expr)));
-		}
-
-		// For other expression types that don't contain subexpressions, return as-is
-		return node;
-
-	} else if (node.is<CallExprNode>()) {
-		return substituteCallExprWithExpressionSubstitutor(node.as<CallExprNode>());
-
-	} else if (node.is<ConstructorCallNode>()) {
-		const ConstructorCallNode& constructor_call = node.as<ConstructorCallNode>();
-		std::string_view constructor_name = constructor_call.type_node().token().value();
-		if (!constructor_name.empty()) {
-			const TemplateTypeArg* bound_arg = nullptr;
-			forEachNonPackTemplateParamArgBinding(
-				template_params,
-				template_args,
-				[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
-					if (bound_arg == nullptr && param.name() == constructor_name) {
-						bound_arg = &arg;
-					}
-				});
-			if (bound_arg != nullptr &&
-				bound_arg->is_value &&
-				bound_arg->has_typed_value_identity &&
-				bound_arg->typed_value_identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
-				bound_arg->typed_value_identity.entity_name.isValid()) {
-				ChunkedVector<ASTNode> substituted_args;
-				for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
-					substituteArgWithPackExpansion(
-						constructor_call.arguments()[i],
-						template_params,
-						template_args,
-						state,
-						substituted_args);
-				}
-				if (std::optional<ASTNode> function_symbol =
-						gSymbolTable.lookup(bound_arg->typed_value_identity.entity_name);
-					function_symbol.has_value() &&
-					function_symbol->is<FunctionDeclarationNode>()) {
-					return ASTNode::emplace_node<ExpressionNode>(
-						makeResolvedCallExpr(
-							function_symbol->as<FunctionDeclarationNode>(),
-							std::move(substituted_args),
-							constructor_call.called_from()));
-				}
-			}
-		}
-		ASTNode substituted_type =
-			substitute_nested(ASTNode(&constructor_call.type_node()));
-			ChunkedVector<ASTNode> substituted_args;
-			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
-				substituteArgWithPackExpansion(
-					constructor_call.arguments()[i],
-					template_params,
-					template_args,
-					state,
-					substituted_args);
-			}
-		return makeRebuiltConstructorCallNode(
-			constructor_call,
-			substituted_type.as<TypeSpecifierNode>(),
-			std::move(substituted_args),
-			/*wrap_in_expression=*/false);
-
-	} else if (node.is<BinaryOperatorNode>()) {
-		// Handle binary operators
-		const BinaryOperatorNode& bin_op = node.as<BinaryOperatorNode>();
-
-		ASTNode substituted_left = substitute_nested(bin_op.get_lhs());
-		ASTNode substituted_right = substitute_nested(bin_op.get_rhs());
-
-		BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
-		annotateConcreteBinaryOperatorOverload(substituted_binop);
-		return emplace_node<BinaryOperatorNode>(substituted_binop);
-
-	} else if (node.is<TernaryOperatorNode>()) {
-		return substituteTernaryOperator(node.as<TernaryOperatorNode>(), false);
-
-	} else if (node.is<PointerToMemberAccessNode>()) {
-		const PointerToMemberAccessNode& member_access = node.as<PointerToMemberAccessNode>();
-		ASTNode substituted_object = substitute_nested(member_access.object());
-		ASTNode substituted_member_pointer = substitute_nested(member_access.member_pointer());
-		return makeRebuiltPointerToMemberAccessNode(
-			member_access,
-			substituted_object,
-			substituted_member_pointer,
-			/*wrap_in_expression=*/false);
-
-	} else if (node.is<DeclarationNode>()) {
+	// Non-expression AST nodes retain their existing parser-owned substitution paths.
+	if (node.is<DeclarationNode>()) {
 		// Handle declarations that might have template parameter types
 		const DeclarationNode& decl = node.as<DeclarationNode>();
 
@@ -2590,234 +1341,48 @@ void Parser::substituteArgWithPackExpansion(
 // this returns `identity(args_2)`.
 // Recursively walks the expression tree to find and replace IdentifierNodes matching pack_name.
 ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_view pack_name, size_t element_index) {
-	if (!expr.has_value() || pack_name.empty())
+	if (!expr.has_value() || pack_name.empty()) {
 		return expr;
+	}
+	if (expr.is<TypeSpecifierNode>()) {
+		return expr;
+	}
 
-	// Handle ExpressionNode variant
+	const auto replace_identifier = [&](const IdentifierNode& identifier) -> ASTNode {
+		if (identifier.name() != pack_name) {
+			return ASTNode();
+		}
+		StringBuilder expanded_name;
+		expanded_name.append(pack_name);
+		expanded_name.append('_');
+		expanded_name.append(element_index);
+		Token new_token(Token::Type::Identifier, expanded_name.commit(), 0, 0, 0);
+		return emplace_node<ExpressionNode>(createBoundIdentifier(new_token));
+	};
+
+	if (expr.is<IdentifierNode>()) {
+		if (ASTNode replacement = replace_identifier(expr.as<IdentifierNode>()); replacement.has_value()) {
+			return replacement;
+		}
+	}
 	if (expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
-
-		if (std::holds_alternative<IdentifierNode>(expr_variant)) {
-			const IdentifierNode& id = std::get<IdentifierNode>(expr_variant);
-			if (id.name() == pack_name) {
-				StringBuilder expanded_name;
-				expanded_name.append(pack_name);
-				expanded_name.append('_');
-				expanded_name.append(element_index);
-				std::string_view expanded_sv = expanded_name.commit();
-				Token new_token(Token::Type::Identifier, expanded_sv, 0, 0, 0);
-				return emplace_node<ExpressionNode>(createBoundIdentifier(new_token));
+		const ExpressionNode& expression = expr.as<ExpressionNode>();
+		if (const auto* identifier = std::get_if<IdentifierNode>(&expression)) {
+			if (ASTNode replacement = replace_identifier(*identifier); replacement.has_value()) {
+				return replacement;
 			}
-			return expr;
 		}
-
-		if (std::holds_alternative<CallExprNode>(expr_variant)) {
-			const CallExprNode& call = std::get<CallExprNode>(expr_variant);
-			ChunkedVector<ASTNode> new_args;
-			for (size_t i = 0; i < call.arguments().size(); ++i) {
-				new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
-			}
-
-			ASTNode new_call = call.has_receiver()
-				? emplace_node<ExpressionNode>(CallExprNode(
-					call.callee(),
-					replacePackIdentifierInExpr(call.receiver(), pack_name, element_index),
-					std::move(new_args),
-					call.called_from()))
-				: emplace_node<ExpressionNode>(CallExprNode(
-					call.callee(),
-					std::move(new_args),
-					call.called_from()));
-			CallExprNode& new_call_ref = std::get<CallExprNode>(new_call.as<ExpressionNode>());
-			copyCallMetadataWithTransformedTemplateArguments(
-				new_call_ref,
-				call,
-				[&](const ASTNode& template_arg) {
-					return replacePackIdentifierInExpr(template_arg, pack_name, element_index);
-				},
-				CallMetadataCopyOptions{});
-			return new_call;
-		}
-
-		if (const auto* binary_operator = std::get_if<BinaryOperatorNode>(&expr_variant)) {
-			const BinaryOperatorNode& binop = *binary_operator;
-			ASTNode new_lhs = replacePackIdentifierInExpr(binop.get_lhs(), pack_name, element_index);
-			ASTNode new_rhs = replacePackIdentifierInExpr(binop.get_rhs(), pack_name, element_index);
-			BinaryOperatorNode rebound_binop(binop.get_token(), new_lhs, new_rhs);
-			return emplace_node<ExpressionNode>(rebound_binop);
-		}
-
-		if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr_variant)) {
-			const UnaryOperatorNode& unop = *unary_operator;
-			ASTNode new_operand = replacePackIdentifierInExpr(unop.get_operand(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(UnaryOperatorNode(
-				unop.get_token(),
-				new_operand,
-				unop.is_prefix(),
-				unop.is_builtin_addressof()));
-		}
-
-		if (std::holds_alternative<ConstructorCallNode>(expr_variant)) {
-			const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr_variant);
-			ChunkedVector<ASTNode> new_args;
-			for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-				new_args.push_back(replacePackIdentifierInExpr(ctor.arguments()[i], pack_name, element_index));
-			}
-			return emplace_node<ExpressionNode>(ConstructorCallNode(ctor.type_node(), std::move(new_args), ctor.called_from()));
-		}
-
-		if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr_variant)) {
-			const StaticCastNode& cast = *static_cast_node;
-			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(StaticCastNode(cast.target_type(), new_expr, cast.cast_token()));
-		}
-
-		if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr_variant)) {
-			const DynamicCastNode& cast = *dynamic_cast_node;
-			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(DynamicCastNode(cast.target_type(), new_expr, cast.cast_token()));
-		}
-
-		if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr_variant)) {
-			const ConstCastNode& cast = *const_cast_node;
-			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(ConstCastNode(cast.target_type(), new_expr, cast.cast_token()));
-		}
-
-		if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr_variant)) {
-			const ReinterpretCastNode& cast = *reinterpret_cast_node;
-			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(ReinterpretCastNode(cast.target_type(), new_expr, cast.cast_token()));
-		}
-
-		if (const auto* sizeof_expr = std::get_if<SizeofExprNode>(&expr_variant)) {
-			if (sizeof_expr->is_type()) {
-				return expr;
-			}
-			ASTNode new_expr = replacePackIdentifierInExpr(sizeof_expr->type_or_expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(new_expr, sizeof_expr->sizeof_token()));
-		}
-
-		if (const auto* alignof_expr = std::get_if<AlignofExprNode>(&expr_variant)) {
-			if (alignof_expr->is_type()) {
-				return expr;
-			}
-			ASTNode new_expr = replacePackIdentifierInExpr(alignof_expr->type_or_expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(AlignofExprNode::from_expression(new_expr, alignof_expr->alignof_token()));
-		}
-
-		if (const auto* typeid_expr = std::get_if<TypeidNode>(&expr_variant)) {
-			if (typeid_expr->is_type()) {
-				return expr;
-			}
-			ASTNode new_operand = replacePackIdentifierInExpr(typeid_expr->operand(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(TypeidNode(new_operand, false, typeid_expr->typeid_token()));
-		}
-
-		if (const auto* noexcept_expr = std::get_if<NoexceptExprNode>(&expr_variant)) {
-			ASTNode new_expr = replacePackIdentifierInExpr(noexcept_expr->expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(NoexceptExprNode(new_expr, noexcept_expr->noexcept_token()));
-		}
-
-		if (const auto* ternary_operator = std::get_if<TernaryOperatorNode>(&expr_variant)) {
-			const TernaryOperatorNode& ternary = *ternary_operator;
-			ASTNode new_cond = replacePackIdentifierInExpr(ternary.condition(), pack_name, element_index);
-			ASTNode new_true = replacePackIdentifierInExpr(ternary.true_expr(), pack_name, element_index);
-			ASTNode new_false = replacePackIdentifierInExpr(ternary.false_expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(TernaryOperatorNode(new_cond, new_true, new_false, ternary.get_token()));
-		}
-
-		if (const auto* member_access = std::get_if<MemberAccessNode>(&expr_variant)) {
-			const MemberAccessNode& ma = *member_access;
-			ASTNode new_object = replacePackIdentifierInExpr(ma.object(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(MemberAccessNode(new_object, ma.member_token(), ma.is_arrow()));
-		}
-
-		if (const auto* pointer_to_member_access = std::get_if<PointerToMemberAccessNode>(&expr_variant)) {
-			const PointerToMemberAccessNode& member_access = *pointer_to_member_access;
-			ASTNode new_object = replacePackIdentifierInExpr(member_access.object(), pack_name, element_index);
-			ASTNode new_member_pointer = replacePackIdentifierInExpr(member_access.member_pointer(), pack_name, element_index);
-			return makeRebuiltPointerToMemberAccessNode(
-				member_access,
-				new_object,
-				new_member_pointer,
-				/*wrap_in_expression=*/true);
-		}
-
-		if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr_variant)) {
-			const ArraySubscriptNode& sub = *array_subscript;
-			ASTNode new_array = replacePackIdentifierInExpr(sub.array_expr(), pack_name, element_index);
-			ASTNode new_index = replacePackIdentifierInExpr(sub.index_expr(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(ArraySubscriptNode(new_array, new_index, sub.bracket_token()));
-		}
-
-		// For other variant types, return as-is
-		return expr;
 	}
 
-	if (expr.is<CallExprNode>()) {
-		const CallExprNode& call = expr.as<CallExprNode>();
-		ChunkedVector<ASTNode> new_args;
-		for (size_t i = 0; i < call.arguments().size(); ++i) {
-			new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
-		}
-		ASTNode new_call = call.has_receiver()
-			? emplace_node<ExpressionNode>(CallExprNode(
-				call.callee(),
-				replacePackIdentifierInExpr(call.receiver(), pack_name, element_index),
-				std::move(new_args),
-				call.called_from()))
-			: emplace_node<ExpressionNode>(CallExprNode(
-				call.callee(),
-				std::move(new_args),
-				call.called_from()));
-		CallExprNode& new_call_ref = std::get<CallExprNode>(new_call.as<ExpressionNode>());
-		copyCallMetadataWithTransformedTemplateArguments(
-			new_call_ref,
-			call,
-			[&](const ASTNode& template_arg) {
-				return replacePackIdentifierInExpr(template_arg, pack_name, element_index);
-			},
-			CallMetadataCopyOptions{});
-		return new_call;
-	}
-
-	if (expr.is<SizeofExprNode>()) {
-		const SizeofExprNode& sizeof_expr = expr.as<SizeofExprNode>();
-		if (sizeof_expr.is_type()) {
-			return expr;
-		}
-		ASTNode new_expr = replacePackIdentifierInExpr(sizeof_expr.type_or_expr(), pack_name, element_index);
-		return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(new_expr, sizeof_expr.sizeof_token()));
-	}
-
-	if (expr.is<AlignofExprNode>()) {
-		const AlignofExprNode& alignof_expr = expr.as<AlignofExprNode>();
-		if (alignof_expr.is_type()) {
-			return expr;
-		}
-		ASTNode new_expr = replacePackIdentifierInExpr(alignof_expr.type_or_expr(), pack_name, element_index);
-		return emplace_node<ExpressionNode>(AlignofExprNode::from_expression(new_expr, alignof_expr.alignof_token()));
-	}
-
-	if (expr.is<TypeidNode>()) {
-		const TypeidNode& typeid_expr = expr.as<TypeidNode>();
-		if (typeid_expr.is_type()) {
-			return expr;
-		}
-		ASTNode new_operand = replacePackIdentifierInExpr(typeid_expr.operand(), pack_name, element_index);
-		return emplace_node<ExpressionNode>(TypeidNode(new_operand, false, typeid_expr.typeid_token()));
-	}
-
-	if (expr.is<NoexceptExprNode>()) {
-		const NoexceptExprNode& noexcept_expr = expr.as<NoexceptExprNode>();
-		ASTNode new_expr = replacePackIdentifierInExpr(noexcept_expr.expr(), pack_name, element_index);
-		return emplace_node<ExpressionNode>(NoexceptExprNode(new_expr, noexcept_expr.noexcept_token()));
-	}
-
-	return expr;
+	ExpressionRewriter rewriter;
+	const auto rewrite_one_to_one = [&](const ASTNode& child, ExpressionStructure::ExpressionChildRole) {
+		return replacePackIdentifierInExpr(child, pack_name, element_index);
+	};
+	const auto rewrite_zero_to_many = [&](const ASTNode& child, ExpressionStructure::ExpressionChildRole, std::vector<ASTNode>& output) {
+		output.push_back(replacePackIdentifierInExpr(child, pack_name, element_index));
+	};
+	return rewriter.rewrite(expr, rewrite_one_to_one, rewrite_zero_to_many);
 }
-
 
 InlineVector<ASTNode, 4> Parser::expandPackExpressionArgument(const ASTNode& pattern) {
 	InlineVector<const PackParamInfo*, 4> packs_in_expr;
