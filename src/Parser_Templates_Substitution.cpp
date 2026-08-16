@@ -1469,6 +1469,8 @@ ASTNode Parser::substituteTemplateParametersWithState(
 								   TypeCategory::Int, TypeQualifier::None, 32));
 			FLASH_LOG(Templates, Trace, "*** Created NumericLiteralNode, returning");
 			return result;
+		} else if (std::holds_alternative<NewExpressionNode>(expr)) {
+			return substituteWithExpressionSubstitutor(node);
 		} else if (std::holds_alternative<InitializerListConstructionNode>(expr)) {
 			return substituteWithExpressionSubstitutor(node);
 		} else if (const auto* noexcept_expr = std::get_if<NoexceptExprNode>(&expr)) {

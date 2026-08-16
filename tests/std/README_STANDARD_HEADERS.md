@@ -66,8 +66,8 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Runs | 8.00s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 9.35s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Instantiated `std::begin`/`std::end` wrappers now reach IR with recovered member return types; `_Has_value` is still missing from the `optional` layout. |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 10.02s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past the shared wrapper-return stop; pack-expansion nodes still survive into codegen for `_Construct_in_place` / `construct_at`, a binary expression lacks an exact semantic slot, and `_Cast` reaches a missing `operator!=`. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | 10.80s compile (retested 2026-08-16, Windows/MSVC STL 14.44). Instantiated `std::begin`/`std::end` wrappers now reach IR with recovered member return types; `_Has_value` is still missing from the `optional` layout. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | 11.29s compile (retested 2026-08-16, Windows/MSVC STL 14.44). Pack expansions in ordinary and placement `new` constructor arguments are now eliminated before sema/IR; the first remaining stop is a binary expression without an exact semantic slot, followed by `_Cast` reaching a missing `operator!=`. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Runs | 1.76s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Runs | 1.31s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Runs | 4.66s wall (retested 2026-08-13 evening, Windows/MSVC STL 14.44). |
@@ -78,10 +78,10 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<span>` | `test_std_span.cpp` | ❌ Link Error | 9.16s frontend compile (retested 2026-08-15, Windows/MSVC STL 14.44). Parsing, sema, and IR complete; link exposes unresolved CRTP/view calls, reverse-iterator construction, range verification, and `std::move`. The concrete `subrange::begin` return still substitutes `_It` as the CPO type. |
 | `<tuple>` | `test_std_tuple.cpp` | ✅ Runs | 2.82s compiler total (retested 2026-08-15, Windows/MSVC STL 14.44). Constructor-template partial ordering, implicit base-constructor overload resolution, zero-argument default-template deduction, and static-member definition ownership are covered by reduced non-`std` regressions. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | 11.68s compile (retested 2026-08-15, Windows/MSVC STL 14.44). `vector:1537:15`: Failed to instantiate template function at `_Pocca(_Al, _Right_al)`. |
-| `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | 11.52s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past C++20 omitted-`typename` `erase`/`erase_if`; same `subrange` `begin`/`end` CPO lowering stop as `<optional>`. |
+| `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | 11.32s compile (retested 2026-08-16, Windows/MSVC STL 14.44). Pack expansions in `_Construct_in_place` / `construct_at` now clear sema and IR; the first remaining top-level failure is a missing sema initializer conversion for `_Big_allocation_threshold` (`int` to `size_t`). |
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | 10.87s compile (retested 2026-08-15, Windows/MSVC STL 14.44). `list:951:23`: Failed to instantiate template function at `_Pocma(_Al, _Right_al)`. |
 | `<queue>` | `test_std_queue.cpp` | ❌ Compile Error | 12.29s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past included `<deque>` omitted-`typename`; now blocked on included `<vector>` `_Pocca`. |
-| `<stack>` | `test_std_stack.cpp` | ❌ Codegen Error | 10.91s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Past included `<deque>` omitted-`typename`; same `subrange` `begin`/`end` CPO lowering stop as `<deque>`. |
+| `<stack>` | `test_std_stack.cpp` | ❌ Codegen Error | 11.46s compile (retested 2026-08-16, Windows/MSVC STL 14.44). Included `<deque>` now clears `new`-expression pack expansion and reaches the same missing sema initializer conversion for `_Big_allocation_threshold`. |
 | `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | 9.49s compile (retested 2026-08-13 evening, Windows/MSVC STL 14.44). Included `<atomic>` now gets past `__iso_volatile_store32` and stops at `atomic:537:42`: No matching function for `_InterlockedCompareExchange128`. |
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | 11.72s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Included `<list>` still stops at `list:951:23` while instantiating `_Pocma(_Al, _Right_al)`. |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | 11.81s compile (retested 2026-08-15, Windows/MSVC STL 14.44). Instantiated `noexcept` is not a constant expression. |
@@ -158,9 +158,9 @@ First stop and the language mechanism to fix. Not a session work-log.
 | Header | Stop | Mechanism to fix |
 |--------|------|------------------|
 | `<optional>` | Codegen: `_Has_value` is missing from the `optional` layout | Complete inherited-member/layout materialization for `optional` |
-| `<any>` | Pack-expansion nodes survive into codegen for `_Construct_in_place` / `construct_at`; a binary expression lacks an exact sema slot; `_Cast` reaches a missing `operator!=` | Expand pack-expansion call arguments and complete generic dependent operator/member resolution before IR |
+| `<any>` | A binary expression lacks an exact sema slot; `_Cast` subsequently reaches a missing `operator!=` | Complete generic dependent operator/member resolution before IR |
 | `<array>` / `<span>` / `<numeric>` / `<iterator>` | Link: unresolved generic CRTP/view and iterator calls; concrete `subrange::begin` still has `_It` substituted as the CPO type | Correct the concrete class-template argument environment for constrained member materialization, then emit/reach the resolved generic member definitions |
-| `<deque>` / `<stack>` | Codegen: shared `subrange` `begin`/`end` CPO lowering stop | Apply the same generic deferred receiver-call recovery, then complete the concrete `subrange` template argument environment |
+| `<deque>` / `<stack>` | IR boundary: namespace-scope `_Big_allocation_threshold` lacks its sema-owned `int` to `size_t` initializer conversion | Ensure namespace/global variables materialized during header/template processing receive the same initialization-conversion annotation as local declarations |
 | `<atomic>` / `<memory>` / `<latch>` / `<shared_mutex>` | Sema: no matching `_InterlockedCompareExchange128` (`long long*`, two `long long` values, `long long[2]`) | Model the MSVC 128-bit CAS intrinsic, including array-to-pointer decay of the comparand result |
 | `<iostream>` / `<sstream>` / `<map>` / `<set>` | Sema: instantiated `noexcept` is not a constant expression | Evaluate dependent `noexcept` specifications after substitution the same way other instantiated exception specs are |
 | `<vector>` / `<queue>` | Sema: `_Pocca(_Al, _Right_al)` overload/template instantiation fails | Preserve and resolve definition-bound dependent overload sets through allocator-trait member replay |
@@ -169,7 +169,19 @@ First stop and the language mechanism to fix. Not a session work-log.
 | `<ranges>` | Template-instantiation iteration limit (sticky abort) | Variadic `invoke` / CPO instantiation without SoftProbe retry storms |
 | `<variant>` | Crash: stack overflow in `materializeAliasTemplateInstantiation` | Bound alias-template materialization recursion / detect cyclic alias instantiation |
 
-The 2026-08-15 parser sweep implemented C++20 P0634R3 implied `typename` in decl-specifier-seq and trailing-return-type contexts (not in nested template arguments). Reduced by `tests/test_implicit_typename_decl_specifier_ret0.cpp` and `tests/test_template_unknown_specialization_implicit_typename_ret0.cpp`. This moves `<deque>` and `<stack>` to the shared `subrange` `begin`/`end` CPO codegen stop, `<set>` onto the instantiated-`noexcept` stop with `<map>`, and `<queue>` onto included `<vector>` `_Pocca`.
+The 2026-08-16 codegen-boundary sweep reduced the `_Construct_in_place` and
+`construct_at` failures to ordinary non-`std` placement and allocating
+`new`-expressions. `ExpressionSubstitutor` now substitutes the allocated type,
+array bound, placement arguments, and constructor arguments, using the shared
+call-argument pack-expansion path before the materialized function body reaches
+semantic analysis. Coverage is
+`tests/test_new_expression_pack_expansion_ret0.cpp`, with mixed native sizes and
+both ordinary and placement construction. This removes every surviving
+`PackExpansionExprNode` diagnostic from fresh `<any>` and `<deque>` probes;
+their new first stops are recorded above without recognizing any standard
+library or vendor helper spelling.
+
+The 2026-08-15 parser sweep implemented C++20 P0634R3 implied `typename` in decl-specifier-seq and trailing-return-type contexts (not in nested template arguments). Reduced by `tests/test_implicit_typename_decl_specifier_ret0.cpp` and `tests/test_template_unknown_specialization_implicit_typename_ret0.cpp`. At that point `<deque>` and `<stack>` reached the shared late codegen path now superseded by the 2026-08-16 findings above; `<set>` moved onto the instantiated-`noexcept` stop with `<map>`, and `<queue>` onto included `<vector>` `_Pocca`.
 
 The same sweep recognized `explicit` on class-template deduction guides. Reduced by `tests/test_explicit_deduction_guide_unnamed_tmpl_param_ret0.cpp`. This clears `xstring:3125` (`explicit basic_string(basic_string_view<...>, ...)`) for `<string>`, `<fstream>`, `<chrono>`, and `<stdexcept>`; the shared next stop is `sizeof` of `_Ty` remaining incomplete in `_String_val`.
 

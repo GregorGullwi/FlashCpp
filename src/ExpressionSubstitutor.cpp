@@ -398,6 +398,8 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	// Dispatch on concrete node types (reached directly or after ExpressionNode unwrap above).
 	if (expr.is<ConstructorCallNode>()) {
 		return substituteConstructorCall(expr.as<ConstructorCallNode>());
+	} else if (expr.is<NewExpressionNode>()) {
+		return substituteNewExpression(expr.as<NewExpressionNode>());
 	} else if (expr.is<CallExprNode>()) {
 		return substituteCallExpr(expr.as<CallExprNode>());
 	} else if (expr.is<BinaryOperatorNode>()) {
@@ -481,6 +483,47 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 	// Wrap in ExpressionNode
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
 	return ASTNode(&new_expr);
+}
+
+ASTNode ExpressionSubstitutor::substituteNewExpression(const NewExpressionNode& new_expression) {
+	TypeSpecifierNode substituted_type = substituteInType(
+		new_expression.type_node().as<TypeSpecifierNode>());
+	TypeSpecifierNode& stored_type =
+		gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(substituted_type));
+
+	std::optional<ASTNode> substituted_size;
+	if (new_expression.size_expr().has_value()) {
+		substituted_size = substitute(*new_expression.size_expr());
+	}
+
+	auto appendSubstitutedArgument = [this](const ASTNode& argument, auto& output) {
+		ChunkedVector<ASTNode> expanded_arguments;
+		substituteCallArgumentPreservingPackExpansion(argument, expanded_arguments);
+		for (const ASTNode& expanded_argument : expanded_arguments) {
+			output.push_back(expanded_argument);
+		}
+	};
+	ChunkedVector<ASTNode, 128, 256> substituted_constructor_args;
+	for (const ASTNode& constructor_arg : new_expression.constructor_args()) {
+		appendSubstitutedArgument(constructor_arg, substituted_constructor_args);
+	}
+	InlineVector<ASTNode, 2> substituted_placement_args;
+	for (const ASTNode& placement_arg : new_expression.placement_args()) {
+		appendSubstitutedArgument(placement_arg, substituted_placement_args);
+	}
+
+	NewExpressionNode& stored_new_expression =
+		gChunkedAnyStorage.emplace_back<NewExpressionNode>(
+			ASTNode(&stored_type),
+			new_expression.is_array(),
+			std::move(substituted_size),
+			std::move(substituted_constructor_args),
+			std::move(substituted_placement_args),
+			new_expression.has_value_init(),
+			new_expression.is_brace_init());
+	ExpressionNode& stored_expression =
+		gChunkedAnyStorage.emplace_back<ExpressionNode>(stored_new_expression);
+	return ASTNode(&stored_expression);
 }
 
 void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
