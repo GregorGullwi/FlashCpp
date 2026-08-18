@@ -3787,6 +3787,8 @@ private:	 // Resume private methods
 	bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
+	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id
+	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume ptr-operator then array abstract-declarators on a type-id
 	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id
 	// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
 	// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,

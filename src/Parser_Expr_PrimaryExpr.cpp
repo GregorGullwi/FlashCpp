@@ -2811,6 +2811,29 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 	return materialized_owner;
 }
 
+namespace {
+ASTNode makeFunctionalCastTypeSpecifierNode(
+	const TypeInfo& instantiated_type_info,
+	const Token& inst_type_token) {
+	const TypeCategory instantiated_category =
+		instantiated_type_info.isStruct()
+			? TypeCategory::Struct
+			: instantiated_type_info.typeEnum();
+	TypeIndex inst_type_index =
+		instantiated_type_info.registeredTypeIndex().withCategory(instantiated_category);
+	if (!inst_type_index.is_valid()) {
+		throw InternalError(
+			"Functional cast materialized a class template without TypeIndex identity");
+	}
+	return ASTNode::emplace_node<TypeSpecifierNode>(
+		inst_type_index,
+		instantiated_type_info.sizeInBits(),
+		inst_type_token,
+		CVQualifier::None,
+		ReferenceQualifier::None);
+}
+}
+
 ParseResult Parser::parseMaterializedTemplateFunctionalCast(
 	const AliasTemplateMaterializationResult& materialized_owner,
 	const Token& source_token) {
@@ -2857,27 +2880,13 @@ ParseResult Parser::parseMaterializedTemplateFunctionalCast(
 		source_token.line(),
 		source_token.column(),
 		source_token.file_index());
-	ASTNode type_spec_node;
-	if (instantiated_type_info != nullptr && instantiated_type_info->isStruct()) {
-		TypeIndex inst_type_index = instantiated_type_info->type_index_;
-		SizeInBits inst_type_size{};
-		if (instantiated_type_info->getStructInfo()) {
-			inst_type_size = instantiated_type_info->getStructInfo()->sizeInBits();
-		}
-		type_spec_node = emplace_node<TypeSpecifierNode>(
-			inst_type_index.withCategory(TypeCategory::Struct),
-			inst_type_size,
-			inst_type_token,
-			CVQualifier::None,
-			ReferenceQualifier::None);
-	} else {
-		type_spec_node = emplace_node<TypeSpecifierNode>(
-			TypeCategory::UserDefined,
-			TypeQualifier::None,
-			0,
-			inst_type_token,
-			CVQualifier::None);
+	if (instantiated_type_info == nullptr) {
+		throw InternalError(
+			"Functional cast materialized a class template without TypeInfo identity");
 	}
+	ASTNode type_spec_node = makeFunctionalCastTypeSpecifierNode(
+		*instantiated_type_info,
+		inst_type_token);
 
 	auto result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
 	return ParseResult::success(result);
@@ -3346,27 +3355,9 @@ ParseResult Parser::parseExplicitTemplateTypeConstruction(
 		identifier_token.line(),
 		identifier_token.column(),
 		identifier_token.file_index());
-	ASTNode type_spec_node;
-	if (instantiated_type_info->isStruct()) {
-		TypeIndex inst_type_index = instantiated_type_info->type_index_;
-		SizeInBits inst_type_size{};
-		if (instantiated_type_info->getStructInfo()) {
-			inst_type_size = instantiated_type_info->getStructInfo()->sizeInBits();
-		}
-		type_spec_node = emplace_node<TypeSpecifierNode>(
-			inst_type_index.withCategory(TypeCategory::Struct),
-			inst_type_size,
-			inst_type_token,
-			CVQualifier::None,
-			ReferenceQualifier::None);
-	} else {
-		type_spec_node = emplace_node<TypeSpecifierNode>(
-			TypeCategory::UserDefined,
-			TypeQualifier::None,
-			0,
-			inst_type_token,
-			CVQualifier::None);
-	}
+	ASTNode type_spec_node = makeFunctionalCastTypeSpecifierNode(
+		*instantiated_type_info,
+		inst_type_token);
 
 	return ParseResult::success(emplace_node<ExpressionNode>(
 		ConstructorCallNode(type_spec_node, std::move(args), inst_type_token)));

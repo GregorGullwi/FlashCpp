@@ -829,34 +829,38 @@ ASTNode ExpressionSubstitutor::substituteFoldExpression(const FoldExpressionNode
 	return result;
 }
 
+TypeSpecifierNode ExpressionSubstitutor::makeSubstitutedTypeFromResolvedTypeInfo(
+	const TypeInfo& resolved_type_info,
+	const TypeSpecifierNode& source) {
+	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+		resolved_type_info.registeredTypeIndex().withCategory(resolved_type_info.typeEnum()));
+	TypeSpecifierNode substituted_type =
+		resolved_alias.type_index.is_valid()
+			? buildTerminalTypeFromResolvedAlias(resolved_alias, source.token())
+			: TypeSpecifierNode(
+				resolved_type_info.registeredTypeIndex().withCategory(
+					resolved_type_info.typeEnum()),
+				resolved_type_info.sizeInBits(),
+				source.token(),
+				CVQualifier::None,
+				ReferenceQualifier::None);
+	if (resolved_alias.type_index.is_valid()) {
+		applyResolvedAliasModifiers(substituted_type, resolved_alias);
+	}
+	applyOuterTypeModifiers(substituted_type, source);
+	if (source.is_pack_expansion()) {
+		substituted_type.set_pack_expansion(true);
+	}
+	const int size_bits = getTypeSpecSizeBits(substituted_type);
+	if (size_bits > 0) {
+		substituted_type.set_size_in_bits(size_bits);
+	}
+	return substituted_type;
+}
+
 TypeSpecifierNode ExpressionSubstitutor::substituteTypeSpecifier(
 	const TypeSpecifierNode& type) {
-	TypeSpecifierNode canonical_substituted_type = substituteInType(type);
-	if (canonical_substituted_type.type() != type.type() ||
-		canonical_substituted_type.type_index() != type.type_index() ||
-		canonical_substituted_type.token().value() != type.token().value() ||
-		canonical_substituted_type.pointer_depth() != type.pointer_depth() ||
-		canonical_substituted_type.reference_qualifier() != type.reference_qualifier()) {
-		return canonical_substituted_type;
-	}
-	if (!template_params_.empty()) {
-		ASTNode parser_substituted = parser_.substituteTemplateParameters(
-			ASTNode(&type),
-			template_params_,
-			template_args_);
-		if (parser_substituted.is<TypeSpecifierNode>()) {
-			const TypeSpecifierNode& substituted_type =
-				parser_substituted.as<TypeSpecifierNode>();
-			if (substituted_type.type() != type.type() ||
-				substituted_type.type_index() != type.type_index() ||
-				substituted_type.token().value() != type.token().value() ||
-				substituted_type.pointer_depth() != type.pointer_depth() ||
-				substituted_type.reference_qualifier() != type.reference_qualifier()) {
-				return substituted_type;
-			}
-		}
-	}
-	return canonical_substituted_type;
+	return substituteInType(type);
 }
 
 ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNode& ctor) {
@@ -5079,6 +5083,17 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 	if (type.type_index().is_valid()) {
 		const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+		if (type_info != nullptr && type_info->isDependentMemberType()) {
+			if (const TypeInfo* resolved_dependent_type =
+					resolveDependentMemberTypeForSubstitution(*type_info);
+				resolved_dependent_type != nullptr &&
+				resolved_dependent_type != type_info &&
+				!resolved_dependent_type->isDependentMemberType() &&
+				!typeIndexContainsDependentPlaceholder(
+					resolved_dependent_type->registeredTypeIndex())) {
+				return makeSubstitutedTypeFromResolvedTypeInfo(*resolved_dependent_type, type);
+			}
+		}
 		if (type_info && type_info->isTypeAlias()) {
 			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 				type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
@@ -5206,25 +5221,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 							findTypeByName(materialized_type.canonicalNameHandle());
 					}
 					if (resolved_type_info != nullptr) {
-						ResolvedAliasTypeInfo resolved_alias =
-							resolveAliasTypeInfo(
-								resolved_type_info->registeredTypeIndex().withCategory(
-									resolved_type_info->typeEnum()));
-						TypeSpecifierNode substituted_type =
-							resolved_alias.type_index.is_valid()
-								? buildTerminalTypeFromResolvedAlias(resolved_alias, type.token())
-								: TypeSpecifierNode(
-									resolved_type_info->registeredTypeIndex().withCategory(
-										resolved_type_info->typeEnum()),
-									resolved_type_info->sizeInBits(),
-									type.token(),
-									type.cv_qualifier(),
-									type.reference_qualifier());
-						if (resolved_alias.type_index.is_valid()) {
-							applyResolvedAliasModifiers(substituted_type, resolved_alias);
-						}
-						applyOuterTypeModifiers(substituted_type, type);
-						return substituted_type;
+						return makeSubstitutedTypeFromResolvedTypeInfo(*resolved_type_info, type);
 					}
 				}
 			}
@@ -5431,21 +5428,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			if (resolved_member != nullptr) {
 				FLASH_LOG(Templates, Trace, "  Resolved '", token_type_name,
 					"' as member type of '", owner_name, "'");
-				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-					resolved_member->registeredTypeIndex().withCategory(resolved_member->typeEnum()));
-				TypeSpecifierNode resolved_type = resolved_alias.type_index.is_valid()
-					? buildTerminalTypeFromResolvedAlias(resolved_alias, type.token())
-					: TypeSpecifierNode(
-						resolved_member->registeredTypeIndex().withCategory(resolved_member->typeEnum()),
-						resolved_member->sizeInBits(),
-						type.token(),
-						CVQualifier::None,
-						ReferenceQualifier::None);
-				if (resolved_alias.type_index.is_valid()) {
-					applyResolvedAliasModifiers(resolved_type, resolved_alias);
-				}
-				applyOuterTypeModifiers(resolved_type, type);
-				return resolved_type;
+				return makeSubstitutedTypeFromResolvedTypeInfo(*resolved_member, type);
 			}
 		}
 
@@ -5476,15 +5459,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 								StringTable::getStringView(owner_base_name),
 								current_inst_args);
 						if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
-							TypeSpecifierNode substituted_current_instantiation(
-								resolved_type_info->registeredTypeIndex().withCategory(
-									resolved_type_info->typeEnum()),
-								resolved_type_info->sizeInBits(),
-								type.token(),
-								CVQualifier::None,
-								ReferenceQualifier::None);
-							applyOuterTypeModifiers(substituted_current_instantiation, type);
-							return substituted_current_instantiation;
+							return makeSubstitutedTypeFromResolvedTypeInfo(*resolved_type_info, type);
 						}
 					}
 				}
@@ -5507,7 +5482,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
 						TypeIndex new_type_index = resolved_type_info->registeredTypeIndex();
 						FLASH_LOG(Templates, Trace, "  Successfully materialized template: ", base_name, " with type_index=", new_type_index);
-						return TypeSpecifierNode(new_type_index.withCategory(resolved_type_info->typeEnum()), 64, Token{}, type.cv_qualifier(), ReferenceQualifier::None);
+						return makeSubstitutedTypeFromResolvedTypeInfo(*resolved_type_info, type);
 					}
 					FLASH_LOG(Templates, Warning, "  Failed to materialize template: ", base_name);
 				}
