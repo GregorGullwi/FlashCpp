@@ -480,11 +480,7 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 	bool ambiguous_same_arity = false;
 	for (const ASTNode& candidate_node : call_candidates) {
 		const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
-		const size_t min_required = countMinRequiredArgs(candidate);
-		const size_t max_accepted = candidate.is_variadic()
-			? std::numeric_limits<size_t>::max()
-			: candidate.parameter_nodes().size();
-		if (argument_count < min_required || argument_count > max_accepted) {
+		if (!functionAcceptsArgumentCount(candidate, argument_count)) {
 			continue;
 		}
 		if (same_arity_candidate != nullptr) {
@@ -840,6 +836,114 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 		call_arg_types);
 }
 
+bool Parser::callArgumentsRequireDelayedOverloadResolution(
+	const ChunkedVector<ASTNode>& args) {
+	// A pack expansion is an incomplete argument list until substitution.
+	// Overload arity checks and unique-candidate binding must wait; the
+	// unexpanded pack is one syntactic argument and is not the instantiation
+	// argument count ([temp.over], [temp.variadic]). Type-dependent non-pack
+	// arguments keep a known arity and still use the ordinary member-template
+	// instantiation path.
+	for (const ASTNode& arg : args) {
+		if (isTopLevelPackExpansionExpr(arg)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+ASTNode Parser::makeUnresolvedMemberCallExpr(
+	ASTNode receiver,
+	ChunkedVector<ASTNode>&& args,
+	const Token& member_name_token) {
+	ASTNode temp_type = emplace_node<TypeSpecifierNode>(
+		TypeIndex{}.withCategory(TypeCategory::Auto),
+		0,
+		member_name_token,
+		CVQualifier::None,
+		ReferenceQualifier::None);
+	auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
+	auto [func_node, func_ref] =
+		emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+	return emplace_node<ExpressionNode>(
+		makeResolvedMemberCallExpr(
+			receiver,
+			func_ref,
+			std::move(args),
+			member_name_token));
+}
+
+std::optional<ParseResult> Parser::diagnoseConstIncompatibleConcreteReceiverMember(
+	const ASTNode& receiver,
+	std::string_view member_name,
+	const Token& error_token) {
+	if (!isHardUseLikeInstantiationMode()) {
+		return std::nullopt;
+	}
+	auto type_opt = get_expression_type(receiver);
+	if (!type_opt.has_value()) {
+		return std::nullopt;
+	}
+	const TypeInfo* owner_type_info =
+		tryResolveConcreteStructOwnerType(*type_opt, true);
+	if (owner_type_info == nullptr ||
+		owner_type_info->is_incomplete_instantiation_ ||
+		owner_type_info->isDependentPlaceholder()) {
+		return std::nullopt;
+	}
+	if (!concreteStructHasConstIncompatibleNamedMember(
+			owner_type_info->getStructInfo(),
+			StringTable::getOrInternStringHandle(member_name),
+			typeSpecifierObjectIsConst(*type_opt))) {
+		return std::nullopt;
+	}
+	return ParseResult::error(
+		"member function '" + std::string(member_name) +
+			"' cannot be called through a const receiver",
+		error_token);
+}
+
+std::optional<ParseResult> Parser::diagnoseHardUseConcreteReceiverNamedMember(
+	const ASTNode& receiver,
+	std::string_view member_name,
+	const Token& error_token) {
+	if (std::optional<ParseResult> const_error =
+			diagnoseConstIncompatibleConcreteReceiverMember(
+				receiver,
+				member_name,
+				error_token);
+		const_error.has_value()) {
+		return const_error;
+	}
+	if (!isHardUseLikeInstantiationMode()) {
+		return std::nullopt;
+	}
+	auto object_type_opt = get_expression_type(receiver);
+	if (!object_type_opt.has_value() ||
+		!is_struct_type(object_type_opt->category())) {
+		return std::nullopt;
+	}
+	const TypeInfo* object_type_info = tryGetTypeInfo(object_type_opt->type_index());
+	if (object_type_info == nullptr ||
+		object_type_info->is_incomplete_instantiation_ ||
+		object_type_info->isDependentPlaceholder()) {
+		return std::nullopt;
+	}
+	const StructTypeInfo* object_struct_info = object_type_info->getStructInfo();
+	if (object_struct_info == nullptr) {
+		return std::nullopt;
+	}
+	auto [known_member, owner_struct] =
+		object_struct_info->findMemberFunctionRecursive(
+			StringTable::getOrInternStringHandle(member_name));
+	if (known_member != nullptr && owner_struct != nullptr) {
+		return std::nullopt;
+	}
+	return ParseResult::error(
+		"No matching member function for call to '" + std::string(member_name) + "'",
+		error_token);
+}
+
 ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token) {
 	// Expect an identifier (member name) OR ~ for pseudo-destructor call
 	// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
@@ -922,80 +1026,41 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
 		}
 
+		const bool delay_overload_resolution =
+			callArgumentsRequireDelayedOverloadResolution(args);
 		const FunctionDeclarationNode* known_member_func =
 			tryResolveConcreteMemberFunction(result, operator_name);
-		FunctionDeclarationNode* func_ref_ptr = nullptr;
-		if (known_member_func) {
-			const size_t min_required = countMinRequiredArgs(*known_member_func);
-			const size_t max_accepted = known_member_func->is_variadic()
-				? std::numeric_limits<size_t>::max()
-				: known_member_func->parameter_nodes().size();
-			if (args.size() < min_required || args.size() > max_accepted) {
-				return ParseResult::error(
-					"No matching member function for call to '" + std::string(operator_name) + "'",
-					member_operator_name_token);
+		if (delay_overload_resolution || known_member_func == nullptr) {
+			if (std::optional<ParseResult> named_member_error =
+					diagnoseHardUseConcreteReceiverNamedMember(
+						*result,
+						operator_name,
+						member_operator_name_token);
+				named_member_error.has_value()) {
+				return std::move(*named_member_error);
 			}
-			func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
-		} else {
-			if (isHardUseLikeInstantiationMode()) {
-				// Reuse existing concrete-member resolution signal: in hard-use contexts,
-				// when parser knows the concrete receiver type but cannot resolve a
-				// matching member operator call here, report a user-facing error instead
-				// of creating a placeholder callee node.
-				if (auto object_type_opt = get_expression_type(*result);
-					object_type_opt.has_value() &&
-					is_struct_type(object_type_opt->category())) {
-					const TypeInfo* object_type_info = tryGetTypeInfo(object_type_opt->type_index());
-					if (object_type_info &&
-						!object_type_info->is_incomplete_instantiation_ &&
-						!object_type_info->isDependentPlaceholder()) {
-						if (const StructTypeInfo* object_struct_info = object_type_info->getStructInfo()) {
-							const StringHandle operator_name_handle =
-								StringTable::getOrInternStringHandle(operator_name);
-							if (concreteStructHasConstIncompatibleNamedMember(
-									object_struct_info,
-									operator_name_handle,
-									typeSpecifierObjectIsConst(*object_type_opt))) {
-								return ParseResult::error(
-									"member function '" + std::string(operator_name) +
-										"' cannot be called through a const receiver",
-									member_operator_name_token);
-							}
-							auto [known_operator, owner_struct] =
-								object_struct_info->findMemberFunctionRecursive(operator_name_handle);
-							if (!known_operator || !owner_struct) {
-								return ParseResult::error(
-									"No matching member function for call to '" + std::string(operator_name) + "'",
-									member_operator_name_token);
-							}
-						}
-					}
-				}
-			}
-			auto type_spec = emplace_node<TypeSpecifierNode>(
-				TypeIndex{}.withCategory(TypeCategory::Auto),
-				0,
-				member_operator_name_token,
-				CVQualifier::None,
-				ReferenceQualifier::None);
-			auto& operator_decl =
-				emplace_node<DeclarationNode>(type_spec, member_operator_name_token)
-					.as<DeclarationNode>();
-			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(operator_decl);
-			func_ref_ptr = &func_ref;
+			result = makeUnresolvedMemberCallExpr(
+				*result,
+				std::move(args),
+				member_operator_name_token);
+			return ParseResult::success(*result);
+		}
+
+		if (!functionAcceptsArgumentCount(*known_member_func, args.size())) {
+			return ParseResult::error(
+				"No matching member function for call to '" + std::string(operator_name) + "'",
+				member_operator_name_token);
 		}
 
 		result = emplace_node<ExpressionNode>(
-			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_operator_name_token));
-		if (known_member_func != nullptr) {
-			attachResolvedMemberCallMetadata(
-				result->as<ExpressionNode>(),
-				current_template_definition_lookup_context_,
-				member_operator_name_token,
-				arg_types,
-				false,
-				*func_ref_ptr);
-		}
+			makeResolvedMemberCallExpr(*result, *known_member_func, std::move(args), member_operator_name_token));
+		attachResolvedMemberCallMetadata(
+			result->as<ExpressionNode>(),
+			current_template_definition_lookup_context_,
+			member_operator_name_token,
+			arg_types,
+			false,
+			*known_member_func);
 		return ParseResult::success(*result);
 	}
 
@@ -1156,6 +1221,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		std::string_view qualified_owner_name =
 			materialized_owner.canonicalName();
 		std::optional<ASTNode> instantiated_func;
+		const bool delay_overload_resolution =
+			callArgumentsRequireDelayedOverloadResolution(args);
 		if (!qualified_owner_name.empty()) {
 			instantiated_func = tryInstantiateMemberFunctionTemplateCall(
 				qualified_owner_name,
@@ -1163,7 +1230,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				member_template_args,
 				arg_types,
 				!args.empty(),
-				false);
+				delay_overload_resolution);
 		}
 
 		if (instantiated_func.has_value() &&
@@ -1186,24 +1253,10 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			return ParseResult::success(*result);
 		}
 
-		auto type_spec = emplace_node<TypeSpecifierNode>(
-			TypeIndex{}.withCategory(TypeCategory::Auto),
-			0,
-			qualified_member_token,
-			CVQualifier::None,
-			ReferenceQualifier::None);
-		auto& member_decl =
-			emplace_node<DeclarationNode>(type_spec, qualified_member_token)
-				.as<DeclarationNode>();
-		auto& func_decl_node =
-			emplace_node<FunctionDeclarationNode>(member_decl)
-				.as<FunctionDeclarationNode>();
-		result = emplace_node<ExpressionNode>(
-			makeResolvedMemberCallExpr(
-				*result,
-				func_decl_node,
-				std::move(args),
-				qualified_member_token));
+		result = makeUnresolvedMemberCallExpr(
+			*result,
+			std::move(args),
+			qualified_member_token);
 		if (!member_template_arg_nodes.empty()) {
 			setCallTemplateArguments(
 				result->as<ExpressionNode>(),
@@ -1286,6 +1339,9 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			return ParseResult::error("Expected ')' after function call arguments", current_token_);
 		}
 
+		const bool delay_overload_resolution =
+			callArgumentsRequireDelayedOverloadResolution(args);
+
 		std::optional<std::string_view> object_struct_name;
 		if (auto type_opt = get_expression_type(*result); type_opt.has_value() &&
 													  is_struct_type(type_opt->category())) {
@@ -1343,6 +1399,22 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			if (!member_found) {
 				return ParseResult::error("SFINAE: member not found on concrete type", member_name_token);
 			}
+		}
+
+		if (delay_overload_resolution) {
+			if (std::optional<ParseResult> const_error =
+					diagnoseConstIncompatibleConcreteReceiverMember(
+						*result,
+						member_name_token.value(),
+						member_name_token);
+				const_error.has_value()) {
+				return std::move(*const_error);
+			}
+			result = makeUnresolvedMemberCallExpr(
+				*result,
+				std::move(args),
+				member_name_token);
+			return ParseResult::success(*result);
 		}
 
 		std::optional<ASTNode> instantiated_func;
@@ -1407,11 +1479,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				member_name_token);
 		}
 		if (known_member_func && !instantiated_func.has_value()) {
-			const size_t min_required = countMinRequiredArgs(*known_member_func);
-			const size_t max_accepted = known_member_func->is_variadic()
-				? std::numeric_limits<size_t>::max()
-				: known_member_func->parameter_nodes().size();
-			if (args.size() < min_required || args.size() > max_accepted) {
+			if (!functionAcceptsArgumentCount(*known_member_func, args.size())) {
 				return ParseResult::error(
 					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
 					member_name_token);
@@ -1445,11 +1513,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 						has_any_local_overload = true;
 						// Check if this overload accepts the argument count
 						if (const auto* candidate = get_function_decl_node(mf.function_decl)) {
-							const size_t min_req = countMinRequiredArgs(*candidate);
-							const size_t max_acc = candidate->is_variadic()
-								? std::numeric_limits<size_t>::max()
-								: candidate->parameter_nodes().size();
-							if (args.size() >= min_req && args.size() <= max_acc) {
+							if (functionAcceptsArgumentCount(*candidate, args.size())) {
 								has_arity_match = true;
 								break;
 							}
@@ -1464,24 +1528,14 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			}
 		}
 
-		if (!known_member_func && !instantiated_func.has_value() &&
-			isHardUseLikeInstantiationMode()) {
-			if (auto type_opt = get_expression_type(*result); type_opt.has_value()) {
-				if (const TypeInfo* owner_type_info =
-						tryResolveConcreteStructOwnerType(*type_opt, true);
-					owner_type_info != nullptr &&
-					!owner_type_info->is_incomplete_instantiation_ &&
-					!owner_type_info->isDependentPlaceholder()) {
-					if (concreteStructHasConstIncompatibleNamedMember(
-							owner_type_info->getStructInfo(),
-							StringTable::getOrInternStringHandle(member_name_token.value()),
-							typeSpecifierObjectIsConst(*type_opt))) {
-						return ParseResult::error(
-							"member function '" + std::string(member_name_token.value()) +
-								"' cannot be called through a const receiver",
-							member_name_token);
-					}
-				}
+		if (!known_member_func && !instantiated_func.has_value()) {
+			if (std::optional<ParseResult> const_error =
+					diagnoseConstIncompatibleConcreteReceiverMember(
+						*result,
+						member_name_token.value(),
+						member_name_token);
+				const_error.has_value()) {
+				return std::move(*const_error);
 			}
 		}
 
@@ -1906,11 +1960,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 		for (const ASTNode& candidate_node : candidates) {
 			const FunctionDeclarationNode& candidate =
 				candidate_node.as<FunctionDeclarationNode>();
-			const size_t min_required = countMinRequiredArgs(candidate);
-			const size_t max_accepted = candidate.is_variadic()
-				? std::numeric_limits<size_t>::max()
-				: candidate.parameter_nodes().size();
-			if (argument_count < min_required || argument_count > max_accepted) {
+			if (!functionAcceptsArgumentCount(candidate, argument_count)) {
 				continue;
 			}
 			if (matched_candidate) {

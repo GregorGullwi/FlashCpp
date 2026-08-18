@@ -485,14 +485,6 @@ static bool isParserOwnedConstructor(const ConstructorDeclarationNode& ctor) {
 	return has_template_pattern_name || has_unmaterialized_template_scaffolding;
 }
 
-static bool isTopLevelPackExpansionExpr(const ASTNode& arg) {
-	if (!arg.is<ExpressionNode>()) {
-		return false;
-	}
-	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	return std::holds_alternative<PackExpansionExprNode>(expr);
-}
-
 static bool hasTopLevelPackExpansionInConstructorInitializers(const ConstructorDeclarationNode& ctor) {
 	for (const auto& member_init : ctor.member_initializers()) {
 		if (isTopLevelPackExpansionExpr(member_init.initializer_expr)) {
