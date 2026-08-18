@@ -13,18 +13,15 @@ For current header status, first stops, and timings, see `tests/std/README_STAND
 `<new>`, `<exception>`, and `<typeinfo>` now compile, but link still misses `__ExceptionPtrCompare`, `terminate`, `type_info`, and related CRT symbols.
 
 ### 3. Allocator / container instantiation
-`<vector>` / `<queue>` still fail instantiating `_Pocca`. `<list>` / `<functional>` still fail `_Pocma`. `<map>` / `<set>` still reject instantiated `noexcept` as non-constant.
+`<vector>` / `<queue>` still fail instantiating `_Pocca`. `<string>` / `<list>` / `<fstream>` / `<chrono>` / `<stdexcept>` now get past instantiated-`noexcept` type-trait evaluation and stop on the sticky `allocator_traits` instantiation-iteration limit. `<map>` / `<set>` still reject instantiated `noexcept` because `conjunction$…::value` is missing after deferred `_Conjunction` bases.
 
 ### 4. Iterator + Ranges Concepts
 `<ranges>` still hits the template-instantiation iteration limit. `<algorithm>` still cannot find `_Optimistic_count` as a constant array bound. `<string_view>` still fails lazy `_String_view_iterator::operator+` replay.
 
-### 5. String layout `sizeof`
-`<string>`, `<fstream>`, `<chrono>`, and `<stdexcept>` now parse MSVC `explicit` deduction guides, then stop because `sizeof(_Ty)` in `_String_val` stays incomplete after substitution.
-
-### 6. MSVC atomic lowering
+### 5. MSVC atomic lowering
 `<atomic>` family is past `__iso_volatile_store32` and stops on `_InterlockedCompareExchange128`.
 
-### 7. Alias-template recursion
+### 6. Alias-template recursion
 `<variant>` currently stack-overflows in `materializeAliasTemplateInstantiation`.
 
 ## Tracking Files

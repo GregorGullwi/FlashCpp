@@ -1876,8 +1876,10 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 
 	// Phase 5: Populate binding-based storage alongside legacy fields.
 	// param_args may be a flattened pack list and can therefore be longer than
-	// param_names in legacy callers.
-	if (stored_param_args.size() < param_names.size()) {
+	// param_names in legacy callers. It can also be shorter when a trailing
+	// parameter pack is empty: template<class T, class... Args> Foo<int>
+	// has two names and one argument.
+	if (stored_param_args.size() + 1 < param_names.size()) {
 		StringBuilder error_builder;
 		error_builder.append("TypeInfo::setInstantiationContext invalid size mismatch: param_names=");
 		error_builder.append(param_names.size());
@@ -1916,6 +1918,11 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 			}
 		}
 		if (binding_args.empty()) {
+			TypeInfo::InstantiationContext::Binding empty_pack_binding;
+			empty_pack_binding.name = binding_name;
+			empty_pack_binding.kind = static_cast<uint8_t>(TemplateParameterKind::Type);
+			empty_pack_binding.is_pack = true;
+			ctx.bindings.push_back(std::move(empty_pack_binding));
 			continue;
 		}
 

@@ -70,3 +70,7 @@ TypeTraitResult evaluateTypeTrait(
 	const StructTypeInfo* struct_info);
 
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr);
+
+// True when any type-trait operand is still a template-dependent type, including
+// leftover pack expansions that have not been expanded to TypeSpecifierNode yet.
+bool typeTraitHasDependentOperands(const TypeTraitExprNode& trait_expr);

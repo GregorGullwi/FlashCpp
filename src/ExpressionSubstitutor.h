@@ -168,6 +168,9 @@ private:
 		const ASTNode& child,
 		ExpressionStructure::ExpressionChildRole role,
 		std::vector<ASTNode>& output);
+	bool tryAppendExpandedTypeArgumentPack(
+		const ASTNode& child,
+		std::vector<ASTNode>& output);
 	ASTNode rewriteStructurally(const ASTNode& expression);
 	void substituteCallArgumentPreservingPackExpansion(
 		const ASTNode& arg,
