@@ -806,7 +806,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			if (!type_result.is_error() && type_result.node().has_value()) {
 				// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				consume_pointer_ref_modifiers(type_spec);
+				consume_type_id_abstract_declarators(type_spec);
 
 				// Now check if ')' follows
 				if (peek() == ")"_tok) {
@@ -938,7 +938,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		if (!type_result.is_error() && type_result.node().has_value()) {
 			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-			consume_pointer_ref_modifiers(type_spec);
+			consume_type_id_abstract_declarators(type_spec);
 
 			// Now check if ')' follows
 			if (peek() == ")"_tok) {
