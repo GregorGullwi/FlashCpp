@@ -29,6 +29,10 @@ inline const QualifiedIdentifierNode* tryGetQualifiedIdentifier(const ASTNode& n
 	return tryGetNode<QualifiedIdentifierNode>(node);
 }
 
+inline bool isTopLevelPackExpansionExpr(const ASTNode& arg) {
+	return tryGetNode<PackExpansionExprNode>(arg) != nullptr;
+}
+
 inline std::string_view getIdentifierNameFromAstNode(const ASTNode& node) {
 	if (const IdentifierNode* identifier = tryGetIdentifier(node)) {
 		return identifier->name();

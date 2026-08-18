@@ -9,6 +9,7 @@
 #include <vector>
 #include <functional>
 #include <algorithm>
+#include <limits>
 #include "InlineVector.h"
 #include "AstNodeTypes.h"
 #include "Token.h"
@@ -125,6 +126,20 @@ inline size_t countMinRequiredArgs(const FunctionDeclarationNode& func) {
 		--i;
 	}
 	return min_required;
+}
+
+inline size_t countMaxAcceptedArgs(const FunctionDeclarationNode& func) {
+	if (func.is_variadic()) {
+		return std::numeric_limits<size_t>::max();
+	}
+	return func.parameter_nodes().size();
+}
+
+inline bool functionAcceptsArgumentCount(
+	const FunctionDeclarationNode& func,
+	size_t argument_count) {
+	return argument_count >= countMinRequiredArgs(func) &&
+		argument_count <= countMaxAcceptedArgs(func);
 }
 
 class SymbolTable {

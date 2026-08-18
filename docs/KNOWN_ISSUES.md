@@ -1,16 +1,5 @@
 # Known Issues
 
-## Non-dependent receiver lookup with argument packs
-
-Inside a function template, a member call whose receiver has a non-template
-class type can fail during template-body materialization when the call uses a
-function-parameter pack (`receiver.method(args...)`). The equivalent dependent
-class-template receiver path is currently supported, as covered by
-`tests/test_member_call_pack_expansion_ret0.cpp`. This is a pre-existing lookup
-or overload-materialization gap, not a Phase 1 expression-structure issue; the
-canonical schema preserves the receiver and call-argument roles for the later
-substitution/lookup phase.
-
 ## Parser type-materialization fallback during expression substitution
 
 `ExpressionSubstitutor::substituteTypeSpecifier` retains a narrow fallback to

@@ -3679,6 +3679,20 @@ private:	 // Resume private methods
 		bool has_call_args,
 		bool has_dependent_call_args);
 	ParseResult parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token);
+	ASTNode makeUnresolvedMemberCallExpr(
+		ASTNode receiver,
+		ChunkedVector<ASTNode>&& args,
+		const Token& member_name_token);
+	bool callArgumentsRequireDelayedOverloadResolution(
+		const ChunkedVector<ASTNode>& args);
+	std::optional<ParseResult> diagnoseConstIncompatibleConcreteReceiverMember(
+		const ASTNode& receiver,
+		std::string_view member_name,
+		const Token& error_token);
+	std::optional<ParseResult> diagnoseHardUseConcreteReceiverNamedMember(
+		const ASTNode& receiver,
+		std::string_view member_name,
+		const Token& error_token);
 	ParseResult parse_unary_expression(ExpressionContext context);
 	ParseResult parse_qualified_operator_call(const Token& context_token, std::span<const StringType<32>> namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
 	// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
