@@ -5746,7 +5746,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						  *param,
 						  template_params,
 						  outer_binding,
-						  retry_args)
+						  retry_args,
+						  TypeIndex{})
 					: tryAppendDefaultTemplateArg(
 						  *param,
 						  std::span<const TemplateParameterNode>(

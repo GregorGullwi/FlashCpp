@@ -2158,44 +2158,86 @@ inline bool typeTokenNamesOwnerClass(
 		namesSameInjectedClassIdentity(token, owner_decl.semantic_name());
 }
 
+inline TypeIndex typeIndexForRegisteredStructName(StringHandle name) {
+	if (!name.isValid()) {
+		return TypeIndex{};
+	}
+	auto type_it = getTypesByNameMap().find(name);
+	if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+		return TypeIndex{};
+	}
+	TypeIndex index = type_it->second->registeredTypeIndex();
+	if (!index.is_valid()) {
+		index = type_it->second->type_index_;
+	}
+	return index.is_valid()
+		? index.withCategory(TypeCategory::Struct)
+		: TypeIndex{};
+}
+
+// C++20 [temp.local]: a bare type naming the current class template, or the
+// primary template of the current specialization, is the injected-class-name.
+// TypeIndex identity is preferred; token identity falls back to the same
+// leaf/hash-stripped compare used by constructor parameter rewrite.
+inline bool typeNamesInjectedClassOfOwner(
+	const TypeSpecifierNode& type_spec,
+	const TypeInfo& owner_info) {
+	if (type_spec.type_index().is_valid()) {
+		if (const TypeInfo* named_type_info = tryGetTypeInfo(type_spec.type_index())) {
+			if (namesSameInjectedClassIdentity(named_type_info->name(), owner_info.name())) {
+				return true;
+			}
+			return owner_info.isTemplateInstantiation() &&
+				namesSameInjectedClassIdentity(
+					named_type_info->name(),
+					owner_info.baseTemplateName());
+		}
+		if (const StructTypeInfo* owner_struct = owner_info.getStructInfo();
+			owner_struct != nullptr &&
+			owner_struct->isOwnTypeIndex(type_spec.type_index())) {
+			return true;
+		}
+	}
+	StringHandle token = type_spec.token().handle();
+	if (!token.isValid()) {
+		return false;
+	}
+	if (namesSameInjectedClassIdentity(token, owner_info.name())) {
+		return true;
+	}
+	return owner_info.isTemplateInstantiation() &&
+		namesSameInjectedClassIdentity(token, owner_info.baseTemplateName());
+}
+
 // Look up the TypeInfo for a class being defined/instantiated from its pattern
 // StructDeclarationNode. Member class templates are often registered under the
 // leaf name ("iterator") while pattern_struct.name() is qualified
 // ("outer::iterator"), so try every identity the defining class may use.
 inline TypeIndex resolveDefiningClassTypeIndex(const StructDeclarationNode& owner_decl) {
-	auto try_name = [&](StringHandle name) -> TypeIndex {
-		if (!name.isValid()) {
-			return TypeIndex{};
-		}
-		auto type_it = getTypesByNameMap().find(name);
-		if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
-			return TypeIndex{};
-		}
-		TypeIndex index = type_it->second->registeredTypeIndex();
-		if (!index.is_valid()) {
-			index = type_it->second->type_index_;
-		}
-		return index.is_valid()
-			? index.withCategory(TypeCategory::Struct)
-			: TypeIndex{};
-	};
-
-	if (TypeIndex by_name = try_name(owner_decl.name()); by_name.is_valid()) {
+	if (TypeIndex by_name = typeIndexForRegisteredStructName(owner_decl.name());
+		by_name.is_valid()) {
 		return by_name;
 	}
-	if (TypeIndex by_semantic = try_name(owner_decl.semantic_name()); by_semantic.is_valid()) {
+	if (TypeIndex by_semantic = typeIndexForRegisteredStructName(owner_decl.semantic_name());
+		by_semantic.is_valid()) {
 		return by_semantic;
 	}
 
 	std::string_view owner_name_view = StringTable::getStringView(owner_decl.name());
 	std::string_view leaf_view = simpleBaseName(owner_name_view);
 	if (!leaf_view.empty() && leaf_view != owner_name_view) {
-		if (TypeIndex by_leaf = try_name(StringTable::getOrInternStringHandle(leaf_view));
+		if (TypeIndex by_leaf = typeIndexForRegisteredStructName(
+				StringTable::getOrInternStringHandle(leaf_view));
 			by_leaf.is_valid()) {
 			return by_leaf;
 		}
 	}
 	return TypeIndex{};
+}
+
+inline TypeIndex instantiatedOwnerTypeIndex(std::string_view struct_name) {
+	return typeIndexForRegisteredStructName(
+		StringTable::getOrInternStringHandle(struct_name));
 }
 
 // Explicit self-type rewrite requires a matched from/to pair. When either side
