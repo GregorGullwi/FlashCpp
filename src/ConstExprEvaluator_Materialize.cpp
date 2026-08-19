@@ -1718,6 +1718,16 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		// When evaluated in constexpr context, this always returns true
 		return EvalResult::from_bool(true);
 	}
+	if (typeTraitHasDependentOperands(trait_expr)) {
+		return EvalResult::error(
+			"Type trait operand is still template-dependent",
+			EvalErrorType::TemplateDependentExpression);
+	}
+	const auto type_trait_eval_failure = [&trait_expr]() {
+		return EvalResult::error(
+			std::string("Failed to evaluate type trait ") +
+			std::string(trait_expr.trait_name()));
+	};
 
 	if (trait_expr.kind() == TypeTraitKind::IsSame &&
 		trait_expr.has_second_type()) {
@@ -1945,7 +1955,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			if (trait_result.success) {
 				return EvalResult::from_bool(trait_result.value);
 			}
-			return EvalResult::error("Failed to evaluate type trait");
+			return type_trait_eval_failure();
 		}
 
 	case TypeTraitKind::IsDestructible:
@@ -1963,7 +1973,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			if (trait_result.success) {
 				return EvalResult::from_bool(trait_result.value);
 			}
-			return EvalResult::error("Failed to evaluate type trait");
+			return type_trait_eval_failure();
 		}
 
 	default:

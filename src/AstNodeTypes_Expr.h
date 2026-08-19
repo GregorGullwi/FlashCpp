@@ -570,6 +570,33 @@ private:
 	Token trait_token_;		// Token for the trait (for error reporting)
 };
 
+template <typename SubstituteOperand>
+inline TypeTraitExprNode rebuildTypeTraitExpr(
+	const TypeTraitExprNode& trait,
+	ASTNode type_node,
+	SubstituteOperand&& substitute_operand) {
+	if (trait.has_second_type()) {
+		return TypeTraitExprNode(
+			trait.kind(),
+			type_node,
+			substitute_operand(trait.second_type_node()),
+			trait.trait_token());
+	}
+	if (trait.is_variadic_trait()) {
+		std::vector<ASTNode> additional_types;
+		additional_types.reserve(trait.additional_type_nodes().size());
+		for (const ASTNode& additional : trait.additional_type_nodes()) {
+			additional_types.push_back(substitute_operand(additional));
+		}
+		return TypeTraitExprNode(
+			trait.kind(),
+			type_node,
+			std::move(additional_types),
+			trait.trait_token());
+	}
+	return TypeTraitExprNode(trait.kind(), type_node, trait.trait_token());
+}
+
 // New expression node: new Type, new Type(args), new Type[size], new (address) Type
 class NewExpressionNode {
 public:

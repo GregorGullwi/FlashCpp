@@ -147,8 +147,13 @@ void Parser::foldInstantiatedNoexceptSpecification(
 		return;
 	}
 	if (!anyTemplateArgIsStructurallyDependent(template_args)) {
-		throw CompileError(
-			"Instantiated noexcept specification is not a constant expression");
+		std::string message =
+			"Instantiated noexcept specification is not a constant expression";
+		if (!value.error_message.empty()) {
+			message += ": ";
+			message += value.error_message;
+		}
+		throw CompileError(std::move(message));
 	}
 }
 
@@ -6765,20 +6770,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								// Create substituted type trait node and evaluate
 								ASTNode subst_type_node = emplace_node<TypeSpecifierNode>(substituted_type_spec);
-								ASTNode subst_trait_node;
-								if (trait_expr.has_second_type()) {
-									ASTNode substituted_second_type = emplace_node<TypeSpecifierNode>(
-										substituteTraitTypeSpecifier(trait_expr.second_type_node()));
-									subst_trait_node = emplace_node<ExpressionNode>(
-										TypeTraitExprNode(
-											trait_expr.kind(),
-											subst_type_node,
-											substituted_second_type,
-											trait_expr.trait_token()));
-								} else {
-									subst_trait_node = emplace_node<ExpressionNode>(
-										TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
-								}
+								ASTNode subst_trait_node = emplace_node<ExpressionNode>(
+									rebuildTypeTraitExpr(
+										trait_expr,
+										subst_type_node,
+										[&](const ASTNode& operand) {
+											return emplace_node<TypeSpecifierNode>(
+												substituteTraitTypeSpecifier(operand));
+										}));
 
 								// Try to evaluate the type trait first. Many traits (is_enum, is_function,
 								// is_pointer, etc.) only check TypeCategory and can succeed even when

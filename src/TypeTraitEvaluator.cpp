@@ -1,5 +1,6 @@
 #include "TypeTraitEvaluator.h"
 
+#include "ExpressionStructure.h"
 #include "OverloadResolution.h"
 
 #include <ranges>
@@ -354,6 +355,19 @@ bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
 }
 
 } // namespace
+
+bool typeTraitHasDependentOperands(const TypeTraitExprNode& trait_expr) {
+	bool dependent = false;
+	ExpressionStructure::visitExpressionChildren(
+		ExpressionNode(trait_expr),
+		[&](ExpressionStructure::ExpressionChildRole, const ASTNode& node) {
+			if (!node.is<TypeSpecifierNode>() ||
+				isDependentTypeTraitOperand(node.as<TypeSpecifierNode>())) {
+				dependent = true;
+			}
+		});
+	return dependent;
+}
 
 bool isStructTriviallyCopyable(const StructTypeInfo* struct_info) {
 	return isStructTriviallyCopyableImpl(struct_info);

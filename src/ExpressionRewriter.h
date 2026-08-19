@@ -236,10 +236,8 @@ private:
 					node.trait_token())));
 			}
 			if (node.is_variadic_trait()) {
-				std::vector<ASTNode> additional_types;
-				for (const ASTNode& additional : node.additional_type_nodes()) {
-					additional_types.push_back(rewriteOne(additional, Role::TypeArgument, one_to_one));
-				}
+				std::vector<ASTNode> additional_types = rewriteSequence(
+					node.additional_type_nodes(), Role::TypeArgument, zero_to_many);
 				return wrap<OneToOne, ZeroToMany>(ExpressionNode(TypeTraitExprNode(
 					node.kind(), type, std::move(additional_types), node.trait_token())));
 			}

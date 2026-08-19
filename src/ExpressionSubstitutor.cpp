@@ -406,11 +406,39 @@ ASTNode ExpressionSubstitutor::rewriteStructuralChild(
 
 void ExpressionSubstitutor::rewriteStructuralZeroToMany(
 	const ASTNode& child,
-	ExpressionStructure::ExpressionChildRole,
+	ExpressionStructure::ExpressionChildRole role,
 	std::vector<ASTNode>& output) {
+	if (role == ExpressionStructure::ExpressionChildRole::TypeArgument &&
+		tryAppendExpandedTypeArgumentPack(child, output)) {
+		return;
+	}
 	ChunkedVector<ASTNode> expanded;
 	substituteCallArgumentPreservingPackExpansion(child, expanded);
 	expanded.visit([&](ASTNode argument) { output.push_back(argument); });
+}
+
+bool ExpressionSubstitutor::tryAppendExpandedTypeArgumentPack(
+	const ASTNode& child,
+	std::vector<ASTNode>& output) {
+	std::string_view pack_name;
+	if (!child.is<TypeSpecifierNode>() || !isPackExpansion(child, pack_name)) {
+		return false;
+	}
+	const auto pack_it = pack_map_.find(pack_name);
+	if (pack_it == pack_map_.end()) {
+		return false;
+	}
+	const TypeSpecifierNode& source = child.as<TypeSpecifierNode>();
+	for (const TemplateTypeArg& pack_arg : pack_it->second) {
+		TypeSpecifierNode expanded =
+			makeTypeSpecifierFromTemplateTypeArg(pack_arg, source.token());
+		applyOuterTypeModifiers(expanded, source);
+		expanded.set_pack_expansion(false);
+		TypeSpecifierNode& stored =
+			gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(expanded));
+		output.push_back(ASTNode(&stored));
+	}
+	return true;
 }
 
 ASTNode ExpressionSubstitutor::rewriteStructurally(const ASTNode& expression) {
