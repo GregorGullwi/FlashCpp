@@ -1697,6 +1697,9 @@ private:
 		const TemplateTypeArg& parsed_arg,
 		StringHandle current_param_name,
 		const TypeInfo::TemplateArgInfo* concrete_arg) const;
+	bool templateArgumentsMatchCurrentInstantiation(
+		std::span<const TemplateTypeArg> parsed_args,
+		const TypeInfo* current_type_info) const;
 	// May materialize the concrete current-instantiation owner name from active template bindings,
 	// so this helper is intentionally non-const.
 	std::optional<AliasTemplateMaterializationResult> tryResolveCurrentInstantiationTemplateOwner(

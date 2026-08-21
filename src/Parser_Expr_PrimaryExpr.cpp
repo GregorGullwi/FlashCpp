@@ -1088,6 +1088,57 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 		parsed_arg.array_size() == concrete_arg->array_size();
 }
 
+bool Parser::templateArgumentsMatchCurrentInstantiation(
+	std::span<const TemplateTypeArg> parsed_args,
+	const TypeInfo* current_type_info) const {
+	const InlineVector<StringHandle, 4>* current_param_names = nullptr;
+	const InlineVector<TypeInfo::TemplateArgInfo, 4>* current_concrete_args = nullptr;
+	if (current_function_ != nullptr && current_function_->has_outer_template_bindings()) {
+		current_param_names = &current_function_->outer_template_param_names();
+		current_concrete_args = &current_function_->outer_template_args();
+	} else if (current_type_info != nullptr &&
+			   current_type_info->hasInstantiationContext()) {
+		current_param_names = &current_type_info->instantiationContext()->param_names;
+		current_concrete_args = &current_type_info->instantiationContext()->param_args();
+	}
+
+	if (current_param_names != nullptr && !current_param_names->empty()) {
+		if (parsed_args.size() != current_param_names->size()) {
+			return false;
+		}
+		for (size_t i = 0; i < parsed_args.size(); ++i) {
+			const TypeInfo::TemplateArgInfo* concrete_arg =
+				current_concrete_args != nullptr && i < current_concrete_args->size()
+					? &(*current_concrete_args)[i]
+					: nullptr;
+			if (!templateArgMatchesCurrentInstantiationSlot(
+					parsed_args[i],
+					(*current_param_names)[i],
+					concrete_arg)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	if (!isTemplateBodyWithActiveParameters()) {
+		return false;
+	}
+	const auto& active_param_names = currentTemplateParamNames();
+	if (parsed_args.size() != active_param_names.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < parsed_args.size(); ++i) {
+		if (!templateArgMatchesCurrentInstantiationSlot(
+				parsed_args[i],
+				active_param_names[i],
+				nullptr)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurrentInstantiationTemplateOwner(
 	std::string_view primary_template_name,
 	std::span<const TemplateTypeArg> template_args) {
@@ -1127,47 +1178,17 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 		return std::nullopt;
 	}
 
-	const InlineVector<StringHandle, 4>* current_param_names = nullptr;
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>* current_concrete_args = nullptr;
 	if (current_function_ != nullptr && current_function_->has_outer_template_bindings()) {
-		current_param_names = &current_function_->outer_template_param_names();
 		current_concrete_args = &current_function_->outer_template_args();
 	} else if (current_type_info != nullptr &&
 			   current_type_info->hasInstantiationContext()) {
-		current_param_names = &current_type_info->instantiationContext()->param_names;
 		current_concrete_args = &current_type_info->instantiationContext()->param_args();
 	}
 
-	if (current_param_names != nullptr && !current_param_names->empty()) {
-		if (template_args.size() != current_param_names->size()) {
-			return std::nullopt;
-		}
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			const TypeInfo::TemplateArgInfo* concrete_arg =
-				(current_concrete_args != nullptr && i < current_concrete_args->size())
-				? &(*current_concrete_args)[i]
-				: nullptr;
-			if (!templateArgMatchesCurrentInstantiationSlot(
-					template_args[i],
-					(*current_param_names)[i],
-					concrete_arg)) {
-				return std::nullopt;
-			}
-		}
-	} else if (isTemplateBodyWithActiveParameters()) {
-		const auto& active_param_names = currentTemplateParamNames();
-		if (template_args.size() != active_param_names.size()) {
-			return std::nullopt;
-		}
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			if (!templateArgMatchesCurrentInstantiationSlot(
-					template_args[i],
-					active_param_names[i],
-					nullptr)) {
-				return std::nullopt;
-			}
-		}
-	} else {
+	if (!templateArgumentsMatchCurrentInstantiation(
+			template_args,
+			current_type_info)) {
 		return std::nullopt;
 	}
 
