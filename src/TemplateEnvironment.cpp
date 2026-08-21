@@ -48,6 +48,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.template_name = arg.template_name_handle;
 	info.member_pointer_kind = arg.member_pointer_kind;
 	info.member_class_name = arg.member_class_name;
+	info.injected_class_declaration = arg.injected_class_declaration;
 	// Default: store the integer value. For pointer/reference/function-pointer NTTPs with
 	// a named entity, also preserve the explicit identity kind and entity name in the
 	// dedicated fields so the roundtrip through toTemplateTypeArg is lossless.
@@ -94,6 +95,7 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.template_name_handle = arg.template_name;
 	ta.member_pointer_kind = arg.member_pointer_kind;
 	ta.member_class_name = arg.member_class_name;
+	ta.injected_class_declaration = arg.injected_class_declaration;
 	if (arg.is_value) {
 		const bool has_explicit_nttp_identity =
 			arg.nttp_kind != FlashCpp::NonTypeValueIdentityKind::Integral ||

@@ -436,6 +436,7 @@ void copyTemplateArgInfoScalarFields(TypeInfo::TemplateArgInfo& dst, const TypeI
 	dst.template_name = src.template_name;
 	dst.member_pointer_kind = src.member_pointer_kind;
 	dst.member_class_name = src.member_class_name;
+	dst.injected_class_declaration = src.injected_class_declaration;
 	dst.nttp_kind = src.nttp_kind;
 	dst.nttp_entity_name = src.nttp_entity_name;
 	dst.nttp_member_name = src.nttp_member_name;
@@ -457,6 +458,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo()
 	  is_template_template_arg(false),
 	  member_pointer_kind(MemberPointerKind::None),
 	  member_class_name(),
+	  injected_class_declaration(nullptr),
 	  nttp_kind(FlashCpp::NonTypeValueIdentityKind::Integral),
 	  nttp_pointer_offset(0) {}
 
@@ -477,6 +479,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(const TemplateArgInfo& other)
 	  template_name(other.template_name),
 	  member_pointer_kind(other.member_pointer_kind),
 	  member_class_name(other.member_class_name),
+	  injected_class_declaration(other.injected_class_declaration),
 	  nttp_kind(other.nttp_kind),
 	  nttp_entity_name(other.nttp_entity_name),
 	  nttp_member_name(other.nttp_member_name),
@@ -501,6 +504,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
 	  template_name(other.template_name),
 	  member_pointer_kind(other.member_pointer_kind),
 	  member_class_name(other.member_class_name),
+	  injected_class_declaration(other.injected_class_declaration),
 	  nttp_kind(other.nttp_kind),
 	  nttp_entity_name(other.nttp_entity_name),
 	  nttp_member_name(other.nttp_member_name),
