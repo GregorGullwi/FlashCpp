@@ -773,6 +773,10 @@ private:
 		std::vector<StringHandle> imported_members;	// Members imported via using-declarations
 		bool has_inherited_constructors = false;	 // True if constructors are inherited from base class
 		const StructDeclarationNode* injected_class_pattern_node = nullptr;
+		// Exact declaration found by ordinary lookup for the injected-class-name.
+		// A partial-specialization body looks up the primary declaration, while the
+		// injected type denotes injected_class_pattern_node.
+		const StructDeclarationNode* injected_class_lookup_declaration = nullptr;
 	};
 	std::vector<StructParsingContext> struct_parsing_context_stack_;
 	void bindInjectedClassIdentity(

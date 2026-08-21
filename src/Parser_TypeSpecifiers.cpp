@@ -4391,12 +4391,16 @@ void Parser::bindInjectedClassIdentity(
 	}
 	for (auto it = struct_parsing_context_stack_.rbegin();
 		 it != struct_parsing_context_stack_.rend(); ++it) {
-		const StructDeclarationNode* context_declaration =
+		const StructDeclarationNode* context_pattern_declaration =
 			it->injected_class_pattern_node != nullptr
 				? it->injected_class_pattern_node
 				: it->struct_node;
-		if (context_declaration == looked_up_declaration) {
-			type_spec.set_injected_class_declaration(looked_up_declaration);
+		const StructDeclarationNode* context_lookup_declaration =
+			it->injected_class_lookup_declaration != nullptr
+				? it->injected_class_lookup_declaration
+				: context_pattern_declaration;
+		if (context_lookup_declaration == looked_up_declaration) {
+			type_spec.set_injected_class_declaration(context_pattern_declaration);
 			return;
 		}
 	}

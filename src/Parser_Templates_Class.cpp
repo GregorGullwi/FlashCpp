@@ -1302,8 +1302,11 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// Parse template arguments: <int>, <float>, etc.
 			std::optional<InlineVector<TemplateTypeArg, 4>> template_args_opt;
 			std::vector<ASTNode> template_arg_syntax_nodes;
+			const StructDeclarationNode* primary_class_declaration = nullptr;
 			if (auto class_template_opt = gTemplateRegistry.lookupTemplate(template_name);
 				class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+				primary_class_declaration =
+					&class_template_opt->as<TemplateClassDeclarationNode>().class_decl_node();
 				template_args_opt = parse_explicit_template_arguments(
 					class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
 					&template_arg_syntax_nodes);
@@ -1614,11 +1617,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// template (e.g., char_traits<char>::char_type and char_traits<wchar_t>::char_type)
 			// both register under the simple name "char_type" and only the first survives.
 			// RAII guard ensures the stack entry is always popped, even on early returns.
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name),
-													 &struct_ref,
-													 struct_info,
-													 gSymbolTable.get_current_namespace_handle(),
-													 {}});
+			StructParsingContext specialization_struct_context{
+				StringTable::getStringView(instantiated_name),
+				&struct_ref,
+				struct_info,
+				gSymbolTable.get_current_namespace_handle(),
+				{}};
+			specialization_struct_context.injected_class_pattern_node = &struct_ref;
+			specialization_struct_context.injected_class_lookup_declaration =
+				primary_class_declaration;
+			struct_parsing_context_stack_.push_back(specialization_struct_context);
 			auto pop_struct_ctx_guard = [this](void*) {
 				if (!struct_parsing_context_stack_.empty())
 					struct_parsing_context_stack_.pop_back();
@@ -3133,11 +3141,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// BUGFIX: Pass local_struct_info for static member visibility in template partial specializations
 			// This fixes the issue where static constexpr members (e.g., __g, __d2) are not visible
 			// when used as template arguments in typedef declarations within the same struct body
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name),
-													 &struct_ref,
-													 struct_info,
-													 gSymbolTable.get_current_namespace_handle(),
-													 {}});
+			StructParsingContext partial_struct_context{
+				StringTable::getStringView(instantiated_name),
+				&struct_ref,
+				struct_info,
+				gSymbolTable.get_current_namespace_handle(),
+				{}};
+			partial_struct_context.injected_class_pattern_node = &struct_ref;
+			partial_struct_context.injected_class_lookup_declaration =
+				&class_template_opt->as<TemplateClassDeclarationNode>().class_decl_node();
+			struct_parsing_context_stack_.push_back(partial_struct_context);
 
 			// Parse class body (same as full specialization)
 			while (!peek().is_eof() && peek() != "}"_tok) {
@@ -5214,12 +5227,17 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			is_union);
 		FlashCpp::ScopedStateCopy member_struct_context_guard(
 			struct_parsing_context_stack_);
-		struct_parsing_context_stack_.push_back({
+		StructParsingContext partial_member_struct_context{
 			pattern_name_str,
 			&member_struct_ref,
 			nullptr,
 			gSymbolTable.get_current_namespace_handle(),
-			{}});
+			{}};
+		partial_member_struct_context.injected_class_pattern_node =
+			&member_struct_ref;
+		partial_member_struct_context.injected_class_lookup_declaration =
+			&class_template_opt->as<TemplateClassDeclarationNode>().class_decl_node();
+		struct_parsing_context_stack_.push_back(partial_member_struct_context);
 
 		// Parse base class list if present (e.g., : List<Rest...>)
 		if (peek() == ":"_tok) {
