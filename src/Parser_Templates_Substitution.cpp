@@ -254,6 +254,25 @@ ASTNode Parser::substituteTemplateParameters(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	TypeIndex current_owner_type_index,
+	bool has_implicit_this,
+	const StructDeclarationNode* owner_declaration) {
+	TemplateBodySubstitutionState state = makeTemplateBodySubstitutionState(
+		current_owner_type_index,
+		has_implicit_this);
+	state.owner_declaration = owner_declaration;
+	state.environment = buildTemplateEnvironment(template_params, template_args, nullptr);
+	return substituteTemplateParametersWithState(
+		node,
+		template_params,
+		template_args,
+		state);
+}
+
+ASTNode Parser::substituteTemplateParameters(
+	const ASTNode& node,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	TypeIndex current_owner_type_index,
 	bool has_implicit_this) {
 	TemplateBodySubstitutionState state = makeTemplateBodySubstitutionState(
 		current_owner_type_index,
@@ -282,6 +301,19 @@ Parser::TemplateBodySubstitutionState Parser::makeTemplateBodySubstitutionState(
 				.commit()));
 		}
 		state.owner_type_name = owner_type_info->name();
+		for (auto it = member_function_context_stack_.rbegin();
+			 it != member_function_context_stack_.rend();
+			 ++it) {
+			if (it->struct_type_index != state.owner_type_index ||
+				it->struct_node == nullptr) {
+				continue;
+			}
+			state.owner_declaration =
+				it->struct_node->injected_class_pattern_declaration() != nullptr
+					? it->struct_node->injected_class_pattern_declaration()
+					: it->struct_node;
+			break;
+		}
 	} else if (has_implicit_this) {
 		throw CompileError(
 			"Implicit-object template substitution requires a concrete owner TypeIndex");
@@ -402,6 +434,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			template_args);
 		if (state.owner_type_name.isValid()) {
 			substitutor.setCurrentOwnerTypeName(state.owner_type_name);
+			substitutor.setCurrentOwnerDeclaration(state.owner_declaration);
 		}
 		ASTNode substituted = substitutor.substitute(node);
 		if (!node.is<ExpressionNode>() && substituted.is<ExpressionNode>()) {
@@ -582,6 +615,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
 				if (current_owner_type_name.isValid()) {
 					substitutor.setCurrentOwnerTypeName(current_owner_type_name);
+					substitutor.setCurrentOwnerDeclaration(state.owner_declaration);
 				}
 				if (const TypeInfo* resolved_dependent_type =
 						substitutor.resolveDependentMemberTypeForSubstitution(*dependent_type_info)) {

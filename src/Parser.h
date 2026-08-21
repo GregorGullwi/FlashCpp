@@ -772,6 +772,7 @@ private:
 		NamespaceHandle namespace_handle = NamespaceHandle{0};  // Namespace where the struct is declared
 		std::vector<StringHandle> imported_members;	// Members imported via using-declarations
 		bool has_inherited_constructors = false;	 // True if constructors are inherited from base class
+		const StructDeclarationNode* injected_class_pattern_node = nullptr;
 	};
 	std::vector<StructParsingContext> struct_parsing_context_stack_;
 	void bindInjectedClassIdentity(
@@ -1202,6 +1203,7 @@ private:
 		TemplateEnvironment environment;
 		TypeIndex owner_type_index{};
 		StringHandle owner_type_name{};
+		const StructDeclarationNode* owner_declaration = nullptr;
 		bool has_implicit_this = false;
 	};
 	// Active only for the duration of a root substitution; nested independent
@@ -3316,6 +3318,13 @@ public:	// Public methods for template instantiation
 		bool has_implicit_this);
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		TypeIndex current_owner_type_index,
+		bool has_implicit_this,
+		const StructDeclarationNode* owner_declaration);
+	ASTNode substituteTemplateParameters(
+		const ASTNode& node,
 		const TemplateInstantiationContext& context);
 	FunctionSignature substituteTemplateFunctionSignature(
 		FunctionSignature signature,
@@ -3334,7 +3343,8 @@ public:	// Public methods for template instantiation
 		std::span<const TemplateTypeArg> template_args,
 		const TemplateEnvironmentSnapshot& outer_snapshot,
 		TypeIndex instantiated_owner_type_index,
-		bool has_implicit_this);
+		bool has_implicit_this,
+		const StructDeclarationNode* owner_declaration);
 
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
@@ -3443,6 +3453,7 @@ private:	 // Resume private methods
 		const Token& declaration_token,
 		std::span<const TemplateParameterNode> substitution_template_params,
 		std::span<const TemplateTypeArg> substitution_template_args,
+		const StructDeclarationNode* pattern_owner_struct_node,
 		std::string_view log_context,
 		std::string_view function_name);
 	// Parse one catch clause at the current token position into catch_clauses.

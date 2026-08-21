@@ -1712,6 +1712,7 @@ inline void registerNestedMemberFunctionsLazyEntries(
 				template_params,
 				template_args,
 				outer_parent_snapshot);
+			lazy_mem_info.identity.pattern_owner_struct_node = &nested_struct;
 			if (should_register_lazy_members) {
 				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 			}
@@ -1728,6 +1729,7 @@ inline void registerNestedMemberFunctionsLazyEntries(
 				template_params,
 				template_args,
 				outer_parent_snapshot);
+			lazy_mem_info.identity.pattern_owner_struct_node = &nested_struct;
 
 			if (should_register_lazy_members) {
 				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));

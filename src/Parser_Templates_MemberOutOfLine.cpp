@@ -14,6 +14,36 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			class_name,
 			gSymbolTable.get_current_namespace_handle());
 	};
+	auto resolvePatternOwner = [&](std::string_view class_name)
+		-> const StructDeclarationNode* {
+		StringHandle exact_owner_name =
+			StringTable::getOrInternStringHandle(class_name);
+		const NamespaceHandle definition_namespace =
+			gSymbolTable.get_current_namespace_handle();
+		if (definition_namespace.isValid() &&
+			!definition_namespace.isGlobal()) {
+			const std::string_view definition_namespace_name =
+				gNamespaceRegistry.getQualifiedName(definition_namespace);
+			if (!class_name.starts_with(definition_namespace_name) ||
+				class_name.size() <= definition_namespace_name.size() + 2 ||
+				class_name.substr(definition_namespace_name.size(), 2) != "::") {
+				exact_owner_name = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(definition_namespace_name)
+						.append("::")
+						.append(class_name)
+						.commit());
+			}
+		}
+		const std::optional<ASTNode> owner_template =
+			gTemplateRegistry.lookupTemplate(exact_owner_name);
+		if (owner_template.has_value() &&
+			owner_template->is<TemplateClassDeclarationNode>()) {
+			return &owner_template->as<TemplateClassDeclarationNode>()
+				.class_decl_node();
+		}
+		return nullptr;
+	};
 
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
@@ -244,6 +274,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 						// Register as out-of-line member function
 					OutOfLineMemberFunction out_of_line_ctor;
+					out_of_line_ctor.pattern_owner_struct_node =
+						resolvePatternOwner(ctor_class_name);
 					out_of_line_ctor.template_params = template_params;
 					out_of_line_ctor.function_node = ctor_func_node;
 					out_of_line_ctor.body_start = ctor_body_start;
@@ -901,6 +933,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	} else {
 		// Regular out-of-line member function for a template class
 		OutOfLineMemberFunction out_of_line_member;
+		out_of_line_member.pattern_owner_struct_node =
+			resolvePatternOwner(qualified_class_name);
 		out_of_line_member.template_params = template_params;
 		out_of_line_member.function_node = func_node;
 		out_of_line_member.body_start = body_start;
