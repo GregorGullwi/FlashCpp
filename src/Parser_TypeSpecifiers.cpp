@@ -890,8 +890,16 @@ ParseResult Parser::parse_type_specifier() {
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
 				type_size = 0;
 			}
-			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+			auto type_spec = emplace_node<TypeSpecifierNode>(
+				struct_type_info->type_index_.withCategory(TypeCategory::Struct),
+				type_size,
+				type_name_token,
+				cv_qualifier,
+				ReferenceQualifier::None);
+			bindInjectedClassIdentity(
+				type_spec.as<TypeSpecifierNode>(),
+				*type_it->second);
+			return ParseResult::success(type_spec);
 		}
 
 		// Forward declaration: struct not yet defined
@@ -1320,7 +1328,6 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						record.owner_template_arguments =
 							alias_target_info->templateArgs();
-
 						auto classify_current_instantiation_owner =
 							[&](TypeIndex current_owner_type_index) {
 							if (!current_owner_type_index.is_valid()) {
@@ -2595,12 +2602,16 @@ ParseResult Parser::parse_type_specifier() {
 							int resolved_type_size = struct_info
 								? static_cast<int>(struct_info->sizeInBits().value)
 								: 0;
-							return emplace_node<TypeSpecifierNode>(
+							auto type_spec = emplace_node<TypeSpecifierNode>(
 								resolved_type_info.type_index_.withCategory(TypeCategory::Struct),
 								resolved_type_size,
 								type_name_token,
 								cv_qualifier,
 								ReferenceQualifier::None);
+							bindInjectedClassIdentity(
+								type_spec.as<TypeSpecifierNode>(),
+								resolved_type_info);
+							return type_spec;
 						}
 
 						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
@@ -3175,8 +3186,17 @@ ParseResult Parser::parse_type_specifier() {
 										member_type_size = static_cast<int>(member_struct_info->sizeInBits().value);
 									}
 								}
-								return ParseResult::success(emplace_node<TypeSpecifierNode>(
-									member_type_info->type_index_.withCategory(member_type_info->typeEnum()), member_type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+								auto type_spec = emplace_node<TypeSpecifierNode>(
+									member_type_info->type_index_.withCategory(
+										member_type_info->typeEnum()),
+									member_type_size,
+									type_name_token,
+									cv_qualifier,
+									ReferenceQualifier::None);
+								bindInjectedClassIdentity(
+									type_spec.as<TypeSpecifierNode>(),
+									*member_type_info);
+								return ParseResult::success(type_spec);
 							}
 							return ParseResult::error("Failed to resolve instantiated member class template type", type_name_token);
 						}
@@ -3416,8 +3436,16 @@ ParseResult Parser::parse_type_specifier() {
 						} else {
 							type_size = 0;
 						}
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							existing_type->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						auto type_spec = emplace_node<TypeSpecifierNode>(
+							existing_type->type_index_.withCategory(TypeCategory::Struct),
+							type_size,
+							type_name_token,
+							cv_qualifier,
+							ReferenceQualifier::None);
+						bindInjectedClassIdentity(
+							type_spec.as<TypeSpecifierNode>(),
+							*existing_type);
+						return ParseResult::success(type_spec);
 					} else {
 						// Return existing placeholder (UserDefined) - don't create duplicates
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -3542,8 +3570,16 @@ ParseResult Parser::parse_type_specifier() {
 					} else {
 						type_size = 0;
 					}
-					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+					auto type_spec = emplace_node<TypeSpecifierNode>(
+						struct_type_info->type_index_.withCategory(TypeCategory::Struct),
+						type_size,
+						type_name_token,
+						cv_qualifier,
+						ReferenceQualifier::None);
+					bindInjectedClassIdentity(
+						type_spec.as<TypeSpecifierNode>(),
+						*struct_type_info);
+					return ParseResult::success(type_spec);
 				}
 			}
 		}
@@ -3834,6 +3870,9 @@ ParseResult Parser::parse_type_specifier() {
 											 : struct_type_info->type_index_.withCategory(TypeCategory::Struct);
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
 				resolved_type_index, type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
+			bindInjectedClassIdentity(
+				type_spec_node.as<TypeSpecifierNode>(),
+				*original_type_info);
 			if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
 				type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
 			}
@@ -4182,4 +4221,31 @@ ParseResult Parser::parse_decltype_specifier() {
 
 	// Return the deduced type specifier
 	return saved_position.success(emplace_node<TypeSpecifierNode>(*type_spec_opt));
+}
+
+void Parser::bindInjectedClassIdentity(
+	TypeSpecifierNode& type_spec,
+	const TypeInfo& looked_up_type) const {
+	if (looked_up_type.isTypeAlias()) {
+		return;
+	}
+	const StructTypeInfo* looked_up_struct = looked_up_type.getStructInfo();
+	if (looked_up_struct == nullptr ||
+		looked_up_struct->declaration_node == nullptr) {
+		return;
+	}
+	for (auto it = member_function_context_stack_.rbegin();
+		 it != member_function_context_stack_.rend(); ++it) {
+		if (it->struct_node == looked_up_struct->declaration_node) {
+			type_spec.set_injected_class_declaration(it->struct_node);
+			return;
+		}
+	}
+	for (auto it = struct_parsing_context_stack_.rbegin();
+		 it != struct_parsing_context_stack_.rend(); ++it) {
+		if (it->struct_node == looked_up_struct->declaration_node) {
+			type_spec.set_injected_class_declaration(it->struct_node);
+			return;
+		}
+	}
 }

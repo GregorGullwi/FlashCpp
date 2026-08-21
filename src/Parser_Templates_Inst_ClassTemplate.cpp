@@ -3740,6 +3740,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				false // is_class
 			);
 			StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
+			struct_info->declaration_node = &instantiated_struct_ref;
 			setOuterTemplateBindingsFromParams(
 				instantiated_struct_ref,
 				effective_pattern_template_params,
@@ -8160,6 +8161,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_struct.is_class(),
 				nested_struct.is_union());
 			StructDeclarationNode& instantiated_nested_struct_ref = instantiated_nested_struct.as<StructDeclarationNode>();
+			nested_struct_info->declaration_node = &instantiated_nested_struct_ref;
 			setOuterTemplateBindingsFromParams(
 				instantiated_nested_struct_ref,
 				effective_template_params,
@@ -9892,6 +9894,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		false // is_class
 	);
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
+	struct_info_ptr->declaration_node = &instantiated_struct_ref;
 	setOuterTemplateBindingsFromParams(
 		instantiated_struct_ref, effective_template_params, effective_template_args);
 

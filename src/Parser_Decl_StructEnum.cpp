@@ -554,6 +554,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		struct_info_name = struct_name;
 	}
 	StructTypeInfo* struct_info = &struct_type_info.createStructInfo(struct_info_name, struct_ref.default_access(), is_union, current_namespace_handle);
+	struct_info->declaration_node = &struct_ref;
 
 	// Update the struct parsing context with the local_struct_info for static member lookup
 	if (!struct_parsing_context_stack_.empty()) {

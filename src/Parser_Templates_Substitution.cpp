@@ -559,6 +559,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 				type_spec.cv_qualifier(),
 				type_spec.reference_qualifier());
 			substituted_spec.copy_indirection_from(type_spec);
+			substituted_spec.copy_binding_identity_from(type_spec);
 			substituted_spec.set_reference_qualifier(type_spec.reference_qualifier());
 			return emplace_node<TypeSpecifierNode>(substituted_spec);
 		};

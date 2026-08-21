@@ -5880,6 +5880,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	struct_type_info.setInstantiationContext({}, template_args_info, nullptr);
 
 	StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access(), spec_struct.is_union(), decl_ns);
+	struct_info->declaration_node = &spec_struct;
 
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {
