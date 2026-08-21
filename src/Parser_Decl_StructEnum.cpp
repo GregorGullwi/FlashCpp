@@ -7,6 +7,23 @@
 #include "TypeTraitEvaluator.h"
 
 namespace {
+InlineVector<TemplateTypeArg, 4> materializeClassFriendTemplateArguments(
+	std::span<const TemplateTypeArg> pattern_arguments,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	InlineVector<TemplateTypeArg, 4> materialized_arguments;
+	materialized_arguments.reserve(pattern_arguments.size());
+	for (const TemplateTypeArg& pattern_argument : pattern_arguments) {
+		materialized_arguments.push_back(
+			materializeTemplateArg(
+				toTemplateArgInfo(pattern_argument),
+				template_params,
+				template_args,
+				nullptr));
+	}
+	return materialized_arguments;
+}
+
 template <typename StructContextRange>
 StringHandle buildNestedTypeChainName(const StructContextRange& struct_contexts, StringHandle type_name) {
 	if (struct_contexts.empty()) {
@@ -4635,10 +4652,55 @@ ParseResult Parser::parse_friend_declaration() {
 		// Handle qualified names: friend class locale::_Impl;
 		// Build full qualified name for proper friend resolution
 		std::string_view qualified_friend_name = consume_qualified_name_suffix(class_name_token.value());
+		StringHandle selected_friend_name =
+			StringTable::getOrInternStringHandle(qualified_friend_name);
+		StringHandle selected_friend_template_name = selected_friend_name;
+		const StructDeclarationNode* selected_friend_declaration = nullptr;
+		if (std::optional<ASTNode> friend_template =
+				gTemplateRegistry.lookupTemplate(selected_friend_name);
+			friend_template.has_value() &&
+			friend_template->is<TemplateClassDeclarationNode>()) {
+			selected_friend_declaration =
+				&friend_template->as<TemplateClassDeclarationNode>()
+					 .class_decl_node();
+		}
+		if (const TypeInfo* selected_friend_type =
+				lookupTypeInCurrentContext(selected_friend_name);
+			selected_friend_type != nullptr) {
+			selected_friend_name = selected_friend_type->name();
+			if (selected_friend_type->getStructInfo() != nullptr) {
+				selected_friend_declaration =
+					selected_friend_type->getStructInfo()->declaration_node;
+			}
+		}
+		InlineVector<TemplateTypeArg, 4> friend_template_arguments;
 
-		// Skip template arguments if present: friend class SomeTemplate<T>;
+		// Preserve specialization arguments so instantiation can grant friendship
+		// to exactly the named specialization.
 		if (peek() == "<"_tok) {
-			skip_template_arguments();
+			if (std::optional<InlineVector<TemplateTypeArg, 4>> parsed_arguments =
+					parse_explicit_template_arguments();
+				parsed_arguments.has_value()) {
+				friend_template_arguments = std::move(*parsed_arguments);
+				const bool arguments_are_concrete = std::none_of(
+					friend_template_arguments.begin(),
+					friend_template_arguments.end(),
+					[](const TemplateTypeArg& argument) {
+						return templateArgIsStructurallyDependent(argument);
+					});
+				if (arguments_are_concrete) {
+					selected_friend_name =
+						StringTable::getOrInternStringHandle(
+							get_instantiated_class_name(
+								StringTable::getStringView(
+									selected_friend_template_name),
+								std::span<const TemplateTypeArg>(
+									friend_template_arguments.data(),
+									friend_template_arguments.size())));
+				}
+			} else {
+				skip_template_arguments();
+			}
 		}
 
 		// Expect semicolon
@@ -4646,8 +4708,17 @@ ParseResult Parser::parse_friend_declaration() {
 			return ParseResult::error("Expected ';' after friend class declaration", current_token_);
 		}
 
-		auto friend_name_handle = StringTable::getOrInternStringHandle(qualified_friend_name);
-		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name_handle);
+		auto friend_node = emplace_node<FriendDeclarationNode>(
+			FriendKind::Class,
+			selected_friend_name);
+		FriendDeclarationNode& friend_declaration =
+			friend_node.as<FriendDeclarationNode>();
+		friend_declaration.set_class_declaration(
+			selected_friend_declaration);
+		friend_declaration.set_class_template_arguments(
+			std::move(friend_template_arguments));
+		friend_declaration.set_class_template_name(
+			selected_friend_template_name);
 		return saved_position.success(friend_node);
 	}
 
@@ -5273,6 +5344,51 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 			continue;
 		}
 		const FriendDeclarationNode& pattern_friend = friend_decl_node.as<FriendDeclarationNode>();
+		if (pattern_friend.kind() == FriendKind::Class &&
+			!pattern_friend.class_template_arguments().empty()) {
+			InlineVector<TemplateTypeArg, 4> materialized_arguments =
+				materializeClassFriendTemplateArguments(
+					pattern_friend.class_template_arguments(),
+					template_params,
+					template_args);
+			StringHandle friend_template_name =
+				pattern_friend.class_template_name();
+			if (!friend_template_name.isValid()) {
+				throw InternalError(
+					"Class friend specialization is missing its template name");
+			}
+			const bool arguments_are_concrete = std::none_of(
+				materialized_arguments.begin(),
+				materialized_arguments.end(),
+				[](const TemplateTypeArg& argument) {
+					return templateArgIsStructurallyDependent(argument);
+				});
+			StringHandle materialized_friend_name = pattern_friend.name();
+			if (arguments_are_concrete) {
+				materialized_friend_name =
+					StringTable::getOrInternStringHandle(
+						get_instantiated_class_name(
+							StringTable::getStringView(friend_template_name),
+							std::span<const TemplateTypeArg>(
+								materialized_arguments.data(),
+								materialized_arguments.size())));
+			}
+			auto materialized_friend_node =
+				emplace_node<FriendDeclarationNode>(
+					FriendKind::Class,
+					materialized_friend_name);
+			FriendDeclarationNode& materialized_friend =
+				materialized_friend_node.as<FriendDeclarationNode>();
+			materialized_friend.set_class_declaration(
+				pattern_friend.class_declaration());
+			materialized_friend.set_class_template_name(
+				friend_template_name);
+			materialized_friend.set_class_template_arguments(
+				std::move(materialized_arguments));
+			registerFriendInStructInfo(materialized_friend, struct_info);
+			instantiated_struct.add_friend(materialized_friend_node);
+			continue;
+		}
 		if (pattern_friend.kind() != FriendKind::Function ||
 			!pattern_friend.function_declaration().has_value()) {
 			registerFriendInStructInfo(pattern_friend, struct_info);
