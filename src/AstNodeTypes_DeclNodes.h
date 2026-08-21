@@ -8,6 +8,7 @@
 
 class TypeSpecifierNode;
 class ConstructorDeclarationNode;
+class StructDeclarationNode;
 namespace FlashCpp {
 struct StructuralClassValue;
 }
@@ -1116,6 +1117,7 @@ struct TypeInfo {
 		StringHandle template_name;  // Name of the template for template-template arguments
 		MemberPointerKind member_pointer_kind;  // Distinguish member function vs data pointers
 		StringHandle member_class_name;  // Declaring class for pointer-to-member types
+		const StructDeclarationNode* injected_class_declaration = nullptr;
 		// Explicit NTTP identity fields — keep the TemplateTypeArg↔TemplateArgInfo roundtrip
 		// lossless without inferring the kind from TypeCategory or ref_qualifier.
 		// Only meaningful when is_value == true.
@@ -1845,6 +1847,23 @@ public:
 	void set_template_parameter_identity(StringHandle name) { template_parameter_name_ = name; }
 	void clear_template_parameter_identity() { template_parameter_name_ = {}; }
 
+	bool has_injected_class_declaration() const {
+		return injected_class_declaration_ != nullptr;
+	}
+	const StructDeclarationNode* injected_class_declaration() const {
+		return injected_class_declaration_;
+	}
+	void set_injected_class_declaration(const StructDeclarationNode* declaration) {
+		injected_class_declaration_ = declaration;
+	}
+	void clear_injected_class_declaration() {
+		injected_class_declaration_ = nullptr;
+	}
+	void copy_binding_identity_from(const TypeSpecifierNode& other) {
+		template_parameter_name_ = other.template_parameter_name_;
+		injected_class_declaration_ = other.injected_class_declaration_;
+	}
+
 	// Pointer-to-member support (for types like int Class::*)
 	bool has_member_class() const { return member_class_name_.has_value(); }
 	StringHandle member_class_name() const { return *member_class_name_; }
@@ -1872,6 +1891,7 @@ public:
 		array_dimensions_ = other.array_dimensions_;
 		has_unsized_outer_array_dimension_ = other.has_unsized_outer_array_dimension_;
 		function_signature_ = other.function_signature_;
+		copy_binding_identity_from(other);
 		// Note: is_pack_expansion_ is NOT copied - it's context-specific during parsing
 		// and shouldn't be propagated during type substitution in template instantiation
 	}
@@ -1900,6 +1920,7 @@ private:
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;	 // True if this type is followed by ... (pack expansion)
 	StringHandle template_parameter_name_; // Scoped type-template parameter binding
+	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
 
@@ -1923,6 +1944,8 @@ inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_
 	if (type_spec.has_template_parameter_identity()) {
 		type.template_parameter_name = type_spec.template_parameter_name();
 	}
+	type.injected_class_declaration =
+		type_spec.injected_class_declaration();
 	type.pointer_qualifiers.reserve(type_spec.pointer_levels().size());
 	for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
 		type.pointer_qualifiers.push_back(pointer_level.cv_qualifier);

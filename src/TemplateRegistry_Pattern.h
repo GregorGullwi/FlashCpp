@@ -134,6 +134,7 @@ struct TemplatePattern {
 				c.array_dimensions.end());
 			deduced.function_signature = c.function_signature();
 		}
+		deduced.injected_class_declaration = c.injected_class_declaration;
 		return deduced;
 	}
 

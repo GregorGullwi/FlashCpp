@@ -7,6 +7,7 @@
 
 enum class TypeCategory : uint8_t;
 enum class TemplateParameterKind : int;
+class StructDeclarationNode;
 
 enum class TypeQualifier {
 	None,
@@ -1117,6 +1118,7 @@ struct FunctionType {
 	bool has_unsized_outer_array_dimension = false;
 	bool is_pack_expansion = false;
 	StringHandle template_parameter_name;
+	const StructDeclarationNode* injected_class_declaration = nullptr;
 	StringHandle member_class_name;
 	std::shared_ptr<FunctionSignature> callable_signature;
 };
