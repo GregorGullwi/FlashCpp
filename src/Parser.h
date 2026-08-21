@@ -1309,6 +1309,23 @@ private:
 		ParserInstantiationContext ctx_;
 	};
 
+	// C++20 [temp.local]: while instantiating a member template, the injected-
+	// class-name of the enclosing specialization must denote that specialization
+	// in default template arguments (`template<class Myself = Pair>`). Pushes
+	// member-function context without registering members into the symbol table.
+	class ScopedInjectedClassOwnerContext {
+	public:
+		ScopedInjectedClassOwnerContext(Parser& parser, std::string_view struct_name);
+		~ScopedInjectedClassOwnerContext();
+		ScopedInjectedClassOwnerContext(const ScopedInjectedClassOwnerContext&) = delete;
+		ScopedInjectedClassOwnerContext& operator=(const ScopedInjectedClassOwnerContext&) = delete;
+		TypeIndex ownerTypeIndex() const { return owner_type_index_; }
+	private:
+		Parser& parser_;
+		TypeIndex owner_type_index_{};
+		bool pushed_ = false;
+	};
+
 	// Format an "in instantiation of …" backtrace from the given context chain.
 	// Only includes frames whose origin_name is valid (mode-only guards pass StringHandle{}).
 	// Returns empty string if ctx is null or no valid origin is found.
@@ -1984,7 +2001,8 @@ private:
 		const TemplateParameterNode& param,
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		const OuterTemplateBinding* outer_binding,
-		InlineVector<TemplateTypeArg, 4>& template_args);
+		InlineVector<TemplateTypeArg, 4>& template_args,
+		TypeIndex injected_class_owner_type);
 	void appendOuterBindingSubstitutionInputs(
 		const OuterTemplateBinding& outer_binding,
 		InlineVector<ASTNode, 4>& out_params,
@@ -3193,6 +3211,11 @@ private:
 		StringHandle dependent_name,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
+	std::optional<TemplateTypeArg> tryFoldDependentQualifiedStaticMemberNTTPFromExpression(
+		const ExpressionNode& expression,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		bool require_owner_type_argument);
 	AliasTemplateMaterializationResult materializeAliasTemplateInstantiation(
 		std::string_view alias_template_name,
 		std::span<const TemplateTypeArg> template_args);

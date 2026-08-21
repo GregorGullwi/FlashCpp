@@ -2909,6 +2909,53 @@ std::optional<ASTNode> Parser::instantiateLazyMemberForCanonicalOwner(
 	return instantiated;
 }
 
+std::optional<TemplateTypeArg> Parser::tryFoldDependentQualifiedStaticMemberNTTPFromExpression(
+	const ExpressionNode& expression,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	bool require_owner_type_argument) {
+	const ExpressionNode* inner_expression = &expression;
+	if (const auto* cast_node = std::get_if<StaticCastNode>(inner_expression);
+		cast_node != nullptr &&
+		cast_node->expr().is<ExpressionNode>()) {
+		inner_expression = &cast_node->expr().as<ExpressionNode>();
+	}
+	const auto* qualified_identifier = std::get_if<QualifiedIdentifierNode>(inner_expression);
+	if (qualified_identifier == nullptr || !qualified_identifier->nameHandle().isValid()) {
+		return std::nullopt;
+	}
+	std::string_view owner_name = gNamespaceRegistry.getQualifiedName(
+		qualified_identifier->namespace_handle());
+	if (owner_name.empty()) {
+		return std::nullopt;
+	}
+	if (require_owner_type_argument) {
+		const TypeInfo* owner_info = findTypeByName(StringTable::getOrInternStringHandle(owner_name));
+		bool owner_has_type_argument = false;
+		if (owner_info != nullptr) {
+			for (const TypeInfo::TemplateArgInfo& owner_arg : owner_info->templateArgs()) {
+				if (!owner_arg.is_value) {
+					owner_has_type_argument = true;
+					break;
+				}
+			}
+		}
+		if (!owner_has_type_argument) {
+			return std::nullopt;
+		}
+	}
+	StringHandle dependent_member_name = StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(owner_name)
+			.append("::")
+			.append(qualified_identifier->nameHandle())
+			.commit());
+	return tryFoldDependentQualifiedStaticMemberNTTP(
+		dependent_member_name,
+		template_params,
+		template_args);
+}
+
 std::optional<TemplateTypeArg> Parser::tryFoldDependentQualifiedStaticMemberNTTP(
 	StringHandle dependent_name,
 	std::span<const TemplateParameterNode> template_params,
@@ -6120,37 +6167,15 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	StringHandle explicit_substitution_owner) {
 	if (dependent_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expression = dependent_expr.as<ExpressionNode>();
-		if (std::holds_alternative<QualifiedIdentifierNode>(expression)) {
-			const QualifiedIdentifierNode& qualified_identifier =
-				std::get<QualifiedIdentifierNode>(expression);
-			std::string_view owner_name = gNamespaceRegistry.getQualifiedName(
-				qualified_identifier.namespace_handle());
-			const TypeInfo* owner_info = owner_name.empty()
-				? nullptr
-				: findTypeByName(StringTable::getOrInternStringHandle(owner_name));
-			bool owner_has_type_argument = false;
-			if (owner_info != nullptr) {
-				for (const TypeInfo::TemplateArgInfo& owner_arg : owner_info->templateArgs()) {
-					if (!owner_arg.is_value) {
-						owner_has_type_argument = true;
-						break;
-					}
-				}
-			}
-			if (owner_has_type_argument && qualified_identifier.nameHandle().isValid()) {
-				StringHandle dependent_member_name = StringTable::getOrInternStringHandle(
-					StringBuilder()
-						.append(owner_name)
-						.append("::")
-						.append(qualified_identifier.nameHandle())
-						.commit());
-				if (auto folded = tryFoldDependentQualifiedStaticMemberNTTP(
-						dependent_member_name,
-						template_params,
-						template_args);
-					folded.has_value()) {
-					return folded;
-				}
+		if (std::holds_alternative<QualifiedIdentifierNode>(expression) ||
+			std::holds_alternative<StaticCastNode>(expression)) {
+			if (auto folded = tryFoldDependentQualifiedStaticMemberNTTPFromExpression(
+					expression,
+					template_params,
+					template_args,
+					true);
+				folded.has_value()) {
+				return folded;
 			}
 		}
 	}
@@ -6411,6 +6436,17 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 		effective_template_args,
 		substitution_owner_type,
 		false);
+
+	if (substituted.is<ExpressionNode>()) {
+		if (auto folded = tryFoldDependentQualifiedStaticMemberNTTPFromExpression(
+				substituted.as<ExpressionNode>(),
+				effective_template_params,
+				effective_template_args,
+				false);
+			folded.has_value()) {
+			return folded;
+		}
+	}
 
 	// Evaluate the substituted expression using the standard constant expression evaluator
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);

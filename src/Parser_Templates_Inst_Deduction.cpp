@@ -949,6 +949,14 @@ bool Parser::tryAppendDefaultTemplateArg(
 		TemplateTypeArg default_arg(default_type);
 		if (is_builtin_type(default_arg.typeEnum())) {
 			default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
+		} else if (!member_function_context_stack_.empty()) {
+			const TypeIndex owner_type_index =
+				member_function_context_stack_.back().struct_type_index;
+			if (const TypeInfo* owner_info = tryGetTypeInfo(owner_type_index);
+				owner_info != nullptr &&
+				typeNamesInjectedClassOfOwner(default_type, *owner_info)) {
+				default_arg = resolveTypeInfoToTemplateArg(*owner_info, default_type);
+			}
 		}
 		template_args.push_back(default_arg);
 		return true;

@@ -232,11 +232,40 @@ void appendMemberTemplateResolutionOuterBindings(
 
 }
 
+Parser::ScopedInjectedClassOwnerContext::ScopedInjectedClassOwnerContext(
+	Parser& parser,
+	std::string_view struct_name)
+	: parser_(parser),
+	  owner_type_index_(instantiatedOwnerTypeIndex(struct_name)) {
+	if (!owner_type_index_.is_valid()) {
+		return;
+	}
+	parser_.member_function_context_stack_.push_back({
+		StringTable::getOrInternStringHandle(struct_name),
+		owner_type_index_,
+		nullptr,
+		nullptr,
+		false
+	});
+	pushed_ = true;
+}
+
+Parser::ScopedInjectedClassOwnerContext::~ScopedInjectedClassOwnerContext() {
+	if (pushed_ && !parser_.member_function_context_stack_.empty()) {
+		parser_.member_function_context_stack_.pop_back();
+	}
+}
+
 bool Parser::tryAppendMemberDefaultTemplateArg(
 	const TemplateParameterNode& param,
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const OuterTemplateBinding* outer_binding,
-	InlineVector<TemplateTypeArg, 4>& current_template_args) {
+	InlineVector<TemplateTypeArg, 4>& current_template_args,
+	TypeIndex injected_class_owner_type) {
+	if (!injected_class_owner_type.is_valid() &&
+		!member_function_context_stack_.empty()) {
+		injected_class_owner_type = member_function_context_stack_.back().struct_type_index;
+	}
 	// Member templates don't have a separate namespace context - use invalid handle
 	// which causes no namespace scope to be entered during SFINAE reparse.
 	if (outer_binding == nullptr &&
@@ -282,7 +311,9 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 	ASTNode substituted_default = substituteTemplateParameters(
 		param.default_value(),
 		typed_combined_params,
-		combined_template_args);
+		combined_template_args,
+		injected_class_owner_type,
+		false);
 	if (param.kind() == TemplateParameterKind::Type && substituted_default.is<TypeSpecifierNode>()) {
 		current_template_args.push_back(TemplateTypeArg(substituted_default.as<TypeSpecifierNode>()));
 		return true;
@@ -611,6 +642,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	std::string_view member_name,
 	std::span<const TypeSpecifierNode> arg_types) {
 
+	ScopedInjectedClassOwnerContext owner_context(*this, struct_name);
+
 	// Build the qualified template name
 	StringBuilder qualified_name_sb;
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
@@ -815,7 +848,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 					default_args.push_back(existing_arg);
 				}
 				if (!tryAppendMemberDefaultTemplateArg(
-						param, template_params, candidate_outer_binding, default_args)) {
+						param,
+						template_params,
+						candidate_outer_binding,
+						default_args,
+						owner_context.ownerTypeIndex())) {
 					return std::nullopt;
 				}
 				template_args.push_back(default_args.back());
@@ -1530,6 +1567,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	std::string_view member_name,
 	std::span<const TemplateTypeArg> template_type_args) {
 
+	ScopedInjectedClassOwnerContext owner_context(*this, struct_name);
+
 	// Build the qualified template name using StringBuilder
 	StringBuilder qualified_name_sb;
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
@@ -1742,7 +1781,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					template_param,
 					template_params,
 					gTemplateRegistry.getOuterTemplateBinding(candidate_qualified_name.view()),
-					completed_template_args)) {
+					completed_template_args,
+					owner_context.ownerTypeIndex())) {
 				has_all_template_args = false;
 				break;
 			}
