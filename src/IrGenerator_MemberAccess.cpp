@@ -3229,6 +3229,53 @@ bool AstToIr::checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
 	if (!accessing_struct)
 		return false;
 
+	bool has_exact_specialization_friend = false;
+	bool has_legacy_class_friend = false;
+	if (member_owner_struct != nullptr &&
+		member_owner_struct->declaration_node != nullptr &&
+		accessing_struct->declaration_node != nullptr) {
+		for (const ASTNode& friend_node :
+			 member_owner_struct->declaration_node->friend_declarations()) {
+			if (!friend_node.is<FriendDeclarationNode>()) {
+				continue;
+			}
+			const FriendDeclarationNode& friend_declaration =
+				friend_node.as<FriendDeclarationNode>();
+			if (friend_declaration.kind() != FriendKind::Class &&
+				friend_declaration.kind() != FriendKind::TemplateClass) {
+				continue;
+			}
+			if (friend_declaration.kind() != FriendKind::Class ||
+				friend_declaration.class_template_arguments().empty()) {
+				has_legacy_class_friend = true;
+				continue;
+			}
+			has_exact_specialization_friend = true;
+			const StructDeclarationNode* friend_specialization =
+				gTemplateRegistry.findClassTemplateInstantiationDeclaration(
+					friend_declaration.class_declaration(),
+					friend_declaration.class_template_arguments());
+			if (friend_specialization == nullptr) {
+				auto friend_type =
+					getTypesByNameMap().find(friend_declaration.name());
+				if (friend_type != getTypesByNameMap().end() &&
+					friend_type->second != nullptr &&
+					friend_type->second->name() == friend_declaration.name() &&
+					friend_type->second->getStructInfo() != nullptr) {
+					friend_specialization =
+						friend_type->second->getStructInfo()->declaration_node;
+				}
+			}
+			if (friend_specialization != nullptr &&
+				friend_specialization == accessing_struct->declaration_node) {
+				return true;
+			}
+		}
+	}
+	if (has_exact_specialization_friend && !has_legacy_class_friend) {
+		return false;
+	}
+
 	// Fast path: exact StringHandle match avoids string_view ↔ StringHandle round-trip.
 	// This covers the most common case: non-template, same-namespace friend, or
 	// fully-qualified name matching the qualified friend entry stored by the parser.

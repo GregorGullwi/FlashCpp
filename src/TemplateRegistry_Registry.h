@@ -339,6 +339,46 @@ public:
 		return lookupTemplate(qi.identifier_handle);
 	}
 
+	const StructDeclarationNode* findClassTemplateInstantiationDeclaration(
+		const StructDeclarationNode* family_declaration,
+		std::span<const TemplateTypeArg> template_arguments) const {
+		if (family_declaration == nullptr) {
+			return nullptr;
+		}
+		auto structDeclaration =
+			[](const ASTNode& node) -> const StructDeclarationNode* {
+				if (node.is<TemplateClassDeclarationNode>()) {
+					return &node.as<TemplateClassDeclarationNode>()
+							.class_decl_node();
+				}
+				if (node.is<StructDeclarationNode>()) {
+					return &node.as<StructDeclarationNode>();
+				}
+				return nullptr;
+			};
+		for (const auto& [registered_name, declarations] : templates_) {
+			bool names_family = false;
+			for (const ASTNode& declaration : declarations) {
+				if (structDeclaration(declaration) == family_declaration) {
+					names_family = true;
+					break;
+				}
+			}
+			if (!names_family) {
+				continue;
+			}
+			const FlashCpp::TemplateInstantiationKey key =
+				FlashCpp::makeInstantiationKey(
+					registered_name,
+					template_arguments);
+			auto instantiation = instantiations_.find(key);
+			if (instantiation != instantiations_.end()) {
+				return structDeclaration(instantiation->second);
+			}
+		}
+		return nullptr;
+	}
+
 	TemplateNameLookupResult lookupTemplateName(const TemplateNameLookupRequest& request) const {
 		TemplateNameLookupResult result;
 		result.request = request;
