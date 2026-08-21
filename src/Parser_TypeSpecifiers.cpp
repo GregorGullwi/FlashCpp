@@ -114,6 +114,44 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	return record;
 }
 
+const StructDeclarationNode* patternDeclaration(
+	const StructDeclarationNode* declaration) {
+	if (declaration == nullptr) {
+		return nullptr;
+	}
+	return declaration->injected_class_pattern_declaration() != nullptr
+		? declaration->injected_class_pattern_declaration()
+		: declaration;
+}
+
+const StructDeclarationNode* declarationForTypeInfo(const TypeInfo* type_info) {
+	if (type_info == nullptr || type_info->getStructInfo() == nullptr) {
+		return nullptr;
+	}
+	return type_info->getStructInfo()->declaration_node;
+}
+
+const StructDeclarationNode* classTemplateDeclarationForExactName(
+	StringHandle template_name) {
+	TemplateNameLookupRequest request;
+	request.name = template_name;
+	request.lookup_kind =
+		template_name.view().find("::") != std::string_view::npos
+			? TemplateNameLookupKind::Qualified
+			: TemplateNameLookupKind::Ordinary;
+	request.timing = TemplateNameLookupTiming::PointOfDefinition;
+	TemplateNameLookupResult lookup =
+		gTemplateRegistry.lookupTemplateName(request);
+	std::optional<ASTNode> declaration =
+		lookup.firstDeclarationOfKind(
+			TemplateDeclarationKind::ClassTemplate);
+	if (!declaration.has_value() ||
+		!declaration->is<TemplateClassDeclarationNode>()) {
+		return nullptr;
+	}
+	return &declaration->as<TemplateClassDeclarationNode>().class_decl_node();
+}
+
 }
 
 // Helper function to get TypeCategory and size for built-in type keywords
@@ -1329,36 +1367,45 @@ ParseResult Parser::parse_type_specifier() {
 						record.owner_template_arguments =
 							alias_target_info->templateArgs();
 						auto classify_current_instantiation_owner =
-							[&](TypeIndex current_owner_type_index) {
-							if (!current_owner_type_index.is_valid()) {
-								return false;
-							}
-							const TypeInfo* current_owner_type_info =
-								tryGetTypeInfo(current_owner_type_index);
-							if (current_owner_type_info == nullptr ||
-								!current_owner_type_info->isTemplateInstantiation()) {
-								return false;
-							}
-							if (current_owner_type_info->baseTemplateName() !=
-								alias_target_info->baseTemplateName()) {
-								return false;
-							}
-							if (current_owner_type_info->sourceNamespace() !=
-								alias_target_info->sourceNamespace()) {
-								return false;
-							}
+							[&](TypeIndex current_owner_type_index,
+								const StructDeclarationNode* current_owner_declaration) {
+								if (!current_owner_type_index.is_valid()) {
+									return false;
+								}
+								const TypeInfo* current_owner_type_info =
+									tryGetTypeInfo(current_owner_type_index);
+								if (current_owner_type_info == nullptr ||
+									!current_owner_type_info->isTemplateInstantiation() ||
+									patternDeclaration(declarationForTypeInfo(alias_target_info)) !=
+										patternDeclaration(current_owner_declaration)) {
+									return false;
+								}
+								InlineVector<TemplateTypeArg, 4> alias_target_args =
+									toTemplateTypeArgList(alias_target_info->templateArgs());
+								if (!templateArgumentsMatchCurrentInstantiation(
+										std::span<const TemplateTypeArg>(
+											alias_target_args.data(),
+											alias_target_args.size()),
+										current_owner_type_info)) {
+									return false;
+								}
 							record.owner_kind =
 								TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
-							record.owner_type =
-								current_owner_type_info->registeredTypeIndex();
-							record.names_current_instantiation = true;
-							return true;
-						};
+								record.owner_type =
+									current_owner_type_info->registeredTypeIndex();
+								record.names_current_instantiation = true;
+								record.current_instantiation_declaration =
+									patternDeclaration(current_owner_declaration);
+								return true;
+							};
 						bool is_current_instantiation_owner = false;
 						if (!member_function_context_stack_.empty()) {
+							const MemberFunctionContext& member_context =
+								member_function_context_stack_.back();
 							is_current_instantiation_owner =
 								classify_current_instantiation_owner(
-									member_function_context_stack_.back().struct_type_index);
+									member_context.struct_type_index,
+									member_context.struct_node);
 						}
 						if (!is_current_instantiation_owner &&
 							!struct_parsing_context_stack_.empty()) {
@@ -1370,7 +1417,8 @@ ParseResult Parser::parse_type_specifier() {
 								active_struct_it->second != nullptr) {
 								is_current_instantiation_owner =
 									classify_current_instantiation_owner(
-										active_struct_it->second->registeredTypeIndex());
+										active_struct_it->second->registeredTypeIndex(),
+										struct_parsing_context_stack_.back().struct_node);
 							}
 						}
 						if (!is_current_instantiation_owner &&
@@ -2717,34 +2765,29 @@ ParseResult Parser::parse_type_specifier() {
 						TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
 							TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
 						TypeIndex owner_type_index{};
-						auto owner_matches_current_instantiation =
-							[&](const TypeInfo& owner_type_info, std::string_view owner_spelling) {
-							if (owner_spelling.empty()) {
-								return false;
+						const StructDeclarationNode* selected_owner_declaration = nullptr;
+						if (instantiated_class.has_value() &&
+							instantiated_class->is<StructDeclarationNode>()) {
+							selected_owner_declaration =
+								&instantiated_class->as<StructDeclarationNode>();
+						}
+						if (selected_owner_declaration == nullptr) {
+							auto selected_owner_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(instantiated_name));
+							if (selected_owner_it != getTypesByNameMap().end()) {
+								selected_owner_declaration =
+									declarationForTypeInfo(selected_owner_it->second);
 							}
-							if (owner_spelling ==
-								StringTable::getStringView(owner_type_info.name())) {
-								return true;
-							}
-							if (!owner_type_info.isTemplateInstantiation()) {
-								return false;
-							}
-							std::string_view base_template_name =
-								StringTable::getStringView(owner_type_info.baseTemplateName());
-							if (owner_spelling == base_template_name) {
-								return true;
-							}
-							StringHandle qualified_base_handle =
-								gNamespaceRegistry.buildQualifiedIdentifier(
-									owner_type_info.sourceNamespace(),
-									owner_type_info.baseTemplateName());
-							std::string_view qualified_base_name =
-								StringTable::getStringView(qualified_base_handle);
-							return !qualified_base_name.empty() &&
-								owner_spelling == qualified_base_name;
-						};
+						}
+						if (selected_owner_declaration == nullptr) {
+							selected_owner_declaration =
+								classTemplateDeclarationForExactName(
+									StringTable::getOrInternStringHandle(type_name));
+						}
+						const StructDeclarationNode* current_instantiation_declaration = nullptr;
 						auto classify_owner_as_current_instantiation =
-							[&](TypeIndex current_owner_type_index) {
+							[&](TypeIndex current_owner_type_index,
+								const StructDeclarationNode* current_owner_declaration) {
 							if (!current_owner_type_index.is_valid()) {
 								return false;
 							}
@@ -2753,11 +2796,42 @@ ParseResult Parser::parse_type_specifier() {
 							if (current_owner_type_info == nullptr) {
 								return false;
 							}
-							if (!owner_matches_current_instantiation(*current_owner_type_info, type_name)) {
+							const StructDeclarationNode* current_pattern_declaration =
+								patternDeclaration(current_owner_declaration);
+							const bool arguments_match_current_instantiation =
+								templateArgumentsMatchCurrentInstantiation(
+									std::span<const TemplateTypeArg>(
+										filled_template_args.data(),
+										filled_template_args.size()),
+									current_owner_type_info);
+							const StringHandle selected_owner_name =
+								StringTable::getOrInternStringHandle(type_name);
+							std::string_view current_injected_class_name =
+								current_owner_declaration != nullptr
+									? StringTable::getStringView(
+										current_owner_declaration->semantic_name())
+									: std::string_view{};
+							if (size_t scope = current_injected_class_name.rfind("::");
+								scope != std::string_view::npos) {
+								current_injected_class_name.remove_prefix(scope + 2);
+							}
+							const bool names_active_injected_class =
+								type_name.find("::") == std::string_view::npos &&
+								selected_owner_name.isValid() &&
+								StringTable::getStringView(selected_owner_name) ==
+									current_injected_class_name;
+							const StructDeclarationNode* selected_pattern_declaration =
+								names_active_injected_class
+									? current_pattern_declaration
+									: patternDeclaration(selected_owner_declaration);
+							if (selected_pattern_declaration !=
+									current_pattern_declaration ||
+								!arguments_match_current_instantiation) {
 								return false;
 							}
 							owner_kind = TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
 							owner_type_index = current_owner_type_info->registeredTypeIndex();
+							current_instantiation_declaration = current_pattern_declaration;
 							return true;
 						};
 						bool classified_current_instantiation = false;
@@ -2766,7 +2840,8 @@ ParseResult Parser::parse_type_specifier() {
 								member_function_context_stack_.back();
 							classified_current_instantiation =
 								classify_owner_as_current_instantiation(
-									member_ctx.struct_type_index);
+									member_ctx.struct_type_index,
+									member_ctx.struct_node);
 						}
 						if (!classified_current_instantiation &&
 							!struct_parsing_context_stack_.empty()) {
@@ -2778,7 +2853,8 @@ ParseResult Parser::parse_type_specifier() {
 								active_struct_it->second != nullptr) {
 								classified_current_instantiation =
 									classify_owner_as_current_instantiation(
-										active_struct_it->second->registeredTypeIndex());
+										active_struct_it->second->registeredTypeIndex(),
+										struct_parsing_context_stack_.back().struct_node);
 							}
 						}
 						if (!classified_current_instantiation && is_dependent_template_param) {
@@ -2837,14 +2913,17 @@ ParseResult Parser::parse_type_specifier() {
 						all_segment_infos.push_back({had_template_keyword, dependent_member_template_args});
 						for (const DependentMemberSegmentInfo& seg : nested_segment_infos)
 							all_segment_infos.push_back(seg);
-						type_info.setDependentQualifiedName(
+						TypeInfo::DependentQualifiedNameRecord dependent_record =
 							makeDependentQualifiedNameRecord(
 								StringTable::getOrInternStringHandle(type_name),
 								owner_type_index,
 								owner_kind,
 								convertToTemplateArgInfo(*template_args),
 								dependent_member_path,
-								all_segment_infos));
+								all_segment_infos);
+						dependent_record.current_instantiation_declaration =
+							current_instantiation_declaration;
+						type_info.setDependentQualifiedName(std::move(dependent_record));
 						std::optional<size_t> terminal_template_member_index;
 						for (size_t i = 0; i < all_segment_infos.size(); ++i) {
 							if (all_segment_infos[i].template_args.has_value()) {

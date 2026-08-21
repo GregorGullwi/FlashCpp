@@ -1190,6 +1190,7 @@ struct TypeInfo {
 		OwnerKind owner_kind;
 		StringHandle owner_name;
 		TypeIndex owner_type;
+		const StructDeclarationNode* current_instantiation_declaration = nullptr;
 		InlineVector<TemplateArgInfo, 4> owner_template_arguments;
 		InlineVector<Member, 4> member_chain;
 		bool names_current_instantiation;
