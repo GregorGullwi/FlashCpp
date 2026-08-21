@@ -3602,9 +3602,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 		}
 
 		// C++20 [temp.local]: injected-class-name parameters must denote the
-		// current specialization. Prefer TypeIndex identity when available; when
-		// the pattern never registered a TypeInfo (common for member class
-		// templates), fall back to token naming the defining class.
+		// current specialization. Preserve the explicit TypeIndex rewrite and use
+		// declaration identity for parameters parsed as injected-class-names.
 		TypeIndex rewritten_owner_type{};
 		if (self_type_from_index.is_valid() &&
 			self_type_to_index.is_valid() &&
@@ -3612,7 +3611,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			rewritten_owner_type = self_type_to_index;
 		} else if (instantiated_owner_type_index.is_valid() &&
 				   owner_decl != nullptr &&
-				   typeTokenNamesOwnerClass(substituted_param_type, *owner_decl)) {
+				   substituted_param_type.injected_class_declaration() ==
+					   owner_decl) {
 			rewritten_owner_type = instantiated_owner_type_index;
 		}
 		if (rewritten_owner_type.is_valid()) {
