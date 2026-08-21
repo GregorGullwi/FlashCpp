@@ -61,6 +61,17 @@ produce `CompileError`; missing canonical compiler metadata should produce
 `InternalError`; unsupported evaluator coverage must not be accepted as either a
 constant value or an ill-formed program.
 
+## Cross-specialization member access can lose the accessing specialization
+
+During IR generation for a non-static class-template member, member access through
+another specialization can replace the accessing class context with the target
+specialization's `StructTypeInfo`. For example, a member of `Box<int>` may then be
+incorrectly allowed to access a private member of `Box<double>`. The access checker
+cannot repair this locally because both inputs already identify `Box<double>`; the
+fix must preserve the accessing specialization through earlier template replay and
+IR context setup. Do not restore base-template or stripped-name comparisons in the
+access checker.
+
 ## SysV x87 aggregate return gap
 
 Concrete SysV aggregate returns plan `direct` vs `indirect` from canonical layout
