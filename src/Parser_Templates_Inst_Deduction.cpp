@@ -896,6 +896,59 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 		return appendEvaluatedNonTypeArg(*reparse_result.node());
 	};
+	enum class InjectedOwnerRelation : uint8_t {
+		KnownSame,
+		KnownDifferent,
+		UnknownLegacy
+	};
+	auto classifyInjectedOwnerRelation = [&](const TypeSpecifierNode& type_spec) {
+		if (type_spec.has_injected_class_declaration()) {
+			if (member_function_context_stack_.empty()) {
+				return InjectedOwnerRelation::KnownDifferent;
+			}
+			const StructDeclarationNode* owner_declaration =
+				member_function_context_stack_.back().struct_node;
+			if (owner_declaration != nullptr &&
+				owner_declaration->injected_class_pattern_declaration() != nullptr) {
+				owner_declaration =
+					owner_declaration->injected_class_pattern_declaration();
+			}
+			return owner_declaration != nullptr &&
+					type_spec.injected_class_declaration() == owner_declaration
+				? InjectedOwnerRelation::KnownSame
+				: InjectedOwnerRelation::KnownDifferent;
+		}
+
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+			type_info != nullptr && type_info->isTemplateInstantiation()) {
+			return InjectedOwnerRelation::KnownDifferent;
+		}
+		return InjectedOwnerRelation::UnknownLegacy;
+	};
+	auto resolveInjectedOwnerDefault = [&](const TypeSpecifierNode& type_spec) {
+		TemplateTypeArg default_arg(type_spec);
+		if (member_function_context_stack_.empty()) {
+			return default_arg;
+		}
+		const TypeInfo* owner_info = tryGetTypeInfo(
+			member_function_context_stack_.back().struct_type_index);
+		if (owner_info == nullptr) {
+			return default_arg;
+		}
+
+		switch (classifyInjectedOwnerRelation(type_spec)) {
+		case InjectedOwnerRelation::KnownSame:
+			return resolveTypeInfoToTemplateArg(*owner_info, type_spec);
+		case InjectedOwnerRelation::KnownDifferent:
+			return default_arg;
+		case InjectedOwnerRelation::UnknownLegacy:
+			if (typeNamesInjectedClassOfOwner(type_spec, *owner_info)) {
+				return resolveTypeInfoToTemplateArg(*owner_info, type_spec);
+			}
+			return default_arg;
+		}
+		throw InternalError("Unhandled injected-class owner relation");
+	};
 	if (param.kind() == TemplateParameterKind::Type) {
 		if (param.has_default_value_position() && !template_args.empty()) {
 			FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
@@ -936,6 +989,8 @@ bool Parser::tryAppendDefaultTemplateArg(
 			TemplateTypeArg default_arg(reparsed_type);
 			if (is_builtin_type(default_arg.typeEnum())) {
 				default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
+			} else {
+				default_arg = resolveInjectedOwnerDefault(reparsed_type);
 			}
 			template_args.push_back(default_arg);
 			return true;
@@ -949,14 +1004,8 @@ bool Parser::tryAppendDefaultTemplateArg(
 		TemplateTypeArg default_arg(default_type);
 		if (is_builtin_type(default_arg.typeEnum())) {
 			default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
-		} else if (!member_function_context_stack_.empty()) {
-			const TypeIndex owner_type_index =
-				member_function_context_stack_.back().struct_type_index;
-			if (const TypeInfo* owner_info = tryGetTypeInfo(owner_type_index);
-				owner_info != nullptr &&
-				typeNamesInjectedClassOfOwner(default_type, *owner_info)) {
-				default_arg = resolveTypeInfoToTemplateArg(*owner_info, default_type);
-			}
+		} else {
+			default_arg = resolveInjectedOwnerDefault(default_type);
 		}
 		template_args.push_back(default_arg);
 		return true;
