@@ -3741,6 +3741,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			);
 			StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
 			struct_info->declaration_node = &instantiated_struct_ref;
+			instantiated_struct_ref.set_injected_class_pattern_declaration(
+				&pattern_struct);
 			setOuterTemplateBindingsFromParams(
 				instantiated_struct_ref,
 				effective_pattern_template_params,
@@ -3885,6 +3887,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					StringHandle lazy_registry_key = registerLazyConstructorStub(
 						new_ctor_ref,
 						new_ctor_node,
+						&pattern_struct,
 						StringTable::getOrInternStringHandle(template_name),
 						instantiated_name,
 						mem_func.access,
@@ -4369,6 +4372,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (lhs.body_start != rhs.body_start ||
 						lhs.initializer_list_start != rhs.initializer_list_start ||
 						lhs.has_initializer_list != rhs.has_initializer_list ||
+						lhs.pattern_owner_struct_node != rhs.pattern_owner_struct_node ||
 						lhs.inner_template_params.size() != rhs.inner_template_params.size() ||
 						lhs.template_params.size() != rhs.template_params.size() ||
 						lhs.function_node.type_name() != rhs.function_node.type_name()) {
@@ -4415,7 +4419,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			FLASH_LOG(Templates, Trace, "Processing ", out_of_line_members.size(),
 				" out-of-line member functions for ", template_name,
 				" (base fallback: ", template_base_name, ")");
+			const StructDeclarationNode* primary_pattern_owner = nullptr;
+			if (const std::optional<ASTNode> primary_template =
+					gTemplateRegistry.lookupTemplate(template_name);
+				primary_template.has_value() &&
+				primary_template->is<TemplateClassDeclarationNode>()) {
+				primary_pattern_owner =
+					&primary_template->as<TemplateClassDeclarationNode>()
+						 .class_decl_node();
+			}
 			for (const auto& out_of_line_member : out_of_line_members) {
+				const StructDeclarationNode* recorded_pattern_owner =
+					out_of_line_member.pattern_owner_struct_node;
+				if (recorded_pattern_owner != nullptr &&
+					recorded_pattern_owner != &pattern_struct &&
+					recorded_pattern_owner != primary_pattern_owner) {
+					continue;
+				}
+				// An out-of-line definition of a partial specialization is registered
+				// against its primary template family before specialization selection.
+				// Once this pattern has been selected, replay must use the selected
+				// partial declaration as the exact current-instantiation owner.
+				const StructDeclarationNode* pattern_owner_struct_node =
+					recorded_pattern_owner != nullptr ? &pattern_struct : nullptr;
 				if (out_of_line_member.inner_template_params.empty()) {
 					// Plain (non-template) OOL member on a partial specialization: resolve the
 					// source declaration first, then map source-member -> instantiated stub
@@ -4491,6 +4517,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								std::span<const TemplateTypeArg>(
 									template_args_for_pattern.data(),
 									template_args_for_pattern.size()),
+								pattern_owner_struct_node,
 								"partial-spec",
 								plain_ool_name)) {
 							OutOfLineFunctionStubResolution info_func_resolution =
@@ -8162,6 +8189,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_struct.is_union());
 			StructDeclarationNode& instantiated_nested_struct_ref = instantiated_nested_struct.as<StructDeclarationNode>();
 			nested_struct_info->declaration_node = &instantiated_nested_struct_ref;
+			instantiated_nested_struct_ref.set_injected_class_pattern_declaration(
+				&nested_struct);
 			setOuterTemplateBindingsFromParams(
 				instantiated_nested_struct_ref,
 				effective_template_params,
@@ -8680,6 +8709,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			for (const auto& out_of_line_member : nested_out_of_line_members) {
+				if (out_of_line_member.pattern_owner_struct_node != nullptr &&
+					out_of_line_member.pattern_owner_struct_node != &nested_struct) {
+					continue;
+				}
 				if (!out_of_line_member.inner_template_params.empty() &&
 					out_of_line_member.function_node.is<ConstructorDeclarationNode>()) {
 					const ConstructorDeclarationNode& out_of_line_ctor_decl =
@@ -9895,6 +9928,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	);
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
 	struct_info_ptr->declaration_node = &instantiated_struct_ref;
+	instantiated_struct_ref.set_injected_class_pattern_declaration(&class_decl);
 	setOuterTemplateBindingsFromParams(
 		instantiated_struct_ref, effective_template_params, effective_template_args);
 
@@ -10108,6 +10142,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				{
 					auto& id = lazy_info.identity;
 					id.original_member_node = mem_func.function_declaration;
+					id.pattern_owner_struct_node = &class_decl;
 					id.template_owner_name = StringTable::getOrInternStringHandle(template_name);
 					id.instantiated_owner_name = instantiated_name;
 					id.original_lookup_name = decl.identifier_token().handle();
@@ -10587,6 +10622,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						registerLazyConstructorStub(
 							new_ctor_ref,
 							new_ctor_node,
+							&class_decl,
 							StringTable::getOrInternStringHandle(template_name),
 							instantiated_name,
 							mem_func.access,
@@ -10664,6 +10700,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						registerLazyConstructorStub(
 							new_ctor_ref,
 							new_ctor_node,
+							&class_decl,
 							StringTable::getOrInternStringHandle(template_name),
 							instantiated_name,
 							mem_func.access,
@@ -11407,6 +11444,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FLASH_LOG(Templates, Trace, "Processing ", out_of_line_members.size(), " out-of-line member functions for ", template_name);
 
 	for (const auto& out_of_line_member : out_of_line_members) {
+		const StructDeclarationNode* pattern_owner_struct_node =
+			out_of_line_member.pattern_owner_struct_node;
+		if (pattern_owner_struct_node != nullptr &&
+			pattern_owner_struct_node != &class_decl) {
+			continue;
+		}
 		// Check if this is a nested template (member function template of a class template)
 		// Pattern: template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
 		if (!out_of_line_member.inner_template_params.empty()) {
@@ -11801,6 +11844,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::span<const TemplateTypeArg>(
 					template_args_to_use.data(),
 					template_args_to_use.size()),
+				pattern_owner_struct_node,
 				"primary-template",
 				decl.identifier_token().value());
 			if (found_match) {

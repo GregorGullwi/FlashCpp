@@ -746,12 +746,16 @@ ASTNode ExpressionSubstitutor::substituteFoldExpression(const FoldExpressionNode
 						&environment_);
 					ExpressionSubstitutor element_substitutor(element_environment, parser_);
 					element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+					element_substitutor.setCurrentOwnerDeclaration(
+						current_owner_declaration_);
 					pack_values.push_back(element_substitutor.substitute(expanded));
 					continue;
 				}
 
 				ExpressionSubstitutor element_substitutor(environment_, parser_);
 				element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+				element_substitutor.setCurrentOwnerDeclaration(
+					current_owner_declaration_);
 				pack_values.push_back(element_substitutor.substitute(expanded));
 			}
 		}
@@ -1079,6 +1083,8 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 							ordered_param_names.data(),
 							ordered_param_names.size()));
 					element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+					element_substitutor.setCurrentOwnerDeclaration(
+						current_owner_declaration_);
 					out.push_back(element_substitutor.substitute(
 						pack_expansion_expr->pattern()));
 				}
@@ -1244,6 +1250,8 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 
 			ExpressionSubstitutor element_substitutor(scalar_bindings, parser_, template_param_order_);
 			element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+			element_substitutor.setCurrentOwnerDeclaration(
+				current_owner_declaration_);
 			ASTNode substituted_expr = element_substitutor.substitute(*pack_arg.dependent_expr);
 			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
 				expanded_args.emplace_back(eval_result->value, eval_result->type);

@@ -634,6 +634,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 				// Register as out-of-line member with inner template params
 				OutOfLineMemberFunction out_of_line_member;
+				if (const std::optional<ASTNode> owner_template =
+						gTemplateRegistry.lookupTemplate(
+							StringTable::getOrInternStringHandle(
+								nested_qualified_class_name));
+					owner_template.has_value() &&
+					owner_template->is<TemplateClassDeclarationNode>()) {
+					out_of_line_member.pattern_owner_struct_node =
+						&owner_template->as<TemplateClassDeclarationNode>()
+							 .class_decl_node();
+				}
 				out_of_line_member.template_params = template_param_nodes;
 				out_of_line_member.function_node = func_node;
 				out_of_line_member.body_start = body_start;

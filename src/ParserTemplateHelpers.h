@@ -827,6 +827,7 @@ inline void setOutOfLineConstructorTemplateReplayMetadata(
 inline StringHandle registerLazyConstructorStub(
 	ConstructorDeclarationNode& ctor_decl,
 	ASTNode ctor_node,
+	const StructDeclarationNode* pattern_owner_struct_node,
 	StringHandle template_owner_name,
 	StringHandle instantiated_name,
 	AccessSpecifier access,
@@ -846,6 +847,7 @@ inline StringHandle registerLazyConstructorStub(
 	{
 		auto& id = lazy_ctor_info.identity;
 		id.original_member_node = ctor_node;
+		id.pattern_owner_struct_node = pattern_owner_struct_node;
 		id.template_owner_name = template_owner_name;
 		id.instantiated_owner_name = instantiated_name;
 		id.original_lookup_name = ctor_decl.name();
@@ -2940,6 +2942,7 @@ bool Parser::replayOutOfLineMemberBody(
 	const Token& declaration_token,
 	std::span<const TemplateParameterNode> substitution_template_params,
 	std::span<const TemplateTypeArg> substitution_template_args,
+	const StructDeclarationNode* pattern_owner_struct_node,
 	std::string_view log_context,
 	std::string_view function_name) {
 	SaveHandle saved_pos = save_token_position();
@@ -2960,6 +2963,27 @@ bool Parser::replayOutOfLineMemberBody(
 			definition_lookup_context.is_valid()
 				? &definition_lookup_context
 				: nullptr);
+		FlashCpp::SymbolTableNamespaceScope definition_ns_scope(
+			definition_lookup_context.definition_namespace);
+		StructParsingContext struct_context;
+		struct_context.struct_name =
+			StringTable::getStringView(instantiated_name);
+		struct_context.struct_node = instantiated_struct_decl;
+		if (auto instantiated_type_it =
+				getTypesByNameMap().find(instantiated_name);
+			instantiated_type_it != getTypesByNameMap().end() &&
+			instantiated_type_it->second != nullptr) {
+			struct_context.local_struct_info =
+				instantiated_type_it->second->getStructInfo();
+		}
+		struct_context.namespace_handle =
+			definition_lookup_context.definition_namespace;
+		struct_context.injected_class_pattern_node =
+			pattern_owner_struct_node;
+		struct_parsing_context_stack_.push_back(struct_context);
+		ScopeGuard struct_context_scope([this]() {
+			struct_parsing_context_stack_.pop_back();
+		});
 
 		FlashCpp::FunctionParsingScopeGuard func_guard(
 			*this,
@@ -2977,7 +3001,10 @@ bool Parser::replayOutOfLineMemberBody(
 				ASTNode substituted_body = substituteTemplateParameters(
 					*body_result.node(),
 					substitution_template_params,
-					substitution_template_args);
+					substitution_template_args,
+					instantiated_type_index,
+					true,
+					pattern_owner_struct_node);
 				inst_func.set_definition(substituted_body);
 				finalize_function_after_definition(inst_func, true);
 				parsed_and_substituted = true;

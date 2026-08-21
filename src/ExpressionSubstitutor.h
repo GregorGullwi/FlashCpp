@@ -116,6 +116,10 @@ public:
 	void setCurrentOwnerTypeName(StringHandle owner_type_name) {
 		current_owner_type_name_ = owner_type_name;
 	}
+	void setCurrentOwnerDeclaration(
+		const StructDeclarationNode* owner_declaration) {
+		current_owner_declaration_ = owner_declaration;
+	}
 
 private:
 	struct MaterializedStoredTemplateArgs {
@@ -233,6 +237,7 @@ private:
 	std::span<const TemplateTypeArg> template_args_{};
 	std::vector<Parser::PackParamInfo> captured_pack_param_info_;
 	StringHandle current_owner_type_name_{};
+	const StructDeclarationNode* current_owner_declaration_ = nullptr;
 	ExpressionRewriter expression_rewriter_;
 	// Cycle-detection guard for materializeStoredTemplateArgs:
 	// tracks TypeInfo pointers currently being materialized to prevent

@@ -1102,6 +1102,13 @@ public:
 	void set_semantic_name(StringHandle semantic_name) {
 		semantic_name_ = semantic_name;
 	}
+	void set_injected_class_pattern_declaration(
+		const StructDeclarationNode* pattern_declaration) {
+		injected_class_pattern_declaration_ = pattern_declaration;
+	}
+	const StructDeclarationNode* injected_class_pattern_declaration() const {
+		return injected_class_pattern_declaration_;
+	}
 	std::span<const StructMemberDecl> members() const { return members_; }
 	std::span<const StructMemberFunctionDecl> member_functions() const { return member_functions_; }
 	std::vector<StructMemberFunctionDecl>& member_functions() { return member_functions_; }
@@ -1452,6 +1459,7 @@ public:
 private:
 	StringHandle name_;	// Points directly into source text from lexer token
 	StringHandle semantic_name_; // Canonical identity for replayed local classes
+	const StructDeclarationNode* injected_class_pattern_declaration_ = nullptr;
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance

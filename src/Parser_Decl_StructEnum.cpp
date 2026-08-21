@@ -3955,6 +3955,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// is_const is stored in StructMemberFunctionDecl, not FunctionDeclarationNode
 				}
 				id.template_owner_name = delayed.struct_name;
+				id.pattern_owner_struct_node = delayed.struct_node;
 			}
 			deferred.body_start = delayed.body_start;
 			deferred.initializer_list_start = delayed.initializer_list_start;

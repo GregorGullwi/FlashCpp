@@ -47,7 +47,8 @@ ASTNode Parser::substituteLazyMemberBody(
 	std::span<const TemplateTypeArg> template_args,
 	const TemplateEnvironmentSnapshot& outer_snapshot,
 	TypeIndex instantiated_owner_type_index,
-	bool has_implicit_this) {
+	bool has_implicit_this,
+	const StructDeclarationNode* owner_declaration) {
 	std::optional<TemplateEnvironment> outer_environment;
 	TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
 		outer_snapshot,
@@ -63,7 +64,8 @@ ASTNode Parser::substituteLazyMemberBody(
 		template_params,
 		template_args,
 		instantiated_owner_type_index,
-		has_implicit_this);
+		has_implicit_this,
+		owner_declaration);
 }
 
 std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
@@ -156,10 +158,13 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 			new_ctor_ref.set_owning_type_index(instantiated_owner_type_index);
 		}
 
-		const StructDeclarationNode* owner_struct_decl = nullptr;
-		if (auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
-			owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
-			owner_struct_decl = &owner_symbol->as<StructDeclarationNode>();
+		const StructDeclarationNode* owner_struct_decl =
+			lazy_info.identity.pattern_owner_struct_node;
+		if (owner_struct_decl == nullptr) {
+			if (auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
+				owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
+				owner_struct_decl = &owner_symbol->as<StructDeclarationNode>();
+			}
 		}
 
 		auto resolve_self_type = [&](TypeIndex& type_index) {
@@ -323,7 +328,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 						lazy_info.template_params,
 						lazy_info.template_args,
 						instantiated_owner_type_index,
-						true);
+						true,
+						owner_struct_decl);
 					substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 				}
 				new_ctor_ref.add_parameter_node(substituted_param_decl);
@@ -352,7 +358,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 				lazy_info.template_params,
 				converted_template_args,
 				instantiated_owner_type_index,
-				true);
+				true,
+				owner_struct_decl);
 		};
 
 		auto substituteInitArg = [&](const ASTNode& arg, std::vector<ASTNode>& out) {
@@ -519,7 +526,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 			converted_template_args,
 			lazy_info.outer_template_environment_snapshot,
 			instantiated_owner_type_index,
-			true);
+			true,
+			owner_struct_decl);
 		new_ctor_ref.set_definition(substituted_body);
 		new_ctor_ref.set_mangled_name(NameMangling::generateMangledNameFromNode(
 			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
@@ -661,13 +669,25 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 			converted_template_args.push_back(ttype_arg);
 		}
 
+		const StructDeclarationNode* owner_struct_decl =
+			lazy_info.identity.pattern_owner_struct_node;
+		if (owner_struct_decl == nullptr) {
+			if (auto owner_symbol = lookup_symbol(
+					lazy_info.identity.template_owner_name);
+				owner_symbol.has_value() &&
+				owner_symbol->is<StructDeclarationNode>()) {
+				owner_struct_decl = &owner_symbol->as<StructDeclarationNode>();
+			}
+		}
+
 		if (dtor_decl.has_noexcept_expression()) {
 			ASTNode substituted_noexcept = substituteTemplateParameters(
 				dtor_decl.noexcept_expression()->node(),
 				lazy_info.template_params,
 				converted_template_args,
 				instantiated_owner_type_index,
-				true);
+				true,
+				owner_struct_decl);
 			new_dtor_ref.set_noexcept_expression(
 				ExpressionHandle(substituted_noexcept));
 			ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
@@ -701,7 +721,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 			converted_template_args,
 			lazy_info.outer_template_environment_snapshot,
 			instantiated_owner_type_index,
-			true);
+			true,
+			owner_struct_decl);
 		new_dtor_ref.set_definition(substituted_body);
 
 		registerAndNormalizeLateMaterializedTopLevelNode(new_dtor_node);
@@ -724,10 +745,13 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 	}
 
 	// Look up the owner struct once for use in both return type and parameter alias resolution.
-	const StructDeclarationNode* owner_struct_decl = nullptr;
-	if (auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
-		owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
-		owner_struct_decl = &owner_symbol->as<StructDeclarationNode>();
+	const StructDeclarationNode* owner_struct_decl =
+		lazy_info.identity.pattern_owner_struct_node;
+	if (owner_struct_decl == nullptr) {
+		if (auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
+			owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
+			owner_struct_decl = &owner_symbol->as<StructDeclarationNode>();
+		}
 	}
 
 	// Resolve self-referential types: when a member function's return type or parameter type
@@ -1031,7 +1055,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
 			lazy_info.outer_template_environment_snapshot,
 			instantiated_owner_type_index,
-			!func_decl.is_static());
+			!func_decl.is_static(),
+			owner_struct_decl);
 		std::optional<TemplateEnvironment> outer_environment;
 		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
 			lazy_info.outer_template_environment_snapshot,
@@ -1040,6 +1065,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 			outer_environment);
 		ExpressionSubstitutor owner_substitutor(substitution_environment, *this);
 		owner_substitutor.setCurrentOwnerTypeName(lazy_info.identity.instantiated_owner_name);
+		owner_substitutor.setCurrentOwnerDeclaration(owner_struct_decl);
 		substituted_body = owner_substitutor.substitute(substituted_body);
 		new_func_ref.set_definition(substituted_body);
 

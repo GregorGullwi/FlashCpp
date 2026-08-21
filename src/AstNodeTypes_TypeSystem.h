@@ -848,6 +848,7 @@ struct DeferredMemberIdentity {
 	Kind kind = Kind::Function;
 
 	ASTNode original_member_node;			  // authoritative source declaration
+	const StructDeclarationNode* pattern_owner_struct_node = nullptr;
 	StringHandle template_owner_name;		  // e.g. integral_constant
 	StringHandle instantiated_owner_name;	  // e.g. integral_constant$hash
 

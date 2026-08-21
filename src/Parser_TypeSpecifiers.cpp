@@ -3821,6 +3821,7 @@ ParseResult Parser::parse_type_specifier() {
 		// entry is safe to resolve via the alias-chain follower.
 		constexpr size_t scope_resolution_len = std::string_view{"::"}.size();
 		const size_t first_scope = type_name.find("::");
+		bool failed_concrete_replay_member_lookup = false;
 		if (first_scope != std::string_view::npos) {
 			std::string_view base_part = type_name.substr(0, first_scope);
 			std::string_view member_chain_str = type_name.substr(first_scope + scope_resolution_len);
@@ -3830,12 +3831,60 @@ ParseResult Parser::parse_type_specifier() {
 				base_info = findTypeByName(base_handle);
 			}
 			if (base_info != nullptr && !base_info->isDependentPlaceholder()) {
+				const TypeInfo* lookup_owner_info = base_info;
+				bool rebound_to_active_owner = false;
+				if (const StructTypeInfo* base_struct_info =
+						base_info->getStructInfo();
+					base_struct_info != nullptr &&
+					base_struct_info->declaration_node != nullptr) {
+					const StructDeclarationNode* base_declaration =
+						base_struct_info->declaration_node
+								->injected_class_pattern_declaration() != nullptr
+							? base_struct_info->declaration_node
+								  ->injected_class_pattern_declaration()
+							: base_struct_info->declaration_node;
+					for (auto context_it =
+							 struct_parsing_context_stack_.rbegin();
+						 context_it != struct_parsing_context_stack_.rend();
+						 ++context_it) {
+						if (context_it->injected_class_pattern_node !=
+								base_declaration ||
+							context_it->local_struct_info == nullptr) {
+							continue;
+						}
+						if (const TypeInfo* instantiated_owner_info =
+								findTypeByName(
+									context_it->local_struct_info->getName());
+							instantiated_owner_info != nullptr) {
+							lookup_owner_info = instantiated_owner_info;
+						}
+						rebound_to_active_owner = true;
+						break;
+					}
+				}
 				if (const TypeInfo* resolved_member = resolveBaseClassMemberTypeChain(
-						base_part,
+						StringTable::getStringView(lookup_owner_info->name()),
 						buildQualifiedTypeMemberChain(member_chain_str))) {
 					type_info_ctx = resolved_member;
+				} else if (
+					rebound_to_active_owner &&
+					member_chain_str.find('<') == std::string_view::npos &&
+					!lookup_owner_info->is_incomplete_instantiation_ &&
+					!lookup_owner_info->isDependentPlaceholder()) {
+					failed_concrete_replay_member_lookup = true;
 				}
 			}
+		}
+
+		if (failed_concrete_replay_member_lookup) {
+			return ParseResult::error(
+				std::string(
+					StringBuilder()
+						.append("Type member '")
+						.append(type_name)
+						.append("' was not found in the concrete replay owner")
+						.commit()),
+				type_name_token);
 		}
 
 		if (type_info_ctx && type_info_ctx->isStruct()) {
@@ -4234,17 +4283,30 @@ void Parser::bindInjectedClassIdentity(
 		looked_up_struct->declaration_node == nullptr) {
 		return;
 	}
+	const StructDeclarationNode* looked_up_declaration =
+		looked_up_struct->declaration_node->injected_class_pattern_declaration() != nullptr
+			? looked_up_struct->declaration_node->injected_class_pattern_declaration()
+			: looked_up_struct->declaration_node;
 	for (auto it = member_function_context_stack_.rbegin();
 		 it != member_function_context_stack_.rend(); ++it) {
-		if (it->struct_node == looked_up_struct->declaration_node) {
-			type_spec.set_injected_class_declaration(it->struct_node);
+		const StructDeclarationNode* context_declaration =
+			it->struct_node != nullptr &&
+					it->struct_node->injected_class_pattern_declaration() != nullptr
+				? it->struct_node->injected_class_pattern_declaration()
+				: it->struct_node;
+		if (context_declaration == looked_up_declaration) {
+			type_spec.set_injected_class_declaration(looked_up_declaration);
 			return;
 		}
 	}
 	for (auto it = struct_parsing_context_stack_.rbegin();
 		 it != struct_parsing_context_stack_.rend(); ++it) {
-		if (it->struct_node == looked_up_struct->declaration_node) {
-			type_spec.set_injected_class_declaration(it->struct_node);
+		const StructDeclarationNode* context_declaration =
+			it->injected_class_pattern_node != nullptr
+				? it->injected_class_pattern_node
+				: it->struct_node;
+		if (context_declaration == looked_up_declaration) {
+			type_spec.set_injected_class_declaration(looked_up_declaration);
 			return;
 		}
 	}
