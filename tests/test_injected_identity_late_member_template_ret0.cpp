@@ -6,17 +6,16 @@ struct Holder {
 	};
 
 	template <class U>
-	struct Nested {
+	struct Late {
 		typename Holder<T>::template Box<T>
 		pass(typename Holder<T>::template Box<T> value) {
-			typename Holder<T>::template Box<T> local = value;
-			return local;
+			return value;
 		}
 	};
 };
 
 int main() {
 	Holder<int>::Box<int> value{42};
-	Holder<int>::Nested<char> nested{};
-	return nested.pass(value).value == 42 ? 0 : 1;
+	Holder<int>::Late<char> late{};
+	return late.pass(value).value == 42 ? 0 : 1;
 }

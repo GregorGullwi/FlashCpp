@@ -561,6 +561,62 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 	TypeIndex substituted_type_index);
 
 template <typename ParamContainer, typename ArgContainer, typename InstantiateFn>
+inline const TypeInfo* materializeDependentQualifiedRecordOwner(
+	const TypeInfo::DependentQualifiedNameRecord& dependent_record,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	InstantiateFn&& instantiate_class_template) {
+	if (dependent_record.owner_name.isValid() &&
+		!dependent_record.owner_template_arguments.empty()) {
+		InlineVector<TemplateTypeArg, 4> concrete_owner_args;
+		concrete_owner_args.reserve(
+			dependent_record.owner_template_arguments.size());
+		bool owner_arguments_are_concrete = true;
+		for (const TypeInfo::TemplateArgInfo& owner_arg :
+			 dependent_record.owner_template_arguments) {
+			TemplateTypeArg concrete_arg = materializeTemplateArg(
+				owner_arg,
+				template_params,
+				template_args);
+			if (concrete_arg.is_dependent ||
+				concrete_arg.dependent_name.isValid() ||
+				concrete_arg.dependent_expr.has_value()) {
+				owner_arguments_are_concrete = false;
+				break;
+			}
+			concrete_owner_args.push_back(std::move(concrete_arg));
+		}
+
+		if (owner_arguments_are_concrete) {
+			if (std::optional<ASTNode> instantiated_owner =
+					instantiate_class_template(
+						StringTable::getStringView(dependent_record.owner_name),
+						std::span<const TemplateTypeArg>(
+							concrete_owner_args.data(),
+							concrete_owner_args.size()),
+						false);
+				instantiated_owner.has_value() &&
+				instantiated_owner->is<StructDeclarationNode>()) {
+				if (const TypeInfo* owner_type_info = findTypeByName(
+						instantiated_owner->as<StructDeclarationNode>().name())) {
+					return owner_type_info;
+				}
+			}
+		}
+	}
+
+	if (dependent_record.owner_type.is_valid()) {
+		if (const TypeInfo* owner_type_info =
+				tryGetTypeInfo(dependent_record.owner_type);
+			owner_type_info != nullptr &&
+			is_struct_type(owner_type_info->typeEnum())) {
+			return owner_type_info;
+		}
+	}
+	return nullptr;
+}
+
+template <typename ParamContainer, typename ArgContainer, typename InstantiateFn>
 inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
 	const ASTNode* original_type_node,
 	const TypeSpecifierNode& original_type_spec,
@@ -976,6 +1032,15 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 	if (dependent_record == nullptr || dependent_record->member_chain.empty()) {
 		return substituted_type_index;
 	}
+	if (const TypeInfo* recorded_owner_type_info =
+			materializeDependentQualifiedRecordOwner(
+				*dependent_record,
+				template_params,
+				template_args,
+				instantiate_class_template);
+		recorded_owner_type_info != nullptr) {
+		owner_type_info = recorded_owner_type_info;
+	}
 
 	const TypeInfo* current_type_info = owner_type_info;
 	for (const auto& member : dependent_record->member_chain) {
@@ -1096,6 +1161,17 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expr)) {
 				dependent_record = qualified->dependentQualifiedName();
 			}
+		}
+	}
+	if (dependent_record != nullptr &&
+		!dependent_record->member_chain.empty() &&
+		dependent_record->member_chain.back().has_template_arguments) {
+		if (const TypeInfo* resolved_member_type =
+				tryGetTypeInfo(substituted_type_index);
+			resolved_member_type != nullptr &&
+			!resolved_member_type->isDependentMemberType() &&
+			!resolved_member_type->hasDependentQualifiedName()) {
+			return substituted_type_index;
 		}
 	}
 	if (template_source_type_info != nullptr) {
@@ -1258,6 +1334,15 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 		if (owner_type_info == nullptr || !is_struct_type(owner_type_info->typeEnum())) {
 			return substituted_type_index;
 		}
+	}
+	if (const TypeInfo* recorded_owner_type_info =
+			materializeDependentQualifiedRecordOwner(
+				*dependent_record,
+				template_params,
+				template_args,
+				instantiate_class_template);
+		recorded_owner_type_info != nullptr) {
+		owner_type_info = recorded_owner_type_info;
 	}
 
 	const TypeInfo* current_type_info = owner_type_info;

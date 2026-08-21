@@ -2591,7 +2591,17 @@ ParseResult Parser::parse_type_specifier() {
 							// Check if ns_qualified starts with type_name:: - if so, append the rest
 							if (ns_qualified.starts_with(type_name) && ns_qualified.size() > type_name.size() + 2 &&
 								ns_qualified.substr(type_name.size(), 2) == "::") {
-								qualified_type_name_builder.append(ns_qualified.substr(type_name.size()));
+								const std::string_view namespace_suffix =
+									ns_qualified.substr(type_name.size());
+								const std::string_view terminal_name =
+									qualified_node.identifier_token().value();
+								// The qualified parser can include the terminal identifier in
+								// its namespace handle. It is appended below, so retain only
+								// genuine intermediate components here.
+								if (namespace_suffix.size() != terminal_name.size() + 2 ||
+									namespace_suffix.substr(2) != terminal_name) {
+									qualified_type_name_builder.append(namespace_suffix);
+								}
 							}
 						}
 						return qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value()).commit();

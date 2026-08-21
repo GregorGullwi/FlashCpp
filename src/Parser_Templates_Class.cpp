@@ -5212,6 +5212,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			qualified_pattern_name,
 			is_class,
 			is_union);
+		FlashCpp::ScopedStateCopy member_struct_context_guard(
+			struct_parsing_context_stack_);
+		struct_parsing_context_stack_.push_back({
+			pattern_name_str,
+			&member_struct_ref,
+			nullptr,
+			gSymbolTable.get_current_namespace_handle(),
+			{}});
 
 		// Parse base class list if present (e.g., : List<Rest...>)
 		if (peek() == ":"_tok) {
@@ -5759,6 +5767,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		qualified_name,
 		is_class,
 		is_union);
+	FlashCpp::ScopedStateCopy member_struct_context_guard(
+		struct_parsing_context_stack_);
+	struct_parsing_context_stack_.push_back({
+		struct_name,
+		&member_struct_ref,
+		nullptr,
+		gSymbolTable.get_current_namespace_handle(),
+		{}});
 
 	// Set template context before base parsing so dependent bases such as
 	// _Category_base<_Const> see non-type and template-template parameter kinds.
