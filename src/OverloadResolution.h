@@ -2144,20 +2144,6 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	return param_idx;
 }
 
-// True when a type token spells the injected-class-name of `owner_decl`
-// (qualified, leaf, or semantic spelling). Used when pattern params never
-// received a TypeIndex and must be rewritten by name under [temp.local].
-inline bool typeTokenNamesOwnerClass(
-	const TypeSpecifierNode& type_spec,
-	const StructDeclarationNode& owner_decl) {
-	StringHandle token = type_spec.token().handle();
-	if (!token.isValid()) {
-		return false;
-	}
-	return namesSameInjectedClassIdentity(token, owner_decl.name()) ||
-		namesSameInjectedClassIdentity(token, owner_decl.semantic_name());
-}
-
 inline TypeIndex typeIndexForRegisteredStructName(StringHandle name) {
 	if (!name.isValid()) {
 		return TypeIndex{};
@@ -2173,40 +2159,6 @@ inline TypeIndex typeIndexForRegisteredStructName(StringHandle name) {
 	return index.is_valid()
 		? index.withCategory(TypeCategory::Struct)
 		: TypeIndex{};
-}
-
-// C++20 [temp.local]: a bare type naming the current class template, or the
-// primary template of the current specialization, is the injected-class-name.
-// TypeIndex identity is preferred; token identity falls back to the same
-// leaf/hash-stripped compare used by constructor parameter rewrite.
-inline bool typeNamesInjectedClassOfOwner(
-	const TypeSpecifierNode& type_spec,
-	const TypeInfo& owner_info) {
-	if (type_spec.type_index().is_valid()) {
-		if (const TypeInfo* named_type_info = tryGetTypeInfo(type_spec.type_index())) {
-			if (namesSameInjectedClassIdentity(named_type_info->name(), owner_info.name())) {
-				return true;
-			}
-			return owner_info.isTemplateInstantiation() &&
-				namesSameInjectedClassIdentity(
-					named_type_info->name(),
-					owner_info.baseTemplateName());
-		}
-		if (const StructTypeInfo* owner_struct = owner_info.getStructInfo();
-			owner_struct != nullptr &&
-			owner_struct->isOwnTypeIndex(type_spec.type_index())) {
-			return true;
-		}
-	}
-	StringHandle token = type_spec.token().handle();
-	if (!token.isValid()) {
-		return false;
-	}
-	if (namesSameInjectedClassIdentity(token, owner_info.name())) {
-		return true;
-	}
-	return owner_info.isTemplateInstantiation() &&
-		namesSameInjectedClassIdentity(token, owner_info.baseTemplateName());
 }
 
 // Look up the TypeInfo for a class being defined/instantiated from its pattern

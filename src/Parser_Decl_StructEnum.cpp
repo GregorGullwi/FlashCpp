@@ -4731,6 +4731,36 @@ ParseResult Parser::parse_friend_declaration() {
 	if (type_result.is_error()) {
 		return type_result;
 	}
+	const auto bind_lexical_injected_class_identity =
+		[this](TypeSpecifierNode& type_spec) {
+			if (type_spec.has_injected_class_declaration() ||
+				struct_parsing_context_stack_.empty()) {
+				return;
+			}
+			const StructParsingContext& owner_context =
+				struct_parsing_context_stack_.back();
+			const StructDeclarationNode* owner_declaration =
+				owner_context.injected_class_pattern_node != nullptr
+					? owner_context.injected_class_pattern_node
+					: owner_context.struct_node;
+			if (owner_declaration == nullptr ||
+				!type_spec.token().handle().isValid()) {
+				return;
+			}
+			std::string_view owner_name = owner_declaration->name().view();
+			if (size_t separator = owner_name.rfind("::");
+				separator != std::string_view::npos) {
+				owner_name.remove_prefix(separator + 2);
+			}
+			if (type_spec.token().value() == owner_name) {
+				type_spec.set_injected_class_declaration(owner_declaration);
+			}
+		};
+	if (type_result.node().has_value() &&
+		type_result.node()->is<TypeSpecifierNode>()) {
+		bind_lexical_injected_class_identity(
+			type_result.node()->as<TypeSpecifierNode>());
+	}
 
 	// Skip pointer/reference qualifiers that may appear after the base type
 	// Patterns like: friend int* func(); or friend int& func(); or friend int const* func();
@@ -4831,6 +4861,13 @@ ParseResult Parser::parse_friend_declaration() {
 		if (!params_result.is_error()) {
 			discard_saved_token(param_save);
 			params_parsed_ok = true;
+			for (ASTNode& parameter : param_list.parameters) {
+				if (parameter.is<DeclarationNode>()) {
+					bind_lexical_injected_class_identity(
+						parameter.as<DeclarationNode>()
+							.type_specifier_node());
+				}
+			}
 		} else {
 			restore_token_position(param_save);
 			// Fall back to simple paren-depth skip
@@ -5424,7 +5461,8 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 			if ((pattern_type_index.is_valid() &&
 				 (!pattern_return_index.is_valid() ||
 				  pattern_return_index == pattern_type_index)) ||
-				typeTokenNamesOwnerClass(pattern_return_type, pattern_struct)) {
+				pattern_return_type.injected_class_declaration() ==
+					&pattern_struct) {
 				return_type_override = concrete_owner_type_index;
 			}
 		}

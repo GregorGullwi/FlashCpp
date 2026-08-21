@@ -596,11 +596,26 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			substituted_spec.set_reference_qualifier(type_spec.reference_qualifier());
 			return emplace_node<TypeSpecifierNode>(substituted_spec);
 		};
-
-		if (current_owner_type_name.isValid()) {
+		if (type_spec.has_injected_class_declaration() &&
+			current_owner_type_name.isValid()) {
 			if (const TypeInfo* current_owner_type_info =
 					findTypeByName(current_owner_type_name)) {
-				if (typeNamesInjectedClassOfOwner(type_spec, *current_owner_type_info)) {
+				const StructDeclarationNode* owner_declaration =
+					state.owner_declaration;
+				if (owner_declaration == nullptr &&
+					current_owner_type_info->getStructInfo() != nullptr) {
+					owner_declaration = current_owner_type_info
+						->getStructInfo()
+						->declaration_node;
+				}
+				if (owner_declaration != nullptr &&
+					owner_declaration->injected_class_pattern_declaration() !=
+						nullptr) {
+					owner_declaration = owner_declaration
+						->injected_class_pattern_declaration();
+				}
+				if (type_spec.injected_class_declaration() ==
+					owner_declaration) {
 					return makeTypeSpecifier(*current_owner_type_info);
 				}
 			}
