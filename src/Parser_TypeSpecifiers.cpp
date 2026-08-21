@@ -3442,9 +3442,10 @@ ParseResult Parser::parse_type_specifier() {
 							type_name_token,
 							cv_qualifier,
 							ReferenceQualifier::None);
-						bindInjectedClassIdentity(
-							type_spec.as<TypeSpecifierNode>(),
-							*existing_type);
+						// This path follows an explicit template-argument list. A
+						// simple-template-id such as Wrapper<long long> names that
+						// specialization; it is not the bare injected-class-name of
+						// the surrounding class template.
 						return ParseResult::success(type_spec);
 					} else {
 						// Return existing placeholder (UserDefined) - don't create duplicates

@@ -758,7 +758,7 @@ private:
 	struct MemberFunctionContext {
 		StringHandle struct_name;  // Points directly into source text from lexer token
 		TypeIndex struct_type_index;
-		StructDeclarationNode* struct_node;	// Pointer to the struct being parsed
+		const StructDeclarationNode* struct_node;	// Pointer to the struct being parsed
 		StructTypeInfo* local_struct_info;   // Pointer to local struct_info being built (for static member lookup)
 		bool has_implicit_this = true;
 	};

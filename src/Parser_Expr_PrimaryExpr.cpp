@@ -1093,7 +1093,7 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 	std::span<const TemplateTypeArg> template_args) {
 	const TypeInfo* current_type_info = nullptr;
 	StringHandle current_struct_name{};
-	StructDeclarationNode* current_struct_node = nullptr;
+	const StructDeclarationNode* current_struct_node = nullptr;
 
 	if (!member_function_context_stack_.empty()) {
 		const auto& member_ctx = member_function_context_stack_.back();

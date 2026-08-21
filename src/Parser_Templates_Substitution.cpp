@@ -343,7 +343,7 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			member_function_context_stack_.push_back({
 				state.owner_type_name,
 				state.owner_type_index,
-				nullptr,
+				state.owner_declaration,
 				nullptr,
 				state.has_implicit_this
 			});
