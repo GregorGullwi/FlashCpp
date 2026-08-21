@@ -1429,6 +1429,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 			// Create struct info in the cold arena - required before parsing static members
 			StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
+			struct_info->declaration_node = &struct_ref;
 
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
@@ -2896,6 +2897,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 			// Create StructTypeInfo for this specialization in the cold arena
 			StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
+			struct_info->declaration_node = &struct_ref;
 
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {

@@ -774,6 +774,9 @@ private:
 		bool has_inherited_constructors = false;	 // True if constructors are inherited from base class
 	};
 	std::vector<StructParsingContext> struct_parsing_context_stack_;
+	void bindInjectedClassIdentity(
+		TypeSpecifierNode& type_spec,
+		const TypeInfo& looked_up_type) const;
 
 	// Store parsed explicit template arguments for cross-function access
 	// This allows template arguments parsed in one function (e.g., parse_primary_expression)

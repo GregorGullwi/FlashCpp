@@ -183,6 +183,10 @@ void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasT
 
 // Reapply modifiers that were written on the outer alias spelling after the alias target is substituted.
 void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode& source) {
+	if (source.has_injected_class_declaration()) {
+		target.set_injected_class_declaration(
+			source.injected_class_declaration());
+	}
 	target.add_pointer_levels(static_cast<int>(source.pointer_depth()));
 	target.add_cv_qualifier(source.cv_qualifier());
 	if (source.reference_qualifier() != ReferenceQualifier::None) {

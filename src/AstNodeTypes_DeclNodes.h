@@ -19,6 +19,7 @@ const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 struct StructTypeInfo {
 	StringHandle name;
 	NamespaceHandle namespace_handle;  // Namespace this struct was declared in
+	const StructDeclarationNode* declaration_node = nullptr; // Exact parsed declaration for this type
 	std::vector<StructMember> members;
 	std::vector<StructStaticMember> static_members;	// Static members
 	std::vector<StructMemberFunction> member_functions;
