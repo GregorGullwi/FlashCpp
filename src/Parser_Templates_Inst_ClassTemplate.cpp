@@ -4848,7 +4848,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							TypeCategory::Struct),
 						std::span<const TemplateParameterNode>(
 							out_of_line_member.inner_template_params.data(),
-							out_of_line_member.inner_template_params.size()));
+							out_of_line_member.inner_template_params.size()),
+						recorded_pattern_owner,
+						&pattern_struct);
 				if (ctor_resolution.ambiguous) {
 					std::string error_msg = std::string(StringBuilder()
 						.append("Could not uniquely match partial-spec out-of-line constructor template '")
@@ -8735,7 +8737,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								TypeCategory::Struct),
 							std::span<const TemplateParameterNode>(
 								out_of_line_member.inner_template_params.data(),
-								out_of_line_member.inner_template_params.size()));
+								out_of_line_member.inner_template_params.size()),
+							out_of_line_member.pattern_owner_struct_node,
+							&nested_struct);
 
 					if (ctor_resolution.ambiguous) {
 						std::string error_msg = std::string(StringBuilder()
@@ -8810,7 +8814,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								TypeCategory::Struct),
 							std::span<const TemplateParameterNode>(
 								out_of_line_member.inner_template_params.data(),
-								out_of_line_member.inner_template_params.size()));
+								out_of_line_member.inner_template_params.size()),
+							out_of_line_member.pattern_owner_struct_node,
+							&nested_struct);
 					if (ctor_resolution.ambiguous) {
 						std::string error_msg = std::string(StringBuilder()
 							.append("Could not uniquely match nested out-of-line constructor template '")
@@ -11486,7 +11492,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							TypeCategory::Struct),
 						std::span<const TemplateParameterNode>(
 							out_of_line_member.inner_template_params.data(),
-							out_of_line_member.inner_template_params.size()));
+							out_of_line_member.inner_template_params.size()),
+						out_of_line_member.pattern_owner_struct_node,
+						&class_decl);
 				if (ctor_resolution.ambiguous) {
 					std::string error_msg = std::string(StringBuilder()
 						.append("Could not uniquely match out-of-line constructor template '")

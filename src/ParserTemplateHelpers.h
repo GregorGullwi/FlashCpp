@@ -133,6 +133,18 @@ inline ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
 	TypeIndex owner_type_index,
 	std::span<const TemplateParameterNode> instantiated_template_params,
 	std::span<const TemplateParameterNode> out_of_line_template_params);
+template <typename InstantiatedDeclNode, typename OutOfLineDeclNode>
+inline ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
+	Parser& parser,
+	const InstantiatedDeclNode& instantiated_decl,
+	const OutOfLineDeclNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	TypeIndex owner_type_index,
+	std::span<const TemplateParameterNode> instantiated_template_params,
+	std::span<const TemplateParameterNode> out_of_line_template_params,
+	const StructDeclarationNode* out_of_line_lookup_owner,
+	const StructDeclarationNode* out_of_line_pattern_owner);
 inline const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param);
 inline bool typeSpecifiersMatchForSignatureValidation(
 	const TypeSpecifierNode& lhs,
@@ -145,7 +157,9 @@ inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	std::span<const TemplateTypeArg> outer_template_args,
 	TypeIndex owner_type_index,
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
-	std::span<const TemplateParameterNode> out_of_line_inner_template_params);
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params,
+	const StructDeclarationNode* out_of_line_lookup_owner,
+	const StructDeclarationNode* out_of_line_pattern_owner);
 inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
@@ -154,7 +168,9 @@ inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	std::span<const TemplateTypeArg> outer_template_args,
 	TypeIndex owner_type_index,
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
-	std::span<const TemplateParameterNode> out_of_line_inner_template_params);
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params,
+	const StructDeclarationNode* out_of_line_lookup_owner,
+	const StructDeclarationNode* out_of_line_pattern_owner);
 
 inline const void* sourceMemberAstNodeKey(const ASTNode& node) {
 	if (!node.has_value())
@@ -569,7 +585,9 @@ inline OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	std::span<const TemplateParameterNode> outer_template_params,
 	std::span<const TemplateTypeArg> outer_template_args,
 	TypeIndex owner_type_index,
-	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params,
+	const StructDeclarationNode* out_of_line_lookup_owner,
+	const StructDeclarationNode* out_of_line_pattern_owner) {
 	OutOfLineConstructorStubResolution resolution;
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	const ASTNode* matched_source_member = nullptr;
@@ -608,7 +626,9 @@ inline OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 			std::span<const TemplateParameterNode>(
 				inst_ctor_decl->template_parameters().data(),
 				inst_ctor_decl->template_parameters().size()),
-			out_of_line_inner_template_params);
+			out_of_line_inner_template_params,
+			out_of_line_lookup_owner,
+			out_of_line_pattern_owner);
 		if (substituted_signature_match == ReplaySignatureMatchResult::InsufficientEvidence) {
 			resolution.insufficient_evidence = true;
 			continue;
@@ -2615,7 +2635,9 @@ inline ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
 	std::span<const TemplateTypeArg> template_args,
 	TypeIndex owner_type_index,
 	std::span<const TemplateParameterNode> instantiated_template_params,
-	std::span<const TemplateParameterNode> out_of_line_template_params) {
+	std::span<const TemplateParameterNode> out_of_line_template_params,
+	const StructDeclarationNode* out_of_line_lookup_owner,
+	const StructDeclarationNode* out_of_line_pattern_owner) {
 	if (instantiated_decl.parameter_nodes().size() != out_of_line_decl.parameter_nodes().size()) {
 		return ReplaySignatureMatchResult::Mismatch;
 	}
@@ -2627,6 +2649,24 @@ inline ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
 			getDeclarationParamTypeNode(out_of_line_decl.parameter_nodes()[i]);
 		if (instantiated_param == nullptr || out_of_line_param == nullptr) {
 			return ReplaySignatureMatchResult::InsufficientEvidence;
+		}
+		TypeSpecifierNode rebound_out_of_line_param = *out_of_line_param;
+		if (!rebound_out_of_line_param.has_injected_class_declaration() &&
+			out_of_line_lookup_owner != nullptr &&
+			out_of_line_pattern_owner != nullptr) {
+			const TypeInfo* out_of_line_type_info =
+				tryGetTypeInfo(rebound_out_of_line_param.type_index());
+			const StructTypeInfo* out_of_line_struct_info =
+				out_of_line_type_info != nullptr
+					? out_of_line_type_info->getStructInfo()
+					: nullptr;
+			if (out_of_line_struct_info != nullptr &&
+				out_of_line_struct_info->declaration_node ==
+					out_of_line_lookup_owner) {
+				rebound_out_of_line_param.set_injected_class_declaration(
+					out_of_line_pattern_owner);
+				out_of_line_param = &rebound_out_of_line_param;
+			}
 		}
 
 		const bool instantiated_is_template_param_placeholder =
@@ -2676,7 +2716,6 @@ inline ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
 					out_of_line_template_params)) {
 				continue;
 			}
-
 			if (tryMatchDependentMemberPlaceholderOwnerArtifactSubstitution(
 					parser,
 					lhs_type,
@@ -2748,6 +2787,29 @@ inline ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
 	return ReplaySignatureMatchResult::Match;
 }
 
+template <typename InstantiatedDeclNode, typename OutOfLineDeclNode>
+inline ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
+	Parser& parser,
+	const InstantiatedDeclNode& instantiated_decl,
+	const OutOfLineDeclNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	TypeIndex owner_type_index,
+	std::span<const TemplateParameterNode> instantiated_template_params,
+	std::span<const TemplateParameterNode> out_of_line_template_params) {
+	return declarationsMatchAfterTemplateSubstitution(
+		parser,
+		instantiated_decl,
+		out_of_line_decl,
+		template_params,
+		template_args,
+		owner_type_index,
+		instantiated_template_params,
+		out_of_line_template_params,
+		nullptr,
+		nullptr);
+}
+
 inline bool isMatchingMemberTemplate(
 	const StructMemberFunctionDecl& member,
 	std::string_view ool_func_name,
@@ -2810,7 +2872,9 @@ inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	std::span<const TemplateTypeArg> outer_template_args,
 	TypeIndex owner_type_index,
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
-	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params,
+	const StructDeclarationNode* out_of_line_lookup_owner,
+	const StructDeclarationNode* out_of_line_pattern_owner) {
 	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
 		return ReplaySignatureMatchResult::Mismatch;
 	}
@@ -2823,7 +2887,9 @@ inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 		outer_template_args,
 		owner_type_index,
 		candidate_inner_template_params,
-		out_of_line_inner_template_params);
+		out_of_line_inner_template_params,
+		out_of_line_lookup_owner,
+		out_of_line_pattern_owner);
 }
 
 inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
@@ -2834,7 +2900,9 @@ inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	std::span<const TemplateTypeArg> outer_template_args,
 	TypeIndex owner_type_index,
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
-	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params,
+	const StructDeclarationNode* out_of_line_lookup_owner,
+	const StructDeclarationNode* out_of_line_pattern_owner) {
 	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
 		return ReplaySignatureMatchResult::Mismatch;
 	}
@@ -2847,7 +2915,9 @@ inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 		outer_template_args,
 		owner_type_index,
 		candidate_inner_template_params,
-		out_of_line_inner_template_params);
+		out_of_line_inner_template_params,
+		out_of_line_lookup_owner,
+		out_of_line_pattern_owner);
 }
 
 void Parser::copyDefinitionParameterIdentifiers(
