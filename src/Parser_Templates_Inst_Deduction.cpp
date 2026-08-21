@@ -896,58 +896,56 @@ bool Parser::tryAppendDefaultTemplateArg(
 
 		return appendEvaluatedNonTypeArg(*reparse_result.node());
 	};
-	enum class InjectedOwnerRelation : uint8_t {
-		KnownSame,
-		KnownDifferent,
-		UnknownLegacy
-	};
-	auto classifyInjectedOwnerRelation = [&](const TypeSpecifierNode& type_spec) {
-		if (type_spec.has_injected_class_declaration()) {
-			if (member_function_context_stack_.empty()) {
-				return InjectedOwnerRelation::KnownDifferent;
-			}
-			const StructDeclarationNode* owner_declaration =
-				member_function_context_stack_.back().struct_node;
-			if (owner_declaration != nullptr &&
-				owner_declaration->injected_class_pattern_declaration() != nullptr) {
-				owner_declaration =
-					owner_declaration->injected_class_pattern_declaration();
-			}
-			return owner_declaration != nullptr &&
-					type_spec.injected_class_declaration() == owner_declaration
-				? InjectedOwnerRelation::KnownSame
-				: InjectedOwnerRelation::KnownDifferent;
-		}
-
-		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-			type_info != nullptr && type_info->isTemplateInstantiation()) {
-			return InjectedOwnerRelation::KnownDifferent;
-		}
-		return InjectedOwnerRelation::UnknownLegacy;
-	};
 	auto resolveInjectedOwnerDefault = [&](const TypeSpecifierNode& type_spec) {
 		TemplateTypeArg default_arg(type_spec);
-		if (member_function_context_stack_.empty()) {
-			return default_arg;
-		}
-		const TypeInfo* owner_info = tryGetTypeInfo(
-			member_function_context_stack_.back().struct_type_index);
-		if (owner_info == nullptr) {
-			return default_arg;
-		}
-
-		switch (classifyInjectedOwnerRelation(type_spec)) {
-		case InjectedOwnerRelation::KnownSame:
-			return resolveTypeInfoToTemplateArg(*owner_info, type_spec);
-		case InjectedOwnerRelation::KnownDifferent:
-			return default_arg;
-		case InjectedOwnerRelation::UnknownLegacy:
-			if (typeNamesInjectedClassOfOwner(type_spec, *owner_info)) {
-				return resolveTypeInfoToTemplateArg(*owner_info, type_spec);
+		const StructDeclarationNode* pattern_owner = nullptr;
+		TypeIndex owner_type_index{};
+		if (!member_function_context_stack_.empty()) {
+			const MemberFunctionContext& owner_context =
+				member_function_context_stack_.back();
+			pattern_owner = owner_context.struct_node;
+			owner_type_index = owner_context.struct_type_index;
+		} else if (!struct_parsing_context_stack_.empty()) {
+			const StructParsingContext& owner_context =
+				struct_parsing_context_stack_.back();
+			pattern_owner =
+				owner_context.injected_class_pattern_node != nullptr
+					? owner_context.injected_class_pattern_node
+					: owner_context.struct_node;
+			if (owner_context.local_struct_info != nullptr &&
+				owner_context.local_struct_info->own_type_index_.has_value()) {
+				owner_type_index =
+					*owner_context.local_struct_info->own_type_index_;
+			} else {
+				auto owner_it = getTypesByNameMap().find(
+					StringTable::getOrInternStringHandle(
+						owner_context.struct_name));
+				if (owner_it != getTypesByNameMap().end() &&
+					owner_it->second != nullptr) {
+					owner_type_index =
+						owner_it->second->registeredTypeIndex();
+				}
 			}
+		}
+		if (pattern_owner != nullptr &&
+			pattern_owner->injected_class_pattern_declaration() != nullptr) {
+			pattern_owner =
+				pattern_owner->injected_class_pattern_declaration();
+		}
+		if (pattern_owner == nullptr ||
+			type_spec.injected_class_declaration() != pattern_owner) {
 			return default_arg;
 		}
-		throw InternalError("Unhandled injected-class owner relation");
+		if (!owner_type_index.is_valid()) {
+			throw InternalError(
+				"Current-instantiation default argument lacks a concrete owner");
+		}
+		const TypeInfo* owner_info = tryGetTypeInfo(owner_type_index);
+		if (owner_info == nullptr) {
+			throw InternalError(
+				"Current-instantiation default argument owner is not registered");
+		}
+		return resolveTypeInfoToTemplateArg(*owner_info, type_spec);
 	};
 	if (param.kind() == TemplateParameterKind::Type) {
 		if (param.has_default_value_position() && !template_args.empty()) {
