@@ -1729,11 +1729,23 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						struct_info,
 						struct_name_view,
 						func_for_mangling->namespace_handle());
+				TypeSpecifierNode resolved_mangling_return_type =
+					*mangling_return_type;
+				if (struct_info->own_type_index_.has_value()) {
+					resolveSelfReferentialType(
+						resolved_mangling_return_type,
+						*struct_info->own_type_index_);
+					for (TypeSpecifierNode& param_type : param_types) {
+						resolveSelfReferentialType(
+							param_type,
+							*struct_info->own_type_index_);
+					}
+				}
 
 				// Generate proper mangled name including parameter types
 				std::string_view mangled = generateMangledNameForCall(
 					func_name,
-					*mangling_return_type,
+					resolved_mangling_return_type,
 					param_types,
 					func_for_mangling->is_variadic(),
 					owner_info.owner_name_for_mangling,
@@ -1760,10 +1772,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			declared_return_type_ptr = &func_decl_node.type_specifier_node();
 		}
 		const TypeSpecifierNode& declared_return_type = *declared_return_type_ptr;
-		const TypeSpecifierNode& return_type =
+		const TypeSpecifierNode& selected_return_type =
 			expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
 				? *expression_return_type
 				: declared_return_type;
+		TypeSpecifierNode return_type = selected_return_type;
+		if (struct_info != nullptr && struct_info->own_type_index_.has_value()) {
+			resolveSelfReferentialType(return_type, *struct_info->own_type_index_);
+		}
 		CallOp call_op = createCallOp(ret_var, function_name, return_type, true, false);
 
 		// Get the actual function declaration to check if it's variadic

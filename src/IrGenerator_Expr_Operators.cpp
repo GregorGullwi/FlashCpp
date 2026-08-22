@@ -4213,51 +4213,34 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 	StringHandle struct_name = struct_name_override.isValid() ? struct_name_override
 															  : (func_node.is_member_function() ? StringTable::getOrInternStringHandle(func_node.parent_struct_name()) : StringHandle{});
 
-	// For member functions, resolve self-referential parameter types in template-instantiated
-	// structs. When a template class has `operator+=(const W& other)`, the stored param type
-	// still references the template base `W` (with total_size=0) instead of the instantiation
-	// `W<int>`. Resolve by looking up the enclosing struct's type_index.
+	// For member functions, resolve parser-bound injected-class return and parameter
+	// types to the exact instantiated owner before mangling the call.
 	if (struct_name.isValid()) {
 		auto struct_it = getTypesByNameMap().find(struct_name);
 		if (struct_it != getTypesByNameMap().end()) {
 			TypeIndex struct_type_index = struct_it->second->type_index_;
-			bool needs_resolution = false;
-			// Check return type for self-referential struct
-			if (return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
-				const TypeInfo* rti = tryGetTypeInfo(return_type.type_index());
-				if (!rti || !rti->getStructInfo() || !rti->getStructInfo()->sizeInBytes().is_set()) {
-					needs_resolution = true;
+			std::vector<TypeSpecifierNode> resolved_params;
+			resolved_params.reserve(func_node.parameter_nodes().size());
+			bool resolved_self_reference = false;
+			for (const auto& param : func_node.parameter_nodes()) {
+				if (param.is<DeclarationNode>()) {
+					const TypeSpecifierNode& original_param =
+						param.as<DeclarationNode>().type_specifier_node();
+					TypeSpecifierNode resolved_param = original_param;
+					resolveSelfReferentialType(resolved_param, struct_type_index);
+					resolved_self_reference = resolved_self_reference ||
+						resolved_param.type_index() != original_param.type_index();
+					resolved_params.push_back(std::move(resolved_param));
 				}
 			}
-			if (!needs_resolution) {
-				for (const auto& param : func_node.parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& pt = param.as<DeclarationNode>().type_specifier_node();
-						if (pt.category() == TypeCategory::Struct && pt.type_index().is_valid()) {
-							const TypeInfo* ti = tryGetTypeInfo(pt.type_index());
-							if (!ti || !ti->getStructInfo() || !ti->getStructInfo()->sizeInBytes().is_set()) {
-								needs_resolution = true;
-								break;
-							}
-						}
-					}
-				}
-			}
-			if (needs_resolution) {
-				std::vector<TypeSpecifierNode> resolved_params;
-				resolved_params.reserve(func_node.parameter_nodes().size());
-				for (const auto& param : func_node.parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						TypeSpecifierNode pt = param.as<DeclarationNode>().type_specifier_node();
-						resolveSelfReferentialType(pt, struct_type_index);
-						resolved_params.push_back(pt);
-					}
-				}
-				TypeSpecifierNode resolved_return_type_copy = return_type;
-				resolveSelfReferentialType(resolved_return_type_copy, struct_type_index);
+			TypeSpecifierNode resolved_return_type_copy = return_type;
+			resolveSelfReferentialType(resolved_return_type_copy, struct_type_index);
+			resolved_self_reference = resolved_self_reference ||
+				resolved_return_type_copy.type_index() != return_type.type_index();
+			if (resolved_self_reference) {
 				return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params,
-														 func_node.is_variadic(), struct_name, namespace_handle, func_node.linkage(),
-														 func_node.is_const_member_function(), func_node.is_static())
+												 func_node.is_variadic(), struct_name, namespace_handle, func_node.linkage(),
+												 func_node.is_const_member_function(), func_node.is_static())
 					.view();
 			}
 		}

@@ -4369,6 +4369,13 @@ void Parser::bindInjectedClassIdentity(
 		return;
 	}
 	const StructTypeInfo* looked_up_struct = looked_up_type.getStructInfo();
+	if (looked_up_struct == nullptr && looked_up_type.type_index_.is_valid()) {
+		const TypeInfo* referred_type = tryGetTypeInfo(looked_up_type.type_index_);
+		if (referred_type != nullptr && referred_type->isStruct() &&
+			referred_type->getStructInfo() != nullptr) {
+			looked_up_struct = referred_type->getStructInfo();
+		}
+	}
 	if (looked_up_struct == nullptr ||
 		looked_up_struct->declaration_node == nullptr) {
 		return;

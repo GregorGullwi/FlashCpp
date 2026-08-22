@@ -61,6 +61,15 @@ produce `CompileError`; missing canonical compiler metadata should produce
 `InternalError`; unsupported evaluator coverage must not be accepted as either a
 constant value or an ill-formed program.
 
+## Partial-specialization member calls can select the non-const overload
+
+Member-call lowering for a partial class-template specialization can select a
+non-const member overload for a const receiver when otherwise-identical const and
+non-const overloads are replayed. Exact injected-class return identity and mangling
+are now preserved, so the call links correctly, but overload selection still needs
+to retain and rank the receiver cv-qualification through replay and IR lowering.
+Do not compensate by changing mangled names or treating the overloads as equivalent.
+
 ## Cross-specialization member access can lose the accessing specialization
 
 During IR generation for a non-static class-template member, member access through
