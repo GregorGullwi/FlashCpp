@@ -5,6 +5,7 @@
 #include "SymbolTable.h"
 #include "CompileContext.h"
 #include "ChunkedString.h"
+#include "TemplateExpressionEquivalence.h"
 #include "TemplateTypes.h" // For FunctionSignatureKey
 #include "InlineVector.h"
 #include <algorithm>
@@ -2102,46 +2103,92 @@ struct OperatorOverloadResult {
 	}
 };
 
-// Helper: resolve a struct parameter type_index for self-referential template parameters.
-// When a template struct Foo<T> is instantiated as Foo<int>, the member function
-// operator+=(const Foo& other) stores the parameter as the uninstantiated Foo
-// (whose struct_info has total_size==0). We resolve it to the concrete instantiated
-// left_type_index so that type matching works correctly.
-// This is the TypeIndex twin of AstToIr::resolveSelfReferentialType used in codegen.
+// Resolve a current-instantiation pattern TypeIndex to its concrete owner.
+// Instantiated StructDeclarationNodes retain the exact source pattern declaration,
+// so this does not depend on source spelling or template-name suffixes.
 inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_type_index) {
 	const size_t type_info_size = getTypeInfoCount();
 	if (!param_idx.is_valid() || param_idx.index() >= type_info_size || left_type_index.index() >= type_info_size)
 		return param_idx;
-	const auto& param_ti = getTypeInfo(param_idx);
-	if (!param_ti.getStructInfo())
-		return param_idx;
-	auto param_name = StringTable::getStringView(param_ti.name());
-	auto param_base_name = simpleBaseName(param_name);
-	auto instantiated_name = StringTable::getStringView(getTypeInfo(left_type_index).name());
-	auto instantiated_base_name = simpleBaseName(instantiated_name);
-	const StructTypeInfo* param_struct_info = param_ti.getStructInfo();
-	if (param_struct_info && !param_struct_info->sizeInBytes().is_set()) {
-		if (param_base_name == instantiated_base_name)
-			return left_type_index;
-	}
-	// If the parameter already carries a template hash suffix, it is already a concrete
-	// specialization (for example "Iter$abc123"), not the uninstantiated self-reference
-	// pattern spelled inside the class definition (for example plain "Iter"). In that
-	// case there is nothing to rewrite.
-	if (param_base_name.size() != param_name.size())
-		return param_idx;
-	if (param_base_name == instantiated_base_name)
+	if (param_idx == left_type_index)
 		return left_type_index;
-	// Uninstantiated self-references inside nested classes are often stored as just "Inner",
-	// while the instantiated owner is recorded as "Outer::Inner$hash". Only fall back to an
-	// unqualified-name comparison when the parameter itself is already unqualified so that
-	// unrelated qualified types with the same leaf name do not match.
-	if (param_base_name.find("::") == std::string_view::npos) {
-		auto last_scope = instantiated_base_name.rfind("::");
-		if (last_scope != std::string_view::npos && param_base_name == instantiated_base_name.substr(last_scope + 2))
-			return left_type_index;
+	const StructTypeInfo* param_struct_info = getTypeInfo(param_idx).getStructInfo();
+	const StructTypeInfo* owner_struct_info = getTypeInfo(left_type_index).getStructInfo();
+	if (param_struct_info == nullptr || owner_struct_info == nullptr ||
+		param_struct_info->declaration_node == nullptr ||
+		owner_struct_info->declaration_node == nullptr) {
+		return param_idx;
 	}
-	return param_idx;
+	const StructDeclarationNode* param_declaration =
+		param_struct_info->declaration_node->injected_class_pattern_declaration() != nullptr
+			? param_struct_info->declaration_node->injected_class_pattern_declaration()
+			: param_struct_info->declaration_node;
+	const StructDeclarationNode* owner_declaration =
+		owner_struct_info->declaration_node->injected_class_pattern_declaration() != nullptr
+			? owner_struct_info->declaration_node->injected_class_pattern_declaration()
+			: owner_struct_info->declaration_node;
+	if (param_declaration != owner_declaration) {
+		return param_idx;
+	}
+	const bool param_is_concrete_instantiation =
+		param_struct_info->declaration_node->injected_class_pattern_declaration() != nullptr;
+	if (param_is_concrete_instantiation) {
+		const auto& param_args = getTypeInfo(param_idx).templateArgs();
+		const auto& owner_args = getTypeInfo(left_type_index).templateArgs();
+		if (!FlashCpp::equalTemplateArgInfoListIdentity(
+				std::span<const TypeInfo::TemplateArgInfo>(
+					param_args.data(), param_args.size()),
+				std::span<const TypeInfo::TemplateArgInfo>(
+					owner_args.data(), owner_args.size()))) {
+			return param_idx;
+		}
+	}
+	return left_type_index;
+}
+
+// Some injected-class types are represented by a dependent TypeInfo that has no
+// StructInfo.  In that case the TypeSpecifierNode's parser-bound declaration is
+// the authoritative identity for the current instantiation.
+inline TypeIndex resolveSelfRefParamIndex(
+	TypeIndex param_idx,
+	TypeIndex left_type_index,
+	const StructDeclarationNode* injected_class_declaration) {
+	TypeIndex resolved = resolveSelfRefParamIndex(param_idx, left_type_index);
+	if (resolved != param_idx || injected_class_declaration == nullptr ||
+		!left_type_index.is_valid() ||
+		left_type_index.index() >= getTypeInfoCount()) {
+		return resolved;
+	}
+
+	const StructTypeInfo* owner_struct_info =
+		getTypeInfo(left_type_index).getStructInfo();
+	if (owner_struct_info == nullptr ||
+		owner_struct_info->declaration_node == nullptr) {
+		return param_idx;
+	}
+
+	const StructDeclarationNode* param_declaration =
+		injected_class_declaration->injected_class_pattern_declaration() != nullptr
+			? injected_class_declaration->injected_class_pattern_declaration()
+			: injected_class_declaration;
+	const StructDeclarationNode* owner_declaration =
+		owner_struct_info->declaration_node->injected_class_pattern_declaration() != nullptr
+			? owner_struct_info->declaration_node->injected_class_pattern_declaration()
+			: owner_struct_info->declaration_node;
+	if (param_declaration != owner_declaration) {
+		return param_idx;
+	}
+
+	const StructTypeInfo* param_struct_info =
+		param_idx.is_valid() && param_idx.index() < getTypeInfoCount()
+			? getTypeInfo(param_idx).getStructInfo()
+			: nullptr;
+	const bool param_is_concrete_instantiation =
+		param_struct_info != nullptr &&
+		param_struct_info->declaration_node != nullptr &&
+		param_struct_info->declaration_node
+			->injected_class_pattern_declaration() != nullptr;
+	return param_is_concrete_instantiation ? param_idx : left_type_index;
 }
 
 inline TypeIndex typeIndexForRegisteredStructName(StringHandle name) {
@@ -2306,7 +2353,10 @@ inline TypeSpecifierNode resolveTypeSpecifierForSelfReference(const TypeSpecifie
 		}
 	}
 	if (needs_type_index(resolved_type)) {
-		resolved.set_type_index(resolveSelfRefParamIndex(resolved.type_index(), enclosing_type_index));
+		resolved.set_type_index(resolveSelfRefParamIndex(
+			resolved.type_index(),
+			enclosing_type_index,
+			resolved.injected_class_declaration()));
 	}
 	return resolved;
 }

@@ -1504,7 +1504,8 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 	if (instantiated_owner_type_index.is_valid()) {
 		substituted_type_index = resolveSelfRefParamIndex(
 			substituted_type_index,
-			instantiated_owner_type_index);
+			instantiated_owner_type_index,
+			original_type_spec.injected_class_declaration());
 	}
 	if (!resolved_from_instantiated_owner_alias) {
 		substituted_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(

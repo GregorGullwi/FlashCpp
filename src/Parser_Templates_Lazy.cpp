@@ -167,9 +167,14 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 			}
 		}
 
-		auto resolve_self_type = [&](TypeIndex& type_index) {
+		auto resolve_self_type = [&](
+			TypeIndex& type_index,
+			const TypeSpecifierNode& type_spec) {
 			if (instantiated_owner_type_index.is_valid()) {
-				type_index = resolveSelfRefParamIndex(type_index, instantiated_owner_type_index);
+				type_index = resolveSelfRefParamIndex(
+					type_index,
+					instantiated_owner_type_index,
+					type_spec.injected_class_declaration());
 			}
 		};
 
@@ -271,7 +276,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 						param_type_index,
 						instantiated_owner_type_index);
 				}
-				resolve_self_type(param_type_index);
+				resolve_self_type(param_type_index, param_type_spec);
 				param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
 					param_decl.type_node(),
 					param_type_spec,

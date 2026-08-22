@@ -2376,32 +2376,21 @@ void AstToIr::generateTrivialDefaultConstructors() {
 // When a template member function references its own class (e.g., const W& in W<T>::operator+=),
 // the type_index may point to the unfinalized template base. This resolves it to the
 // enclosing instantiated struct's type_index by mutating `type` in-place.
-// Shares the [temp.local] identity rule with resolveSelfRefParamIndex / namesSameInjectedClassIdentity.
+// Shares the exact [temp.local] declaration-identity rule with resolveSelfRefParamIndex.
 void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
 	if (!type.type_index().is_valid() || !enclosing_type_index.is_valid()) {
 		return;
 	}
 
-	// Prefer the shared TypeIndex rewrite used by overload resolution and template
-	// parameter copy (incomplete StructInfo, `$hash` skip, nested leaf names).
+	// Use the shared exact TypeIndex/declaration rewrite used by overload resolution
+	// and template parameter copy.
 	TypeIndex resolved =
-		resolveSelfRefParamIndex(type.type_index(), enclosing_type_index);
+		resolveSelfRefParamIndex(
+			type.type_index(),
+			enclosing_type_index,
+			type.injected_class_declaration());
 	if (resolved != type.type_index()) {
 		type.set_type_index(resolved);
-		return;
-	}
-
-	// Pattern TypeInfos without StructInfo still need name-based rewrite:
-	// W (unfinalized) matches W$hash; Outer does not match Outer::Inner.
-	const TypeInfo* ti = tryGetTypeInfo(type.type_index());
-	const TypeInfo* enc_ti = tryGetTypeInfo(enclosing_type_index);
-	if (ti == nullptr || enc_ti == nullptr || ti->getStructInfo() != nullptr) {
-		return;
-	}
-	if (namesSameInjectedClassIdentity(
-			StringTable::getStringView(ti->name()),
-			StringTable::getStringView(enc_ti->name()))) {
-		type.set_type_index(enclosing_type_index);
 	}
 }
 
