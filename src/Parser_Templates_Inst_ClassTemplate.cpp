@@ -3716,7 +3716,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_params,
 					template_args_for_member_copy,
 					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
-					!deferred_body.is_constructor && !deferred_body.is_static);
+					!deferred_body.is_constructor && !deferred_body.is_static,
+					&pattern_struct);
 				if (deferred_body.is_static) {
 					substituted_body = rebindStaticMemberInitializerFunctionCalls(
 						substituted_body,
