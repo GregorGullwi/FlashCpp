@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-06-04
+**Last Updated:** 2026-08-22
 
 This document is intentionally forward-looking. It should capture the current
 ownership model, the invariants future work can rely on, and the next cleanup
@@ -39,8 +39,11 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 
 - query-state APIs (`NotYetAnalyzed`, `AnalyzedAbsent`, `Available`) are the
   expected boundary for semantic facts
-- the audited codegen paths no longer use direct
-  `parser_.get_expression_type(...)` recovery
+- the audited direct-call codegen paths no longer use direct
+  `parser_.get_expression_type(...)` recovery; one final fallback use remains
+  in the receiver-constness derivation helper
+  (`src/IrGenerator_MemberAccess.cpp`, `isObjectConstQualified` path) and
+  should move to sema-owned cv-qualification facts
 - normalized bodies already hard-fail in several places where sema-owned facts
   are required, including constructor annotation, call-result typing,
   `typeid(expr)` classification, range-expression typing, and several
@@ -155,28 +158,34 @@ Recommended next step:
 
 ### 2. Unify remaining member/call lookup helpers
 
-Several paths now apply the same standards rule independently: const receivers
-only see const-qualified non-static members, while non-const receivers prefer
-non-const overloads and then const overloads when no non-const match exists.
-This is true for receiver-based constexpr member calls, current-struct
-constexpr calls, and normalized template/member direct-call resolution, but the
-candidate collectors are still structurally separate.
+Several paths apply the same standards rule: const receivers only see
+const-qualified non-static members, while non-const receivers prefer non-const
+overloads and then const overloads when no non-const match exists. A shared
+collector for this rule already exists
+(`collectConstAwareVisibleMemberFunctionCandidates` in
+`src/MemberFunctionLookupShared.h`, consumed by the parser postfix-call
+paths), but independent reimplementations remain: sema's
+`partitionMemberOverloadsByReceiverConstness` and
+`resolve_member_overload_with_argument_nodes` in `src/OverloadResolution.h`,
+plus the constexpr receiver-based and current-struct lookup paths.
 
 Recommended next step:
 
-- extract a shared const-aware member-candidate collector for constexpr
-  receiver-based lookup and current-struct lookup
-- extend that shared member-lookup helper to cover sema member-call target
-  selection and constexpr member-call target selection, so const/static/member-
-  template filtering rules live in one standards-owned path instead of being
-  reimplemented across sema, constexpr evaluation, and IR-adjacent recovery
+- migrate the remaining reimplementations (sema overload partitioning,
+  OverloadResolution member selection, constexpr receiver-based and
+  current-struct lookup) onto the shared const-aware collector, so
+  const/static/member-template filtering rules live in one standards-owned
+  path instead of being reimplemented across sema, constexpr evaluation, and
+  IR-adjacent recovery
 - apply the sema-owned overload-resolution argument collector to the remaining
   semantic call-resolution entry points that still rely on parser-owned
   expression typing or reduced argument modeling
 
 ### 3. Replace pointer-keyed semantic call identity with stable call identity
 
-Some sema facts are still keyed by `CallExprNode*`. That remains fragile across
+Some sema facts are still keyed by raw AST node addresses (maps typed as
+`const void*` in `SemanticAnalysis.h`, keyed with `&callExprNode`). That
+remains fragile across
 template substitution and generic-lambda normalization because cloned call
 nodes are semantically the same call but not the same address. The recent
 generic-lambda regression was fixed by preferring the exact normalized call
@@ -235,6 +244,45 @@ be converted to one of:
 - `InternalError` for missing compiler-owned facts
 - user-facing compile diagnostics for ill-formed code
 
+### 7. Move access control out of AstToIr into sema
+
+Member access control is currently evaluated during IR generation, not by
+parser or sema; `SemanticAnalysis.cpp` contains no access-control logic at
+all. The checks live in `AstToIr`: `checkMemberAccess` for data members
+(called from `generateMemberAccessIr`) and `checkMemberFunctionAccess` for
+member functions (called from `IrGenerator_Call_Indirect.cpp`), both backed
+by `isSameClassOrInstantiation` in `src/IrGenerator_MemberAccess.cpp`. That
+identity helper also serves non-access consumers today - constructor/target
+matching (`resolvedConstructorMatchesTargetType`) and copy-initialization
+comparison in `IrGenerator_Stmt_Decl.cpp` - so moving the access checks to
+sema must leave those callers with an equally exact identity predicate. This is a transitional placement, not the
+desired end state:
+
+- C++20 [class.access] makes access control part of the semantic meaning of
+  an expression, checked together with name lookup before the expression is
+  used; diagnostics should carry real source locations instead of the current
+  `std::cerr` + generic `"Access control violation"` `CompileError`.
+- The check runs only on paths that reach IR generation, so ill-formed access
+  in dead or never-lowered code is not diagnosed.
+- The accessing context is recovered indirectly (the `this` symbol in the
+  codegen symbol table) instead of being tracked as semantic class-scope
+  state.
+
+Moving it requires:
+
+1. Sema-resolved member expressions: for each `MemberAccessNode`, record the
+   resolved owner struct identity and member after substitution/instantiation
+   in the per-expression sema slots (the mechanism already exists for calls
+   and casts).
+2. An authoritative semantic current-class scope stack that survives template
+   replay, replacing recovery from the codegen symbol table.
+3. Reusing the specialization-identity comparison introduced for cross-
+   specialization private access (canonical `TemplateInstantiationKey`
+   equality over stamped TypeInfo metadata; exact registered-name equality
+   otherwise). That logic should move with the check and be deleted from
+   AstToIr once the sema-side checker owns it; AstToIr keeps at most an
+   assertion.
+
 ## Standards endpoint
 
 The C++20 target for this area is:
@@ -246,10 +294,10 @@ The C++20 target for this area is:
 
 ## Related documents
 
-- [docs/2026-04-04-codegen-name-lookup-investigation.md](/C:/Projects/FlashCpp/docs/2026-04-04-codegen-name-lookup-investigation.md)
-- [docs/2026-05-12-template-argument-architecture-audit.md](/C:/Projects/FlashCpp/docs/2026-05-12-template-argument-architecture-audit.md)
-- [docs/2026-05-12-template-argument-standard-conformance-investigation.md](/C:/Projects/FlashCpp/docs/2026-05-12-template-argument-standard-conformance-investigation.md)
-- [docs/2026-04-27-fallback-comments-audit.md](/C:/Projects/FlashCpp/docs/2026-04-27-fallback-comments-audit.md)
+- [docs/2026-04-04-codegen-name-lookup-investigation.md](2026-04-04-codegen-name-lookup-investigation.md)
+- [docs/2026-05-12-template-argument-architecture-audit.md](2026-05-12-template-argument-architecture-audit.md)
+- [docs/2026-05-12-template-argument-standard-conformance-investigation.md](2026-05-12-template-argument-standard-conformance-investigation.md)
+- [docs/2026-04-27-fallback-comments-audit.md](2026-04-27-fallback-comments-audit.md)
 
 ## Legacy pointer docs
 

@@ -3332,49 +3332,57 @@ bool AstToIr::checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
 	return false;
 }
 
-// Helper: check if two structs are the same class, including template instantiations.
-// Template instantiations use a '$hash' suffix (e.g., basic_string_view$291eceb35e7234a9)
-// that must be stripped for comparison with the base template.
+// Helper: check if two structs are the same class, including template
+// instantiations. Specialization identity comes from the TypeInfos' stamped
+// template-instantiation metadata (base template + ordered template
+// arguments); registered names are only compared for exact equality, never
+// by stripping instantiation suffixes.
 bool AstToIr::isSameClassOrInstantiation(const StructTypeInfo* a, const StructTypeInfo* b) const {
 	if (a == b)
 		return true;
 	if (!a || !b)
 		return false;
+
+	// Typed identity path: when both sides carry template-instantiation
+	// metadata with recorded arguments, compare their canonical instantiation
+	// keys (base template + ordered template arguments) instead of registered
+	// names. Distinct specializations of one class template are distinct
+	// classes (C++20 [class.access]), so a member of Box<int> must not match
+	// Box<double> even though both replay from the same primary template.
+	const TypeInfo* info_a = nullptr;
+	const TypeInfo* info_b = nullptr;
+	if (a->own_type_index_.has_value()) {
+		info_a = tryGetTypeInfo(*a->own_type_index_);
+	}
+	if (b->own_type_index_.has_value()) {
+		info_b = tryGetTypeInfo(*b->own_type_index_);
+	}
+	if (info_a != nullptr && info_b != nullptr &&
+		info_a->isTemplateInstantiation() && info_b->isTemplateInstantiation() &&
+		!info_a->templateArgs().empty() && !info_b->templateArgs().empty()) {
+		InlineVector<TemplateTypeArg, 4> args_a;
+		InlineVector<TemplateTypeArg, 4> args_b;
+		for (const auto& stored_arg : info_a->templateArgs()) {
+			args_a.push_back(toTemplateTypeArg(stored_arg));
+		}
+		for (const auto& stored_arg : info_b->templateArgs()) {
+			args_b.push_back(toTemplateTypeArg(stored_arg));
+		}
+		const FlashCpp::TemplateInstantiationKey key_a = FlashCpp::makeInstantiationKey(
+			info_a->baseTemplateName(),
+			std::span<const TemplateTypeArg>(args_a.data(), args_a.size()));
+		const FlashCpp::TemplateInstantiationKey key_b = FlashCpp::makeInstantiationKey(
+			info_b->baseTemplateName(),
+			std::span<const TemplateTypeArg>(args_b.data(), args_b.size()));
+		return key_a == key_b;
+	}
+
+	// Exact registered-name identity for everything the typed path does not
+	// cover: ordinary (non-template) classes, and instantiations whose
+	// TypeInfo has not been stamped with template-argument metadata yet.
 	std::string_view name_a = StringTable::getStringView(a->getName());
 	std::string_view name_b = StringTable::getStringView(b->getName());
-	if (name_a == name_b)
-		return true;
-	auto stripHash = [](std::string_view name) -> std::string_view {
-		std::string_view base = extractBaseTemplateName(name);
-		if (!base.empty()) {
-			auto dollar_pos = name.find('$');
-			auto search_region = (dollar_pos != std::string_view::npos) ? name.substr(0, dollar_pos) : name;
-			auto pos = search_region.rfind(base);
-			if (pos != std::string_view::npos) {
-				return name.substr(0, pos + base.size());
-			}
-			return base;
-		}
-		return name;
-	};
-	std::string_view base_a = stripHash(name_a);
-	std::string_view base_b = stripHash(name_b);
-	if (base_a.empty() || base_b.empty())
-		return false;
-	if (base_a == base_b)
-		return true;
-	auto getUnqualified = [](std::string_view name) -> std::string_view {
-		auto ns_pos = name.rfind("::");
-		if (ns_pos != std::string_view::npos) {
-			return name.substr(ns_pos + 2);
-		}
-		return name;
-	};
-	bool a_has_ns = base_a.find("::") != std::string_view::npos;
-	bool b_has_ns = base_b.find("::") != std::string_view::npos;
-	if (a_has_ns == b_has_ns)
-		return false;
-	return getUnqualified(base_a) == getUnqualified(base_b);
+	return name_a == name_b;
 }
 
 // Helper to check if accessing_struct is nested within member_owner_struct
