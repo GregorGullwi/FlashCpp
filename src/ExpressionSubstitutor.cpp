@@ -95,27 +95,6 @@ bool decodeTTPPlaceholderArg(std::string_view encoded_arg, TemplateTypeArg& deco
 	return true;
 }
 
-std::optional<std::string_view> tryResolveCanonicalTypeName(
-	const TypeSpecifierNode& type,
-	std::string_view type_name,
-	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map) {
-	if (!type.type_index().is_valid()) {
-		return std::nullopt;
-	}
-
-	const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
-	if (!type_info) {
-		return std::nullopt;
-	}
-
-	std::string_view canonical_type_name = StringTable::getStringView(type_info->name());
-	if (canonical_type_name.empty() || canonical_type_name == type_name || !param_map.contains(canonical_type_name)) {
-		return std::nullopt;
-	}
-
-	return canonical_type_name;
-}
-
 TypeSpecifierNode buildTerminalTypeFromResolvedAlias(const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
 	return TypeSpecifierNode(
 		resolved_alias.type_index,
@@ -5322,13 +5301,6 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 		// Look up this template parameter in our substitution map.
 		auto it = param_map_.find(token_type_name);
-		if (it == param_map_.end()) {
-			if (std::optional<std::string_view> canonical_type_name = tryResolveCanonicalTypeName(type, token_type_name, param_map_)) {
-				FLASH_LOG(Templates, Trace, "  Resolved type token via canonical type info name: ", token_type_name, " -> ", *canonical_type_name);
-				token_type_name = *canonical_type_name;
-				it = param_map_.find(token_type_name);
-			}
-		}
 		if (it != param_map_.end()) {
 			TemplateTypeArg subst = it->second;
 			if (!subst.is_value && subst.type_index.is_valid()) {
