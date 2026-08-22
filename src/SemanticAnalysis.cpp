@@ -184,7 +184,32 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
 	TypeSpecifierNode& type_spec,
 	SemanticAnalysis& sema) {
-	if (!decl.is_array() || type_spec.is_array()) {
+	if (!decl.is_array()) {
+		return;
+	}
+	// C++20 [dcl.ptr]/1: pointer-to-array declarators carry their bounds on
+	// the pointee. Store them without turning the declared entity into an
+	// array object.
+	if (type_spec.has_pointee_array_declarator()) {
+		if (!type_spec.array_dimensions().empty()) {
+			return;
+		}
+		std::vector<size_t> pointee_dimensions;
+		pointee_dimensions.reserve(decl.array_dimension_count());
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, sema);
+		for (const auto& dim_expr : decl.array_dimensions()) {
+			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+			if (!eval_result.success() || eval_result.as_int() <= 0) {
+				return;
+			}
+			pointee_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+		}
+		if (!pointee_dimensions.empty()) {
+			type_spec.set_pointee_array_dimensions(pointee_dimensions);
+		}
+		return;
+	}
+	if (type_spec.is_array()) {
 		return;
 	}
 
@@ -208,7 +233,32 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
 	TypeSpecifierNode& type_spec,
 	Parser& parser) {
-	if (!decl.is_array() || type_spec.is_array()) {
+	if (!decl.is_array()) {
+		return;
+	}
+	// C++20 [dcl.ptr]/1: pointer-to-array declarators carry their bounds on
+	// the pointee. Store them without turning the declared entity into an
+	// array object.
+	if (type_spec.has_pointee_array_declarator()) {
+		if (!type_spec.array_dimensions().empty()) {
+			return;
+		}
+		std::vector<size_t> pointee_dimensions;
+		pointee_dimensions.reserve(decl.array_dimension_count());
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, parser);
+		for (const auto& dim_expr : decl.array_dimensions()) {
+			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+			if (!eval_result.success() || eval_result.as_int() <= 0) {
+				return;
+			}
+			pointee_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+		}
+		if (!pointee_dimensions.empty()) {
+			type_spec.set_pointee_array_dimensions(pointee_dimensions);
+		}
+		return;
+	}
+	if (type_spec.is_array()) {
 		return;
 	}
 
@@ -528,7 +578,14 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	for (const auto& pointer_level : desc.pointer_levels) {
 		type_node.add_pointer_level(pointer_level.cv_qualifier);
 	}
-	if (!desc.array_dimensions.empty()) {
+	if (desc.pointee_array_declarator) {
+		// C++20 [dcl.ptr]/1: the bounds belong to the pointee; the entity
+		// itself is not an array object.
+		type_node.set_pointee_array_declarator(true);
+		if (!desc.array_dimensions.empty()) {
+			type_node.set_pointee_array_dimensions(desc.array_dimensions);
+		}
+	} else if (!desc.array_dimensions.empty()) {
 		type_node.set_array(true);
 		type_node.set_array_dimensions(desc.array_dimensions);
 	}
@@ -992,6 +1049,8 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 			return false;
 	}
 	if (array_dimensions != other.array_dimensions)
+		return false;
+	if (pointee_array_declarator != other.pointee_array_declarator)
 		return false;
 	if (function_signature.has_value() != other.function_signature.has_value())
 		return false;
@@ -4357,6 +4416,13 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		for (auto dim : type.array_dimensions()) {
 			desc.array_dimensions.push_back(dim);
 		}
+	} else if (type.has_pointee_array_declarator()) {
+		// C++20 [dcl.ptr]/1: pointer-to-array declarators carry their bounds
+		// on the pointee; the declared entity is a scalar pointer.
+		desc.pointee_array_declarator = true;
+		for (auto dim : type.array_dimensions()) {
+			desc.array_dimensions.push_back(dim);
+		}
 	}
 
 	// Function signature. Alias-backed function pointer/reference types can
@@ -4377,6 +4443,16 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 		for (size_t i = 0; i < alias_info.pointer_depth; ++i) {
 			desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+		}
+			// C++20 [dcl.ptr]/1: pointee-bound dimensions must stay outside every
+			// pointer level. An alias that itself carries indirection would place
+			// pointer levels between the entity and the array bound, which the
+			// flat canonical representation cannot express; diagnose instead of
+			// silently misrepresenting the declared type.
+		if (desc.pointee_array_declarator && alias_info.pointer_depth > 0) {
+			throw CompileError(
+				std::string("unsupported declarator: alias with indirection combined "
+							"with a parenthesized pointer-to-array declarator"));
 		}
 		if (desc.ref_qualifier == ReferenceQualifier::None &&
 			alias_info.reference_qualifier != ReferenceQualifier::None) {
@@ -4434,7 +4510,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 	}
 
-		auto id = type_context_.intern(desc);
+	auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
 }
@@ -6020,6 +6096,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return {};
 					CanonicalTypeDesc result_desc = type_context_.get(operand_id);
 					result_desc.ref_qualifier = ReferenceQualifier::None;
+						// C++20 [expr.unary.op]/3: & applies to the undecayed
+						// operand lvalue. An array object operand yields a
+						// pointer-to-array ([dcl.ptr]/1).
+					result_desc.pointee_array_declarator =
+						result_desc.pointer_levels.empty() &&
+						!result_desc.array_dimensions.empty();
 					result_desc.pointer_levels.push_back(PointerLevel{});
 					return type_context_.intern(result_desc);
 				}
@@ -6038,6 +6120,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					result_desc.ref_qualifier = ReferenceQualifier::None;
 					if (!result_desc.pointer_levels.empty()) {
 						result_desc.pointer_levels.pop_back();
+						if (result_desc.pointer_levels.empty()) {
+								// The pointee bounds become object bounds again.
+							result_desc.pointee_array_declarator = false;
+						}
 						return type_context_.intern(result_desc);
 					}
 					if (!result_desc.array_dimensions.empty()) {
@@ -8752,14 +8838,25 @@ void SemanticAnalysis::ensureResolvedCallArgConversionsComplete(
 				&arg);
 		arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
 		const CanonicalTypeId arg_value_type_id = canonicalizeType(arg_value_type);
-		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
+			// C++20 [dcl.arr]/2, [basic.fct]: parameter types are enriched with
+			// their declaration's array bounds before comparison so that
+			// pointer-to-array parameters carry the same pointee extents as the
+			// arguments flowing into them.
+		TypeSpecifierNode comparable_param_type = param_type;
+		applyDeclarationArrayBoundsToTypeSpec(
+			param_node.as<DeclarationNode>(), comparable_param_type, *this);
+		const CanonicalTypeId param_type_id = canonicalizeType(comparable_param_type);
 		if (!arg_value_type_id || !param_type_id) {
 			continue;
 		}
 
 		const CanonicalTypeDesc& arg_desc = type_context_.get(arg_value_type_id);
 		if (canonical_types_match(arg_value_type_id, param_type_id) &&
-			arg_desc.array_dimensions.empty()) {
+			(arg_desc.array_dimensions.empty() ||
+			 arg_desc.pointee_array_declarator)) {
+				// Identity match. Dimensions behind a pointer level describe the
+				// pointee ([dcl.ptr]/1); [conv.array] applies only to array
+				// objects, so no decay conversion exists or is required here.
 			continue;
 		}
 

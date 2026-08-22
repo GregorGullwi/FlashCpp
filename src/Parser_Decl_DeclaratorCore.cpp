@@ -1042,7 +1042,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				// The return type is: base_type (*)[array_size] = pointer to array of base_type
 				// Set the base_type to indicate it's a pointer to array
 				base_type.add_pointer_level(ptr_cv);
-				base_type.set_array(true);
+				// C++20 [dcl.ptr]/1: the array suffix binds inside the pointer.
+				base_type.set_pointee_array_declarator(true);
 			} else {
 				// The return type is: base_type (*) = pointer to base_type
 				base_type.add_pointer_level(ptr_cv);
@@ -1091,7 +1092,10 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 			}
 
 			base_type.add_pointer_level(ptr_cv);
-			base_type.set_array(true);
+			// C++20 [dcl.ptr]/1: the array suffix of a parenthesized declarator
+			// binds inside the pointer, so this declares a pointer to T[N],
+			// not an array of pointers.
+			base_type.set_pointee_array_declarator(true);
 
 			return ParseResult::success(
 				emplace_node<DeclarationNode>(
