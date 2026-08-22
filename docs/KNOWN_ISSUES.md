@@ -64,6 +64,36 @@ requires the same capture guarantee for class-scope alias bodies plus the
 member-context replay metadata those paths rely on. `Parser::ReplayTemplateBindings`
 (pack-aware) keeps pack arity correct inside those replays meanwhile.
 
+A structural-first flip of the in-class primary clone was attempted and
+reverted (2026-08-22); it regressed two tests and exposed the exact ambient-
+state coupling that replay currently absorbs:
+
+- `test_template_default_qualified_arg_order_ret42.cpp` returned 44 instead of
+  42. Trace chain: holder's NTTP default `pair_value<Z, A>::value` is evaluated
+  by `substituteNonTypeDefaultExpressionImpl` with the correct frame
+  (`params=Z,A,V args=4,2`) and correctly rewrites to
+  `pair_value$eed27b09::value`; immediately afterwards a second substitution
+  pass resolves the same stored owner arguments with `A -> 4` instead of 2,
+  instantiates a bogus `pair_value<4,4>` whose member early-normalizes to 44,
+  and that value becomes V. The wrong binding appears only when replay does
+  not run first: some later re-resolution of the struct's stored instantiation
+  context (early-normalizer / constexpr member lookup path) reads bindings
+  polluted by an enclosing frame. Root cause to fix: make the instantiation
+  context stored on completed class specializations authoritative (concrete
+  values, not dependent spellings) and stop later passes from re-deriving
+  member initializers through ambient `template_param_substitutions_`.
+- `test_template_dependent_base_member_template_static_value_ret0.cpp` failed
+  to link (`Derived$hash::value` unresolved): the structural result for a
+  static member reached through a deferred base did not register the emitted
+  global under the name main references.
+
+Migration precondition for both: the capture guarantee already built for
+variable templates must hold for class-scope alias bodies, plus a
+member-context equivalent of the definition-lookup metadata replay installs
+(`push_replay_member_context`). A strict post-substitution dependency check
+(param-name identifiers, TemplateParameterReferenceNode, dependent call
+records) is the right flip signal once those are fixed.
+
 ## Access control is still evaluated during IR generation, not sema
 
 Member access control (`checkMemberAccess`, `checkMemberFunctionAccess`,
