@@ -128,3 +128,15 @@ constexpr/overload/builtin coverage, but no real x87 load/store/`%st0` emission
 path. Constexpr evaluation often collapses
 `long double` to `double`. Do not paper over return ABI with size guesses or INTEGER
 fallbacks; wait until `long double` lowering can emit the SysV x87 convention.
+
+## Struct assignment through reference parameters is wrong for types larger than 8 bytes
+
+Implicit copy-assignment (`left = right`) where both operands are references to a
+struct whose size exceeds 8 bytes drops the member stores and loads the low byte of
+the reference slot instead of dereferencing. Disassembly of
+`?maybeSwap@@YAXAEAVWide@@AEAVWide@@Z` (Wide = four `int` members, 16 bytes) shows
+the two assignment stores missing entirely, while the 1-byte `Tiny` instantiation is
+correct. Found while building
+`tests/test_conjunction_inherited_value_deferred_base_ret0.cpp`; swap side-effect
+checks were scoped out of that test until this is fixed. Fix belongs in IR lowering
+of struct assignment through reference-typed lvalues.
