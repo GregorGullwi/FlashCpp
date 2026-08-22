@@ -5235,6 +5235,11 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 			template_param_names,
 			template_param_kinds,
 			non_type_categories);
+		ReplayTemplateBindings replay_bindings(
+			*this,
+			template_params_for_substitution,
+			template_args_for_substitution,
+			substitution_context.environment);
 
 		restore_lexer_position_only(*template_node.initializer_replay_position());
 

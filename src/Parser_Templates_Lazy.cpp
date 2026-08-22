@@ -1252,6 +1252,28 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				: current_template_definition_lookup_context_);
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
+		const std::vector<std::pair<StringHandle, size_t>> saved_pack_sizes =
+			template_param_pack_sizes_;
+		ScopeGuard restore_pack_sizes([this, &saved_pack_sizes]() {
+			template_param_pack_sizes_ = saved_pack_sizes;
+		});
+		for (const TemplateParameterNode& replay_param :
+			 std::span<const TemplateParameterNode>(
+				 lazy_info.template_params.data(),
+				 lazy_info.template_params.size())) {
+			if (!replay_param.is_variadic()) {
+				continue;
+			}
+			template_param_pack_sizes_.emplace_back(
+				replay_param.nameHandle(),
+				countPackSizeFromParams(
+					replay_param.name(),
+					std::span<const TemplateParameterNode>(
+						lazy_info.template_params.data(),
+						lazy_info.template_params.size()),
+					lazy_info.template_args.size())
+					.value_or(0));
+		}
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 		for (StringHandle param_name : param_names) {
 			pushCurrentTemplateParamName(param_name);
