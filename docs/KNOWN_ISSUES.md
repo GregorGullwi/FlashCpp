@@ -1,5 +1,33 @@
 # Known Issues
 
+## `sizeof` cannot parse pointer-to-array type-ids
+
+`sizeof(int(*)[3])` fails with `"Expected type or expression after 'sizeof('"`
+(`Parser_Expr_PrimaryExpr.cpp`). The named-declarator form
+(`int (*p)[3]; sizeof(*p)`) works, so the gap is specific to the abstract
+declarator path inside `sizeof(type-id)`. Found while writing
+pointer-to-array regression tests; the declarator-structure work tracked below
+is a prerequisite for sharing one abstract-declarator parser between `sizeof`,
+`alignof`, and cast expressions.
+
+## Flat type representation cannot express interleaved pointer/array declarators
+
+C++20 declarators compose recursively: in `int (*(*p)[3])[4]`, `p` is pointer
+to array[3] of pointer to array[4] of int — array bounds interleave between
+pointer levels. `TypeSpecifierNode` and `CanonicalTypeDesc` flatten a type into
+a base category plus parallel `pointer_levels` / `array_dimensions` lists, so
+only the two boundary shapes are representable: all dimensions outside the
+pointers (`T* p[N]`) and all dimensions behind every pointer
+(`T (*p)[N]`, `T (**pp)[N]`, `T (*p)[N][M]`), selected by the
+`pointee_array_declarator` flag. Mixed interleavings such as
+`int* (*p)[3]` (pointer to array of pointers) cannot be encoded. The paren
+declarator path rejects a leading declarator star before the group, but an
+alias carrying indirection would silently reorder the levels; canonicalization
+therefore throws for that combination (`canonicalizeType`). Full conformance
+requires replacing the parallel fields with an ordered declarator-component
+sequence (or recursive type nodes) across AST, canonical types, template
+substitution, mangling, traits, and codegen stride derivation.
+
 ## Access control is still evaluated during IR generation, not sema
 
 Member access control (`checkMemberAccess`, `checkMemberFunctionAccess`,

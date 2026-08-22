@@ -794,6 +794,14 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	TypeIndex element_type_index = TypeIndex{}; // Track type_index for struct elements
 	int element_pointer_depth = 0; // Track pointer depth for pointer array elements
 	bool applied_subscript_pointer_conversion = false;
+
+	// Bases reached through expressions (e.g. (*ptr)[i] on a pointer-to-array
+	// of structs) carry their pointee identity in the result type; adopt it so
+	// downstream member access keeps the struct TypeIndex.
+	if (!element_type_index.is_valid() && array_result.type_index.is_valid()) {
+		element_type_index = array_result.type_index;
+	}
+
 	if (array_expr_node.is<ExpressionNode>()) {
 		const void* array_key = static_cast<const void*>(&array_expr_node.as<ExpressionNode>());
 		const auto slot = sema_.getSlot(array_key);

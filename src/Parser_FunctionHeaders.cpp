@@ -71,10 +71,14 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		if (auto node = type_and_name_result.node()) {
 			// Apply array-to-pointer decay for function parameters
 			// In C++, function parameters declared as T arr[N] are treated as T* arr
+			// C++20 [dcl.fct]/5: only an array-typed parameter adjusts to a
+			// pointer. A pointer-to-array declarator such as int (*p)[3] already
+			// declares a pointer and must keep its type.
 			if (node->is<DeclarationNode>()) {
 				auto& decl = node->as<DeclarationNode>();
 				if (decl.array_size().has_value() &&
-					!decl.type_specifier_node().is_reference()) {
+					!decl.type_specifier_node().is_reference() &&
+					!decl.type_specifier_node().has_pointee_array_declarator()) {
 					// This is an array parameter - convert to pointer
 					// Get the underlying type and add a pointer level
 					const TypeSpecifierNode& orig_type = decl.type_specifier_node();

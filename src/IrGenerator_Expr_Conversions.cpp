@@ -1773,8 +1773,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			// Logical NOT always returns bool8
 		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	} else if (unaryOperatorNode.op() == "~") {
-			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
-			// After promotion, non-integral operands (e.g. float/double) are ill-formed.
+		// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
+		// After promotion, non-integral operands (e.g. float/double) are ill-formed.
 		if (!is_integer_type(operandType) && operandType != TypeCategory::Bool) {
 			throw CompileError("operand of '~' must have integral or unscoped enumeration type");
 		}
@@ -1989,6 +1989,99 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			}
 		}
 		// else: multi-level pointer, element_size stays 64 (pointer)
+
+		// C++20 [expr.unary.op]/1 with [dcl.ptr]/1 and [conv.array]: for a
+		// pointer-to-array operand such as T (*p)[N], *p designates the array
+		// object itself. As an operand it undergoes array-to-pointer decay, so
+		// its value is the address p holds - no load may be emitted. The
+		// address is materialized into a fresh lvalue temp so downstream
+		// subscripts compute element addresses from it.
+		bool pointee_is_array = false;
+		TypeIndex pointee_type_index{};
+		if (pointer_depth == 1 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+				// Sema owns expression typing ([expr.unary.op]/1): the operand's
+				// canonical descriptor is the single authority for declarator
+				// structure. Prefer an existing semantic slot; otherwise canonicalize
+				// the identifier's declaration type through the same pipeline.
+			const ExpressionNode& deref_operand_expr =
+				unaryOperatorNode.get_operand().as<ExpressionNode>();
+			CanonicalTypeId operand_type_id{};
+			if (const auto operand_slot = sema_.getSlot(&deref_operand_expr);
+				operand_slot.has_value() && operand_slot->has_type()) {
+				operand_type_id = operand_slot->type_id;
+			} else if (std::holds_alternative<IdentifierNode>(deref_operand_expr)) {
+				auto operand_symbol = symbol_table.lookup(
+					std::get<IdentifierNode>(deref_operand_expr).name());
+				const DeclarationNode* operand_decl = nullptr;
+				if (operand_symbol.has_value()) {
+					if (operand_symbol->is<DeclarationNode>()) {
+						operand_decl = &operand_symbol->as<DeclarationNode>();
+					} else if (operand_symbol->is<VariableDeclarationNode>()) {
+						operand_decl = &operand_symbol->as<VariableDeclarationNode>().declaration();
+					}
+				}
+				if (operand_decl != nullptr) {
+					operand_type_id = sema_.canonicalizeTypeForImplicitConversion(
+						operand_decl->type_specifier_node());
+				}
+			}
+			if (operand_type_id) {
+				const CanonicalTypeDesc& operand_desc =
+					sema_.typeContext().get(operand_type_id);
+				pointee_is_array = operand_desc.pointee_array_declarator;
+				pointee_type_index = operand_desc.type_index;
+			}
+		}
+		if (pointee_is_array) {
+			TempVar addr_temp = var_counter.next();
+
+			std::variant<StringHandle, TempVar> decay_base;
+			IrValue decay_rhs_value;
+			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+				decay_base = *string;
+				decay_rhs_value = *string;
+			} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
+				decay_base = *temp_var;
+				decay_rhs_value = *temp_var;
+			} else if (const auto* imm_ptr = std::get_if<unsigned long long>(&operandIrOperands.value)) {
+				TempVar materialized_ptr = var_counter.next();
+				AssignmentOp materialize_ptr;
+				materialize_ptr.result = materialized_ptr;
+				materialize_ptr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, materialized_ptr);
+				materialize_ptr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, *imm_ptr);
+				materialize_ptr.is_pointer_store = false;
+				materialize_ptr.dereference_rhs_references = false;
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_ptr), Token()));
+				decay_base = materialized_ptr;
+				decay_rhs_value = materialized_ptr;
+			} else {
+				throw InternalError("Dereference pointer has unsupported operand value kind");
+			}
+
+			AssignmentOp copy_op;
+			copy_op.result = addr_temp;
+			copy_op.lhs = makeTypedValue(operandType, SizeInBits{64}, addr_temp);
+			copy_op.rhs = makeTypedValue(operandType, SizeInBits{64}, decay_rhs_value);
+			copy_op.is_pointer_store = false;
+			copy_op.dereference_rhs_references = false;
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_op), unaryOperatorNode.get_token()));
+
+			LValueInfo decay_lvalue_info(
+				LValueInfo::Kind::Indirect,
+				decay_base,
+				0);
+			setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(decay_lvalue_info, TypeCategory::Invalid, 0));
+
+			return makeExprResult(
+				pointee_type_index.is_valid()
+					? pointee_type_index.withCategory(operandType)
+					: operandIrOperands.type_index.withCategory(operandType),
+				SizeInBits{static_cast<int>(element_size)},
+				IrOperand{addr_temp},
+				PointerDepth{},
+				ValueStorage::ContainsAddress);
+		}
+
 
 		// Create typed payload with TypedValue
 		DereferenceOp op;
