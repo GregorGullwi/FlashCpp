@@ -4828,12 +4828,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		inst_args = std::move(materialized_args.args);
 	}
 
-	// Fallback: if TypeInfo lookup found no stored args (e.g., the placeholder wasn't registered
-	// in getTypesByNameMap(), or it's a non-template namespace), fall back to using the full param_map_.
-	// This handles cases like pack expansion bases where no TypeInfo exists.
-	if (inst_args.empty() && (type_it == getTypesByNameMap().end() || type_it->second == nullptr)) {
-		inst_args = collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteQualifiedIdentifier");
-	}
 	for (TemplateTypeArg& arg : inst_args) {
 		if (!arg.is_value && !arg.is_template_template_arg && is_builtin_type(arg.category())) {
 			TypeIndex canonical_builtin_index = nativeTypeIndex(arg.category());
