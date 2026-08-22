@@ -95,5 +95,11 @@ int main() {
 	if (!MyConjunctionV<IsBig<Wide>>) return 52;
 	if (!MyConjunctionV<>) return 53;
 	if (!MyConjunctionV<HasWide<Wide>>) return 54;
+	// Side effects of the reference-parameter swaps above: implicit
+	// copy-assignment through references must copy every member.
+	if (tiny_a.byte != 'B') return 55;
+	if (tiny_b.byte != 'A') return 56;
+	if (wide_a.v0 != 5) return 57;
+	if (wide_b.v0 != 1) return 58;
 	return 0;
 }

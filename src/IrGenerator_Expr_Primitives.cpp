@@ -1268,7 +1268,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				type_node.type_index(), pointee_size, PointerDepth{});
 
 			int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
-			TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
+			TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
 												  StringTable::getOrInternStringHandle(identifierNode.name()));
 
 				// Mark as lvalue with Indirect metadata for unified assignment handler
@@ -1437,7 +1437,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference variable load lowering");
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
-				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
+				TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
 													  StringTable::getOrInternStringHandle(identifierNode.name()));
 
 					// Mark as lvalue with ReferenceDeref metadata for unified assignment handler
