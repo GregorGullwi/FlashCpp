@@ -1,5 +1,21 @@
 # Known Issues
 
+## Access control is still evaluated during IR generation, not sema
+
+Member access control (`checkMemberAccess`, `checkMemberFunctionAccess`,
+`isSameClassOrInstantiation` in `src/IrGenerator_MemberAccess.cpp`) runs at
+AstToIr/IR-generation time; the parser and `SemanticAnalysis.cpp` perform no
+access checking. Consequences: diagnostics lack real source locations (the
+generic `"Access control violation"` `CompileError`), ill-formed accesses in
+code that is never lowered are not diagnosed, and the accessing class context
+is recovered from the codegen symbol table (`this` symbol) instead of
+authoritative semantic class-scope state. The specialization-identity
+comparison added for cross-specialization private access (canonical
+`TemplateInstantiationKey` equality over stamped TypeInfo metadata) belongs
+to that future sema-side checker. See "Main remaining gaps" entry 7 in
+[SEMANTIC_ANALYSIS_STATUS.md](SEMANTIC_ANALYSIS_STATUS.md) for the migration
+requirements.
+
 ## Template instantiation recursion has very high per-level stack cost
 
 The recursive base-class instantiation path
@@ -86,17 +102,6 @@ non-const overloads are replayed. Exact injected-class return identity and mangl
 are now preserved, so the call links correctly, but overload selection still needs
 to retain and rank the receiver cv-qualification through replay and IR lowering.
 Do not compensate by changing mangled names or treating the overloads as equivalent.
-
-## Cross-specialization member access can lose the accessing specialization
-
-During IR generation for a non-static class-template member, member access through
-another specialization can replace the accessing class context with the target
-specialization's `StructTypeInfo`. For example, a member of `Box<int>` may then be
-incorrectly allowed to access a private member of `Box<double>`. The access checker
-cannot repair this locally because both inputs already identify `Box<double>`; the
-fix must preserve the accessing specialization through earlier template replay and
-IR context setup. Do not restore base-template or stripped-name comparisons in the
-access checker.
 
 ## SysV x87 aggregate return gap
 
