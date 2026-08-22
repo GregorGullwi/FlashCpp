@@ -14878,25 +14878,57 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 	flushAllDirtyRegisters();
 
 	int value_size = op.value.size_in_bits.value;
-	int value_size_bytes = value_size / 8;
+	int value_size_bytes = (value_size + 7) / 8;
+
+		// Resolve the frame slot that holds the destination address
+	int32_t pointer_slot_offset = -1;
+	if (const auto* temp_var = std::get_if<TempVar>(&op.pointer.value)) {
+		pointer_slot_offset = getStackOffsetFromTempVar(*temp_var);
+	} else {
+		StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
+		auto it = variable_scopes.back().variables.find(var_name_handle);
+		if (it == variable_scopes.back().variables.end()) {
+			throw InternalError("Pointer variable not found in DereferenceStore");
+			return;
+		}
+		pointer_slot_offset = it->second.offset;
+	}
+	if (pointer_slot_offset == -1) {
+		throw InternalError("Pointer slot has no stack offset in DereferenceStore");
+	}
+
+		// Aggregate values larger than one register cannot move through a single
+		// load/store pair. Copy every byte between the source slot and the memory
+		// addressed by the pointer slot instead, so struct stores through
+		// references keep all members.
+	if (value_size_bytes > 8) {
+		std::optional<int32_t> value_slot_offset;
+		if (const auto* temp_var = std::get_if<TempVar>(&op.value.value)) {
+			int32_t temp_offset = getStackOffsetFromTempVar(*temp_var);
+			if (temp_offset != -1) {
+				value_slot_offset = temp_offset;
+			}
+		} else if (const auto* string = std::get_if<StringHandle>(&op.value.value)) {
+			auto it = variable_scopes.back().variables.find(*string);
+			if (it != variable_scopes.back().variables.end()) {
+				value_slot_offset = it->second.offset;
+			}
+		}
+		if (!value_slot_offset.has_value()) {
+			throw InternalError("Aggregate DereferenceStore requires a memory-resident value");
+		}
+		emitFrameMemoryCopy(
+			FrameMemoryLocation{*value_slot_offset, 0, FrameMemoryStorage::Direct},
+			FrameMemoryLocation{pointer_slot_offset, 0, FrameMemoryStorage::Indirect},
+			SizeInBytes{value_size_bytes});
+		return;
+	}
 
 		// Allocate registers through the register allocator to avoid conflicts
 	X64Register ptr_reg = allocateRegisterWithSpilling();
 	const StackVariableScope& current_scope = variable_scopes.back();
 
-	if (const auto* temp_var = std::get_if<TempVar>(&op.pointer.value)) {
-		TempVar temp = *temp_var;
-		int32_t temp_offset = getStackOffsetFromTempVar(temp);
-		emitMovFromFrame(ptr_reg, temp_offset);
-	} else {
-		StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
-		auto it = current_scope.variables.find(var_name_handle);
-		if (it == current_scope.variables.end()) {
-			throw InternalError("Pointer variable not found in DereferenceStore");
-			return;
-		}
-		emitMovFromFrame(ptr_reg, it->second.offset);
-	}
+	emitMovFromFrame(ptr_reg, pointer_slot_offset);
 
 		// Allocate a second register for the value - must be different from ptr_reg
 	X64Register value_reg = allocateRegisterWithSpilling();
