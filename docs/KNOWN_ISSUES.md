@@ -1,5 +1,41 @@
 # Known Issues
 
+## Variable-template initializer replay removed; static-member replay clones remain
+
+RESOLVED for variable templates (2026-08-22, branch `opencode/alias-capture-identity`):
+variable-template initializers are now substituted once, structurally, from the
+declaration-time AST. Three mechanisms made that possible:
+
+1. **Capture fix** — `Parser::rewriteDependentMemberTypeSpellings`
+   (`Parser_Templates_Inst_Substitution.cpp`, hooked where the alias branch of
+   `parse_type_specifier` returns an unresolvable dependent target,
+   `Parser_TypeSpecifiers.cpp`) clones a dependent-member placeholder whose
+   record still spells the alias body's own parameters (`remove_cv<T>::type`)
+   into one spelling the use-site arguments (`remove_cv<Ty>::type`). Without it
+   the stored initializer was unresolvable by any environment-based pass;
+   replay used to mask this via leaked `template_param_substitutions_`.
+2. **Replay deletion** — `try_reparse_variable_template_initializer` /
+   `try_replay_variable_template_initializer` and their call sites in
+   `try_instantiate_variable_template` are gone; both the primary and partial-
+   specialization branches substitute the stored AST directly.
+3. **Phase 3 correctness** — the recovery block now (a) prefers the pack-expanded
+   use-site arguments over placeholder-stored arguments when they already name a
+   registered specialization, and (b) rewrites the qualifier even when
+   `try_instantiate_class_template` hits its already-instantiated cache (which
+   returns nullopt). Previously a cache hit left the stale placeholder namespace
+   in the initializer ("Undefined qualified identifier" at codegen).
+
+Measured effect on Parsing phase: `tests/std/test_std_map.cpp` 8597 ms -> 6400 ms
+(~26% faster); unit tests unchanged.
+
+REMAINING WORK: four sibling lexer-replay sites still substitute static-member
+initializers by re-parsing source text (in-class primary + partial-spec and
+out-of-line clones in `Parser_Templates_Inst_ClassTemplate.cpp`, lazy clone in
+`Parser_Templates_Lazy.cpp`). Migrating them onto structural substitution
+requires the same capture guarantee for class-scope alias bodies plus the
+member-context replay metadata those paths rely on. `Parser::ReplayTemplateBindings`
+(pack-aware) keeps pack arity correct inside those replays meanwhile.
+
 ## Access control is still evaluated during IR generation, not sema
 
 Member access control (`checkMemberAccess`, `checkMemberFunctionAccess`,

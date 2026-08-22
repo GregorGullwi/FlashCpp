@@ -8,28 +8,6 @@
 #include "ParserTemplateHelpers.h"
 #include "TypeTraitEvaluator.h"
 
-static void buildVariableTemplateParameterReplayState(
-	std::span<const TemplateParameterNode> template_params,
-	InlineVector<StringHandle, 4>& template_param_names,
-	InlineVector<TemplateParameterKind, 4>& template_param_kinds,
-	InlineVector<TypeCategory, 4>& non_type_categories) {
-	template_param_names.clear();
-	template_param_kinds.clear();
-	non_type_categories.clear();
-	template_param_names.reserve(template_params.size());
-	template_param_kinds.reserve(template_params.size());
-	non_type_categories.reserve(template_params.size());
-	for (const TemplateParameterNode& template_param : template_params) {
-		template_param_names.push_back(template_param.nameHandle());
-		template_param_kinds.push_back(template_param.kind());
-		non_type_categories.push_back(
-			template_param.kind() == TemplateParameterKind::NonType &&
-				template_param.has_type()
-				? template_param.type_specifier_node().type()
-				: TypeCategory::Invalid);
-	}
-}
-
 static bool hasComplexDeferredMemberChain(const TemplateAliasNode& node) {
 	const auto segments = node.targetMemberTemplateSegments();
 	if (segments.size() > 1) {
@@ -3521,6 +3499,134 @@ const TypeInfo* Parser::tryMaterializeMemberAliasTemplateSpecialization(
 	return materialized_class.resolved_type_info;
 }
 
+std::optional<TypeSpecifierNode> Parser::rewriteDependentMemberTypeSpellings(
+	const TypeSpecifierNode& dependent_type_spec,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	const Token& result_token,
+	CVQualifier cv_qualifier) {
+	const TypeInfo* type_info = tryGetTypeInfo(dependent_type_spec.type_index());
+	if (type_info == nullptr || !type_info->isDependentMemberType()) {
+		return std::nullopt;
+	}
+	const TypeInfo::DependentQualifiedNameRecord* record = type_info->dependentQualifiedName();
+	if (record == nullptr ||
+		(record->owner_template_arguments.empty() && record->member_chain.empty())) {
+		return std::nullopt;
+	}
+
+	TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+		template_params,
+		template_args,
+		nullptr);
+	auto rewrite_arg_infos =
+		[&](std::span<const TypeInfo::TemplateArgInfo> stored_args,
+			bool& any_rebound) -> InlineVector<TypeInfo::TemplateArgInfo, 4> {
+		InlineVector<TypeInfo::TemplateArgInfo, 4> rewritten_args;
+		rewritten_args.reserve(stored_args.size());
+		for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
+			TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+			if (arg.dependent_name.isValid()) {
+				std::optional<TemplateTypeArg> bound_arg;
+				if (const TemplateTypeArg* direct_bound_arg =
+						substitution_environment.findOne(arg.dependent_name);
+					direct_bound_arg != nullptr) {
+					bound_arg = *direct_bound_arg;
+				} else {
+					bound_arg = resolveContextBinding(
+						arg.dependent_name,
+						substitution_environment);
+				}
+				if (bound_arg.has_value() && !bound_arg->is_value) {
+					arg = rebindDependentTemplateTypeArg(*bound_arg, stored_arg);
+					any_rebound = true;
+				}
+			}
+			rewritten_args.push_back(toTemplateArgInfo(arg));
+		}
+		return rewritten_args;
+	};
+
+	bool any_rebound = false;
+	TypeInfo::DependentQualifiedNameRecord rewritten_record = *record;
+	rewritten_record.owner_template_arguments = rewrite_arg_infos(
+		std::span<const TypeInfo::TemplateArgInfo>(
+			record->owner_template_arguments.data(),
+			record->owner_template_arguments.size()),
+		any_rebound);
+	for (auto& member_record : rewritten_record.member_chain) {
+		if (!member_record.has_template_arguments) {
+			continue;
+		}
+		bool member_rebound = false;
+		member_record.template_arguments = rewrite_arg_infos(
+			std::span<const TypeInfo::TemplateArgInfo>(
+				member_record.template_arguments.data(),
+				member_record.template_arguments.size()),
+			member_rebound);
+		any_rebound = any_rebound || member_rebound;
+	}
+	if (!any_rebound) {
+		return std::nullopt;
+	}
+
+	std::vector<TemplateTypeArg> rewritten_args_for_naming;
+	rewritten_args_for_naming.reserve(rewritten_record.owner_template_arguments.size());
+	for (const TypeInfo::TemplateArgInfo& arg_info : rewritten_record.owner_template_arguments) {
+		rewritten_args_for_naming.push_back(toTemplateTypeArg(arg_info));
+	}
+	std::string_view new_owner_name = get_instantiated_class_name(
+		StringTable::getStringView(record->owner_name),
+		std::span<const TemplateTypeArg>(
+			rewritten_args_for_naming.data(),
+			rewritten_args_for_naming.size()));
+	if (new_owner_name.empty()) {
+		return std::nullopt;
+	}
+
+	StringBuilder new_name_builder;
+	new_name_builder.append(new_owner_name);
+	for (const auto& member_record : rewritten_record.member_chain) {
+		new_name_builder.append("::").append(
+			StringTable::getStringView(member_record.name));
+		if (member_record.has_template_arguments) {
+			new_name_builder.append("<")
+				.append(member_record.template_arguments.size())
+				.append(" args>");
+		}
+	}
+	StringHandle new_handle = StringTable::getOrInternStringHandle(new_name_builder.commit());
+
+	const TypeInfo* new_info = nullptr;
+	if (auto existing_it = getTypesByNameMap().find(new_handle);
+		existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
+		new_info = existing_it->second;
+	} else {
+		TypeInfo& placeholder_type = add_empty_type_entry();
+		placeholder_type.fallback_size_bits_ = 0;
+		placeholder_type.name_ = new_handle;
+		placeholder_type.is_incomplete_instantiation_ = true;
+		placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+		placeholder_type.setDependentQualifiedName(std::move(rewritten_record));
+		if (const TypeInfo::InstantiationContext* source_context = type_info->instantiationContext();
+			source_context != nullptr) {
+			placeholder_type.setInstantiationContext(
+				source_context->param_names,
+				InlineVector<TypeInfo::TemplateArgInfo, 4>(source_context->param_args()),
+				source_context->parent);
+		}
+		getTypesByNameMap()[new_handle] = &placeholder_type;
+		new_info = &placeholder_type;
+	}
+
+	return TypeSpecifierNode(
+		new_info->registeredTypeIndex().withCategory(TypeCategory::UserDefined),
+		0,
+		result_token,
+		cv_qualifier,
+		ReferenceQualifier::None);
+}
+
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
 	std::span<const TemplateParameterNode> template_params,
@@ -4980,10 +5086,6 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		explicit_outer_binding != nullptr
 			? explicit_outer_binding
 			: gTemplateRegistry.getOuterTemplateBinding(template_name);
-	std::optional<TemplateEnvironment> outer_environment;
-	if (outer_binding != nullptr) {
-		outer_environment = buildTemplateEnvironment(*outer_binding);
-	}
 
 	auto fill_missing_variable_template_args =
 		[&](std::span<const TemplateTypeArg> input_args) -> std::optional<std::vector<TemplateTypeArg>> {
@@ -5169,141 +5271,6 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		effective_template_params,
 		effective_template_args);
 
-	auto try_reparse_variable_template_initializer =
-		[&](
-			const TemplateVariableDeclarationNode& template_node,
-			std::span<const TemplateParameterNode> template_params_for_substitution,
-			std::span<const TemplateTypeArg> template_args_for_substitution,
-			StringHandle instantiated_variable_name) -> std::optional<ASTNode> {
-		const VariableDeclarationNode& pattern_var_decl =
-			template_node.variable_decl_node();
-		if (!pattern_var_decl.initializer().has_value() ||
-			!template_node.has_initializer_replay_position()) {
-			return std::nullopt;
-		}
-
-		SaveHandle current_pos = save_token_position();
-		ScopedLexerPositionRestore lexer_restore(*this, current_pos);
-
-		TemplateInstantiationContext substitution_context =
-			buildTemplateInstantiationContext(
-				template_params_for_substitution,
-				template_args_for_substitution,
-				outer_environment.has_value() ? &*outer_environment : nullptr,
-				currentTemplateSubstitutionFailurePolicy());
-
-		TemplateDefinitionLookupContext definition_lookup_context =
-			template_node.initializer_definition_lookup_context();
-		if (!definition_lookup_context.is_valid()) {
-			const DeclarationNode& declaration =
-				pattern_var_decl.declaration();
-			definition_lookup_context.setDefinitionToken(
-				declaration.identifier_token());
-			definition_lookup_context.definition_namespace =
-				gSymbolTable.get_current_namespace_handle();
-		}
-		definition_lookup_context.current_instantiation_name =
-			instantiated_variable_name;
-		substitution_context.definition_lookup_context =
-			definition_lookup_context.is_valid()
-				? &definition_lookup_context
-				: nullptr;
-
-		// Capture the caller's depth before forcing replay depth so the guard restores
-		// the original instantiation context after this initializer has been reparsed.
-		FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
-		// Depth 0 means non-template code; depth 1 is the minimum "inside a
-		// template declaration" state needed for dependent token classification.
-		// Replay must parse as if it were back in the original template declaration
-		// regardless of the actual instantiation nesting depth.
-		constexpr int kReplayTemplateParsingDepth = 1;
-		parsing_template_depth_ = kReplayTemplateParsingDepth;
-		ScopedDefinitionLookupContext ctx_scope(
-			current_template_definition_lookup_context_,
-			substitution_context.definition_lookup_context);
-
-		InlineVector<StringHandle, 4> template_param_names;
-		InlineVector<TemplateParameterKind, 4> template_param_kinds;
-		InlineVector<TypeCategory, 4> non_type_categories;
-		buildVariableTemplateParameterReplayState(
-			template_params_for_substitution,
-			template_param_names,
-			template_param_kinds,
-			non_type_categories);
-		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-		setCurrentTemplateParameters(
-			template_param_names,
-			template_param_kinds,
-			non_type_categories);
-
-		restore_lexer_position_only(*template_node.initializer_replay_position());
-
-		DeclarationNode declaration_for_reparse =
-			pattern_var_decl.declaration();
-		TypeSpecifierNode& type_spec =
-			declaration_for_reparse.type_specifier_node();
-
-		std::optional<ASTNode> reparsed_initializer;
-		if (peek() == "="_tok) {
-			ParseResult init_result = parse_copy_initialization(
-				declaration_for_reparse,
-				type_spec);
-			if (!init_result.is_error()) {
-				reparsed_initializer = init_result.node();
-			} else {
-				FLASH_LOG(Templates, Trace,
-					"Replay parse failed for variable template initializer ",
-					declaration_for_reparse.identifier_token().value(), ": ",
-					init_result.error_message(),
-					" - falling back to AST substitution");
-			}
-		} else if (peek() == "{"_tok) {
-			ParseResult init_result = parse_brace_initializer(type_spec);
-			if (!init_result.is_error() &&
-				init_result.node().has_value()) {
-				reparsed_initializer = *init_result.node();
-			} else if (init_result.is_error()) {
-				FLASH_LOG(Templates, Trace,
-					"Replay brace-init parse failed for variable template initializer ",
-					declaration_for_reparse.identifier_token().value(), ": ",
-					init_result.error_message(),
-					" - falling back to AST substitution");
-			}
-		}
-
-		if (!reparsed_initializer.has_value()) {
-			return std::nullopt;
-		}
-
-		return substituteTemplateParameters(
-			*reparsed_initializer,
-			substitution_context);
-	};
-
-	auto try_replay_variable_template_initializer =
-		[&](
-			const TemplateVariableDeclarationNode& template_node,
-			std::span<const TemplateParameterNode> template_params_for_substitution,
-			std::span<const TemplateTypeArg> template_args_for_substitution,
-			StringHandle instantiated_variable_name,
-			std::string_view failure_message) -> std::optional<ASTNode> {
-		try {
-			return try_reparse_variable_template_initializer(
-				template_node,
-				template_params_for_substitution,
-				template_args_for_substitution,
-				instantiated_variable_name);
-		} catch (const std::exception& ex) {
-			FLASH_LOG_FORMAT(
-				Templates,
-				Debug,
-				"{}{} — falling back to AST substitution",
-				failure_message,
-				ex.what());
-			return std::nullopt;
-		}
-	};
-
 	// Structural pattern matching: find the best matching partial specialization
 	// Uses TemplatePattern::matches() which handles qualifier matching, multi-arg,
 	// and proper template parameter deduction without string-based pattern keys.
@@ -5355,24 +5322,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 
 		std::optional<ASTNode> init_expr;
 		if (spec_var_decl.initializer().has_value()) {
-			StringHandle instantiated_var_handle =
-				StringTable::getOrInternStringHandle(persistent_name);
-			const char* failure_message = !spec_params.empty()
-				? "Replay substitution failed for variable-template partial specialization initializer: "
-				: "Replay parsing failed for variable-template specialization initializer: ";
-			init_expr = try_replay_variable_template_initializer(
-				spec_template,
-				spec_params,
-				converted_args,
-				instantiated_var_handle,
-				failure_message);
-			if (!init_expr.has_value()) {
-				if (!spec_params.empty()) {
-					init_expr = substituteTemplateParameters(
-						*spec_var_decl.initializer(), spec_params, converted_args);
-				} else {
-					init_expr = *spec_var_decl.initializer();
-				}
+			// Structural substitution: the declaration-time initializer AST is
+			// substituted once under the specialization's binding environment.
+			if (!spec_params.empty()) {
+				init_expr = substituteTemplateParameters(
+					*spec_var_decl.initializer(), spec_params, converted_args);
+			} else {
+				init_expr = *spec_var_decl.initializer();
 			}
 			if (!spec_params.empty()) {
 				spec_type = substituteTemplateParameters(
@@ -5416,19 +5372,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 	std::optional<ASTNode> new_initializer = std::nullopt;
 	if (orig_var_decl.initializer().has_value()) {
 		FLASH_LOG(Templates, Trace, "Substituting initializer expression for variable template");
-		StringHandle instantiated_var_handle =
-			StringTable::getOrInternStringHandle(persistent_name);
-		new_initializer = try_replay_variable_template_initializer(
-			var_template,
-			effective_template_params,
-			effective_template_args,
-			instantiated_var_handle,
-			"Replay substitution failed for variable-template initializer: ");
-		if (!new_initializer.has_value()) {
-			new_initializer = substituteTemplateParameters(
-				orig_var_decl.initializer().value(),
-				variable_template_context);
-		}
+		// Structural substitution: the declaration-time initializer AST is
+		// substituted once under the instantiation's binding environment; no
+		// lexer replay of source text is needed.
+		new_initializer = substituteTemplateParameters(
+			orig_var_decl.initializer().value(),
+			variable_template_context);
 		FLASH_LOG(Templates, Trace, "Initializer substitution complete");
 
 		// PHASE 3 FIX: After substitution, trigger instantiation of any class templates
@@ -5476,15 +5425,29 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 						auto inner_template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
 						if (inner_template_opt.has_value()) {
 							std::vector<TemplateTypeArg> inner_template_args = resolved_args;
-							auto inner_type_it = getTypesByNameMap().find(
-								StringTable::getOrInternStringHandle(struct_name_view));
-							if (inner_type_it != getTypesByNameMap().end() &&
-								inner_type_it->second != nullptr &&
-								inner_type_it->second->isTemplateInstantiation()) {
-								inner_template_args = materializePlaceholderTemplateArgs(
-									*inner_type_it->second,
-									template_params,
-									filled_args);
+							// The substituted qualifier already carries the pack-expanded
+							// use-site arguments. Only fall back to the referenced
+							// placeholder's stored arguments when those expanded
+							// arguments do not name a registered specialization:
+							// placeholder-stored args can predate pack expansion (an
+							// empty expansion stored as one dependent argument) and
+							// would derive a different instantiation identity.
+							if (!gTemplateRegistry.lookupExactSpecialization(
+									template_name_to_lookup,
+									std::span<const TemplateTypeArg>(
+										resolved_args.data(),
+										resolved_args.size()))
+									 .has_value()) {
+								auto inner_type_it = getTypesByNameMap().find(
+									StringTable::getOrInternStringHandle(struct_name_view));
+								if (inner_type_it != getTypesByNameMap().end() &&
+									inner_type_it->second != nullptr &&
+									inner_type_it->second->isTemplateInstantiation()) {
+									inner_template_args = materializePlaceholderTemplateArgs(
+										*inner_type_it->second,
+										template_params,
+										filled_args);
+								}
 							}
 
 							// This is a template - try to instantiate it with the concrete arguments
@@ -5497,12 +5460,21 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 								// Add to AST so it gets codegen
 								registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
-
-								// Now update the qualified identifier to use the correct instantiated name
-								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
-								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, inner_template_args);
-								FLASH_LOG(Templates, Trace, "Phase 3: Instantiated class name: '", instantiated_name, "'");
-
+							}
+							// A cache hit inside try_instantiate_class_template returns
+							// nullopt when the full specialization already exists; the
+							// qualifier rewrite below must still run so the initializer
+							// points at that existing instantiation instead of the
+							// declaration-time dependent placeholder namespace.
+							std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, inner_template_args);
+							auto instantiated_type_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(instantiated_name));
+							const bool instantiation_ready =
+								instantiated.has_value() ||
+								(instantiated_type_it != getTypesByNameMap().end() &&
+								 instantiated_type_it->second != nullptr &&
+								 instantiated_type_it->second->isTemplateInstantiation());
+							if (instantiation_ready) {
 								// Create a new qualified identifier with the updated namespace
 								// Get the parent namespace and add the instantiated name as a child
 								NamespaceHandle parent_ns = gNamespaceRegistry.getParent(ns_handle);
