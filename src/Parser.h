@@ -2213,6 +2213,82 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	void populateTemplateParamSubstitutions(
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		const TemplateEnvironment& environment);
+	// RAII guard that installs parse-time PACK bindings for replayed
+	// initializer/body parsing so a `<Pack...>` expansion resolves its arity
+	// from the active binding environment instead of re-classifying token text:
+	// - template_param_substitutions_ gains variadic-pack-only entries bound to
+	//   N elements; an empty pack binds to zero args so the expansion yields no
+	//   arguments,
+	// - template_param_pack_sizes_ gains the authoritative per-pack sizes.
+	// Pre-existing substitution entries are preserved untouched: replay parsing
+	// keeps whatever binding context its caller installed, and non-pack
+	// parameters stay dependent here so replay produces the same AST shape as
+	// the original declaration parse for exactly one later substitution pass.
+	class ReplayTemplateBindings {
+	public:
+		ReplayTemplateBindings(
+			Parser& parser,
+			std::span<const TemplateParameterNode> template_params,
+			std::span<const TemplateTypeArg> template_args,
+			const TemplateEnvironment& environment)
+			: parser_(parser),
+			  substitutions_base_size_(parser.template_param_substitutions_.size()),
+			  pack_sizes_base_size_(parser.template_param_pack_sizes_.size()) {
+			bool environment_has_packs = false;
+			for (const TemplateEnvironment* env = &environment;
+				 env != nullptr;
+				 env = env->parent) {
+				for (const TemplateBinding& binding : env->bindings) {
+					if (!binding.is_pack) {
+						continue;
+					}
+					environment_has_packs = true;
+					TemplateParamSubstitution pack_substitution;
+					pack_substitution.param_name = binding.name;
+					pack_substitution.is_pack = true;
+					pack_substitution.pack_args.assign(
+						binding.args.begin(),
+						binding.args.end());
+					parser_.template_param_substitutions_.push_back(
+						std::move(pack_substitution));
+				}
+			}
+			bool params_have_variadic = false;
+			for (const TemplateParameterNode& param : template_params) {
+				if (!param.is_variadic()) {
+					continue;
+				}
+				params_have_variadic = true;
+				parser_.template_param_pack_sizes_.emplace_back(
+					param.nameHandle(),
+					Parser::countPackSizeFromParams(param.name(), template_params, template_args.size())
+						.value_or(0));
+			}
+			installed_ = environment_has_packs || params_have_variadic;
+		}
+
+		~ReplayTemplateBindings() {
+			if (!installed_) {
+				return;
+			}
+			auto truncate_to_base_size = [](auto& container, size_t base_size) {
+				if (container.size() > base_size) {
+					container.resize(base_size);
+				}
+			};
+			truncate_to_base_size(parser_.template_param_pack_sizes_, pack_sizes_base_size_);
+			truncate_to_base_size(parser_.template_param_substitutions_, substitutions_base_size_);
+		}
+
+		ReplayTemplateBindings(const ReplayTemplateBindings&) = delete;
+		ReplayTemplateBindings& operator=(const ReplayTemplateBindings&) = delete;
+
+	private:
+		Parser& parser_;
+		size_t substitutions_base_size_;
+		size_t pack_sizes_base_size_;
+		bool installed_;
+	};
 	// Build outer-template binding data from the AST template parameter list so
 	// parameter names and args stay index-aligned even if the parameter list
 	// ever stops being a pure TemplateParameterNode sequence.

@@ -3187,6 +3187,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								template_param_names,
 								template_param_kinds,
 								non_type_categories);
+							ReplayTemplateBindings replay_bindings(
+								*this,
+								template_params_for_substitution,
+								template_args_for_substitution,
+								substitution_context.environment);
 
 							restore_lexer_position_only(*static_member.initializer_position);
 
@@ -7661,6 +7666,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			template_param_names,
 			template_param_kinds,
 			non_type_categories);
+		ReplayTemplateBindings replay_bindings(
+			*this,
+			replay_template_params,
+			replay_template_args,
+			substitution_context.environment);
 
 		auto member_ctx_scope =
 			push_replay_member_context(
@@ -12385,6 +12395,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_param_names,
 					template_param_kinds,
 					non_type_categories);
+				ReplayTemplateBindings replay_bindings(
+					*this,
+					out_of_line_var.template_params,
+					template_args_to_use,
+					substitution_context.environment);
 
 				auto member_ctx_scope =
 					push_replay_member_context(
