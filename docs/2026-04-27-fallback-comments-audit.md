@@ -1,17 +1,18 @@
-# Fallback Comments Audit (snapshot 2026-07-13)
+# Fallback Comments Audit (snapshot 2026-08-22)
 
 > Historical note: the filename is retained for continuity, but the tracked items
 > should be understood as temporary compatibility/recovery behavior and
 > standards-alignment debt, not as endorsed long-term compiler semantics.
 
-## Current snapshot (2026-07-13)
+## Current snapshot (2026-08-22)
 
 The April/May probe log below is historical evidence, not the current priority
-list. The current checkout was rebuilt with `.\build_flashcpp.bat` and passed
-the Windows suite with 2,756 regular tests and 236 expected-fail tests. A first
-run used a 2026-07-09 binary and reported seven failures; rerunning those exact
-tests after the clean 2026-07-13 rebuild passed all seven, so those failures were
-stale-binary artifacts rather than current regressions.
+list. The `injected-identity-cleanup` branch was rebuilt with
+`.\build_flashcpp.bat` and passed the Windows suite with 2,905 regular tests and
+252 expected-fail tests at `a7c877c5`. The original large, broken cleanup is
+preserved at `backup/injected-identity-cleanup-17489a68`; the replacement history
+is split into small commits, each validated by the focused identity/replay gate
+and the full suite before commit.
 
 The claims that remain valid are narrower than the original audit suggested:
 
@@ -23,11 +24,12 @@ The claims that remain valid are narrower than the original audit suggested:
 - Lazy member materialization is now a sema-owned ODR-use fixpoint drained before
   codegen. The old codegen-side materialization claim is historical and should
   not remain in the active removal queue.
-- Template substitution still has live recovery: unresolved non-type defaults,
-  variable-template evaluation, deferred-base type passthrough, pack metadata
-  reconstruction, and TypeIndex/name matching. The recent partial-specialization
-  and static-member-template work improves identity propagation but does not
-  remove these fallback classes.
+- Template substitution still has live recovery, but the injected-class/current-
+  instantiation portion is substantially narrower. Parser, replay, defaults,
+  dependent friends, self-reference resolution, and several qualified-owner
+  paths now carry exact declaration/pattern identity. Several name-based
+  `ExpressionSubstitutor` recoveries have been deleted. Two concrete metadata
+  gaps still block the remaining owner-name removals and are listed below.
 - Type layout is more centralized than in April through `TypeSizeQuery.h`, but
   that helper still deliberately returns `fallback_size_bits_`, 32-bit placeholder
   sizes, and legacy alias sizes. It is not yet an authoritative complete/
@@ -40,6 +42,42 @@ The claims that remain valid are narrower than the original audit suggested:
 Use function/helper names rather than the old line numbers when following the
 historical entries below; source line numbers have moved substantially.
 
+### Injected-identity cleanup checkpoint
+
+The cleanup replaced name, leaf-name, base-template, and specialization-hash
+comparisons with declaration or pattern identity across parsing, class/member
+replay, template defaults, dependent qualified owners, friend specializations,
+self-reference resolution, call mangling, and deferred member bodies. Regression
+coverage now includes namespace collisions, nested classes, current-instantiation
+defaults, other-specialization rejection, dependent friend specialization,
+partial-specialization replay, hidden friends, and self-referential signatures.
+
+The following `ExpressionSubstitutor` compatibility paths were removed and each
+change passed the full suite independently:
+
+- reconstructing qualified-owner arguments from the entire current parameter map;
+- walking `current_owner_type_name_` scopes and `origin_name` to recover bindings;
+- retrying parameter substitution through a coincidental canonical `TypeInfo` name;
+- reconstructing nested member-template namespaces by splitting qualified names.
+
+Two attempted removals remain blocked by specific missing metadata and were
+fully reverted:
+
+1. Removing `legacyOwnerRefersToCurrentOwnerType` breaks
+   `test_deferred_recursive_member_constructor_swap_ret0.cpp`. The dependent
+   `Base::swap` record and first deferred partial-specialization replay can carry
+   exact pattern identity, but a second substitution invocation has a concrete
+   owner name and a null `current_owner_declaration_`.
+2. Removing the remaining main qualified-id base/hash reconstruction breaks
+   `dependent_base_qualified_nttp_preserves_unsigned_ret42.cpp`. The reduced
+   `Derived<N> : Kind<Source<N>::value>` path loses the unsigned non-type template
+   argument/value identity before canonical owner materialization.
+
+Parser/semantic and IR/codegen audits found no other independently removable
+injected-identity heuristic at this checkpoint. The remaining name-oriented
+sites either depend on the two metadata gaps above or implement ordinary C++
+lookup, mangling, or ABI behavior.
+
 ## Scope
 
 This audit reviewed C++ source comments containing `fallback` in `src\*.h` and `src\*.cpp`. The focus is not the spelling of variables such as `fallback_size_bits_` by itself, but comment-backed control flow where the compiler intentionally recovers from missing information. Most of these are not C++20 semantic fallbacks; they are symptoms of parser, semantic analysis, template instantiation, or IR/codegen phase boundaries being incomplete.
@@ -49,9 +87,10 @@ This audit reviewed C++ source comments containing `fallback` in `src\*.h` and `
 The original five gaps now divide into three active debt classes and one mostly
 closed boundary:
 
-1. Template instantiation still relies on secondary substitution, name scans,
-   placeholder types, pack metadata, and TypeIndex recovery instead of preserving
-   canonical dependent bindings everywhere.
+1. Template instantiation now preserves exact injected-class identity across most
+   active parsing and replay frontiers, but still relies on secondary substitution,
+   pack metadata reconstruction, placeholder types, and two known owner/value
+   recovery boundaries described in the current snapshot.
 2. Type size and type identity still have legacy answers in `TypeSizeQuery.h`,
    `fallback_size_bits_`, parser snapshots, and placeholder sizing.
 3. Parser recovery still skips unsupported nested template/member constructs.
@@ -141,18 +180,27 @@ Representative sites:
 - `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved non-type defaults still retry through `substituteAndEvaluateNonTypeDefault(...)`; deferred-base type arguments still pass through the original `TypeSpecifierNode` when canonical substitution cannot resolve them; and variable-template evaluation remains a dedicated bridge before generic constexpr evaluation.
 - `src\Parser_Templates_Inst_ClassTemplate.cpp` and `src\Parser_Templates_Inst_MemberFunc.cpp` — replay-first static-member initialization and registry-backed outer bindings are now authoritative where source metadata exists, but AST substitution and registry binding fallbacks remain for no-source and partial-specialization cases.
 - `src\Parser_Templates_Inst_Substitution.cpp` — type-trait substitution still matches by TypeInfo name when TypeIndex registration differs across templates. This is exactly the kind of identity recovery the audit should retire after all current template-parameter bindings are canonical.
-- `src\ExpressionSubstitutor.cpp::substituteQualifiedIdentifier` — if the qualified type is absent from `gTypesByNameMap`, it reconstructs arguments from the current bound-template map. This remains a legitimate compatibility path but is still name/context recovery.
+- `src\ExpressionSubstitutor.cpp::materializeDependentQualifiedRecordOwner` —
+  exact `current_instantiation_declaration` identity is authoritative when both
+  sides are present. `legacyOwnerRefersToCurrentOwnerType` remains only because a
+  second partial-specialization body substitution can still omit the active owner
+  declaration.
+- `src\ExpressionSubstitutor.cpp::substituteQualifiedIdentifier` — full-map owner-
+  argument reconstruction and nested namespace splitting have been removed. The
+  remaining main base/hash path is still required by a dependent unsigned NTTP
+  base until `Source<N>::value` retains canonical value identity earlier.
 - `src\Parser_FunctionHeaders.cpp` — pack expansion can still recover element count from symbol-table names, and argument type collection can synthesize a type from the expression or default to `int` when parser typing is unavailable.
 - The invalid-`TypeIndex` path in `Parser_Templates_Params.cpp` has been narrowed to canonical current-parameter materialization, speculative-parse rejection, or invariant failure; it is no longer a broad accepted-dependent signal.
 
 Missing feature:
 
 Template instantiation still lacks one authoritative dependent-type and
-dependent-expression substitution pipeline. Recent identity fixes for forwarding
-parameters, partial specializations, and static-member-template class scope have
-closed several concrete gaps, but bindings, pack slices, non-type values, array
-bounds, nested types, and instantiated TypeInfo metadata can still be recovered
-from names or parser state.
+dependent-expression substitution pipeline. Exact declaration identity now spans
+injected-class parsing, partial-specialization and out-of-line replay, lazy member
+replay, template defaults, dependent friends, self-reference resolution, and
+several dependent qualified-owner paths. The remaining gaps are concentrated in
+secondary replay context, unsigned non-type value identity, pack slices, array
+bounds, no-source instantiation, and residual TypeInfo metadata recovery.
 
 Why the fallback is non-compliant:
 
@@ -165,14 +213,21 @@ suite demonstrates coverage, not that these fallback branches are dead.
 
 Removal direction:
 
-- Continue carrying canonical type/non-type/template-template bindings and source
-  identity through partial-specialization, static-member, deferred-base, and pack
-  instantiation paths.
+- Locate the second partial-specialization substitution invocation that loses
+  `current_owner_declaration_`; pass the already-selected pattern declaration
+  through that boundary, then retry removal of
+  `legacyOwnerRefersToCurrentOwnerType`.
+- Preserve typed unsigned NTTP identity for dependent qualified bases before
+  canonical owner materialization, then retry removal of the remaining main
+  base/hash reconstruction in `substituteQualifiedIdentifier`.
+- Continue carrying canonical type/non-type/template-template bindings through
+  static-member, deferred-base, no-source, and pack instantiation paths.
 - Replace the active TypeIndex/name fallback in trait substitution and the
   symbol-name pack reconstruction with explicit binding metadata; add regressions
   for reordered parameters, packs outside function signatures, and nested owners.
-- Make ExpressionSubstitutor's fallback inputs explicit and observable, then
-  delete a fallback only after a hard-fail probe identifies no remaining user path.
+- Keep removing one `ExpressionSubstitutor` fallback per commit, with the focused
+  identity/replay gate and full suite before each commit. Do not combine either
+  remaining blocker with unrelated parser, semantic, or IR cleanup.
 - Keep `type_index == 0` out of dependency classification; use the canonical
   dependent-placeholder metadata already established for current template params.
 
@@ -350,40 +405,46 @@ These are not C++ semantic fallbacks. They may still deserve cleanup, but they d
 
 ## Recommended removal order
 
-1. **Template identity and substitution recovery**: retire TypeIndex/name scans,
-   pack symbol-name reconstruction, and unresolved default/deferred-base recovery
-   by carrying canonical bindings through the active template frontiers.
-2. **Authoritative layout state**: finish `TypeSizeQuery.h` so incomplete or
+1. **Two remaining identity prerequisites**: preserve owner declaration through
+   the second partial-specialization substitution and preserve typed unsigned
+   NTTP identity through dependent qualified-base materialization. Retry the two
+   blocked `ExpressionSubstitutor` deletions independently afterward.
+2. **Remaining template substitution recovery**: retire trait TypeIndex/name
+   scans, pack symbol-name reconstruction, and unresolved default/deferred-base
+   recovery by carrying canonical bindings through the active template frontiers.
+3. **Authoritative layout state**: finish `TypeSizeQuery.h` so incomplete or
    dependent types are represented explicitly instead of receiving 32/64-bit
    fallback sizes.
-3. **Parser skip recovery**: replace nested-template/friend token skipping with
+4. **Parser skip recovery**: replace nested-template/friend token skipping with
    explicit AST support or targeted `CompileError` after adding focused tests.
-4. **Residual codegen compatibility**: only after an executing non-normalized or
+5. **Residual codegen compatibility**: only after an executing non-normalized or
    synthesized path is isolated, move it into sema normalization and remove the
    lower-phase selector.
 
 ## Practical next audit steps
 
-- Probe the active template identity/default/pack fallbacks individually and add
-  one reduced regression per executing path before changing behavior.
+- Use the existing reduced blockers for the two remaining injected-identity
+  prerequisites; do not add name-based recovery to make either test pass.
+- Probe other active template default/pack fallbacks individually and add one
+  reduced regression per executing path before changing behavior.
 - Probe `TypeSizeQuery.h`'s 32/64-bit placeholder and alias-size branches with
   incomplete, dependent, alias, enum, and nested-member `sizeof` cases.
 - Delete comments for already-removed normalized codegen fallbacks, keeping only
   the executable invariant and a short reference to the regression that proved
   the path dead.
 
-## Next 3 items (2026-07-13)
+## Next 3 items (2026-08-22)
 
-1. **Canonical template identity and substitution** — remove the active
-   TypeIndex/name matching and symbol-name pack recovery by carrying canonical
-   bindings through partial specializations, deferred bases, static members, and
-   packs. Add focused regressions before each fallback removal.
-2. **Explicit layout states** — finish the `TypeSizeQuery.h` transition so
+1. **Close the two recorded identity gaps** — find the second null-owner
+   substitution for recursive partial-specialization replay, then preserve typed
+   unsigned NTTP identity for dependent qualified bases. Retry each blocked
+   fallback deletion in its own fully gated commit.
+2. **Canonical template binding cleanup** — remove the remaining trait and pack
+   name recovery by carrying canonical bindings through deferred bases, static
+   members, no-source instantiation, and packs.
+3. **Explicit layout states** — finish the `TypeSizeQuery.h` transition so
    incomplete/dependent aliases cannot receive 32/64-bit placeholder sizes, then
    harden `sizeof` and array-bound lowering against unresolved layout.
-3. **Parser skip recovery** — cover nested member-template and qualified-friend
-   skip branches with reduced tests, then parse valid forms explicitly or emit a
-   targeted `CompileError` instead of discarding the construct.
 
 ## Historical probe results from 2026-04-27 through 2026-05-26
 
@@ -395,7 +456,7 @@ replacement for the current snapshot above.
 
 The entries in this section preserve historical evidence and exact regression
 names. They are not a current status report; where an entry conflicts with the
-2026-07-13 snapshot or the three-item queue above, the newer snapshot wins.
+2026-08-22 snapshot or the three-item queue above, the newer snapshot wins.
 
 ### Proven active in the 2026-04/05 probe corpus
 
@@ -519,6 +580,20 @@ names. They are not a current status report; where an entry conflicts with the
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
 
+- the 2026-08 injected-identity rewrite replaced the original large broken
+  cleanup with independently gated commits; the latest checkpoint passed 2,905
+  regular tests and 252 expected-fail tests on Windows;
+- parser-side injected-name token/base/hash helpers, template-default legacy
+  owner matching, and TypeIndex self-reference leaf-name matching were replaced
+  with exact declaration/pattern identity plus explicit replay metadata;
+- dependent friend specializations now retain and substitute exact template
+  arguments, while family-wide template friendship remains a distinct path;
+- `ExpressionSubstitutor` no longer reconstructs qualified-owner arguments from
+  the entire binding map, walks owner/origin spelling for bindings, retries via a
+  canonical token name, or splits nested qualified names to recreate owners;
+- two further removals were probed and proven active: recursive partial-
+  specialization replay still has one null owner-declaration substitution, and
+  dependent unsigned-NTTP bases still require earlier typed value identity;
 - some narrow substitution recoveries were already dead in the current corpus and have now been removed;
 - the function-shaped and constructor-shaped deferred-member queue bridges in `IrGenerator_Visitors_TypeInit.cpp` were also dead in the current corpus and have now been replaced with hard invariants;
 - the array-dimension substitution fallback in `Parser_Templates_Inst_ClassTemplate.cpp` was also dead in the current corpus and has now been removed;
