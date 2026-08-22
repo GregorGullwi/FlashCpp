@@ -2195,6 +2195,21 @@ ParseResult Parser::parse_type_specifier() {
 										type_name_token,
 										cv_qualifier)));
 							}
+							// The alias body's dependent-member placeholder keeps the
+							// body's own parameter spellings. Rebind them to the
+							// use-site arguments so later substitution passes can
+							// resolve the record through the active environment.
+							if (auto rewritten_dependent_type =
+									rewriteDependentMemberTypeSpellings(
+										instantiated_type,
+										alias_node.template_parameters(),
+										*template_args,
+										type_name_token,
+										cv_qualifier);
+								rewritten_dependent_type.has_value()) {
+								return ParseResult::success(
+									emplace_node<TypeSpecifierNode>(*rewritten_dependent_type));
+							}
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 						}
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
