@@ -88,11 +88,16 @@ int main_impl(int argc, char* argv[]);
 
 // Linux/Unix default RLIMIT_STACK is often 8MB, which is too small for deep but
 // finite class-template instantiation chains in -O0 debug builds. Raise the soft
-// limit to 16MB when permitted so Nest/Chain depth regressions match Windows'
-// larger reserved stack without requiring callers to set ulimit.
+// limit when permitted so Nest/Chain depth regressions match Windows' larger
+// reserved stack without requiring callers to set ulimit.
+// Measured worst case (tests/test_template_cache_hit_depth_ret0.cpp, Chain<39>):
+// each base-class instantiation level recurses through three fat substitution
+// frames (~130KB total at -O0), so a 39-deep chain needs ~17MB in the sharded
+// build. 64MB leaves headroom for longer chains without committing pages that
+// are never touched (the limit is soft; only faulted stack pages cost memory).
 static void ensureMinimumProcessStackSize() {
 #if !defined(_WIN32)
-	constexpr rlim_t kMinimumStackBytes = static_cast<rlim_t>(16ull * 1024ull * 1024ull);
+	constexpr rlim_t kMinimumStackBytes = static_cast<rlim_t>(64ull * 1024ull * 1024ull);
 	rlimit limit{};
 	if (getrlimit(RLIMIT_STACK, &limit) != 0) {
 		return;

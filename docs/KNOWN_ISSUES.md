@@ -1,5 +1,22 @@
 # Known Issues
 
+## Template instantiation recursion has very high per-level stack cost
+
+The recursive base-class instantiation path
+(`try_instantiate_class_template` → `materializeTemplateInstantiationForLookup`
+→ `instantiate_and_register_base_template`, plus the substitution machinery it
+calls) consumes roughly 400KB of stack per inheritance level in `-O0` builds,
+because the substitution functions keep many inline-storage locals on the stack.
+A `Chain<39>`-style test needs ~17-20MB, which is why
+`ensureMinimumProcessStackSize()` raises the Linux soft `RLIMIT_STACK` to 64MB
+(src/FlashCppMain.cpp). The existing depth guard
+(`kMaxTemplateInstantiationNestingDepth = 128`) only counts nesting levels and
+cannot fire before the process stack is exhausted, so a chain roughly three to
+four times deeper than `Chain<39>` would still overflow. Slimming the fat frames
+(inline-storage locals in `substituteTemplateParametersWithState`,
+`instantiate_and_register_base_template`) or converting fatal exhaustion into a
+clean diagnostic would remove this ceiling.
+
 ## Current `<any>` / `<deque>` integration stops
 
 The 2026-08-16 standard-header probes still fail outside this Phase 1 scope.
