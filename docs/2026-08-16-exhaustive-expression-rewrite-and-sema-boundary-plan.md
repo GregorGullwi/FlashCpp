@@ -9,6 +9,12 @@ This document describes follow-up work after PR #1871, which added the missing
 broader than that fix: its goal is to make the same class of omission difficult
 to compile, easy to diagnose, and impossible to reach code generation silently.
 
+The completed Phase 0-3 work centralizes structural expression traversal and
+reconstruction, but it does not yet establish the lifecycle ownership contract
+described in Phase 4. Parser-side pack-expansion orchestration and unresolved
+pack nodes on deferred template-member surfaces remain supported until concrete
+materialization.
+
 ### Completed Phase 0/1 implementation record
 
 - Added `src/ExpressionStructure.h` as the canonical structural schema for all
@@ -53,9 +59,10 @@ not a Phase 1 behavior change.
   tokens, operator metadata, lambda metadata, and new-expression flags during
   structural rebuilding.
 - Migrated `ExpressionSubstitutor` constructor/new/operator and remaining
-  structural expression families onto the rewriter; its unknown-expression
-  fallback now fails at the dynamic boundary, while non-expression statement
-  and declaration children remain owned by their existing parser passes.
+  structural expression families onto the rewriter. Unknown expression
+  alternatives fail through the exhaustive rewriter; non-expression statement
+  and declaration children still intentionally pass through unchanged to their
+  existing parser owners.
 - Added reduced metadata and pack-sequence regressions in
   `test_expression_rewriter_metadata_ret42.cpp` and
   `test_expression_rewriter_pack_sequences_ret42.cpp`.
@@ -76,7 +83,9 @@ Phase 3; explicit lifecycle ownership remains Phase 4.
   parameter/argument entry points build the equivalent environment once.
 - Routed wrapped and direct expression surfaces through one
   `ExpressionSubstitutor` entry point, preserving the current owner type and
-  parser substitution scope.
+  parser substitution scope. Structural expression reconstruction is now
+  centralized, although parser-side pack-expansion orchestration remains for
+  statement/initializer surfaces and contexts that need parser deduction data.
 - Removed the parser's per-alternative expression routing and retained parser
   ownership only for declarations, types, statements, and scope-sensitive
   reconstruction.
@@ -131,6 +140,11 @@ function originated from a deferred template body) with lifecycle state (the
 body is now concrete and sema-owned). That broad skip can hide exactly the late
 materialization errors the boundary is meant to catch.
 
+Semantic analysis also currently tolerates unresolved `PackExpansionExprNode`
+instances on deferred template-member function surfaces. Phase 4 must
+distinguish those surfaces from concrete materialized bodies rather than
+rejecting every pack node indiscriminately.
+
 The architectural problem is therefore not only one missing `if` branch. It is
 the combination of:
 
@@ -149,7 +163,9 @@ the combination of:
 - Template expression substitution must have one owner.
 - A concrete materialized body must be checked before sema owns it, regardless
   of whether it originated as a deferred template body.
-- Parser-only helper nodes must never reach a sema-normalized body or IR.
+- Parser-only helper nodes must never reach a sema-normalized concrete body or
+  IR. Deferred template-pattern/member-body surfaces may retain them until
+  concrete materialization.
 - Pack expansion must remain an arity-changing template operation, not a
   codegen fallback.
 - Diagnostics must identify the owning function/type, child role, node kind,
@@ -177,9 +193,11 @@ The completed architecture should enforce these invariants:
 2. **Rewrite invariant:** every expression rewriter explicitly handles every
    alternative. There is no generic "return unchanged" fallback for an unknown
    expression kind.
-3. **Pack invariant:** `FoldExpressionNode` and `PackExpansionExprNode` may exist
-   only on parser-owned template-pattern/deferred surfaces. They may not exist
-   on a concrete materialized body presented to sema.
+3. **Pack invariant:** `FoldExpressionNode` and `PackExpansionExprNode` may
+   remain on parser-owned template-pattern/deferred surfaces, but must be
+   eliminated before a concrete materialized body is presented to sema. The
+   current implementation still permits unresolved pack expansions on deferred
+   template-member bodies; Phase 4 makes the distinction explicit.
 4. **Lifecycle invariant:** provenance flags do not decide ownership. A
    materialized concrete body is checked and normalized even when it retains a
    saved template body position for diagnostics or caching.
@@ -314,7 +332,8 @@ metadata-copy code.
 
 #### No permissive fallback
 
-Remove this behavior from `ExpressionSubstitutor::substitute`:
+Remove the permissive behavior for an unrecognized *expression* from
+`ExpressionSubstitutor::substitute`:
 
 ```cpp
 // For any other node type, return as-is
@@ -324,6 +343,11 @@ return expr;
 Explicit leaf nodes may be returned unchanged. An unrecognized expression node
 must be a compile-time error in the visitor or an `InternalError` only at a
 truly dynamic boundary that cannot be made exhaustive.
+
+The existing return for declaration and statement children is not the target of
+this change: those surfaces remain owned by the parser's declaration/statement
+substitution passes. The invariant is that an unknown expression alternative
+must not be silently returned unchanged.
 
 ### 3. Make `ExpressionSubstitutor` the single expression-substitution owner
 
@@ -349,6 +373,11 @@ declaration and statement reconstruction, scope management, and the
 `TemplateBodySubstitutionState`. When it encounters an expression surface, it
 should delegate the whole expression to `ExpressionSubstitutor`, not decide
 which expression variants deserve delegation.
+
+Parser-side expansion helpers may still participate where pack deduction,
+function-parameter-pack names, aggregate initializer structure, or statement
+ownership is required; they must not become a second generic expression
+reconstruction path.
 
 #### Environment requirements
 
@@ -466,14 +495,16 @@ expression schema and an ownership policy:
   constructor/base/delegating initializers, and bodies;
 - report `FoldExpressionNode` and `PackExpansionExprNode` with the owning path,
   child role, and source location;
-- reject the root before `normalizeTopLevelNode` runs.
+- reject the root before `normalizeTopLevelNode` runs. The checker must preserve
+  the legitimate deferred-body case until materialization; this is a lifecycle
+  distinction, not a blanket ban on pack nodes in every sema traversal.
 
 This makes the pending-root checker effective for the exact failure fixed by
 PR #1871 instead of relying on IR's final assertion.
 
 ### 5. Make IR consume-only
 
-IR currently contains useful hard errors such as
+IR currently contains useful defense-in-depth hard errors such as
 `PackExpansionExprNode survived into codegen after pre-sema boundary
 enforcement`. Keep these as defense-in-depth, but add a root-level ownership
 assertion before expression lowering:
@@ -559,8 +590,11 @@ expression alternative, and all pack child-position regressions pass.
 - Audit all `ExpressionSubstitutor` construction sites for empty packs, outer
   bindings, and current-owner propagation.
 
-Exit criterion: the parser has one expression delegation point and no list of
-individual expression variants to route.
+Exit criterion: the parser has one generic expression delegation point and no
+second parser-side list of expression variants used merely to choose a
+substitution implementation. Parser-owned pack expansion and aggregate/
+statement reconstruction may remain where their non-expression context is
+required.
 
 ### Phase 4: Make lifecycle ownership explicit
 
@@ -699,7 +733,7 @@ the full suite green.
    - migrate low-risk expression families;
    - remove the permissive fallback.
 3. **Single substitution owner**
-   - route all expression substitution through `ExpressionSubstitutor`;
+   - route structural expression substitution through `ExpressionSubstitutor`;
    - remove parser-side variant routing.
 4. **Explicit materialization lifecycle**
    - add ownership states and boundary enforcement;
@@ -717,9 +751,14 @@ late-materialization scheduling changes.
 This plan is complete when:
 
 - `ExpressionNode` has one exhaustive structural schema;
-- `ExpressionSubstitutor` has no unknown-node fallback;
-- parser template substitution delegates every expression to one owner;
-- pack-expanding child sequences use one shared flat-map mechanism;
+- `ExpressionSubstitutor` has no unknown-expression fallback; intentional
+  pass-through of declaration/statement children remains owned by the parser;
+- parser template substitution delegates structural expression rewriting to one
+  owner, with parser-owned pack/initializer orchestration retained where the
+  surrounding statement context requires it;
+- structural pack-expanding expression child sequences use one shared flat-map
+  mechanism, while parser-owned statement/initializer expansion remains
+  explicit;
 - concrete materialized bodies are boundary-checked even when they retain
   deferred-template provenance;
 - all IR roots are explicitly sema-normalized;
