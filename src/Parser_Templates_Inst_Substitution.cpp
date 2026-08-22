@@ -5313,16 +5313,21 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		structural_match = gTemplateRegistry.findVariableTemplateSpecialization(template_name, filled_args);
 	}
 
+	// Generate unique name for the instantiation using hash-based naming
+	// This ensures consistent naming with class template instantiations
+	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, instantiation_identity_args);
+
+	// Check if already instantiated
+	if (std::optional<ASTNode> existing_instantiation = gSymbolTable.lookup(persistent_name);
+		existing_instantiation.has_value()) {
+		return existing_instantiation;
+	}
+
 	if (structural_match.has_value() && structural_match->node.is<TemplateVariableDeclarationNode>()) {
 		FLASH_LOG(Templates, Trace, "Found variable template partial specialization via structural match");
 		const TemplateVariableDeclarationNode& spec_template = structural_match->node.as<TemplateVariableDeclarationNode>();
 		const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
 		const Token& orig_token = spec_var_decl.declaration().identifier_token();
-		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, instantiation_identity_args);
-
-		if (gSymbolTable.lookup(persistent_name).has_value()) {
-			return gSymbolTable.lookup(persistent_name);
-		}
 
 		const DeclarationNode& spec_decl = spec_var_decl.declaration();
 		ASTNode spec_type = spec_decl.type_node();
@@ -5387,15 +5392,6 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		gSymbolTable.insertGlobal(persistent_name, var_decl_node);
 		registerAndNormalizeLateMaterializedTopLevelNodeFront(var_decl_node);
 		return var_decl_node;
-	}
-
-	// Generate unique name for the instantiation using hash-based naming
-	// This ensures consistent naming with class template instantiations
-	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, instantiation_identity_args);
-
-	// Check if already instantiated
-	if (gSymbolTable.lookup(persistent_name).has_value()) {
-		return gSymbolTable.lookup(persistent_name);
 	}
 
 	// Get the original variable declaration
@@ -5522,10 +5518,19 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 									new_qual_id.set_template_arguments(
 										std::move(template_argument_nodes));
 								}
-								if (const auto* dependent_record =
-										qual_id.dependentQualifiedName()) {
-									new_qual_id.setDependentQualifiedName(
-										*dependent_record);
+								// Once the owner has been substituted to a different concrete
+								// instantiation, the original dependent-qualified record must not
+								// survive on the rebound identifier (same rule as
+								// ExpressionSubstitutor::substituteQualifiedIdentifier). Keeping it
+								// would make later constant-expression evaluation reinterpret the
+								// rewritten `Instantiation$hash::member` through the stale dependent
+								// placeholder owner.
+								if (gNamespaceRegistry.getName(new_ns_handle) == struct_name_view) {
+									if (const auto* dependent_record =
+											qual_id.dependentQualifiedName()) {
+										new_qual_id.setDependentQualifiedName(
+											*dependent_record);
+									}
 								}
 								new_initializer = emplace_node<ExpressionNode>(new_qual_id);
 
