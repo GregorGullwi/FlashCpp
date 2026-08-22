@@ -3284,6 +3284,19 @@ private:
 		const TypeSpecifierNode& alias_type_spec,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
+	// Rewrite a dependent-member alias target whose record still spells the
+	// alias body's own parameter names (e.g. `remove_cv<T>::type` captured when
+	// the alias was declared) into a cloned placeholder that spells the
+	// use-site arguments (e.g. `remove_cv<Ty>::type`) so later instantiation-
+	// time substitution can resolve it through the active environment.
+	// Returns nullopt when nothing rebinds or the target is not a
+	// dependent-member placeholder.
+	std::optional<TypeSpecifierNode> rewriteDependentMemberTypeSpellings(
+		const TypeSpecifierNode& dependent_type_spec,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		const Token& result_token,
+		CVQualifier cv_qualifier);
 	// Materialize a class-member typedef/alias whose pattern is an alias-template
 	// specialization (e.g. `using Selected = conditional_t<Trait_v<T>, A, B>`).
 	// Evaluates dependent NTTP arguments against the active class-template

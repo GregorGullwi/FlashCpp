@@ -1135,10 +1135,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					} else if (eval_result.success()) {
 						unsigned long long value = evalResultMemberToRaw(eval_result, type_node.type());
 						appendValueAsBytes(op.init_data, value, element_size);
-					} else {
-							// Evaluation failed: for constexpr variables this is an error;
-							// for non-constexpr globals, warn and zero-initialize.
-						if (shouldRejectStaticStorageEvalFailure(eval_result.error_type)) {
+				} else {
+						// Evaluation failed: for constexpr variables this is an error;
+						// for non-constexpr globals, warn and zero-initialize.
+					if (shouldRejectStaticStorageEvalFailure(eval_result.error_type)) {
 							throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
 											   "' initializer is not a constant expression: " + eval_result.error_message);
 						}
