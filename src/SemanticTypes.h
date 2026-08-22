@@ -116,6 +116,10 @@ struct CanonicalTypeDesc {
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 	InlineVector<PointerLevel, 4> pointer_levels;
 	InlineVector<size_t, 4> array_dimensions;
+	// C++20 [dcl.ptr]/1: true when the array dimensions bind inside the
+	// declarator's pointer levels (T (*p)[N] is "pointer to array of N T"),
+	// as opposed to an array of pointers (T* p[N]).
+	bool pointee_array_declarator = false;
 	CanonicalTypeFlags flags = CanonicalTypeFlags::None;
 	std::optional<FunctionSignature> function_signature;
 
@@ -147,6 +151,7 @@ struct hash<CanonicalTypeDesc> {
 		h = combine(h, d.array_dimensions.size());
 		for (size_t dim : d.array_dimensions)
 			h = combine(h, dim);
+		h = combine(h, static_cast<size_t>(d.pointee_array_declarator));
 		h = combine(h, static_cast<size_t>(d.flags));
 		if (d.function_signature) {
 			h = combine(

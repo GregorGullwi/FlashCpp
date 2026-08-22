@@ -3108,9 +3108,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// Handle array-to-pointer decay
 				// When an array is used in an expression (except with sizeof, &, etc.),
 				// it decays to a pointer to its first element
-				// Use is_array() which handles both sized arrays (int arr[5]) and
-				// unsized arrays (int arr[] = {...}) where is_unsized_array_ is true
-				if (decl->is_array()) {
+				// Use is_array_object() which covers sized arrays (int arr[5]) and
+				// unsized arrays (int arr[] = {...}); a pointer-to-array declarator
+				// such as int (*p)[3] already holds a pointer and never decays
+				// further (C++20 [conv.array]/1).
+				if (decl->is_array_object()) {
 					// This is an array declaration - decay to pointer
 					// Create a new TypeSpecifierNode with one level of pointer
 					TypeSpecifierNode pointer_type = type;
@@ -3442,7 +3444,33 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 		// Handle address-of operator: &var -> adds one level of pointer
 		else if (op == "&") {
+				// C++20 [expr.unary.op]/3: & applies to the undecayed operand
+				// lvalue. For an array object the result is a pointer-to-array
+				// ([dcl.ptr]/1), not a second pointer level over the decayed
+				// first-element pointer.
 			TypeSpecifierNode result = operand_type;
+			if (operand_node.is<ExpressionNode>() &&
+				std::holds_alternative<IdentifierNode>(operand_node.as<ExpressionNode>())) {
+				if (auto addr_symbol = lookup_symbol(
+						std::get<IdentifierNode>(operand_node.as<ExpressionNode>())
+							.nameHandle());
+					addr_symbol.has_value()) {
+					if (const DeclarationNode* addr_decl =
+							get_decl_from_symbol(*addr_symbol);
+						addr_decl != nullptr) {
+						result = addr_decl->type_specifier_node();
+						applyDeclarationArrayBoundsToTypeSpec(*addr_decl, result, *this);
+					}
+				}
+			}
+			const bool operand_is_object_array =
+				result.is_array() &&
+				!result.has_pointee_array_declarator() &&
+				!result.is_reference();
+			if (operand_is_object_array) {
+				result.set_pointee_array_declarator(true);
+			}
+			result.set_reference_qualifier(ReferenceQualifier::None);
 			result.add_pointer_level();
 			return result;
 		}

@@ -1809,6 +1809,23 @@ public:
 			array_dimensions_.push_back(*array_size);
 		}
 	}
+	// C++20 [dcl.ptr]/1, [dcl.arr]/1: a parenthesized declarator such as
+	// T (*p)[N] binds the array suffix inside the pointer declarator, so the
+	// declared entity p is a scalar pointer whose pointee is "array of N T".
+	// The declared entity itself is not an array object.
+	bool has_pointee_array_declarator() const { return pointee_array_declarator_; }
+	void set_pointee_array_declarator(bool has_pointee_array_declarator) {
+		pointee_array_declarator_ = has_pointee_array_declarator;
+		if (has_pointee_array_declarator) {
+			is_array_ = false;
+			has_unsized_outer_array_dimension_ = false;
+		}
+	}
+	// Stores the pointee bounds carried by a pointer-to-array declarator
+	// without changing the object-ness of the declared entity.
+	void set_pointee_array_dimensions(std::span<const size_t> dims) {
+		array_dimensions_.assign(dims.begin(), dims.end());
+	}
 	// Multidimensional array support
 	void add_array_dimension(size_t size) {
 		is_array_ = true;
@@ -1865,7 +1882,6 @@ public:
 		template_parameter_name_ = other.template_parameter_name_;
 		injected_class_declaration_ = other.injected_class_declaration_;
 	}
-
 	// Pointer-to-member support (for types like int Class::*)
 	bool has_member_class() const { return member_class_name_.has_value(); }
 	StringHandle member_class_name() const { return *member_class_name_; }
@@ -1891,6 +1907,7 @@ public:
 		reference_qualifier_ = other.reference_qualifier_;
 		is_array_ = other.is_array_;
 		array_dimensions_ = other.array_dimensions_;
+		pointee_array_declarator_ = other.pointee_array_declarator_;
 		has_unsized_outer_array_dimension_ = other.has_unsized_outer_array_dimension_;
 		function_signature_ = other.function_signature_;
 		copy_binding_identity_from(other);
@@ -1918,6 +1935,7 @@ private:
 	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;	// Reference qualifier (None, LValue, or RValue)
 	bool is_array_ = false;		// True if this is an array type (T[N] or T[])
 	std::vector<size_t> array_dimensions_;  // Array dimensions (e.g., int[2][3][4] -> {2, 3, 4})
+	bool pointee_array_declarator_ = false;	 // True for T (*p)[N]: dimensions bind to the pointee ([dcl.ptr]/1)
 	bool has_unsized_outer_array_dimension_ = false;	// True for parser-only shapes like T[][N]
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;	 // True if this type is followed by ... (pack expansion)
@@ -2565,6 +2583,12 @@ public:
 	void set_identifier_token(Token token) { identifier_ = std::move(token); }
 	uint32_t line_number() const { return identifier_.line(); }
 	bool is_array() const { return !array_dimensions_.empty() || is_unsized_array_; }
+	// True when the declared entity itself is an array object ([dcl.arr]).
+	// A pointer-to-array declarator such as T (*p)[N] stores N as a pointee
+	// bound; the entity is a scalar pointer, so this returns false for it.
+	bool is_array_object() const {
+		return is_array() && !type_node_.has_pointee_array_declarator();
+	}
 	// Returns the first (outermost) dimension for backwards compatibility
 	const std::optional<ASTNode> array_size() const {
 		if (array_dimensions_.empty())
