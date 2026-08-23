@@ -3,23 +3,58 @@
 ## Pointer-to-array declarator coverage gaps
 
 `sizeof`/`alignof` type-ids with pointer-to-array declarators (`int(*)[3]`,
-`const int(*)[3]`, `int(*const)[3]`) now parse through the shared
-abstract-declarator machinery, and sizeof/alignof on pointer-to-array objects
-(`sizeof(*p)`, `sizeof(p)`) report pointer/array-object sizes correctly.
+`const int(*)[3]`, `int(*const)[3]`) parse through the shared
+abstract-declarator machinery; named multi-bound declarators
+(`long (*table)[2][4]`) parse in every context (global, local, member,
+parameter, function return); indexing through a pointer-to-array object or a
+pointer-to-array struct member (`(*t)[i][j]`, `(*g.member)[i][j]`) lowers as
+flattened row-major element access; and member/static-member registration,
+canonical typing, constexpr sizing, and global bindings all preserve the
+pointee shape via the `pointee_array_declarator` flag on `StructMember`,
+`StaticMemberDecl`, `StructStaticMember`, and `CanonicalTypeDesc`.
 Remaining gaps in the same area:
 
-- Named multi-bound pointee declarators still parse only one bound:
-  `long (*table)[2][4];` as a struct member fails with "Expected ';' after
-  struct member declaration" because `parse_declarator`'s named branch handles
-  a single `[N]` suffix before returning. The abstract (type-id) path accepts
-  multiple bounds; the named path needs the same loop.
-- Struct members holding pointer-to-array objects lay out correctly now
-  (scalar pointer storage), but indexing through such a member
-  (`h.cursor[0][i]`) has no dedicated lowering and is untested.
-- Template-class member registration paths
-  (`Parser_Templates_Class.cpp`, typedef aliases of pointer-to-array) still
-  size members from raw `is_array()` instead of `is_array_object()` and can
-  repeat the over-sized-member layout bug fixed in `Parser_Decl_StructEnum.cpp`.
+- Cast expressions cannot parse parenthesized abstract-declarator type-ids:
+  `static_cast<int(*)[3]>(v)`, `reinterpret_cast<long(*)[2][4]>(v)`, and the
+  C-style `(int(*)[3])v` all fail ("Expected '>' after type in static_cast" /
+  "Expected primary expression"). The cast paths
+  (`parse_cast_type_specifier` in `Parser_Expr_PrimaryUnary.cpp`,
+  `consume_cast_type_id_postfix_modifiers`) consume only trailing cv- and
+  ptr/ref-operators, not the parenthesized groups or `[N]` suffixes that
+  `consume_type_id_abstract_declarators` (used by `sizeof`/`alignof`) accepts.
+  Named spellings are unaffected: `int (*q)[3] = p;` parses and lowers
+  correctly.
+- Indexing through a class-template-instantiated pointer-to-array member
+  (`Box<int> b; b.cells = &arr; (*b.cells)[i][j];`) crashes at runtime. The
+  non-template struct path is fully working
+  (tests/test_ptr_to_array_member_subscript_ret0.cpp); the instantiated-
+  member case loses the pointee bounds somewhere in template substitution /
+  lazy member resolution and falls back to non-flattened subscripting with a
+  bad base.
+- Out-of-line definitions of qualified static members spelled with
+  parenthesized declarators (`long (*Registry::table)[2][4] = nullptr;`) are
+  rejected by the parser ("Expected identifier token"). In-class
+  `static constexpr` members work.
+
+## Local aggregate initialization of multidimensional struct arrays
+
+A local definition such as `struct P { int x, y; }; P pts[2][2] = {{{1,2},
+{3,4}}, {{5,6},{7,8}}};` does not initialize the elements correctly: direct
+element reads (`pts[0][0].x != 1`) fail before any pointers are involved.
+Element-wise assignment after a bare declaration works, and file-scope arrays
+with the same initializer work (tests/test_ptr_to_array_multibound_declarator_ret0.cpp
+uses file scope for this reason). The bug is in local aggregate/initializer-
+list lowering for nested braces over struct elements, not in the declarator
+or subscript machinery.
+
+## Member stores through a global struct pointer
+
+With file-scope `W wv; W* wp;`, executing `wp = &wv; wp->tag = 7;` leaves
+`wv.tag` unchanged (verified identical on the pre-pointer-to-array baseline).
+Scalar/int globals, `long*` element writes, and `int**` chains through the
+same binding-width fix behave correctly
+(tests/test_global_pointer_binding_width_ret0.cpp). The arrow-store path for
+aggregate members via a global binding needs its own investigation.
 
 ## Flat type representation cannot express interleaved pointer/array declarators
 

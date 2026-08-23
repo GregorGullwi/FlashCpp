@@ -149,6 +149,7 @@ struct StructTypeInfo {
 				   size_t referenced_size_bits,
 				   bool is_array,
 				   std::vector<size_t> array_dimensions,
+				   bool pointee_array_declarator,
 				   int pointer_depth,
 				   std::optional<size_t> bitfield_width,
 				   std::optional<FunctionSignature> function_sig,
@@ -261,7 +262,8 @@ struct StructTypeInfo {
 		}
 		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
 							 access, std::move(default_initializer), reference_qualifier,
-							 referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
+							 referenced_size_bits, is_array, std::move(array_dimensions),
+							 pointee_array_declarator, pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
 		members.back().is_no_unique_address = is_no_unique_address;
 		if (function_sig.has_value()) {

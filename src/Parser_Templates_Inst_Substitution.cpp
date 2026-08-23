@@ -5878,6 +5878,14 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
+		// C++20 [dcl.ptr]/1: preserve pointee bounds bound by a parenthesized
+		// declarator without scaling storage.
+		std::vector<size_t> member_pointee_dimensions;
+		if (type_spec.has_pointee_array_declarator() && !type_spec.array_dimensions().empty()) {
+			member_pointee_dimensions.assign(
+				type_spec.array_dimensions().begin(),
+				type_spec.array_dimensions().end());
+		}
 		struct_info->addMember(
 			member_name_handle,
 			member_type_index,
@@ -5888,7 +5896,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			type_spec.reference_qualifier(),
 			type_spec.reference_qualifier() != ReferenceQualifier::None ? get_type_size_bits(member_type) : 0,
 			false,
-			{},
+			member_pointee_dimensions,
+			type_spec.has_pointee_array_declarator(),
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width,
 			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,

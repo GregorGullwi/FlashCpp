@@ -636,7 +636,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					const auto& vd = fast_sym->as<VariableDeclarationNode>();
 					const auto& decl_n = vd.declaration();
 					const auto& type_n = decl_n.type_specifier_node();
-					bool is_array_type = decl_n.is_array() || type_n.is_array();
+					bool is_array_type = decl_n.is_array_object() || type_n.is_array();
 					bool is_ptr_or_ref = type_n.is_pointer() || type_n.is_reference() || type_n.is_function_pointer();
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
 					TempVar result_temp = var_counter.next();
@@ -663,7 +663,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(type_n, identifier_handle)) {
 						return *enumerator_constant;
 					}
-					bool is_array_type = decl_n.is_array() || type_n.is_array();
+					bool is_array_type = decl_n.is_array_object() || type_n.is_array();
 					int size_bits = (type_n.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp op;
@@ -1141,7 +1141,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// Generate GlobalLoad IR instruction
 			TempVar result_temp = var_counter.next();
 				// For arrays, result is a pointer (64-bit address)
-			bool is_array_type = decl_node.is_array() || type_node.is_array();
+			bool is_array_type = decl_node.is_array_object() || type_node.is_array();
 			int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.setType(type_node.category());
@@ -1198,7 +1198,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// Array extents can live on either the declaration node or the type node,
 				// so check both representations before falling through to ordinary reference
 				// dereference handling.
-			if (decl_node.is_array() || type_node.is_array()) {
+			if (decl_node.is_array_object() || type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
 				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
 			}
@@ -1334,7 +1334,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// This is a global variable - generate GlobalLoad
 			TempVar result_temp = var_counter.next();
 				// For arrays, pointers, and references, result is a pointer (64-bit address)
-			bool is_array_type = decl_node.is_array() || type_node.is_array();
+			bool is_array_type = decl_node.is_array_object() || type_node.is_array();
 			bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 			int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
@@ -1387,7 +1387,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					// Array extents can live on either the declaration node or the type node,
 					// so check both representations before treating this like an ordinary
 					// reference value.
-				if (decl_node.is_array() || type_node.is_array()) {
+				if (decl_node.is_array_object() || type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
 					return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
 				}
@@ -2025,7 +2025,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 		if (is_global) {
 				// Generate GlobalLoad for namespace-qualified global variable
 			TempVar result_temp = var_counter.next();
-			bool is_array_type = decl_node.is_array() || type_node.is_array();
+			bool is_array_type = decl_node.is_array_object() || type_node.is_array();
 			bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 			int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
@@ -2067,7 +2067,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			// Namespace-scoped variables are always global
 			// Generate GlobalLoad for namespace-qualified global variable
 		TempVar result_temp = var_counter.next();
-		bool is_array_type = decl_node.is_array() || type_node.is_array();
+		bool is_array_type = decl_node.is_array_object() || type_node.is_array();
 		bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 		int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 		GlobalLoadOp op;

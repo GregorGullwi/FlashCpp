@@ -315,6 +315,73 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 	return result;
 }
 
+AstToIr::MultiDimPointeeDerefArrayAccess AstToIr::collectMultiDimPointeeDerefIndices(const ArraySubscriptNode& subscript) {
+	MultiDimPointeeDerefArrayAccess result;
+	std::vector<ASTNode> indices_reversed;
+	const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
+
+	// Collect the outermost index first (the one in the current subscript)
+	indices_reversed.push_back(subscript.index_expr());
+
+	// Walk down the chain of ArraySubscriptNodes
+	while (std::holds_alternative<ArraySubscriptNode>(*current)) {
+		const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
+		indices_reversed.push_back(inner.index_expr());
+		current = &inner.array_expr().as<ExpressionNode>();
+	}
+
+	// The root must be a pointer dereference: (*p)[i]...[k]
+	if (!std::holds_alternative<UnaryOperatorNode>(*current)) {
+		return result;
+	}
+	const UnaryOperatorNode& deref = std::get<UnaryOperatorNode>(*current);
+	if (deref.op() != "*") {
+		return result;
+	}
+	if (!deref.get_operand().is<ExpressionNode>()) {
+		return result;
+	}
+	const ExpressionNode& deref_operand_expr = deref.get_operand().as<ExpressionNode>();
+
+	// Sema owns expression typing ([expr.unary.op]/1): prefer an existing
+	// semantic slot, otherwise canonicalize the identifier's declaration type.
+	CanonicalTypeId operand_type_id{};
+	if (const auto operand_slot = sema_.getSlot(&deref_operand_expr);
+		operand_slot.has_value() && operand_slot->has_type()) {
+		operand_type_id = operand_slot->type_id;
+	} else if (std::holds_alternative<IdentifierNode>(deref_operand_expr)) {
+		const DeclarationNode* operand_decl = lookupDeclaration(
+			std::get<IdentifierNode>(deref_operand_expr).name());
+		if (operand_decl != nullptr) {
+			operand_type_id = sema_.canonicalizeTypeForImplicitConversion(
+				operand_decl->type_specifier_node());
+		}
+	}
+	if (!operand_type_id) {
+		return result;
+	}
+	const CanonicalTypeDesc& desc = sema_.typeContext().get(operand_type_id);
+	// C++20 [dcl.ptr]/1: only a declarator whose bounds bind inside the
+	// pointer yields an array object on dereference, and every subscript in
+	// the chain consumes one bound.
+	if (!desc.pointee_array_declarator ||
+		desc.pointer_levels.size() != 1 ||
+		desc.array_dimensions.empty() ||
+		desc.array_dimensions.size() < indices_reversed.size() ||
+		indices_reversed.size() <= 1) {
+		return result;
+	}
+
+	result.indices.reserve(indices_reversed.size());
+	for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
+		result.indices.push_back(*it);
+	}
+	result.pointee_desc = desc;
+	result.deref_operand = &deref_operand_expr;
+	result.is_valid = true;
+	return result;
+}
+
 ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 											 ExpressionContext context) {
 	// If sema resolved this subscript to operator[], dispatch to member function call IR.
@@ -360,6 +427,177 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	FLASH_LOG_FORMAT(Codegen, Debug, "generateArraySubscriptIr: array_expr is ArraySubscriptNode = {}",
 					 std::holds_alternative<ArraySubscriptNode>(array_expr));
 	if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
+		// C++20 [dcl.ptr]/1, [expr.sub]/1: a subscript chain rooted at a
+		// pointer-to-array dereference indexes the pointee array object. Each
+		// subscript consumes one bound, so (*p)[i][j] over T(*)[2][4] reads
+		// element p[i][j] with row-major strides ([dcl.array]/1). The whole
+		// chain is flattened here, mirroring the identifier and member
+		// multidimensional collectors below.
+		auto pointee_deref_multi_dim = collectMultiDimPointeeDerefIndices(arraySubscriptNode);
+		if (pointee_deref_multi_dim.is_valid) {
+			const CanonicalTypeDesc& pointee_desc = pointee_deref_multi_dim.pointee_desc;
+			const TypeCategory element_type = pointee_desc.category();
+			TypeIndex element_type_index = pointee_desc.type_index;
+			int element_size_bits = get_type_size_bits(element_type);
+			if (element_size_bits == 0 && element_type_index.is_valid()) {
+				TypeSpecifierNode element_type_spec(
+					element_type_index.withCategory(element_type),
+					SizeInBits{0},
+					Token{},
+					CVQualifier::None,
+					ReferenceQualifier::None);
+				element_size_bits = queryConcreteAliasResolvedTypeSizeBits(element_type_spec).size_bits;
+			}
+			if (element_size_bits <= 0) {
+				throw InternalError("Pointer-to-array subscript could not resolve element size");
+			}
+			const InlineVector<size_t, 4>& dim_sizes = pointee_desc.array_dimensions;
+
+			// Materialize the base address: the dereferenced pointer's VALUE
+			// is the address of the pointee array object ([dcl.ptr]/1), so no
+			// load of the array may be emitted.
+			std::variant<StringHandle, TempVar> decay_base;
+			IrValue decay_rhs_value;
+			bool base_materialized = false;
+			TempVar addr_temp = var_counter.next();
+			if (std::holds_alternative<IdentifierNode>(*pointee_deref_multi_dim.deref_operand)) {
+				const auto& base_ident =
+					std::get<IdentifierNode>(*pointee_deref_multi_dim.deref_operand);
+				const StringHandle base_name =
+					StringTable::getOrInternStringHandle(base_ident.name());
+				if (symbol_table.lookup(base_name).has_value()) {
+					// Local operand: the generic assignment lowering loads the
+					// stack slot by value.
+					decay_base = base_name;
+					decay_rhs_value = base_name;
+				} else {
+					// Global/static operand: load the pointer VALUE with full
+					// pointer width into a dedicated temp; that temp already
+					// designates the array object, so no further copy is
+					// needed.
+					GlobalLoadOp load_op;
+					load_op.result.setType(TypeCategory::UnsignedLongLong);
+					load_op.result.ir_type = IrType::Integer;
+					load_op.result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+					load_op.result.value = addr_temp;
+					load_op.global_name = base_name;
+					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), Token()));
+					decay_base = addr_temp;
+					decay_rhs_value = addr_temp;
+					base_materialized = true;
+				}
+			}
+			if (!base_materialized) {
+				auto base_operands = visitExpressionNode(*pointee_deref_multi_dim.deref_operand);
+				if (const auto* string = std::get_if<StringHandle>(&base_operands.value)) {
+					decay_base = *string;
+					decay_rhs_value = *string;
+				} else if (const auto* temp_var = std::get_if<TempVar>(&base_operands.value)) {
+					decay_base = *temp_var;
+					decay_rhs_value = *temp_var;
+				} else if (const auto* imm_ptr = std::get_if<unsigned long long>(&base_operands.value)) {
+					TempVar materialized_ptr = var_counter.next();
+					AssignmentOp materialize_ptr;
+					materialize_ptr.result = materialized_ptr;
+					materialize_ptr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, materialized_ptr);
+					materialize_ptr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, *imm_ptr);
+					materialize_ptr.is_pointer_store = false;
+					materialize_ptr.dereference_rhs_references = false;
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_ptr), Token()));
+					decay_base = materialized_ptr;
+					decay_rhs_value = materialized_ptr;
+				} else {
+					throw InternalError("Pointer-to-array subscript has unsupported operand value kind");
+				}
+
+				AssignmentOp copy_op;
+				copy_op.result = addr_temp;
+				copy_op.lhs = makeTypedValue(pointee_deref_multi_dim.pointee_desc.category(), SizeInBits{POINTER_SIZE_BITS}, addr_temp);
+				copy_op.rhs = makeTypedValue(pointee_deref_multi_dim.pointee_desc.category(), SizeInBits{POINTER_SIZE_BITS}, decay_rhs_value);
+				copy_op.is_pointer_store = false;
+				copy_op.dereference_rhs_references = false;
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_op), Token()));
+			}
+
+			// Compute strides: stride[k] = product of bounds after k.
+			std::vector<size_t> strides(dim_sizes.size());
+			strides.back() = 1;
+			for (int k = static_cast<int>(dim_sizes.size()) - 2; k >= 0; --k) {
+				strides[k] = strides[k + 1] * dim_sizes[k + 1];
+			}
+
+			// Generate code to compute flat index: sum(indices[k] * strides[k]).
+			auto idx0_operands = visitExpressionNode(pointee_deref_multi_dim.indices[0].as<ExpressionNode>());
+			TempVar flat_index = var_counter.next();
+			if (strides[0] == 1) {
+				BinaryOp add_op;
+				add_op.lhs = toTypedValue(idx0_operands);
+				add_op.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 0ULL);
+				add_op.result = IrValue{flat_index};
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
+			} else {
+				BinaryOp mul_op;
+				mul_op.lhs = toTypedValue(idx0_operands);
+				mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
+				mul_op.result = IrValue{flat_index};
+				ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
+			}
+			for (size_t k = 1; k < pointee_deref_multi_dim.indices.size(); ++k) {
+				auto idx_operands = visitExpressionNode(pointee_deref_multi_dim.indices[k].as<ExpressionNode>());
+				TempVar new_flat = var_counter.next();
+				if (strides[k] == 1) {
+					BinaryOp add_op;
+					add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
+					add_op.rhs = toTypedValue(idx_operands);
+					add_op.result = IrValue{new_flat};
+					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
+				} else {
+					TempVar temp_prod = var_counter.next();
+					BinaryOp mul_op;
+					mul_op.lhs = toTypedValue(idx_operands);
+					mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
+					mul_op.result = IrValue{temp_prod};
+					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
+
+					BinaryOp add_op;
+					add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
+					add_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, temp_prod);
+					add_op.result = IrValue{new_flat};
+					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
+				}
+				flat_index = new_flat;
+			}
+
+			// Single flattened access against the decayed base pointer.
+			TempVar result_var = var_counter.next();
+			LValueInfo lvalue_info(
+				LValueInfo::Kind::ArrayElement,
+				decay_base,
+				0);
+			lvalue_info.array_index = IrValue{flat_index};
+			lvalue_info.is_pointer_to_array = true;
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, element_type, element_size_bits));
+
+			ArrayAccessOp payload;
+			payload.result = result_var;
+			payload.element_type_index = element_type_index.withCategory(element_type);
+			payload.element_size_in_bits = element_size_bits;
+			payload.member_offset = 0;
+			payload.is_pointer_to_array = true;
+			payload.array = addr_temp;
+			payload.index.setType(TypeCategory::UnsignedLongLong);
+			payload.index.ir_type = IrType::Integer;
+			payload.index.size_in_bits = SizeInBits{64};
+			payload.index.value = flat_index;
+
+			if (context == ExpressionContext::LValueAddress) {
+				return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, element_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
+			}
+
+			ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
+			return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
+		}
+
 		// First check if this is a multidimensional member array access (obj.arr[i][j])
 		auto member_multi_dim = collectMultiDimMemberArrayIndices(arraySubscriptNode);
 		FLASH_LOG_FORMAT(Codegen, Debug, "Member multidim check: is_valid={}", member_multi_dim.is_valid);

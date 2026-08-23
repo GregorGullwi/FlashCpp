@@ -3979,6 +3979,7 @@ private:	 // Resume private methods
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
 	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id
+	void addConstantArrayDimensionsToTypeSpec(TypeSpecifierNode& type_spec, const std::vector<ASTNode>& dimension_exprs); // Constant-fold parsed "[expr]" bounds and apply all of them to the type-spec when every bound resolves
 	std::optional<CVQualifier> scan_parenthesized_pointer_group(CallingConvention& out_calling_conv, Token& out_identifier, bool& out_has_identifier); // Scan "(" [cc] "*" cv-seq? [id] ")" shared by named and abstract declarators
 	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume ptr-operator then array abstract-declarators on a type-id
 	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id

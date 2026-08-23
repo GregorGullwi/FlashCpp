@@ -922,6 +922,28 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 	return ParseResult::success(binding_node);
 }
 
+// Constant-folds parsed "[expr]" array bounds and applies them to a
+// type-specifier ([dcl.array]/1).  The bounds are applied only when every
+// expression folds to a positive constant, so a dependent bound never leaves a
+// partially resolved dimension list behind for the semantic layer, which can
+// re-resolve the full set later from the declaration's expressions.
+void Parser::addConstantArrayDimensionsToTypeSpec(
+	TypeSpecifierNode& type_spec,
+	const std::vector<ASTNode>& dimension_exprs) {
+	std::vector<size_t> dimensions;
+	dimensions.reserve(dimension_exprs.size());
+	for (const ASTNode& dimension_expr : dimension_exprs) {
+		const auto dim_val = try_evaluate_constant_expression(dimension_expr);
+		if (!dim_val.has_value() || dim_val->value <= 0) {
+			return;
+		}
+		dimensions.push_back(static_cast<size_t>(dim_val->value));
+	}
+	for (const size_t dim : dimensions) {
+		type_spec.add_array_dimension(dim);
+	}
+}
+
 // Scans a parenthesized pointer declarator group "(" [calling-convention]
 // "*" cv-qualifier-seq? [identifier] ")" starting at the opening '('.  Shared
 // by named declarators (parse_declarator) and type-id abstract-declarators
@@ -1062,7 +1084,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				return ParseResult::error("Expected ')' after function declarator", current_token_);
 			}
 
-			std::optional<ASTNode> array_size_expr;
+			std::vector<ASTNode> return_pointee_dimensions;
 
 			// Check for function-pointer return type suffix: '(' params ')' after the
 			// parenthesized declarator. Pattern: type (*func(params))(ptr_params)
@@ -1106,25 +1128,33 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				base_type = function_ptr_type;
 
 			// Check for array declarator: '[' size ']' after the function declarator
-			// Pattern: type (*func(params))[array_size]
+			// Pattern: type (*func(params))[array_size][array_sizeN]
 			} else if (peek() == "["_tok) {
-				advance(); // consume '['
+				// C++20 [dcl.ptr]/1, [dcl.array]/1: every array suffix after
+				// the parenthesized declarator binds inside the returned
+				// pointer, so (*func(params))[2][4] returns a pointer to
+				// T[2][4].
+				while (peek() == "["_tok) {
+					advance(); // consume '['
 
-				// Parse array size expression
-				auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (size_result.is_error()) {
-					return size_result;
+					// Parse array size expression
+					auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (size_result.is_error()) {
+						return size_result;
+					}
+					return_pointee_dimensions.push_back(*size_result.node());
+
+					if (!consume("]"_tok)) {
+						return ParseResult::error("Expected ']' after array size", current_token_);
+					}
 				}
-				array_size_expr = size_result.node();
 
-				if (!consume("]"_tok)) {
-					return ParseResult::error("Expected ']' after array size", current_token_);
-				}
-
-				// The return type is: base_type (*)[array_size] = pointer to array of base_type
-				// Set the base_type to indicate it's a pointer to array
+				// The return type is: base_type (*)[N][M] = pointer to array of base_type
 				base_type.add_pointer_level(ptr_cv);
-				// C++20 [dcl.ptr]/1: the array suffix binds inside the pointer.
+				addConstantArrayDimensionsToTypeSpec(base_type, return_pointee_dimensions);
+				// Applied last on purpose: set_pointee_array_declarator(true)
+				// resets is_array_; the returned entity stays a scalar pointer
+				// ([dcl.ptr]/1).
 				base_type.set_pointee_array_declarator(true);
 			} else {
 				// The return type is: base_type (*) = pointer to base_type
@@ -1132,10 +1162,14 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 			}
 
 			// Create declaration node for the function with the computed return type
-			auto decl_node = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(base_type),
-				identifier_token,
-				array_size_expr);
+			auto decl_node = return_pointee_dimensions.empty()
+				? emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(base_type),
+					identifier_token)
+				: emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(base_type),
+					identifier_token,
+					std::move(return_pointee_dimensions));
 
 			// Create function declaration node
 			auto func_decl_node = emplace_node<FunctionDeclarationNode>(
@@ -1157,33 +1191,44 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 		}
 		advance(); // consume ')'
 
-		// Check for pointer-to-array: (*name)[size]
+		// Check for pointer-to-array: (*name)[size][sizeN]
 		// The '*' inside (*name) establishes the pointer level; handle it here
-		// where ptr_cv is available, mirroring Case 2 (lines 811-812).
+		// where ptr_cv is available, mirroring Case 2 above.
 		if (peek() == "["_tok) {
-			advance(); // consume '['
-
-			auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (size_result.is_error()) {
-				return size_result;
-			}
-			std::optional<ASTNode> array_size_expr = size_result.node();
-
-			if (!consume("]"_tok)) {
-				return ParseResult::error("Expected ']' after array size in pointer-to-array declarator", current_token_);
-			}
-
+			// C++20 [dcl.ptr]/1, [dcl.array]/1: every array suffix following
+			// the parenthesized declarator binds inside the pointer, so
+			// long (*table)[2][4] declares table as a pointer to long[2][4].
 			base_type.add_pointer_level(ptr_cv);
-			// C++20 [dcl.ptr]/1: the array suffix of a parenthesized declarator
-			// binds inside the pointer, so this declares a pointer to T[N],
-			// not an array of pointers.
+			std::vector<ASTNode> pointee_dimensions;
+			while (peek() == "["_tok) {
+				advance(); // consume '['
+
+				auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (size_result.is_error()) {
+					return size_result;
+				}
+				pointee_dimensions.push_back(*size_result.node());
+
+				if (!consume("]"_tok)) {
+					return ParseResult::error("Expected ']' after array size in pointer-to-array declarator", current_token_);
+				}
+			}
+
+			// Record every bound on the type_spec when all of them are positive
+			// constants (same shape as consume_array_type_id_modifiers); when
+			// any bound is dependent the semantic layer resolves them later from
+			// the declaration's dimension expressions.
+			addConstantArrayDimensionsToTypeSpec(base_type, pointee_dimensions);
+			// Applied last on purpose: set_pointee_array_declarator(true)
+			// resets is_array_, and the declared entity must stay a scalar
+			// pointer whose pointee carries the recorded bounds ([dcl.ptr]/1).
 			base_type.set_pointee_array_declarator(true);
 
 			return ParseResult::success(
 				emplace_node<DeclarationNode>(
 					emplace_node<TypeSpecifierNode>(base_type),
 					identifier_token,
-					array_size_expr));
+					std::move(pointee_dimensions)));
 		}
 
 		// Now parse the function parameters: '(' params ')'

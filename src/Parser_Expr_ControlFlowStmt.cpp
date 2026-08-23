@@ -1215,6 +1215,7 @@ ParseResult Parser::parse_lambda_expression() {
 					64,				   // Size in bits
 					false,				   // is_array
 					{},				   // array_dimensions
+					false,				   // pointee_array_declarator
 					0,				   // pointer_depth (stored as void*, depth encoded in type)
 					std::nullopt,		  // bitfield_width
 					std::nullopt,		  // function_sig
@@ -1247,6 +1248,7 @@ ParseResult Parser::parse_lambda_expression() {
 								enclosing_struct->sizeInBits().value,	 // Size in bits
 								false,								  // is_array
 								{},									  // array_dimensions
+								false,								  // pointee_array_declarator
 								0,									  // pointer_depth
 								std::nullopt,						  // bitfield_width
 								std::nullopt,						  // function_sig
@@ -1381,6 +1383,7 @@ ParseResult Parser::parse_lambda_expression() {
 				referenced_size_bits,
 				var_type.is_array(),
 				std::vector<size_t>(var_type.array_dimensions().begin(), var_type.array_dimensions().end()),
+				var_type.has_pointee_array_declarator(),
 				static_cast<int>(var_type.pointer_depth()),
 				std::nullopt,
 				var_type.has_function_signature() ? std::optional(var_type.function_signature()) : std::nullopt,
