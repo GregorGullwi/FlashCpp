@@ -10,6 +10,10 @@ struct Member {
 	short value = 11;
 };
 
+struct OrdinaryOuter {
+	Member members[2];
+};
+
 template<typename T>
 struct Derived : Base<T> {
 	Member members[2];
@@ -18,6 +22,10 @@ struct Derived : Base<T> {
 };
 
 int main() {
+	OrdinaryOuter ordinary;
+	if (ordinary.members[0].value != 11 || ordinary.members[1].value != 11) {
+		return 1;
+	}
 	Derived<int> value;
 	return value.base_value + value.members[0].value + value.members[1].value +
 		value.bits + value.tail;

@@ -2400,7 +2400,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						// Only call base default constructor if the base class actually has constructors
 						// This avoids link errors when inheriting from classes without constructors
 						if (base_struct_info &&
-							(base_struct_info->findDefaultConstructor() != nullptr ||
+							((base_struct_info->findDefaultConstructor() != nullptr &&
+							  !base_struct_info->isDefaultConstructorDeleted()) ||
 							 (base_struct_info->implicit_default_constructor.exists &&
 							  !base_struct_info->implicit_default_constructor.is_deleted))) {
 							const std::span<const ASTNode> no_arguments;
@@ -2634,7 +2635,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						}
 
 						// Step 2: Handle non-bitfield members
-						for (const auto& member : struct_info->members) {
+						for (size_t member_index = 0; member_index < struct_info->members.size(); ++member_index) {
+							const StructMember& member = struct_info->members[member_index];
 							if (member.bitfield_width.has_value())
 								continue; // handled above
 							if (!struct_info->isPotentiallyConstructedByDefaultConstructor(member)) {
@@ -2847,7 +2849,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								if (member.type_index.category() == TypeCategory::Struct) {
 									const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 									if (member_type_info && member_type_info->getStructInfo() &&
-										(member_type_info->getStructInfo()->findDefaultConstructor() != nullptr ||
+										((member_type_info->getStructInfo()->findDefaultConstructor() != nullptr &&
+										  !member_type_info->getStructInfo()->isDefaultConstructorDeleted()) ||
 										 (member_type_info->getStructInfo()->implicit_default_constructor.exists &&
 										  !member_type_info->getStructInfo()->implicit_default_constructor.is_deleted))) {
 										is_struct_with_constructor = true;
@@ -2857,17 +2860,33 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								if (is_struct_with_constructor) {
 									// Call the nested struct's default constructor instead of zero-initializing
 									const TypeInfo& member_type_info = getTypeInfo(member.type_index);
-									ConstructorCallOp ctor_op;
-									ctor_op.object = StringTable::getOrInternStringHandle("this");
-									// No arguments for default constructor
-									// Use base_class_offset to specify the member's offset within the parent struct
-									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
-									ctor_op.base_class_offset = static_cast<int>(member.offset);
-									if (member_type_info.getStructInfo()) {
-										fillInDefaultConstructorArguments(ctor_op, *member_type_info.getStructInfo());
-										finalizeConstructorCallOp(ctor_op, *member_type_info.getStructInfo(), node.name_token());
+									const ImplicitDefaultMemberInitialization* semantic_initialization = nullptr;
+									for (const auto& initialization : struct_info->implicit_default_constructor.member_initializers) {
+										if (initialization.member_index == member_index &&
+											initialization.kind == ImplicitDefaultMemberInitializationKind::DefaultConstructor) {
+											semantic_initialization = &initialization;
+											break;
+										}
 									}
-									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+									const size_t element_count = semantic_initialization
+										? semantic_initialization->element_count
+										: 1;
+									const size_t element_stride = semantic_initialization
+										? semantic_initialization->element_stride
+										: member.size;
+									for (size_t element_index = 0; element_index < element_count; ++element_index) {
+										const size_t element_offset = member.offset + element_index * element_stride;
+										assert(element_offset <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+											"Member offset exceeds int range");
+										ConstructorCallOp ctor_op;
+										ctor_op.object = StringTable::getOrInternStringHandle("this");
+										ctor_op.base_class_offset = static_cast<int>(element_offset);
+										if (member_type_info.getStructInfo()) {
+											fillInDefaultConstructorArguments(ctor_op, *member_type_info.getStructInfo());
+											finalizeConstructorCallOp(ctor_op, *member_type_info.getStructInfo(), node.name_token());
+										}
+										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+									}
 									continue;  // Skip the MemberStore since constructor handles initialization
 								} else {
 									// Zero-initialize based on type
