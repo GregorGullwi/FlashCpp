@@ -3063,9 +3063,13 @@ public:
 		// `set_definition` is the Materialized transition; any attempt to set a
 		// body after a recorded substitution failure is a bug in the caller.
 		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
+		assert(ownership_phase_ != AstOwnershipPhase::SemaNormalized);
 
 		definition_block_.emplace(block_node);
 		body_state_tag_ = BodyStateTag::Materialized;
+		if (!(is_template_pattern_ && ownership_phase_ == AstOwnershipPhase::ParserPattern)) {
+			ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
+		}
 		return true;
 	}
 
@@ -3151,6 +3155,9 @@ public:
 	void set_template_body_position(SaveHandle handle) {
 		has_template_body_ = true;
 		template_body_position_handle_ = handle;
+		if (!is_materialized() && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			ownership_phase_ = AstOwnershipPhase::ParserDeferredBody;
+		}
 	}
 	bool has_template_body_position() const { return has_template_body_; }
 	SaveHandle template_body_position() const { return template_body_position_handle_; }
@@ -3213,8 +3220,20 @@ public:
 	void set_is_deleted(bool deleted) { is_deleted_ = deleted; }
 	bool is_deleted() const { return is_deleted_; }
 
-	void set_is_template_pattern(bool is_template_pattern) { is_template_pattern_ = is_template_pattern; }
+	void set_is_template_pattern(bool is_template_pattern) {
+		is_template_pattern_ = is_template_pattern;
+		if (is_template_pattern && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			ownership_phase_ = AstOwnershipPhase::ParserPattern;
+		}
+	}
 	bool is_template_pattern() const { return is_template_pattern_; }
+
+	AstOwnershipPhase ownership_phase() const { return ownership_phase_; }
+	void markSemaNormalized() const {
+		assert(ownership_phase_ == AstOwnershipPhase::ConcreteMaterialized ||
+			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
+		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
+	}
 
 	// Inline always support (for template instantiations that are pure expressions)
 	// When true, this function should always be inlined and never generate a call
@@ -3315,6 +3334,7 @@ private:
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
+	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 	StringHandle lazy_member_registry_key_;
 	TemplateDefinitionLookupContext definition_lookup_context_;  // Captured at parse time for nested member function templates

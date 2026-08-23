@@ -236,6 +236,13 @@ public:
 		return node.has_value() && normalized_ast_nodes_.count(node.raw_pointer()) > 0;
 	}
 
+	// Returns true when this declaration root has crossed semantic normalization.
+	// This is distinct from normalized_ast_nodes_, which records expression-level
+	// analysis slots and is not an ownership marker.
+	bool hasNormalizedRoot(const ASTNode& node) const {
+		return node.has_value() && normalized_root_nodes_.count(node.raw_pointer()) > 0;
+	}
+
 	// Look up the compound assignment back-conversion slot (keyed by BinaryOperatorNode address).
 	// Returns non-empty when sema annotated a commonType→lhsType result back-conversion.
 	std::optional<SemanticSlot> getCompoundAssignBackConv(const void* binop_key) const {
@@ -729,6 +736,7 @@ private:
 	// (e.g. template instantiation member functions generated during parsing).
 	std::unordered_set<const void*> normalized_bodies_;
 	std::unordered_set<const void*> normalized_ast_nodes_;
+	std::unordered_set<const void*> normalized_root_nodes_;
 	std::unordered_set<const FunctionDeclarationNode*> resolving_auto_return_functions_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.

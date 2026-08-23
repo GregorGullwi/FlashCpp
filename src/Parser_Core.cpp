@@ -1149,6 +1149,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 	}
 
 	const SavedToken& saved_token = *saved_tokens_[handle];
+	assertTopLevelNodeTrackingSynchronized();
 	if (FLASH_LOG_ENABLED(Parser, Debug)) {
 		std::string saved_tok = std::string(saved_token.current_token_.value());
 		std::string current_tok = std::string(current_token_.value());

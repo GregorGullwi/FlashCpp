@@ -520,21 +520,6 @@ const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructType
 	return nullptr;
 }
 
-static bool isParserOwnedConstructor(const ConstructorDeclarationNode& ctor) {
-	// Parser-owned constructors still carry template-substitution scaffolding:
-	// template pattern names, template parameter lists, deferred body source, or
-	// deferred initializer-list source. They are excluded from sema-owned
-	// post-parse boundary validation until lazy instantiation materializes them.
-	const bool has_template_pattern_name =
-		ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos;
-	const bool has_unmaterialized_template_scaffolding =
-		!ctor.is_materialized() &&
-		(ctor.has_template_parameters() ||
-		 ctor.has_template_body_position() ||
-		 ctor.has_template_initializer_list_position());
-	return has_template_pattern_name || has_unmaterialized_template_scaffolding;
-}
-
 static bool hasTopLevelPackExpansionInConstructorInitializers(const ConstructorDeclarationNode& ctor) {
 	for (const auto& member_init : ctor.member_initializers()) {
 		if (isTopLevelPackExpansionExpr(member_init.initializer_expr)) {
@@ -1086,10 +1071,144 @@ const CanonicalTypeDesc& TypeContext::get(CanonicalTypeId id) const {
 // See tryAnnotateConversion() below for usage.
 
 namespace {
+template <typename T>
+inline constexpr bool postParseBoundaryDependentFalse = false;
+
+std::string_view postParseBoundaryRoleName(ExpressionStructure::ExpressionChildRole role) {
+	using ExpressionChildRole = ExpressionStructure::ExpressionChildRole;
+	switch (role) {
+	case ExpressionChildRole::Operand:
+		return "Operand";
+	case ExpressionChildRole::Condition:
+		return "Condition";
+	case ExpressionChildRole::TrueBranch:
+		return "TrueBranch";
+	case ExpressionChildRole::FalseBranch:
+		return "FalseBranch";
+	case ExpressionChildRole::Receiver:
+		return "Receiver";
+	case ExpressionChildRole::TemplateArgument:
+		return "TemplateArgument";
+	case ExpressionChildRole::CallArgument:
+		return "CallArgument";
+	case ExpressionChildRole::ConstructorArgument:
+		return "ConstructorArgument";
+	case ExpressionChildRole::PlacementArgument:
+		return "PlacementArgument";
+	case ExpressionChildRole::ConstructedType:
+		return "ConstructedType";
+	case ExpressionChildRole::ArrayBound:
+		return "ArrayBound";
+	case ExpressionChildRole::TypeOperand:
+		return "TypeOperand";
+	case ExpressionChildRole::TypeArgument:
+		return "TypeArgument";
+	case ExpressionChildRole::CastTarget:
+		return "CastTarget";
+	case ExpressionChildRole::CaptureInitializer:
+		return "CaptureInitializer";
+	case ExpressionChildRole::LambdaParameter:
+		return "LambdaParameter";
+	case ExpressionChildRole::LambdaReturnType:
+		return "LambdaReturnType";
+	case ExpressionChildRole::Body:
+		return "Body";
+	case ExpressionChildRole::FoldInitializer:
+		return "FoldInitializer";
+	case ExpressionChildRole::FoldPackExpression:
+		return "FoldPackExpression";
+	case ExpressionChildRole::PackPattern:
+		return "PackPattern";
+	case ExpressionChildRole::InitializerElementType:
+		return "InitializerElementType";
+	case ExpressionChildRole::InitializerTargetType:
+		return "InitializerTargetType";
+	case ExpressionChildRole::InitializerElement:
+		return "InitializerElement";
+	}
+	throw InternalError("Post-parse boundary encountered an unknown expression child role");
+}
+
+template <typename T>
+std::string_view postParseBoundaryExpressionName() {
+	using ExpressionType = std::remove_cvref_t<T>;
+	if constexpr (std::is_same_v<ExpressionType, IdentifierNode>) {
+		return "Identifier";
+	} else if constexpr (std::is_same_v<ExpressionType, QualifiedIdentifierNode>) {
+		return "QualifiedIdentifier";
+	} else if constexpr (std::is_same_v<ExpressionType, StringLiteralNode>) {
+		return "StringLiteral";
+	} else if constexpr (std::is_same_v<ExpressionType, NumericLiteralNode>) {
+		return "NumericLiteral";
+	} else if constexpr (std::is_same_v<ExpressionType, BoolLiteralNode>) {
+		return "BoolLiteral";
+	} else if constexpr (std::is_same_v<ExpressionType, BinaryOperatorNode>) {
+		return "BinaryOperator";
+	} else if constexpr (std::is_same_v<ExpressionType, UnaryOperatorNode>) {
+		return "UnaryOperator";
+	} else if constexpr (std::is_same_v<ExpressionType, TernaryOperatorNode>) {
+		return "TernaryOperator";
+	} else if constexpr (std::is_same_v<ExpressionType, ConstructorCallNode>) {
+		return "ConstructorCall";
+	} else if constexpr (std::is_same_v<ExpressionType, MemberAccessNode>) {
+		return "MemberAccess";
+	} else if constexpr (std::is_same_v<ExpressionType, PointerToMemberAccessNode>) {
+		return "PointerToMemberAccess";
+	} else if constexpr (std::is_same_v<ExpressionType, ArraySubscriptNode>) {
+		return "ArraySubscript";
+	} else if constexpr (std::is_same_v<ExpressionType, SizeofExprNode>) {
+		return "SizeofExpr";
+	} else if constexpr (std::is_same_v<ExpressionType, SizeofPackNode>) {
+		return "SizeofPack";
+	} else if constexpr (std::is_same_v<ExpressionType, AlignofExprNode>) {
+		return "AlignofExpr";
+	} else if constexpr (std::is_same_v<ExpressionType, OffsetofExprNode>) {
+		return "OffsetofExpr";
+	} else if constexpr (std::is_same_v<ExpressionType, TypeTraitExprNode>) {
+		return "TypeTraitExpr";
+	} else if constexpr (std::is_same_v<ExpressionType, NewExpressionNode>) {
+		return "NewExpression";
+	} else if constexpr (std::is_same_v<ExpressionType, DeleteExpressionNode>) {
+		return "DeleteExpression";
+	} else if constexpr (std::is_same_v<ExpressionType, StaticCastNode>) {
+		return "StaticCast";
+	} else if constexpr (std::is_same_v<ExpressionType, DynamicCastNode>) {
+		return "DynamicCast";
+	} else if constexpr (std::is_same_v<ExpressionType, ConstCastNode>) {
+		return "ConstCast";
+	} else if constexpr (std::is_same_v<ExpressionType, ReinterpretCastNode>) {
+		return "ReinterpretCast";
+	} else if constexpr (std::is_same_v<ExpressionType, TypeidNode>) {
+		return "Typeid";
+	} else if constexpr (std::is_same_v<ExpressionType, LambdaExpressionNode>) {
+		return "LambdaExpression";
+	} else if constexpr (std::is_same_v<ExpressionType, TemplateParameterReferenceNode>) {
+		return "TemplateParameterReference";
+	} else if constexpr (std::is_same_v<ExpressionType, FoldExpressionNode>) {
+		return "FoldExpression";
+	} else if constexpr (std::is_same_v<ExpressionType, PackExpansionExprNode>) {
+		return "PackExpansionExpr";
+	} else if constexpr (std::is_same_v<ExpressionType, PseudoDestructorCallNode>) {
+		return "PseudoDestructorCall";
+	} else if constexpr (std::is_same_v<ExpressionType, NoexceptExprNode>) {
+		return "NoexceptExpr";
+	} else if constexpr (std::is_same_v<ExpressionType, InitializerListConstructionNode>) {
+		return "InitializerListConstruction";
+	} else if constexpr (std::is_same_v<ExpressionType, ThrowExpressionNode>) {
+		return "ThrowExpression";
+	} else if constexpr (std::is_same_v<ExpressionType, CallExprNode>) {
+		return "CallExpr";
+	} else {
+		static_assert(postParseBoundaryDependentFalse<ExpressionType>,
+			"Every ExpressionNode alternative must have a post-parse diagnostic name");
+	}
+}
+
 struct PostParseBoundarySample {
 	const char* node_kind = "";
 	Token token;
-	StringHandle context_path;
+	StringHandle owner_path;
+	StringHandle child_path;
 };
 
 struct PostParseBoundaryReport {
@@ -1101,14 +1220,14 @@ struct PostParseBoundaryReport {
 		return fold_expression_count != 0 || pack_expansion_count != 0;
 	}
 
-	void recordFold(const Token& token, StringHandle context_path) {
+	void recordFold(const Token& token, StringHandle owner_path, StringHandle child_path) {
 		++fold_expression_count;
-		recordSample("FoldExpressionNode", token, context_path);
+		recordSample("FoldExpressionNode", token, owner_path, child_path);
 	}
 
-	void recordPackExpansion(const Token& token, StringHandle context_path) {
+	void recordPackExpansion(const Token& token, StringHandle owner_path, StringHandle child_path) {
 		++pack_expansion_count;
-		recordSample("PackExpansionExprNode", token, context_path);
+		recordSample("PackExpansionExprNode", token, owner_path, child_path);
 	}
 
 	const PostParseBoundarySample* firstSample(std::string_view node_kind) const {
@@ -1121,11 +1240,15 @@ struct PostParseBoundaryReport {
 	}
 
 private:
-	void recordSample(const char* node_kind, const Token& token, StringHandle context_path) {
+	void recordSample(
+		const char* node_kind,
+		const Token& token,
+		StringHandle owner_path,
+		StringHandle child_path) {
 		if (samples.size() >= 8) {
 			return;
 		}
-		samples.push_back(PostParseBoundarySample{node_kind, token, context_path});
+		samples.push_back(PostParseBoundarySample{node_kind, token, owner_path, child_path});
 	}
 };
 
@@ -1168,6 +1291,50 @@ private:
 		return StringTable::getOrInternStringHandle(path_builder.commit());
 	}
 
+	StringHandle currentExpressionChildPath() const {
+		if (expression_node_stack_.empty()) {
+			return {};
+		}
+
+		StringBuilder path_builder;
+		const size_t node_count = role_stack_.empty()
+			? expression_node_stack_.size()
+			: expression_node_stack_.size() - 1;
+		for (size_t index = 0; index < node_count; ++index) {
+			if (index != 0) {
+				path_builder.append("."sv);
+			}
+			path_builder.append(expression_node_stack_[index]);
+			if (index < role_stack_.size()) {
+				path_builder.append("."sv).append(role_stack_[index]);
+			}
+		}
+		return StringTable::getOrInternStringHandle(path_builder.commit());
+	}
+
+	static StringHandle makeRolePathSegment(
+		ExpressionStructure::ExpressionChildRole role,
+		size_t occurrence_index) {
+		StringBuilder role_builder;
+		role_builder.append(postParseBoundaryRoleName(role))
+			.append("["sv)
+			.append(static_cast<uint64_t>(occurrence_index))
+			.append("]"sv);
+		return StringTable::getOrInternStringHandle(role_builder.commit());
+	}
+
+	static size_t nextRoleOccurrence(
+		std::vector<std::pair<ExpressionStructure::ExpressionChildRole, size_t>>& occurrences,
+		ExpressionStructure::ExpressionChildRole role) {
+		for (auto& occurrence : occurrences) {
+			if (occurrence.first == role) {
+				return occurrence.second++;
+			}
+		}
+		occurrences.emplace_back(role, 1);
+		return 0;
+	}
+
 	void visit(const ASTNode& node) {
 		if (!node.has_value()) {
 			return;
@@ -1181,10 +1348,10 @@ private:
 		if (node.is<FunctionDeclarationNode>()) {
 			const auto& func = node.as<FunctionDeclarationNode>();
 			const bool pushed = pushContext(func.decl_node().identifier_token().value());
-			// Skip functions whose bodies still belong to template parsing/substitution:
-			// deferred bodies will be reparsed during lazy instantiation, and template
-			// pattern nodes intentionally still contain pre-substitution helper nodes.
-			if (func.has_template_body_position() || func.is_template_pattern()) {
+			// Saved body positions are provenance only. A concrete materialized clone
+			// is checked even when it retains a replay position for diagnostics.
+			if (func.ownership_phase() == AstOwnershipPhase::ParserPattern ||
+				func.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
 				popContext(pushed);
 				return;
 			}
@@ -1201,15 +1368,15 @@ private:
 		if (node.is<ConstructorDeclarationNode>()) {
 			const auto& ctor = node.as<ConstructorDeclarationNode>();
 			const bool pushed = pushContext(StringTable::getStringView(ctor.name()));
-			// Template-pattern constructor AST still belongs to parser/template-substitution
-			// ownership and intentionally retains pre-substitution helper nodes.
-			if (isParserOwnedConstructor(ctor)) {
+			if (ctor.ownership_phase() == AstOwnershipPhase::ParserPattern ||
+				ctor.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
 				popContext(pushed);
 				return;
 			}
-			// Constructor initializer pack expansions are intentionally left on
-			// parser-owned member-template constructors until the constructor itself
-			// is instantiated.
+			// Constructor initializer packs still use parser-side arity-changing
+			// orchestration until the constructor is selected for materialization.
+			// A follow-up lifecycle slice should make this ParserDeferredBody state
+			// explicit at the producer and remove this compatibility classification.
 			if (hasTopLevelPackExpansionInConstructorInitializers(ctor)) {
 				popContext(pushed);
 				return;
@@ -1244,6 +1411,11 @@ private:
 		if (node.is<DestructorDeclarationNode>()) {
 			const auto& dtor = node.as<DestructorDeclarationNode>();
 			const bool pushed = pushContext(StringTable::getStringView(dtor.name()));
+			if (dtor.ownership_phase() == AstOwnershipPhase::ParserPattern ||
+				dtor.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
+				popContext(pushed);
+				return;
+			}
 			if (dtor.is_materialized()) {
 				visit(*dtor.get_definition());
 			}
@@ -1254,6 +1426,11 @@ private:
 		if (node.is<StructDeclarationNode>()) {
 			const auto& decl = node.as<StructDeclarationNode>();
 			const bool pushed = pushContext(StringTable::getStringView(decl.name()));
+			if (decl.ownership_phase() == AstOwnershipPhase::ParserPattern ||
+				decl.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
+				popContext(pushed);
+				return;
+			}
 			for (const auto& member : decl.members()) {
 				visit(member.declaration);
 				if (member.default_initializer.has_value()) {
@@ -1480,24 +1657,45 @@ private:
 	}
 
 	void visitExpression(const ExpressionNode& expr) {
+		const StringHandle expression_name = std::visit(
+			[](const auto& expression) {
+				return StringTable::getOrInternStringHandle(
+					postParseBoundaryExpressionName<decltype(expression)>());
+			},
+			expr);
+		expression_node_stack_.push_back(expression_name);
+
 		std::visit([this](const auto& expression) {
 			using ExpressionType = std::decay_t<decltype(expression)>;
 			if constexpr (std::is_same_v<ExpressionType, FoldExpressionNode>) {
-				report_.recordFold(expression.get_token(), currentContextPath());
+				report_.recordFold(
+					expression.get_token(),
+					currentContextPath(),
+					currentExpressionChildPath());
 			} else if constexpr (std::is_same_v<ExpressionType, PackExpansionExprNode>) {
-				report_.recordPackExpansion(expression.get_token(), currentContextPath());
+				report_.recordPackExpansion(
+					expression.get_token(),
+					currentContextPath(),
+					currentExpressionChildPath());
 			}
 		}, expr);
 
+		std::vector<std::pair<ExpressionStructure::ExpressionChildRole, size_t>> occurrences;
 		ExpressionStructure::visitExpressionChildren(
 			expr,
-			[this](ExpressionStructure::ExpressionChildRole, const ASTNode& child) {
+			[this, &occurrences](ExpressionStructure::ExpressionChildRole role, const ASTNode& child) {
+				const size_t occurrence_index = nextRoleOccurrence(occurrences, role);
+				role_stack_.push_back(makeRolePathSegment(role, occurrence_index));
 				visit(child);
+				role_stack_.pop_back();
 			});
+		expression_node_stack_.pop_back();
 	}
 
 	PostParseBoundaryReport report_;
 	std::vector<StringHandle> context_stack_;
+	std::vector<StringHandle> expression_node_stack_;
+	std::vector<StringHandle> role_stack_;
 };
 
 void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
@@ -1528,15 +1726,16 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 
 	if (IS_FLASH_LOG_ENABLED(General, Error)) {
 		for (const auto& sample : report.samples) {
-			StringBuilder context_suffix_builder;
-			if (sample.context_path.isValid()) {
-				context_suffix_builder.append(" in ");
-				context_suffix_builder.append(sample.context_path);
-			}
-			const std::string context_suffix(context_suffix_builder.commit());
 			FLASH_LOG(General, Error,
-					  "  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column(),
-					  context_suffix);
+					  "  sample ", sample.node_kind,
+					  " owner: ", sample.owner_path.isValid()
+						? StringTable::getStringView(sample.owner_path)
+						: "<root>"sv,
+					  " child: ", sample.child_path.isValid()
+						? StringTable::getStringView(sample.child_path)
+						: "<root>"sv,
+					  " source token: '", sample.token.value(), "' at ", sample.token.line(), ":",
+					  sample.token.column(), " file#", sample.token.file_index());
 		}
 	}
 
@@ -1562,7 +1761,7 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 			message += " near line " + std::to_string(first_pack_sample->token.line()) +
 					   ":" + std::to_string(first_pack_sample->token.column());
 		}
-		throw CompileError(message);
+		throw InternalError(message);
 	}
 }
 } // namespace
@@ -2913,6 +3112,13 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 		normalizeConstructorDeclaration(node.as<ConstructorDeclarationNode>());
 	} else if (node.is<DestructorDeclarationNode>()) {
 		normalizeDestructorDeclaration(node.as<DestructorDeclarationNode>());
+	} else if (node.is<BlockNode>()) {
+		// File/namespace-scope extern linkage blocks are represented as declaration
+		// lists. Normalize each contained declaration as a top-level root so their
+		// callable lifecycle transitions complete before IR.
+		for (const ASTNode& declaration : node.as<BlockNode>().get_statements()) {
+			normalizeTopLevelNode(declaration);
+		}
 	} else if (node.is<VariableDeclarationNode>()) {
 		auto& var = node.as<VariableDeclarationNode>();
 		const auto& init = var.initializer();
@@ -2923,6 +3129,28 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 			normalizeExpression(*init, ctx);
 			popScope();
 		}
+	}
+
+	bool parser_owned_root = false;
+	if (node.is<FunctionDeclarationNode>()) {
+		const auto phase = node.as<FunctionDeclarationNode>().ownership_phase();
+		parser_owned_root = phase == AstOwnershipPhase::ParserPattern ||
+			phase == AstOwnershipPhase::ParserDeferredBody;
+	} else if (node.is<ConstructorDeclarationNode>()) {
+		const auto phase = node.as<ConstructorDeclarationNode>().ownership_phase();
+		parser_owned_root = phase == AstOwnershipPhase::ParserPattern ||
+			phase == AstOwnershipPhase::ParserDeferredBody;
+	} else if (node.is<DestructorDeclarationNode>()) {
+		const auto phase = node.as<DestructorDeclarationNode>().ownership_phase();
+		parser_owned_root = phase == AstOwnershipPhase::ParserPattern ||
+			phase == AstOwnershipPhase::ParserDeferredBody;
+	} else if (node.is<StructDeclarationNode>()) {
+		const auto phase = node.as<StructDeclarationNode>().ownership_phase();
+		parser_owned_root = phase == AstOwnershipPhase::ParserPattern ||
+			phase == AstOwnershipPhase::ParserDeferredBody;
+	}
+	if (!parser_owned_root) {
+		normalized_root_nodes_.insert(node.raw_pointer());
 	}
 	// Template declarations, forward declarations, typedefs, using directives,
 	// enums, concepts - no semantic normalization needed in Phase 1
@@ -2964,6 +3192,10 @@ void SemanticAnalysis::normalizeParameterExpressionsInScope(
 }
 
 void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNode& func) {
+	if (func.ownership_phase() == AstOwnershipPhase::ParserPattern ||
+		func.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
+		return;
+	}
 	const auto& def = func.get_definition();
 	if (!def.has_value())
 		return; // Forward declaration only
@@ -3036,10 +3268,15 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	});
 
 	normalizeStatement(*def, ctx);
+	func.markSemaNormalized();
 	popScope();
 }
 
 void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarationNode& ctor) {
+	if (ctor.ownership_phase() == AstOwnershipPhase::ParserPattern ||
+		ctor.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
+		return;
+	}
 	const auto& def = ctor.get_definition();
 	if (!def.has_value())
 		return;
@@ -3087,10 +3324,15 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	}
 
 	normalizeStatement(*def, ctx);
+	ctor.markSemaNormalized();
 	popScope();
 }
 
 void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclarationNode& dtor) {
+	if (dtor.ownership_phase() == AstOwnershipPhase::ParserPattern ||
+		dtor.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
+		return;
+	}
 	const auto& def = dtor.get_definition();
 	if (!def.has_value())
 		return;
@@ -3118,10 +3360,15 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 	pushScope();
 	registerOuterTemplateBindingsInScope(dtor);
 	normalizeStatement(*def, ctx);
+	dtor.markSemaNormalized();
 	popScope();
 }
 
 void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& decl) {
+	if (decl.ownership_phase() == AstOwnershipPhase::ParserPattern ||
+		decl.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
+		return;
+	}
 	SemanticContext ctx;
 	pushScope();
 	auto cleanup = ScopeGuard([this]() { popScope(); });
@@ -3211,6 +3458,9 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 			normalizeStructDeclaration(nested_class_node.as<StructDeclarationNode>());
 		}
 	}
+
+	decl.markSemaNormalized();
+	normalized_root_nodes_.insert(static_cast<const void*>(&decl));
 }
 
 void SemanticAnalysis::normalizeNamespace(const NamespaceDeclarationNode& ns) {
@@ -3247,6 +3497,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		} else {
 			normalizeBlock(block, ctx);
 		}
+	} else if (node.is<StructDeclarationNode>()) {
+		normalizeStructDeclaration(node.as<StructDeclarationNode>());
 	} else if (node.is<ExpressionNode>()) {
 		normalizeExpression(node, ctx);
 	} else if (node.is<ReturnStatementNode>()) {

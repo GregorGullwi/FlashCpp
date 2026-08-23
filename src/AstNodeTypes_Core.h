@@ -3,6 +3,7 @@
 #include <climits>
 #include <any>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <typeinfo>
@@ -24,6 +25,17 @@
 // SaveHandle type for parser save/restore operations
 // Matches Parser::SaveHandle typedef in Parser.h
 using SaveHandle = size_t;
+
+// Ownership of a body-bearing AST node is independent from template-source
+// provenance.  In particular, a concrete instantiation may retain a saved
+// template body position for diagnostics/replay while its current body is
+// already sema-owned.
+enum class AstOwnershipPhase : uint8_t {
+	ParserPattern,
+	ParserDeferredBody,
+	ConcreteMaterialized,
+	SemaNormalized,
+};
 
 // Forward declarations
 struct TemplateTypeArg;

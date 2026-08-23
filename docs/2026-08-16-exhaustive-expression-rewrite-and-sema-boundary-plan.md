@@ -3,7 +3,9 @@
 ## Status
 
 Phase 0, Phase 1, Phase 2, and Phase 3 are complete as of 2026-08-16.
-Phases 4-5 remain pending.
+Phases 4 and 5 are in progress: the current branch contains the explicit
+ownership/provenance boundary slice and the first structural-reuse cleanup,
+but their full exit criteria are not yet met.
 This document describes follow-up work after PR #1871, which added the missing
 `NewExpressionNode` template-substitution path. The plan is intentionally
 broader than that fix: its goal is to make the same class of omission difficult
@@ -100,11 +102,68 @@ Phase 3; explicit lifecycle ownership remains Phase 4.
   when canonical expression substitution resolves a current-instantiation
   member type, including `sizeof` over a dependent alias.
 
-Phase 4 findings remain intentionally deferred: `has_template_body_position()`
-continues to describe provenance rather than lifecycle ownership, pending-root
-registration and boundary checking are unchanged, and no `SemaNormalized`
-state or IR root ownership assertion was added in this phase. The documented
-non-dependent receiver lookup gap is also unchanged.
+Phase 4 findings are substantially addressed: ownership is now explicit,
+concrete materialized roots are checked independently of saved provenance,
+late-root registration is guarded, and boundary diagnostics carry owner/child
+paths and source tokens. The documented non-dependent receiver lookup gap is
+unchanged.
+
+### Phase 4 implementation-progress record (2026-08-23)
+
+- Added `AstOwnershipPhase` to body-bearing function, constructor, destructor,
+  and struct roots. Materialization transitions roots to
+  `ConcreteMaterialized`; parser pattern/deferred-body setters preserve the
+  parser-owned states; successful normalization marks roots
+  `SemaNormalized`.
+- Kept saved template body/initializer positions and template-pattern identity
+  as provenance only. `PostParseBoundaryChecker` now skips only
+  `ParserPattern` and `ParserDeferredBody`, so a concrete clone is checked even
+  when it retains deferred-template provenance.
+- Added sema normalized-root tracking and IR checks for normalized function,
+  constructor, destructor, struct, and namespace entry points.
+- Guarded late-materialized callable registration against parser-pattern/
+  deferred roots, asserted top-level tracking synchronization, and made
+  `extern` linkage-block extraction preserve late roots and their pending-sema
+  registration. Shape-only/forward struct identities remain registerable for
+  later upgrade while their parser-owned phase prevents sema consumption.
+- Added role-indexed boundary paths such as
+  `NewExpression.ConstructorArgument[0]`, alongside owner, node kind, token,
+  line/column, and file index.
+- Added `test_lifecycle_deferred_pack_surface_ret42.cpp` and
+  `test_lifecycle_materialized_body_provenance_ret42.cpp` for the deferred and
+  concrete-provenance cases.
+
+The Phase 4 exit criterion is not yet fully met. A compiler-level negative test
+still needs a controlled hook that deliberately injects a parser-only helper
+into a concrete body and proves rejection before sema. Codegen-synthetic
+trivial constructors remain outside AST-root normalization and need an explicit
+documented treatment. Constructor initializer packs also retain a compatibility
+classification until their producers assign `ParserDeferredBody` explicitly.
+The current IR checks establish the required guards for ordinary AST roots but
+do not yet prove that every synthetic codegen artifact crossed one uniform
+`SemaNormalized` transition.
+
+### Phase 5 implementation-progress record (2026-08-23)
+
+- `TemplateExpressionEquivalence.cpp` now collects structural expression
+  children through `ExpressionStructure::visitExpressionChildren` for equality
+  and hashing. Structural roles are compared/hashed generically while
+  operator flags, node flags, callee identity, type/path metadata, template
+  argument roles, and lambda metadata remain intentional semantic checks; lambda
+  bodies remain intentionally excluded.
+- `exprContainsIdentifier` in
+  `Parser_Templates_Substitution.cpp` now uses `AstTraversal`, reusing the
+  canonical expression traversal for identifiers and template-parameter
+  references instead of maintaining a separate recursive expression walk.
+- Duplicate structural equality/hash range helpers were removed where the
+  shared schema subsumes them.
+
+The Phase 5 exit criterion is not yet met. Remaining expression-kind switches
+must still be audited across constexpr, dependence classification, cloning,
+and diagnostics; only structural walks should migrate, while pass-specific
+semantic decisions remain local. The lifecycle negative-test and synthetic-
+constructor items above also remain open and are not silently closed by this
+reuse slice.
 
 ## Problem statement
 
@@ -598,6 +657,9 @@ required.
 
 ### Phase 4: Make lifecycle ownership explicit
 
+**Status: In progress (implementation slice recorded above; exit criteria not
+met).**
+
 - Add the ownership state and transitions.
 - Separate saved body-position provenance from ownership decisions.
 - Change the boundary checker to inspect all concrete materialized bodies.
@@ -609,6 +671,9 @@ materialized body fails at the parser/sema boundary with an owning path and
 token, before semantic normalization or IR.
 
 ### Phase 5: Cleanup and extend reuse
+
+**Status: In progress (implementation slice recorded above; exit criteria not
+met).**
 
 - Search for remaining hand-maintained expression child lists in constexpr,
   dependence classification, equivalence, cloning, and diagnostic code.
