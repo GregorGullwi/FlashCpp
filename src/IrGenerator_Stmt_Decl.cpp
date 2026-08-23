@@ -2470,6 +2470,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					0,
 					true,
 					std::vector<size_t>(type_array_dimensions.begin(), type_array_dimensions.end()),
+					false,
 					static_cast<int>(type_node.pointer_depth()),
 					std::nullopt);
 				if (tryEmitArrayMemberStores(array_member, init_list, decl.identifier_token().handle(), 0, node.declaration().identifier_token()))

@@ -1839,6 +1839,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			member_size * 8,
 			false,  // is_array
 			{},		// array_dimensions
+			false,  // pointee_array_declarator
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width,
 			getCanonicalFunctionPointerSignature(substituted_type_spec),

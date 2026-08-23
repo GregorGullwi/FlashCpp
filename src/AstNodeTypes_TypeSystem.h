@@ -1244,6 +1244,10 @@ struct StructMember {
 	std::optional<ASTNode> default_initializer;	// C++11 default member initializer
 	bool is_array;		   // True if member is an array
 	std::vector<size_t> array_dimensions;  // Dimensions for multidimensional arrays
+	// C++20 [dcl.ptr]/1: true when a parenthesized declarator bound these
+	// dimensions inside the pointer (T (*m)[N]); the member object stays a
+	// scalar pointer and is_array remains false.
+	bool pointee_array_declarator = false;
 	int pointer_depth;	   // Pointer indirection level (e.g., int* = 1, int** = 2)
 	std::optional<FunctionSignature> function_signature;	 // For FunctionPointer members: stores return type and parameter types
 	bool is_no_unique_address = false;
@@ -1262,12 +1266,14 @@ struct StructMember {
 				 size_t ref_size_bits,
 				 bool is_arr,
 				 std::vector<size_t> arr_dims,
+				 bool member_pointee_array_declarator,
 				 int ptr_depth,
 				 std::optional<size_t> bf_width)
 		: name(n), type_index(tidx), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), reference_qualifier(ref_qual),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
+		  pointee_array_declarator(member_pointee_array_declarator),
 		  pointer_depth(ptr_depth) {}
 
 	StringHandle getName() const {
@@ -1476,6 +1482,9 @@ struct StructStaticMember {
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	bool is_array = false;
 	std::vector<size_t> array_dimensions;
+	// C++20 [dcl.ptr]/1: true when a parenthesized declarator bound these
+	// dimensions inside the pointer (T (*m)[N]); is_array stays false.
+	bool pointee_array_declarator = false;
 	int pointer_depth = 0;  // Pointer indirection level (e.g., int* = 1, int** = 2)
 	bool is_constexpr = false;
 

@@ -189,7 +189,17 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 
 		const auto& ts = decl_ptr->type_specifier_node();
 		info.type_index = nativeTypeIndex(ts.type());
-		info.size_in_bits = SizeInBits{ts.size_in_bits()};
+		// C++20 [dcl.ptr]/1, [expr.sizeof]: a pointer or reference object
+		// occupies the pointer width regardless of its pointee, so stores
+		// through the binding must not truncate to the element width.
+		const bool ts_is_pointer_like =
+			ts.pointer_depth() > 0 ||
+			ts.is_reference() ||
+			ts.is_rvalue_reference() ||
+			ts.has_function_signature();
+		info.size_in_bits = SizeInBits{ts_is_pointer_like
+										   ? POINTER_SIZE_BITS
+										   : static_cast<int>(ts.size_in_bits())};
 	};
 
 	switch (identifier.binding()) {
@@ -5643,7 +5653,11 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 			return;
 		}
 		const TypeSpecifierNode& rhs_type = rhs_decl->type_specifier_node();
-		if (!rhs_decl->is_array() && !rhs_type.is_array()) {
+		if (!rhs_decl->is_array_object() && !rhs_type.is_array()) {
+			// C++20 [dcl.ptr]/1: a pointer-to-array entity such as
+			// T (*p)[N] records its bounds as pointee dimensions but is a
+			// scalar pointer object; its value already designates storage,
+			// so no array-to-pointer decay applies.
 			return;
 		}
 		value_tv.pointer_depth = PointerDepth{1};

@@ -414,7 +414,14 @@ std::optional<TypeSpecifierNode> tryGetConstexprPointerToMemberAccessType(
 		Token{},
 		CVQualifier::None);
 	member_type.set_type_index(member_result.member->type_index);
-	if (member_result.member->is_array) {
+	if (member_result.member->pointee_array_declarator) {
+		// C++20 [dcl.ptr]/1: the bounds belong to the pointee; the member
+		// object is a scalar pointer.
+		member_type.set_pointee_array_declarator(true);
+		if (!member_result.member->array_dimensions.empty()) {
+			member_type.set_pointee_array_dimensions(member_result.member->array_dimensions);
+		}
+	} else if (member_result.member->is_array) {
 		member_type.set_array_dimensions(member_result.member->array_dimensions);
 	}
 	if (member_result.member->pointer_depth > 0) {
@@ -541,7 +548,14 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 			Token{},
 			CVQualifier::None);
 		member_type.set_type_index(member_result.member->type_index);
-		if (member_result.member->is_array) {
+		if (member_result.member->pointee_array_declarator) {
+			// C++20 [dcl.ptr]/1: the bounds belong to the pointee; the member
+			// object is a scalar pointer.
+			member_type.set_pointee_array_declarator(true);
+			if (!member_result.member->array_dimensions.empty()) {
+				member_type.set_pointee_array_dimensions(member_result.member->array_dimensions);
+			}
+		} else if (member_result.member->is_array) {
 			member_type.set_array_dimensions(member_result.member->array_dimensions);
 		}
 		if (member_result.member->pointer_depth > 0) {
@@ -3176,7 +3190,14 @@ static TypeSpecifierNode make_member_type_spec(const StructMember& member) {
 		CVQualifier::None);
 	type_spec.set_reference_qualifier(member.reference_qualifier);
 	type_spec.add_pointer_levels(member.pointer_depth);
-	type_spec.set_array_dimensions(member.array_dimensions);
+	if (member.pointee_array_declarator) {
+		// C++20 [dcl.ptr]/1: the bounds belong to the pointee; the member
+		// object is a scalar pointer.
+		type_spec.set_pointee_array_declarator(true);
+		type_spec.set_pointee_array_dimensions(member.array_dimensions);
+	} else if (member.is_array) {
+		type_spec.set_array_dimensions(member.array_dimensions);
+	}
 	if (member.function_signature.has_value()) {
 		type_spec.set_function_signature(*member.function_signature);
 	}

@@ -650,6 +650,16 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
+				// C++20 [dcl.ptr]/1: preserve pointee bounds bound by a
+				// parenthesized declarator without scaling storage.
+				std::vector<size_t> member_pointee_dimensions;
+				const bool member_pointee_array_declarator =
+					member_type_spec.has_pointee_array_declarator();
+				if (member_pointee_array_declarator && !member_type_spec.array_dimensions().empty()) {
+					member_pointee_dimensions.assign(
+						member_type_spec.array_dimensions().begin(),
+						member_type_spec.array_dimensions().end());
+				}
 				struct_info->addMember(
 					member_name_handle,
 					member_type_spec.type_index(),
@@ -660,7 +670,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					member_type_spec.reference_qualifier(),
 					member_type_spec.size_in_bits(),
 					false,
-					{},
+					member_pointee_dimensions,
+					member_pointee_array_declarator,
 					static_cast<int>(member_type_spec.pointer_depth()),
 					member_decl.bitfield_width,
 					member_type_spec.has_function_signature() ? std::optional(member_type_spec.function_signature()) : std::nullopt,
@@ -1886,6 +1897,16 @@ ParseResult Parser::parse_typedef_declaration() {
 			}
 			// Phase 7B: Intern member name and use StringHandle overload
 			StringHandle member_name_handle = decl.identifier_token().handle();
+			// C++20 [dcl.ptr]/1: preserve pointee bounds bound by a
+			// parenthesized declarator without scaling storage.
+			std::vector<size_t> member_pointee_dimensions;
+			const bool member_pointee_array_declarator =
+				member_type_spec.has_pointee_array_declarator();
+			if (member_pointee_array_declarator && !member_type_spec.array_dimensions().empty()) {
+				member_pointee_dimensions.assign(
+					member_type_spec.array_dimensions().begin(),
+					member_type_spec.array_dimensions().end());
+			}
 			struct_info->addMember(
 				member_name_handle,
 				member_type_spec.type_index(),
@@ -1896,7 +1917,8 @@ ParseResult Parser::parse_typedef_declaration() {
 				ref_qual,
 				referenced_size_bits,
 				false,
-				{},
+				member_pointee_dimensions,
+				member_pointee_array_declarator,
 				static_cast<int>(member_type_spec.pointer_depth()),
 				member_decl.bitfield_width,
 				member_type_spec.has_function_signature() ? std::optional(member_type_spec.function_signature()) : std::nullopt,

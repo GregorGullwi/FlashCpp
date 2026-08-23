@@ -1324,6 +1324,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								0, // referenced_size_bits
 								false, // is_array
 								{}, // array_dimensions
+								false, // pointee_array_declarator
 								0, // pointer_depth
 								std::nullopt // bitfield_width
 							});
@@ -1610,16 +1611,25 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// For array members, multiply element size by array count and collect dimensions
 						bool is_array = false;
 						std::vector<size_t> array_dimensions;
+						// C++20 [dcl.ptr]/1: a pointer-to-array member keeps its
+						// bounds on the pointee without scaling storage.
+						bool pointee_array_declarator = false;
 						if (!anon_array_dimensions.empty()) {
-							is_array = true;
+							if (anon_member_type_spec.has_pointee_array_declarator()) {
+								pointee_array_declarator = true;
+							} else {
+								is_array = true;
+							}
 							for (const auto& dim_expr : anon_array_dimensions) {
 								ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 								if (eval_result.success() && eval_result.as_int() > 0) {
 									size_t dim_size = static_cast<size_t>(eval_result.as_int());
 									array_dimensions.push_back(dim_size);
-									member_size *= dim_size;
-									referenced_size_bits *= dim_size;
+									if (!pointee_array_declarator) {
+										member_size *= dim_size;
+										referenced_size_bits *= dim_size;
+									}
 								}
 							}
 						}
@@ -1657,6 +1667,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							referenced_size_bits,
 							ref_qual,
 							is_array,
+							pointee_array_declarator,
 							static_cast<int>(anon_member_type_spec.pointer_depth()),
 							std::move(array_dimensions));
 
@@ -1937,8 +1948,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			auto [static_member_size, static_member_alignment] =
 				calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
 			bool is_array = decl.is_array_object() || type_spec.is_array();
+			// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator
+			// belong to the pointee; the static member object is a scalar
+			// pointer, so its storage must not scale by them ([dcl.arr]).
+			const bool static_pointee_array_declarator = type_spec.has_pointee_array_declarator();
 			std::vector<size_t> array_dimensions;
-			if (decl.is_array()) {
+			if (decl.is_array_object()) {
 				for (const auto& dim_expr : decl.array_dimensions()) {
 					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
@@ -1946,6 +1961,20 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						size_t dim_size = static_cast<size_t>(eval_result.as_int());
 						array_dimensions.push_back(dim_size);
 						static_member_size *= dim_size;
+					}
+				}
+			} else if (static_pointee_array_declarator) {
+				if (!type_spec.array_dimensions().empty()) {
+					array_dimensions.assign(
+						type_spec.array_dimensions().begin(),
+						type_spec.array_dimensions().end());
+				} else {
+					for (const auto& dim_expr : decl.array_dimensions()) {
+						ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
+						auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+						if (eval_result.success() && eval_result.as_int() > 0) {
+							array_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+						}
 					}
 				}
 			} else if (type_spec.is_array()) {
@@ -2011,6 +2040,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					? *initializer_definition_lookup_context
 					: TemplateDefinitionLookupContext{},
 				is_static_constexpr);
+			if (static_pointee_array_declarator) {
+				struct_info->static_members.back().pointee_array_declarator = true;
+			}
 
 			continue;
 		}
@@ -3144,21 +3176,22 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					effective_alignment = struct_info->pack_alignment;
 				}
 
-				// Manually add member to struct_info at the aligned offset
-				StructMember& semantic_member = struct_info->members.emplace_back(
-					union_member.member_name,
-					union_member.type_index,
-					aligned_union_start, // Same offset for all union members
-					union_member.member_size,
-					effective_alignment,
-					AccessSpecifier::Public, // Anonymous union members are always public
-					union_member.default_initializer,
-					union_member.reference_qualifier,
-					union_member.referenced_size_bits,
-					union_member.is_array,
-					union_member.array_dimensions,
-					union_member.pointer_depth,
-					union_member.bitfield_width);
+			// Manually add member to struct_info at the aligned offset
+			StructMember& semantic_member = struct_info->members.emplace_back(
+				union_member.member_name,
+				union_member.type_index,
+				aligned_union_start, // Same offset for all union members
+				union_member.member_size,
+				effective_alignment,
+				AccessSpecifier::Public, // Anonymous union members are always public
+				union_member.default_initializer,
+				union_member.reference_qualifier,
+				union_member.referenced_size_bits,
+				union_member.is_array,
+				union_member.array_dimensions,
+				union_member.pointee_array_declarator,
+				union_member.pointer_depth,
+				union_member.bitfield_width);
 				if (union_info.is_union) {
 					semantic_member.anonymous_union_group_index = next_union_idx;
 				}
@@ -3206,6 +3239,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// scalar pointer object, so its bounds must not scale its storage.
 		bool is_array = false;
 		std::vector<size_t> array_dimensions;
+		// C++20 [dcl.ptr]/1, [dcl.arr]/1: the bounds of a parenthesized
+		// declarator belong to the pointee. Record them on the member so
+		// member typing preserves the declarator shape; storage stays a
+		// scalar pointer.
+		bool pointee_array_declarator = false;
 		if (decl.is_array_object()) {
 			is_array = true;
 			// Collect all array dimensions
@@ -3240,6 +3278,23 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				member_size *= dim_size;
 				referenced_size_bits *= dim_size;
 			}
+		} else if (type_spec.has_pointee_array_declarator()) {
+			pointee_array_declarator = true;
+			if (!type_spec.array_dimensions().empty()) {
+				// Bounds already constant-folded at parse time.
+				array_dimensions.assign(
+					type_spec.array_dimensions().begin(),
+					type_spec.array_dimensions().end());
+			} else {
+				for (const auto& dim_expr : decl.array_dimensions()) {
+					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
+					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+					if (!eval_result.success() || eval_result.as_int() <= 0) {
+						continue;
+					}
+					array_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+				}
+			}
 		}
 
 		// Add member to struct layout with default initializer
@@ -3262,6 +3317,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			referenced_size_bits,
 			is_array,
 			array_dimensions,
+			pointee_array_declarator,
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width,
 			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
@@ -4401,6 +4457,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 		0, // referenced_size_bits
 		false, // is_array
 		{}, // array_dimensions
+		false, // pointee_array_declarator
 		0, // pointer_depth
 		std::nullopt // bitfield_width
 	};
@@ -4520,6 +4577,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					0, // referenced_size_bits
 					false, // is_array
 					{}, // array_dimensions
+					false, // pointee_array_declarator
 					0, // pointer_depth
 					std::nullopt // bitfield_width
 				});
@@ -4599,6 +4657,14 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			if (eval_result.success() && eval_result.as_int() > 0) {
 				size_t dim_size = static_cast<size_t>(eval_result.as_int());
 				resolved_array_dimensions.push_back(dim_size);
+			}
+		}
+		// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator belong
+		// to the pointee; the member object is a scalar pointer, so its storage
+		// must not scale by them ([dcl.arr]).
+		const bool pointee_array_declarator = member_type_spec.has_pointee_array_declarator();
+		if (!pointee_array_declarator) {
+			for (size_t dim_size : resolved_array_dimensions) {
 				member_size *= dim_size;
 				referenced_size_bits *= dim_size;
 			}
@@ -4616,9 +4682,10 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			std::nullopt, // no default initializer
 			ReferenceQualifier::None,
 			referenced_size_bits,
-			!resolved_array_dimensions.empty(), // is_array
+			!resolved_array_dimensions.empty() && !pointee_array_declarator, // is_array
 			std::move(resolved_array_dimensions), // array_dimensions
-			0, // pointer_depth
+			pointee_array_declarator,
+			static_cast<int>(member_type_spec.pointer_depth()),
 			std::nullopt // bitfield_width
 		});
 		if (member_type_spec.has_function_signature()) {

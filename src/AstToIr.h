@@ -79,6 +79,15 @@ private:
 		bool is_valid = false;
 	};
 
+	// A subscript chain rooted at a pointer-to-array dereference, e.g.
+	// (*p)[i][j] with p of type T(*)[2][4] (C++20 [dcl.ptr]/1, [expr.sub]).
+	struct MultiDimPointeeDerefArrayAccess {
+		CanonicalTypeDesc pointee_desc{};
+		std::vector<ASTNode> indices;  // Indices from outermost to innermost
+		const ExpressionNode* deref_operand = nullptr;  // Expression yielding the pointer
+		bool is_valid = false;
+	};
+
 	struct AddressComponents {
 		std::variant<StringHandle, TempVar> base;			  // Base variable or temp
 		ValueStorage base_storage = ValueStorage::ContainsData; // Whether the base names storage or contains an address
@@ -389,6 +398,7 @@ private:
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
+	MultiDimPointeeDerefArrayAccess collectMultiDimPointeeDerefIndices(const ArraySubscriptNode& subscript);
 	std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const;
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 										ExpressionContext context = ExpressionContext::Load);

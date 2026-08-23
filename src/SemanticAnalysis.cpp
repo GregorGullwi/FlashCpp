@@ -894,7 +894,12 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 	CanonicalTypeDesc desc;
 	desc.type_index = member.type_index.withCategory(member.memberType());
 	desc.ref_qualifier = member.reference_qualifier;
-	if (member.is_array) {
+	if (member.pointee_array_declarator) {
+		// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator
+		// belong to the pointee; the member object is a scalar pointer.
+		desc.pointee_array_declarator = true;
+		desc.array_dimensions = member.array_dimensions;
+	} else if (member.is_array) {
 		desc.array_dimensions = member.array_dimensions;
 	}
 	if (member.function_signature.has_value()) {
@@ -914,6 +919,14 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 	desc.type_index = member.type_index.withCategory(member.memberType());
 	desc.base_cv = member.cv_qualifier;
 	desc.ref_qualifier = member.reference_qualifier;
+	if (member.pointee_array_declarator) {
+		// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator
+		// belong to the pointee; the member object is a scalar pointer.
+		desc.pointee_array_declarator = true;
+		desc.array_dimensions = member.array_dimensions;
+	} else if (member.is_array) {
+		desc.array_dimensions = member.array_dimensions;
+	}
 	for (int i = 0; i < member.pointer_depth; ++i) {
 		desc.pointer_levels.push_back(PointerLevel{});
 	}

@@ -2446,7 +2446,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (resolved_array_dimensions.empty()) {
 					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
-				bool is_array_member = !resolved_array_dimensions.empty();
+				// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator
+				// belong to the pointee; the member object is a scalar pointer,
+				// so its storage must not scale by them ([dcl.arr]).
+				const bool member_pointee_array_declarator =
+					substituted_member_type_spec.has_pointee_array_declarator();
+				bool is_array_member = !resolved_array_dimensions.empty() && !member_pointee_array_declarator;
 				TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
 
 				// Calculate member size accounting for pointer depth
@@ -2456,8 +2461,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Pointers and references are always 8 bytes (64-bit)
 					member_size = 8;
 				}
-				for (size_t dim_size : resolved_array_dimensions) {
-					member_size *= dim_size;
+				if (!member_pointee_array_declarator) {
+					for (size_t dim_size : resolved_array_dimensions) {
+						member_size *= dim_size;
+					}
 				}
 				// Calculate member alignment
 				// For pointers and references, use 8-byte alignment (pointer alignment on x64)
@@ -2488,6 +2495,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ref_qual != ReferenceQualifier::None ? get_substituted_type_size_bits(member_type_index) : 0,
 					is_array_member,
 					std::move(resolved_array_dimensions),
+					member_pointee_array_declarator,
 					static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
 					getCanonicalFunctionPointerSignature(substituted_member_type_spec),
@@ -7512,7 +7520,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (resolved_array_dimensions.empty()) {
 			resolved_array_dimensions = resolved_member_alias.array_dimensions;
 		}
-		bool is_array_member = !resolved_array_dimensions.empty();
+		// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator belong
+		// to the pointee; the member object is a scalar pointer, so its storage
+		// must not scale by them ([dcl.arr]).
+		const bool member_pointee_array_declarator =
+			substituted_type_spec.has_pointee_array_declarator();
+		bool is_array_member = !resolved_array_dimensions.empty() && !member_pointee_array_declarator;
 		TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
 		TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
 		size_t member_size;
@@ -7588,6 +7601,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			referenced_size_bits,
 			is_array_member,
 			std::move(resolved_array_dimensions),
+			member_pointee_array_declarator,
 			static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
 			getCanonicalFunctionPointerSignature(substituted_type_spec),
@@ -8523,7 +8537,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (resolved_array_dimensions.empty()) {
 					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
-				bool is_array_member = !resolved_array_dimensions.empty();
 				TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
 				TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
 
@@ -8539,6 +8552,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					type_spec,
 					template_params,
 					template_args_to_use);
+
+				// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator
+				// belong to the pointee; the member object is a scalar pointer,
+				// so its storage must not scale by them ([dcl.arr]).
+				const bool member_pointee_array_declarator =
+					substituted_type_spec.has_pointee_array_declarator();
+				bool is_array_member =
+					!resolved_array_dimensions.empty() && !member_pointee_array_declarator;
 
 				const MemberSizeAndAlignment element_layout =
 					calculateResolvedMemberSizeAndAlignment(
@@ -8577,6 +8598,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					referenced_size_bits,
 					is_array_member,
 					resolved_array_dimensions,
+					member_pointee_array_declarator,
 					static_cast<int>(substituted_type_spec.pointer_depth()),
 					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
 					getCanonicalFunctionPointerSignature(substituted_type_spec),

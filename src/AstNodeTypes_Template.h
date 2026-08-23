@@ -990,6 +990,9 @@ struct AnonymousUnionMemberInfo {
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference, or RValueReference
 	bool is_array;					   // True if member is an array
 	std::vector<size_t> array_dimensions; // Dimension sizes for multidimensional arrays (e.g., {3, 3} for int[3][3])
+	// C++20 [dcl.ptr]/1: true when a parenthesized declarator bound these
+	// dimensions inside the pointer (T (*m)[N]); is_array stays false.
+	bool pointee_array_declarator = false;
 	int pointer_depth;				   // Pointer indirection level
 
 	// Convenience helpers
@@ -1001,12 +1004,14 @@ struct AnonymousUnionMemberInfo {
 							 std::optional<ASTNode> initializer,
 							 size_t ref_size_bits, ReferenceQualifier ref_qual,
 							 bool is_arr,
+							 bool member_pointee_array_declarator,
 							 int ptr_depth,
 							 std::vector<size_t> arr_dims)
 		: member_name(name), type_index(tidx), member_size(size),
 		  member_alignment(align), bitfield_width(bitfield_w), default_initializer(std::move(initializer)),
 		  referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
 		  is_array(is_arr), array_dimensions(std::move(arr_dims)),
+		  pointee_array_declarator(member_pointee_array_declarator),
 		  pointer_depth(ptr_depth) {}
 };
 
@@ -1152,6 +1157,9 @@ struct StaticMemberDecl {
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	bool is_array = false;
 	std::vector<size_t> array_dimensions;
+	// C++20 [dcl.ptr]/1: true when a parenthesized declarator bound these
+	// dimensions inside the pointer (T (*m)[N]); is_array stays false.
+	bool pointee_array_declarator = false;
 	int pointer_depth = 0;		   // Pointer indirection level (e.g., int* = 1, int** = 2)
 	bool is_constexpr = false;
 	std::optional<SaveHandle> initializer_position; // Saved lexer position at '=' or '{' for lazy replay
@@ -1175,6 +1183,10 @@ struct StaticMemberDecl {
 	void setArrayInfo(bool is_arr, std::span<const size_t> dims) {
 		is_array = is_arr;
 		array_dimensions.assign(dims.begin(), dims.end());
+	}
+
+	void setPointeeArrayDeclarator(bool member_pointee_array_declarator) {
+		pointee_array_declarator = member_pointee_array_declarator;
 	}
 
 	void setDeclaration(ASTNode decl) {
@@ -1418,6 +1430,7 @@ public:
 									std::optional<ASTNode> default_initializer,
 									size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
 									bool is_array,
+									bool pointee_array_declarator,
 									int pointer_depth,
 									std::vector<size_t> array_dimensions) {
 		// Add to the last anonymous union that was created
@@ -1425,6 +1438,7 @@ public:
 			anonymous_unions_.back().union_members.emplace_back(
 				member_name, type_index, member_size, member_alignment,
 				bitfield_width, std::move(default_initializer), referenced_size_bits, reference_qualifier, is_array,
+				pointee_array_declarator,
 				pointer_depth,
 				std::move(array_dimensions));
 		}
