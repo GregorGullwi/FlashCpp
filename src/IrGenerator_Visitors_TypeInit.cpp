@@ -2330,17 +2330,21 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					if (!member_struct_info) {
 						throw InternalError("Implicit default-constructor member plan has no struct metadata");
 					}
-					ConstructorCallOp ctor_op;
-					ctor_op.object = StringTable::getOrInternStringHandle("this");
-					assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
-						"Member offset exceeds int range");
-					ctor_op.base_class_offset = static_cast<int>(member.offset);
-					fillInDefaultConstructorArguments(ctor_op, *member_struct_info);
-					queueConstructorDefinition(
-						getTypeInfo(member.type_index),
-						ctor_op.resolved_constructor);
-					finalizeConstructorCallOp(ctor_op, *member_struct_info, Token());
-					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+					for (size_t element_index = 0; element_index < initialization.element_count; ++element_index) {
+						const size_t element_offset =
+							member.offset + element_index * initialization.element_stride;
+						assert(element_offset <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+							"Member offset exceeds int range");
+						ConstructorCallOp ctor_op;
+						ctor_op.object = StringTable::getOrInternStringHandle("this");
+						ctor_op.base_class_offset = static_cast<int>(element_offset);
+						fillInDefaultConstructorArguments(ctor_op, *member_struct_info);
+						queueConstructorDefinition(
+							getTypeInfo(member.type_index),
+							ctor_op.resolved_constructor);
+						finalizeConstructorCallOp(ctor_op, *member_struct_info, Token());
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+					}
 					continue;
 				}
 				if (member.default_initializer.has_value()) {

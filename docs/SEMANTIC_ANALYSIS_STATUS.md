@@ -401,7 +401,23 @@ The remaining lifecycle exception is the synthetic IR definition itself:
 `FunctionDeclOp` lowered directly from the semantic record because there is no
 AST root or body to normalize. Copy/move construction, assignment, and
 destruction still use their older mixed parser/AST paths and remain later
-special-member migration slices.
+special-member migration slices. Parser-fabricated AST-backed implicit default
+constructors also retain their existing visitor body-lowering path; that path
+now consumes semantic existence/deletion facts for nested construction but is
+not yet represented solely by the initialization-plan record.
+
+One deletion-rule gap also remains: non-static member metadata does not yet
+preserve member cv-qualification, so sema cannot diagnose every
+`const-default-constructible` failure for const non-class members without a
+default member initializer. This is tracked in `docs/KNOWN_ISSUES.md` rather
+than being guessed in IR.
+
+Deferred alias bases can also reach special-member finalization without a
+concrete base `StructTypeInfo`. The semantic record marks that state explicitly
+with `has_unresolved_base_initialization`; the current compatibility behavior
+omits a base action until the existing template machinery resolves the alias.
+Removing that state requires carrying resolved base identity through deferred
+alias substitution and is tracked as a known issue.
 
 ## Standards endpoint
 

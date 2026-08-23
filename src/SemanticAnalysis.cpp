@@ -3629,6 +3629,12 @@ void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
 
 		for (const BaseClassSpecifier& base : struct_info.base_classes) {
 			const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index);
+			if (!base_info && base.type_index.is_valid()) {
+				const ResolvedAliasTypeInfo resolved_base = resolveAliasTypeInfo(base.type_index);
+				if (resolved_base.terminal_type_info) {
+					base_info = resolved_base.terminal_type_info->getStructInfo();
+				}
+			}
 			if (!base_info && !base.name.empty()) {
 				auto base_type = getTypesByNameMap().find(
 					StringTable::getOrInternStringHandle(base.name));
@@ -3636,10 +3642,8 @@ void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
 					base_info = base_type->second->getStructInfo();
 				}
 			}
-			// A still-deferred base identity has no concrete constructor action to
-			// publish yet. Its hard-use materialization refreshes this idempotent
-			// record through the late gateway before lowering.
 			if (!base_info) {
+				record.has_unresolved_base_initialization = true;
 				continue;
 			}
 			if (!hasUsableDefaultConstructor(*base_info)) {
@@ -3676,9 +3680,20 @@ void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
 				record.is_deleted = true;
 				continue;
 			}
+			size_t element_count = 1;
+			if (member.is_array) {
+				for (size_t dimension : member.array_dimensions) {
+					element_count *= dimension;
+				}
+			}
+			if (element_count == 0 || member.size % element_count != 0) {
+				throw InternalError("Implicit default-constructor member array has invalid layout metadata");
+			}
 			record.member_initializers.push_back({
 				member_index,
-				ImplicitDefaultMemberInitializationKind::DefaultConstructor});
+				ImplicitDefaultMemberInitializationKind::DefaultConstructor,
+				element_count,
+				member.size / element_count});
 		}
 	}
 }

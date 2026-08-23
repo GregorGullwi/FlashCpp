@@ -2399,7 +2399,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					if (!node.is_implicit() || is_implicit_default_ctor) {
 						// Only call base default constructor if the base class actually has constructors
 						// This avoids link errors when inheriting from classes without constructors
-						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
+						if (base_struct_info &&
+							(base_struct_info->findDefaultConstructor() != nullptr ||
+							 (base_struct_info->implicit_default_constructor.exists &&
+							  !base_struct_info->implicit_default_constructor.is_deleted))) {
 							const std::span<const ASTNode> no_arguments;
 							ctor_op.resolved_constructor =
 								resolveCodegenConstructorFromArgs(*base_struct_info, no_arguments);
@@ -2575,21 +2578,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					// defined as deleted if any non-static data member of class type M has a
 					// user-declared constructor but no default constructor.
 					// In that case skip generating the body entirely — the function is effectively deleted.
-					bool is_implicitly_deleted = false;
-					for (const auto& member : struct_info->members) {
-						if (!struct_info->isPotentiallyConstructedByDefaultConstructor(member)) {
-							continue;
-						}
-						if (member.type_index.category() == TypeCategory::Struct) {
-							const TypeInfo* mti = tryGetTypeInfo(member.type_index);
-							if (mti && mti->getStructInfo() &&
-								mti->getStructInfo()->implicit_default_constructor.is_finalized &&
-								mti->getStructInfo()->implicit_default_constructor.is_deleted) {
-								is_implicitly_deleted = true;
-								break;
-							}
-						}
-					}
+					const bool is_implicitly_deleted =
+						struct_info->implicit_default_constructor.is_finalized &&
+						struct_info->implicit_default_constructor.is_deleted;
 
 					if (!is_implicitly_deleted) {
 
@@ -2855,7 +2846,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								bool is_struct_with_constructor = false;
 								if (member.type_index.category() == TypeCategory::Struct) {
 									const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-									if (member_type_info && member_type_info->getStructInfo() && member_type_info->getStructInfo()->hasAnyConstructor()) {
+									if (member_type_info && member_type_info->getStructInfo() &&
+										(member_type_info->getStructInfo()->findDefaultConstructor() != nullptr ||
+										 (member_type_info->getStructInfo()->implicit_default_constructor.exists &&
+										  !member_type_info->getStructInfo()->implicit_default_constructor.is_deleted))) {
 										is_struct_with_constructor = true;
 									}
 								}
