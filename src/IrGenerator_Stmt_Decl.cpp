@@ -1500,6 +1500,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							const auto& initializers = init_list.initializers();
+							const bool default_constructor_is_deleted =
+								struct_info.isDefaultConstructorDeleted() ||
+								(struct_info.implicit_default_constructor.is_finalized &&
+								 struct_info.implicit_default_constructor.is_deleted);
+							if (initializers.empty() && default_constructor_is_deleted) {
+								std::string_view error_msg = StringBuilder()
+									.append("Cannot default-initialize struct ")
+									.append(StringTable::getStringView(struct_info.name))
+									.append(" - default constructor is deleted")
+									.commit();
+								throw CompileError(std::string(error_msg));
+							}
 
 								// Check if this is a designated initializer list or aggregate initialization
 								// Designated initializers always use direct member initialization
@@ -1827,7 +1839,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							} else {
 								// No constructor - use direct member initialization
 								// But first check if default constructor is deleted
-								if (num_initializers == 0 && struct_info.isDefaultConstructorDeleted()) {
+								if (num_initializers == 0 && default_constructor_is_deleted) {
 									std::string_view error_msg = StringBuilder().append("Cannot default-initialize struct ").append(StringTable::getStringView(struct_info.name)).append(" - default constructor is deleted").commit();
 									throw CompileError(std::string(error_msg));
 								}
