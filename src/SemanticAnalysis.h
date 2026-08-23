@@ -183,6 +183,11 @@ public:
 
 	// Access cast info side table.
 	std::span<const ImplicitCastInfo> castInfoTable() const { return cast_info_table_; }
+	// Sema-authoritative class entities that may participate in IR. Lookup and
+	// shape probes never enter this collection.
+	std::span<const StructTypeInfo* const> codegenReadyTypes() const {
+		return codegen_ready_types_;
+	}
 
 	// Look up the semantic slot for an expression node.
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
@@ -402,6 +407,7 @@ private:
 
 	// Top-level dispatch
 	void normalizeTopLevelNode(const ASTNode& node);
+	void finalizeCodegenReadyTypes();
 
 	// Declaration handlers
 	void normalizeFunctionDeclaration(const FunctionDeclarationNode& func);
@@ -737,6 +743,8 @@ private:
 	std::unordered_set<const void*> normalized_bodies_;
 	std::unordered_set<const void*> normalized_ast_nodes_;
 	std::unordered_set<const void*> normalized_root_nodes_;
+	std::vector<const StructTypeInfo*> codegen_ready_types_;
+	std::unordered_set<const StructTypeInfo*> codegen_ready_type_keys_;
 	std::unordered_set<const FunctionDeclarationNode*> resolving_auto_return_functions_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.

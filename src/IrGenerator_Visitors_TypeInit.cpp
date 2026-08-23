@@ -2136,34 +2136,21 @@ void AstToIr::generateStaticMemberDeclarations() {
 }
 
 void AstToIr::generateTrivialDefaultConstructors() {
-	std::unordered_set<const TypeInfo*> processed;
-
-	for (const auto& [type_name, type_info] : getTypesByNameMap()) {
-		if (!type_info->isStruct()) {
-			continue;
+	for (const StructTypeInfo* struct_info : sema_.codegenReadyTypes()) {
+		if (!struct_info || !struct_info->isSemaReady() || !struct_info->isProgramEntity()) {
+			throw InternalError("SemanticAnalysis exposed a non-ready class entity to codegen");
 		}
-
-		// Skip pattern structs
-		if (gTemplateRegistry.isPatternStructName(type_name)) {
-			continue;
+		if (!struct_info->own_type_index_.has_value()) {
+			throw InternalError("Sema-ready class entity has no owning TypeIndex");
 		}
-
-		// Skip structs with incomplete instantiation - they have unresolved template params
+		const TypeInfo* type_info = tryGetTypeInfo(*struct_info->own_type_index_);
+		if (!type_info || !type_info->isStruct() || type_info->getStructInfo() != struct_info) {
+			throw InternalError("Sema-ready class entity has inconsistent TypeInfo ownership");
+		}
 		if (type_info->is_incomplete_instantiation_) {
-			FLASH_LOG(Codegen, Debug, "Skipping trivial constructor for '", StringTable::getStringView(type_name), "' (incomplete instantiation)");
-			continue;
+			throw InternalError("Incomplete class instantiation entered codegen-ready type collection");
 		}
-
-		// Skip if already processed
-		if (processed.count(type_info) > 0) {
-			continue;
-		}
-		processed.insert(type_info);
-
-		const StructTypeInfo* struct_info = type_info->getStructInfo();
-		if (!struct_info) {
-			continue;
-		}
+		const StringHandle type_name = type_info->name();
 
 		// Only generate trivial constructor if explicitly marked as needing one
 		// The needs_default_constructor flag is set during template instantiation

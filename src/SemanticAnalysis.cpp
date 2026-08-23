@@ -953,7 +953,7 @@ CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateA
 	return desc;
 }
 
-const TypeInfo* findStructTypeInfoByNameFragment(std::string_view struct_name) {
+TypeInfo* findStructTypeInfoByNameFragment(std::string_view struct_name) {
 	if (struct_name.empty()) {
 		return nullptr;
 	}
@@ -988,6 +988,16 @@ const TypeInfo* findStructTypeInfoByNameFragment(std::string_view struct_name) {
 	}
 
 	return nullptr;
+}
+
+TypeInfo* findStructTypeInfoForDeclaration(const StructDeclarationNode& declaration) {
+	for (const auto& [_, type_info] : getTypesByNameMap()) {
+		if (type_info && type_info->getStructInfo() &&
+			type_info->getStructInfo()->declaration_node == &declaration) {
+			return type_info;
+		}
+	}
+	return findStructTypeInfoByNameFragment(declaration.name().view());
 }
 } // namespace
 
@@ -1809,6 +1819,7 @@ public:
 		// auto-return functions that were materialized during drainLazyMemberRegistry).
 		// Auto-return types are now fully resolved so the retry will succeed.
 		owner_.resolvePendingCopyInitAnnotations();
+		owner_.finalizeCodegenReadyTypes();
 
 		FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
 				  owner_.stats_.roots_visited, " roots visited, ",
@@ -3371,7 +3382,7 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 	pushScope();
 	auto cleanup = ScopeGuard([this]() { popScope(); });
 	registerOuterTemplateBindingsInScope(decl);
-	const TypeInfo* struct_type_info = findStructTypeInfoByNameFragment(StringTable::getStringView(decl.name()));
+	TypeInfo* struct_type_info = findStructTypeInfoForDeclaration(decl);
 
 	std::optional<MemberContext> member_default_init_context;
 	if (struct_type_info && struct_type_info->getStructInfo()) {
@@ -3459,6 +3470,102 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 
 	decl.markSemaNormalized();
 	normalized_root_nodes_.insert(static_cast<const void*>(&decl));
+	if (!struct_type_info || !struct_type_info->getStructInfo()) {
+		return;
+	}
+	StructTypeInfo& struct_info = *struct_type_info->getStructInfo();
+	if (struct_info.entity_participation == StructEntityParticipation::Unclassified) {
+		struct_info.classifyParticipation(
+			decl.is_nested()
+				? StructEntityParticipation::NestedProgramEntity
+				: StructEntityParticipation::ProgramEntity);
+	}
+	if (struct_info.isProgramEntity()) {
+		struct_info.markSemaReady();
+		if (codegen_ready_type_keys_.insert(&struct_info).second) {
+			codegen_ready_types_.push_back(&struct_info);
+		}
+	}
+}
+
+void SemanticAnalysis::finalizeCodegenReadyTypes() {
+	std::unordered_set<const TypeInfo*> visited_types;
+	std::vector<StructTypeInfo*> worklist;
+	std::unordered_set<StructTypeInfo*> queued_types;
+	auto admitProgramEntity = [&](StructTypeInfo* struct_info) {
+		if (!struct_info || !struct_info->isProgramEntity()) {
+			return;
+		}
+		if (codegen_ready_type_keys_.insert(struct_info).second) {
+			codegen_ready_types_.push_back(struct_info);
+		}
+		if (queued_types.insert(struct_info).second) {
+			worklist.push_back(struct_info);
+		}
+	};
+	for (const auto& [_, type_info] : getTypesByNameMap()) {
+		if (!type_info || !visited_types.insert(type_info).second) {
+			continue;
+		}
+		StructTypeInfo* struct_info = type_info->getStructInfo();
+		if (type_info->is_incomplete_instantiation_) {
+			continue;
+		}
+		admitProgramEntity(struct_info);
+	}
+
+	for (size_t index = 0; index < worklist.size(); ++index) {
+		StructTypeInfo* struct_info = worklist[index];
+		if (!struct_info->own_type_index_.has_value()) {
+			throw InternalError("Program class entity has no owning TypeIndex at the sema/codegen boundary");
+		}
+		const TypeInfo* type_info = tryGetTypeInfo(*struct_info->own_type_index_);
+		if (!type_info || type_info->is_incomplete_instantiation_) {
+			throw InternalError("Program class entity reached the sema/codegen boundary before finalization");
+		}
+		struct_info->markSemaReady();
+
+		auto admitReachableDependency = [&](StructTypeInfo* dependency) {
+			if (!dependency) {
+				return;
+			}
+			if (dependency->own_type_index_.has_value()) {
+				const TypeInfo* dependency_type = tryGetTypeInfo(*dependency->own_type_index_);
+				if (dependency_type && dependency_type->getStructInfo()) {
+					dependency = const_cast<StructTypeInfo*>(dependency_type->getStructInfo());
+				}
+			}
+			if (!dependency->isProgramEntity()) {
+				dependency->classifyParticipation(
+					dependency->enclosing_class_ != nullptr
+						? StructEntityParticipation::NestedProgramEntity
+						: StructEntityParticipation::ProgramEntity);
+			}
+			admitProgramEntity(dependency);
+		};
+		for (const BaseClassSpecifier& base : struct_info->base_classes) {
+			StructTypeInfo* base_info = const_cast<StructTypeInfo*>(
+				tryGetStructTypeInfo(base.type_index));
+			if (!base_info && !base.name.empty()) {
+				auto base_type = getTypesByNameMap().find(
+					StringTable::getOrInternStringHandle(base.name));
+				if (base_type != getTypesByNameMap().end() && base_type->second) {
+					base_info = base_type->second->getStructInfo();
+				}
+			}
+			admitReachableDependency(base_info);
+		}
+		for (const StructMember& member : struct_info->members) {
+			if (!struct_info->isPotentiallyConstructedByDefaultConstructor(member)) {
+				continue;
+			}
+			admitReachableDependency(const_cast<StructTypeInfo*>(
+				tryGetStructTypeInfo(member.type_index)));
+		}
+		for (StructTypeInfo* nested_class : struct_info->nested_classes_) {
+			admitReachableDependency(nested_class);
+		}
+	}
 }
 
 void SemanticAnalysis::normalizeNamespace(const NamespaceDeclarationNode& ns) {

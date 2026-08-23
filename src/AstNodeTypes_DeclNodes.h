@@ -15,6 +15,22 @@ struct StructuralClassValue;
 struct StructTypeInfo;
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 
+// Classification of a class type's participation in the translation unit.
+// This is deliberately independent of AstOwnershipPhase: parser ownership of
+// an AST and eligibility to reach IR are different lifecycle dimensions.
+enum class StructEntityParticipation : uint8_t {
+	Unclassified,
+	ProgramEntity,
+	NestedProgramEntity,
+	LookupProbe,
+	ShapeOnly,
+};
+
+enum class StructSemanticReadiness : uint8_t {
+	AwaitingSema,
+	SemaReady,
+};
+
 // Struct type information
 struct StructTypeInfo {
 	StringHandle name;
@@ -40,6 +56,8 @@ struct StructTypeInfo {
 	bool is_union = false;	   // True if this is a union (all members at offset 0)
 	bool is_final = false;	   // True if this class/struct is declared with 'final' keyword
 	bool needs_default_constructor = false;	// True if struct needs an implicit default constructor
+	StructEntityParticipation entity_participation = StructEntityParticipation::Unclassified;
+	StructSemanticReadiness semantic_readiness = StructSemanticReadiness::AwaitingSema;
 
 	// Deleted special member functions tracking
 	bool has_deleted_default_constructor = false;  // True if default constructor is = delete
@@ -100,6 +118,16 @@ struct StructTypeInfo {
 
 	StringHandle getName() const {
 		return name;
+	}
+
+	void classifyParticipation(StructEntityParticipation participation);
+	void markSemaReady();
+	bool isProgramEntity() const {
+		return entity_participation == StructEntityParticipation::ProgramEntity ||
+			entity_participation == StructEntityParticipation::NestedProgramEntity;
+	}
+	bool isSemaReady() const {
+		return semantic_readiness == StructSemanticReadiness::SemaReady;
 	}
 
 	NamespaceHandle getNamespaceHandle() const {
