@@ -30,7 +30,7 @@
 //
 // 3. **Implementation Functions**:
 //    - generateItaniumMangledName(...) - Itanium C++ ABI (used on Linux/Unix)
-//    - generateMangledNameForConstructor(...) - MSVC constructor mangling
+//    - generateMangledNameForConstructor(...) - target-style constructor mangling
 //    - generateMangledNameForDestructor(...) - MSVC destructor mangling
 //    - MSVC regular function mangling (inline in generateMangledName)
 //
@@ -2499,7 +2499,7 @@ inline MangledName generateMangledNameFromNode(
 // MSVC mangles constructors as ??0ClassName@Namespace@@... where 0 is the constructor marker
 // This is called internally by generateMangledNameFromNode(ConstructorDeclarationNode) when
 // g_mangling_style == ManglingStyle::MSVC
-inline MangledName generateMangledNameForConstructor(
+inline MangledName generateMSVCMangledNameForConstructor(
 	std::string_view struct_name,
 	std::span<const TypeSpecifierNode> param_types,
 	std::span<const std::string_view> namespace_path,
@@ -2541,7 +2541,7 @@ inline MangledName generateMangledNameForConstructor(
 }
 
 // Overload that accepts parameter nodes directly to avoid creating a temporary vector
-inline MangledName generateMangledNameForConstructor(
+inline MangledName generateMSVCMangledNameForConstructor(
 	std::string_view struct_name,
 	std::span<const ASTNode> param_nodes,
 	std::span<const std::string_view> namespace_path,
@@ -2581,6 +2581,71 @@ inline MangledName generateMangledNameForConstructor(
 	builder.append("@Z");  // End marker
 
 	return MangledName(builder.commit());
+}
+
+template <typename ParameterNode>
+inline MangledName generateMangledNameForConstructorForCurrentStyle(
+	StringHandle struct_name,
+	std::span<const ParameterNode> param_types,
+	std::span<const std::string_view> namespace_path,
+	ConstructorVariant constructor_variant) {
+	const std::string_view qualified_name = StringTable::getStringView(struct_name);
+	if (g_mangling_style == ManglingStyle::Itanium) {
+		std::string_view constructor_name = qualified_name;
+		const size_t separator = qualified_name.rfind("::");
+		if (separator != std::string_view::npos) {
+			constructor_name = qualified_name.substr(separator + 2);
+		}
+		TypeSpecifierNode void_return(
+			TypeCategory::Void,
+			TypeQualifier::None,
+			0,
+			Token{},
+			CVQualifier::None);
+		return generateMangledName(
+			constructor_name,
+			void_return,
+			param_types,
+			false,
+			struct_name,
+			namespace_path,
+			Linkage::CPlusPlus,
+			false,
+			false,
+			constructor_variant);
+	}
+	return generateMSVCMangledNameForConstructor(
+		qualified_name,
+		param_types,
+		namespace_path,
+		constructor_variant);
+}
+
+// Generate a constructor symbol from the canonical owning type name without
+// requiring callers to split qualified names, own a declaration node, or
+// select an ABI.
+inline MangledName generateMangledNameForConstructor(
+	StringHandle struct_name,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const std::string_view> namespace_path,
+	ConstructorVariant constructor_variant) {
+	return generateMangledNameForConstructorForCurrentStyle(
+		struct_name,
+		param_types,
+		namespace_path,
+		constructor_variant);
+}
+
+inline MangledName generateMangledNameForConstructor(
+	StringHandle struct_name,
+	std::span<const ASTNode> param_nodes,
+	std::span<const std::string_view> namespace_path,
+	ConstructorVariant constructor_variant) {
+	return generateMangledNameForConstructorForCurrentStyle(
+		struct_name,
+		param_nodes,
+		namespace_path,
+		constructor_variant);
 }
 
 // Generate MSVC mangled name for a destructor
@@ -2623,30 +2688,11 @@ inline MangledName generateMangledNameFromNode(
 	const ConstructorDeclarationNode& ctor_node,
 	std::span<const std::string_view> namespace_path,
 	ConstructorVariant constructor_variant) {
-	// Check mangling style and use appropriate mangler
-	if (g_mangling_style == ManglingStyle::Itanium) {
-		// For Itanium mangling, constructors are regular functions with C1/C2 markers
-		// We need to call the regular mangling function
-		// The constructor name is the same as the class name
-		std::string_view struct_name_sv = StringTable::getStringView(ctor_node.struct_name());
-
-		// Extract the class name (last component after ::)
-		std::string_view class_name = struct_name_sv;
-		auto last_colon = struct_name_sv.rfind("::");
-		if (last_colon != std::string_view::npos) {
-			class_name = struct_name_sv.substr(last_colon + 2);
-		}
-
-		// Create a dummy TypeSpecifierNode for the return type (constructors return void)
-		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
-
-		// Call the regular mangling function with the class name as the function name
-		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
-								   false, ctor_node.struct_name(), namespace_path, Linkage::CPlusPlus, false, false, constructor_variant);
-	} else {
-		// Use MSVC-style constructor mangling
-		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path, constructor_variant);
-	}
+	return generateMangledNameForConstructor(
+		ctor_node.struct_name(),
+		ctor_node.parameter_nodes(),
+		namespace_path,
+		constructor_variant);
 }
 
 // Generate mangled name from a DestructorDeclarationNode

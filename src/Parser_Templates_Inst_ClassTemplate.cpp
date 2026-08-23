@@ -515,10 +515,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				type_info.name_ = inst_handle;
 				auto template_args_info = toTemplateArgInfoList(template_args);
 				InlineVector<StringHandle, 4> placeholder_param_names;
+				InlineVector<TypeIndex, 4> placeholder_param_type_indices;
 				if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 					template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+					const auto& placeholder_params =
+						template_opt->as<TemplateClassDeclarationNode>().template_parameters();
 					placeholder_param_names = collectParamNameHandles(
-						template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+						placeholder_params,
+						template_args.size());
+					placeholder_param_type_indices = collectParamTypeIndices(
+						placeholder_params,
 						template_args.size());
 				}
 				type_info.setTemplateInstantiationInfo(
@@ -526,6 +532,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_args_info);
 				type_info.setInstantiationContext(
 					std::move(placeholder_param_names),
+					std::move(placeholder_param_type_indices),
 					template_args_info,
 					nullptr);
 				getTypesByNameMap()[inst_handle] = &type_info;
@@ -1996,6 +2003,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // Populate type-owned instantiation context
 			struct_type_info.setInstantiationContext(
 				collectParamNameHandles(template_params, template_args.size()),
+				collectParamTypeIndices(template_params, template_args.size()),
 				template_args_info, nullptr);
 
 			// Register class template pack sizes in persistent registry for specializations
@@ -5897,6 +5905,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
 			StringHandle outer_name = outer_binding->param_names[i];
 			const TemplateTypeArg& outer_arg = outer_binding->param_args[i];
+			if (i < outer_binding->params.size()) {
+				if (const TemplateParameterNode* outer_param =
+						tryGetTemplateParameterNode(outer_binding->params[i]);
+					outer_param != nullptr) {
+					effective_template_params.push_back(*outer_param);
+					effective_template_args.push_back(outer_arg);
+					continue;
+				}
+			}
 			Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
 			if (outer_arg.is_value) {
 				TypeSpecifierNode outer_type(
@@ -5908,7 +5925,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				effective_template_params.push_back(TemplateParameterNode(outer_name, outer_type, outer_token));
 			} else {
 				TemplateParameterNode outer_param(outer_name, outer_token);
-				outer_param.set_registered_type_index(outer_arg.type_index.withCategory(outer_arg.typeEnum()));
 				effective_template_params.push_back(outer_param);
 			}
 			effective_template_args.push_back(outer_arg);
@@ -5954,8 +5970,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		buildTemplateArgSubstitutionMaps(
-			template_params,
-			template_args_to_use,
+			effective_template_params,
+			effective_template_args,
 			[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg) {
 				return enrichTemplateArgForParameter(tparam, arg);
 			},
@@ -5963,8 +5979,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			pack_substitution_map,
 			&template_param_order);
 
-		for (size_t i = 0; i < template_params.size(); ++i) {
-			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+		for (size_t i = 0; i < effective_template_params.size(); ++i) {
+			const TemplateParameterNode* tparam = tryGetTemplateParameterNode(effective_template_params[i]);
 			if (tparam == nullptr) {
 				continue;
 			}
@@ -6155,6 +6171,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				effective_template_args.size()));
 	struct_type_info.setInstantiationContext(
 		collectParamNameHandles(
+			effective_template_params,
+			effective_template_args.size()),
+		collectParamTypeIndices(
 			effective_template_params,
 			effective_template_args.size()),
 		instantiation_context_args_info,
@@ -8246,6 +8265,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			nested_type_info.setInstantiationContext(
 				collectParamNameHandles(
+					effective_template_params,
+					effective_template_args.size()),
+				collectParamTypeIndices(
 					effective_template_params,
 					effective_template_args.size()),
 				collectEnrichedTemplateArgInfos(

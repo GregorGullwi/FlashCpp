@@ -87,12 +87,15 @@ Implicit default-constructor lowering consumes this sema-produced, deduplicated
 collection and the `ImplicitDefaultConstructorSemanticRecord` finalized on each
 `StructTypeInfo`. The record distinguishes absence, deletion, an existing AST
 declaration, and the non-AST definition that requires synthetic IR. It also owns
-the ordered base/member initialization plan by referencing resolved base type
-identities with subobject offsets/virtual status and stable member indices with
-array element count/stride. Pattern types, lookup probes, shape-only
-artifacts, and incomplete instantiations therefore cannot enter constructor
-codegen merely because they have a `ConcreteMaterialized` AST or
+the ordered base/member initialization plan through separate complete-object
+virtual-base and base-object direct-base action groups. Those actions reference
+canonical base type identities and subobject offsets; member actions use stable
+member indices with array element count/stride. Pattern types, lookup probes,
+shape-only artifacts, and incomplete instantiations therefore cannot enter
+constructor codegen merely because they have a `ConcreteMaterialized` AST or
 finalized-looking type shape.
+Dependent base identities are resolved through the owning type's instantiation
+context by template-parameter `TypeIndex`, not by parameter or base spelling.
 `normalized_root_nodes_` remains for pointer-keyed root checks, including root
 kinds without type-owned lifecycle storage; it is no longer used to infer which
 class types participate in constructor codegen.
@@ -391,8 +394,9 @@ Moving it requires:
 
 Implicit default-constructor synthesis now crosses the sema/IR boundary through
 `ImplicitDefaultConstructorSemanticRecord`. Sema finalizes existence, deletion,
-the need for a non-AST IR definition, and the base/member initialization plan,
-including base-subobject offsets and array element count/stride;
+the need for a non-AST IR definition, and phase-specific complete-object virtual
+base, base-object direct-base, and member initialization plans, including
+base-subobject offsets and array element count/stride;
 IR no longer scans constructors or interprets `needs_default_constructor` to
 make those decisions. The legacy flag is still written and consulted in
 parser/template compatibility paths, but it has no authority at the sema/IR
@@ -416,10 +420,10 @@ than being guessed in IR.
 
 Deferred alias bases can also reach special-member finalization without a
 concrete base `StructTypeInfo`. The semantic record marks that state explicitly
-with `has_unresolved_base_initialization`; the current compatibility behavior
-omits a base action until the existing template machinery resolves the alias.
-Removing that state requires carrying resolved base identity through deferred
-alias substitution and is tracked as a known issue.
+with `has_unresolved_base_initialization`, and codegen rejects that incomplete
+plan rather than guessing a target from the source spelling or omitting the base
+action. Removing that state requires carrying resolved base identity through
+deferred alias substitution and is tracked as a known issue.
 
 ## Standards endpoint
 

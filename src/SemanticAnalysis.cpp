@@ -3502,6 +3502,66 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 	}
 }
 
+static const TypeInfo* tryResolveCanonicalTypeInfo(
+	TypeIndex type_index,
+	const TypeInfo* context_type_info,
+	int remaining_depth) {
+	if (remaining_depth <= 0 || !type_index.is_valid()) {
+		return nullptr;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(type_index);
+	if (!type_info) {
+		return nullptr;
+	}
+	if (type_info->isDependentPlaceholder()) {
+		const TypeIndex parameter_type_index = type_info->registeredTypeIndex();
+		for (const TypeInfo::InstantiationContext* context =
+				 context_type_info ? context_type_info->instantiationContext() : nullptr;
+			 context;
+			 context = context->parent) {
+			for (const TypeInfo::InstantiationContext::Binding& binding : context->bindings) {
+				if (binding.parameter_type_index != parameter_type_index ||
+					binding.args.size() != 1 ||
+					binding.args[0].is_value) {
+					continue;
+				}
+				return tryResolveCanonicalTypeInfo(
+					binding.args[0].type_index,
+					context_type_info,
+					remaining_depth - 1);
+			}
+		}
+		return nullptr;
+	}
+	if (type_info->getStructInfo()) {
+		return type_info;
+	}
+	if (type_info->isTypeAlias()) {
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(type_index);
+		if (!resolved.type_index.is_valid() || resolved.type_index == type_index) {
+			return nullptr;
+		}
+		return tryResolveCanonicalTypeInfo(
+			resolved.type_index,
+			context_type_info,
+			remaining_depth - 1);
+	}
+	return type_info->is_incomplete_instantiation_ ? nullptr : type_info;
+}
+
+static const StructTypeInfo* tryGetCanonicalStructTypeInfo(
+	TypeIndex type_index,
+	const TypeInfo* context_type_info) {
+	if (!type_index.is_valid()) {
+		return nullptr;
+	}
+	const TypeInfo* type_info = tryResolveCanonicalTypeInfo(
+		type_index,
+		context_type_info,
+		8);
+	return type_info ? type_info->getStructInfo() : nullptr;
+}
+
 void SemanticAnalysis::finalizeCodegenReadyTypes() {
 	std::unordered_set<const TypeInfo*> visited_types;
 	std::vector<StructTypeInfo*> worklist;
@@ -3543,6 +3603,9 @@ void SemanticAnalysis::finalizeCodegenReadyTypes() {
 			if (!dependency) {
 				return;
 			}
+			if (dependency->entity_participation == StructEntityParticipation::TemplatePattern) {
+				return;
+			}
 			if (dependency->own_type_index_.has_value()) {
 				const TypeInfo* dependency_type = tryGetTypeInfo(*dependency->own_type_index_);
 				if (dependency_type && dependency_type->getStructInfo()) {
@@ -3559,14 +3622,7 @@ void SemanticAnalysis::finalizeCodegenReadyTypes() {
 		};
 		for (const BaseClassSpecifier& base : struct_info->base_classes) {
 			StructTypeInfo* base_info = const_cast<StructTypeInfo*>(
-				tryGetStructTypeInfo(base.type_index));
-			if (!base_info && !base.name.empty()) {
-				auto base_type = getTypesByNameMap().find(
-					StringTable::getOrInternStringHandle(base.name));
-				if (base_type != getTypesByNameMap().end() && base_type->second) {
-					base_info = base_type->second->getStructInfo();
-				}
-			}
+				tryGetCanonicalStructTypeInfo(base.type_index, type_info));
 			admitReachableDependency(base_info);
 		}
 		for (const StructMember& member : struct_info->members) {
@@ -3626,37 +3682,50 @@ void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
 		if (!record.exists) {
 			continue;
 		}
+		const TypeInfo* owner_type_info = struct_info.own_type_index_.has_value()
+			? tryGetTypeInfo(*struct_info.own_type_index_)
+			: nullptr;
 
-		for (const BaseClassSpecifier& base : struct_info.base_classes) {
-			const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index);
-			if (!base_info && base.type_index.is_valid()) {
-				const ResolvedAliasTypeInfo resolved_base = resolveAliasTypeInfo(base.type_index);
-				if (resolved_base.terminal_type_info) {
-					base_info = resolved_base.terminal_type_info->getStructInfo();
-				}
-			}
-			if (!base_info && !base.name.empty()) {
-				auto base_type = getTypesByNameMap().find(
-					StringTable::getOrInternStringHandle(base.name));
-				if (base_type != getTypesByNameMap().end() && base_type->second) {
-					base_info = base_type->second->getStructInfo();
-				}
-			}
+		auto appendBaseInitialization = [&](const BaseClassSpecifier& base, auto& initializers) {
+			const StructTypeInfo* base_info =
+				tryGetCanonicalStructTypeInfo(base.type_index, owner_type_info);
 			if (!base_info) {
+				const TypeInfo* unresolved_type = tryGetTypeInfo(base.type_index);
+				FLASH_LOG(Types, Debug,
+					"Unresolved implicit default-constructor base identity: owner=",
+					StringTable::getStringView(struct_info.name),
+					", base=", base.name,
+					", type_index=", base.type_index.index(),
+					", dependent=", unresolved_type && unresolved_type->isDependentPlaceholder(),
+					", incomplete=", unresolved_type && unresolved_type->is_incomplete_instantiation_,
+					", has_struct=", unresolved_type && unresolved_type->getStructInfo(),
+					", alias=", unresolved_type && unresolved_type->isTypeAlias());
 				record.has_unresolved_base_initialization = true;
-				continue;
+				return;
 			}
 			if (!hasUsableDefaultConstructor(*base_info)) {
 				record.is_deleted = true;
-				continue;
+				return;
 			}
 			if (!base_info->own_type_index_.has_value()) {
 				throw InternalError("Implicit default-constructor base plan has no TypeIndex");
 			}
-			record.base_initializers.push_back({
+			initializers.push_back({
 				*base_info->own_type_index_,
-				base.offset,
-				base.is_virtual});
+				base.offset});
+		};
+
+		for (const BaseClassSpecifier& virtual_base : struct_info.virtual_bases) {
+			appendBaseInitialization(
+				virtual_base,
+				record.complete_object_virtual_base_initializers);
+		}
+		for (const BaseClassSpecifier& direct_base : struct_info.base_classes) {
+			if (!direct_base.is_virtual) {
+				appendBaseInitialization(
+					direct_base,
+					record.base_object_direct_base_initializers);
+			}
 		}
 
 		for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {

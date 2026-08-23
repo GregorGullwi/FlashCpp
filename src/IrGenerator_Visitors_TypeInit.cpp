@@ -2139,6 +2139,30 @@ void AstToIr::generateStaticMemberDeclarations() {
 	}
 }
 
+void AstToIr::emitImplicitDefaultBaseConstructorCall(
+	const ImplicitDefaultBaseInitialization& initialization,
+	const Token& source_token) {
+	const TypeInfo* base_type_info = tryGetTypeInfo(initialization.type_index);
+	const StructTypeInfo* base_struct_info =
+		base_type_info ? base_type_info->getStructInfo() : nullptr;
+	if (!base_struct_info ||
+		!base_struct_info->own_type_index_.has_value() ||
+		*base_struct_info->own_type_index_ != initialization.type_index) {
+		throw InternalError("Implicit default-constructor plan has non-canonical base identity");
+	}
+	if (initialization.offset > static_cast<size_t>(std::numeric_limits<int>::max())) {
+		throw InternalError("Implicit default-constructor base offset exceeds IR range");
+	}
+
+	ConstructorCallOp call_op;
+	call_op.object = StringTable::getOrInternStringHandle("this");
+	call_op.base_class_offset = static_cast<int>(initialization.offset);
+	call_op.call_base_object_variant = !base_struct_info->virtual_bases.empty();
+	fillInDefaultConstructorArguments(call_op, *base_struct_info);
+	finalizeConstructorCallOp(call_op, *base_struct_info, source_token);
+	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), source_token));
+}
+
 void AstToIr::generateTrivialDefaultConstructors() {
 	for (const StructTypeInfo* struct_info : sema_.codegenReadyTypes()) {
 		if (!struct_info || !struct_info->isSemaReady() || !struct_info->isProgramEntity()) {
@@ -2167,6 +2191,9 @@ void AstToIr::generateTrivialDefaultConstructors() {
 		if (!default_constructor.exists) {
 			throw InternalError("Sema requested IR for a nonexistent implicit default constructor");
 		}
+		if (default_constructor.has_unresolved_base_initialization) {
+			throw InternalError("Sema exposed an implicit default-constructor plan with unresolved base identity");
+		}
 		if (!default_constructor.is_deleted) {
 			// This constructor is deliberately not represented by a
 			// ConstructorDeclarationNode.  It is a codegen artifact, so do not
@@ -2193,74 +2220,47 @@ void AstToIr::generateTrivialDefaultConstructors() {
 			// Use style-aware mangling that properly handles constructors for both MSVC and Itanium
 			std::vector<TypeSpecifierNode> empty_params; // Explicit type to avoid ambiguity
 			std::vector<std::string_view> empty_namespace_path; // Explicit type to avoid ambiguity
-			std::string_view class_name = StringTable::getStringView(type_info->name());
 
-			// Use the appropriate mangling based on the style
-			if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
-				// MSVC uses dedicated constructor mangling (??0ClassName@@...)
-				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
+			auto mangleSyntheticConstructor = [&](NameMangling::ConstructorVariant variant) {
+				return StringTable::getOrInternStringHandle(
 					NameMangling::generateMangledNameForConstructor(
-						class_name,
+						type_info->name(),
 						empty_params,
 						empty_namespace_path,
-						NameMangling::ConstructorVariant::Complete));
-			} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
-				// Itanium uses regular mangling with class name as function name (produces C1 marker)
-				// Extract the last component for func_name (handles nested classes like "Outer::Inner")
-				std::string_view func_name = class_name;
-				auto last_colon = class_name.rfind("::");
-				if (last_colon != std::string_view::npos) {
-					func_name = class_name.substr(last_colon + 2);
-				}
-				TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
-				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
-					func_name,
-					void_return,
-					empty_params,
-					false, // not variadic
-					type_info->name(), // struct_name
-					empty_namespace_path,
-					Linkage::CPlusPlus,
-					false, // constructors are never const
-					false,
-					NameMangling::ConstructorVariant::Complete));
-			} else {
-				assert(false && "Unhandled name mangling type");
+						variant));
+			};
+
+			ctor_decl_op.mangled_name =
+				mangleSyntheticConstructor(NameMangling::ConstructorVariant::Complete);
+			const bool emit_base_object_variant =
+				!default_constructor.complete_object_virtual_base_initializers.empty();
+			FunctionDeclOp base_object_ctor_decl_op;
+			if (emit_base_object_variant) {
+				base_object_ctor_decl_op = ctor_decl_op;
+				base_object_ctor_decl_op.mangled_name =
+					mangleSyntheticConstructor(NameMangling::ConstructorVariant::BaseObject);
 			}
 
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
 
-			// Lower the base initialization plan exactly as sema published it.
-			for (const ImplicitDefaultBaseInitialization& base_initialization :
-				 default_constructor.base_initializers) {
-				const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_initialization.type_index);
-				if (!base_struct_info) {
-					throw InternalError("Implicit default-constructor base plan has no struct metadata");
+			if (emit_base_object_variant) {
+				for (const ImplicitDefaultBaseInitialization& virtual_base :
+					 default_constructor.complete_object_virtual_base_initializers) {
+					emitImplicitDefaultBaseConstructorCall(virtual_base, Token());
 				}
-						// If the base class has a lazy (unmaterialized) default constructor,
-						// materialize it through sema before emitting the ConstructorCallOp
-						// so codegen does not drive parser-side lazy bookkeeping directly.
-						const StructMemberFunction* base_default_ctor = base_struct_info->findDefaultConstructor();
-						if (base_default_ctor &&
-							base_default_ctor->function_decl.is<ConstructorDeclarationNode>() &&
-							!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_materialized()) {
-							StringHandle base_name = base_struct_info->name;
-							const auto& ctor_decl = base_default_ctor->function_decl.as<ConstructorDeclarationNode>();
-							StringHandle ctor_name = ctor_decl.name();
-							if (base_name.isValid() && ctor_name.isValid()) {
-								sema_.ensureMemberFunctionMaterialized(base_name, ctor_decl);
-							}
-						}
-						ConstructorCallOp call_op;
-						call_op.object = StringTable::getOrInternStringHandle("this");
-						if (base_initialization.offset > static_cast<size_t>(std::numeric_limits<int>::max())) {
-							throw InternalError("Implicit default-constructor base offset exceeds IR range");
-						}
-						call_op.base_class_offset = static_cast<int>(base_initialization.offset);
-						// No arguments for default constructor
-						fillInDefaultConstructorArguments(call_op, *base_struct_info);
-						finalizeConstructorCallOp(call_op, *base_struct_info, Token());
-						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
+
+				ConstructorCallOp base_object_call;
+				base_object_call.object = StringTable::getOrInternStringHandle("this");
+				base_object_call.call_base_object_variant = true;
+				finalizeConstructorCallOp(base_object_call, *struct_info, Token());
+				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_object_call), Token()));
+				emitVoidReturn(Token());
+				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(base_object_ctor_decl_op), Token()));
+			}
+
+			for (const ImplicitDefaultBaseInitialization& direct_base :
+				 default_constructor.base_object_direct_base_initializers) {
+				emitImplicitDefaultBaseConstructorCall(direct_base, Token());
 			}
 
 			// Combine bitfield default initializers into single per-unit stores

@@ -290,4 +290,5 @@ for IR. Sema records this explicitly as
 but cannot yet publish a concrete base-constructor action or determine deletion
 from that base. Preserve the resolved base declaration identity during alias
 substitution, then require semantic special-member finalization to resolve every
-base. Do not move the old name lookup or omission decision back into AstToIr.
+base. Codegen rejects an incomplete plan; do not restore name lookup or silently
+omit the unresolved base action.
