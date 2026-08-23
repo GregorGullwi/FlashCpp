@@ -47,7 +47,11 @@ IR entry                    -> requires SemaNormalized where enforced
 equivalence walk. `exprContainsIdentifier` now uses `AstTraversal`, so it sees
 identifiers and template-parameter references through the same expression
 children (including type operands) rather than maintaining another recursive
-expression list.
+expression list. Lambda capture discovery and explicit-template-argument
+dependence checks also use the schema for structural child recursion, while
+their identifier/lookup/fold policies remain local. Static-member initializer
+rebinding reconstructs non-call expressions through `ExpressionRewriter` and
+retains its specialized call-target selection path.
 
 Two lifecycle regressions cover the current distinction:
 `tests/test_lifecycle_deferred_pack_surface_ret42.cpp` preserves a legitimately
@@ -64,13 +68,26 @@ later upgrade while their parser-owned phase prevents sema consumption.
 Boundary failures report the owner path, role-indexed structural child path,
 node kind, token spelling, line/column, and file index.
 
-This contract is still being tightened. A compiler-level negative regression
-still needs a controlled hook that injects a forbidden helper into a concrete
-body. Codegen-synthetic trivial constructors remain outside AST-root
-normalization, and constructor initializer packs retain a compatibility
-classification until their producers assign `ParserDeferredBody` explicitly.
-Neither case should be treated as evidence that every synthetic artifact has
-crossed the same lifecycle.
+This contract is still being tightened in later cleanup phases. The internal
+doctest regression parses an ordinary concrete function and injects a forbidden
+helper directly into the test-owned AST under a role-bearing expression parent;
+the boundary rejects it before semantic normalization and reports the owner,
+child path, node kind, token, and location without exposing test syntax in the
+production compiler. Codegen-synthetic trivial
+constructors remain outside AST-root normalization by design: their
+`FunctionDeclOp` carries the explicit
+`IrFunctionLifecycle::CodegenSyntheticTrivialConstructor` tag. They are emitted
+from finalized `StructTypeInfo` after semantic analysis; no constructor AST
+root is fabricated or marked normalized. The object converter validates the
+synthetic declaration shape separately from AST-root lifecycle checks.
+Constructor member/base/delegating initializer producers now assign
+`ParserDeferredBody` whenever a top-level pack helper remains and transition
+back to `ConcreteMaterialized` after materialization removes it. Neither case
+should be treated as evidence that every synthetic artifact has crossed the same
+lifecycle. No source-language regression can inspect this internal lifecycle
+tag; the existing template default-member-initializer regressions cover the
+observable constructor behavior, while the IR lifecycle tag and object-
+converter guard cover the metadata invariant directly.
 
 ## Ownership model
 

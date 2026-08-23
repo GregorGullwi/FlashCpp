@@ -129,19 +129,33 @@ unchanged.
 - Added role-indexed boundary paths such as
   `NewExpression.ConstructorArgument[0]`, alongside owner, node kind, token,
   line/column, and file index.
+- Added the internal
+  `SemanticAnalysis:ConcreteBodyRejectsParserOnlyHelperBeforeNormalization`
+  regression in the doctest compiler harness. It parses an ordinary concrete
+  function, injects a forbidden pack helper directly into the test-owned AST
+  under `UnaryOperator.Operand[0]`, and proves rejection before semantic
+  normalization or IR without adding test syntax to the production compiler.
+- Constructor member/base/delegating initializer storage now transitions a
+  parser-owned constructor to `ParserDeferredBody` whenever it retains a
+  top-level pack helper, and returns to `ConcreteMaterialized` after
+  materialization once substitution has removed the pack. The boundary
+  checker no longer relies on a constructor-specific compatibility skip.
 - Added `test_lifecycle_deferred_pack_surface_ret42.cpp` and
   `test_lifecycle_materialized_body_provenance_ret42.cpp` for the deferred and
   concrete-provenance cases.
 
-The Phase 4 exit criterion is not yet fully met. A compiler-level negative test
-still needs a controlled hook that deliberately injects a parser-only helper
-into a concrete body and proves rejection before sema. Codegen-synthetic
-trivial constructors remain outside AST-root normalization and need an explicit
-documented treatment. Constructor initializer packs also retain a compatibility
-classification until their producers assign `ParserDeferredBody` explicitly.
-The current IR checks establish the required guards for ordinary AST roots but
-do not yet prove that every synthetic codegen artifact crossed one uniform
-`SemaNormalized` transition.
+The lifecycle-specific Phase 4 exit criterion is now met: the internal AST
+regression proves rejection before sema/IR, and constructor initializer packs
+carry an explicit parser-owned phase until concrete materialization. Codegen-synthetic
+trivial constructors have an explicit documented treatment: their
+`FunctionDeclOp` carries `IrFunctionLifecycle::CodegenSyntheticTrivialConstructor`,
+and the object converter validates their synthetic declaration shape. They are
+emitted from finalized `StructTypeInfo` after semantic analysis and
+intentionally do not receive `AstOwnershipPhase`, because there is no
+constructor AST root. Their lifecycle tag is compiler-internal and cannot
+be exercised by a source-language test; existing template default-member-
+initializer regressions cover the emitted behavior, while the IR lifecycle tag
+and object-converter guard directly enforce the metadata invariant.
 
 ### Phase 5 implementation-progress record (2026-08-23)
 
@@ -157,13 +171,28 @@ do not yet prove that every synthetic codegen artifact crossed one uniform
   references instead of maintaining a separate recursive expression walk.
 - Duplicate structural equality/hash range helpers were removed where the
   shared schema subsumes them.
+- Lambda implicit-capture discovery in `Parser_Core.cpp` now keeps its local
+  identifier, nested-lambda, and implicit-`this` policy while traversing every
+  expression child through `ExpressionStructure`. The new
+  `test_lambda_capture_new_constructor_arg_ret42.cpp` covers a previously
+  omitted `new` constructor-argument surface.
+- The two explicit-template-argument dependence walkers in
+  `Parser_Templates_Params.cpp` now use the shared schema for their structural
+  child checks while retaining their distinct qualified-name, placeholder-type,
+  and fold policies.
+- `RebindStaticMemberAst::tryRebindExpressionChildren` now reconstructs every
+  non-call expression through the exhaustive `ExpressionRewriter`; calls keep
+  their local static-member target-selection and metadata-copy policy.
 
 The Phase 5 exit criterion is not yet met. Remaining expression-kind switches
-must still be audited across constexpr, dependence classification, cloning,
-and diagnostics; only structural walks should migrate, while pass-specific
-semantic decisions remain local. The lifecycle negative-test and synthetic-
-constructor items above also remain open and are not silently closed by this
-reuse slice.
+in constexpr evaluation, overload form classification, boundary diagnostics,
+and codegen are intentional semantic dispatches. Follow-up review remains for
+the mixed structural/semantic deferred-dependence walk in
+`Parser_Expr_PrimaryExpr.cpp`, static-member call rebinding, and the legacy
+`substitute_template_params_in_expression` path in
+`Parser_Templates_Inst_Substitution.cpp`; those paths should migrate only when
+their lookup and environment policies can be preserved explicitly. Phase 4's
+lifecycle-specific exit criterion is complete independently of this cleanup.
 
 ## Problem statement
 

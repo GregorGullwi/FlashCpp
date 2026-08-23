@@ -2183,11 +2183,17 @@ void AstToIr::generateTrivialDefaultConstructors() {
 
 		// Generate trivial default constructor if no constructor exists and it's not deleted
 		if (!has_constructor && !struct_info->isDefaultConstructorDeleted()) {
+			// This constructor is deliberately not represented by a
+			// ConstructorDeclarationNode.  It is a codegen artifact, so do not
+			// assign it an AstOwnershipPhase. It is emitted from finalized StructTypeInfo
+			// after semantic analysis and carries its separate IR lifecycle tag below.
+
 			FLASH_LOG(Codegen, Debug, "Generating trivial constructor for ", type_name);
 
 			// Use the pattern from visitConstructorDeclarationNode
 			// Create function declaration for constructor
 			FunctionDeclOp ctor_decl_op;
+			ctor_decl_op.lifecycle = IrFunctionLifecycle::CodegenSyntheticTrivialConstructor;
 			ctor_decl_op.function_name = type_info->name();
 			ctor_decl_op.struct_name = type_info->name();
 			ctor_decl_op.return_type_index = nativeTypeIndex(TypeCategory::Void);

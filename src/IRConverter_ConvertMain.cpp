@@ -7490,6 +7490,10 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 		// Use typed payload path
 	const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
+	if (func_decl.lifecycle == IrFunctionLifecycle::CodegenSyntheticTrivialConstructor &&
+		(func_decl.parameters.size() != 0 || !func_decl.is_inline || !func_decl.struct_name.isValid())) {
+		throw InternalError("Malformed codegen-synthetic trivial constructor FunctionDecl");
+	}
 
 		// Use mangled name if available (for member functions like lambda operator()),
 		// otherwise use function_name. This is important for nested lambdas where multiple
