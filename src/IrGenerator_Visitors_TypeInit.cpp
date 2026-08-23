@@ -2231,8 +2231,9 @@ void AstToIr::generateTrivialDefaultConstructors() {
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
 
 			// Lower the base initialization plan exactly as sema published it.
-			for (TypeIndex base_type_index : default_constructor.base_initializers) {
-				const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_type_index);
+			for (const ImplicitDefaultBaseInitialization& base_initialization :
+				 default_constructor.base_initializers) {
+				const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_initialization.type_index);
 				if (!base_struct_info) {
 					throw InternalError("Implicit default-constructor base plan has no struct metadata");
 				}
@@ -2252,6 +2253,10 @@ void AstToIr::generateTrivialDefaultConstructors() {
 						}
 						ConstructorCallOp call_op;
 						call_op.object = StringTable::getOrInternStringHandle("this");
+						if (base_initialization.offset > static_cast<size_t>(std::numeric_limits<int>::max())) {
+							throw InternalError("Implicit default-constructor base offset exceeds IR range");
+						}
+						call_op.base_class_offset = static_cast<int>(base_initialization.offset);
 						// No arguments for default constructor
 						fillInDefaultConstructorArguments(call_op, *base_struct_info);
 						finalizeConstructorCallOp(call_op, *base_struct_info, Token());
@@ -2349,6 +2354,18 @@ void AstToIr::generateTrivialDefaultConstructors() {
 				}
 				if (member.default_initializer.has_value()) {
 					const ASTNode& init_node = member.default_initializer.value();
+					if (member.is_array && init_node.has_value() && init_node.is<InitializerListNode>()) {
+						const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+						if (!tryEmitArrayMemberStores(
+								member,
+								init_list,
+								StringTable::getOrInternStringHandle("this"),
+								0,
+								Token())) {
+							throw InternalError("Semantic array default-member initializer plan could not be lowered");
+						}
+						continue;
+					}
 					if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 						// Use the default member initializer
 						ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());

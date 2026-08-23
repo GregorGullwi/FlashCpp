@@ -88,7 +88,8 @@ collection and the `ImplicitDefaultConstructorSemanticRecord` finalized on each
 `StructTypeInfo`. The record distinguishes absence, deletion, an existing AST
 declaration, and the non-AST definition that requires synthetic IR. It also owns
 the ordered base/member initialization plan by referencing resolved base type
-identities and stable member indices. Pattern types, lookup probes, shape-only
+identities with subobject offsets/virtual status and stable member indices with
+array element count/stride. Pattern types, lookup probes, shape-only
 artifacts, and incomplete instantiations therefore cannot enter constructor
 codegen merely because they have a `ConcreteMaterialized` AST or
 finalized-looking type shape.
@@ -390,7 +391,8 @@ Moving it requires:
 
 Implicit default-constructor synthesis now crosses the sema/IR boundary through
 `ImplicitDefaultConstructorSemanticRecord`. Sema finalizes existence, deletion,
-the need for a non-AST IR definition, and the base/member initialization plan;
+the need for a non-AST IR definition, and the base/member initialization plan,
+including base-subobject offsets and array element count/stride;
 IR no longer scans constructors or interprets `needs_default_constructor` to
 make those decisions. The legacy flag is still written and consulted in
 parser/template compatibility paths, but it has no authority at the sema/IR

@@ -3653,7 +3653,10 @@ void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
 			if (!base_info->own_type_index_.has_value()) {
 				throw InternalError("Implicit default-constructor base plan has no TypeIndex");
 			}
-			record.base_initializers.push_back(*base_info->own_type_index_);
+			record.base_initializers.push_back({
+				*base_info->own_type_index_,
+				base.offset,
+				base.is_virtual});
 		}
 
 		for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
@@ -3661,10 +3664,38 @@ void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
 			if (!struct_info.isPotentiallyConstructedByDefaultConstructor(member)) {
 				continue;
 			}
+			size_t element_count = 1;
+			if (member.is_array) {
+				for (size_t dimension : member.array_dimensions) {
+					element_count *= dimension;
+				}
+			}
+			if (element_count == 0 || member.size % element_count != 0) {
+				throw InternalError("Implicit default-constructor member array has invalid layout metadata");
+			}
+			const size_t element_stride = member.size / element_count;
 			if (member.default_initializer.has_value()) {
+				const ASTNode& initializer = *member.default_initializer;
+				if (member.type_index.category() == TypeCategory::Struct &&
+					member.pointer_depth == 0 && initializer.is<InitializerListNode>() &&
+					initializer.as<InitializerListNode>().initializers().empty()) {
+					const StructTypeInfo* member_info = tryGetStructTypeInfo(member.type_index);
+					if (!member_info || !hasUsableDefaultConstructor(*member_info)) {
+						record.is_deleted = true;
+						continue;
+					}
+					record.member_initializers.push_back({
+						member_index,
+						ImplicitDefaultMemberInitializationKind::DefaultConstructor,
+						element_count,
+						element_stride});
+					continue;
+				}
 				record.member_initializers.push_back({
 					member_index,
-					ImplicitDefaultMemberInitializationKind::DefaultMemberInitializer});
+					ImplicitDefaultMemberInitializationKind::DefaultMemberInitializer,
+					element_count,
+					element_stride});
 				continue;
 			}
 			if (member.is_reference()) {
@@ -3680,20 +3711,11 @@ void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
 				record.is_deleted = true;
 				continue;
 			}
-			size_t element_count = 1;
-			if (member.is_array) {
-				for (size_t dimension : member.array_dimensions) {
-					element_count *= dimension;
-				}
-			}
-			if (element_count == 0 || member.size % element_count != 0) {
-				throw InternalError("Implicit default-constructor member array has invalid layout metadata");
-			}
 			record.member_initializers.push_back({
 				member_index,
 				ImplicitDefaultMemberInitializationKind::DefaultConstructor,
 				element_count,
-				member.size / element_count});
+				element_stride});
 		}
 	}
 }

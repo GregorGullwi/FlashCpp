@@ -44,6 +44,12 @@ struct ImplicitDefaultMemberInitialization {
 	size_t element_stride = 0;
 };
 
+struct ImplicitDefaultBaseInitialization {
+	TypeIndex type_index;
+	size_t offset = 0;
+	bool is_virtual = false;
+};
+
 // Sema-owned description of the implicitly-declared default constructor. The
 // plan refers to existing type/member metadata and normalized initializers; it
 // deliberately does not fabricate a ConstructorDeclarationNode or body.
@@ -53,7 +59,7 @@ struct ImplicitDefaultConstructorSemanticRecord {
 	bool is_deleted = false;
 	bool requires_synthetic_ir = false;
 	bool has_unresolved_base_initialization = false;
-	std::vector<TypeIndex> base_initializers;
+	std::vector<ImplicitDefaultBaseInitialization> base_initializers;
 	std::vector<ImplicitDefaultMemberInitialization> member_initializers;
 };
 
