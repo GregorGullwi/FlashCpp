@@ -31,6 +31,29 @@ enum class StructSemanticReadiness : uint8_t {
 	SemaReady,
 };
 
+enum class ImplicitDefaultMemberInitializationKind : uint8_t {
+	DefaultMemberInitializer,
+	DefaultConstructor,
+};
+
+struct ImplicitDefaultMemberInitialization {
+	size_t member_index = 0;
+	ImplicitDefaultMemberInitializationKind kind =
+		ImplicitDefaultMemberInitializationKind::DefaultMemberInitializer;
+};
+
+// Sema-owned description of the implicitly-declared default constructor. The
+// plan refers to existing type/member metadata and normalized initializers; it
+// deliberately does not fabricate a ConstructorDeclarationNode or body.
+struct ImplicitDefaultConstructorSemanticRecord {
+	bool is_finalized = false;
+	bool exists = false;
+	bool is_deleted = false;
+	bool requires_synthetic_ir = false;
+	std::vector<TypeIndex> base_initializers;
+	std::vector<ImplicitDefaultMemberInitialization> member_initializers;
+};
+
 // Struct type information
 struct StructTypeInfo {
 	StringHandle name;
@@ -58,6 +81,7 @@ struct StructTypeInfo {
 	bool needs_default_constructor = false;	// True if struct needs an implicit default constructor
 	StructEntityParticipation entity_participation = StructEntityParticipation::Unclassified;
 	StructSemanticReadiness semantic_readiness = StructSemanticReadiness::AwaitingSema;
+	ImplicitDefaultConstructorSemanticRecord implicit_default_constructor;
 
 	// Deleted special member functions tracking
 	bool has_deleted_default_constructor = false;  // True if default constructor is = delete

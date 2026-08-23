@@ -39,6 +39,9 @@ public:
 		StringHandle struct_name,
 		ASTNode function_node,
 		NamespaceHandle namespace_handle);
+	void queueConstructorDefinition(
+		const TypeInfo& type_info,
+		const ConstructorDeclarationNode* constructor);
 
 	// ODR-use emission for free inline/__inline definitions: skip bodies until
 	// a call (or other use) marks them needed, then emit from the deferred queue.

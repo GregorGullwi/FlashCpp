@@ -188,6 +188,9 @@ public:
 	std::span<const StructTypeInfo* const> codegenReadyTypes() const {
 		return codegen_ready_types_;
 	}
+	// Refresh sema-owned implicit special-member records after an existing late
+	// materialization gateway admits additional class entities.
+	void finalizeImplicitDefaultConstructors();
 
 	// Look up the semantic slot for an expression node.
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).

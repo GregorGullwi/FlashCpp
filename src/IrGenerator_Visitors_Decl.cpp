@@ -2362,17 +2362,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								if (!inner_ctor) {
 									continue;
 								}
-								// Emit a default-construct for the middle aggregate first (zero-init)
-								ConstructorCallOp mid_ctor_op;
-								mid_ctor_op.object = StringTable::getOrInternStringHandle("this");
-								assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
-								mid_ctor_op.base_class_offset = static_cast<int>(base.offset);
-								mid_ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
-								fillInDefaultConstructorArguments(mid_ctor_op, *base_struct_info);
-								finalizeConstructorCallOp(mid_ctor_op, *base_struct_info, node.name_token());
-								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(mid_ctor_op), node.name_token()));
-
-								// Then forward the args to the inner base at the combined offset
+								// Aggregate initialization constructs the inner base directly. The
+								// middle aggregate's implicit default constructor may be deleted
+								// precisely because that base has no default constructor, so it is
+								// not a separate construction step.
 								const size_t combined_offset = base.offset + inner_base.offset;
 								assert(combined_offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Combined base class offset exceeds int range");
 								ConstructorCallOp inner_ctor_op;
@@ -2411,7 +2404,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							ctor_op.resolved_constructor =
 								resolveCodegenConstructorFromArgs(*base_struct_info, no_arguments);
 							if (ctor_op.resolved_constructor == nullptr &&
-								base_struct_info->needs_default_constructor) {
+								base_struct_info->implicit_default_constructor.requires_synthetic_ir &&
+								!base_struct_info->implicit_default_constructor.is_deleted) {
 								fillInDefaultConstructorArguments(ctor_op, *base_struct_info);
 							}
 							finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
@@ -2589,8 +2583,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						if (member.type_index.category() == TypeCategory::Struct) {
 							const TypeInfo* mti = tryGetTypeInfo(member.type_index);
 							if (mti && mti->getStructInfo() &&
-								mti->getStructInfo()->hasUserDefinedConstructor() &&
-								!mti->getStructInfo()->hasConstructor()) {
+								mti->getStructInfo()->implicit_default_constructor.is_finalized &&
+								mti->getStructInfo()->implicit_default_constructor.is_deleted) {
 								is_implicitly_deleted = true;
 								break;
 							}
@@ -3892,14 +3886,9 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				if (!base_resolution.selected_overload) {
 					continue;
 				}
-				// Emit default-construct for the outer aggregate first (zero-initializes it)
-				ConstructorCallOp outer_ctor_op;
-				outer_ctor_op.object = ret_var;
-				fillInDefaultConstructorArguments(outer_ctor_op, *struct_info);
-				finalizeConstructorCallOp(outer_ctor_op, *struct_info, constructorCallNode.called_from());
-				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(outer_ctor_op), constructorCallNode.called_from()));
-
-				// Then forward args to the base class constructor at its offset
+				// Extended aggregate initialization constructs the selected base
+				// directly; it does not invoke the aggregate's (possibly deleted)
+				// implicit default constructor first.
 				ConstructorCallOp base_ctor_op;
 				base_ctor_op.object = ret_var;
 				assert(base_spec.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");

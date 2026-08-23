@@ -333,14 +333,18 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	TempVar temp = var_counter.next();
 	const auto& initializers = init_list.initializers();
 
-	// Emit constructor call (default ctor to allocate the struct)
-	ConstructorCallOp ctor_op;
-	ctor_op.object = temp;
-	// Keep any callable default-constructor annotation on the temporary object even
-	// when aggregate-style member stores will finish its initialization afterwards.
-	fillInDefaultConstructorArguments(ctor_op, *struct_info);
-	finalizeConstructorCallOp(ctor_op, *struct_info, Token());
-	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+	const bool has_usable_default_constructor =
+		(struct_info->findDefaultConstructor() != nullptr &&
+		 !struct_info->isDefaultConstructorDeleted()) ||
+		(struct_info->implicit_default_constructor.exists &&
+		 !struct_info->implicit_default_constructor.is_deleted);
+	if (has_usable_default_constructor) {
+		ConstructorCallOp ctor_op;
+		ctor_op.object = temp;
+		fillInDefaultConstructorArguments(ctor_op, *struct_info);
+		finalizeConstructorCallOp(ctor_op, *struct_info, Token());
+		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+	}
 
 	// Emit member stores for each initializer
 	const auto& members = struct_info->members;
@@ -1107,13 +1111,23 @@ void AstToIr::finalizeConstructorCallOp(
 	}
 	const bool is_metadata_free_implicit_default_ctor =
 		ctor_op.arguments.empty() &&
-		target_struct_info.findDefaultConstructor() == nullptr &&
-		!target_struct_info.isDefaultConstructorDeleted();
+		target_struct_info.implicit_default_constructor.requires_synthetic_ir &&
+		!target_struct_info.implicit_default_constructor.is_deleted;
 	if (!ctor_op.resolved_constructor && !is_metadata_free_implicit_default_ctor) {
 		throw InternalError(std::string(StringBuilder()
 											.append("ConstructorCallOp missing resolved constructor for '")
 											.append(StringTable::getStringView(target_struct_info.name))
-											.append("'")
+											.append("' (implicit record: finalized=")
+											.append(target_struct_info.implicit_default_constructor.is_finalized ? "true" : "false")
+											.append(", exists=")
+											.append(target_struct_info.implicit_default_constructor.exists ? "true" : "false")
+											.append(", synthetic-ir=")
+											.append(target_struct_info.implicit_default_constructor.requires_synthetic_ir ? "true" : "false")
+											.append(", deleted=")
+											.append(target_struct_info.implicit_default_constructor.is_deleted ? "true" : "false")
+											.append(", arguments=")
+											.append(std::to_string(ctor_op.arguments.size()))
+											.append(")")
 											.commit()));
 	}
 
