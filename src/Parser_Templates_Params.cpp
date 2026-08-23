@@ -117,15 +117,6 @@ TypeInfo& Parser::ensureTemplateParameterTypeRegistration(TemplateParameterNode&
 	}
 
 	if (type_info == nullptr) {
-		if (auto existing_it = getTypesByNameMap().find(tparam.nameHandle());
-			existing_it != getTypesByNameMap().end() &&
-			existing_it->second != nullptr &&
-			existing_it->second->isDependentPlaceholder()) {
-			type_info = existing_it->second;
-		}
-	}
-
-	if (type_info == nullptr) {
 		type_info = &add_template_param_type(
 			tparam.nameHandle(),
 			tparam.kind() == TemplateParameterKind::Template ? TypeCategory::Template : TypeCategory::UserDefined,

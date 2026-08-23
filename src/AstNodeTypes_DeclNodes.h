@@ -22,6 +22,7 @@ enum class StructEntityParticipation : uint8_t {
 	Unclassified,
 	ProgramEntity,
 	NestedProgramEntity,
+	TemplatePattern,
 	LookupProbe,
 	ShapeOnly,
 };
@@ -47,7 +48,6 @@ struct ImplicitDefaultMemberInitialization {
 struct ImplicitDefaultBaseInitialization {
 	TypeIndex type_index;
 	size_t offset = 0;
-	bool is_virtual = false;
 };
 
 // Sema-owned description of the implicitly-declared default constructor. The
@@ -59,8 +59,9 @@ struct ImplicitDefaultConstructorSemanticRecord {
 	bool is_deleted = false;
 	bool requires_synthetic_ir = false;
 	bool has_unresolved_base_initialization = false;
-	std::vector<ImplicitDefaultBaseInitialization> base_initializers;
-	std::vector<ImplicitDefaultMemberInitialization> member_initializers;
+	InlineVector<ImplicitDefaultBaseInitialization, 1> complete_object_virtual_base_initializers;
+	InlineVector<ImplicitDefaultBaseInitialization, 1> base_object_direct_base_initializers;
+	InlineVector<ImplicitDefaultMemberInitialization, 2> member_initializers;
 };
 
 // Struct type information
@@ -1269,15 +1270,16 @@ struct TypeInfo {
 	};
 
  // Canonical template environment owned by instantiated types.
- // Stores both parameter names and concrete arguments so that later phases
- // (codegen, constexpr evaluation) can resolve template bindings without
- // registry-name reconstruction.  For nested types inside a template
- // instantiation, `parent` points to the enclosing type's context.
+ // Stores parameter identities, diagnostic names, and concrete arguments so
+ // later phases can resolve template bindings without registry-name lookup.
+ // For nested types inside a template instantiation, `parent` points to the
+ // enclosing type's context.
 	static constexpr uint32_t kNoTemplateArgs = UINT32_MAX;
 
 	struct InstantiationContext {
 		struct Binding {
 			StringHandle name;
+			TypeIndex parameter_type_index;
 			InlineVector<TemplateArgInfo, 1> args;
 			uint8_t kind = 0; // TemplateParameterKind as uint8
 			bool is_pack = false;
@@ -1392,6 +1394,10 @@ struct TypeInfo {
 
 	// Set the type-owned instantiation context for template instantiations.
 	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
+								 InlineVector<TemplateArgInfo, 4> param_args,
+								 const InstantiationContext* parent);
+	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
+								 InlineVector<TypeIndex, 4> parameter_type_indices,
 								 InlineVector<TemplateArgInfo, 4> param_args,
 								 const InstantiationContext* parent);
 

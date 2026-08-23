@@ -172,6 +172,9 @@ private:
 		ExpressionContext context,
 		const Token& source_token);
 	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
+	void emitImplicitDefaultBaseConstructorCall(
+		const ImplicitDefaultBaseInitialization& initialization,
+		const Token& source_token);
 	void finalizeConstructorCallOp(
 		ConstructorCallOp& ctor_op,
 		const StructTypeInfo& target_struct_info,

@@ -1910,6 +1910,17 @@ void TypeInfo::setEnumInfo(EnumTypeInfo info) {
 void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,
 									   InlineVector<TemplateArgInfo, 4> param_args,
 									   const InstantiationContext* parent) {
+	setInstantiationContext(
+		std::move(param_names),
+		{},
+		std::move(param_args),
+		parent);
+}
+
+void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,
+									   InlineVector<TypeIndex, 4> parameter_type_indices,
+									   InlineVector<TemplateArgInfo, 4> param_args,
+									   const InstantiationContext* parent) {
 	InstantiationContext ctx;
 	ctx.parent = parent;
 	ctx.param_names = param_names;
@@ -1936,6 +1947,7 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 	size_t name_index = 0;
 	while (name_index < param_names.size()) {
 		InlineVector<TemplateArgInfo, 1> binding_args;
+		const size_t binding_parameter_index = name_index;
 		const StringHandle binding_name = param_names[name_index];
 		if (arg_index < stored_param_args.size()) {
 			binding_args.push_back(stored_param_args[arg_index]);
@@ -1962,6 +1974,9 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		if (binding_args.empty()) {
 			TypeInfo::InstantiationContext::Binding empty_pack_binding;
 			empty_pack_binding.name = binding_name;
+			if (binding_parameter_index < parameter_type_indices.size()) {
+				empty_pack_binding.parameter_type_index = parameter_type_indices[binding_parameter_index];
+			}
 			empty_pack_binding.kind = static_cast<uint8_t>(TemplateParameterKind::Type);
 			empty_pack_binding.is_pack = true;
 			ctx.bindings.push_back(std::move(empty_pack_binding));
@@ -1970,6 +1985,9 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 
 		TypeInfo::InstantiationContext::Binding binding;
 		binding.name = binding_name;
+		if (binding_parameter_index < parameter_type_indices.size()) {
+			binding.parameter_type_index = parameter_type_indices[binding_parameter_index];
+		}
 		binding.args = std::move(binding_args);
 		TemplateParameterKind binding_kind = TemplateParameterKind::Type;
 		if (binding.args.front().is_template_template_arg) {

@@ -3755,6 +3755,20 @@ inline InlineVector<StringHandle, 4> collectParamNameHandles(
 }
 
 template <typename ParamContainer>
+inline InlineVector<TypeIndex, 4> collectParamTypeIndices(
+	const ParamContainer& template_params,
+	size_t max_count) {
+	InlineVector<TypeIndex, 4> type_indices;
+	for (size_t i = 0; i < template_params.size() && i < max_count; ++i) {
+		if (const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+			param != nullptr) {
+			type_indices.push_back(param->registered_type_index());
+		}
+	}
+	return type_indices;
+}
+
+template <typename ParamContainer>
 inline InlineVector<TypeInfo::TemplateArgInfo, 4> collectEnrichedTemplateArgInfos(
 	const ParamContainer& template_params,
 	std::span<const TemplateTypeArg> template_args) {

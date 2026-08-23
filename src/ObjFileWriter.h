@@ -401,7 +401,7 @@ public:
 
 			if (name == class_short_name) {
 				// It is a constructor
-				return std::string(NameMangling::generateMangledNameForConstructor(
+				return std::string(NameMangling::generateMSVCMangledNameForConstructor(
 					sig.class_name,
 					sig.parameter_types,
 					{},

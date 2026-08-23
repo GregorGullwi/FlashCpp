@@ -1870,25 +1870,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	{
 		std::vector<std::string_view> empty_namespace_path;
 
-		// Use the appropriate mangling based on the style
-		if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
-				// MSVC uses dedicated constructor mangling (??0ClassName@@...)
-			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
-				NameMangling::generateMangledNameForConstructor(
-					struct_name_for_ctor,
-					node.parameter_nodes(),
-					empty_namespace_path,
-					emit_split_ctor_variants ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete));
-		} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
-				// Itanium uses regular mangling with class name as function name (produces C1 marker)
-			TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
-			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
-				ctor_function_name, return_type, node.parameter_nodes(),
-				false, StringTable::getOrInternStringHandle(struct_name_for_ctor), empty_namespace_path, Linkage::CPlusPlus, false, false,
+		ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
+			NameMangling::generateMangledNameForConstructor(
+				StringTable::getOrInternStringHandle(struct_name_for_ctor),
+				node.parameter_nodes(),
+				empty_namespace_path,
 				emit_split_ctor_variants ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete));
-		} else {
-			assert(false && "Unhandled name mangling type");
-		}
 		current_function_mangled_name_ = ctor_decl_op.mangled_name;
 	}
 

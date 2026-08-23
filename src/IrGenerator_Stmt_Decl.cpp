@@ -3248,7 +3248,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 
 						const bool semantic_plan_requires_call =
-							!implicit_default_constructor.base_initializers.empty() ||
+							!implicit_default_constructor.complete_object_virtual_base_initializers.empty() ||
+							!implicit_default_constructor.base_object_direct_base_initializers.empty() ||
 							!implicit_default_constructor.member_initializers.empty();
 						bool needs_default_ctor_call = !is_implicit_default_ctor ||
 													   semantic_plan_requires_call ||
