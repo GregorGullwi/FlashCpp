@@ -4369,13 +4369,24 @@ ParseResult Parser::parse_extern_block(Linkage linkage) {
 	// Create a block node containing all declarations parsed in this extern block
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 
-	// Move all nodes added during this block into the BlockNode
+	// Move user-written nodes added during this block into the BlockNode. Late
+	// materialization may be triggered while parsing a declaration in the block;
+	// those roots belong to the parser's top-level lifecycle and must remain in
+	// ast_nodes_ (and in the pending semantic-root queue).
 	for (size_t i = ast_size_before; i < ast_nodes_.size(); ++i) {
-		block_ref.add_statement_node(ast_nodes_[i]);
+		if (!isInstantiatedNode(i)) {
+			block_ref.add_statement_node(ast_nodes_[i]);
+		}
 	}
 
-	// Remove those nodes from ast_nodes_ since they're now in the BlockNode
-	ast_nodes_.resize(ast_size_before);
+	// Remove only user nodes from the tail, keeping the tracking vector and
+	// instantiated-node identity set consistent.
+	for (size_t i = ast_nodes_.size(); i > ast_size_before;) {
+		--i;
+		if (!isInstantiatedNode(i)) {
+			eraseTopLevelNodeAt(i);
+		}
+	}
 
 	return ParseResult::success(block_node);
 }

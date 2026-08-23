@@ -591,8 +591,12 @@ public:
 		if (definition_block_.has_value())
 			return false;
 		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
+		assert(ownership_phase_ != AstOwnershipPhase::SemaNormalized);
 		definition_block_.emplace(block_node);
 		body_state_tag_ = BodyStateTag::Materialized;
+		if (ownership_phase_ != AstOwnershipPhase::ParserPattern) {
+			ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
+		}
 		return true;
 	}
 
@@ -656,9 +660,15 @@ public:
 
 	void set_template_parameters(const InlineVector<TemplateParameterNode, 4>& template_parameters) {
 		template_parameters_ = template_parameters;
+		if (ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			ownership_phase_ = AstOwnershipPhase::ParserPattern;
+		}
 	}
 	void add_template_parameter(const TemplateParameterNode& template_parameter) {
 		template_parameters_.push_back(template_parameter);
+		if (ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			ownership_phase_ = AstOwnershipPhase::ParserPattern;
+		}
 	}
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	bool has_template_parameters() const { return !template_parameters_.empty(); }
@@ -668,12 +678,25 @@ public:
 	void set_template_body_position(SaveHandle handle) {
 		has_template_body_ = true;
 		template_body_position_handle_ = handle;
+		if (!is_materialized() && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			ownership_phase_ = AstOwnershipPhase::ParserDeferredBody;
+		}
 	}
 	bool has_template_body_position() const { return has_template_body_; }
 	SaveHandle template_body_position() const { return template_body_position_handle_; }
+
+	AstOwnershipPhase ownership_phase() const { return ownership_phase_; }
+	void markSemaNormalized() const {
+		assert(ownership_phase_ == AstOwnershipPhase::ConcreteMaterialized ||
+			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
+		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
+	}
 	void set_template_initializer_list_position(SaveHandle handle) {
 		has_template_initializer_list_ = true;
 		template_initializer_list_position_handle_ = handle;
+		if (!is_materialized() && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			ownership_phase_ = AstOwnershipPhase::ParserDeferredBody;
+		}
 	}
 	bool has_template_initializer_list_position() const { return has_template_initializer_list_; }
 	SaveHandle template_initializer_list_position() const { return template_initializer_list_position_handle_; }
@@ -743,6 +766,7 @@ private:
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	TypeIndex owning_type_index_{};
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
+	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 	StringHandle lazy_member_registry_key_;
 	const ConstructorDeclarationNode* template_specialization_source_ = nullptr;
@@ -767,8 +791,10 @@ public:
 		if (definition_block_.has_value())
 			return false;
 		assert(body_state_tag_ != BodyStateTag::FailedSubstitution);
+		assert(ownership_phase_ != AstOwnershipPhase::SemaNormalized);
 		definition_block_.emplace(block_node);
 		body_state_tag_ = BodyStateTag::Materialized;
+		ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 		return true;
 	}
 
@@ -805,9 +831,19 @@ public:
 	void set_template_body_position(SaveHandle handle) {
 		template_body_position_ = handle;
 		has_template_body_ = true;
+		if (!is_materialized() && ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
+			ownership_phase_ = AstOwnershipPhase::ParserDeferredBody;
+		}
 	}
 	bool has_template_body_position() const { return has_template_body_; }
 	SaveHandle template_body_position() const { return template_body_position_; }
+
+	AstOwnershipPhase ownership_phase() const { return ownership_phase_; }
+	void markSemaNormalized() const {
+		assert(ownership_phase_ == AstOwnershipPhase::ConcreteMaterialized ||
+			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
+		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
+	}
 
 	// Diagnostic payload for a cached substitution failure.
 	StringHandle substitution_failure_reason() const { return substitution_failure_reason_; }
@@ -893,6 +929,7 @@ private:
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
+	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 	SaveHandle template_body_position_;  // Saved position for deferred template body replay
 	bool has_template_body_ = false;	 // True when template_body_position_ is valid
@@ -1430,6 +1467,7 @@ public:
 	void mark_shape_only() {
 		assert(struct_body_state_tag_ == StructBodyStateTag::NotMaterialized);
 		struct_body_state_tag_ = StructBodyStateTag::ShapeOnly;
+		ownership_phase_ = AstOwnershipPhase::ParserPattern;
 	}
 
 	void mark_materialized() {
@@ -1437,6 +1475,14 @@ public:
 			   struct_body_state_tag_ == StructBodyStateTag::ShapeOnly ||
 			   struct_body_state_tag_ == StructBodyStateTag::Materialized);
 		struct_body_state_tag_ = StructBodyStateTag::Materialized;
+		ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
+	}
+
+	AstOwnershipPhase ownership_phase() const { return ownership_phase_; }
+	void markSemaNormalized() const {
+		assert(ownership_phase_ == AstOwnershipPhase::ConcreteMaterialized ||
+			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
+		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
 	}
 
 	void mark_failed_substitution(StringHandle reason) {
@@ -1507,6 +1553,7 @@ private:
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	StructBodyStateTag struct_body_state_tag_ = StructBodyStateTag::NotMaterialized;
+	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle struct_substitution_failure_reason_;  // Populated iff struct_body_state_tag_ == FailedSubstitution
 };
 

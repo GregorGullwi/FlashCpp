@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-08-22
+**Last Updated:** 2026-08-23
 
 This document is intentionally forward-looking. It should capture the current
 ownership model, the invariants future work can rely on, and the next cleanup
@@ -14,6 +14,63 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - parser builds syntax, symbols, and template-instantiation scaffolding
 - `SemanticAnalysis::run()` normalizes post-parse semantics
 - `AstToIr` is expected to lower from sema-owned facts, not reconstruct them
+
+## AST lifecycle and sema boundary
+
+Body-bearing declaration roots now carry an explicit `AstOwnershipPhase`,
+separate from template-source provenance:
+
+- `ParserPattern` is the parser-owned template pattern;
+- `ParserDeferredBody` is a parser-owned body retained for later replay;
+- `ConcreteMaterialized` is a concrete instantiated root awaiting sema;
+- `SemaNormalized` is a root that completed semantic normalization.
+
+Saved template body/initializer positions and template-pattern identity remain
+provenance. They may survive on a concrete materialized clone for replay and
+diagnostics and no longer, by themselves, justify skipping the pre-sema
+boundary check. The checker uses ownership phase and inspects concrete roots,
+including concrete bodies that retain deferred-template provenance. Parser
+patterns and genuinely deferred bodies remain exempt until materialization.
+
+The current transitions are:
+
+```text
+parse pattern/deferred body -> ParserPattern or ParserDeferredBody
+concrete instantiation      -> ConcreteMaterialized
+boundary validation         -> ConcreteMaterialized (validated)
+successful sema normalization -> SemaNormalized
+IR entry                    -> requires SemaNormalized where enforced
+```
+
+`ExpressionStructure` is also the canonical structural child schema used by
+`AstTraversal`, the pre-sema boundary checker, and the Phase 5 expression
+equivalence walk. `exprContainsIdentifier` now uses `AstTraversal`, so it sees
+identifiers and template-parameter references through the same expression
+children (including type operands) rather than maintaining another recursive
+expression list.
+
+Two lifecycle regressions cover the current distinction:
+`tests/test_lifecycle_deferred_pack_surface_ret42.cpp` preserves a legitimately
+deferred pack surface, while
+`tests/test_lifecycle_materialized_body_provenance_ret42.cpp` requires a
+materialized out-of-line template body with deferred provenance to normalize
+and lower successfully.
+
+Late-materialized registration now rejects parser-pattern/deferred callable
+roots, asserts that top-level tracking stays synchronized, and preserves
+registered late roots when `extern` linkage blocks move user declarations into
+their block node. Shape-only/forward struct identities remain registerable for
+later upgrade while their parser-owned phase prevents sema consumption.
+Boundary failures report the owner path, role-indexed structural child path,
+node kind, token spelling, line/column, and file index.
+
+This contract is still being tightened. A compiler-level negative regression
+still needs a controlled hook that injects a forbidden helper into a concrete
+body. Codegen-synthetic trivial constructors remain outside AST-root
+normalization, and constructor initializer packs retain a compatibility
+classification until their producers assign `ParserDeferredBody` explicitly.
+Neither case should be treated as evidence that every synthetic artifact has
+crossed the same lifecycle.
 
 ## Ownership model
 

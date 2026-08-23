@@ -139,8 +139,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	if (node.is_template_pattern()) {
 		return;
 	}
-	if (!node.is_materialized() && !node.is_implicit()) {
-		return;
+	if (!node.is_materialized()) {
+		if (!node.is_implicit()) {
+			return;
+		}
+	} else if (!node.is_implicit() &&
+		node.ownership_phase() != AstOwnershipPhase::SemaNormalized) {
+		throw InternalError("IR function root entered code generation before semantic normalization");
 	}
 	const FunctionDeclarationNode* saved_current_function_node = current_function_node_;
 	current_function_node_ = &node;
@@ -1777,8 +1782,13 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	// Implicit constructors might not have a body if trivial, but we must emit the symbol
 	// so the linker can find it if referenced.
 	// Proceed to generate an empty function body.
-	if (!node.is_materialized() && !node.is_implicit()) {
-		return;
+	if (!node.is_materialized()) {
+		if (!node.is_implicit()) {
+			return;
+		}
+	} else if (!node.is_implicit() &&
+		node.ownership_phase() != AstOwnershipPhase::SemaNormalized) {
+		throw InternalError("IR constructor root entered code generation before semantic normalization");
 	}
 
 	// Phase 16: track whether sema normalized this constructor body.
@@ -3270,6 +3280,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
 	if (!node.is_materialized())
 		return;
+	if (node.ownership_phase() != AstOwnershipPhase::SemaNormalized) {
+		throw InternalError("IR destructor root entered code generation before semantic normalization");
+	}
 
 	// track whether sema normalized this destructor body.
 	sema_normalized_current_function_ =

@@ -1,8 +1,10 @@
 #include "TemplateExpressionEquivalence.h"
 #include "CompileError.h"
+#include "ExpressionStructure.h"
 #include "TemplateRegistry_Types.h"
 #include "TemplateTypes.h"
 #include <cstring>
+#include <vector>
 
 namespace FlashCpp {
 
@@ -29,26 +31,38 @@ bool equalTemplateArgInfoIdentity(
 	const TypeInfo::TemplateArgInfo& rhs);
 size_t hashTemplateArgInfoIdentity(const TypeInfo::TemplateArgInfo& arg);
 
-template <typename Range>
-bool equalAstRange(const Range& lhs, const Range& rhs) {
-	if (lhs.size() != rhs.size()) {
+using StructuralExpressionChild = std::pair<ExpressionStructure::ExpressionChildRole, ASTNode>;
+
+std::vector<StructuralExpressionChild> collectStructuralExpressionChildren(const ASTNode& node) {
+	std::vector<StructuralExpressionChild> children;
+	ExpressionStructure::visitExpressionChildren(
+		node,
+		[&children](ExpressionStructure::ExpressionChildRole role, const ASTNode& child) {
+			children.emplace_back(role, child);
+		});
+	return children;
+}
+
+bool equalStructuralExpressionChildren(const ASTNode& lhs, const ASTNode& rhs) {
+	const auto lhs_children = collectStructuralExpressionChildren(lhs);
+	const auto rhs_children = collectStructuralExpressionChildren(rhs);
+	if (lhs_children.size() != rhs_children.size()) {
 		return false;
 	}
-	for (size_t i = 0; i < lhs.size(); ++i) {
-		if (!equalDependentExpressionIdentityImpl(lhs[i], rhs[i])) {
+	for (size_t i = 0; i < lhs_children.size(); ++i) {
+		if (lhs_children[i].first != rhs_children[i].first ||
+			!equalDependentExpressionIdentityImpl(lhs_children[i].second, rhs_children[i].second)) {
 			return false;
 		}
 	}
 	return true;
 }
 
-template <typename Range>
-size_t hashAstRange(const Range& range) {
-	size_t seed = std::hash<size_t>{}(range.size());
-	for (const ASTNode& node : range) {
-		hashCombine(seed, hashDependentExpressionIdentityImpl(node));
+void hashStructuralExpressionChildren(size_t& seed, const ASTNode& node) {
+	for (const auto& [role, child] : collectStructuralExpressionChildren(node)) {
+		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(role)));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(child));
 	}
-	return seed;
 }
 
 template <typename Range>
@@ -413,18 +427,13 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			lhs_qualified->hasDependentQualifiedName() != rhs_qualified->hasDependentQualifiedName()) {
 			return false;
 		}
-		if (lhs_qualified->has_template_arguments() &&
-			!equalAstRange(
-				lhs_qualified->template_arguments(),
-				rhs_qualified->template_arguments())) {
-			return false;
-		}
 		if (!lhs_qualified->hasDependentQualifiedName()) {
-			return true;
+			return equalStructuralExpressionChildren(lhs, rhs);
 		}
 		return equalDependentQualifiedNameRecord(
 			*lhs_qualified->dependentQualifiedName(),
-			*rhs_qualified->dependentQualifiedName());
+			*rhs_qualified->dependentQualifiedName()) &&
+			equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const NumericLiteralNode* lhs_numeric = tryGetNode<NumericLiteralNode>(lhs)) {
 		const NumericLiteralNode* rhs_numeric = tryGetNode<NumericLiteralNode>(rhs);
@@ -445,8 +454,7 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 		const BinaryOperatorNode* rhs_binary = tryGetNode<BinaryOperatorNode>(rhs);
 		return rhs_binary != nullptr &&
 			   lhs_binary->op() == rhs_binary->op() &&
-			   equalDependentExpressionIdentityImpl(lhs_binary->get_lhs(), rhs_binary->get_lhs()) &&
-			   equalDependentExpressionIdentityImpl(lhs_binary->get_rhs(), rhs_binary->get_rhs());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const UnaryOperatorNode* lhs_unary = tryGetNode<UnaryOperatorNode>(lhs)) {
 		const UnaryOperatorNode* rhs_unary = tryGetNode<UnaryOperatorNode>(rhs);
@@ -454,28 +462,25 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			   lhs_unary->op() == rhs_unary->op() &&
 			   lhs_unary->is_prefix() == rhs_unary->is_prefix() &&
 			   lhs_unary->is_builtin_addressof() == rhs_unary->is_builtin_addressof() &&
-			   equalDependentExpressionIdentityImpl(lhs_unary->get_operand(), rhs_unary->get_operand());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const TernaryOperatorNode* lhs_ternary = tryGetNode<TernaryOperatorNode>(lhs)) {
 		const TernaryOperatorNode* rhs_ternary = tryGetNode<TernaryOperatorNode>(rhs);
 		return rhs_ternary != nullptr &&
-			   equalDependentExpressionIdentityImpl(lhs_ternary->condition(), rhs_ternary->condition()) &&
-			   equalDependentExpressionIdentityImpl(lhs_ternary->true_expr(), rhs_ternary->true_expr()) &&
-			   equalDependentExpressionIdentityImpl(lhs_ternary->false_expr(), rhs_ternary->false_expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const MemberAccessNode* lhs_member = tryGetNode<MemberAccessNode>(lhs)) {
 		const MemberAccessNode* rhs_member = tryGetNode<MemberAccessNode>(rhs);
 		return rhs_member != nullptr &&
 			   lhs_member->is_arrow() == rhs_member->is_arrow() &&
 			   lhs_member->member_name() == rhs_member->member_name() &&
-			   equalDependentExpressionIdentityImpl(lhs_member->object(), rhs_member->object());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const PointerToMemberAccessNode* lhs_member_ptr = tryGetNode<PointerToMemberAccessNode>(lhs)) {
 		const PointerToMemberAccessNode* rhs_member_ptr = tryGetNode<PointerToMemberAccessNode>(rhs);
 		return rhs_member_ptr != nullptr &&
 			   lhs_member_ptr->is_arrow() == rhs_member_ptr->is_arrow() &&
-			   equalDependentExpressionIdentityImpl(lhs_member_ptr->object(), rhs_member_ptr->object()) &&
-			   equalDependentExpressionIdentityImpl(lhs_member_ptr->member_pointer(), rhs_member_ptr->member_pointer());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const PseudoDestructorCallNode* lhs_pseudo_dtor = tryGetNode<PseudoDestructorCallNode>(lhs)) {
 		const PseudoDestructorCallNode* rhs_pseudo_dtor = tryGetNode<PseudoDestructorCallNode>(rhs);
@@ -483,19 +488,18 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			   lhs_pseudo_dtor->is_arrow_access() == rhs_pseudo_dtor->is_arrow_access() &&
 			   lhs_pseudo_dtor->qualified_type_name() == rhs_pseudo_dtor->qualified_type_name() &&
 			   lhs_pseudo_dtor->type_name() == rhs_pseudo_dtor->type_name() &&
-			   equalDependentExpressionIdentityImpl(lhs_pseudo_dtor->object(), rhs_pseudo_dtor->object());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const ArraySubscriptNode* lhs_subscript = tryGetNode<ArraySubscriptNode>(lhs)) {
 		const ArraySubscriptNode* rhs_subscript = tryGetNode<ArraySubscriptNode>(rhs);
 		return rhs_subscript != nullptr &&
-			   equalDependentExpressionIdentityImpl(lhs_subscript->array_expr(), rhs_subscript->array_expr()) &&
-			   equalDependentExpressionIdentityImpl(lhs_subscript->index_expr(), rhs_subscript->index_expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const SizeofExprNode* lhs_sizeof = tryGetNode<SizeofExprNode>(lhs)) {
 		const SizeofExprNode* rhs_sizeof = tryGetNode<SizeofExprNode>(rhs);
 		return rhs_sizeof != nullptr &&
 			   lhs_sizeof->is_type() == rhs_sizeof->is_type() &&
-			   equalDependentExpressionIdentityImpl(lhs_sizeof->type_or_expr(), rhs_sizeof->type_or_expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const SizeofPackNode* lhs_sizeof_pack = tryGetNode<SizeofPackNode>(lhs)) {
 		const SizeofPackNode* rhs_sizeof_pack = tryGetNode<SizeofPackNode>(rhs);
@@ -506,30 +510,26 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 		const AlignofExprNode* rhs_alignof = tryGetNode<AlignofExprNode>(rhs);
 		return rhs_alignof != nullptr &&
 			   lhs_alignof->is_type() == rhs_alignof->is_type() &&
-			   equalDependentExpressionIdentityImpl(lhs_alignof->type_or_expr(), rhs_alignof->type_or_expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const NoexceptExprNode* lhs_noexcept = tryGetNode<NoexceptExprNode>(lhs)) {
 		const NoexceptExprNode* rhs_noexcept = tryGetNode<NoexceptExprNode>(rhs);
 		return rhs_noexcept != nullptr &&
-			   equalDependentExpressionIdentityImpl(lhs_noexcept->expr(), rhs_noexcept->expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const OffsetofExprNode* lhs_offsetof = tryGetNode<OffsetofExprNode>(lhs)) {
 		const OffsetofExprNode* rhs_offsetof = tryGetNode<OffsetofExprNode>(rhs);
 		return rhs_offsetof != nullptr &&
-			   equalTypeSpecifierIdentityImpl(lhs_offsetof->type_node(), rhs_offsetof->type_node()) &&
-			   equalTokenValueRange(lhs_offsetof->member_path(), rhs_offsetof->member_path());
+			   equalTokenValueRange(lhs_offsetof->member_path(), rhs_offsetof->member_path()) &&
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const TypeTraitExprNode* lhs_type_trait = tryGetNode<TypeTraitExprNode>(lhs)) {
 		const TypeTraitExprNode* rhs_type_trait = tryGetNode<TypeTraitExprNode>(rhs);
 		return rhs_type_trait != nullptr &&
 			   lhs_type_trait->kind() == rhs_type_trait->kind() &&
 			   lhs_type_trait->has_type() == rhs_type_trait->has_type() &&
-			   (!lhs_type_trait->has_type() ||
-				equalDependentExpressionIdentityImpl(lhs_type_trait->type_node(), rhs_type_trait->type_node())) &&
 			   lhs_type_trait->has_second_type() == rhs_type_trait->has_second_type() &&
-			   (!lhs_type_trait->has_second_type() ||
-				equalDependentExpressionIdentityImpl(lhs_type_trait->second_type_node(), rhs_type_trait->second_type_node())) &&
-			   equalAstRange(lhs_type_trait->additional_type_nodes(), rhs_type_trait->additional_type_nodes());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const NewExpressionNode* lhs_new = tryGetNode<NewExpressionNode>(lhs)) {
 		const NewExpressionNode* rhs_new = tryGetNode<NewExpressionNode>(rhs);
@@ -537,48 +537,39 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			   lhs_new->is_array() == rhs_new->is_array() &&
 			   lhs_new->has_value_init() == rhs_new->has_value_init() &&
 			   lhs_new->is_brace_init() == rhs_new->is_brace_init() &&
-			   equalDependentExpressionIdentityImpl(lhs_new->type_node(), rhs_new->type_node()) &&
-			   lhs_new->size_expr().has_value() == rhs_new->size_expr().has_value() &&
-			   (!lhs_new->size_expr().has_value() ||
-				equalDependentExpressionIdentityImpl(*lhs_new->size_expr(), *rhs_new->size_expr())) &&
-			   equalAstRange(lhs_new->constructor_args(), rhs_new->constructor_args()) &&
-			   equalAstRange(lhs_new->placement_args(), rhs_new->placement_args());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const DeleteExpressionNode* lhs_delete = tryGetNode<DeleteExpressionNode>(lhs)) {
 		const DeleteExpressionNode* rhs_delete = tryGetNode<DeleteExpressionNode>(rhs);
 		return rhs_delete != nullptr &&
 			   lhs_delete->is_array() == rhs_delete->is_array() &&
-			   equalDependentExpressionIdentityImpl(lhs_delete->expr(), rhs_delete->expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const StaticCastNode* lhs_static_cast = tryGetNode<StaticCastNode>(lhs)) {
 		const StaticCastNode* rhs_static_cast = tryGetNode<StaticCastNode>(rhs);
 		return rhs_static_cast != nullptr &&
-			   equalTypeSpecifierIdentityImpl(lhs_static_cast->target_type(), rhs_static_cast->target_type()) &&
-			   equalDependentExpressionIdentityImpl(lhs_static_cast->expr(), rhs_static_cast->expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const DynamicCastNode* lhs_dynamic_cast = tryGetNode<DynamicCastNode>(lhs)) {
 		const DynamicCastNode* rhs_dynamic_cast = tryGetNode<DynamicCastNode>(rhs);
 		return rhs_dynamic_cast != nullptr &&
-			   equalTypeSpecifierIdentityImpl(lhs_dynamic_cast->target_type(), rhs_dynamic_cast->target_type()) &&
-			   equalDependentExpressionIdentityImpl(lhs_dynamic_cast->expr(), rhs_dynamic_cast->expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const ConstCastNode* lhs_const_cast = tryGetNode<ConstCastNode>(lhs)) {
 		const ConstCastNode* rhs_const_cast = tryGetNode<ConstCastNode>(rhs);
 		return rhs_const_cast != nullptr &&
-			   equalTypeSpecifierIdentityImpl(lhs_const_cast->target_type(), rhs_const_cast->target_type()) &&
-			   equalDependentExpressionIdentityImpl(lhs_const_cast->expr(), rhs_const_cast->expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const ReinterpretCastNode* lhs_reinterpret_cast = tryGetNode<ReinterpretCastNode>(lhs)) {
 		const ReinterpretCastNode* rhs_reinterpret_cast = tryGetNode<ReinterpretCastNode>(rhs);
 		return rhs_reinterpret_cast != nullptr &&
-			   equalTypeSpecifierIdentityImpl(lhs_reinterpret_cast->target_type(), rhs_reinterpret_cast->target_type()) &&
-			   equalDependentExpressionIdentityImpl(lhs_reinterpret_cast->expr(), rhs_reinterpret_cast->expr());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const TypeidNode* lhs_typeid = tryGetNode<TypeidNode>(lhs)) {
 		const TypeidNode* rhs_typeid = tryGetNode<TypeidNode>(rhs);
 		return rhs_typeid != nullptr &&
 			   lhs_typeid->is_type() == rhs_typeid->is_type() &&
-			   equalDependentExpressionIdentityImpl(lhs_typeid->operand(), rhs_typeid->operand());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const LambdaExpressionNode* lhs_lambda = tryGetNode<LambdaExpressionNode>(lhs)) {
 		const LambdaExpressionNode* rhs_lambda = tryGetNode<LambdaExpressionNode>(rhs);
@@ -629,47 +620,40 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			   lhs_fold->direction() == rhs_fold->direction() &&
 			   lhs_fold->type() == rhs_fold->type() &&
 			   lhs_fold->has_complex_pack_expr() == rhs_fold->has_complex_pack_expr() &&
-			   (!lhs_fold->has_complex_pack_expr() ||
-				equalDependentExpressionIdentityImpl(*lhs_fold->pack_expr(), *rhs_fold->pack_expr())) &&
 			   lhs_fold->init_expr().has_value() == rhs_fold->init_expr().has_value() &&
-			   (!lhs_fold->init_expr().has_value() ||
-				equalDependentExpressionIdentityImpl(*lhs_fold->init_expr(), *rhs_fold->init_expr()));
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const PackExpansionExprNode* lhs_pack_expansion = tryGetNode<PackExpansionExprNode>(lhs)) {
 		const PackExpansionExprNode* rhs_pack_expansion = tryGetNode<PackExpansionExprNode>(rhs);
+		(void)lhs_pack_expansion;
 		return rhs_pack_expansion != nullptr &&
-			   equalDependentExpressionIdentityImpl(lhs_pack_expansion->pattern(), rhs_pack_expansion->pattern());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const InitializerListConstructionNode* lhs_init_list = tryGetNode<InitializerListConstructionNode>(lhs)) {
 		const InitializerListConstructionNode* rhs_init_list = tryGetNode<InitializerListConstructionNode>(rhs);
+		(void)lhs_init_list;
 		return rhs_init_list != nullptr &&
-			   equalDependentExpressionIdentityImpl(lhs_init_list->element_type(), rhs_init_list->element_type()) &&
-			   equalDependentExpressionIdentityImpl(lhs_init_list->target_type(), rhs_init_list->target_type()) &&
-			   equalAstRange(lhs_init_list->elements(), rhs_init_list->elements());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const ThrowExpressionNode* lhs_throw = tryGetNode<ThrowExpressionNode>(lhs)) {
 		const ThrowExpressionNode* rhs_throw = tryGetNode<ThrowExpressionNode>(rhs);
 		return rhs_throw != nullptr &&
 			   lhs_throw->is_rethrow() == rhs_throw->is_rethrow() &&
 			   lhs_throw->expression().has_value() == rhs_throw->expression().has_value() &&
-			   (!lhs_throw->expression().has_value() ||
-				equalDependentExpressionIdentityImpl(*lhs_throw->expression(), *rhs_throw->expression()));
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const CallExprNode* lhs_call = tryGetNode<CallExprNode>(lhs)) {
 		const CallExprNode* rhs_call = tryGetNode<CallExprNode>(rhs);
 		return rhs_call != nullptr &&
 			   equalCalleeDescriptorIdentity(lhs_call->callee(), rhs_call->callee()) &&
 			   lhs_call->has_receiver() == rhs_call->has_receiver() &&
-			   (!lhs_call->has_receiver() ||
-				equalDependentExpressionIdentityImpl(lhs_call->receiver(), rhs_call->receiver())) &&
-			   equalAstRange(lhs_call->arguments(), rhs_call->arguments()) &&
-			   equalAstRange(lhs_call->template_arguments(), rhs_call->template_arguments());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (const ConstructorCallNode* lhs_ctor = tryGetNode<ConstructorCallNode>(lhs)) {
 		const ConstructorCallNode* rhs_ctor = tryGetNode<ConstructorCallNode>(rhs);
+		(void)lhs_ctor;
 		return rhs_ctor != nullptr &&
-			   equalTypeSpecifierIdentityImpl(lhs_ctor->type_node(), rhs_ctor->type_node()) &&
-			   equalAstRange(lhs_ctor->arguments(), rhs_ctor->arguments());
+			   equalStructuralExpressionChildren(lhs, rhs);
 	}
 	if (!isSupportedDependentExpressionIdentityNode(lhs)) {
 		throwUnsupportedDependentExpressionIdentityNode("equalDependentExpressionIdentity(lhs)", lhs);
@@ -699,13 +683,11 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 		hashCombine(seed, std::hash<NamespaceHandle>{}(qualified->namespace_handle()));
 		hashCombineStringView(seed, qualified->name());
 		hashCombine(seed, std::hash<bool>{}(qualified->has_template_arguments()));
-		if (qualified->has_template_arguments()) {
-			hashCombine(seed, hashAstRange(qualified->template_arguments()));
-		}
 		hashCombine(seed, std::hash<bool>{}(qualified->hasDependentQualifiedName()));
 		if (qualified->hasDependentQualifiedName()) {
 			hashCombine(seed, hashDependentQualifiedNameRecord(*qualified->dependentQualifiedName()));
 		}
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const NumericLiteralNode* numeric = tryGetNode<NumericLiteralNode>(node)) {
@@ -726,8 +708,7 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 	if (const BinaryOperatorNode* binary = tryGetNode<BinaryOperatorNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(7);
 		hashCombineStringView(seed, binary->op());
-		hashCombine(seed, hashDependentExpressionIdentityImpl(binary->get_lhs()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(binary->get_rhs()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const UnaryOperatorNode* unary = tryGetNode<UnaryOperatorNode>(node)) {
@@ -735,28 +716,26 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 		hashCombineStringView(seed, unary->op());
 		hashCombine(seed, std::hash<bool>{}(unary->is_prefix()));
 		hashCombine(seed, std::hash<bool>{}(unary->is_builtin_addressof()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(unary->get_operand()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const TernaryOperatorNode* ternary = tryGetNode<TernaryOperatorNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(9);
-		hashCombine(seed, hashDependentExpressionIdentityImpl(ternary->condition()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(ternary->true_expr()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(ternary->false_expr()));
+		(void)ternary;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const MemberAccessNode* member = tryGetNode<MemberAccessNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(10);
 		hashCombine(seed, std::hash<bool>{}(member->is_arrow()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(member->object()));
 		hashCombineStringView(seed, member->member_name());
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const PointerToMemberAccessNode* member_ptr = tryGetNode<PointerToMemberAccessNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(11);
 		hashCombine(seed, std::hash<bool>{}(member_ptr->is_arrow()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(member_ptr->object()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(member_ptr->member_pointer()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const PseudoDestructorCallNode* pseudo_dtor = tryGetNode<PseudoDestructorCallNode>(node)) {
@@ -764,19 +743,19 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 		hashCombine(seed, std::hash<bool>{}(pseudo_dtor->is_arrow_access()));
 		hashCombine(seed, std::hash<StringHandle>{}(pseudo_dtor->qualified_type_name()));
 		hashCombineStringView(seed, pseudo_dtor->type_name());
-		hashCombine(seed, hashDependentExpressionIdentityImpl(pseudo_dtor->object()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const ArraySubscriptNode* subscript = tryGetNode<ArraySubscriptNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(13);
-		hashCombine(seed, hashDependentExpressionIdentityImpl(subscript->array_expr()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(subscript->index_expr()));
+		(void)subscript;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const SizeofExprNode* sizeof_expr = tryGetNode<SizeofExprNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(14);
 		hashCombine(seed, std::hash<bool>{}(sizeof_expr->is_type()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(sizeof_expr->type_or_expr()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const SizeofPackNode* sizeof_pack = tryGetNode<SizeofPackNode>(node)) {
@@ -787,82 +766,71 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 	if (const AlignofExprNode* alignof_expr = tryGetNode<AlignofExprNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(16);
 		hashCombine(seed, std::hash<bool>{}(alignof_expr->is_type()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(alignof_expr->type_or_expr()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const NoexceptExprNode* noexcept_expr = tryGetNode<NoexceptExprNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(17);
-		hashCombine(seed, hashDependentExpressionIdentityImpl(noexcept_expr->expr()));
+		(void)noexcept_expr;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const OffsetofExprNode* offsetof_expr = tryGetNode<OffsetofExprNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(18);
-		hashCombine(seed, hashTypeSpecifierIdentityImpl(offsetof_expr->type_node()));
 		hashCombine(seed, hashTokenValueRange(offsetof_expr->member_path()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const TypeTraitExprNode* type_trait = tryGetNode<TypeTraitExprNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(19);
 		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(type_trait->kind())));
 		hashCombine(seed, std::hash<bool>{}(type_trait->has_type()));
-		if (type_trait->has_type()) {
-			hashCombine(seed, hashDependentExpressionIdentityImpl(type_trait->type_node()));
-		}
 		hashCombine(seed, std::hash<bool>{}(type_trait->has_second_type()));
-		if (type_trait->has_second_type()) {
-			hashCombine(seed, hashDependentExpressionIdentityImpl(type_trait->second_type_node()));
-		}
-		hashCombine(seed, hashAstRange(type_trait->additional_type_nodes()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const NewExpressionNode* new_expr = tryGetNode<NewExpressionNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(20);
-		hashCombine(seed, hashDependentExpressionIdentityImpl(new_expr->type_node()));
 		hashCombine(seed, std::hash<bool>{}(new_expr->is_array()));
 		hashCombine(seed, std::hash<bool>{}(new_expr->has_value_init()));
 		hashCombine(seed, std::hash<bool>{}(new_expr->is_brace_init()));
-		hashCombine(seed, std::hash<bool>{}(new_expr->size_expr().has_value()));
-		if (new_expr->size_expr().has_value()) {
-			hashCombine(seed, hashDependentExpressionIdentityImpl(*new_expr->size_expr()));
-		}
-		hashCombine(seed, hashAstRange(new_expr->constructor_args()));
-		hashCombine(seed, hashAstRange(new_expr->placement_args()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const DeleteExpressionNode* delete_expr = tryGetNode<DeleteExpressionNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(21);
 		hashCombine(seed, std::hash<bool>{}(delete_expr->is_array()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(delete_expr->expr()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const StaticCastNode* static_cast_expr = tryGetNode<StaticCastNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(22);
-		hashCombine(seed, hashTypeSpecifierIdentityImpl(static_cast_expr->target_type()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(static_cast_expr->expr()));
+		(void)static_cast_expr;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const DynamicCastNode* dynamic_cast_expr = tryGetNode<DynamicCastNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(23);
-		hashCombine(seed, hashTypeSpecifierIdentityImpl(dynamic_cast_expr->target_type()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(dynamic_cast_expr->expr()));
+		(void)dynamic_cast_expr;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const ConstCastNode* const_cast_expr = tryGetNode<ConstCastNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(24);
-		hashCombine(seed, hashTypeSpecifierIdentityImpl(const_cast_expr->target_type()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(const_cast_expr->expr()));
+		(void)const_cast_expr;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const ReinterpretCastNode* reinterpret_cast_expr = tryGetNode<ReinterpretCastNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(25);
-		hashCombine(seed, hashTypeSpecifierIdentityImpl(reinterpret_cast_expr->target_type()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(reinterpret_cast_expr->expr()));
+		(void)reinterpret_cast_expr;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const TypeidNode* typeid_expr = tryGetNode<TypeidNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(26);
 		hashCombine(seed, std::hash<bool>{}(typeid_expr->is_type()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(typeid_expr->operand()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const LambdaExpressionNode* lambda = tryGetNode<LambdaExpressionNode>(node)) {
@@ -901,51 +869,40 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(fold->direction())));
 		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(fold->type())));
 		hashCombine(seed, std::hash<bool>{}(fold->has_complex_pack_expr()));
-		if (fold->has_complex_pack_expr()) {
-			hashCombine(seed, hashDependentExpressionIdentityImpl(*fold->pack_expr()));
-		}
 		hashCombine(seed, std::hash<bool>{}(fold->init_expr().has_value()));
-		if (fold->init_expr().has_value()) {
-			hashCombine(seed, hashDependentExpressionIdentityImpl(*fold->init_expr()));
-		}
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const PackExpansionExprNode* pack_expansion = tryGetNode<PackExpansionExprNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(30);
-		hashCombine(seed, hashDependentExpressionIdentityImpl(pack_expansion->pattern()));
+		(void)pack_expansion;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const InitializerListConstructionNode* init_list = tryGetNode<InitializerListConstructionNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(31);
-		hashCombine(seed, hashDependentExpressionIdentityImpl(init_list->element_type()));
-		hashCombine(seed, hashDependentExpressionIdentityImpl(init_list->target_type()));
-		hashCombine(seed, hashAstRange(init_list->elements()));
+		(void)init_list;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const ThrowExpressionNode* throw_expr = tryGetNode<ThrowExpressionNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(32);
 		hashCombine(seed, std::hash<bool>{}(throw_expr->is_rethrow()));
 		hashCombine(seed, std::hash<bool>{}(throw_expr->expression().has_value()));
-		if (throw_expr->expression().has_value()) {
-			hashCombine(seed, hashDependentExpressionIdentityImpl(*throw_expr->expression()));
-		}
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const CallExprNode* call = tryGetNode<CallExprNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(33);
 		hashCombine(seed, hashCalleeDescriptorIdentity(call->callee()));
 		hashCombine(seed, std::hash<bool>{}(call->has_receiver()));
-		if (call->has_receiver()) {
-			hashCombine(seed, hashDependentExpressionIdentityImpl(call->receiver()));
-		}
-		hashCombine(seed, hashAstRange(call->arguments()));
-		hashCombine(seed, hashAstRange(call->template_arguments()));
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	if (const ConstructorCallNode* ctor = tryGetNode<ConstructorCallNode>(node)) {
 		size_t seed = std::hash<uint8_t>{}(34);
-		hashCombine(seed, hashTypeSpecifierIdentityImpl(ctor->type_node()));
-		hashCombine(seed, hashAstRange(ctor->arguments()));
+		(void)ctor;
+		hashStructuralExpressionChildren(seed, node);
 		return seed;
 	}
 	throwUnsupportedDependentExpressionIdentityNode("hashDependentExpressionIdentity", node);

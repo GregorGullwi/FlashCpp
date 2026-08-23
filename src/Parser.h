@@ -3106,6 +3106,7 @@ public:
 	/// that currently use `ast_nodes_.push_back(...)` during initial parsing
 	/// should migrate to this helper.
 	void appendUserNode(const ASTNode& node) {
+		assertTopLevelNodeTrackingSynchronized();
 		ast_nodes_.push_back(node);
 		ast_node_is_instantiated_.push_back(0);
 	}
@@ -3113,6 +3114,7 @@ public:
 	/// Erase the top-level AST node at `index`, keeping the parallel
 	/// instantiation-tag vector in sync. Used by token-save rollback.
 	void eraseTopLevelNodeAt(size_t index) {
+		assertTopLevelNodeTrackingSynchronized();
 		if (index >= ast_nodes_.size()) {
 			return;
 		}
@@ -3136,6 +3138,8 @@ public:
 	/// base-class helper recursion) may reach the same freshly-created struct;
 	/// silently double-pushing would produce LNK2005 at codegen time.
 	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
+		assertTopLevelNodeTrackingSynchronized();
+		validateLateMaterializedTopLevelNode(node);
 		if (const void* key = node.raw_pointer()) {
 			auto [_, inserted] = instantiated_node_keys_.insert(key);
 			if (!inserted) {
@@ -3154,6 +3158,8 @@ public:
 	/// Does NOT normalize immediately - use for dependencies that must be processed first.
 	/// Idempotent by raw_pointer() identity (see registerLateMaterializedTopLevelNode).
 	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
+		assertTopLevelNodeTrackingSynchronized();
+		validateLateMaterializedTopLevelNode(node);
 		if (const void* key = node.raw_pointer()) {
 			auto [_, inserted] = instantiated_node_keys_.insert(key);
 			if (!inserted) {
@@ -3180,6 +3186,41 @@ public:
 		registerLateMaterializedTopLevelNodeFront(node);
 		normalizePendingSemanticRoots();
 	}
+
+private:
+	void assertTopLevelNodeTrackingSynchronized() const {
+		if (ast_nodes_.size() != ast_node_is_instantiated_.size()) {
+			throw InternalError("AST top-level node tracking vectors are out of sync");
+		}
+	}
+
+	void validateLateMaterializedTopLevelNode(const ASTNode& node) const {
+		if (!node.has_value()) {
+			throw InternalError("Cannot register an empty late-materialized AST root");
+		}
+
+		const auto rejectParserOwnedRoot = [](AstOwnershipPhase phase) {
+			return phase == AstOwnershipPhase::ParserPattern ||
+				phase == AstOwnershipPhase::ParserDeferredBody;
+		};
+		if (node.is<FunctionDeclarationNode>() &&
+			rejectParserOwnedRoot(node.as<FunctionDeclarationNode>().ownership_phase())) {
+			throw InternalError("Parser-owned function root entered late-materialization registration");
+		}
+		if (node.is<ConstructorDeclarationNode>() &&
+			rejectParserOwnedRoot(node.as<ConstructorDeclarationNode>().ownership_phase())) {
+			throw InternalError("Parser-owned constructor root entered late-materialization registration");
+		}
+		if (node.is<DestructorDeclarationNode>() &&
+			rejectParserOwnedRoot(node.as<DestructorDeclarationNode>().ownership_phase())) {
+			throw InternalError("Parser-owned destructor root entered late-materialization registration");
+		}
+		// Shape-only and forward class-template instantiations are registered so
+		// their stable identity can be upgraded later. Their parser-owned phase
+		// keeps the boundary checker and sema from consuming them prematurely.
+	}
+
+public:
 	void registerLateMaterializedOwningStructRoot(StringHandle struct_name) {
 		if (!struct_name.isValid()) {
 			return;

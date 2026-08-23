@@ -117,6 +117,13 @@ void AstToIr::visit(const ASTNode& node) {
 	if (!node.has_value()) {
 		return;
 	}
+	const bool has_unnormalized_root = node.is<StructDeclarationNode>()
+		? node.as<StructDeclarationNode>().is_materialized() &&
+			node.as<StructDeclarationNode>().ownership_phase() != AstOwnershipPhase::SemaNormalized
+		: node.is<NamespaceDeclarationNode>() && !sema_.hasNormalizedRoot(node);
+	if (has_unnormalized_root) {
+		throw InternalError("IR root entered code generation before semantic normalization");
+	}
 
 	if (node.is<StructDeclarationNode>() || node.is<NamespaceDeclarationNode>()) {
 		// Top-level/file-scope structs and namespace-contained structs should never
