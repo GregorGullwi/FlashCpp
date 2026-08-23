@@ -1635,6 +1635,44 @@ std::string TypeSpecifierNode::getReadableString() const {
 
 // StructTypeInfo method implementations
 
+void StructTypeInfo::classifyParticipation(StructEntityParticipation participation) {
+	if (participation == StructEntityParticipation::Unclassified) {
+		throw InternalError("StructTypeInfo cannot transition back to Unclassified participation");
+	}
+	if (entity_participation == participation) {
+		return;
+	}
+
+	const bool can_promote_probe =
+		entity_participation == StructEntityParticipation::Unclassified ||
+		entity_participation == StructEntityParticipation::LookupProbe ||
+		entity_participation == StructEntityParticipation::ShapeOnly;
+	const bool promotes_to_program =
+		participation == StructEntityParticipation::ProgramEntity ||
+		participation == StructEntityParticipation::NestedProgramEntity;
+	const bool refines_program_nesting =
+		entity_participation == StructEntityParticipation::ProgramEntity &&
+		participation == StructEntityParticipation::NestedProgramEntity;
+	const bool materializes_shape_as_probe =
+		entity_participation == StructEntityParticipation::ShapeOnly &&
+		participation == StructEntityParticipation::LookupProbe;
+	if ((can_promote_probe && promotes_to_program) ||
+		(entity_participation == StructEntityParticipation::Unclassified) ||
+		refines_program_nesting || materializes_shape_as_probe) {
+		entity_participation = participation;
+		return;
+	}
+
+	throw InternalError("Invalid StructTypeInfo participation transition");
+}
+
+void StructTypeInfo::markSemaReady() {
+	if (!isProgramEntity()) {
+		throw InternalError("Only program class entities can become sema-ready for codegen");
+	}
+	semantic_readiness = StructSemanticReadiness::SemaReady;
+}
+
 const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
 	for (const auto& func : member_functions) {
 		if (func.is_constructor) {

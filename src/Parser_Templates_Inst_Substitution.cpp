@@ -6060,6 +6060,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// If no constructor was defined, we should synthesize a default one
 	// For now, mark that we need one and it will be generated in codegen
 	struct_info->needs_default_constructor = !has_constructor;
+	struct_info->classifyParticipation(currentStructEntityParticipation(false));
 	FLASH_LOG(Templates, Trace, "Full spec has constructor: ", has_constructor ? "yes" : "no, needs default");
 
 	struct_type_info.attachStructInfo(*struct_info);

@@ -235,6 +235,35 @@ TemplateInstantiationAttemptScope::~TemplateInstantiationAttemptScope() {
 	}
 }
 
+void Parser::promoteCachedClassTemplateInstantiationForCurrentUse(
+	TypeInfo* type_info,
+	const ASTNode* cached_node) {
+	if (template_instantiation_mode_ != TemplateInstantiationMode::HardUse) {
+		return;
+	}
+	if ((!type_info || !type_info->getStructInfo()) && cached_node &&
+		cached_node->is<StructDeclarationNode>()) {
+		auto type_it = getTypesByNameMap().find(
+			cached_node->as<StructDeclarationNode>().name());
+		if (type_it != getTypesByNameMap().end()) {
+			type_info = type_it->second;
+		}
+	}
+	if (!type_info || !type_info->getStructInfo()) {
+		return;
+	}
+
+	StructTypeInfo* struct_info = type_info->getStructInfo();
+	const bool is_nested = struct_info->enclosing_class_ != nullptr ||
+		(cached_node && cached_node->is<StructDeclarationNode>() &&
+			cached_node->as<StructDeclarationNode>().is_nested());
+	struct_info->classifyParticipation(currentStructEntityParticipation(is_nested));
+	if (cached_node && cached_node->is<StructDeclarationNode>() &&
+		cached_node->as<StructDeclarationNode>().is_materialized()) {
+		registerLateMaterializedTopLevelNode(*cached_node);
+	}
+}
+
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(ClassTemplateInstantiation);
@@ -350,6 +379,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (cached_is_shape_only || cached_failed_substitution) {
 						return cached;
 					}
+					promoteCachedClassTemplateInstantiationForCurrentUse(nullptr, &*cached);
 					return std::nullopt;
 				}
 			}
@@ -566,6 +596,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (cached_is_shape_only || cached_failed_substitution) {
 					return cached;
 				}
+				promoteCachedClassTemplateInstantiationForCurrentUse(nullptr, &*cached);
 				return std::nullopt; // Already instantiated and committed globally
 			}
 		}
@@ -1506,8 +1537,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				"Type-map hit for '{}' is backed by a ShapeOnly instantiation — re-entering full instantiation",
 				StringTable::getStringView(instantiated_name));
 		} else {
-		PROFILE_TEMPLATE_CACHE_HIT(instantiated_name);
-		return std::nullopt;
+			PROFILE_TEMPLATE_CACHE_HIT(instantiated_name);
+			promoteCachedClassTemplateInstantiationForCurrentUse(
+				existing_type->second,
+				cached_node);
+			return std::nullopt;
 		}
 	}
 	PROFILE_TEMPLATE_CACHE_MISS(instantiated_name);
@@ -1796,6 +1830,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Trace, "Found ShapeOnly instantiation with filled-in defaults; re-entering full instantiation");
 			} else {
 				FLASH_LOG(Templates, Trace, "Found existing instantiation with filled-in defaults");
+				promoteCachedClassTemplateInstantiationForCurrentUse(
+					existing_type_with_defaults->second,
+					cached_node);
 				return std::nullopt;
 			}
 		}
@@ -5000,6 +5037,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Commit point: state transition NotMaterialized|ShapeOnly -> ShapeOnly|Materialized.
 			// ShapeOnly   -> mode is ShapeOnly (shape probe, no commit side effects).
 			// Materialized -> mode is HardUse or SoftProbe (full commit, all artifacts registered).
+			struct_info->classifyParticipation(currentStructEntityParticipation(
+				instantiated_struct.as<StructDeclarationNode>().is_nested()));
 			if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 				instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
 			} else {
@@ -6051,6 +6090,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			FLASH_LOG(Templates, Trace, "Type already exists from ShapeOnly instantiation, continuing to upgrade");
 		} else {
 			FLASH_LOG(Templates, Trace, "Type already exists, returning nullopt");
+			promoteCachedClassTemplateInstantiationForCurrentUse(
+				existing_type->second,
+				cached_node);
 			// Already instantiated, return the existing struct node
 			// We need to find the struct node in the AST
 			// For now, just return nullopt and let the type lookup handle it
@@ -13083,6 +13125,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Commit point: state transition NotMaterialized|ShapeOnly -> ShapeOnly|Materialized.
 	// ShapeOnly   -> mode is ShapeOnly (shape probe, no commit side effects).
 	// Materialized -> mode is HardUse or SoftProbe (full commit, all artifacts registered).
+	struct_info_ptr->classifyParticipation(currentStructEntityParticipation(
+		instantiated_struct.as<StructDeclarationNode>().is_nested()));
 	if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 		instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
 	} else {

@@ -68,6 +68,30 @@ later upgrade while their parser-owned phase prevents sema consumption.
 Boundary failures report the owner path, role-indexed structural child path,
 node kind, token spelling, line/column, and file index.
 
+Class-type participation is tracked separately on `StructTypeInfo` through
+`StructEntityParticipation`. Ordinary and nested program entities are distinct
+from lookup probes and shape-only artifacts even when all of them have a
+concrete-looking type payload. Template-instantiation finalization classifies
+the entity from the active instantiation mode; a later hard use may promote a
+probe/shape entity to a program entity. Semantic normalization then marks the
+type `SemaReady` and publishes it through `SemanticAnalysis::codegenReadyTypes()`.
+Nested program entities enter the same collection when sema recursively walks
+their enclosing class, without requiring a separate top-level root identity.
+Hard-use cache hits promote earlier lookup-probe/shape classifications and
+re-register their materialized root through the late-root gateway. At the final
+sema/codegen boundary, sema closes program participation over base classes,
+potentially default-constructed data members, and nested classes; this covers
+IR-reachable dependencies that do not have an independent top-level root.
+
+Implicit trivial-default-constructor lowering consumes this sema-produced,
+deduplicated collection instead of discovering work by scanning the global type
+name registry. Pattern types, lookup probes, shape-only artifacts, and
+incomplete instantiations therefore cannot enter constructor codegen merely
+because they have a `ConcreteMaterialized` AST or finalized-looking type shape.
+`normalized_root_nodes_` remains for pointer-keyed root checks, including root
+kinds without type-owned lifecycle storage; it is no longer used to infer which
+class types participate in constructor codegen.
+
 This contract is still being tightened in later cleanup phases. The internal
 doctest regression parses an ordinary concrete function and injects a forbidden
 helper directly into the test-owned AST under a role-bearing expression parent;
@@ -77,7 +101,7 @@ production compiler. Codegen-synthetic trivial
 constructors remain outside AST-root normalization by design: their
 `FunctionDeclOp` carries the explicit
 `IrFunctionLifecycle::CodegenSyntheticTrivialConstructor` tag. They are emitted
-from finalized `StructTypeInfo` after semantic analysis; no constructor AST
+from sema-ready `StructTypeInfo` program entities after semantic analysis; no constructor AST
 root is fabricated or marked normalized. The object converter validates the
 synthetic declaration shape separately from AST-root lifecycle checks.
 Constructor member/base/delegating initializer producers now assign
@@ -356,6 +380,17 @@ Moving it requires:
    otherwise). That logic should move with the check and be deleted from
    AstToIr once the sema-side checker owns it; AstToIr keeps at most an
    assertion.
+
+### 8. Move implicit special-member synthesis into sema
+
+The type-participation/readiness split makes constructor discovery
+authoritative, but `needs_default_constructor` is still parser metadata and IR
+still decides whether to create the implicit constructor declaration/body.
+Sema should eventually synthesize an explicit special-member semantic record
+(without requiring a fabricated AST body), including deletion and member/base
+initialization decisions. IR should only lower that record. Until then,
+`IrFunctionLifecycle::CodegenSyntheticTrivialConstructor` remains the explicit
+bridge for this one non-AST function source.
 
 ## Standards endpoint
 

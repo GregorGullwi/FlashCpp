@@ -2920,6 +2920,23 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	bool shouldCommitTemplateInstantiationArtifacts() const {
 		return template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly;
 	}
+	StructEntityParticipation currentStructEntityParticipation(bool is_nested) const {
+		switch (template_instantiation_mode_) {
+		case TemplateInstantiationMode::HardUse:
+			return is_nested
+				? StructEntityParticipation::NestedProgramEntity
+				: StructEntityParticipation::ProgramEntity;
+		case TemplateInstantiationMode::SoftProbe:
+		case TemplateInstantiationMode::HardUseCandidateProbe:
+			return StructEntityParticipation::LookupProbe;
+		case TemplateInstantiationMode::ShapeOnly:
+			return StructEntityParticipation::ShapeOnly;
+		}
+		throw InternalError("Unhandled template instantiation mode for struct participation");
+	}
+	void promoteCachedClassTemplateInstantiationForCurrentUse(
+		TypeInfo* type_info,
+		const ASTNode* cached_node);
 	bool isHardUseLikeInstantiationMode() const;
 	bool isTemplateInstantiationFailureProbeMode() const;
 	TemplateSubstitutionFailurePolicy currentTemplateSubstitutionFailurePolicy() const;
