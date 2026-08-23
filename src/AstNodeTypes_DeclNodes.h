@@ -40,6 +40,8 @@ struct ImplicitDefaultMemberInitialization {
 	size_t member_index = 0;
 	ImplicitDefaultMemberInitializationKind kind =
 		ImplicitDefaultMemberInitializationKind::DefaultMemberInitializer;
+	size_t element_count = 1;
+	size_t element_stride = 0;
 };
 
 // Sema-owned description of the implicitly-declared default constructor. The
@@ -50,6 +52,7 @@ struct ImplicitDefaultConstructorSemanticRecord {
 	bool exists = false;
 	bool is_deleted = false;
 	bool requires_synthetic_ir = false;
+	bool has_unresolved_base_initialization = false;
 	std::vector<TypeIndex> base_initializers;
 	std::vector<ImplicitDefaultMemberInitialization> member_initializers;
 };

@@ -12,12 +12,13 @@ struct Member {
 
 template<typename T>
 struct Derived : Base<T> {
-	Member member;
+	Member members[2];
 	unsigned bits : 4 = 3;
-	char tail = 21;
+	char tail = 10;
 };
 
 int main() {
 	Derived<int> value;
-	return value.base_value + value.member.value + value.bits + value.tail;
+	return value.base_value + value.members[0].value + value.members[1].value +
+		value.bits + value.tail;
 }
