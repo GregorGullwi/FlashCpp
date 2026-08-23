@@ -789,7 +789,19 @@ struct FunctionParam {
 };
 
 // Function declaration
+// Most function declarations originate from an AST root that semantic analysis
+// normalized before IR generation.  A trivial default constructor is the one
+// intentional exception: codegen synthesizes its complete body directly from
+// a sema-normalized StructTypeInfo and there is no constructor AST root to
+// normalize.  Keep that distinction explicit instead of overloading
+// AstOwnershipPhase for a non-AST artifact.
+enum class IrFunctionLifecycle : uint8_t {
+	SemaNormalizedAst,
+	CodegenSyntheticTrivialConstructor,
+};
+
 struct FunctionDeclOp {
+	IrFunctionLifecycle lifecycle = IrFunctionLifecycle::SemaNormalizedAst;
 	SizeInBits return_size_in_bits;
 	PointerDepth return_pointer_depth = PointerDepth{};
 	TypeIndex return_type_index{};  // TypeCategory embedded; replaces Type return_type

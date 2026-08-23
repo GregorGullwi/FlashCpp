@@ -520,29 +520,6 @@ const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructType
 	return nullptr;
 }
 
-static bool hasTopLevelPackExpansionInConstructorInitializers(const ConstructorDeclarationNode& ctor) {
-	for (const auto& member_init : ctor.member_initializers()) {
-		if (isTopLevelPackExpansionExpr(member_init.initializer_expr)) {
-			return true;
-		}
-	}
-	for (const auto& base_init : ctor.base_initializers()) {
-		for (const auto& arg : base_init.arguments) {
-			if (isTopLevelPackExpansionExpr(arg)) {
-				return true;
-			}
-		}
-	}
-	if (ctor.delegating_initializer().has_value()) {
-		for (const auto& arg : ctor.delegating_initializer()->arguments) {
-			if (isTopLevelPackExpansionExpr(arg)) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
 void setMaterializedTypeSpecifierSize(TypeSpecifierNode& type_node) {
 	int size_bits = 0;
 	if (type_node.reference_qualifier() != ReferenceQualifier::None ||
@@ -1252,6 +1229,33 @@ private:
 	}
 };
 
+void appendPostParseBoundarySampleDetails(
+	std::string& message,
+	const PostParseBoundarySample* sample) {
+	if (sample == nullptr) {
+		return;
+	}
+	message += " [node kind=";
+	message += sample->node_kind;
+	message += ", owner=";
+	message += sample->owner_path.isValid()
+		? std::string(StringTable::getStringView(sample->owner_path))
+		: "<root>";
+	message += ", child=";
+	message += sample->child_path.isValid()
+		? std::string(StringTable::getStringView(sample->child_path))
+		: "<root>";
+	message += ", source token='";
+	message += std::string(sample->token.value());
+	message += "' at ";
+	message += std::to_string(sample->token.line());
+	message += ":";
+	message += std::to_string(sample->token.column());
+	message += " file#";
+	message += std::to_string(sample->token.file_index());
+	message += "]";
+}
+
 class PostParseBoundaryChecker {
 public:
 	PostParseBoundaryReport run(std::span<const ASTNode> roots) {
@@ -1370,14 +1374,6 @@ private:
 			const bool pushed = pushContext(StringTable::getStringView(ctor.name()));
 			if (ctor.ownership_phase() == AstOwnershipPhase::ParserPattern ||
 				ctor.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
-				popContext(pushed);
-				return;
-			}
-			// Constructor initializer packs still use parser-side arity-changing
-			// orchestration until the constructor is selected for materialization.
-			// A follow-up lifecycle slice should make this ParserDeferredBody state
-			// explicit at the producer and remove this compatibility classification.
-			if (hasTopLevelPackExpansionInConstructorInitializers(ctor)) {
 				popContext(pushed);
 				return;
 			}
@@ -1751,6 +1747,7 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 			message += " near line " + std::to_string(first_fold_sample->token.line()) +
 					   ":" + std::to_string(first_fold_sample->token.column());
 		}
+		appendPostParseBoundarySampleDetails(message, first_fold_sample);
 		throw InternalError(message);
 	}
 
@@ -1761,6 +1758,7 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 			message += " near line " + std::to_string(first_pack_sample->token.line()) +
 					   ":" + std::to_string(first_pack_sample->token.column());
 		}
+		appendPostParseBoundarySampleDetails(message, first_pack_sample);
 		throw InternalError(message);
 	}
 }

@@ -4,6 +4,11 @@ struct TemplateEnvironmentSnapshotNode;
 #include <type_traits>
 #include "AstNodeTypes_DeclNodes.h"
 
+// Defined after ExpressionNode is declared in AstNodeTypes.h.  Constructor
+// initializer storage uses this narrow query to keep parser-owned pack
+// surfaces in ParserDeferredBody until substitution has expanded them.
+bool isTopLevelPackExpansionExpr(const ASTNode& arg);
+
 // Template parameter kinds
 enum class TemplateParameterKind {
 	Type,	  // typename T or class T
@@ -554,14 +559,17 @@ public:
 
 	void add_member_initializer(std::string_view member_name, ASTNode initializer_expr) {
 		member_initializers_.emplace_back(member_name, initializer_expr);
+		updateInitializerOwnershipPhase();
 	}
 
 	void add_base_initializer(StringHandle base_name, std::vector<ASTNode> args) {
 		base_initializers_.emplace_back(base_name, std::move(args));
+		updateInitializerOwnershipPhase();
 	}
 
 	void set_delegating_initializer(std::vector<ASTNode> args) {
 		delegating_initializer_.emplace(std::move(args));
+		updateInitializerOwnershipPhase();
 	}
 
 	void replace_initializers(
@@ -571,6 +579,7 @@ public:
 		member_initializers_ = std::move(member_initializers);
 		base_initializers_ = std::move(base_initializers);
 		delegating_initializer_ = std::move(delegating_initializer);
+		updateInitializerOwnershipPhase();
 	}
 
 	void set_is_implicit(bool implicit) {
@@ -594,9 +603,7 @@ public:
 		assert(ownership_phase_ != AstOwnershipPhase::SemaNormalized);
 		definition_block_.emplace(block_node);
 		body_state_tag_ = BodyStateTag::Materialized;
-		if (ownership_phase_ != AstOwnershipPhase::ParserPattern) {
-			ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
-		}
+		updateInitializerOwnershipPhase();
 		return true;
 	}
 
@@ -691,6 +698,29 @@ public:
 			ownership_phase_ == AstOwnershipPhase::SemaNormalized);
 		ownership_phase_ = AstOwnershipPhase::SemaNormalized;
 	}
+
+	bool hasParserDeferredInitializerPack() const {
+		for (const auto& member_init : member_initializers_) {
+			if (isTopLevelPackExpansionExpr(member_init.initializer_expr)) {
+				return true;
+			}
+		}
+		for (const auto& base_init : base_initializers_) {
+			for (const auto& arg : base_init.arguments) {
+				if (isTopLevelPackExpansionExpr(arg)) {
+					return true;
+				}
+			}
+		}
+		if (delegating_initializer_.has_value()) {
+			for (const auto& arg : delegating_initializer_->arguments) {
+				if (isTopLevelPackExpansionExpr(arg)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
 	void set_template_initializer_list_position(SaveHandle handle) {
 		has_template_initializer_list_ = true;
 		template_initializer_list_position_handle_ = handle;
@@ -742,6 +772,18 @@ public:
 	}
 
 private:
+	void updateInitializerOwnershipPhase() {
+		if (ownership_phase_ == AstOwnershipPhase::SemaNormalized ||
+			ownership_phase_ == AstOwnershipPhase::ParserPattern) {
+			return;
+		}
+		if (hasParserDeferredInitializerPack()) {
+			ownership_phase_ = AstOwnershipPhase::ParserDeferredBody;
+		} else if (is_materialized() && ownership_phase_ == AstOwnershipPhase::ParserDeferredBody) {
+			ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
+		}
+	}
+
 	StringHandle struct_name_;
 	StringHandle name_;
 	std::vector<ASTNode> parameter_nodes_;

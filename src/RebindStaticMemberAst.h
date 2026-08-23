@@ -2,6 +2,7 @@
 
 #include "AstTraversal.h"
 #include "CallNodeHelpers.h"
+#include "ExpressionRewriter.h"
 #include <type_traits>
 
 namespace RebindStaticMemberAst {
@@ -75,95 +76,26 @@ std::optional<ASTNode> tryRebindExpressionChildren(
 	}
 
 	const auto& expr = node.as<ExpressionNode>();
-	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-		const auto& binop = std::get<BinaryOperatorNode>(expr);
-		return ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(
-			binop.get_token(),
-			recurse(binop.get_lhs()),
-			recurse(binop.get_rhs())));
+	// Calls need static-member-specific target rebinding in the surrounding
+	// routine below.  Keep this handoff explicit; ExpressionRewriter preserves
+	// the original callee by design and cannot select the rebound owner here.
+	if (std::holds_alternative<CallExprNode>(expr)) {
+		return std::nullopt;
 	}
 
-	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-		const auto& unop = std::get<UnaryOperatorNode>(expr);
-		return ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(
-			unop.get_token(),
-			recurse(unop.get_operand()),
-			unop.is_prefix(),
-			unop.is_builtin_addressof()));
-	}
-
-	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
-		const auto& ternary = std::get<TernaryOperatorNode>(expr);
-		return ASTNode::emplace_node<ExpressionNode>(TernaryOperatorNode(
-			recurse(ternary.condition()),
-			recurse(ternary.true_expr()),
-			recurse(ternary.false_expr()),
-			ternary.get_token()));
-	}
-
-	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
-		return ASTNode::emplace_node<ExpressionNode>(StaticCastNode(
-			cast->target_type(),
-			recurse(cast->expr()),
-			cast->cast_token()));
-	}
-
-	if (const auto* cast = std::get_if<DynamicCastNode>(&expr)) {
-		return ASTNode::emplace_node<ExpressionNode>(DynamicCastNode(
-			cast->target_type(),
-			recurse(cast->expr()),
-			cast->cast_token()));
-	}
-
-	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
-		return ASTNode::emplace_node<ExpressionNode>(ConstCastNode(
-			cast->target_type(),
-			recurse(cast->expr()),
-			cast->cast_token()));
-	}
-
-	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
-		return ASTNode::emplace_node<ExpressionNode>(ReinterpretCastNode(
-			cast->target_type(),
-			recurse(cast->expr()),
-			cast->cast_token()));
-	}
-
-	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
-		return ASTNode::emplace_node<ExpressionNode>(MemberAccessNode(
-			recurse(member_access->object()),
-			member_access->member_token(),
-			member_access->is_arrow()));
-	}
-
-	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
-		return ASTNode::emplace_node<ExpressionNode>(ArraySubscriptNode(
-			recurse(subscript->array_expr()),
-			recurse(subscript->index_expr()),
-			subscript->bracket_token()));
-	}
-
-	if (const auto* ptr_member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
-		return ASTNode::emplace_node<ExpressionNode>(PointerToMemberAccessNode(
-			recurse(ptr_member_access->object()),
-			recurse(ptr_member_access->member_pointer()),
-			ptr_member_access->operator_token(),
-			ptr_member_access->is_arrow()));
-	}
-
-	if (std::holds_alternative<ConstructorCallNode>(expr)) {
-		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
-		ChunkedVector<ASTNode> rebound_args;
-		for (const auto& arg : ctor_call.arguments()) {
-			rebound_args.push_back(recurse(arg));
-		}
-		return ASTNode::emplace_node<ExpressionNode>(ConstructorCallNode(
-			ctor_call.type_node(),
-			std::move(rebound_args),
-			ctor_call.called_from()));
-	}
-
-	return std::nullopt;
+	ExpressionRewriter rewriter;
+	auto one_to_one = [&recurse](
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole) {
+		return recurse(child);
+	};
+	auto zero_to_many = [&recurse](
+		const ASTNode& child,
+		ExpressionStructure::ExpressionChildRole,
+		std::vector<ASTNode>& output) {
+		output.push_back(recurse(child));
+	};
+	return rewriter.rewrite(node, one_to_one, zero_to_many);
 }
 
 template <typename RecurseFn>

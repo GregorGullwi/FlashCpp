@@ -3,6 +3,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "ExpressionStructure.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -41,6 +42,21 @@ std::optional<std::span<const TemplateParameterNode>> templateParametersForCandi
 		break;
 	}
 	return std::nullopt;
+}
+
+template <typename RecurseFn>
+bool hasDependentStructuralExpressionChild(
+	const ExpressionNode& expression,
+	RecurseFn&& recurse) {
+	bool dependent = false;
+	ExpressionStructure::visitExpressionChildren(
+		expression,
+		[&](ExpressionStructure::ExpressionChildRole, const ASTNode& child) {
+			if (!dependent && recurse(child)) {
+				dependent = true;
+			}
+		});
+	return dependent;
 }
 }
 
@@ -1386,67 +1402,63 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				}
 				return false;
 			}
-			if (const auto* binary = std::get_if<BinaryOperatorNode>(&dep_expr)) {
-				return self(self, binary->get_lhs()) || self(self, binary->get_rhs());
+			if (std::holds_alternative<BinaryOperatorNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* unary = std::get_if<UnaryOperatorNode>(&dep_expr)) {
-				return self(self, unary->get_operand());
+			if (std::holds_alternative<UnaryOperatorNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* member = std::get_if<MemberAccessNode>(&dep_expr)) {
-				return self(self, member->object());
+			if (std::holds_alternative<MemberAccessNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* ptr_member = std::get_if<PointerToMemberAccessNode>(&dep_expr)) {
-				return self(self, ptr_member->object()) || self(self, ptr_member->member_pointer());
+			if (std::holds_alternative<PointerToMemberAccessNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&dep_expr)) {
-				return self(self, array_subscript->array_expr()) || self(self, array_subscript->index_expr());
+			if (std::holds_alternative<ArraySubscriptNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* call_expr = std::get_if<CallExprNode>(&dep_expr)) {
-				if (call_expr->has_receiver() && self(self, call_expr->receiver())) {
-					return true;
-				}
-				for (const ASTNode& arg : call_expr->arguments()) {
-					if (self(self, arg)) {
-						return true;
-					}
-				}
-				for (const ASTNode& template_arg : call_expr->template_arguments()) {
-					if (self(self, template_arg)) {
-						return true;
-					}
-				}
-				return false;
+			if (std::holds_alternative<CallExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
 			if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&dep_expr)) {
 				if (typeSpecStillUsesDependentPlaceholder(ctor_call->type_specifier_node())) {
 					return true;
 				}
-				for (const ASTNode& arg : ctor_call->arguments()) {
-					if (self(self, arg)) {
-						return true;
-					}
-				}
-				return false;
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* init_list = std::get_if<InitializerListConstructionNode>(&dep_expr)) {
-				if (self(self, init_list->element_type()) || self(self, init_list->target_type())) {
-					return true;
-				}
-				for (const ASTNode& element : init_list->elements()) {
-					if (self(self, element)) {
-						return true;
-					}
-				}
-				return false;
+			if (std::holds_alternative<InitializerListConstructionNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* noexc = std::get_if<NoexceptExprNode>(&dep_expr)) {
-				return self(self, noexc->expr());
+			if (std::holds_alternative<NoexceptExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* sizeof_expr = std::get_if<SizeofExprNode>(&dep_expr)) {
-				return self(self, sizeof_expr->type_or_expr());
+			if (std::holds_alternative<SizeofExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* alignof_expr = std::get_if<AlignofExprNode>(&dep_expr)) {
-				return self(self, alignof_expr->type_or_expr());
+			if (std::holds_alternative<AlignofExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
 			if (const auto* cast_expr = std::get_if<StaticCastNode>(&dep_expr)) {
 				return self(self, cast_expr->expr()) || typeSpecStillUsesDependentPlaceholder(cast_expr->target_type_node());
@@ -1460,24 +1472,15 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			if (const auto* cast_expr = std::get_if<ReinterpretCastNode>(&dep_expr)) {
 				return self(self, cast_expr->expr()) || typeSpecStillUsesDependentPlaceholder(cast_expr->target_type_node());
 			}
-			if (const auto* trait_expr = std::get_if<TypeTraitExprNode>(&dep_expr)) {
-				if (trait_expr->has_type() && self(self, trait_expr->type_node())) {
-					return true;
-				}
-				if (trait_expr->has_second_type() && self(self, trait_expr->second_type_node())) {
-					return true;
-				}
-				for (const ASTNode& extra_type : trait_expr->additional_type_nodes()) {
-					if (self(self, extra_type)) {
-						return true;
-					}
-				}
-				return false;
+			if (std::holds_alternative<TypeTraitExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* ternary = std::get_if<TernaryOperatorNode>(&dep_expr)) {
-				return self(self, ternary->condition()) ||
-					   self(self, ternary->true_expr()) ||
-					   self(self, ternary->false_expr());
+			if (std::holds_alternative<TernaryOperatorNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
 			if (const auto* fold = std::get_if<FoldExpressionNode>(&dep_expr)) {
 				if (fold->has_complex_pack_expr() && fold->pack_expr().has_value() &&
@@ -3649,67 +3652,63 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 				}
 				return false;
 			}
-			if (const auto* binary = std::get_if<BinaryOperatorNode>(&dep_expr)) {
-				return self(self, binary->get_lhs()) || self(self, binary->get_rhs());
+			if (std::holds_alternative<BinaryOperatorNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* unary = std::get_if<UnaryOperatorNode>(&dep_expr)) {
-				return self(self, unary->get_operand());
+			if (std::holds_alternative<UnaryOperatorNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* member = std::get_if<MemberAccessNode>(&dep_expr)) {
-				return self(self, member->object());
+			if (std::holds_alternative<MemberAccessNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* ptr_member = std::get_if<PointerToMemberAccessNode>(&dep_expr)) {
-				return self(self, ptr_member->object()) || self(self, ptr_member->member_pointer());
+			if (std::holds_alternative<PointerToMemberAccessNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&dep_expr)) {
-				return self(self, array_subscript->array_expr()) || self(self, array_subscript->index_expr());
+			if (std::holds_alternative<ArraySubscriptNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* call_expr = std::get_if<CallExprNode>(&dep_expr)) {
-				if (call_expr->has_receiver() && self(self, call_expr->receiver())) {
-					return true;
-				}
-				for (const ASTNode& arg : call_expr->arguments()) {
-					if (self(self, arg)) {
-						return true;
-					}
-				}
-				for (const ASTNode& template_arg : call_expr->template_arguments()) {
-					if (self(self, template_arg)) {
-						return true;
-					}
-				}
-				return false;
+			if (std::holds_alternative<CallExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
 			if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&dep_expr)) {
 				if (typeSpecStillUsesDependentPlaceholder(ctor_call->type_specifier_node())) {
 					return true;
 				}
-				for (const ASTNode& arg : ctor_call->arguments()) {
-					if (self(self, arg)) {
-						return true;
-					}
-				}
-				return false;
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* init_list = std::get_if<InitializerListConstructionNode>(&dep_expr)) {
-				if (self(self, init_list->element_type()) || self(self, init_list->target_type())) {
-					return true;
-				}
-				for (const ASTNode& element : init_list->elements()) {
-					if (self(self, element)) {
-						return true;
-					}
-				}
-				return false;
+			if (std::holds_alternative<InitializerListConstructionNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* noexc = std::get_if<NoexceptExprNode>(&dep_expr)) {
-				return self(self, noexc->expr());
+			if (std::holds_alternative<NoexceptExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* sizeof_expr = std::get_if<SizeofExprNode>(&dep_expr)) {
-				return self(self, sizeof_expr->type_or_expr());
+			if (std::holds_alternative<SizeofExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* alignof_expr = std::get_if<AlignofExprNode>(&dep_expr)) {
-				return self(self, alignof_expr->type_or_expr());
+			if (std::holds_alternative<AlignofExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
 			if (const auto* cast_expr = std::get_if<StaticCastNode>(&dep_expr)) {
 				return self(self, cast_expr->expr()) || typeSpecStillUsesDependentPlaceholder(cast_expr->target_type_node());
@@ -3723,24 +3722,15 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 			if (const auto* cast_expr = std::get_if<ReinterpretCastNode>(&dep_expr)) {
 				return self(self, cast_expr->expr()) || typeSpecStillUsesDependentPlaceholder(cast_expr->target_type_node());
 			}
-			if (const auto* trait_expr = std::get_if<TypeTraitExprNode>(&dep_expr)) {
-				if (trait_expr->has_type() && self(self, trait_expr->type_node())) {
-					return true;
-				}
-				if (trait_expr->has_second_type() && self(self, trait_expr->second_type_node())) {
-					return true;
-				}
-				for (const ASTNode& extra_type : trait_expr->additional_type_nodes()) {
-					if (self(self, extra_type)) {
-						return true;
-					}
-				}
-				return false;
+			if (std::holds_alternative<TypeTraitExprNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
-			if (const auto* ternary = std::get_if<TernaryOperatorNode>(&dep_expr)) {
-				return self(self, ternary->condition()) ||
-					   self(self, ternary->true_expr()) ||
-					   self(self, ternary->false_expr());
+			if (std::holds_alternative<TernaryOperatorNode>(dep_expr)) {
+				return hasDependentStructuralExpressionChild(
+					dep_expr,
+					[&](const ASTNode& child) { return self(self, child); });
 			}
 			return false;
 		};

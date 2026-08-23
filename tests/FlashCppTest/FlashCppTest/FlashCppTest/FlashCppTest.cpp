@@ -1731,6 +1731,50 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 }
 #endif
 
+TEST_CASE("SemanticAnalysis:ConcreteBodyRejectsParserOnlyHelperBeforeNormalization") {
+	std::string code = "int phase4_boundary_target() { return 0; }";
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_lifecycle_negative_boundary.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	auto parse_result = parser.parse();
+	REQUIRE(!parse_result.is_error());
+
+	const auto& roots = parser.get_nodes();
+	REQUIRE(roots.size() == 1);
+	REQUIRE(roots.front().is<FunctionDeclarationNode>());
+	auto& function = const_cast<FunctionDeclarationNode&>(
+		roots.front().as<FunctionDeclarationNode>());
+	REQUIRE(function.is_materialized());
+	REQUIRE(function.ownership_phase() == AstOwnershipPhase::ConcreteMaterialized);
+
+	const Token& marker_token = function.decl_node().identifier_token();
+	ASTNode pattern = ASTNode::emplace_node<ExpressionNode>(NumericLiteralNode(
+		marker_token,
+		0ULL,
+		TypeCategory::Int,
+		TypeQualifier::None,
+		32));
+	ASTNode helper = ASTNode::emplace_node<ExpressionNode>(
+		PackExpansionExprNode(pattern, marker_token));
+	ASTNode parent = ASTNode::emplace_node<ExpressionNode>(
+		UnaryOperatorNode(marker_token, helper));
+	ASTNode body = *function.get_definition();
+	body.as<BlockNode>().add_statement_node(parent);
+
+	try {
+		parser_sema.run();
+		FAIL("Concrete body containing PackExpansionExprNode reached semantic normalization");
+	} catch (const InternalError& error) {
+		const std::string message = error.what();
+		CHECK(message.find("node kind=PackExpansionExprNode") != std::string::npos);
+		CHECK(message.find("owner=phase4_boundary_target") != std::string::npos);
+		CHECK(message.find("child=UnaryOperator.Operand[0]") != std::string::npos);
+		CHECK(message.find("source token='phase4_boundary_target'") != std::string::npos);
+	}
+}
+
 TEST_CASE("SemanticAnalysis:ResolvedDirectCallQueryTracksAnalysisState") {
 	std::string code = R"(
 		int foo() { return 7; }
