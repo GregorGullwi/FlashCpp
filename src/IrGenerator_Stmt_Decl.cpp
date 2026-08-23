@@ -3230,12 +3230,25 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 
+						if (type_info->getStructInfo()->isDefaultConstructorDeleted() ||
+							implicit_default_constructor.is_deleted) {
+							throw CompileError("Cannot use deleted default constructor");
+						}
+
+						const bool semantic_plan_requires_call =
+							!implicit_default_constructor.base_initializers.empty() ||
+							!implicit_default_constructor.member_initializers.empty();
 						bool needs_default_ctor_call = !is_implicit_default_ctor ||
-													   type_info->getStructInfo()->hasDefaultMemberInitializers() ||
+													   semantic_plan_requires_call ||
 													   type_info->getStructInfo()->has_vtable ||
 													   has_base_with_constructors;
 
 						if (needs_default_ctor_call) {
+							const ConstructorDeclarationNode* default_ctor_node = nullptr;
+							if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+								default_ctor_node = &default_ctor->function_decl.as<ConstructorDeclarationNode>();
+							}
+							queueConstructorDefinition(*type_info, default_ctor_node);
 								// Check if this is an array - need to call constructor for each element
 							if (decl.is_array()) {
 									// For arrays, we need to call the constructor once for each element
