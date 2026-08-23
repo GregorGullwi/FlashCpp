@@ -1,14 +1,25 @@
 # Known Issues
 
-## `sizeof` cannot parse pointer-to-array type-ids
+## Pointer-to-array declarator coverage gaps
 
-`sizeof(int(*)[3])` fails with `"Expected type or expression after 'sizeof('"`
-(`Parser_Expr_PrimaryExpr.cpp`). The named-declarator form
-(`int (*p)[3]; sizeof(*p)`) works, so the gap is specific to the abstract
-declarator path inside `sizeof(type-id)`. Found while writing
-pointer-to-array regression tests; the declarator-structure work tracked below
-is a prerequisite for sharing one abstract-declarator parser between `sizeof`,
-`alignof`, and cast expressions.
+`sizeof`/`alignof` type-ids with pointer-to-array declarators (`int(*)[3]`,
+`const int(*)[3]`, `int(*const)[3]`) now parse through the shared
+abstract-declarator machinery, and sizeof/alignof on pointer-to-array objects
+(`sizeof(*p)`, `sizeof(p)`) report pointer/array-object sizes correctly.
+Remaining gaps in the same area:
+
+- Named multi-bound pointee declarators still parse only one bound:
+  `long (*table)[2][4];` as a struct member fails with "Expected ';' after
+  struct member declaration" because `parse_declarator`'s named branch handles
+  a single `[N]` suffix before returning. The abstract (type-id) path accepts
+  multiple bounds; the named path needs the same loop.
+- Struct members holding pointer-to-array objects lay out correctly now
+  (scalar pointer storage), but indexing through such a member
+  (`h.cursor[0][i]`) has no dedicated lowering and is untested.
+- Template-class member registration paths
+  (`Parser_Templates_Class.cpp`, typedef aliases of pointer-to-array) still
+  size members from raw `is_array()` instead of `is_array_object()` and can
+  repeat the over-sized-member layout bug fixed in `Parser_Decl_StructEnum.cpp`.
 
 ## Flat type representation cannot express interleaved pointer/array declarators
 

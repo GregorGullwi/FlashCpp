@@ -76,6 +76,15 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 		aligned_type.set_array_dimensions({});
 	}
 
+	// C++20 [expr.alignof]: a pointer or reference object is always a 64-bit
+	// aligned entity on x64, whatever its pointee.  The parser-set
+	// size_in_bits() and any alias/struct resolution describe the base type
+	// before declarator postfixes were applied.
+	if (aligned_type.pointer_depth() > 0 ||
+		aligned_type.reference_qualifier() != ReferenceQualifier::None) {
+		return 8;
+	}
+
 	TypeCategory aligned_category = aligned_type.category();
 	if (aligned_type.type_index().is_valid()) {
 		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(aligned_type.type_index());
@@ -1906,7 +1915,10 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 }
 
 std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
-	if (!decl.is_array()) {
+	// C++20 [dcl.ptr]/1: a pointer-to-array entity such as T (*p)[N] is a
+	// scalar pointer object, not an array object, so its sizeof is the pointer
+	// size and array sizing must not apply.
+	if (!decl.is_array_object()) {
 		return std::nullopt;
 	}
 

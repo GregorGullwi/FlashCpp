@@ -922,11 +922,93 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 	return ParseResult::success(binding_node);
 }
 
+// Scans a parenthesized pointer declarator group "(" [calling-convention]
+// "*" cv-qualifier-seq? [identifier] ")" starting at the opening '('.  Shared
+// by named declarators (parse_declarator) and type-id abstract-declarators
+// (consume_type_id_abstract_declarators) so both spellings agree on CV,
+// attribute, and calling-convention handling inside the group (C++20
+// [dcl.ptr]/1).  Returns the CV-qualifiers written on the '*', or nullopt with
+// the token position restored when the tokens do not form such a group.
+std::optional<CVQualifier> Parser::scan_parenthesized_pointer_group(
+	CallingConvention& out_calling_conv,
+	Token& out_identifier,
+	bool& out_has_identifier) {
+	out_has_identifier = false;
+	if (peek() != "("_tok) {
+		return std::nullopt;
+	}
+	SaveHandle group_start = save_token_position();
+	advance(); // consume '('
+
+	out_calling_conv = parse_calling_convention(CallingConvention::Default);
+
+	if (peek() != "*"_tok) {
+		restore_token_position(group_start);
+		return std::nullopt;
+	}
+	advance(); // consume '*'
+
+	const CVQualifier pointer_cv = parse_cv_qualifiers();
+	skip_noop_gnu_qualifiers();
+	skip_cpp_attributes();   // Handle [[...]] / __attribute__((...)) on the pointer declarator
+
+	if (peek().is_identifier()) {
+		out_identifier = peek_info();
+		out_has_identifier = true;
+		advance();
+	}
+
+	if (peek() != ")"_tok) {
+		restore_token_position(group_start);
+		return std::nullopt;
+	}
+	advance(); // consume ')'
+	return pointer_cv;
+}
+
 // NEW: Parse declarators (handles function pointers, arrays, etc.)
 ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linkage) {
-	// Check for parenthesized declarator: '(' '*' identifier ')'
+	// Check for parenthesized declarator: '(' '*' [identifier] ')'
 	// This is the pattern for function pointers: int (*fp)(int, int)
 	if (peek() == "("_tok) {
+		// Probe for the identifier-less abstract group "(*)" (C++20 [dcl.name])
+		// first; it shares the group scanner with type-id parsing so both bind
+		// array suffixes inside the pointer identically ([dcl.ptr]/1).  Named
+		// groups rewind and take the original sequence below, whose dispatch
+		// distinguishes int(*fp)(params) from int(*func(params))[N] by token
+		// order inside the group.
+		SaveHandle group_probe = save_token_position();
+		CallingConvention probe_calling_conv = CallingConvention::Default;
+		Token probe_identifier;
+		bool probe_has_identifier = false;
+		std::optional<CVQualifier> abstract_group_cv = scan_parenthesized_pointer_group(
+			probe_calling_conv, probe_identifier, probe_has_identifier);
+		if (abstract_group_cv.has_value() && !probe_has_identifier) {
+			discard_saved_token(group_probe);
+			const CVQualifier ptr_cv = *abstract_group_cv;
+
+			if (peek() == "("_tok) {
+				Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
+				return parse_postfix_declarator(base_type, dummy_identifier, linkage);
+			}
+			if (base_type.is_reference() || base_type.is_rvalue_reference()) {
+				throw CompileError("Cannot form a pointer to reference type");
+			}
+			base_type.add_pointer_level(ptr_cv);
+			if (peek() == "["_tok) {
+				consume_array_type_id_modifiers(base_type);
+				// C++20 [dcl.ptr]/1: the array suffix of a parenthesized
+				// declarator binds inside the pointer.
+				base_type.set_pointee_array_declarator(true);
+			}
+			Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
+			return ParseResult::success(
+				emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(base_type),
+					dummy_identifier));
+		}
+		restore_token_position(group_probe);
+
 		advance(); // consume '('
 
 		CallingConvention calling_conv = parse_calling_convention(CallingConvention::Default);
@@ -963,7 +1045,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 		advance();
 
 		// Check what comes after the identifier:
-		// Case 1: ')' followed by '(' -> function pointer variable: int (*fp)(params)
+		// Case 1: ')' followed by '[' -> pointer-to-array variable: int (*p)[3]
 		// Case 2: '(' -> function returning pointer: int (*func(params))[array_size] or int (*func(params))
 		if (peek() == "("_tok) {
 			// Case 2: This is a function returning pointer (or pointer-to-array)
