@@ -83,11 +83,15 @@ sema/codegen boundary, sema closes program participation over base classes,
 potentially default-constructed data members, and nested classes; this covers
 IR-reachable dependencies that do not have an independent top-level root.
 
-Implicit trivial-default-constructor lowering consumes this sema-produced,
-deduplicated collection instead of discovering work by scanning the global type
-name registry. Pattern types, lookup probes, shape-only artifacts, and
-incomplete instantiations therefore cannot enter constructor codegen merely
-because they have a `ConcreteMaterialized` AST or finalized-looking type shape.
+Implicit default-constructor lowering consumes this sema-produced, deduplicated
+collection and the `ImplicitDefaultConstructorSemanticRecord` finalized on each
+`StructTypeInfo`. The record distinguishes absence, deletion, an existing AST
+declaration, and the non-AST definition that requires synthetic IR. It also owns
+the ordered base/member initialization plan by referencing resolved base type
+identities and stable member indices. Pattern types, lookup probes, shape-only
+artifacts, and incomplete instantiations therefore cannot enter constructor
+codegen merely because they have a `ConcreteMaterialized` AST or
+finalized-looking type shape.
 `normalized_root_nodes_` remains for pointer-keyed root checks, including root
 kinds without type-owned lifecycle storage; it is no longer used to infer which
 class types participate in constructor codegen.
@@ -97,13 +101,14 @@ doctest regression parses an ordinary concrete function and injects a forbidden
 helper directly into the test-owned AST under a role-bearing expression parent;
 the boundary rejects it before semantic normalization and reports the owner,
 child path, node kind, token, and location without exposing test syntax in the
-production compiler. Codegen-synthetic trivial
-constructors remain outside AST-root normalization by design: their
-`FunctionDeclOp` carries the explicit
-`IrFunctionLifecycle::CodegenSyntheticTrivialConstructor` tag. They are emitted
-from sema-ready `StructTypeInfo` program entities after semantic analysis; no constructor AST
-root is fabricated or marked normalized. The object converter validates the
-synthetic declaration shape separately from AST-root lifecycle checks.
+production compiler. The remaining synthetic IR lifecycle exception is narrow
+and explicit: non-AST implicit default-constructor definitions remain outside
+AST-root normalization, and their `FunctionDeclOp` carries
+`IrFunctionLifecycle::CodegenSyntheticTrivialConstructor`. Sema decides that
+the constructor exists, whether it is deleted, and which base/member actions
+form its body; `AstToIr` only lowers that record. No constructor AST root is
+fabricated or marked normalized. The object converter validates the synthetic
+declaration shape separately from AST-root lifecycle checks.
 Constructor member/base/delegating initializer producers now assign
 `ParserDeferredBody` whenever a top-level pack helper remains and transition
 back to `ConcreteMaterialized` after materialization removes it. Neither case
@@ -383,14 +388,20 @@ Moving it requires:
 
 ### 8. Move implicit special-member synthesis into sema
 
-The type-participation/readiness split makes constructor discovery
-authoritative, but `needs_default_constructor` is still parser metadata and IR
-still decides whether to create the implicit constructor declaration/body.
-Sema should eventually synthesize an explicit special-member semantic record
-(without requiring a fabricated AST body), including deletion and member/base
-initialization decisions. IR should only lower that record. Until then,
-`IrFunctionLifecycle::CodegenSyntheticTrivialConstructor` remains the explicit
-bridge for this one non-AST function source.
+Implicit default-constructor synthesis now crosses the sema/IR boundary through
+`ImplicitDefaultConstructorSemanticRecord`. Sema finalizes existence, deletion,
+the need for a non-AST IR definition, and the base/member initialization plan;
+IR no longer scans constructors or interprets `needs_default_constructor` to
+make those decisions. The legacy flag is still written and consulted in
+parser/template compatibility paths, but it has no authority at the sema/IR
+boundary; a later parser cleanup can remove that provisional signal.
+
+The remaining lifecycle exception is the synthetic IR definition itself:
+`IrFunctionLifecycle::CodegenSyntheticTrivialConstructor` identifies a
+`FunctionDeclOp` lowered directly from the semantic record because there is no
+AST root or body to normalize. Copy/move construction, assignment, and
+destruction still use their older mixed parser/AST paths and remain later
+special-member migration slices.
 
 ## Standards endpoint
 

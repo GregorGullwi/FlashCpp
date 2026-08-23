@@ -1833,6 +1833,7 @@ public:
 		// Auto-return types are now fully resolved so the retry will succeed.
 		owner_.resolvePendingCopyInitAnnotations();
 		owner_.finalizeCodegenReadyTypes();
+		owner_.finalizeImplicitDefaultConstructors();
 
 		FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
 				  owner_.stats_.roots_visited, " roots visited, ",
@@ -3577,6 +3578,107 @@ void SemanticAnalysis::finalizeCodegenReadyTypes() {
 		}
 		for (StructTypeInfo* nested_class : struct_info->nested_classes_) {
 			admitReachableDependency(nested_class);
+		}
+	}
+}
+
+void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
+	// Establish existence/deletion for every admitted type before deriving any
+	// cross-type initialization plan. This makes the second pass independent of
+	// codegen-ready collection order.
+	for (const StructTypeInfo* const_struct_info : codegen_ready_types_) {
+		StructTypeInfo& struct_info = *const_cast<StructTypeInfo*>(const_struct_info);
+		auto& record = struct_info.implicit_default_constructor;
+		record = {};
+
+		const StructMemberFunction* declared_default = struct_info.findDefaultConstructor();
+		bool has_implicit_ast_declaration = false;
+		if (declared_default && declared_default->function_decl.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& declaration =
+				declared_default->function_decl.as<ConstructorDeclarationNode>();
+			has_implicit_ast_declaration = declaration.is_implicit();
+		}
+
+		// C++20 [class.default.ctor]: an implicit default constructor exists when
+		// there is no user-declared constructor. Parser-generated copy/move
+		// declarations must not suppress it.
+		record.exists = has_implicit_ast_declaration ||
+			(declared_default == nullptr && !struct_info.hasUserDeclaredConstructor());
+	record.is_deleted = record.exists && struct_info.isDefaultConstructorDeleted();
+	record.requires_synthetic_ir = record.exists && declared_default == nullptr;
+		record.is_finalized = true;
+	}
+
+	auto hasUsableDefaultConstructor = [](const StructTypeInfo& struct_info) {
+		if (const StructMemberFunction* declared_default = struct_info.findDefaultConstructor()) {
+			if (!declared_default->function_decl.is<ConstructorDeclarationNode>()) {
+				throw InternalError("Default constructor metadata has a non-constructor AST node");
+			}
+			return !struct_info.isDefaultConstructorDeleted();
+		}
+		const auto& record = struct_info.implicit_default_constructor;
+		return record.is_finalized && record.exists && !record.is_deleted;
+	};
+
+	for (const StructTypeInfo* const_struct_info : codegen_ready_types_) {
+		StructTypeInfo& struct_info = *const_cast<StructTypeInfo*>(const_struct_info);
+		auto& record = struct_info.implicit_default_constructor;
+		if (!record.exists) {
+			continue;
+		}
+
+		for (const BaseClassSpecifier& base : struct_info.base_classes) {
+			const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index);
+			if (!base_info && !base.name.empty()) {
+				auto base_type = getTypesByNameMap().find(
+					StringTable::getOrInternStringHandle(base.name));
+				if (base_type != getTypesByNameMap().end() && base_type->second) {
+					base_info = base_type->second->getStructInfo();
+				}
+			}
+			// A still-deferred base identity has no concrete constructor action to
+			// publish yet. Its hard-use materialization refreshes this idempotent
+			// record through the late gateway before lowering.
+			if (!base_info) {
+				continue;
+			}
+			if (!hasUsableDefaultConstructor(*base_info)) {
+				record.is_deleted = true;
+				continue;
+			}
+			if (!base_info->own_type_index_.has_value()) {
+				throw InternalError("Implicit default-constructor base plan has no TypeIndex");
+			}
+			record.base_initializers.push_back(*base_info->own_type_index_);
+		}
+
+		for (size_t member_index = 0; member_index < struct_info.members.size(); ++member_index) {
+			const StructMember& member = struct_info.members[member_index];
+			if (!struct_info.isPotentiallyConstructedByDefaultConstructor(member)) {
+				continue;
+			}
+			if (member.default_initializer.has_value()) {
+				record.member_initializers.push_back({
+					member_index,
+					ImplicitDefaultMemberInitializationKind::DefaultMemberInitializer});
+				continue;
+			}
+			if (member.is_reference()) {
+				record.is_deleted = true;
+				continue;
+			}
+			if (member.type_index.category() != TypeCategory::Struct || member.pointer_depth != 0) {
+				continue;
+			}
+
+			const StructTypeInfo* member_info = tryGetStructTypeInfo(member.type_index);
+			if (!member_info || !hasUsableDefaultConstructor(*member_info)) {
+				record.is_deleted = true;
+				continue;
+			}
+			record.member_initializers.push_back({
+				member_index,
+				ImplicitDefaultMemberInitializationKind::DefaultConstructor});
 		}
 	}
 }

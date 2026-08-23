@@ -3086,8 +3086,11 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 			if (struct_info && !struct_info->is_union) {
 				const auto& arg_types = traitNode.additional_type_nodes();
 				if (arg_types.empty()) {
-					// Default constructible - has default constructor or no user-defined ctors
-					result = !struct_info->hasUserDefinedConstructor() || struct_info->hasConstructor();
+					const auto& implicit_default_constructor = struct_info->implicit_default_constructor;
+					const StructMemberFunction* declared_default = struct_info->findDefaultConstructor();
+					result = (declared_default != nullptr && !struct_info->isDefaultConstructorDeleted()) ||
+						(implicit_default_constructor.is_finalized &&
+						 implicit_default_constructor.exists && !implicit_default_constructor.is_deleted);
 				} else {
 					// Check for matching constructor
 					// Simple heuristic: if it has any user-defined constructor, assume constructible

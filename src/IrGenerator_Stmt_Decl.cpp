@@ -335,38 +335,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			flush();
 		}
 	} full_expression_temp_flush_guard{flushFullExpressionTemps};
-	auto queue_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode* ctor) {
-		if (!ctor || ctor->has_template_parameters()) {
-			// A constructor template is only a deduction candidate.  The concrete
-			// specialization is queued after constructor overload resolution has
-			// materialized it with the call's template arguments.
-			return;
-		}
-		const ConstructorDeclarationNode* ctor_to_queue = ctor;
-		if (!ctor_to_queue->is_materialized()) {
-			if (std::optional<ASTNode> materialized_ctor =
-					sema_.parserSemanticServices().ensureMemberFunctionMaterialized(
-						type_info_ref.name(),
-						*ctor_to_queue);
-				materialized_ctor.has_value() &&
-				materialized_ctor->is<ConstructorDeclarationNode>()) {
-				ctor_to_queue = &materialized_ctor->as<ConstructorDeclarationNode>();
-			}
-		}
-		// Always queue the selected constructor for deferred emission.  Late-instantiated
-		// concrete ctors (created by materializeMatchingConstructorTemplate during sema
-		// annotation — after beginStructDeclarationCodegen already ran) are NOT visited
-		// during the struct codegen walk and must be emitted here.  Ctors that were
-		// already visited during beginStructDeclarationCodegen are deduplicated by the
-		// emitted_constructor_nodes_ guard inside visitConstructorDeclarationNode, so
-		// double-emit is safe to ignore.
-		queueDeferredMemberFunctionFromNode(
-			type_info_ref.name(),
-			ASTNode(ctor_to_queue),
-			type_info_ref.getStructInfo() != nullptr
-				? type_info_ref.getStructInfo()->namespace_handle
-				: NamespaceHandle{});
-	};
 	auto register_destructor_if_needed = [this](const DeclarationNode& inner_decl, const TypeInfo* type_info) {
 		if (!type_info || !type_info->getStructInfo() || !type_info->getStructInfo()->hasDestructor()) {
 			return;
@@ -1546,11 +1514,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							size_t num_initializers = initializers.size();
 							bool missing_sema_resolved_ctor = false;
 
-								// Special case: if empty initializer list and struct needs a trivial default constructor
-								// This handles template specializations where the constructor is generated later
+								// Sema may provide a non-AST implicit default constructor.
 							if (!use_direct_member_init && num_initializers == 0 &&
-								!struct_info.hasAnyConstructor() && struct_info.needs_default_constructor &&
-								!struct_info.isDefaultConstructorDeleted()) {
+								struct_info.implicit_default_constructor.requires_synthetic_ir &&
+								!struct_info.implicit_default_constructor.is_deleted) {
 								has_matching_constructor = true;
 								matching_ctor = nullptr;
 							}
@@ -1808,7 +1775,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							if (has_matching_constructor) {
-								queue_nested_template_ctor(*type_info, matching_ctor);
+								queueConstructorDefinition(*type_info, matching_ctor);
 
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
@@ -2535,11 +2502,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					throw CompileError("Cannot instantiate abstract class");
 				}
 
-				// needs_default_constructor covers implicit default constructors
-				// synthesized by generateTrivialDefaultConstructors() for template-
-				// instantiated structs that have member default initializers but no
-				// explicit user-declared constructors.
-				if (type_info->getStructInfo()->hasAnyConstructor() || type_info->getStructInfo()->needs_default_constructor) {
+				const auto& implicit_default_constructor =
+					type_info->getStructInfo()->implicit_default_constructor;
+				if (type_info->getStructInfo()->hasAnyConstructor() || implicit_default_constructor.exists) {
 					FLASH_LOG(Codegen, Debug, "Struct ", type_info->name(), " has constructor or needs default constructor");
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"
 						// Skip if the variable was already initialized with an rvalue (function return)
@@ -2708,12 +2673,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							if (is_aggregate && num_args <= type_info->getStructInfo()->members.size()) {
 								FLASH_LOG(Codegen, Debug, "Using aggregate parenthesized init for ", type_info->name());
 								used_aggregate_paren_init = true;
-								// Emit default constructor call first (zero-initializes the object)
-								ConstructorCallOp default_ctor_op;
-								default_ctor_op.object = decl.identifier_token().handle();
-								fillInDefaultConstructorArguments(default_ctor_op, *type_info->getStructInfo());
-								finalizeConstructorCallOp(default_ctor_op, *type_info->getStructInfo(), decl.identifier_token());
-								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
+								const bool has_usable_default_constructor =
+									(type_info->getStructInfo()->findDefaultConstructor() != nullptr &&
+									 !type_info->getStructInfo()->isDefaultConstructorDeleted()) ||
+									(implicit_default_constructor.exists &&
+									 !implicit_default_constructor.is_deleted);
+								if (has_usable_default_constructor) {
+									ConstructorCallOp default_ctor_op;
+									default_ctor_op.object = decl.identifier_token().handle();
+									fillInDefaultConstructorArguments(default_ctor_op, *type_info->getStructInfo());
+									finalizeConstructorCallOp(default_ctor_op, *type_info->getStructInfo(), decl.identifier_token());
+									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
+								}
 
 									// Then emit member stores for each argument
 								size_t member_idx = 0;
@@ -2749,14 +2720,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							const bool allowImplicitDefault =
 								!matching_ctor &&
 								num_args == 0 &&
-								type_info->getStructInfo()->findDefaultConstructor() == nullptr &&
-								!type_info->getStructInfo()->hasAnyConstructor() &&
-								type_info->getStructInfo()->needs_default_constructor &&
-								!type_info->getStructInfo()->isDefaultConstructorDeleted();
+								implicit_default_constructor.requires_synthetic_ir &&
+								!implicit_default_constructor.is_deleted;
 							if (!matching_ctor && !allowImplicitDefault) {
 								reportNoMatchingConstructor(type_info->name(), "direct initialization", decl.identifier_token());
 							}
-							queue_nested_template_ctor(*type_info, matching_ctor);
+							queueConstructorDefinition(*type_info, matching_ctor);
 
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
@@ -3225,7 +3194,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 						ctor_op.resolved_constructor = selected_ctor;
 						if (selected_ctor) {
-							queue_nested_template_ctor(*type_info, selected_ctor);
+							queueConstructorDefinition(*type_info, selected_ctor);
 						}
 						if (is_converting_ctor && !selected_ctor) {
 							reportNoMatchingConstructor(type_info->name(), "copy initialization", decl.identifier_token());

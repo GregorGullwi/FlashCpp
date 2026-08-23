@@ -105,8 +105,12 @@ AstToIr::AstToIr(
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(parser), sema_(semantic_analysis) {
 	// Generate static member declarations for template classes before processing AST
 	generateStaticMemberDeclarations();
-	// Materialize implicit default constructors for instantiated structs that were
-	// marked with needs_default_constructor during parsing/template instantiation.
+	// Static-member preparation can trigger the existing late-template
+	// materialization gateway. Refresh sema's idempotent records for any newly
+	// admitted class entities before lowering them.
+	sema_.finalizeImplicitDefaultConstructors();
+	// Lower sema-owned implicit default-constructor records before the main AST
+	// walk so variable initialization can reference their synthetic definitions.
 	// Variable initialization lowers default construction to ConstructorCallOp, so
 	// these synthetic ctor bodies must exist before the main AST walk starts.
 	generateTrivialDefaultConstructors();
@@ -2152,24 +2156,18 @@ void AstToIr::generateTrivialDefaultConstructors() {
 		}
 		const StringHandle type_name = type_info->name();
 
-		// Only generate trivial constructor if explicitly marked as needing one
-		// The needs_default_constructor flag is set during template instantiation
-		// when a struct has no constructors but needs a default one
-		if (!struct_info->needs_default_constructor) {
+		const ImplicitDefaultConstructorSemanticRecord& default_constructor =
+			struct_info->implicit_default_constructor;
+		if (!default_constructor.is_finalized) {
+			throw InternalError("Sema-ready class entity has no finalized special-member record");
+		}
+		if (!default_constructor.requires_synthetic_ir) {
 			continue;
 		}
-
-		// Check if there are already constructors defined
-		bool has_constructor = false;
-		for (const auto& mem_func : struct_info->member_functions) {
-			if (mem_func.is_constructor) {
-				has_constructor = true;
-				break;
-			}
+		if (!default_constructor.exists) {
+			throw InternalError("Sema requested IR for a nonexistent implicit default constructor");
 		}
-
-		// Generate trivial default constructor if no constructor exists and it's not deleted
-		if (!has_constructor && !struct_info->isDefaultConstructorDeleted()) {
+		if (!default_constructor.is_deleted) {
 			// This constructor is deliberately not represented by a
 			// ConstructorDeclarationNode.  It is a codegen artifact, so do not
 			// assign it an AstOwnershipPhase. It is emitted from finalized StructTypeInfo
@@ -2232,17 +2230,12 @@ void AstToIr::generateTrivialDefaultConstructors() {
 
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
 
-			// Call base class constructors if any
-			for (const auto& base : struct_info->base_classes) {
-				auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base.name));
-				if (base_type_it != getTypesByNameMap().end()) {
-					// Call base constructor if the base has user-defined constructors OR needs a trivial
-					// default constructor (e.g., template-instantiated class with member default-
-					// initializers but no explicit constructors). hasConstructor() covers the trivial
-					// constructor case (needs_default_constructor==true) that arises with template
-					// base classes like Base<T> resolved to a concrete type.
-					const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
-					if (base_struct_info && base_struct_info->hasConstructor()) {
+			// Lower the base initialization plan exactly as sema published it.
+			for (TypeIndex base_type_index : default_constructor.base_initializers) {
+				const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_type_index);
+				if (!base_struct_info) {
+					throw InternalError("Implicit default-constructor base plan has no struct metadata");
+				}
 						// If the base class has a lazy (unmaterialized) default constructor,
 						// materialize it through sema before emitting the ConstructorCallOp
 						// so codegen does not drive parser-side lazy bookkeeping directly.
@@ -2263,8 +2256,6 @@ void AstToIr::generateTrivialDefaultConstructors() {
 						fillInDefaultConstructorArguments(call_op, *base_struct_info);
 						finalizeConstructorCallOp(call_op, *base_struct_info, Token());
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
-					}
-				}
 			}
 
 			// Combine bitfield default initializers into single per-unit stores
@@ -2272,8 +2263,13 @@ void AstToIr::generateTrivialDefaultConstructors() {
 			{
 				std::unordered_map<size_t, unsigned long long> combined_bitfield_values;
 				std::unordered_set<size_t> bitfield_offsets;
-				for (const auto& member : struct_info->members) {
-					if (member.bitfield_width.has_value() && member.default_initializer.has_value()) {
+				for (const auto& initialization : default_constructor.member_initializers) {
+					if (initialization.kind != ImplicitDefaultMemberInitializationKind::DefaultMemberInitializer ||
+						initialization.member_index >= struct_info->members.size()) {
+						continue;
+					}
+					const StructMember& member = struct_info->members[initialization.member_index];
+					if (member.bitfield_width.has_value()) {
 						bitfield_offsets.insert(member.offset);
 						unsigned long long val = 0;
 						ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
@@ -2322,9 +2318,31 @@ void AstToIr::generateTrivialDefaultConstructors() {
 			StringHandle saved_struct_name = current_struct_name_;
 			current_struct_name_ = type_info->name();
 
-			for (const auto& member : struct_info->members) {
+			for (const auto& initialization : default_constructor.member_initializers) {
+				if (initialization.member_index >= struct_info->members.size()) {
+					throw InternalError("Implicit default-constructor member plan index is out of range");
+				}
+				const StructMember& member = struct_info->members[initialization.member_index];
 				if (member.bitfield_width.has_value())
 					continue; // handled above
+				if (initialization.kind == ImplicitDefaultMemberInitializationKind::DefaultConstructor) {
+					const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
+					if (!member_struct_info) {
+						throw InternalError("Implicit default-constructor member plan has no struct metadata");
+					}
+					ConstructorCallOp ctor_op;
+					ctor_op.object = StringTable::getOrInternStringHandle("this");
+					assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+						"Member offset exceeds int range");
+					ctor_op.base_class_offset = static_cast<int>(member.offset);
+					fillInDefaultConstructorArguments(ctor_op, *member_struct_info);
+					queueConstructorDefinition(
+						getTypeInfo(member.type_index),
+						ctor_op.resolved_constructor);
+					finalizeConstructorCallOp(ctor_op, *member_struct_info, Token());
+					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+					continue;
+				}
 				if (member.default_initializer.has_value()) {
 					const ASTNode& init_node = member.default_initializer.value();
 					if (init_node.has_value() && init_node.is<ExpressionNode>()) {

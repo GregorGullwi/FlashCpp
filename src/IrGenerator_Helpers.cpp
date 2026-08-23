@@ -97,6 +97,32 @@ void AstToIr::queueDeferredMemberFunctionFromNode(
 	deferred_member_functions_.push_back(std::move(deferred_info));
 }
 
+void AstToIr::queueConstructorDefinition(
+	const TypeInfo& type_info,
+	const ConstructorDeclarationNode* constructor) {
+	if (!constructor || constructor->has_template_parameters()) {
+		return;
+	}
+	const ConstructorDeclarationNode* constructor_to_queue = constructor;
+	if (!constructor_to_queue->is_materialized()) {
+		if (std::optional<ASTNode> materialized_constructor =
+				sema_.parserSemanticServices().ensureMemberFunctionMaterialized(
+					type_info.name(),
+					*constructor_to_queue);
+			materialized_constructor.has_value() &&
+			materialized_constructor->is<ConstructorDeclarationNode>()) {
+			constructor_to_queue =
+				&materialized_constructor->as<ConstructorDeclarationNode>();
+		}
+	}
+	queueDeferredMemberFunctionFromNode(
+		type_info.name(),
+		ASTNode(constructor_to_queue),
+		type_info.getStructInfo() != nullptr
+			? type_info.getStructInfo()->namespace_handle
+			: NamespaceHandle{});
+}
+
 void AstToIr::requestInlineFunctionEmission(const FunctionDeclarationNode& node) {
 	if (!node.is_inline() || !node.is_materialized() || node.is_member_function()) {
 		return;
