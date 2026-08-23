@@ -1932,9 +1932,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Register static member in struct info
 			// Calculate size and alignment for the static member, preserving array shape.
+			// C++20 [dcl.ptr]/1: a pointer-to-array entity is a scalar pointer
+			// object; its pointee bounds must not scale its storage.
 			auto [static_member_size, static_member_alignment] =
 				calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
-			bool is_array = decl.is_array() || type_spec.is_array();
+			bool is_array = decl.is_array_object() || type_spec.is_array();
 			std::vector<size_t> array_dimensions;
 			if (decl.is_array()) {
 				for (const auto& dim_expr : decl.array_dimensions()) {
@@ -3199,10 +3201,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 		}
 
-		// For array members, multiply element size by array count and collect dimensions
+		// For array members, multiply element size by array count and collect dimensions.
+		// C++20 [dcl.ptr]/1: a pointer-to-array member such as T (*p)[N] is a
+		// scalar pointer object, so its bounds must not scale its storage.
 		bool is_array = false;
 		std::vector<size_t> array_dimensions;
-		if (decl.is_array()) {
+		if (decl.is_array_object()) {
 			is_array = true;
 			// Collect all array dimensions
 			const auto& dims = decl.array_dimensions();

@@ -1998,6 +1998,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// subscripts compute element addresses from it.
 		bool pointee_is_array = false;
 		TypeIndex pointee_type_index{};
+		std::vector<size_t> pointee_array_dimensions;
 		if (pointer_depth == 1 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				// Sema owns expression typing ([expr.unary.op]/1): the operand's
 				// canonical descriptor is the single authority for declarator
@@ -2030,6 +2031,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					sema_.typeContext().get(operand_type_id);
 				pointee_is_array = operand_desc.pointee_array_declarator;
 				pointee_type_index = operand_desc.type_index;
+				pointee_array_dimensions.assign(
+					operand_desc.array_dimensions.begin(),
+					operand_desc.array_dimensions.end());
 			}
 		}
 		if (pointee_is_array) {
@@ -2072,11 +2076,24 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				0);
 			setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(decay_lvalue_info, TypeCategory::Invalid, 0));
 
+			// The materialized lvalue designates the complete pointee array
+			// object ([dcl.ptr]/1, [expr.sizeof]): its size spans every recorded
+			// bound, not a single element.  Subscript lowering derives element
+			// strides from the type via deriveElementStrideBitsFromType, so the
+			// aggregate carry-through does not distort indexing.
+			size_t pointee_object_bits = static_cast<size_t>(element_size);
+			for (size_t pointee_dim : pointee_array_dimensions) {
+				if (pointee_dim == 0 || pointee_object_bits > static_cast<size_t>(SIZE_MAX) / pointee_dim) {
+					throw InternalError("Pointer-to-array pointee bounds overflow object size");
+				}
+				pointee_object_bits *= pointee_dim;
+			}
+
 			return makeExprResult(
 				pointee_type_index.is_valid()
 					? pointee_type_index.withCategory(operandType)
 					: operandIrOperands.type_index.withCategory(operandType),
-				SizeInBits{static_cast<int>(element_size)},
+				SizeInBits{static_cast<int>(pointee_object_bits)},
 				IrOperand{addr_temp},
 				PointerDepth{},
 				ValueStorage::ContainsAddress);

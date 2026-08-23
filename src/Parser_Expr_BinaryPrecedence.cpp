@@ -1683,6 +1683,19 @@ void Parser::consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec
 }
 
 void Parser::consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec) {
+	// Parenthesized abstract-declarator groups route through the same
+	// declarator machinery as named declarations so a type-id such as
+	// int(*)[3] binds its array suffix inside the pointer exactly like the
+	// named form int(*p)[3] (C++20 [dcl.name], [dcl.ptr]/1).
+	if (peek() == "("_tok) {
+		SaveHandle group_start = save_token_position();
+		ParseResult declarator_result = parse_declarator(type_spec, Linkage::None);
+		if (!declarator_result.is_error() && declarator_result.node().has_value()) {
+			discard_saved_token(group_start);
+			return;
+		}
+		restore_token_position(group_start);
+	}
 	consume_pointer_ref_modifiers(type_spec);
 	consume_array_type_id_modifiers(type_spec);
 }

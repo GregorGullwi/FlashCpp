@@ -254,6 +254,15 @@ std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type
 		aligned_type.set_size_in_bits(getTypeSpecSizeBits(aligned_type));
 	}
 
+	// C++20 [expr.alignof]: a pointer or reference object is always a 64-bit
+	// aligned entity on x64, whatever its pointee.  The parser-set
+	// size_in_bits() describes the base type before declarator postfixes were
+	// applied, so it must not win over the pointer shape.
+	if (aligned_type.pointer_depth() > 0 ||
+		aligned_type.reference_qualifier() != ReferenceQualifier::None) {
+		return 8;
+	}
+
 	if (aligned_type.category() == TypeCategory::Struct) {
 		const TypeIndex type_index = aligned_type.type_index();
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
@@ -480,8 +489,22 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 
 		TypeSpecifierNode operand_type = *operand_type_opt;
 		if (unary.op() == "*") {
+			// C++20 [dcl.ptr]/1: when the pointer declarator binds array
+			// suffixes inside the pointer (T (*p)[N]), the dereference yields
+			// the complete array object, so the bounds become ordinary array
+			// dimensions on the result ([expr.unary.op]/1).
+			const bool deref_yields_array_object =
+				operand_type.has_pointee_array_declarator() &&
+				!operand_type.array_dimensions().empty();
 			if (operand_type.pointer_levels().size() > 0) {
 				operand_type.remove_pointer_level();
+			}
+			if (deref_yields_array_object) {
+				const std::vector<size_t> pointee_dims(
+					operand_type.array_dimensions().begin(),
+					operand_type.array_dimensions().end());
+				operand_type.set_array_dimensions(pointee_dims);
+				operand_type.set_pointee_array_declarator(false);
 			}
 			return operand_type;
 		}
@@ -1861,8 +1884,10 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 				if (symbol.has_value()) {
 					const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 					if (decl) {
-						// Check if it's an array
-						if (decl->is_array()) {
+						// Check if it's an array object.  A pointer-to-array
+						// entity such as T (*p)[N] is a scalar pointer
+						// ([dcl.ptr]/1), so array sizing must not apply.
+						if (decl->is_array_object()) {
 							const auto& array_type_spec = decl->type_specifier_node();
 							size_t element_size = get_typespec_size_bytes(array_type_spec);
 							if (element_size > 0) {
@@ -2120,8 +2145,11 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 
 						if (decl) {
-							// Check if it's an array - if so, calculate total size
-							if (decl->is_array()) {
+							// Check if it's an array object - if so, calculate
+							// total size.  A pointer-to-array entity such as
+							// T (*p)[N] is a scalar pointer ([dcl.ptr]/1), so
+							// array sizing must not apply.
+							if (decl->is_array_object()) {
 								const auto& type_spec = decl->type_specifier_node();
 								size_t element_size = get_typespec_size_bytes(type_spec);
 								if (element_size > 0) {
@@ -2235,6 +2263,13 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 		if (type_node.is<TypeSpecifierNode>()) {
 			const auto& type_spec = type_node.as<TypeSpecifierNode>();
 
+			// C++20 [expr.alignof]: a pointer or reference object is always a
+			// 64-bit aligned entity on x64, whatever its pointee.
+			if (type_spec.pointer_depth() > 0 ||
+				type_spec.reference_qualifier() != ReferenceQualifier::None) {
+				return EvalResult::from_int(8);
+			}
+
 			// For struct types, look up alignment from type info
 			if (type_spec.category() == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
@@ -2273,6 +2308,14 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 							const auto& type_node = decl->type_node();
 							if (type_node.is<TypeSpecifierNode>()) {
 								const auto& type_spec = type_node.as<TypeSpecifierNode>();
+
+								// C++20 [expr.alignof]: a pointer or reference
+								// object is always a 64-bit aligned entity on
+								// x64, whatever its pointee.
+								if (type_spec.pointer_depth() > 0 ||
+									type_spec.reference_qualifier() != ReferenceQualifier::None) {
+									return EvalResult::from_int(8);
+								}
 
 								// Handle struct types
 								if (type_spec.category() == TypeCategory::Struct) {
