@@ -9,6 +9,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 . "$SCRIPT_DIR/runner/runner_common.sh"
 export -f runner_expected_return_value
+export -f runner_expected_diagnostics
+export -f runner_plain_emitted_diagnostics
+export -f runner_compare_diagnostic_sets
 
 # Help FlashCpp's Linux startup policy: deep template instantiation needs a
 # stack well above the 8MB default. Raise the SOFT limit only (-S): setting the
@@ -567,9 +570,27 @@ test_one_fail_file() {
     if [ -f "$obj" ]; then
         echo "FAIL_BAD|$base|should have failed" > "$result_file"
         rm -f "$obj"
-    else
-        echo "FAIL_OK|$base|" > "$result_file"
+        return
     fi
+
+    # When the test pins its diagnostics via expected-diag comments, severity,
+    # stable ID name and number, line, and column must all match the plain
+    # rendered compiler output exactly.
+    local expected
+    expected=$(runner_expected_diagnostics "$(cat "$f")")
+    if [ -n "$expected" ]; then
+        local emitted detail comparison
+        emitted=$(runner_plain_emitted_diagnostics "$compile_output")
+        runner_compare_diagnostic_sets "$expected" "$emitted"
+        if [ "$RUNNER_DIAG_COMPARISON" = "match" ]; then
+            echo "FAIL_OK|$base|" > "$result_file"
+        else
+            echo "DIAG_MISMATCH|$base|$RUNNER_DIAG_DETAIL" > "$result_file"
+        fi
+        return
+    fi
+
+    echo "FAIL_OK|$base|" > "$result_file"
 }
 export -f test_one_fail_file
 
@@ -706,6 +727,12 @@ for base in "${FAIL_FILES[@]}"; do
             else
                 echo -e "${RED}[UNEXPECTED PASS]${NC} $base ($detail)"
             fi
+            ;;
+        DIAG_MISMATCH)
+            FAIL_BAD+=("$base")
+            FAIL_BAD_DETAILS+=("$detail")
+            FAILED_TEST_NAMES+=("$base")
+            echo -e "${RED}[DIAGNOSTIC MISMATCH]${NC} $base ($detail)"
             ;;
     esac
 done

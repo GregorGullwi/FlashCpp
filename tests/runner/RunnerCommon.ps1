@@ -113,6 +113,76 @@ function Test-FlashCppMigrationCounterBaseline {
 	return "Ok"
 }
 
+function Get-FlashCppExpectedDiagnostics {
+	param([string]$SourceContent)
+
+	$expected = @()
+	foreach ($line in ($SourceContent -split "`r?`n")) {
+		$match = [regex]::Match(
+			$line,
+			'^\s*//\s*expected-diag:\s*(fatal error|error|warning|note)\s+([A-Za-z][A-Za-z0-9_]*)#(\d+)\s+(\d+):(\d+)\s*$')
+		if ($match.Success) {
+			$expected += [pscustomobject]@{
+				Severity = $match.Groups[1].Value
+				Name = $match.Groups[2].Value
+				Number = [long]$match.Groups[3].Value
+				Line = [long]$match.Groups[4].Value
+				Column = [long]$match.Groups[5].Value
+				Key = "{0} {1}#{2} {3}:{4}" -f $match.Groups[1].Value, $match.Groups[2].Value,
+					$match.Groups[3].Value, $match.Groups[4].Value, $match.Groups[5].Value
+			}
+		}
+	}
+	return $expected
+}
+
+function Get-FlashCppPlainEmittedDiagnostics {
+	param([string]$CompilerOutput)
+
+	$emitted = @()
+	foreach ($line in ($CompilerOutput -split "`r?`n")) {
+		# Only plain rendered diagnostic lines count. The engine rendering is
+		# duplicated on stderr behind a colored logger prefix starting with an
+		# escape byte or '[', which this first-character filter removes; a
+		# decorated copy can therefore never satisfy an expectation.
+		if ([string]::IsNullOrWhiteSpace($line)) { continue }
+		$first = $line.TrimStart()[0]
+		if ($first -eq [char]0x1b -or $first -eq '[') { continue }
+		$match = [regex]::Match(
+			$line,
+			'^.*?:(\d+):(\d+):\s*(fatal error|error|warning|note): .*\[([A-Za-z][A-Za-z0-9_]*)#(\d+)\]\s*$')
+		if ($match.Success) {
+			$emitted += [pscustomobject]@{
+				Line = [long]$match.Groups[1].Value
+				Column = [long]$match.Groups[2].Value
+				Severity = $match.Groups[3].Value
+				Name = $match.Groups[4].Value
+				Number = [long]$match.Groups[5].Value
+				Key = "{0} {1}#{2} {3}:{4}" -f $match.Groups[3].Value, $match.Groups[4].Value,
+					$match.Groups[5].Value, $match.Groups[1].Value, $match.Groups[2].Value
+			}
+		}
+	}
+	return $emitted
+}
+
+function Compare-FlashCppDiagnosticSets {
+	param(
+		[object[]]$Expected,
+		[object[]]$Emitted
+	)
+
+	$expectedKeys = @($Expected | ForEach-Object { $_.Key } | Select-Object -Unique)
+	$emittedKeys = @($Emitted | ForEach-Object { $_.Key } | Select-Object -Unique)
+	$unmatchedExpected = @($expectedKeys | Where-Object { $emittedKeys -notcontains $_ })
+	$unexpectedEmitted = @($emittedKeys | Where-Object { $expectedKeys -notcontains $_ })
+	return [pscustomobject]@{
+		Matched = ($unmatchedExpected.Count -eq 0 -and $unexpectedEmitted.Count -eq 0)
+		UnmatchedExpected = $unmatchedExpected
+		UnexpectedEmitted = $unexpectedEmitted
+	}
+}
+
 function Write-FlashCppCiRecord {
 	param(
 		[string]$Path,

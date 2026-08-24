@@ -563,7 +563,24 @@ function Invoke-TestOneFailFile {
 		if (Test-Path $objFile) {
 			$resultLine = "FAIL_BAD|$fileName|should have failed"
 		} else {
-			$resultLine = "FAIL_OK|$fileName|"
+			# When the test pins its diagnostics, severity, stable ID name and
+			# number, line, and column must all match the plain rendered output.
+			$expected = Get-FlashCppExpectedDiagnostics -SourceContent (Get-Content -LiteralPath $filePath -Raw)
+			if ($expected.Count -gt 0) {
+				$emitted = Get-FlashCppPlainEmittedDiagnostics -CompilerOutput $failOutput
+				$comparison = Compare-FlashCppDiagnosticSets -Expected $expected -Emitted $emitted
+				if ($comparison.Matched) {
+					$resultLine = "FAIL_OK|$fileName|"
+				} else {
+					$problems = @()
+					foreach ($key in $comparison.UnmatchedExpected) { $problems += "missing $key" }
+					foreach ($key in $comparison.UnexpectedEmitted) { $problems += "unexpected $key" }
+					$detail = ($problems -join "; ") -replace "[`r`n]", " "
+					$resultLine = "DIAG_MISMATCH|$fileName|$detail"
+				}
+			} else {
+				$resultLine = "FAIL_OK|$fileName|"
+			}
 		}
 	} catch {
 		$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: $_"
@@ -638,7 +655,12 @@ function Invoke-TestOneMultiTuCase {
 }
 
 $invokeTestOneFileDefinition = ${function:Invoke-TestOneFile}.ToString()
-$invokeTestOneFailFileDefinition = ${function:Invoke-TestOneFailFile}.ToString()
+	$invokeTestOneFailFileDefinition = ${function:Invoke-TestOneFailFile}.ToString()
+	# Parallel runspaces receive only explicitly injected state; the fail worker
+	# needs its diagnostic-assertion helpers serialized alongside it.
+	$getFlashCppExpectedDiagnosticsDefinition = ${function:Get-FlashCppExpectedDiagnostics}.ToString()
+	$getFlashCppPlainEmittedDiagnosticsDefinition = ${function:Get-FlashCppPlainEmittedDiagnostics}.ToString()
+	$compareFlashCppDiagnosticSetsDefinition = ${function:Compare-FlashCppDiagnosticSets}.ToString()
 $serialRetryRecovered = @()
 
 # ──────────────────────────────────────────────────────
@@ -764,6 +786,9 @@ if ($useParallel -and $failFiles.Count -gt 0) {
 	$failParallelJob = $failFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
 		Set-Location $using:RepoRoot
 		${function:Invoke-TestOneFailFile} = $using:invokeTestOneFailFileDefinition
+		${function:Get-FlashCppExpectedDiagnostics} = $using:getFlashCppExpectedDiagnosticsDefinition
+		${function:Get-FlashCppPlainEmittedDiagnostics} = $using:getFlashCppPlainEmittedDiagnosticsDefinition
+		${function:Compare-FlashCppDiagnosticSets} = $using:compareFlashCppDiagnosticSetsDefinition
 		$file = $_
 		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:resultDir
 	} -AsJob
@@ -780,8 +805,11 @@ if ($useParallel -and $failFiles.Count -gt 0) {
 			$line = Get-Content $resultFile -Raw
 			$parts = $line -split '\|', 3
 			switch ($parts[0]) {
-				"FAIL_OK"  { Write-Host "OK (failed as expected)" }
-				"FAIL_BAD" { Write-Host "[UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red }
+				"FAIL_OK"       { Write-Host "OK (failed as expected)" }
+				"FAIL_BAD"      { Write-Host "[UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red }
+				"DIAG_MISMATCH" {
+					Write-Host "[DIAGNOSTIC MISMATCH] $($parts[2])" -ForegroundColor Red
+				}
 			}
 		}
 	}
@@ -906,6 +934,12 @@ foreach ($file in $failFiles) {
 			$failTestFailed += $file.Name
 			if ($useParallel) {
 				Write-Host "$($file.Name) - [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
+			}
+		}
+		"DIAG_MISMATCH" {
+			$failTestFailed += $file.Name
+			if ($useParallel) {
+				Write-Host "$($file.Name) - [DIAGNOSTIC MISMATCH] $($parts[2])" -ForegroundColor Red
 			}
 		}
 	}

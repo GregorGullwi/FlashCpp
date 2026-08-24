@@ -83,6 +83,52 @@ runner_ci_init() {
 	printf 'flashcpp-runner-v1\tmeta\tschema\t1\n' > "$path"
 }
 
+# Expected-diag assertion helpers. Canonical diagnostic key format (shared by
+# extraction and comparison): "<severity> <Name>#<number> <line>:<column>".
+
+runner_expected_diagnostics() {
+	local source_content="$1"
+	printf '%s\n' "$source_content" | grep -oE '^[[:space:]]*//[[:space:]]*expected-diag:[[:space:]]*(fatal error|error|warning|note)[[:space:]]+[A-Za-z][A-Za-z0-9_]*#[0-9]+[[:space:]]+[0-9]+:[0-9]+[[:space:]]*$' |
+		sed -E 's|^[[:space:]]*//[[:space:]]*expected-diag:[[:space:]]*||'
+}
+
+runner_plain_emitted_diagnostics() {
+	local compiler_output="$1"
+	# Only plain rendered diagnostic lines count; the engine rendering is also
+	# printed behind a colored logger prefix whose first printable character is
+	# an escape byte or '[', so those decorated copies can never match.
+	printf '%s\n' "$compiler_output" | grep -v $'^\x1b' | grep -v '^\[' |
+		grep -E '^.*:[0-9]+:[0-9]+: (fatal error|error|warning|note): .*\[[A-Za-z][A-Za-z0-9_]*#[0-9]+\][[:space:]]*$' |
+		sed -E 's,^.*:([0-9]+):([0-9]+): (fatal error|error|warning|note): .*\[([A-Za-z][A-Za-z0-9_]*)#([0-9]+)\][[:space:]]*$,\3 \4#\5 \1:\2,'
+}
+
+runner_compare_diagnostic_sets() {
+	local expected="$1"
+	local emitted="$2"
+	local expected_sorted emitted_sorted
+	expected_sorted=$(printf '%s\n' "$expected" | grep -v '^$' | sort -u)
+	emitted_sorted=$(printf '%s\n' "$emitted" | grep -v '^$' | sort -u)
+	local missing unexpected
+	missing=$(comm -23 <(printf '%s\n' "$expected_sorted") <(printf '%s\n' "$emitted_sorted"))
+	unexpected=$(comm -13 <(printf '%s\n' "$expected_sorted") <(printf '%s\n' "$emitted_sorted"))
+	if [ -z "$missing" ] && [ -z "$unexpected" ]; then
+		RUNNER_DIAG_COMPARISON='match'
+		RUNNER_DIAG_DETAIL=''
+		return
+	fi
+	local key
+	RUNNER_DIAG_DETAIL=""
+	while IFS= read -r key; do
+		[ -z "$key" ] && continue
+		RUNNER_DIAG_DETAIL="${RUNNER_DIAG_DETAIL:+$RUNNER_DIAG_DETAIL; }missing $key"
+	done <<< "$missing"
+	while IFS= read -r key; do
+		[ -z "$key" ] && continue
+		RUNNER_DIAG_DETAIL="${RUNNER_DIAG_DETAIL:+$RUNNER_DIAG_DETAIL; }unexpected $key"
+	done <<< "$unexpected"
+	RUNNER_DIAG_COMPARISON='mismatch'
+}
+
 runner_ci_record() {
 	local path="$1"
 	shift

@@ -29,6 +29,58 @@ assert_runner "$legacy_kind_ok" "explicit legacy compile-only probes override th
 if runner_linux_return_is_valid test_invalid_ret256.cpp; then range_ok=false; else range_ok=true; fi
 assert_runner "$range_ok" "Linux return encodings above 255 are rejected"
 
+assertion_source='int bad;
+// expected-diag: error SomeDiagnostic#1001 3:7
+// expected-diag: note SomeNote#1051 4:2
+// unrelated comment mentioning expected-diag without payload'
+expected_keys=$(runner_expected_diagnostics "$assertion_source" | sort)
+if printf '%s\n' "$expected_keys" | grep -qxF 'error SomeDiagnostic#1001 3:7' &&
+	printf '%s\n' "$expected_keys" | grep -qxF 'note SomeNote#1051 4:2' &&
+	[ "$(printf '%s\n' "$expected_keys" | wc -l)" -eq 2 ]; then
+	extraction_ok=true
+else
+	extraction_ok=false
+fi
+assert_runner "$extraction_ok" "expected-diag comments parse to severity, ID, and location keys"
+
+diag_file="$temp_root/diag_output.txt"
+printf '%s\n' \
+	$(printf '\033[31m[ERROR][Parser] C:\\src\\t.cpp:3:7: error: decorated copy [SomeDiagnostic#1001]\033[0m') \
+	'C:\src\t.cpp:3:7: error: plain primary [SomeDiagnostic#1001]' \
+	'C:\src\t.cpp:4:2: note: plain note [SomeNote#1051]' \
+	"  in instantiation of 'X' requested here" \
+	'[Progress] Preprocessing complete: 9 lines' > "$diag_file"
+emitted_keys=$(runner_plain_emitted_diagnostics "$(cat "$diag_file")" | sort)
+if printf '%s\n' "$emitted_keys" | grep -qxF 'error SomeDiagnostic#1001 3:7' &&
+	printf '%s\n' "$emitted_keys" | grep -qxF 'note SomeNote#1051 4:2' &&
+	[ "$(printf '%s\n' "$emitted_keys" | wc -l)" -eq 2 ]; then
+	emission_ok=true
+else
+	emission_ok=false
+fi
+assert_runner "$emission_ok" "only plain rendered diagnostic lines are emitted candidates; decorated copies never match"
+
+runner_compare_diagnostic_sets "$expected_keys" "$emitted_keys"
+[ "$RUNNER_DIAG_COMPARISON" = "match" ] && match_ok=true || match_ok=false
+assert_runner "$match_ok" "identical expected and emitted diagnostic sets match"
+
+shifted_keys=$(printf 'error SomeDiagnostic#1001 3:8\nnote SomeNote#1051 4:2')
+runner_compare_diagnostic_sets "$expected_keys" "$shifted_keys"
+if [ "$RUNNER_DIAG_COMPARISON" = "mismatch" ] &&
+	printf '%s' "$RUNNER_DIAG_DETAIL" | grep -qF 'missing error SomeDiagnostic#1001 3:7' &&
+	printf '%s' "$RUNNER_DIAG_DETAIL" | grep -qF 'unexpected error SomeDiagnostic#1001 3:8'; then
+	shift_ok=true
+else
+	shift_ok=false
+fi
+assert_runner "$shift_ok" "a location shift fails the comparison and names both sides"
+
+runner_compare_diagnostic_sets "" "$emitted_keys"
+[ "$RUNNER_DIAG_COMPARISON" = "mismatch" ] && printf '%s' "$RUNNER_DIAG_DETAIL" | grep -qF 'unexpected '
+unclaimed_ok=$?
+[ "$unclaimed_ok" -eq 0 ] && unclaimed_status=true || unclaimed_status=false
+assert_runner "$unclaimed_status" "unclaimed emitted diagnostics fail coverage"
+
 FLASHCPP_PIE_MODE=supported
 [ "$(runner_pie_mode)" = supported ] && pie_supported_ok=true || pie_supported_ok=false
 assert_runner "$pie_supported_ok" "PIE supported gate is explicit and testable"
@@ -69,9 +121,15 @@ if command -v clang++ >/dev/null 2>&1 && timeout --version 2>/dev/null | grep -q
 	assert_runner "$skipped_ok" "discovered but unschedulable multi-TU sources fail discovery"
 
 	return_ci="$temp_root/return.tsv"
-	bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/invalid_return" --ci-output "$return_ci" runner_self_ret256 >/dev/null 2>&1
-	[ $? -ne 0 ] && grep -q $'\tinvalid-return\t' "$return_ci" && invalid_return_ok=true || invalid_return_ok=false
-	assert_runner "$invalid_return_ok" "runner preflight rejects encoded Linux returns above 255"
+	# The encoded-return preflight is Linux-only by contract (Windows exit
+	# statuses are not truncated to 0-255), so its self-test must be too.
+	if [ "$(uname -s 2>/dev/null)" = "Linux" ]; then
+		bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/invalid_return" --ci-output "$return_ci" runner_self_ret256 >/dev/null 2>&1
+		[ $? -ne 0 ] && grep -q $'\tinvalid-return\t' "$return_ci" && invalid_return_ok=true || invalid_return_ok=false
+		assert_runner "$invalid_return_ok" "runner preflight rejects encoded Linux returns above 255"
+	else
+		printf 'SKIP: encoded-return preflight check requires Linux\n'
+	fi
 else
 	printf 'SKIP: functional multi-TU and PIE checks require clang++ and timeout\n'
 fi

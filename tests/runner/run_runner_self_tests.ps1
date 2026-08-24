@@ -66,6 +66,40 @@ try {
 	Assert-Runner ($improvedStatus -eq "Improved") "counts below the baseline ratchet down without failing"
 	Assert-Runner ($regressedStatus -eq "Regressed") "counts above the baseline are regressions"
 	Assert-Runner ($untrackedStatus -eq "MissingBaseline") "corpus entries without a baseline cannot pass silently"
+
+	$assertionSource = @"
+int bad;
+// expected-diag: error SomeDiagnostic#1001 3:7
+// expected-diag: note SomeNote#1051 4:2
+// unrelated comment mentioning expected-diag without payload
+"@
+	$expectedDiags = Get-FlashCppExpectedDiagnostics -SourceContent $assertionSource
+	Assert-Runner ($expectedDiags.Count -eq 2 -and
+		$expectedDiags[0].Key -eq "error SomeDiagnostic#1001 3:7" -and
+		$expectedDiags[1].Key -eq "note SomeNote#1051 4:2") "expected-diag comments parse to severity, ID, and location keys"
+
+	$diagnosticOutput = @(
+		"$([char]0x1b)[31m[ERROR][Parser] C:\src\t.cpp:3:7: error: decorated copy [SomeDiagnostic#1001]$([char]0x1b)[0m",
+		"C:\src\t.cpp:3:7: error: plain primary [SomeDiagnostic#1001]",
+		"C:\src\t.cpp:4:2: note: plain note [SomeNote#1051]",
+		"  in instantiation of 'X' requested here",
+		"[Progress] Preprocessing complete: 9 lines"
+	) -join "`n"
+	$emittedDiags = Get-FlashCppPlainEmittedDiagnostics -CompilerOutput $diagnosticOutput
+	Assert-Runner ($emittedDiags.Count -eq 2 -and
+		$emittedDiags[0].Key -eq "error SomeDiagnostic#1001 3:7" -and
+		$emittedDiags[1].Key -eq "note SomeNote#1051 4:2") "only plain rendered diagnostic lines are emitted candidates; decorated copies never match"
+
+	$matchResult = Compare-FlashCppDiagnosticSets -Expected $expectedDiags -Emitted $emittedDiags
+	Assert-Runner ($matchResult.Matched) "identical expected and emitted diagnostic sets match"
+
+	$shifted = Get-FlashCppPlainEmittedDiagnostics -CompilerOutput "C:\src\t.cpp:3:8: error: shifted column [SomeDiagnostic#1001]"
+	$mismatchResult = Compare-FlashCppDiagnosticSets -Expected $expectedDiags -Emitted (@($shifted) + @($emittedDiags | Where-Object { $_.Severity -eq 'note' }))
+	Assert-Runner (-not $mismatchResult.Matched -and
+		@($mismatchResult.UnmatchedExpected).Count -eq 1 -and
+		@($mismatchResult.UnexpectedEmitted).Count -eq 1 -and
+		$mismatchResult.UnmatchedExpected[0] -eq "error SomeDiagnostic#1001 3:7") "a location shift fails the comparison and names both sides"
+	Assert-Runner ((Compare-FlashCppDiagnosticSets -Expected @() -Emitted $emittedDiags).UnexpectedEmitted.Count -eq 2) "unclaimed emitted diagnostics fail coverage"
 } finally {
 	Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
