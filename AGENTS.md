@@ -24,7 +24,37 @@
 - Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do not add opcodes manually to `textSectionData` in `IRConverter.h`, make helper functions if no fitting `emit` function exist.
 - Never use default parameter values in function or method signatures in the codebase, tests are excluded from this rule. Every argument must be passed explicitly by the caller. Default parameters hide misuse (e.g., forgetting to propagate a flag) and make call sites silently wrong instead of producing a compile error.
 - Multi-line comments should have the same indentation as the code it describes.
-- Avoid shared_ptr and unique_ptr, use a ChunkedVector<Type> instead since it has stable pointer guarantees.
+- Avoid shared_ptr and unique_ptr. Prefer `FrontendContext`-owned typed arenas
+  and stable IDs. A `ChunkedVector<T>` arena must be pinned because copying or
+  moving the arena can invalidate element addresses; stable addresses are an
+  implementation property, not semantic identity.
+
+## Memory, Arenas & Stack Usage
+- REALLY try to minimize memory footprint. Use bitmasks instead of bools. Think about struct padding.
+- Use `InlineVector` only when the inline capacity is supported by measured
+  element counts and spill rates. Avoid large local `InlineVector` instances
+  on recursive parser, template, substitution, constraint, lookup, constexpr,
+  or semantic paths.
+- Treat `ChunkedVector<T>`'s `ChunkSize` as an element count and pass an
+  explicit measured value for new arenas. Do not rely on its current default.
+- `StringHandle` is for interned spelling and lookup keys. Never use its numeric
+  value as declaration, type, template, specialization, cache, or ABI identity.
+- Do not add new semantic objects to `ChunkedAnyVector`; it is a legacy AST
+  bridge.
+- Unbounded source-language recursion must use an explicit worklist or
+  arena-owned frame stack. Do not map template instantiation depth, constraint
+  recursion, substitution recursion, or point-of-instantiation processing
+  directly to native C++ call depth.
+- Keep recursive-path frames small: pass IDs or spans instead of AST values,
+  template environments, argument vectors, or other large objects by value.
+- For changes on potentially recursive paths, inspect stack-usage output when
+  the toolchain supports it (`-fstack-usage` on clang/GCC), compare changed
+  frames against the baseline, and include a deep targeted regression under
+  the normal OS stack limit. Do not raise the stack limit to make the new path
+  pass.
+- Pull request review must report the largest changed stack frame for recursive
+  paths and whether native stack usage remains bounded as logical template
+  depth increases.
 
 ## Debugging & Reference Tips
 Use `dumpbin.exe`, locate the path with `where.exe`, which is great for spotting codegen drift. When investigating parser issues, rebuild with `build_flashcpp.bat` and run `x64/Debug/FlashCpp.exe -v path\to\input.cpp` to emit dependency and IR traces without editing source. Output file will end up in the working folder.
