@@ -93,6 +93,26 @@ function Initialize-FlashCppCiOutput {
 	[System.IO.File]::WriteAllText($Path, "flashcpp-runner-v1`tmeta`tschema`t1$([Environment]::NewLine)", [System.Text.UTF8Encoding]::new($false))
 }
 
+function Get-FlashCppOutsideEngineDiagnosticCount {
+	param([string]$CompilerOutput)
+
+	$match = [regex]::Match($CompilerOutput, 'Diagnostics emitted outside DiagnosticEngine:\s*(\d+)')
+	if (-not $match.Success) { return $null }
+	return [long]$match.Groups[1].Value
+}
+
+function Test-FlashCppMigrationCounterBaseline {
+	param(
+		[long]$ActualCount,
+		[Nullable[long]]$BaselineCount
+	)
+
+	if ($null -eq $BaselineCount) { return "MissingBaseline" }
+	if ($ActualCount -gt $BaselineCount) { return "Regressed" }
+	if ($ActualCount -lt $BaselineCount) { return "Improved" }
+	return "Ok"
+}
+
 function Write-FlashCppCiRecord {
 	param(
 		[string]$Path,

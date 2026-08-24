@@ -141,6 +141,15 @@ static void setManglingStyle(CompileContext& context, CompileContext::ManglingSt
 	}
 }
 
+// Boundary-0 migration telemetry: diagnostics still emitted outside the
+// structured engine (legacy CompileError strings and ParseResult errors).
+// Printed on every post-parse exit path so fixed-corpus baselines observe
+// error terminations too, not only successful pipelines.
+static void printOutsideDiagnosticTelemetry() {
+	FLASH_LOG(General, Info, "\nDiagnostics emitted outside DiagnosticEngine: ",
+			  diagnosticsEmittedOutsideEngineCount());
+}
+
 int main(int argc, char* argv[]) {
 	ensureMinimumProcessStackSize();
 
@@ -497,6 +506,7 @@ int main_impl(int argc, char* argv[]) {
 			parser->printRuntimeStats();
 			printTypeTableStats();
 			StackStringStats::print_stats();
+			printOutsideDiagnosticTelemetry();
 		}
 		if (show_alloc_stats) {
 			FlashCpp::AllocationTracker::printStats();
@@ -539,6 +549,9 @@ int main_impl(int argc, char* argv[]) {
 		try {
 			sema->run();
 		} catch (const CompileError& e) {
+			if (show_perf_stats) {
+				printOutsideDiagnosticTelemetry();
+			}
 			if (const Diagnostic* structured_error = e.structuredDiagnostic()) {
 				std::string rendered_error = renderDiagnostic(
 					*structured_error, context.diagnostics(), lexer.file_paths());
@@ -550,6 +563,9 @@ int main_impl(int argc, char* argv[]) {
 			FLASH_LOG(General, Error, "error: ", e.what(), notes);
 			return 1;
 		} catch (const InternalError& e) {
+			if (show_perf_stats) {
+				printOutsideDiagnosticTelemetry();
+			}
 			FLASH_LOG(General, Error, "internal error: ", e.what());
 			return 1;
 		}
@@ -712,12 +728,18 @@ int main_impl(int argc, char* argv[]) {
 	if (ir_conversion_error_count > 0) {
 		FLASH_LOG(General, Error, "Compilation failed during IR generation (",
 				  ir_conversion_error_count, " top-level failures)");
+		if (show_perf_stats) {
+			printOutsideDiagnosticTelemetry();
+		}
 		return 1;
 	}
 
 	// Semantic compile errors (explicit constructor violations, etc.) are fatal
 	if (has_compile_errors) {
 		FLASH_LOG(General, Error, "Compilation failed due to semantic errors");
+		if (show_perf_stats) {
+			printOutsideDiagnosticTelemetry();
+		}
 		return 1;
 	}
 
@@ -754,6 +776,7 @@ int main_impl(int argc, char* argv[]) {
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
 		if (show_perf_stats) {
 			StackStringStats::print_stats();
+			printOutsideDiagnosticTelemetry();
 		}
 		return 1;
 	} catch (const std::exception& e) {
@@ -761,6 +784,7 @@ int main_impl(int argc, char* argv[]) {
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
 		if (show_perf_stats) {
 			StackStringStats::print_stats();
+			printOutsideDiagnosticTelemetry();
 		}
 		return 1;
 	} catch (...) {
@@ -768,6 +792,7 @@ int main_impl(int argc, char* argv[]) {
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
 		if (show_perf_stats) {
 			StackStringStats::print_stats();
+			printOutsideDiagnosticTelemetry();
 		}
 		return 1;
 	}
@@ -807,8 +832,7 @@ int main_impl(int argc, char* argv[]) {
 
 		// Boundary-0 migration telemetry: diagnostics still emitted outside the
 		// structured engine (legacy CompileError strings and ParseResult errors).
-		FLASH_LOG(General, Info, "\nDiagnostics emitted outside DiagnosticEngine: ",
-				  diagnosticsEmittedOutsideEngineCount());
+		printOutsideDiagnosticTelemetry();
 	}
 	if (show_alloc_stats) {
 		FlashCpp::AllocationTracker::printStats();
