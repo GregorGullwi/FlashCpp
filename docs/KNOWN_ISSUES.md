@@ -12,18 +12,14 @@ flattened row-major element access; and member/static-member registration,
 canonical typing, constexpr sizing, and global bindings all preserve the
 pointee shape via the `pointee_array_declarator` flag on `StructMember`,
 `StaticMemberDecl`, `StructStaticMember`, and `CanonicalTypeDesc`.
+Cast type-ids also accept parenthesized abstract-declarator groups:
+`static_cast<int(*)[3]>(v)`, `static_cast<const int(*)[3]>(v)`,
+`reinterpret_cast<long(*)[2][4]>(v)` and the C-style `(int(*)[3])v` route the
+group through `parse_declarator` via `consume_cast_type_id_paren_declarator`,
+so the pointee shape matches the named spelling `int (*p)[3]`
+(tests/test_ptr_to_array_cast_type_id_ret0.cpp).
 Remaining gaps in the same area:
 
-- Cast expressions cannot parse parenthesized abstract-declarator type-ids:
-  `static_cast<int(*)[3]>(v)`, `reinterpret_cast<long(*)[2][4]>(v)`, and the
-  C-style `(int(*)[3])v` all fail ("Expected '>' after type in static_cast" /
-  "Expected primary expression"). The cast paths
-  (`parse_cast_type_specifier` in `Parser_Expr_PrimaryUnary.cpp`,
-  `consume_cast_type_id_postfix_modifiers`) consume only trailing cv- and
-  ptr/ref-operators, not the parenthesized groups or `[N]` suffixes that
-  `consume_type_id_abstract_declarators` (used by `sizeof`/`alignof`) accepts.
-  Named spellings are unaffected: `int (*q)[3] = p;` parses and lowers
-  correctly.
 - Indexing through a class-template-instantiated pointer-to-array member
   (`Box<int> b; b.cells = &arr; (*b.cells)[i][j];`) crashes at runtime. The
   non-template struct path is fully working

@@ -3983,6 +3983,7 @@ private:	 // Resume private methods
 	std::optional<CVQualifier> scan_parenthesized_pointer_group(CallingConvention& out_calling_conv, Token& out_identifier, bool& out_has_identifier); // Scan "(" [cc] "*" cv-seq? [id] ")" shared by named and abstract declarators
 	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume ptr-operator then array abstract-declarators on a type-id
 	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id
+	bool consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec); // Consume a parenthesized abstract-declarator group in a cast type-id
 	// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
 	// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
 	// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
