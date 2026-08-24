@@ -47,8 +47,16 @@ if command -v clang++ >/dev/null 2>&1 && timeout --version 2>/dev/null | grep -q
 	success_ci="$temp_root/success.tsv"
 	success_output="$temp_root/success.out"
 	bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/multi_tu_success" --ci-output "$success_ci" runner_self_multi_ret42 >"$success_output" 2>&1
-	[ $? -eq 0 ] && grep -q $'flashcpp-runner-v1\tsummary\tall\tsuccess' "$success_ci" && grep -q 'PIE: supported\|PIE: unsupported' "$success_output" && multi_success_ok=true || multi_success_ok=false
+	[ $? -eq 0 ] && grep -q $'flashcpp-runner-v1\tsummary\tall\tsuccess' "$success_ci" && grep -q 'link mode: no-pie' "$success_output" && multi_success_ok=true || multi_success_ok=false
 	assert_runner "$multi_success_ok" "successful multi-TU fixture compiles, links, and runs"
+
+	if [ "$(runner_pie_mode)" = "supported" ]; then
+		pie_ci="$temp_root/pie.tsv"
+		pie_output="$temp_root/pie.out"
+		bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --pie --multi-tu-root "$SCRIPT_DIR/fixtures/multi_tu_success" --ci-output "$pie_ci" runner_self_multi_ret42 >"$pie_output" 2>&1
+		[ $? -eq 0 ] && grep -q $'flashcpp-runner-v1\tsummary\tall\tsuccess' "$pie_ci" && grep -q 'link mode: pie' "$pie_output" && pie_functional_ok=true || pie_functional_ok=false
+		assert_runner "$pie_functional_ok" "PIE multi-TU fixture links and runs when ELF PIE is supported"
+	fi
 
 	failure_ci="$temp_root/failure.tsv"
 	FLASHCPP_RERUN_PHASE=1 bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/multi_tu_failure" --ci-output "$failure_ci" runner_self_multi_link_fail_ret0 >/dev/null 2>&1

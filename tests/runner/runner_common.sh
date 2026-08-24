@@ -20,21 +20,26 @@ runner_binary_is_fresh() {
 	return 0
 }
 
-runner_test_kind() {
+runner_classify_test() {
 	local file_name="$1"
 	local source_path="$2"
 	local platform_exclusions=" $3 "
 	local support_sources=" $4 "
 	local compile_only_overrides=" $5 "
-	[[ "$platform_exclusions" == *" $file_name "* ]] && { printf 'platform-excluded'; return; }
-	[[ "$support_sources" == *" $file_name "* ]] && { printf 'support-source'; return; }
-	[[ "$compile_only_overrides" == *" $file_name "* ]] && { printf 'compile-only'; return; }
-	[[ "$file_name" == *_fail.cpp ]] && { printf 'compile-failure'; return; }
+	[[ "$platform_exclusions" == *" $file_name "* ]] && { RUNNER_TEST_KIND='platform-excluded'; return; }
+	[[ "$support_sources" == *" $file_name "* ]] && { RUNNER_TEST_KIND='support-source'; return; }
+	[[ "$compile_only_overrides" == *" $file_name "* ]] && { RUNNER_TEST_KIND='compile-only'; return; }
+	[[ "$file_name" == *_fail.cpp ]] && { RUNNER_TEST_KIND='compile-failure'; return; }
 	if grep -qE '\b(int|void)[[:space:]]+main[[:space:]]*\(' "$source_path"; then
-		printf 'runnable'
+		RUNNER_TEST_KIND='runnable'
 	else
-		printf 'compile-only'
+		RUNNER_TEST_KIND='compile-only'
 	fi
+}
+
+runner_test_kind() {
+	runner_classify_test "$@"
+	printf '%s' "$RUNNER_TEST_KIND"
 }
 
 runner_expected_return_value() {
