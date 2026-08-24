@@ -1,5 +1,6 @@
 #pragma once
 #include "AstNodeTypes_Core.h"
+#include "SourceLocation.h"
 #include <cassert>
 #include <format>
 #include <functional>
@@ -22,30 +23,6 @@ enum class CVQualifier : uint8_t {
 	Const = 1 << 0,
 	Volatile = 1 << 1,
 	ConstVolatile = Const | Volatile
-};
-
-struct SourceLocation {
-	size_t line = 0;
-	size_t column = 0;
-	size_t file_index = SIZE_MAX;
-
-	static SourceLocation fromToken(const Token& token) {
-		return SourceLocation{
-			token.line(),
-			token.column(),
-			token.file_index()};
-	}
-
-	static SourceLocation fromParts(size_t line_value, size_t column_value, size_t file_index_value) {
-		return SourceLocation{
-			line_value,
-			column_value,
-			file_index_value};
-	}
-
-	bool is_valid() const {
-		return line != 0 && file_index != SIZE_MAX;
-	}
 };
 
 // Definition-context lookup state used by two-phase lookup records.

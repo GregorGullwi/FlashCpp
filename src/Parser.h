@@ -208,7 +208,11 @@ public:
 	ParseResult() : value_or_error_(std::monostate{}) {}
 	ParseResult(ASTNode node) : value_or_error_(node) {}
 	ParseResult(std::string error_message, Token token)
-		: value_or_error_(Error{std::move(error_message), std::move(token)}) {}
+		: value_or_error_(Error{std::move(error_message), std::move(token)}) {
+		// Parse errors are diagnostics emitted outside DiagnosticEngine while
+		// ParseResult remains the parser's reporting channel.
+		recordDiagnosticEmittedOutsideEngine();
+	}
 
 	bool is_error() const {
 		return std::holds_alternative<Error>(value_or_error_);
@@ -1294,10 +1298,19 @@ private:
 		ScopedParserInstantiationContext(Parser& p, TemplateInstantiationMode mode, StringHandle origin)
 			: parser_(p),
 			  prev_ctx_(p.current_instantiation_ctx_),
-			  prev_mode_(p.template_instantiation_mode_) {
+			  prev_mode_(p.template_instantiation_mode_),
+			  pushed_engine_frame_(false) {
 			ctx_ = {mode, origin, prev_ctx_};
 			parser_.current_instantiation_ctx_ = &ctx_;
 			parser_.template_instantiation_mode_ = mode;
+			// Mirror the chain into the diagnostic engine so diagnostics
+			// reported inside this scope capture their instantiation context
+			// by value at report time. Mode-only guards carry no name and are
+			// skipped, matching buildInstantiationNotes().
+			if (origin.isValid()) {
+				parser_.context_.diagnostics().pushTemplateContext(origin, SourceLocation{});
+				pushed_engine_frame_ = true;
+			}
 		}
 		~ScopedParserInstantiationContext() {
 			// Capture backtrace on the first destructor invocation during unwinding.
@@ -1305,6 +1318,9 @@ private:
 			// The empty-check ensures we capture only once (innermost guard first).
 			if (std::uncaught_exceptions() > 0 && g_parser_instantiation_notes.empty()) {
 				g_parser_instantiation_notes = buildInstantiationNotes(parser_.current_instantiation_ctx_);
+			}
+			if (pushed_engine_frame_) {
+				parser_.context_.diagnostics().popTemplateContext();
 			}
 			parser_.current_instantiation_ctx_ = prev_ctx_;
 			parser_.template_instantiation_mode_ = prev_mode_;
@@ -1315,6 +1331,7 @@ private:
 		Parser& parser_;
 		const ParserInstantiationContext* prev_ctx_;
 		TemplateInstantiationMode prev_mode_;
+		bool pushed_engine_frame_;
 		ParserInstantiationContext ctx_;
 	};
 

@@ -295,3 +295,14 @@ producing an implementation-limit diagnostic. The throughput corpus avoids
 this construct; the query benchmark retains a separate 1,025-level logical
 dependency probe. Architecture boundary 7 must move the real instantiation and
 substitution path onto small arena-owned frames before this issue can be closed.
+
+## SemanticAnalysis query-state doctest fails on a clean tree
+
+The unity doctest build (tests/FlashCppTest) fails
+`SemanticAnalysis:ResolvedDirectCallQueryTracksAnalysisState` on clean `main`
+as of 2026-08-24: an expression-type query reports `Available` before
+`SemanticAnalysis::run()`, so `before_run.state == NotYetAnalyzed` does not
+hold. Reproduced with the LLVM clang-cl 20.1 unity build from the repository
+root; unrelated to the DiagnosticEngine slice that surfaced it. Suspect shared
+static state across earlier TEST_CASEs in the same process. Owner: sema query
+lifecycle; fix by isolating per-test semantic state or resetting query slots.

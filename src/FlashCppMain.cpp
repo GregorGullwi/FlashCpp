@@ -466,6 +466,9 @@ int main_impl(int argc, char* argv[]) {
 	bool parse_compile_error = false;
 	std::string parse_compile_error_message;
 	std::string parse_compile_error_notes;
+	// When the thrown CompileError carries a structured diagnostic, this holds
+	// the engine-rendered located text and takes precedence over message+notes.
+	std::string parse_compile_error_structured_display;
 	{
 		PhaseTimer timer("Parsing", false, &parsing_time, FlashCpp::AllocationPhase::Parsing);
 		// Note: Lexing happens lazily during parsing in this implementation
@@ -478,6 +481,12 @@ int main_impl(int argc, char* argv[]) {
 			// are thrown as CompileError from within template instantiation during parsing.
 			parse_compile_error = true;
 			parse_compile_error_message = e.what();
+			if (const Diagnostic* structured_error = e.structuredDiagnostic()) {
+				// Engine-rendered output already includes the instantiation
+				// context snapshot, so legacy unwinding notes are not appended.
+				parse_compile_error_structured_display = renderDiagnostic(
+					*structured_error, context.diagnostics(), lexer.file_paths());
+			}
 			parse_compile_error_notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
 		}
@@ -495,8 +504,13 @@ int main_impl(int argc, char* argv[]) {
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time,
 						   ir_conversion_time, deferred_gen_time, codegen_time, total_start);
 		if (parse_compile_error) {
-			FLASH_LOG(Parser, Error, "error: ", parse_compile_error_message, parse_compile_error_notes);
-			std::cerr << "error: " << parse_compile_error_message << parse_compile_error_notes << std::endl;
+			if (!parse_compile_error_structured_display.empty()) {
+				FLASH_LOG(Parser, Error, parse_compile_error_structured_display);
+				std::cerr << parse_compile_error_structured_display << std::endl;
+			} else {
+				FLASH_LOG(Parser, Error, "error: ", parse_compile_error_message, parse_compile_error_notes);
+				std::cerr << "error: " << parse_compile_error_message << parse_compile_error_notes << std::endl;
+			}
 			return 1;
 		}
 		// Print formatted error with file:line:column information and include stack
@@ -524,6 +538,12 @@ int main_impl(int argc, char* argv[]) {
 		try {
 			sema->run();
 		} catch (const CompileError& e) {
+			if (const Diagnostic* structured_error = e.structuredDiagnostic()) {
+				std::string rendered_error = renderDiagnostic(
+					*structured_error, context.diagnostics(), lexer.file_paths());
+				FLASH_LOG(General, Error, rendered_error);
+				return 1;
+			}
 			std::string notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
 			FLASH_LOG(General, Error, "error: ", e.what(), notes);
@@ -783,6 +803,11 @@ int main_impl(int argc, char* argv[]) {
 #endif
 
 		ir.printStats();
+
+		// Boundary-0 migration telemetry: diagnostics still emitted outside the
+		// structured engine (legacy CompileError strings and ParseResult errors).
+		FLASH_LOG(General, Info, "\nDiagnostics emitted outside DiagnosticEngine: ",
+				  diagnosticsEmittedOutsideEngineCount());
 	}
 	if (show_alloc_stats) {
 		FlashCpp::AllocationTracker::printStats();

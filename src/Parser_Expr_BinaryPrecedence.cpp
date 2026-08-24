@@ -1597,6 +1597,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 			   kw == "__unaligned" || kw == "__uptr" || kw == "__sptr";
 	};
 	while (peek() == "*"_tok) {
+		Token pointer_token = peek_info();
 		advance(); // consume '*'
 		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
 		skip_noop_gnu_qualifiers(); // Skip __restrict / __restrict__ after pointer CV-qualifiers
@@ -1606,7 +1607,13 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 			advance();
 		}
 		if (type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-			throw CompileError("Cannot form a pointer to reference type");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::PointerToReferenceType,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(pointer_token),
+				"Cannot form a pointer to reference type",
+				{});
 		}
 		type_spec.add_pointer_level(ptr_cv);
 	}
@@ -1649,6 +1656,7 @@ void Parser::consume_array_type_id_modifiers(TypeSpecifierNode& type_spec) {
 		return;
 	}
 	while (peek() == "["_tok) {
+		Token opening_bracket_token = peek_info();
 		advance();
 		if (peek() == "]"_tok) {
 			type_spec.set_array(true);
@@ -1671,7 +1679,23 @@ void Parser::consume_array_type_id_modifiers(TypeSpecifierNode& type_spec) {
 		}
 		type_spec.add_array_dimension(dim_size);
 		if (!consume("]"_tok)) {
-			throw CompileError("Expected ']' after array size in type-id");
+			SourceLocation opening_bracket_location = SourceLocation::fromToken(opening_bracket_token);
+			DiagnosticEngine& diagnostics_engine = context_.diagnostics();
+			uint32_t bracket_diagnostic_index = diagnostics_engine.reportWithRange(
+				DiagnosticId::ExpectedCloseBracketAfterArraySize,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(peek_info()),
+				SourceRange::fromLocations(opening_bracket_location, SourceLocation::fromToken(peek_info())),
+				"Expected ']' after array size",
+				{});
+			diagnostics_engine.attachNote(
+				bracket_diagnostic_index,
+				DiagnosticId::NoteToMatchOpeningBracket,
+				opening_bracket_location,
+				"to match this '['",
+				{});
+			throw CompileError::fromStructuredDiagnostic(
+				diagnostics_engine.diagnostic(bracket_diagnostic_index));
 		}
 	}
 }
