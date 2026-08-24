@@ -16,8 +16,9 @@
 //
 // Ownership contract:
 // - DiagnosticEngine instances accumulate Diagnostic records by value. Stored
-//   records own their arguments, notes (via pool indices), and a value-copy of
-//   the active template-instantiation context captured at report time.
+//   records own message and argument text through stable engine-side storage,
+//   notes (via pool indices), and a value-copy of the active
+//   template-instantiation context captured at report time.
 // - Nothing stored here escapes by pointer or reference except const views
 //   whose validity matches the engine lifetime.
 // - DiagnosticId values are stable forever and never derived from message
@@ -98,8 +99,8 @@ inline void appendDiagnosticIdTag(StringBuilder& builder, DiagnosticId id) {
 }
 
 // One structured substitution slot for a message template. Templates use "{}"
-// placeholders consumed left to right. Text arguments borrow caller-owned
-// spelling that outlives the diagnostic (token buffer or interned table).
+// placeholders consumed left to right. Text arguments passed to report() are
+// copied into stable DiagnosticEngine storage before the record is retained.
 struct DiagnosticArgument {
 	enum class Kind : uint8_t {
 		SignedInteger,
@@ -275,7 +276,7 @@ public:
 		diagnostic.id = id;
 		diagnostic.severity = severity;
 		diagnostic.location = location;
-		diagnostic.message_template = message_template;
+		diagnostic.message_template = storeText(message_template);
 		copyArguments(diagnostic.arguments, arguments);
 		snapshotInstantiationContext(diagnostic);
 		return append(std::move(diagnostic));
@@ -294,7 +295,7 @@ public:
 		DiagnosticNote note;
 		note.id = id;
 		note.location = location;
-		note.message_template = message_template;
+		note.message_template = storeText(message_template);
 		copyArguments(note.arguments, arguments);
 		uint32_t note_index = static_cast<uint32_t>(note_pool_.size());
 		note_pool_.push_back(std::move(note));
@@ -340,11 +341,20 @@ private:
 		return static_cast<uint32_t>(diagnostics_.size() - 1);
 	}
 
+	std::string_view storeText(std::string_view text) {
+		text_storage_.emplace_back(text);
+		return text_storage_.back();
+	}
+
 	template <size_t kInlineCapacity>
-	static void copyArguments(InlineVector<DiagnosticArgument, kInlineCapacity>& target,
-							  std::span<const DiagnosticArgument> source) {
+	void copyArguments(InlineVector<DiagnosticArgument, kInlineCapacity>& target,
+					   std::span<const DiagnosticArgument> source) {
 		for (const DiagnosticArgument& argument : source) {
-			target.push_back(argument);
+			DiagnosticArgument stored_argument = argument;
+			if (stored_argument.kind == DiagnosticArgument::Kind::Text) {
+				stored_argument.text_value = storeText(stored_argument.text_value);
+			}
+			target.push_back(stored_argument);
 		}
 	}
 
@@ -357,6 +367,7 @@ private:
 	std::vector<Diagnostic> diagnostics_;
 	std::vector<DiagnosticNote> note_pool_;
 	std::vector<TemplateInstantiationFrame> template_context_;
+	std::deque<std::string> text_storage_;
 	size_t severity_counts_[4] = {0, 0, 0, 0};
 };
 

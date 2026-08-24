@@ -514,6 +514,7 @@ int main_impl(int argc, char* argv[]) {
 			return 1;
 		}
 		// Print formatted error with file:line:column information and include stack
+		recordDiagnosticEmittedOutsideEngine();
 		std::string error_msg = parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer);
 		FLASH_LOG(Parser, Error, error_msg);
 		// Also print to stderr to ensure error is visible even with minimal logging

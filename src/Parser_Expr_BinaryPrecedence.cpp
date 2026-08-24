@@ -1611,7 +1611,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 				context_.diagnostics(),
 				DiagnosticId::PointerToReferenceType,
 				DiagnosticSeverity::Error,
-				SourceLocation::fromToken(pointer_token),
+				lexer_.getSourceLocation(pointer_token),
 				"Cannot form a pointer to reference type",
 				{});
 		}
@@ -1679,13 +1679,14 @@ void Parser::consume_array_type_id_modifiers(TypeSpecifierNode& type_spec) {
 		}
 		type_spec.add_array_dimension(dim_size);
 		if (!consume("]"_tok)) {
-			SourceLocation opening_bracket_location = SourceLocation::fromToken(opening_bracket_token);
+			SourceLocation opening_bracket_location = lexer_.getSourceLocation(opening_bracket_token);
+			SourceLocation unexpected_token_location = lexer_.getSourceLocation(peek_info());
 			DiagnosticEngine& diagnostics_engine = context_.diagnostics();
 			uint32_t bracket_diagnostic_index = diagnostics_engine.reportWithRange(
 				DiagnosticId::ExpectedCloseBracketAfterArraySize,
 				DiagnosticSeverity::Error,
-				SourceLocation::fromToken(peek_info()),
-				SourceRange::fromLocations(opening_bracket_location, SourceLocation::fromToken(peek_info())),
+				unexpected_token_location,
+				SourceRange::fromLocations(opening_bracket_location, unexpected_token_location),
 				"Expected ']' after array size",
 				{});
 			diagnostics_engine.attachNote(
