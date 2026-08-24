@@ -393,11 +393,8 @@ For each issue:
 
 **Validation Commands:**
 ```bash
-# Run all tests - verify compilation and linking
+# Run all tests, including compile, link, runtime, and return-value validation
 cd /home/runner/work/FlashCpp/FlashCpp && ./tests/run_all_tests.sh
-
-# Validate return values of runnable tests
-cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 ```
 
 ---
