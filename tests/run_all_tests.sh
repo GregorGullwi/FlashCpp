@@ -195,6 +195,7 @@ FAIL_FILES=()
 EXCLUDED_FILES=()
 PLATFORM_EXCLUSIONS=""
 SUPPORT_SOURCES="linux_exception_stubs.cpp"
+COMPILE_ONLY_OVERRIDES="test_ub_fail.cpp"
 for candidate in tests/test_seh_*.cpp; do
 	[ -f "$candidate" ] && PLATFORM_EXCLUSIONS+=" $(basename "$candidate")"
 done
@@ -202,7 +203,7 @@ DISCOVERED_ELIGIBLE=0
 for f in tests/*.cpp; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
-	kind=$(runner_test_kind "$base" "$f" "$PLATFORM_EXCLUSIONS" "$SUPPORT_SOURCES")
+	kind=$(runner_test_kind "$base" "$f" "$PLATFORM_EXCLUSIONS" "$SUPPORT_SOURCES" "$COMPILE_ONLY_OVERRIDES")
 	case "$kind" in
 		platform-excluded|support-source) EXCLUDED_FILES+=("$base:$kind") ;;
 		compile-failure) FAIL_FILES+=("$base"); ((DISCOVERED_ELIGIBLE++)) ;;

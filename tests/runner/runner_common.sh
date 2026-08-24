@@ -25,8 +25,10 @@ runner_test_kind() {
 	local source_path="$2"
 	local platform_exclusions=" $3 "
 	local support_sources=" $4 "
+	local compile_only_overrides=" $5 "
 	[[ "$platform_exclusions" == *" $file_name "* ]] && { printf 'platform-excluded'; return; }
 	[[ "$support_sources" == *" $file_name "* ]] && { printf 'support-source'; return; }
+	[[ "$compile_only_overrides" == *" $file_name "* ]] && { printf 'compile-only'; return; }
 	[[ "$file_name" == *_fail.cpp ]] && { printf 'compile-failure'; return; }
 	if grep -qE '\b(int|void)[[:space:]]+main[[:space:]]*\(' "$source_path"; then
 		printf 'runnable'

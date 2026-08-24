@@ -33,11 +33,13 @@ function Get-FlashCppTestKind {
 		[string]$FileName,
 		[string]$SourceContent,
 		[string[]]$PlatformExclusions,
-		[string[]]$SupportSources
+		[string[]]$SupportSources,
+		[string[]]$CompileOnlyOverrides
 	)
 
 	if ($PlatformExclusions -contains $FileName) { return "PlatformExcluded" }
 	if ($SupportSources -contains $FileName) { return "SupportSource" }
+	if ($CompileOnlyOverrides -contains $FileName) { return "CompileOnly" }
 	if ($FileName -match '_fail\.cpp$') { return "CompileFailure" }
 	if ($SourceContent -match '\b(?:int|void)\s+main\s*\(') { return "Runnable" }
 	return "CompileOnly"
