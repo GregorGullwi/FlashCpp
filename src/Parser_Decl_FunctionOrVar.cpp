@@ -301,75 +301,72 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		}
 	}
 
-	const bool has_qualified_declarator_owner =
-		decl_node.has_qualified_declarator_owner();
-	if (has_qualified_declarator_owner || peek() == "::"_tok) {
+	if (peek() == "::"_tok) {
 		discard_saved_token(declaration_start);
-		StringHandle class_name;
+		// This is an out-of-line member function definition
+		advance();  // consume '::'
+
+		// The class name is in decl_node.identifier_token()
+		StringHandle class_name = decl_node.identifier_token().handle();
+
+		// Parse the actual function name - this can be an identifier or 'operator' keyword
 		Token function_name_token;
 		[[maybe_unused]] bool is_operator = false;
 
-		if (has_qualified_declarator_owner) {
-			class_name = decl_node.qualified_declarator_owner();
-			function_name_token = decl_node.identifier_token();
-		} else if (peek() == "::"_tok) {
-			advance();  // consume '::'
-			class_name = decl_node.identifier_token().handle();
-			if (peek() == "operator"_tok) {
-				// Out-of-line operator definition: ClassName::operator=(...) etc.
-				is_operator = true;
-				function_name_token = peek_info();
-				advance();  // consume 'operator'
+		if (peek() == "operator"_tok) {
+			// Out-of-line operator definition: ClassName::operator=(...) etc.
+			is_operator = true;
+			function_name_token = peek_info();
+			advance();  // consume 'operator'
 
-				// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
-				if (peek().is_eof()) {
-					FLASH_LOG(Parser, Error, "Expected operator symbol after 'operator'");
-					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
-				}
+			// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
+			if (peek().is_eof()) {
+				FLASH_LOG(Parser, Error, "Expected operator symbol after 'operator'");
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
 
-				// Build the full operator name using StringBuilder
-				StringBuilder operator_builder;
-				operator_builder.append("operator");
-				std::string_view op = peek_info().value();
-				operator_builder.append(op);
-				advance();
+			// Build the full operator name using StringBuilder
+			StringBuilder operator_builder;
+			operator_builder.append("operator");
+			std::string_view op = peek_info().value();
+			operator_builder.append(op);
+			advance();
 
-				// Handle multi-character operators like >>=, <<=, etc.
-				while (!peek().is_eof()) {
-					std::string_view next = peek_info().value();
-					if (next == "=" || next == ">" || next == "<") {
-						// Could be part of >>=, <<=, etc.
-						if (op == ">" && (next == ">" || next == "=")) {
-							operator_builder.append(next);
-							advance();
-							op = next;
-						} else if (op == "<" && (next == "<" || next == "=")) {
-							operator_builder.append(next);
-							advance();
-							op = next;
-						} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
-							operator_builder.append(next);
-							advance();
-							break;
-						} else {
-							break;
-						}
+			// Handle multi-character operators like >>=, <<=, etc.
+			while (!peek().is_eof()) {
+				std::string_view next = peek_info().value();
+				if (next == "=" || next == ">" || next == "<") {
+					// Could be part of >>=, <<=, etc.
+					if (op == ">" && (next == ">" || next == "=")) {
+						operator_builder.append(next);
+						advance();
+						op = next;
+					} else if (op == "<" && (next == "<" || next == "=")) {
+						operator_builder.append(next);
+						advance();
+						op = next;
+					} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
+						operator_builder.append(next);
+						advance();
+						break;
 					} else {
 						break;
 					}
+				} else {
+					break;
 				}
-
-				// Create a token with the full operator name
-				std::string_view operator_symbol = operator_builder.commit();
-				function_name_token = Token(Token::Type::Identifier, operator_symbol,
-											function_name_token.line(), function_name_token.column(), function_name_token.file_index());
-			} else if (peek().is_identifier()) {
-				function_name_token = peek_info();
-				advance();
-			} else {
-				FLASH_LOG(Parser, Error, "Expected function name or 'operator' after '::'");
-				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 			}
+
+			// Create a token with the full operator name
+			std::string_view operator_symbol = operator_builder.commit();
+			function_name_token = Token(Token::Type::Identifier, operator_symbol,
+										function_name_token.line(), function_name_token.column(), function_name_token.file_index());
+		} else if (peek().is_identifier()) {
+			function_name_token = peek_info();
+			advance();
+		} else {
+			FLASH_LOG(Parser, Error, "Expected function name or 'operator' after '::'");
+			return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 		}
 
 		// Find the struct in the type registry

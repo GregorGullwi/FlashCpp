@@ -1065,16 +1065,6 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 		}
 		Token identifier_token = peek_info();
 		advance();
-		StringHandle qualified_declarator_owner;
-		if (peek() == "::"_tok) {
-			qualified_declarator_owner = identifier_token.handle();
-			advance();
-			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected member name after '::' in declarator", current_token_);
-			}
-			identifier_token = peek_info();
-			advance();
-		}
 
 		// Check what comes after the identifier:
 		// Case 1: ')' followed by '[' -> pointer-to-array variable: int (*p)[3]
@@ -1234,27 +1224,15 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 			// pointer whose pointee carries the recorded bounds ([dcl.ptr]/1).
 			base_type.set_pointee_array_declarator(true);
 
-			auto declaration = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(base_type),
-				identifier_token,
-				std::move(pointee_dimensions));
-			if (qualified_declarator_owner.isValid()) {
-				declaration.as<DeclarationNode>().set_qualified_declarator_owner(
-					qualified_declarator_owner);
-			}
-			return ParseResult::success(declaration);
+			return ParseResult::success(
+				emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(base_type),
+					identifier_token,
+					std::move(pointee_dimensions)));
 		}
 
 		// Now parse the function parameters: '(' params ')'
-		ParseResult declarator_result = parse_postfix_declarator(
-			base_type, identifier_token, linkage);
-		if (!declarator_result.is_error() && qualified_declarator_owner.isValid() &&
-			declarator_result.node().has_value() &&
-			declarator_result.node()->is<DeclarationNode>()) {
-			declarator_result.node()->as<DeclarationNode>().set_qualified_declarator_owner(
-				qualified_declarator_owner);
-		}
-		return declarator_result;
+		return parse_postfix_declarator(base_type, identifier_token, linkage);
 	}
 
 	// Handle pointer prefix: * [const] [volatile] *...
