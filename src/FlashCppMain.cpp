@@ -144,8 +144,15 @@ static void setManglingStyle(CompileContext& context, CompileContext::ManglingSt
 int main(int argc, char* argv[]) {
 	ensureMinimumProcessStackSize();
 
-	// Install crash handler for automatic crash logging with stack traces
-	CrashHandler::install();
+	// Install crash handler for automatic crash logging with stack traces.
+	// Installation failure (e.g. sigaltstack/sigaction rejected by the
+	// kernel) means a later crash - especially a stack overflow - may not
+	// produce a crash report, so treat it as a fatal startup error instead of
+	// continuing silently unprotected.
+	if (!CrashHandler::install()) {
+		std::cerr << "Fatal error: failed to install crash handler" << std::endl;
+		return 1;
+	}
 
 	try {
 		return main_impl(argc, argv);

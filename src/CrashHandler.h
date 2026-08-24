@@ -354,10 +354,18 @@ inline void abortHandler(int /*signal*/) {
 	RaiseException(EXCEPTION_NONCONTINUABLE_EXCEPTION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
 }
 
-// Install the crash handler - call this at program startup
-inline void install() {
+// Install the crash handler - call this at program startup.
+// Returns true if installation succeeded, false otherwise. Callers must check
+// the result: a failed installation means a later crash may not produce a
+// crash report.
+inline bool install() {
+	bool ok = true;
+
 	// Install vectored exception handler (highest priority)
-	AddVectoredExceptionHandler(1, vectoredExceptionHandler);
+	if (AddVectoredExceptionHandler(1, vectoredExceptionHandler) == nullptr) {
+		fprintf(stderr, "CrashHandler::install: AddVectoredExceptionHandler failed\n");
+		ok = false;
+	}
 
 	// Install unhandled exception filter (fallback)
 	SetUnhandledExceptionFilter(unhandledExceptionFilter);
@@ -367,7 +375,12 @@ inline void install() {
 	_set_purecall_handler(purecallHandler);
 
 	// Install signal handler for abort
-	signal(SIGABRT, abortHandler);
+	if (signal(SIGABRT, abortHandler) == SIG_ERR) {
+		fprintf(stderr, "CrashHandler::install: signal(SIGABRT) failed\n");
+		ok = false;
+	}
+
+	return ok;
 }
 
 } // namespace CrashHandler
@@ -380,6 +393,7 @@ inline void install() {
 #include <cstdlib>
 #include <ctime>
 #include <cstring>
+#include <cerrno>
 #include <unistd.h>
 #include <execinfo.h>
 #include <sys/utsname.h>
@@ -395,6 +409,11 @@ constexpr int kTimestampBufferSize = 64;
 constexpr int kMaxSymbolLength = 256;
 constexpr int kMaxCommandLength = 640;  // kMaxPathLength + room for addr2line command
 constexpr int kMaxSourceLocationLength = 560;  // Path + ":" + line number
+// Minimum size of the alternate signal stack. Must be large enough for
+// signalHandler() and everything it calls (fprintf, backtrace, dladdr,
+// demangling, etc.) to run without overflowing it. 64 KiB is comfortably
+// above MINSIGSTKSZ/SIGSTKSZ on every supported platform.
+constexpr size_t kAltStackSize = 64 * 1024;
 
 // Preallocated static buffers - avoid memory allocation during crash handling
 // This is important for signal safety and handling out-of-memory crashes
@@ -402,6 +421,11 @@ static char s_filenameBuffer[kMaxPathLength];
 static char s_timestampBuffer[kTimestampBufferSize];
 static char s_commandBuffer[kMaxCommandLength];
 static char s_demangledBuffer[kMaxSymbolLength];
+// Statically allocated alternate signal stack. A signal handler installed
+// with SA_ONSTACK runs on this stack instead of the thread's normal stack, so
+// a fatal signal caused by exhausting the normal stack (e.g. SIGSEGV from a
+// stack overflow) can still run signalHandler() and produce a crash report.
+static char s_altStackBuffer[kAltStackSize];
 // Flag to indicate we're inside a signal handler - prevents calling non-async-signal-safe functions
 static volatile sig_atomic_t s_inSignalHandler = 0;
 
@@ -621,6 +645,21 @@ inline void writeStackFrame(FILE* file, int frameNum, void* addr) {
 // but are commonly used in crash handlers and work reliably in practice.
 // Safety: Uses preallocated static buffers to avoid memory allocation.
 inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
+	// A fatal signal delivered while we are already inside this handler means
+	// the handler itself is crashing (e.g. the shared static buffers or the
+	// alternate stack are being reused for a nested report). Recursing back
+	// into the crash-report work below could corrupt those buffers further or
+	// recurse indefinitely, so bail out immediately without touching any
+	// shared state: restore the default disposition and re-raise, mirroring
+	// the re-raise at the end of the normal report path below so the process
+	// still terminates by signal once this handler returns and the signal
+	// mask is restored.
+	if (s_inSignalHandler) {
+		signal(sig, SIG_DFL);
+		kill(getpid(), sig);
+		return;
+	}
+
 	// Mark that we're inside a signal handler to prevent non-async-signal-safe calls
 	s_inSignalHandler = 1;
 
@@ -709,20 +748,48 @@ inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
 	kill(getpid(), sig);
 }
 
-// Install the crash handler - call this at program startup
-inline void install() {
+// Install the crash handler - call this at program startup.
+// Configures a statically allocated alternate signal stack and installs
+// SA_ONSTACK fatal-signal handlers on it, so a crash can still be reported
+// even when it is caused by exhausting the thread's normal stack (e.g. a
+// SIGSEGV from stack overflow during deep recursion). Returns true if the
+// alternate stack and every signal handler were installed successfully,
+// false otherwise. Callers must check the result: a failed installation
+// means a later crash - in particular a stack overflow - may not produce a
+// crash report at all.
+inline bool install() {
+	// Configure the alternate signal stack before installing any SA_ONSTACK
+	// handler below, so a fatal signal can never be delivered before the
+	// stack it needs to run on is in place.
+	stack_t altStack;
+	memset(&altStack, 0, sizeof(altStack));
+	altStack.ss_sp = s_altStackBuffer;
+	altStack.ss_size = sizeof(s_altStackBuffer);
+	altStack.ss_flags = 0;
+	if (sigaltstack(&altStack, nullptr) != 0) {
+		fprintf(stderr, "CrashHandler::install: sigaltstack failed: %s\n", strerror(errno));
+		return false;
+	}
+
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_sigaction = signalHandler;
-	sa.sa_flags = SA_SIGINFO;
+	sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
 	sigemptyset(&sa.sa_mask);
 
-	// Install handlers for common crash signals
-	sigaction(SIGSEGV, &sa, nullptr);  // Segmentation fault
-	sigaction(SIGABRT, &sa, nullptr);  // Abort
-	sigaction(SIGFPE, &sa, nullptr);	 // Floating point exception
-	sigaction(SIGILL, &sa, nullptr);	 // Illegal instruction
-	sigaction(SIGBUS, &sa, nullptr);	 // Bus error
+	// Install handlers for common crash signals, each running on the
+	// alternate stack configured above.
+	constexpr int kFatalSignals[] = {SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS};
+	bool installed = true;
+	for (int sig : kFatalSignals) {
+		if (sigaction(sig, &sa, nullptr) != 0) {
+			fprintf(stderr, "CrashHandler::install: sigaction(%s) failed: %s\n",
+					getSignalName(sig), strerror(errno));
+			installed = false;
+		}
+	}
+
+	return installed;
 }
 
 } // namespace CrashHandler
@@ -731,8 +798,9 @@ inline void install() {
 
 // Stub implementation for unsupported platforms
 namespace CrashHandler {
-inline void install() {
-		// No-op on unsupported platforms
+inline bool install() {
+	// No-op on unsupported platforms - nothing to install, so report success.
+	return true;
 }
 } // namespace CrashHandler
 
