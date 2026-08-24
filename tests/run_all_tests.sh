@@ -6,6 +6,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
+. "$SCRIPT_DIR/runner/runner_common.sh"
+export -f runner_expected_return_value
 
 # Help FlashCpp's Linux startup policy: deep template instantiation needs a
 # stack well above the 8MB default. Raise the SOFT limit only (-S): setting the
@@ -31,6 +33,8 @@ VERBOSE=0
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 REQUESTED_TEST_NAMES=()
 USE_CLANG=0
+CI_OUTPUT=""
+MULTI_TU_ROOT="$SCRIPT_DIR/multi_tu"
 [ "${GITHUB_ACTIONS:-}" = "true" ] && VERBOSE=1
 
 while [ $# -gt 0 ]; do
@@ -40,6 +44,22 @@ while [ $# -gt 0 ]; do
 			;;
 		--clang)
 			USE_CLANG=1
+			;;
+		--ci-output)
+			shift
+			[ $# -gt 0 ] || { echo "ERROR: Missing value for --ci-output"; exit 1; }
+			CI_OUTPUT="$1"
+			;;
+		--ci-output=*)
+			CI_OUTPUT="${1#--ci-output=}"
+			;;
+		--multi-tu-root)
+			shift
+			[ $# -gt 0 ] || { echo "ERROR: Missing value for --multi-tu-root"; exit 1; }
+			MULTI_TU_ROOT="$1"
+			;;
+		--multi-tu-root=*)
+			MULTI_TU_ROOT="${1#--multi-tu-root=}"
 			;;
 		-j[0-9]*)
 			JOBS="${1#-j}"
@@ -71,6 +91,11 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
+if [ -n "$CI_OUTPUT" ] && [[ "$CI_OUTPUT" != /* ]]; then
+	CI_OUTPUT="$REPO_ROOT/$CI_OUTPUT"
+fi
+runner_ci_init "$CI_OUTPUT"
+
 echo "FlashCpp ELF Test Runner"
 echo "========================"
 
@@ -84,11 +109,27 @@ elif [ -x "x64/Debug/FlashCpp" ]; then
 	FLASHCPP_BIN="./x64/Debug/FlashCpp"
 else
 	echo "Building..."
-	make main CXX=clang++ > /dev/null 2>&1 || { echo -e "${RED}Build failed${NC}"; exit 1; }
+	make main CXX=clang++ > /dev/null 2>&1 || { echo -e "${RED}Build failed${NC}"; runner_ci_record "$CI_OUTPUT" runner compiler build-failed "make main failed"; exit 1; }
 	FLASHCPP_BIN="./x64/Debug/FlashCpp"
 fi
 export FLASHCPP_BIN
 export USE_CLANG
+
+if [ "$USE_CLANG" -eq 0 ] && ! runner_binary_is_fresh "${FLASHCPP_BIN#./}" "$REPO_ROOT"; then
+	message="Compiler binary is older than $RUNNER_NEWEST_SOURCE. Run 'make main CXX=clang++' and retry."
+	echo -e "${RED}ERROR:${NC} $message"
+	runner_ci_record "$CI_OUTPUT" runner compiler stale-binary "$message"
+	exit 1
+fi
+
+PIE_MODE=$(runner_pie_mode)
+if [ "$PIE_MODE" = "invalid" ]; then
+	message="FLASHCPP_PIE_MODE must be auto, supported, or unsupported"
+	echo -e "${RED}ERROR:${NC} $message"
+	runner_ci_record "$CI_OUTPUT" runner pie invalid-gate "$message"
+	exit 1
+fi
+export PIE_MODE
 
 print_flashcpp_build_info() {
 	local version_probe_src version_probe_obj version_banner git_head binary_mtime
@@ -147,24 +188,84 @@ contains() {
     return 1
 }
 
-# Get test files with main()
+# Classify every discovered source. Files without main are compile-only tests;
+# they must not disappear merely because textual main detection missed them.
 TEST_FILES=()
 FAIL_FILES=()
-SEH_SKIPPED=0
+EXCLUDED_FILES=()
+PLATFORM_EXCLUSIONS=""
+SUPPORT_SOURCES="linux_exception_stubs.cpp"
+for candidate in tests/test_seh_*.cpp; do
+	[ -f "$candidate" ] && PLATFORM_EXCLUSIONS+=" $(basename "$candidate")"
+done
+DISCOVERED_ELIGIBLE=0
 for f in tests/*.cpp; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
-
-    # Skip Windows-only SEH tests on Linux
-    if [[ "$base" == test_seh_*.cpp ]]; then
-        ((SEH_SKIPPED++))
-        continue
-    fi
-
-    if grep -q '\bint\s\+main\s*(' "$f" || grep -q '\bvoid\s\+main\s*(' "$f"; then
-        [[ "$base" == *"_fail.cpp" ]] && FAIL_FILES+=("$base") || TEST_FILES+=("$base")
-    fi
+	kind=$(runner_test_kind "$base" "$f" "$PLATFORM_EXCLUSIONS" "$SUPPORT_SOURCES")
+	case "$kind" in
+		platform-excluded|support-source) EXCLUDED_FILES+=("$base:$kind") ;;
+		compile-failure) FAIL_FILES+=("$base"); ((DISCOVERED_ELIGIBLE++)) ;;
+		runnable|compile-only) TEST_FILES+=("$base"); ((DISCOVERED_ELIGIBLE++)) ;;
+		*)
+			message="Eligible test file was discovered but not classified: $f"
+			echo -e "${RED}ERROR:${NC} $message"
+			runner_ci_record "$CI_OUTPUT" discovery "$base" skipped "$message"
+			exit 1
+			;;
+	esac
 done
+
+if [ "$DISCOVERED_ELIGIBLE" -ne "$((${#TEST_FILES[@]} + ${#FAIL_FILES[@]}))" ]; then
+	message="Eligible test discovery count does not match the scheduled test count"
+	echo -e "${RED}ERROR:${NC} $message"
+	runner_ci_record "$CI_OUTPUT" discovery all skipped "$message"
+	exit 1
+fi
+
+MULTI_TU_CASES=()
+if [[ "$MULTI_TU_ROOT" != /* ]]; then MULTI_TU_ROOT="$REPO_ROOT/$MULTI_TU_ROOT"; fi
+export MULTI_TU_ROOT
+if [ -d "$MULTI_TU_ROOT" ]; then
+	for case_dir in "$MULTI_TU_ROOT"/*; do
+		[ -d "$case_dir" ] || continue
+		case_name=$(basename "$case_dir")
+		case_sources=()
+		for source in "$case_dir"/*.cpp; do [ -f "$source" ] && case_sources+=("$source"); done
+		main_count=0
+		for source in "${case_sources[@]}"; do
+			grep -qE '\b(int|void)[[:space:]]+main[[:space:]]*\(' "$source" && ((main_count++))
+		done
+		if [ ${#case_sources[@]} -eq 0 ] || [ "$main_count" -ne 1 ]; then
+			message="Invalid multi-TU case '$case_name': found ${#case_sources[@]} sources and $main_count translation units containing main"
+			echo -e "${RED}ERROR:${NC} $message"
+			runner_ci_record "$CI_OUTPUT" discovery "$case_name" invalid-multi-tu "$message"
+			exit 1
+		fi
+		MULTI_TU_CASES+=("$case_name")
+	done
+fi
+
+if [ "$(uname -s 2>/dev/null)" = "Linux" ]; then
+	INVALID_RETURN_NAMES=()
+	for base in "${TEST_FILES[@]}"; do
+		if grep -qE '\b(int|void)[[:space:]]+main[[:space:]]*\(' "tests/$base" && ! runner_linux_return_is_valid "$base"; then
+			INVALID_RETURN_NAMES+=("$base")
+		fi
+	done
+	for case_name in "${MULTI_TU_CASES[@]}"; do
+		runner_linux_return_is_valid "$case_name" || INVALID_RETURN_NAMES+=("$case_name")
+	done
+	if [ ${#INVALID_RETURN_NAMES[@]} -gt 0 ]; then
+		for base in "${INVALID_RETURN_NAMES[@]}"; do
+			value=$(runner_expected_return_value "$base")
+			message="Encoded expected return value $value is outside Linux range 0-255"
+			echo -e "${RED}ERROR:${NC} $base: $message"
+			runner_ci_record "$CI_OUTPUT" discovery "$base" invalid-return "$message"
+		done
+		exit 1
+	fi
+fi
 
 if [ ${#REQUESTED_TEST_NAMES[@]} -gt 0 ]; then
 	FILTERED_TEST_FILES=()
@@ -175,10 +276,15 @@ if [ ${#REQUESTED_TEST_NAMES[@]} -gt 0 ]; then
 	for base in "${FAIL_FILES[@]}"; do
 		contains "$base" "${REQUESTED_TEST_NAMES[@]}" && FILTERED_FAIL_FILES+=("$base")
 	done
+	FILTERED_MULTI_TU_CASES=()
+	for case_name in "${MULTI_TU_CASES[@]}"; do
+		contains "$case_name" "${REQUESTED_TEST_NAMES[@]}" && FILTERED_MULTI_TU_CASES+=("$case_name")
+	done
 
 	matched_names=()
 	[ ${#FILTERED_TEST_FILES[@]} -gt 0 ] && matched_names+=("${FILTERED_TEST_FILES[@]}")
 	[ ${#FILTERED_FAIL_FILES[@]} -gt 0 ] && matched_names+=("${FILTERED_FAIL_FILES[@]}")
+	[ ${#FILTERED_MULTI_TU_CASES[@]} -gt 0 ] && matched_names+=("${FILTERED_MULTI_TU_CASES[@]}")
 	missing_names=()
 	for requested in "${REQUESTED_TEST_NAMES[@]}"; do
 		if ! contains "$requested" "${matched_names[@]}" && ! contains "$requested" "${missing_names[@]}"; then
@@ -188,17 +294,23 @@ if [ ${#REQUESTED_TEST_NAMES[@]} -gt 0 ]; then
 
 	if [ ${#missing_names[@]} -gt 0 ]; then
 		echo -e "${RED}ERROR:${NC} Test file(s) not found in tests/: ${missing_names[*]}"
+		for requested in "${missing_names[@]}"; do runner_ci_record "$CI_OUTPUT" discovery "$requested" not-found "requested test was not scheduled"; done
 		exit 1
 	fi
 
 	TEST_FILES=("${FILTERED_TEST_FILES[@]}")
 	FAIL_FILES=("${FILTERED_FAIL_FILES[@]}")
+	MULTI_TU_CASES=("${FILTERED_MULTI_TU_CASES[@]}")
 fi
 
 TOTAL=${#TEST_FILES[@]}
 TOTAL_FAIL=${#FAIL_FILES[@]}
-[ "$SEH_SKIPPED" -gt 0 ] && echo "Skipped $SEH_SKIPPED Windows-only SEH tests"
+if [ ${#EXCLUDED_FILES[@]} -gt 0 ]; then
+	echo "Explicitly excluded ${#EXCLUDED_FILES[@]} platform/support sources"
+	if [ "$VERBOSE" = "1" ]; then printf '  %s\n' "${EXCLUDED_FILES[@]}"; fi
+fi
 echo "Testing $TOTAL files ($JOBS parallel jobs)..."
+echo "Testing ${#MULTI_TU_CASES[@]} multi-TU cases (PIE: $PIE_MODE)..."
 echo ""
 
 # Create temp directory for results
@@ -212,6 +324,59 @@ trap "rm -rf '$RESULT_DIR'" EXIT
 #   STATUS: COMPILE_OK, COMPILE_FAIL, LINK_OK, LINK_FAIL,
 #           RUNTIME_CRASH, RETURN_MISMATCH, RETURN_OK, EXPECTED_LINK_FAIL, EXPECTED_FAIL
 # ──────────────────────────────────────────────────────
+link_and_run_objects() {
+	local base="$1"
+	local result_file="$2"
+	shift 2
+	local objects=("$@")
+	local expected_value
+	expected_value=$(runner_expected_return_value "$base")
+	local variants=("no-pie")
+	[ "$PIE_MODE" = "supported" ] && variants+=("pie")
+	local variant exe link_output link_exit_code stderr_output return_value signal
+	for variant in "${variants[@]}"; do
+		exe="/tmp/${base%.*}_$$_${variant}_exe"
+		rm -f "$exe"
+		local link_args=()
+		if [ "$variant" = "pie" ]; then link_args+=("-pie"); else link_args+=("-no-pie"); fi
+		if [ "$USE_CLANG" -eq 1 ]; then
+			link_output=$(clang++ "${link_args[@]}" -o "$exe" "${objects[@]}" 2>&1)
+		else
+			link_output=$(clang++ "${link_args[@]}" -o "$exe" "${objects[@]}" -lstdc++ -lc 2>&1)
+		fi
+		link_exit_code=$?
+		if [ "$link_exit_code" -ne 0 ]; then
+			local link_errors
+			link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed|relocation.*PIE" | head -1)
+			echo "LINK_FAIL|$base|$variant: $link_errors" > "$result_file"
+			rm -f "$exe"
+			return
+		fi
+
+		stderr_output=$(timeout 5 "$exe" 2>&1 > /dev/null)
+		return_value=$?
+		if [ "$return_value" -eq 124 ]; then
+			echo "RUNTIME_CRASH|$base|$variant: TIMEOUT" > "$result_file"
+			rm -f "$exe"
+			return
+		fi
+		if echo "$stderr_output" | grep -qiE "(segmentation fault|illegal instruction|aborted|bus error|floating point exception|killed|dumped core|terminate called)"; then
+			signal=$((return_value - 128))
+			echo "RUNTIME_CRASH|$base|$variant: signal $signal" > "$result_file"
+			rm -f "$exe"
+			return
+		fi
+		if [ "$return_value" -ne "$expected_value" ]; then
+			echo "RETURN_MISMATCH|$base|$variant: expected $expected_value got $return_value" > "$result_file"
+			rm -f "$exe"
+			return
+		fi
+		rm -f "$exe"
+	done
+	echo "RETURN_OK|$base|$expected_value (${variants[*]})" > "$result_file"
+}
+export -f link_and_run_objects
+
 test_one_file() {
     local base="$1"
     local repo_root="$2"
@@ -248,6 +413,12 @@ test_one_file() {
     fi
 
     if [ -f "$obj" ]; then
+		if ! grep -qE '\b(int|void)[[:space:]]+main[[:space:]]*\(' "$f"; then
+			echo "COMPILE_ONLY_OK|$base|no main" > "$result_file"
+			rm -f "$obj"
+			return
+		fi
+
         # Compile any C helper files required for this test (from EXTRA_C_HELPERS env var)
         local extra_objs=()
         for mapping in $EXTRA_C_HELPERS; do
@@ -264,54 +435,7 @@ test_one_file() {
             fi
         done
 
-        # Link
-        local link_output
-        if [ "$USE_CLANG" -eq 1 ]; then
-            link_output=$(clang++ -no-pie -o "$exe" "$obj" "${extra_objs[@]}" 2>&1)
-        else
-            link_output=$(clang++ -no-pie -o "$exe" "$obj" "${extra_objs[@]}" -lstdc++ -lc 2>&1)
-        fi
-        local link_exit_code=$?
-
-        if [ $link_exit_code -eq 0 ]; then
-            # Run the executable to validate return value
-            local stderr_output
-            stderr_output=$(timeout 5 "$exe" 2>&1 > /dev/null)
-            local return_value=$?
-
-            # Check for timeout (exit code 124)
-            if [ $return_value -eq 124 ]; then
-                echo "RUNTIME_CRASH|$base|TIMEOUT" > "$result_file"
-                rm -f "$exe" "$obj"
-                return
-            fi
-
-            # Check for actual crashes by looking for crash indicators in stderr
-            if echo "$stderr_output" | grep -qiE "(segmentation fault|illegal instruction|aborted|bus error|floating point exception|killed|dumped core|terminate called)"; then
-                local signal=$((return_value - 128))
-                echo "RUNTIME_CRASH|$base|signal $signal" > "$result_file"
-                rm -f "$exe" "$obj"
-                return
-            fi
-
-            # Check if the filename indicates an expected return value.
-            # Tests without a _retN suffix default to expecting 0.
-            local expected_value=0
-            if [[ "$base" =~ _ret([0-9]+)\.cpp$ ]]; then
-                expected_value="${BASH_REMATCH[1]}"
-            fi
-            if [ "$return_value" -ne "$expected_value" ]; then
-                echo "RETURN_MISMATCH|$base|expected $expected_value got $return_value" > "$result_file"
-            else
-                echo "RETURN_OK|$base|$expected_value" > "$result_file"
-            fi
-            rm -f "$exe"
-        else
-            # Link failure
-            local link_errors
-            link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed" | head -5)
-            echo "LINK_FAIL|$base|$(echo "$link_errors" | head -1)" > "$result_file"
-        fi
+		link_and_run_objects "$base" "$result_file" "$obj" "${extra_objs[@]}"
     else
         local first_error
         first_error=$(echo "$compile_output" | grep -i "error" | head -1)
@@ -321,6 +445,36 @@ test_one_file() {
     rm -f "${extra_objs[@]}"
 }
 export -f test_one_file
+
+test_one_multi_tu_case() {
+	local case_name="$1"
+	local repo_root="$2"
+	local result_dir="$3"
+	local case_dir="$MULTI_TU_ROOT/$case_name"
+	local result_file="$result_dir/$case_name.result"
+	local objects=()
+	local source obj compile_output compile_exit
+	for source in "$case_dir"/*.cpp; do
+		[ -f "$source" ] || continue
+		obj="/tmp/${case_name}_$(basename "${source%.cpp}")_$$.o"
+		if [ "$USE_CLANG" -eq 1 ]; then
+			compile_output=$(timeout 30 "$FLASHCPP_BIN" -std=c++20 -c "$source" -o "$obj" 2>&1)
+		else
+			compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "$source" -o "$obj" 2>&1)
+		fi
+		compile_exit=$?
+		if [ "$compile_exit" -gt 128 ] || [ ! -f "$obj" ]; then
+			echo "COMPILE_FAIL|$case_name|$(basename "$source"): $(echo "$compile_output" | grep -i error | head -1)" > "$result_file"
+			rm -f "${objects[@]}" "$obj"
+			return
+		fi
+		objects+=("$obj")
+	done
+
+	link_and_run_objects "$case_name" "$result_file" "${objects[@]}"
+	rm -f "${objects[@]}"
+}
+export -f test_one_multi_tu_case
 
 # ──────────────────────────────────────────────────────
 # Worker: test one _fail file
@@ -379,6 +533,12 @@ if [ ${#FAIL_FILES[@]} -gt 0 ]; then
         xargs -P "$JOBS" -I {} bash -c 'test_one_fail_file "$@"' _ {} "$REPO_ROOT" "$RESULT_DIR"
 fi
 
+# Multi-TU cases stay grouped and run sequentially; ordinary single-file tests
+# retain their existing parallel path.
+for case_name in "${MULTI_TU_CASES[@]}"; do
+	test_one_multi_tu_case "$case_name" "$REPO_ROOT" "$RESULT_DIR"
+done
+
 # ──────────────────────────────────────────────────────
 # Collect results
 # ──────────────────────────────────────────────────────
@@ -397,7 +557,8 @@ declare -a RETURN_MISMATCH=()
 declare -a RETURN_MISMATCH_DETAILS=()
 declare -a FAILED_TEST_NAMES=()
 
-for base in "${TEST_FILES[@]}"; do
+RESULT_CASES=("${TEST_FILES[@]}" "${MULTI_TU_CASES[@]}")
+for base in "${RESULT_CASES[@]}"; do
     result_file="$RESULT_DIR/$base.result"
     if [ ! -f "$result_file" ]; then
         COMPILE_FAIL+=("$base (no result)")
@@ -412,6 +573,10 @@ for base in "${TEST_FILES[@]}"; do
             LINK_OK+=("$base")
             [ "$VERBOSE" = "1" ] && echo "  $base ... OK (returned ${detail})" >&2
             ;;
+		COMPILE_ONLY_OK)
+			COMPILE_OK+=("$base")
+			[ "$VERBOSE" = "1" ] && echo "  $base ... OK (compile-only)" >&2
+			;;
         RETURN_MISMATCH)
             COMPILE_OK+=("$base")
             LINK_OK+=("$base")
@@ -494,7 +659,7 @@ echo ""
 echo "========================"
 echo "SUMMARY"
 echo "========================"
-echo "Total: $TOTAL files tested (with $JOBS parallel jobs)"
+echo "Total: $TOTAL single-file tests and ${#MULTI_TU_CASES[@]} multi-TU cases (with $JOBS parallel jobs)"
 printf "Compile: ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#COMPILE_OK[@]}" "${#COMPILE_FAIL[@]}"
 printf "Link:    ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#LINK_OK[@]}" "${#LINK_FAIL[@]}"
 printf "Runtime: ${GREEN}%d pass${NC} / ${RED}%d crash${NC} / ${RED}%d mismatch${NC}\n" "$((${#LINK_OK[@]} - ${#RUNTIME_CRASH[@]} - ${#RETURN_MISMATCH[@]}))" "${#RUNTIME_CRASH[@]}" "${#RETURN_MISMATCH[@]}"
@@ -569,8 +734,15 @@ echo ""
 # NOTE: Return value mismatches now fail the build since __has_builtin has been fixed; runtime crashes also now fail the build
 if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ] && [ ${#RETURN_MISMATCH[@]} -eq 0 ] && [ ${#RUNTIME_CRASH[@]} -eq 0 ]; then
     echo -e "${GREEN}RESULT: SUCCESS${NC}"
+	runner_ci_record "$CI_OUTPUT" summary all success "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]}"
     exit 0
 else
+	for name in "${COMPILE_FAIL[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" compile-failed ""; done
+	for name in "${LINK_FAIL[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" link-failed ""; done
+	for name in "${FAIL_BAD[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" unexpected-pass ""; done
+	for name in "${RETURN_MISMATCH[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" return-mismatch ""; done
+	for name in "${RUNTIME_CRASH[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" runtime-crash ""; done
+	runner_ci_record "$CI_OUTPUT" summary all failed "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]}"
     if [ "${FLASHCPP_RERUN_PHASE:-0}" != "1" ] && [ ${#FAILED_TEST_NAMES[@]} -gt 0 ]; then
         echo "Re-running failing tests sequentially for diagnostics..."
         echo ""

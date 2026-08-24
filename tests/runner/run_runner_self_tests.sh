@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$SCRIPT_DIR/runner_common.sh"
+
+failures=0
+assert_runner() {
+	if "$1"; then printf 'PASS: %s\n' "$2"; else printf 'FAIL: %s\n' "$2"; failures=$((failures + 1)); fi
+}
+
+temp_root=$(mktemp -d)
+trap 'rm -rf "$temp_root"' EXIT
+mkdir -p "$temp_root/repo/src"
+printf 'binary\n' > "$temp_root/repo/FlashCpp"
+printf 'source\n' > "$temp_root/repo/src/source.cpp"
+touch -t 202608240100 "$temp_root/repo/FlashCpp"
+touch -t 202608240101 "$temp_root/repo/src/source.cpp"
+if runner_binary_is_fresh "$temp_root/repo/FlashCpp" "$temp_root/repo"; then stale_ok=false; else stale_ok=true; fi
+assert_runner "$stale_ok" "stale compiler timestamps are rejected"
+
+[ "$(runner_test_kind test_compile_only.cpp "$SCRIPT_DIR/fixtures/invalid_multi_tu/runner_self_skipped_ret0/only_support.cpp" "" "")" = "compile-only" ] && kind_ok=true || kind_ok=false
+assert_runner "$kind_ok" "eligible sources without main are scheduled as compile-only"
+
+if runner_linux_return_is_valid test_invalid_ret256.cpp; then range_ok=false; else range_ok=true; fi
+assert_runner "$range_ok" "Linux return encodings above 255 are rejected"
+
+FLASHCPP_PIE_MODE=supported
+[ "$(runner_pie_mode)" = supported ] && pie_supported_ok=true || pie_supported_ok=false
+assert_runner "$pie_supported_ok" "PIE supported gate is explicit and testable"
+FLASHCPP_PIE_MODE=unsupported
+[ "$(runner_pie_mode)" = unsupported ] && pie_unsupported_ok=true || pie_unsupported_ok=false
+assert_runner "$pie_unsupported_ok" "PIE unsupported gate is explicit and testable"
+unset FLASHCPP_PIE_MODE
+
+ci_path="$temp_root/runner.tsv"
+runner_ci_init "$ci_path"
+runner_ci_record "$ci_path" test fixture failed $'line one\nline two'
+[ "$(wc -l < "$ci_path")" -eq 2 ] && grep -q $'^flashcpp-runner-v1\ttest\tfixture\tfailed\tline one line two$' "$ci_path" && ci_ok=true || ci_ok=false
+assert_runner "$ci_ok" "CI records use the stable tab-separated schema"
+
+if command -v clang++ >/dev/null 2>&1 && timeout --version 2>/dev/null | grep -q 'GNU coreutils'; then
+	success_ci="$temp_root/success.tsv"
+	success_output="$temp_root/success.out"
+	bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/multi_tu_success" --ci-output "$success_ci" runner_self_multi_ret42 >"$success_output" 2>&1
+	[ $? -eq 0 ] && grep -q $'flashcpp-runner-v1\tsummary\tall\tsuccess' "$success_ci" && grep -q 'PIE: supported\|PIE: unsupported' "$success_output" && multi_success_ok=true || multi_success_ok=false
+	assert_runner "$multi_success_ok" "successful multi-TU fixture compiles, links, and runs"
+
+	failure_ci="$temp_root/failure.tsv"
+	FLASHCPP_RERUN_PHASE=1 bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/multi_tu_failure" --ci-output "$failure_ci" runner_self_multi_link_fail_ret0 >/dev/null 2>&1
+	[ $? -ne 0 ] && grep -q $'\tlink-failed\t' "$failure_ci" && multi_failure_ok=true || multi_failure_ok=false
+	assert_runner "$multi_failure_ok" "failing multi-TU fixture reports a machine-readable link failure"
+
+	invalid_ci="$temp_root/invalid.tsv"
+	bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/invalid_multi_tu" --ci-output "$invalid_ci" runner_self_skipped_ret0 >/dev/null 2>&1
+	[ $? -ne 0 ] && grep -q $'\tinvalid-multi-tu\t' "$invalid_ci" && skipped_ok=true || skipped_ok=false
+	assert_runner "$skipped_ok" "discovered but unschedulable multi-TU sources fail discovery"
+
+	return_ci="$temp_root/return.tsv"
+	bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/invalid_return" --ci-output "$return_ci" runner_self_ret256 >/dev/null 2>&1
+	[ $? -ne 0 ] && grep -q $'\tinvalid-return\t' "$return_ci" && invalid_return_ok=true || invalid_return_ok=false
+	assert_runner "$invalid_return_ok" "runner preflight rejects encoded Linux returns above 255"
+else
+	printf 'SKIP: functional multi-TU and PIE checks require clang++ and timeout\n'
+fi
+
+[ "$failures" -eq 0 ] || exit 1
+printf 'Runner self-tests passed\n'
