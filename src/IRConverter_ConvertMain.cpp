@@ -11803,13 +11803,13 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 
 			// Get RHS source (function address or nullptr)
-		X64Register source_reg = X64Register::RAX;
+		X64Register source_reg = allocateRegisterWithSpilling();
 
 		if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.rhs.value)) {
 			TempVar rhs_var = *temp_var_ptr;
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
-				// Load function address from RHS stack location into RAX
+			// Load function address from RHS stack location
 			emitMovFromFrame(source_reg, rhs_offset);
 		} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.rhs.value)) {
 				// RHS is an immediate value (e.g., nullptr = 0)
@@ -11817,11 +11817,12 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			emitMovImm64(source_reg, rhs_value);
 		}
 
-			// Store RAX to LHS stack location (8 bytes for function pointer - always 64-bit)
+		// Store source to LHS stack location (8 bytes for function pointer - always 64-bit)
 		emitMovToFrameSized(
 			SizedRegister{source_reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{lhs_offset, 64, false}  // dest: 64-bit for function pointer
 		);
+		regAlloc.release(source_reg);
 
 			// Clear any stale register associations for this stack offset
 			// This ensures subsequent loads will actually load from memory instead of using stale cached values
@@ -12151,7 +12152,13 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 	const bool treat_rhs_as_float =
 		is_floating_point_type(rhs_type) &&
 		!rhs_contains_address;
-	X64Register source_reg = X64Register::RAX;
+	X64Register source_reg = X64Register::Count;
+	bool release_source_reg = false;
+	auto allocateSourceRegister = [&]() {
+		source_reg = allocateRegisterWithSpilling();
+		release_source_reg = true;
+		return source_reg;
+	};
 	std::optional<IndirectStorageInfo> copied_indirect_info;
 	TempVar lhs_temp_for_metadata{};
 	if (std::holds_alternative<TempVar>(op.lhs.value)) {
@@ -12195,11 +12202,14 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 				emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 				source_reg = ptr_reg;
+				release_source_reg = true;
 			} else if (treat_rhs_as_float) {
 				source_reg = allocateXMMRegisterWithSpilling();
+				release_source_reg = true;
 				bool is_float = (rhs_type == TypeCategory::Float);
 				emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 			} else {
+				allocateSourceRegister();
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 				emitMovFromFrameSized(
 					SizedRegister{source_reg, 64, false},  // dest: 64-bit register
@@ -12248,48 +12258,60 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 			emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 			source_reg = ptr_reg;
-		} else if (rhs_ref_info.has_value() &&
-			((!rhs_contains_address &&
-			  (!op.dereference_rhs_references || rhs_ref_info->holds_address_only)) ||
-			 op.propagate_rhs_address_metadata)) {
-			copied_indirect_info = rhs_ref_info;
-		} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
-				// Check if the value is already in a register
-			source_reg = rhs_reg.value();
+			release_source_reg = true;
 		} else {
-			if (treat_rhs_as_float) {
-				source_reg = allocateXMMRegisterWithSpilling();
-				bool is_float = (rhs_type == TypeCategory::Float);
-				emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
+			if (rhs_ref_info.has_value() &&
+				((!rhs_contains_address &&
+				  (!op.dereference_rhs_references || rhs_ref_info->holds_address_only)) ||
+				 op.propagate_rhs_address_metadata)) {
+				copied_indirect_info = rhs_ref_info;
+			}
+			if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
+				// Check if the value is already in a register
+				source_reg = rhs_reg.value();
 			} else {
+				if (treat_rhs_as_float) {
+					source_reg = allocateXMMRegisterWithSpilling();
+					release_source_reg = true;
+					bool is_float = (rhs_type == TypeCategory::Float);
+					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
+				} else {
+					allocateSourceRegister();
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
-				emitMovFromFrameSized(
-					SizedRegister{source_reg, 64, false},  // dest: 64-bit register
-					SizedStackSlot{rhs_offset, op.rhs.size_in_bits.value, isSignedType(rhs_type)}  // source: sized stack slot
-				);
+					emitMovFromFrameSized(
+						SizedRegister{source_reg, 64, false},  // dest: 64-bit register
+						SizedStackSlot{rhs_offset, op.rhs.size_in_bits.value, isSignedType(rhs_type)}  // source: sized stack slot
+					);
+				}
 			}
 		}
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.rhs.value)) {
 			// RHS is an immediate value
 		unsigned long long rhs_value = *ull_val;
-			// MOV RAX, imm64
-		emitMovImm64(X64Register::RAX, rhs_value);
+		allocateSourceRegister();
+		emitMovImm64(source_reg, rhs_value);
 	} else if (std::holds_alternative<double>(op.rhs.value)) {
 			// RHS is a floating-point immediate value
 		double double_value = std::get<double>(op.rhs.value);
 			// Allocate an XMM register and load the double into it
 		source_reg = allocateXMMRegisterWithSpilling();
+		release_source_reg = true;
 			// NumericLiteralNode stores floating values as double regardless of
 			// the literal's semantic type. Encode the destination width before
 			// moving the immediate into the XMM register.
 		uint64_t bits = encodeFloatingImmediateBits(double_value, op.rhs.size_in_bits.value);
 			// Load bits into a general-purpose register first
-		emitMovImm64(X64Register::RAX, bits);
-			// Move from RAX to XMM register using movq instruction
-		emitMovqGprToXmm(X64Register::RAX, source_reg);
+		X64Register bits_reg = allocateRegisterWithSpilling();
+		emitMovImm64(bits_reg, bits);
+		// Move from GPR to XMM register using movq instruction
+		emitMovqGprToXmm(bits_reg, source_reg);
+		regAlloc.release(bits_reg);
 	}
 
 		// Store source register to LHS stack location
+	if (source_reg == X64Register::Count) {
+		throw InternalError("Assignment RHS did not produce a source register");
+	}
 		// Check if LHS is a reference parameter that needs dereferencing
 	auto ref_info = getIndirectStackInfo(lhs_offset);
 	if (ref_info.has_value()) {
@@ -12339,6 +12361,9 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				copied_indirect_info->holds_address_only,
 				lhs_temp_for_metadata);
 		}
+	}
+	if (release_source_reg) {
+		regAlloc.release(source_reg);
 	}
 }
 
