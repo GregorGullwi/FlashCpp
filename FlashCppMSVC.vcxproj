@@ -444,6 +444,7 @@
     <ClInclude Include="src\CodeViewDebug.h" />
     <ClInclude Include="src\CommandLineParser.h" />
     <ClInclude Include="src\CompileContext.h" />
+    <ClInclude Include="src\Diagnostics.h" />
     <ClInclude Include="src\CompileError.h" />
     <ClInclude Include="src\CompilerIncludes.h" />
     <ClInclude Include="src\VariantUtils.h" />
@@ -494,6 +495,7 @@
     <ClInclude Include="src\PlatformInternals.h" />
     <ClInclude Include="src\ProfilingTimer.h" />
     <ClInclude Include="src\StackString.h" />
+    <ClInclude Include="src\SourceLocation.h" />
     <ClInclude Include="src\StringBuilder.h" />
     <ClInclude Include="src\StringLiteralTokenUtils.h" />
     <ClInclude Include="src\StringTable.h" />

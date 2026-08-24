@@ -964,6 +964,17 @@ Once sema and templates are independent of parser state:
 - remove parser-to-sema cycles;
 - remove parser callbacks from constexpr.
 
+### Block ranges in the token buffer
+
+Record each balanced block (`{...}`, `(...)`, `[...]`) in the `TokenBuffer` as
+a `{TokenIndex begin, TokenIndex end}` range so parsers can jump to the start
+or end of a block without rescanning. Ranges must be computed over the
+post-preprocessing token stream so tokens produced by macro expansion are
+included. Block ranges give O(1) skip-to-end for body scanning, error
+recovery, and checkpointing; they replace repeated balanced-bracket scans;
+and they supply whole-block `SourceRange` payloads for structured diagnostics
+and future fix-it hints. Ranges are stable indices, never addresses.
+
 Exit criteria:
 
 - rollback never retains an instantiation or registry mutation;

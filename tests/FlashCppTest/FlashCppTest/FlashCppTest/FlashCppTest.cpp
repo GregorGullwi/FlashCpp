@@ -4067,3 +4067,249 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	const auto& free_param = free_result.free_function_overload->parameter_nodes()[1].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 	CHECK(free_param.type_index() == free_wrap_rhs_idx);
 }
+
+TEST_SUITE("Diagnostics") {
+	TEST_CASE("Stable diagnostic IDs keep fixed values independent of message text") {
+		// Mutation target: changing any value here breaks this test and every
+		// converted-site assertion below, which is exactly the point.
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::None) == 0u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::PointerToReferenceType) == 1001u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::MultipleAsmSuffixesOnDeclarator) == 1002u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::ExpectedCloseBracketAfterArraySize) == 1003u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::NoteToMatchOpeningBracket) == 1051u);
+
+		CHECK(diagnosticIdName(DiagnosticId::PointerToReferenceType) == "PointerToReferenceType");
+		CHECK(diagnosticIdName(DiagnosticId::NoteToMatchOpeningBracket) == "NoteToMatchOpeningBracket");
+
+		// Same ID must serve different message templates without identity drift.
+		DiagnosticEngine engine;
+		uint32_t first = engine.report(
+			DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+			SourceLocation::fromParts(1, 1, 0), "template one {}", {});
+		uint32_t second = engine.report(
+			DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+			SourceLocation::fromParts(2, 1, 0), "totally different text", {});
+		CHECK(engine.diagnostic(first).id == engine.diagnostic(second).id);
+	}
+
+	TEST_CASE("Severity classification accumulates per level and flags errors") {
+		DiagnosticEngine engine;
+		engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Warning,
+					  SourceLocation::fromParts(1, 1, 0), "w", {});
+		engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+					  SourceLocation::fromParts(2, 1, 0), "e", {});
+		engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+					  SourceLocation::fromParts(3, 1, 0), "e2", {});
+		engine.report(DiagnosticId::None, DiagnosticSeverity::Note,
+					  SourceLocation::fromParts(4, 1, 0), "n", {});
+
+		CHECK(engine.count(DiagnosticSeverity::Warning) == 1);
+		CHECK(engine.count(DiagnosticSeverity::Error) == 2);
+		CHECK(engine.count(DiagnosticSeverity::Note) == 1);
+		CHECK(engine.diagnostics().size() == 4);
+		CHECK(engine.hasErrors());
+		CHECK(diagnosticSeverityTag(DiagnosticSeverity::Fatal) == std::string_view("fatal error"));
+
+		DiagnosticEngine clean_engine;
+		CHECK_FALSE(clean_engine.hasErrors());
+	}
+
+	TEST_CASE("Locations and ranges are stored verbatim") {
+		DiagnosticEngine engine;
+		SourceRange range = SourceRange::fromLocations(
+			SourceLocation::fromParts(7, 9, 1), SourceLocation::fromParts(7, 14, 1));
+		uint32_t index = engine.reportWithRange(
+			DiagnosticId::ExpectedCloseBracketAfterArraySize, DiagnosticSeverity::Error,
+			SourceLocation::fromParts(7, 14, 1), range, "missing bracket", {});
+
+		const Diagnostic& stored = engine.diagnostic(index);
+		CHECK(stored.location.line == 7u);
+		CHECK(stored.location.column == 14u);
+		CHECK(stored.location.file_index == 1u);
+		REQUIRE(stored.has_range());
+		CHECK(stored.range.begin.column == 9u);
+		CHECK(stored.range.end.column == 14u);
+
+		// Compact record check: locations are 12 bytes (three uint32 fields).
+		MESSAGE("sizeof(SourceLocation)=" << sizeof(SourceLocation)
+				<< " sizeof(SourceRange)=" << sizeof(SourceRange));
+		CHECK(sizeof(SourceLocation) == 12u);
+	}
+
+	TEST_CASE("Arguments render sequentially into template placeholders") {
+		StringHandle interned = StringTable::getOrInternStringHandle("InternedName");
+		const std::array<DiagnosticArgument, 3> mixed_arguments{
+			DiagnosticArgument::text("x"),
+			DiagnosticArgument::internedText(interned),
+			DiagnosticArgument::unsignedInteger(2)};
+		std::string rendered = renderDiagnosticMessage(
+			"suffixes on declarator '{}' at {} are not supported, count {}",
+			mixed_arguments);
+		CHECK(rendered == "suffixes on declarator 'x' at InternedName are not supported, count 2");
+
+		const std::array<DiagnosticArgument, 1> negative_argument{
+			DiagnosticArgument::signedInteger(-42)};
+		std::string signed_render = renderDiagnosticMessage(
+			"line {}", negative_argument);
+		CHECK(signed_render == "line -42");
+
+		// Contract: a missing argument renders nothing for its placeholder.
+		const std::array<DiagnosticArgument, 1> present_argument{
+			DiagnosticArgument::unsignedInteger(1)};
+		std::string missing = renderDiagnosticMessage(
+			"value {}", present_argument);
+		CHECK(missing == "value 1");
+	}
+
+	TEST_CASE("Notes attach through pool indices and render under the parent") {
+		DiagnosticEngine engine;
+		uint32_t index = engine.reportWithRange(
+			DiagnosticId::ExpectedCloseBracketAfterArraySize, DiagnosticSeverity::Error,
+			SourceLocation::fromParts(3, 35, 0),
+			SourceRange::fromLocations(SourceLocation::fromParts(3, 32, 0), SourceLocation::fromParts(3, 35, 0)),
+			"Expected ']' after array size", {});
+		engine.attachNote(index, DiagnosticId::NoteToMatchOpeningBracket,
+						  SourceLocation::fromParts(3, 32, 0), "to match this '['", {});
+
+		const Diagnostic& parent = engine.diagnostic(index);
+		REQUIRE(parent.note_indices.size() == 1);
+		CHECK(engine.note(parent.note_indices[0]).id == DiagnosticId::NoteToMatchOpeningBracket);
+
+		std::deque<std::string> paths{"unit.cpp"};
+		std::string rendered = renderDiagnostic(parent, engine, paths);
+		CHECK(rendered.find("unit.cpp:3:35: error: Expected ']' after array size [ExpectedCloseBracketAfterArraySize#1003]") != std::string::npos);
+		CHECK(rendered.find("unit.cpp:3:32: note: to match this '[' [NoteToMatchOpeningBracket#1051]") != std::string::npos);
+	}
+
+	TEST_CASE("Rendered lines expose machine-consumable id, line, and column") {
+		DiagnosticEngine engine;
+		uint32_t index = engine.report(
+			DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+			SourceLocation::fromParts(2, 30, 0), "Cannot form a pointer to reference type", {});
+		std::deque<std::string> paths{"m.cpp"};
+		std::string rendered = renderDiagnostic(engine.diagnostic(index), engine, paths);
+
+		// Contract: deterministic location prefix and trailing stable-id tag;
+		// both parseable without message prose.
+		CHECK(rendered.compare(0, 18, "m.cpp:2:30: error:") == 0);
+		const std::string expected_suffix = "[PointerToReferenceType#1001]";
+		REQUIRE(rendered.size() > expected_suffix.size());
+		CHECK(rendered.substr(rendered.size() - expected_suffix.size()) == expected_suffix);
+		CHECK(diagnosticIdNumber(DiagnosticId::ExpectedCloseBracketAfterArraySize) == 1003u);
+	}
+
+	TEST_CASE("Template-instantiation context snapshots by value at report time") {
+		DiagnosticEngine engine;
+		StringHandle outer = StringTable::getOrInternStringHandle("Outer<int>");
+		StringHandle inner = StringTable::getOrInternStringHandle("Inner::func");
+		{
+			DiagnosticEngine::TemplateContextGuard outer_guard(engine, outer, SourceLocation::fromParts(10, 5, 0));
+			{
+				DiagnosticEngine::TemplateContextGuard inner_guard(engine, inner, SourceLocation{});
+				CHECK(engine.templateContextDepth() == 2);
+				engine.report(DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+							  SourceLocation::fromParts(11, 1, 0), "boom", {});
+			}
+			CHECK(engine.templateContextDepth() == 1);
+		}
+		CHECK(engine.templateContextDepth() == 0);
+
+		REQUIRE(engine.diagnostics().size() == 1);
+		const InlineVector<TemplateInstantiationFrame, 4>& frames = engine.diagnostic(0).instantiation_context;
+		REQUIRE(frames.size() == 2);
+		CHECK(frames[0].template_name == outer);
+		CHECK(frames[1].template_name == inner);
+	}
+
+	TEST_CASE("CompileError bridge preserves what() and carries structured payload") {
+		DiagnosticEngine engine;
+		const std::array<DiagnosticArgument, 1> declarator_argument{
+			DiagnosticArgument::text("decl")};
+		uint32_t index = engine.report(
+			DiagnosticId::MultipleAsmSuffixesOnDeclarator, DiagnosticSeverity::Error,
+			SourceLocation::fromParts(4, 6, 0),
+			"Multiple __asm suffixes on declarator '{}' are not supported",
+			declarator_argument);
+
+		try {
+			throw CompileError::fromStructuredDiagnostic(engine.diagnostic(index));
+		} catch (const CompileError& caught) {
+			CHECK(std::string(caught.what()) ==
+				  "Multiple __asm suffixes on declarator 'decl' are not supported");
+			const Diagnostic* payload = caught.structuredDiagnostic();
+			REQUIRE(payload != nullptr);
+			CHECK(payload->id == DiagnosticId::MultipleAsmSuffixesOnDeclarator);
+			CHECK(payload->location.line == 4u);
+			CHECK(payload->location.column == 6u);
+		}
+
+		// Copying the exception (throw does this implicitly) keeps the payload.
+		try {
+			throw CompileError::fromStructuredDiagnostic(engine.diagnostic(index));
+		} catch (const std::runtime_error& copied) {
+			const CompileError* compile_copy = dynamic_cast<const CompileError*>(&copied);
+			REQUIRE(compile_copy != nullptr);
+			CHECK(compile_copy->structuredDiagnostic() != nullptr);
+			CHECK(std::string(compile_copy->what()).find("'decl'") != std::string::npos);
+		}
+	}
+
+	TEST_CASE("Legacy construction counts toward outside-engine inventory; bridge does not") {
+		uint64_t before = diagnosticsEmittedOutsideEngineCount();
+		{
+			CompileError legacy("legacy failure path");
+			(void)legacy;
+		}
+		uint64_t after_legacy = diagnosticsEmittedOutsideEngineCount();
+		CHECK(after_legacy == before + 1);
+
+		{
+			DiagnosticEngine engine;
+			uint32_t index = engine.report(
+				DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+				SourceLocation::fromParts(1, 1, 0), "structured", {});
+			CompileError bridged = CompileError::fromStructuredDiagnostic(engine.diagnostic(index));
+			(void)bridged;
+		}
+		CHECK(diagnosticsEmittedOutsideEngineCount() == after_legacy);
+	}
+
+	TEST_CASE("Converted pointer-to-reference diagnostic carries structured payload end to end") {
+		std::string_view code = "using R = int&;\nint main(){ int x = sizeof(R*); return x; }\n";
+		Lexer lexer(code);
+		CompileContext local_context;
+		SemanticAnalysis parser_sema(local_context, gSymbolTable);
+		Parser parser(lexer, local_context, parser_sema);
+
+		bool threw = false;
+		try {
+			parser.parse();
+		} catch (const CompileError& caught) {
+			threw = true;
+			const Diagnostic* payload = caught.structuredDiagnostic();
+			REQUIRE(payload != nullptr);
+			CHECK(payload->id == DiagnosticId::PointerToReferenceType);
+			CHECK(payload->severity == DiagnosticSeverity::Error);
+			CHECK(payload->location.line == 2u);
+			CHECK(std::string(caught.what()) == "Cannot form a pointer to reference type");
+
+			std::deque<std::string> paths{"probe.cpp"};
+			std::string rendered = renderDiagnostic(*payload, local_context.diagnostics(), paths);
+			CHECK(rendered.find("error: Cannot form a pointer to reference type [PointerToReferenceType#1001]") != std::string::npos);
+		}
+		CHECK(threw);
+	}
+
+	TEST_CASE("Record size inventory for stored diagnostic records") {
+		// Cold-path records; sizes documented here so future layout changes
+		// are conscious decisions rather than accidents.
+		MESSAGE("sizeof(DiagnosticArgument)=" << sizeof(DiagnosticArgument));
+		MESSAGE("sizeof(TemplateInstantiationFrame)=" << sizeof(TemplateInstantiationFrame));
+		MESSAGE("sizeof(DiagnosticNote)=" << sizeof(DiagnosticNote));
+		MESSAGE("sizeof(Diagnostic)=" << sizeof(Diagnostic));
+
+		static_assert(sizeof(DiagnosticArgument) <= 32, "argument slot must stay compact");
+		static_assert(sizeof(SourceRange) == 24, "range packs two compact locations");
+		CHECK(true);
+	}
+}

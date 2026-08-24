@@ -9,6 +9,7 @@
 #include <span>
 #include <unordered_map>
 #include "ChunkedAnyVector.h"
+#include "Diagnostics.h"
 #include "Log.h"
 
 class CompileContext {
@@ -246,6 +247,14 @@ public:
 		return false;
 	}
 
+	DiagnosticEngine& diagnostics() {
+		return diagnostics_;
+	}
+
+	const DiagnosticEngine& diagnostics() const {
+		return diagnostics_;
+	}
+
 private:
 	std::vector<std::string> includeDirs_;
 	std::optional<std::string> inputFile_;
@@ -282,4 +291,9 @@ private:
 	// Using std::deque instead of std::vector to avoid invalidating string_views on reallocation
 	// deque guarantees that references/pointers to elements remain valid when adding new elements
 	std::deque<std::string> function_name_literals_;
+
+	// Structured diagnostic accumulation. Owned here until the boundary-1
+	// FrontendContext takes over diagnostic ownership; non-copyable by
+	// composition, so CompileContext is neither copyable nor movable.
+	DiagnosticEngine diagnostics_;
 };

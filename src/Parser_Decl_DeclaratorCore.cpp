@@ -787,10 +787,20 @@ void Parser::parse_variable_declarator_suffixes(DeclarationNode& decl) {
 		if (!skip_asm_suffix(&current_asm_symbol_name)) {
 			break;
 		}
-		if (asm_symbol_name.has_value()) {
-			throw CompileError("Multiple __asm suffixes on declarator '" +
-							   std::string(decl.identifier_token().value()) +
-							   "' are not supported");
+		// parse_postfix_declarator captures a first __asm suffix into the
+		// declaration itself; any further suffix here is therefore already the
+		// second one even when this loop has not captured one yet.
+		if (asm_symbol_name.has_value() || decl.has_mangled_name()) {
+			const Token& declarator_identifier = decl.identifier_token();
+			const std::array<DiagnosticArgument, 1> arguments{
+				DiagnosticArgument::text(declarator_identifier.value())};
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::MultipleAsmSuffixesOnDeclarator,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(declarator_identifier),
+				"Multiple __asm suffixes on declarator '{}' are not supported",
+				arguments);
 		}
 		asm_symbol_name = current_asm_symbol_name;
 		skip_cpp_attributes();
@@ -1014,7 +1024,13 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				return parse_postfix_declarator(base_type, dummy_identifier, linkage);
 			}
 			if (base_type.is_reference() || base_type.is_rvalue_reference()) {
-				throw CompileError("Cannot form a pointer to reference type");
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::PointerToReferenceType,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(peek_info()),
+					"Cannot form a pointer to reference type",
+					{});
 			}
 			base_type.add_pointer_level(ptr_cv);
 			if (peek() == "["_tok) {
