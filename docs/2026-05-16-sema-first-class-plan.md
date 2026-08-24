@@ -4,7 +4,12 @@
 
 The active architectural status has moved to a consolidated document.
 
-Use `docs/SEMANTIC_ANALYSIS_STATUS.md` for the current parser/sema lifecycle and query-state model.
+Use:
+
+- `docs/2026-08-24-front-end-rearchitecture-plan.md` for future architecture
+  and implementation ordering;
+- `docs/SEMANTIC_ANALYSIS_STATUS.md` for the shipping parser/sema lifecycle and
+  query-state model.
 
 Keep fallback-specific and template/materialization details in:
 

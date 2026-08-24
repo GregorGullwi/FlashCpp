@@ -2,17 +2,24 @@
 
 **Last Updated:** 2026-05-26
 
+**Superseded for future work:** Use
+`docs/2026-08-24-front-end-rearchitecture-plan.md` for lookup ownership and
+implementation ordering. Keep this investigation as evidence about codegen
+lookup and recovery paths in the shipping compiler. Do not execute the concrete
+plan below unless a pull request boundary in the new plan explicitly cites it.
+
 ## Current relevance snapshot
 
 This investigation is still relevant, but only parts of the original plan are
 active.
 
-### Still active
+### Still present in the shipping compiler
 
 - Codegen still reconstructs argument typing in
   `buildCodegenOverloadResolutionArgType(...)` and related call sites.
 - Several temporary compatibility/recovery paths identified in the 2026-04-27 audit are still active and
-  should be removed by strengthening sema annotations/ownership first.
+  remain implementation debt. Their removal must follow the architecture and
+  pull request boundaries in the new plan.
 
 ### Partly superseded
 
@@ -31,7 +38,8 @@ the path to standard C++20 semantics.
 
 ## Concrete implementation plan
 
-This top section is the execution plan.
+This top section was the execution plan for the superseded architecture. It is
+retained as historical evidence only.
 
 The rest of this document is the investigation backing the plan. Each task below points to the detailed findings so an agent can:
 

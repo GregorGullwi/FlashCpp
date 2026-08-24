@@ -3,6 +3,12 @@
 **Date:** 2026-04-08  
 **Last Updated:** 2026-05-05
 
+**Superseded for future work:** Use
+`docs/2026-08-24-front-end-rearchitecture-plan.md` for template instantiation
+architecture and implementation ordering. Keep this document as historical
+status for the parser-owned materialization system. Do not continue its active
+items unless a pull request boundary in the new plan explicitly cites them.
+
 This document tracks the current state of template instantiation, lazy
 materialization, and the sema/codegen boundary. It is intentionally compact:
 completed implementation history is summarized, and active work points at the

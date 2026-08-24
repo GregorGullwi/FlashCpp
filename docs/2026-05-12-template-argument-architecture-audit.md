@@ -3,9 +3,11 @@
 **Date:** 2026-05-12  
 **Last updated:** 2026-07-13
 
-This is a forward-looking planning reference for template infrastructure. Keep
-it limited to the current architecture, invariants, live failures, and next
-tasks; completed branch history belongs in tests and version control.
+**Superseded for future work:** Use
+`docs/2026-08-24-front-end-rearchitecture-plan.md` for template architecture and
+implementation ordering. Keep this audit as evidence about the shipping
+template implementation and its defects. Do not execute its remaining tasks
+unless a pull request boundary in the new plan explicitly cites them.
 
 ## Current architecture
 

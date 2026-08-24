@@ -4,6 +4,8 @@
 
 This file is intentionally compact.
 
-For current sema ownership, pipeline, and backlog status, use:
+Use:
 
-- `docs/SEMANTIC_ANALYSIS_STATUS.md`
+- `docs/2026-08-24-front-end-rearchitecture-plan.md` for future expression-sema
+  architecture and implementation ordering;
+- `docs/SEMANTIC_ANALYSIS_STATUS.md` for the shipping implementation state.

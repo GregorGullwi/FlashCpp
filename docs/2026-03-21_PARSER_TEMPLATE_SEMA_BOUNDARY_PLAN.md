@@ -4,6 +4,12 @@
 
 Boundary status is now tracked centrally.
 
-Use `docs/SEMANTIC_ANALYSIS_STATUS.md` for current parser/sema boundary rules and invariants, and keep detailed materialization work in:
+Use:
+
+- `docs/2026-08-24-front-end-rearchitecture-plan.md` for future architecture
+  and implementation ordering;
+- `docs/SEMANTIC_ANALYSIS_STATUS.md` for current parser/sema boundary behavior.
+
+Keep detailed materialization history in:
 
 - `docs/2026-04-08-template-instantiation-materialization-plan.md`

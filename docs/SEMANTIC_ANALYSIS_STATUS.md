@@ -2,9 +2,11 @@
 
 **Last Updated:** 2026-08-23
 
-This document is intentionally forward-looking. It should capture the current
-ownership model, the invariants future work can rely on, and the next cleanup
-targets. Detailed branch-by-branch history belongs in Git.
+**Purpose:** This document describes the shipping compiler and its current
+parser, sema, and codegen contracts. It is not the forward-looking architecture
+plan. Use `docs/2026-08-24-front-end-rearchitecture-plan.md` for implementation
+ordering and future ownership. Treat cleanup items here as evidence about
+current debt, not as independent priorities.
 
 ## Current pipeline
 

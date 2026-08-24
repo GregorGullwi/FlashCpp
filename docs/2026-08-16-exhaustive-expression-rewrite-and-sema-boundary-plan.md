@@ -1,5 +1,12 @@
 # 2026-08-16 Exhaustive Expression Rewrite and Sema Boundary Plan
 
+**Superseded for future work:** Use
+`docs/2026-08-24-front-end-rearchitecture-plan.md` as the only forward-looking
+front-end architecture plan. Keep this document as implementation history and
+evidence for the existing expression traversal and lifecycle machinery. Do not
+continue its remaining tasks unless a pull request boundary in the new plan
+explicitly cites them.
+
 ## Status
 
 Phase 0, Phase 1, Phase 2, and Phase 3 are complete as of 2026-08-16.

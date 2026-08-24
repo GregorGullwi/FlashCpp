@@ -1,0 +1,840 @@
+# Front-end rearchitecture plan
+
+**Date:** 2026-08-24
+**Status:** Revised after independent Claude Opus architecture review
+
+## Decision
+
+FlashCpp will keep the existing repository, backend, constexpr evaluator,
+lexer, preprocessor directive handling, support containers, and regression
+corpus. The object writers will be kept and extended, but their monolithic
+section model will be replaced where multi-translation-unit support requires
+it.
+
+The parser-owned semantic and template architecture will be replaced behind
+explicit facades. The replacement gets a new semantic AST model and scoped
+arena. Stable IDs will not be bolted onto the existing pointer-keyed AST as if
+that solved its ownership problems. The old AST will be bridged during
+migration and deleted from normalized front-end paths over time.
+
+This is not a greenfield compiler rewrite. It is also not a continuation of
+the current parser-to-sema annotation migration.
+
+## Target pipeline
+
+```text
+preprocessing tokens
+    -> syntax parser
+    -> syntax AST
+    -> persistent declarations, entities, and scopes
+    -> semantic analysis and template instantiation
+    -> normalized semantic AST
+    -> typed AST-to-IR lowering
+    -> existing machine-code and object-file backend
+```
+
+The target ownership model is:
+
+- The parser owns syntax and source fidelity.
+- Persistent scopes own lexical context.
+- A `DeclarationBuilder` owned by `FrontendContext` creates declarations,
+  matches redeclarations, creates or finds entities, and applies merge rules.
+- Declaration entities carry canonical identity, redeclaration chains,
+  linkage, and definition state.
+- Sema owns lookup, expression typing, conversions, overload resolution,
+  access control, constant-expression requirements, and diagnostics.
+- The template engine operates on AST patterns and semantic identities. It
+  does not restore lexer positions or mutate parser state.
+- Constexpr consumes sema-owned types and declarations. It requests
+  instantiation through the template-engine facade.
+- AST-to-IR consumes normalized semantic nodes. It cannot perform lookup,
+  overload resolution, access checks, template materialization, or writes into
+  sema.
+- The backend consumes typed IR and target ABI information.
+
+## Architectural invariants
+
+1. `ScopeId`, `DeclId`, `EntityId`, `ExprId`, `TypeId`, and `TemplateDeclId`
+   are strong, stable identities owned by a compilation context.
+2. `DeclId` identifies one source declaration. `EntityId` identifies the
+   canonical C++ entity across redeclarations and definitions.
+3. Canonical types are recursive structural nodes. Identity is independent of
+   parse order, spelling, parser stacks, arena addresses, and translation-unit
+   layout.
+4. Template parameters use depth and index. Names remain only for diagnostics
+   and source printing.
+5. One semantic fact has one authority. Temporary shadow comparison is
+   allowed, but dual writes are not.
+6. Syntax nodes contain no mangled names or backend state.
+7. Template bodies are AST patterns, not saved lexer positions.
+8. Failed tentative parsing and failed substitution commit no declarations,
+   entities, types, diagnostics, instantiations, or AST nodes.
+9. Lookup returns complete declaration sets and represents ambiguity directly.
+10. Overload resolution records complete implicit conversion sequences.
+11. ELF mangling conforms to the Itanium C++ ABI. COFF mangling conforms to
+    the MSVC ABI. Mangled output is a deterministic pure function of the
+    canonical entity, canonical types, and target ABI. A proprietary hash is
+    not acceptable.
+12. Normalized codegen paths fail with `InternalError` when semantic facts are
+    absent. They do not recover by spelling, mangled name, arity, or parser
+    queries.
+13. No standard-library or vendor spelling may affect general language
+    semantics.
+14. Object format, calling convention, exception ABI, data model, and target
+    architecture are separate target properties.
+
+## Delivery rules
+
+- Keep `main` buildable and warning-clean after every change.
+- Use small migration PRs with one ownership change and a deletion target.
+- Add a reduced non-`std` regression before fixing a language defect exposed by
+  a standard header.
+- Mutation-validate architectural tests. Each new test must fail on the current
+  compiler or on a deliberately broken implementation before it counts as
+  coverage.
+- Every compatibility path needs a counter, a named removal architecture
+  boundary, and a hard failure for already-migrated constructs.
+- No construct may remain routable to both old and new implementations across
+  the architecture boundary that declares the new path authoritative.
+- Do not add a parallel type, argument, lookup, environment, or declaration
+  representation without an adapter and named deletion architecture boundary.
+- Move semantic operations behind facades, establish the new authority, then
+  delete the old implementation. Do not copy an operation into another layer.
+- Do not combine this work with an SSA or machine-code backend rewrite.
+- Each pull request boundary normally lands through one short-lived branch and
+  one pull request. Do not keep a long-running migration branch.
+
+## Agent execution contract
+
+This document is an architecture roadmap, not a sufficient implementation
+prompt for an agent.
+
+An architecture boundary describes an observable ownership state and normally
+spans several pull requests. A pull request boundary is one landable change
+with one approved execution brief.
+
+Before implementation, each pull request boundary requires an approved
+execution brief containing:
+
+- one bounded objective;
+- exact files and symbols expected to change;
+- the current control and data flow;
+- the target API and ownership change;
+- invariants that must hold after the PR;
+- behavior explicitly out of scope;
+- regressions that fail before the change;
+- validation commands;
+- compatibility code and counters affected;
+- code that must be deleted before the PR is complete;
+- known risks and conditions that require stopping for redesign.
+
+An agent cannot declare completion while a listed regression still fails, a
+named deletion target remains reachable, a required counter moved in the wrong
+direction, or a machine-checkable completion rule in the brief fails.
+
+A weaker agent may implement a reviewed execution brief when the change is
+mechanical or locally bounded. A strong compiler model should write or review
+briefs that alter identity, ownership, lookup, types, templates, diagnostics,
+or parser control flow.
+
+Agents must not invent fallback paths, broaden scope, or keep both old and new
+authorities when the brief requires deletion.
+
+A reverted architectural attempt must add a written finding describing the
+failed invariant and root cause before another implementation retries the same
+approach.
+
+## Architecture boundary 0: diagnosability and measurement
+
+Architectural work cannot be judged with the current diagnostic and runner
+contracts.
+
+### Diagnostic engine
+
+Introduce:
+
+- stable diagnostic IDs;
+- severity;
+- `SourceLocation` and `SourceRange`;
+- structured arguments;
+- attached notes;
+- template-instantiation context;
+- diagnostic accumulation and recovery.
+
+`CompileError` may temporarily carry a structured diagnostic while retaining
+`what()`. New semantic code must emit diagnostics through the engine.
+
+### Crash and invariant handling
+
+- Install an alternate signal stack with `sigaltstack` and `SA_ONSTACK`.
+- Add an effective crash-handler reentry guard.
+- Remove the `InternalError`-to-warning downgrade.
+- Stop swallowing `std::bad_any_cast` during per-root IR processing.
+- Investigate the deterministic standard-header crash under ASAN.
+
+### Runner hardening
+
+- Require diagnostic ID, source line, and source column for every new
+  `_fail.cpp` test.
+- Maintain a named conversion backlog for existing `_fail.cpp` tests and
+  migrate them incrementally.
+- Add multi-translation-unit compile and link cases.
+- Add a PIE link variant.
+- Fail on discovered but skipped test files.
+- Reject encoded return values outside 0 through 255 on Linux.
+- Run selected standard-header probes as tracked expected failures.
+- Add a clang differential mode for reduced implementation-independent tests.
+
+### Architectural regression corpus
+
+Add reduced tests for:
+
+- integral promotions in `auto`, overload resolution, `sizeof`, constexpr, and
+  template deduction;
+- same-named templates in different namespaces;
+- template specializations crossing translation-unit boundaries;
+- inline functions, vtables, RTTI, templates, and implicit special members
+  shared by two translation units;
+- dependent ADL at the point of instantiation;
+- ambiguous member lookup through multiple bases;
+- pointer-to-data-member owner and pointee identity;
+- nested template access to outer template parameters;
+- positive and negative generic detection;
+- ambiguous and invalid partial specializations;
+- compound requirements and constraint subsumption;
+- legal and illegal redeclaration merging;
+- tentative parsing and substitution rollback.
+
+Existing failures may enter a named expected-failure manifest. A test cannot be
+weakened into a parse-only or unconditional-return check.
+
+### Migration counters
+
+Do not manually add counters to every legacy call site. Track shared choke
+points first:
+
+- count parser expression-type queries in the shared query entry point;
+- count symbol lookup, access, and overload requests at the service boundary;
+- route parser and IR template-materialization requests through
+  `TemplateEngine` and count them there;
+- count token replay in the lexer-position restore functions;
+- count unresolved semantic queries at the AST-to-IR entry boundary;
+- count old and new template routing inside the facade;
+- count diagnostics emitted outside `DiagnosticEngine`.
+
+Some legacy behavior, such as `'$'` string surgery or direct parser calls, has
+no shared entry point yet. For those cases:
+
+1. create a static inventory with `rg`;
+2. route one caller family through a facade;
+3. make the old entry point private or change its signature so remaining
+   callers become compile errors;
+4. add the runtime counter at the new choke point;
+5. delete the static inventory when direct calls are no longer possible.
+
+The compiler and linker should help find callers. Prefer access control,
+signature changes, deleted overloads, and dependency removal over maintaining a
+hand-written list of source locations.
+
+Inline data-shape conventions need a different removal mechanism. The `'$'`
+family has no shared API to make private. Architecture boundary 3B removes the
+hash from registered type names, after which all `find('$')` recovery becomes
+dead code. Its guard is a static inventory plus a test that no registered type
+name or emitted symbol contains the proprietary template hash form. Do not
+create a facade around the string surgery.
+
+Counters are directional evidence, not proof that every hidden path was found.
+Each counter needs:
+
+- a fixed corpus and recorded baseline;
+- a named architecture boundary where it must reach zero;
+- a compile-time or static guard preventing new direct callers;
+- removal when the old path becomes unreachable.
+
+Exit criteria:
+
+- structured diagnostics can be asserted by tests;
+- internal invariant failures cannot be reported as success;
+- every known architectural defect has a mutation-validated regression or a
+  tracked expected failure;
+- choke-point counters and the remaining static inventories are visible in CI
+  on a fixed corpus;
+- diagnostics emitted outside the engine have a baseline and a named removal
+  target in architecture boundary 11.
+
+## Architecture boundary 1: front-end context, arenas, identities, and entities
+
+Introduce a per-translation-unit `FrontendContext`.
+
+It owns:
+
+- diagnostics;
+- target information;
+- syntax and semantic arenas;
+- scopes;
+- declarations and entities;
+- canonical types;
+- template registries and the template-engine facade;
+- migration statistics.
+
+Existing globals may initially forward to the active context. New code cannot
+add process-global compiler state.
+
+### Scoped arena
+
+Add an arena model with:
+
+- stable handles;
+- transactional registry checkpoints;
+- monotonic scratch allocation for tentative parsing and substitution probes;
+- destructor registration for objects owning heap storage;
+- commit by publishing stable IDs and registry entries, without copying or
+  relocating cyclic AST graphs.
+
+Failed probes may leave unreachable arena bytes until the translation unit
+ends. They must leave no observable declaration, entity, type, diagnostic, or
+instantiation registration. Track discarded scratch bytes and enforce a
+reasonable implementation limit so repeated failure cannot exhaust memory
+silently.
+
+The existing `ChunkedAnyVector` remains available to the old AST during the
+bridge. New semantic nodes cannot use raw addresses as identity.
+
+### Declaration and entity model
+
+Add `DeclarationBuilder`, owned by `FrontendContext` and invoked by the syntax
+parser. It creates source declarations, resolves the canonical entity, and
+applies redeclaration merge rules. Sema consults the result rather than creating
+parallel entities.
+
+Deliver:
+
+- `DeclId` for each source declaration;
+- `EntityId` for the canonical C++ entity;
+- redeclaration chains;
+- declaration versus definition state;
+- linkage and visibility on the entity;
+- merge rules for default arguments, exception specifications, `inline`,
+  `constexpr`, attributes, friend declarations, and template declarations.
+
+### Persistent scopes
+
+Deliver:
+
+- stable `ScopeId`;
+- parent links;
+- declaration lists;
+- namespace and class ownership;
+- source-order positions for point-sensitive lookup;
+- `ScopeId` recorded at declaration and expression lookup sites.
+
+### Template facade shell
+
+Route public template instantiation requests through one `TemplateEngine`
+facade without changing behavior. Add old-engine routing counters.
+
+Exit criteria:
+
+- leaving parser scope does not destroy lookup information;
+- a scratch transaction can allocate declarations and types, fail, and leave
+  every committed registry unchanged;
+- discarded scratch bytes are measured and bounded;
+- IDs cannot be constructed from pointers;
+- no new semantic table is keyed by `const void*`;
+- declaration merging passes its initial regression set;
+- every template instantiation entry point passes through the facade.
+
+## Architecture boundary 2: multi-translation-unit object model
+
+This is a prerequisite, not optional parallel hardening.
+
+Deliver:
+
+- per-symbol or otherwise groupable code and data sections;
+- COMDAT groups or correct weak emission for vague-linkage entities;
+- correct symbol sizes;
+- deduplicated defined and undefined symbol-table entries;
+- valid `.eh_frame` and relocation-section flags;
+- correct `.data.rel.ro` placement and relocation kinds for RTTI and vtables;
+- PIE-safe output.
+
+Exit criteria:
+
+- two translation units sharing inline functions, template instantiations,
+  vtables, RTTI, and implicit special members link and run;
+- symbol tables contain one coherent entry per symbol;
+- the linker produces no `.eh_frame` or text-relocation warnings.
+
+## Architecture boundary 3A: canonical types
+
+Replace flat type descriptions with recursive canonical nodes for:
+
+- builtins and qualifiers;
+- pointers and references;
+- arrays;
+- function and member-function types;
+- pointer-to-data-member and pointer-to-member-function types;
+- records and enums;
+- template parameters;
+- template specializations;
+- dependent types.
+
+Delete the parallel pointer-level and array-dimension representation as
+semantic currency. Parser declarator structures may remain syntax-only until
+canonicalization.
+
+Exit criteria:
+
+- canonicalization does not inspect parser or member-context stacks;
+- parse-order changes do not alter type identity;
+- pointer-to-member overloads distinguish owner and pointee types;
+- interleaved pointer, array, function, and member-pointer declarators have one
+  structural representation;
+- flat pointer-level and array-dimension fields are absent from migrated
+  semantic paths.
+
+## Architecture boundary 3B: ABI-conforming mangling
+
+Implement:
+
+- Itanium `<template-args>` and substitution compression on ELF;
+- MSVC template-name encoding and back references on COFF;
+- constructor and destructor variants required by each ABI;
+- mangling from `EntityId`, canonical types, and target ABI only.
+
+Exit criteria:
+
+- parse-order changes do not alter mangled output;
+- mangled names match clang or MSVC byte-for-byte for a fixed ABI corpus;
+- template specializations have compatible identities across translation
+  units;
+- no registered type name or emitted symbol uses the proprietary `$hash`
+  template form;
+- `find('$')` recovery sites are deleted rather than wrapped in a facade.
+
+## Architecture boundary 4: authoritative expression sema
+
+Introduce a semantic expression node or result containing:
+
+- `TypeId`;
+- value category;
+- selected declaration or overload set;
+- implicit conversion sequence;
+- constant-expression requirements;
+- semantic rewrite or lowering records.
+
+Start with:
+
+1. literals and identifiers;
+2. builtin unary and binary operators;
+3. assignment and initialization;
+4. conditional expressions;
+5. calls.
+
+Use shadow comparison before switching each expression family.
+
+Exit criteria:
+
+- one implementation owns integral promotions, usual arithmetic conversions,
+  qualification conversions, reference binding, and list-initialization
+  narrowing;
+- parser, constexpr, templates, and AST-to-IR read the same expression type;
+- duplicate arithmetic-conversion implementations are deleted;
+- scalar AST-to-IR performs no type reconstruction;
+- promotion, narrowing, constexpr-width, `auto`, and deduction regressions use
+  the new path.
+
+## Architecture boundary 5: lookup, overload resolution, and access control
+
+Introduce one `NameLookup` service over persistent scopes and declaration
+entities.
+
+Deliver:
+
+- unqualified, qualified, member, ADL, and using-directive lookup;
+- source-order and point-of-instantiation inputs;
+- declaration-set merging and explicit ambiguity;
+- class-member lookup according to `[class.member.lookup]`;
+- access checking integrated with lookup results;
+- one overload engine with complete implicit conversion sequences,
+  derived-to-base distance, template ordering hooks, and candidate diagnostics;
+- declaration-keyed constexpr bindings.
+
+Migration order:
+
+1. class-member lookup and access;
+2. sema expression lookup;
+3. parser binding through the shared service;
+4. constexpr;
+5. AST-to-IR, followed by deletion of its lookup code.
+
+Exit criteria:
+
+- ambiguous-base member lookup is diagnosed;
+- promotion ranks above conversion;
+- parser and sema cannot produce different answers for one `ScopeId`;
+- AST-to-IR has no `gSymbolTable`, lazy-member lookup, parser lookup, or
+  access-check calls;
+- mangled-name and arity-only call selection are deleted.
+
+This boundary owns removal of lookup and access logic from AST-to-IR. It does
+not own template-materialization calls, which move behind `TemplateEngine` in
+architecture boundary 6.
+
+## Architecture boundary 6: template identity, arguments, and environments
+
+Move the facade to semantic identity.
+
+Deliver:
+
+- registries keyed by `TemplateDeclId`;
+- parameters keyed by depth and index;
+- one ordered `TemplateArgument` representation for types, values, templates,
+  and packs;
+- one immutable substitution environment;
+- declaration-keyed instantiation and specialization caches;
+- identity-correct class, function, alias, and variable template registries;
+- adapters from old representations with named deletion architecture
+  boundaries.
+
+Exit criteria:
+
+- same-named templates in different namespaces never collide or overwrite;
+- nested templates retain outer bindings by identity;
+- alias and variable templates no longer use single name-keyed slots;
+- every old argument, environment, and key representation has a removal
+  architecture boundary;
+- parser and AST-to-IR template-materialization calls route through the facade;
+- direct calls to parser instantiation entry points are impossible outside the
+  old-engine implementation hidden behind the facade.
+
+## Architecture boundary 7: probe transactions, SFINAE, and constraint satisfaction
+
+This architecture boundary precedes AST-based partial-specialization and
+function-template instantiation.
+
+Deliver:
+
+- substitution failure as a typed result rather than an exception controlled
+  by global parser mode;
+- isolated probe transactions over scratch declarations, types, diagnostics,
+  and instantiation records;
+- normalized atomic constraints with parameter mappings;
+- constraint satisfaction;
+- simple, type, compound, and nested requirements;
+- `noexcept` and return-type requirements as parts of compound requirements;
+- instantiation-context diagnostics.
+
+Exit criteria:
+
+- failed probes leave no committed state;
+- generic detection works without recognizing `void_t` or library spellings;
+- compound requirements reject missing or incorrectly typed expressions;
+- hardcoded standard-library detection and trait names are absent from general
+  compiler logic.
+
+## Architecture boundary 8A: AST-based template instantiation
+
+Implement:
+
+```text
+template AST pattern + substitution environment + semantic context
+    -> instantiated semantic declarations and expressions
+```
+
+The new path cannot access the lexer or parser cursor.
+
+Migration order:
+
+1. class templates with data members and aliases;
+2. class-template member functions;
+3. partial specializations;
+4. function templates;
+5. variable and alias templates;
+6. deduction guides and explicit instantiations;
+7. out-of-line and lazy members.
+
+Deliver:
+
+- structural substitution over the new semantic AST;
+- shared P-against-A deduction;
+- proper non-deduced contexts;
+- partial-specialization matching and ordering;
+- point-of-instantiation work queue;
+- per-chain instantiation stack and diagnostics;
+- conforming implementation limits without a sticky translation-unit cap.
+
+Exit criteria:
+
+- migrated constructs never restore saved lexer positions;
+- migrated probes commit no state on failure;
+- namespace, outer-binding, specialization, ADL, detection, and cross-TU
+  regressions pass;
+- replay counters reach zero for migrated constructs;
+- each migrated old path is deleted.
+
+## Architecture boundary 8B: constraint subsumption and constrained ordering
+
+This boundary starts only after architecture boundary 8A has migrated function
+templates and partial ordering to the new template engine.
+
+Deliver:
+
+- subsumption over normalized atomic constraints and parameter mappings;
+- constrained function-template ordering layered on the new function-template
+  partial-ordering implementation;
+- diagnostics for incomparable and unsatisfied constraints.
+
+Exit criteria:
+
+- subsumption selects the more constrained overload;
+- constrained ordering never calls the parser-owned deduction engine;
+- the syntactic legacy constraint-ordering implementation is deleted.
+
+## Architecture boundary 9: semantic AST-to-IR lowering
+
+AST-to-IR is an active migration layer, not a passive consumer.
+
+Architecture boundaries 5 and 6 are preconditions. Lookup, access checks, and
+template-materialization calls must already have moved out of AST-to-IR before
+this boundary replaces its lowering contract.
+
+Deliver:
+
+- a typed lowering interface from normalized semantic nodes;
+- lowering records for range-for, implicit construction, conversions, calls,
+  access paths, temporaries, and cleanup;
+- no semantic lookup, access checking, overload resolution, template
+  materialization, or parser callbacks;
+- no writes from AST-to-IR into semantic state;
+- adapters to the existing flat IR while the backend remains unchanged.
+
+Exit criteria:
+
+- all semantic questions needed by lowering are answered before entry;
+- missing facts produce `InternalError`;
+- codegen-synthesized name-to-type maps are deleted;
+- lowering consumes only normalized semantic nodes and typed lowering records;
+- the old AST-to-IR semantic compatibility interface is deleted.
+
+## Architecture boundary 10: parser ownership replacement
+
+Once sema and templates are independent of parser state:
+
+- move tentative parsing onto scoped transactions;
+- keep parser output syntax-only;
+- remove parser-owned overload resolution, constexpr decisions, access checks,
+  template substitution, and instantiation;
+- remove parser-to-sema cycles;
+- remove parser callbacks from constexpr.
+
+Exit criteria:
+
+- rollback never retains an instantiation or registry mutation;
+- `SemanticAnalysis` no longer stores a parser pointer;
+- constexpr cannot call parser methods;
+- `Parser_Templates_Inst_*` and replay helper files are deleted;
+- the parser exposes a bounded syntax-facing interface instead of acting as a
+  compiler service locator.
+
+## Architecture boundary 11: delete transitional storage
+
+Delete:
+
+- raw-pointer semantic side tables;
+- duplicate resolved fields on syntax nodes;
+- parser return-type hints and mangled-name recovery;
+- old and new shadow-comparison code;
+- bridge nodes that have no remaining users;
+- raw `std::cerr` diagnostics and bare `CompileError(std::string)` construction
+  outside approved terminal adapters;
+- compatibility counters after they reach zero.
+
+Exit criteria:
+
+- every semantic fact has one storage location and one writer;
+- cloning and substitution cannot orphan semantic state;
+- syntax nodes contain no backend names or codegen lifecycle state;
+- the outside-`DiagnosticEngine` counter is zero;
+- the final pipeline matches this document.
+
+## Deferred work
+
+Do not combine these with the core migration without a concrete dependency:
+
+- token-based preprocessing;
+- a target triple and cross-compilation;
+- typed IR payloads and an IR verifier;
+- CFG, SSA, optimization, and global register allocation;
+- library-mode compilation and concurrent translation units.
+
+## Decision gates
+
+### Gate 0: diagnosable multi-TU baseline
+
+Do not begin architecture boundary 3A until the multi-TU corpus links and runs
+without linker warnings.
+
+### Gate 1: identity foundation
+
+Do not begin architecture boundary 4 until boundaries 3A and 3B produce
+canonical identities and ABI-conforming mangling without parse-order,
+parser-stack, raw-pointer, or proprietary-hash inputs.
+
+### Gate 2: semantic authority
+
+Do not begin broad template migration in architecture boundary 6 until boundary
+5 proves one expression type, one lookup answer, and complete conversion
+ranking for the scalar and member-lookup corpus.
+
+### Gate 3: template replacement viability
+
+Do not begin parser ownership replacement until architecture boundaries 7, 8A,
+and 8B pass:
+
+- cross-TU specialization identity;
+- namespace-separated same-name templates;
+- nested outer bindings;
+- dependent ADL;
+- partial-specialization ambiguity;
+- generic detection without library-name recognition;
+- compound requirements and subsumption.
+
+If these require token replay or parser-state recovery, revise the model rather
+than adding compatibility code.
+
+### Gate 4: old-engine deletion
+
+The migration is not complete while token replay, parser-owned instantiation,
+AST-to-IR lookup, or pointer-keyed semantic state remains reachable for
+normalized code.
+
+## Initial pull request boundaries
+
+Pull request boundaries 1 through 3 advance architecture boundary 0. Pull
+request boundary 4 closes its tracking work and introduces the template facade
+needed by architecture boundary 1. Pull request boundaries 5 and 6 continue
+architecture boundary 1.
+
+### Pull request boundary 1: diagnostics and crash diagnosability
+
+- Add the diagnostic engine core.
+- Convert three to five diagnostics that already have correct source locations.
+- Record the remaining raw diagnostic sites and begin the outside-engine
+  counter. Do not move member lookup diagnostics into sema in this PR.
+- Install the alternate signal stack and reentry guard.
+- Remove `InternalError` and `bad_any_cast` downgrades.
+
+### Pull request boundary 2: runner mechanics and expected-failure manifest
+
+- Add diagnostic assertions, multi-TU mode, PIE mode, return-range validation,
+  and skipped-test reporting.
+- Add the named expected-failure manifest and enforce stale-entry detection.
+
+### Pull request boundary 3: first architectural regression slices
+
+- Add promotion, namespace-template-identity, and ambiguous-member-lookup
+  probes as tracked expected failures.
+- Correct namespace-collision tests so colliding templates have observably
+  different structure.
+- Mutation-validate every new probe.
+
+This boundary requires a strong compiler review even when a weaker agent writes
+the test files.
+
+### Pull request boundary 4: migration counters and template facade
+
+- Route instantiation entry points through `TemplateEngine`.
+- Add counters for replay, AST-to-IR lookup, codegen-to-parser calls,
+  post-parse parser typing, and centralized string-based identity recovery.
+- Add a static inventory for inline `'$'` parsing rather than wrapping it.
+- Prevent counter increases on a fixed CI corpus.
+
+This is an architectural PR and requires a strong implementation agent.
+
+### Pull request boundary 5: `FrontendContext`, IDs, and scoped arena
+
+- Add the context and strong ID types.
+- Add monotonic scratch allocation, registry rollback, commit, and discarded
+  byte accounting tests.
+- Forward selected globals through the active context without behavior change.
+
+This is an architectural PR and requires a strong implementation agent.
+
+### Pull request boundary 6: persistent scopes and first recovery deletion
+
+- Make scope exit move a cursor instead of destroying the scope.
+- Record `ScopeId` on declarations and lookup sites.
+- Delete one spelling-based namespace recovery path and require the recorded
+  scope.
+
+## Stop criteria
+
+Stop the current sequence if any of these occurs:
+
+1. After the arena and identity work, the first migrated expression families
+   cannot retain stable semantic identity across cloning and substitution
+   without dual pointer and ID ownership.
+2. ABI-conforming mangling still requires parser stacks, registration order,
+   raw addresses, or content hashes.
+3. Two migrated template attempts reintroduce saved-token replay for the same
+   missing semantic input or ambient parser-state dependency.
+4. A migration counter fails to reach zero across two consecutive architecture
+   boundaries because the new path cannot answer a question the old path
+   answers.
+5. A construct remains supported by both engines after the architecture
+   boundary that declares the new engine authoritative.
+6. After architecture boundary 10, `SemanticAnalysis::parser_` or
+   `ConstExpr::EvaluationContext::parser` still exists, or a non-parser,
+   non-bridge translation unit includes `Parser.h` to request a semantic
+   service.
+7. Two consecutive architecture boundaries each need more than five unplanned
+   compatibility paths. A compatibility path is code guarded by a migration
+   counter or compatibility marker that was absent from the approved execution
+   brief.
+8. The object-writer section model cannot support COMDAT and vague linkage
+   without replacing the object-writer API. Stop before architecture boundary
+   3A and write a separate object-writer replacement plan rather than bypassing
+   Gate 0.
+9. The first two probe-transaction slices require relocating cyclic AST graphs
+   or rewriting inbound pointers instead of committing stable IDs and registry
+   entries.
+
+Criteria 1 through 7 and 9 justify replacing the strangler with a clean new
+front end inside FlashCpp. Criterion 8 pauses the front-end sequence for a
+separate object-writer replacement plan. Neither outcome means discarding the
+backend, constexpr evaluator, object writers, or tests.
+
+## Bug-fixing policy during migration
+
+Fix current bugs immediately when they:
+
+- prevent diagnosis or testing;
+- corrupt syntax needed by the new front end;
+- block a migration facade;
+- affect reusable backend or object-writer code;
+- can be fixed by landing the new authoritative component.
+
+Do not extend old replay, name-recovery, pointer-keyed sema, codegen lookup, or
+standard-library special cases. Use those defects as vertical migration slices:
+add the regression, implement the replacement component, route the construct,
+then delete the old path.
+
+## Relationship to existing documents
+
+This plan supersedes architectural directions that assume parser-owned
+instantiation, pointer-keyed semantic storage, or saved-token replay will be
+the final design.
+
+The following documents remain useful as historical evidence, but are
+superseded as implementation plans:
+
+- `docs/2026-08-16-exhaustive-expression-rewrite-and-sema-boundary-plan.md`;
+- `docs/2026-05-12-template-argument-architecture-audit.md`;
+- `docs/2026-04-08-template-instantiation-materialization-plan.md`;
+- `docs/2026-04-04-codegen-name-lookup-investigation.md`;
+- archived parser, sema, constexpr, and implicit-cast plan pointers.
+
+`docs/SEMANTIC_ANALYSIS_STATUS.md` continues to describe the shipping compiler
+until architecture boundaries are reached. Existing plans remain useful as
+implementation history and defect references.
