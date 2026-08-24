@@ -27,10 +27,6 @@ Remaining gaps in the same area:
   member case loses the pointee bounds somewhere in template substitution /
   lazy member resolution and falls back to non-flattened subscripting with a
   bad base.
-- Out-of-line definitions of qualified static members spelled with
-  parenthesized declarators (`long (*Registry::table)[2][4] = nullptr;`) are
-  rejected by the parser ("Expected identifier token"). In-class
-  `static constexpr` members work.
 
 ## Local aggregate initialization of multidimensional struct arrays
 
