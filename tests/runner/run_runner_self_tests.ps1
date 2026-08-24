@@ -30,10 +30,12 @@ try {
 	$freshness = Test-FlashCppBinaryFreshness -BinaryPath $binary -SourceFiles @((Get-Item -LiteralPath $source))
 	Assert-Runner $freshness.IsFresh "fresh compiler timestamps pass"
 
-	$compileOnlyKind = Get-FlashCppTestKind -FileName "test_compile_only.cpp" -SourceContent "int value();" -PlatformExclusions @() -SupportSources @()
-	$failureKind = Get-FlashCppTestKind -FileName "test_invalid_fail.cpp" -SourceContent "not C++" -PlatformExclusions @() -SupportSources @()
+	$compileOnlyKind = Get-FlashCppTestKind -FileName "test_compile_only.cpp" -SourceContent "int value();" -PlatformExclusions @() -SupportSources @() -CompileOnlyOverrides @()
+	$failureKind = Get-FlashCppTestKind -FileName "test_invalid_fail.cpp" -SourceContent "not C++" -PlatformExclusions @() -SupportSources @() -CompileOnlyOverrides @()
+	$legacyCompileOnlyKind = Get-FlashCppTestKind -FileName "test_ub_fail.cpp" -SourceContent "int value();" -PlatformExclusions @() -SupportSources @() -CompileOnlyOverrides @("test_ub_fail.cpp")
 	Assert-Runner ($compileOnlyKind -eq "CompileOnly") "eligible sources without main are scheduled as compile-only"
 	Assert-Runner ($failureKind -eq "CompileFailure") "_fail sources are scheduled even without main"
+	Assert-Runner ($legacyCompileOnlyKind -eq "CompileOnly") "explicit legacy compile-only probes are not inferred as expected failures from their suffix"
 
 	$returnCheck = Test-FlashCppLinuxReturnValue -Name "test_invalid_ret256.cpp"
 	Assert-Runner (-not $returnCheck.IsValid -and $returnCheck.Value -eq 256) "Linux return encodings above 255 are rejected"

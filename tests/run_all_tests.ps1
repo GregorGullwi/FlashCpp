@@ -174,6 +174,12 @@ $supportSources = @(
 	"linux_exception_stubs.cpp"
 )
 
+# This legacy probe keeps all ill-formed constexpr expressions commented out;
+# it verifies that their surrounding definitions compile without crashing.
+$compileOnlyOverrides = @(
+	"test_ub_fail.cpp"
+)
+
 # Expected runtime crashes - files that compile and link but crash at runtime
 $expectedRuntimeCrashes = @(
 )
@@ -185,7 +191,7 @@ $failFiles = @()
 $excludedFiles = @()
 foreach ($file in $allTestFiles) {
 	$sourceContent = Get-Content $file.FullName -Raw
-	$kind = Get-FlashCppTestKind -FileName $file.Name -SourceContent $sourceContent -PlatformExclusions $linuxOnlyTests -SupportSources $supportSources
+	$kind = Get-FlashCppTestKind -FileName $file.Name -SourceContent $sourceContent -PlatformExclusions $linuxOnlyTests -SupportSources $supportSources -CompileOnlyOverrides $compileOnlyOverrides
 	switch ($kind) {
 		"CompileFailure" { $failFiles += $file }
 		"Runnable" { $regularFiles += $file }

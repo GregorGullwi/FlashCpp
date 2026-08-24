@@ -20,8 +20,11 @@ touch -t 202608240101 "$temp_root/repo/src/source.cpp"
 if runner_binary_is_fresh "$temp_root/repo/FlashCpp" "$temp_root/repo"; then stale_ok=false; else stale_ok=true; fi
 assert_runner "$stale_ok" "stale compiler timestamps are rejected"
 
-[ "$(runner_test_kind test_compile_only.cpp "$SCRIPT_DIR/fixtures/invalid_multi_tu/runner_self_skipped_ret0/only_support.cpp" "" "")" = "compile-only" ] && kind_ok=true || kind_ok=false
+[ "$(runner_test_kind test_compile_only.cpp "$SCRIPT_DIR/fixtures/invalid_multi_tu/runner_self_skipped_ret0/only_support.cpp" "" "" "")" = "compile-only" ] && kind_ok=true || kind_ok=false
 assert_runner "$kind_ok" "eligible sources without main are scheduled as compile-only"
+
+[ "$(runner_test_kind test_ub_fail.cpp "$REPO_ROOT/tests/test_ub_fail.cpp" "" "" "test_ub_fail.cpp")" = "compile-only" ] && legacy_kind_ok=true || legacy_kind_ok=false
+assert_runner "$legacy_kind_ok" "explicit legacy compile-only probes override the expected-failure suffix"
 
 if runner_linux_return_is_valid test_invalid_ret256.cpp; then range_ok=false; else range_ok=true; fi
 assert_runner "$range_ok" "Linux return encodings above 255 are rejected"
