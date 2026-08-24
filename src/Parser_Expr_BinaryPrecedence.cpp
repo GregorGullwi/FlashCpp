@@ -1682,6 +1682,31 @@ void Parser::consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec
 	consume_pointer_ref_modifiers(type_spec);
 }
 
+// A cast type-id is a type-id (C++20 [expr.static.cast], [expr.cast]), so it may
+// contain a parenthesized abstract-declarator group such as int(*)[3]. The group
+// is only attempted when the token after '(' is a ptr-operator, which no
+// parenthesized expression or functional-cast argument list can start with; that
+// keeps (f)(a) and (T)(x) on their existing expression paths. The group itself is
+// routed through parse_declarator so the pointee shape is derived by the same
+// machinery as the named spelling int(*p)[3].
+bool Parser::consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec) {
+	if (peek() != "("_tok) {
+		return false;
+	}
+	TokenKind after_paren = peek(1);
+	if (after_paren != "*"_tok && after_paren != "&"_tok && after_paren != "&&"_tok) {
+		return false;
+	}
+	SaveHandle group_start = save_token_position();
+	ParseResult declarator_result = parse_declarator(type_spec, Linkage::None);
+	if (!declarator_result.is_error() && declarator_result.node().has_value()) {
+		discard_saved_token(group_start);
+		return true;
+	}
+	restore_token_position(group_start);
+	return false;
+}
+
 void Parser::consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec) {
 	// Parenthesized abstract-declarator groups route through the same
 	// declarator machinery as named declarations so a type-id such as

@@ -281,6 +281,12 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 		}
 	}
 
+	// Parenthesized abstract-declarator group, e.g. static_cast<int(*)[3]>(v).
+	// Checked after the member-pointer forms so (S::*) spellings keep their path.
+	if (!type_spec.is_member_object_pointer() && !type_spec.is_member_function_pointer()) {
+		consume_cast_type_id_paren_declarator(type_spec);
+	}
+
 	// Expect '>'
 	if (peek() != ">"_tok) {
 		return ParseResult::error(std::string(StringBuilder().append("Expected '>' after type in ").append(cast_name).commit()), current_token_);
@@ -407,8 +413,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 
 			consume_cast_type_id_postfix_modifiers(type_spec);
-
-			// Check if followed by ')'
+			// Parenthesized abstract-declarator group, e.g. (int(*)[3])v.
+			consume_cast_type_id_paren_declarator(type_spec);
 			if (consume(")"_tok)) {
 				// Before treating this as a C-style cast, verify that the type is actually valid.
 				// If type_spec is UserDefined with type_index 0, it means parse_type_specifier()
