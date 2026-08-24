@@ -6,7 +6,9 @@
 param(
 	[Parameter(Position = 0, ValueFromRemainingArguments = $true)]
 	[string[]]$TestFile = @(),
-	[int]$Jobs = 0
+	[int]$Jobs = 0,
+	[string]$CiOutput = "",
+	[string]$MultiTuRoot = ""
 )
 
 $requestedTestNames = @(
@@ -29,6 +31,12 @@ $ErrorActionPreference = "SilentlyContinue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
+. (Join-Path $ScriptDir "runner\RunnerCommon.ps1")
+
+if (-not [string]::IsNullOrWhiteSpace($CiOutput) -and -not [System.IO.Path]::IsPathRooted($CiOutput)) {
+	$CiOutput = Join-Path $RepoRoot $CiOutput
+}
+Initialize-FlashCppCiOutput -Path $CiOutput
 
 Write-Host "=============================================="
 Write-Host "FlashCpp Test Runner (PowerShell)"
@@ -51,6 +59,7 @@ if ($allExes) {
 	& .\build_flashcpp.bat
 	if ($LASTEXITCODE -ne 0) {
 		Write-Host "ERROR: Failed to build FlashCpp" -ForegroundColor Red
+		Write-FlashCppCiRecord -Path $CiOutput -Kind "runner" -Name "compiler" -Status "build-failed" -Detail "build_flashcpp.bat failed"
 		exit 1
 	}
 	# Try again after build
@@ -60,6 +69,7 @@ if ($allExes) {
 		$flashCppPath = $newestExe.FullName
 	} else {
 		Write-Host "ERROR: FlashCpp.exe not found after build" -ForegroundColor Red
+		Write-FlashCppCiRecord -Path $CiOutput -Kind "runner" -Name "compiler" -Status "missing-binary" -Detail "compiler executable not found after build"
 		exit 1
 	}
 }
@@ -67,6 +77,14 @@ if ($allExes) {
 # Resolve to absolute path so parallel runspaces (which have a different working
 # directory) can still invoke the compiler without a CommandNotFoundException.
 $flashCppPath = (Get-Item $flashCppPath).FullName
+
+$freshness = Test-FlashCppBinaryFreshness -BinaryPath $flashCppPath -SourceFiles @(Get-FlashCppRelevantSourceFiles -RepoRoot $RepoRoot)
+if (-not $freshness.IsFresh) {
+	$message = "Compiler binary is older than $($freshness.NewestSource). Run .\build_flashcpp.bat and retry."
+	Write-Host "ERROR: $message" -ForegroundColor Red
+	Write-FlashCppCiRecord -Path $CiOutput -Kind "runner" -Name "compiler" -Status "stale-binary" -Detail $message
+	exit 1
+}
 
 # Get FlashCpp build info
 $buildDate = (Get-Item $flashCppPath).LastWriteTime
@@ -151,50 +169,82 @@ $linuxOnlyTests = @(
 	"test_builtin_constant_p_ret42.cpp"  # Uses GCC/Clang __builtin_constant_p (not available in MSVC)
 )
 
+# Sources used as link support are discovered but are not standalone tests.
+$supportSources = @(
+	"linux_exception_stubs.cpp"
+)
+
 # Expected runtime crashes - files that compile and link but crash at runtime
 $expectedRuntimeCrashes = @(
 )
 
-# Filter to only files that have a main function and separate _fail files
-$filesWithMain = @()
+# Classify every discovered source. Compile-only tests are intentionally run;
+# this prevents a missing or unusually-spelled main from silently dropping a test.
+$regularFiles = @()
 $failFiles = @()
+$excludedFiles = @()
 foreach ($file in $allTestFiles) {
-	# Skip Linux-only test files on Windows
-	if ($linuxOnlyTests -contains $file.Name) {
-		continue
-	}
-	
 	$sourceContent = Get-Content $file.FullName -Raw
-	$hasMain = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
-	if ($hasMain) {
-		if ($file.Name -match "_fail\.cpp$") {
-			$failFiles += $file
-		} else {
-			$filesWithMain += $file
+	$kind = Get-FlashCppTestKind -FileName $file.Name -SourceContent $sourceContent -PlatformExclusions $linuxOnlyTests -SupportSources $supportSources
+	switch ($kind) {
+		"CompileFailure" { $failFiles += $file }
+		"Runnable" { $regularFiles += $file }
+		"CompileOnly" { $regularFiles += $file }
+		"PlatformExcluded" { $excludedFiles += [pscustomobject]@{ File = $file; Reason = "Linux-only" } }
+		"SupportSource" { $excludedFiles += [pscustomobject]@{ File = $file; Reason = "link support source" } }
+		default {
+			$message = "Eligible test file was discovered but not classified: $($file.FullName)"
+			Write-Host "ERROR: $message" -ForegroundColor Red
+			Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name $file.Name -Status "skipped" -Detail $message
+			exit 1
 		}
 	}
 }
 
-$referenceFiles = $filesWithMain
+$referenceFiles = $regularFiles
 $totalFailFiles = $failFiles.Count
+
+if ([string]::IsNullOrWhiteSpace($MultiTuRoot)) {
+	$multiTuRoot = Join-Path $ScriptDir "multi_tu"
+} elseif ([System.IO.Path]::IsPathRooted($MultiTuRoot)) {
+	$multiTuRoot = $MultiTuRoot
+} else {
+	$multiTuRoot = Join-Path $RepoRoot $MultiTuRoot
+}
+$multiTuCases = @(Get-FlashCppMultiTuCases -Root $multiTuRoot)
+$invalidMultiTuCases = @($multiTuCases | Where-Object { $null -ne $_.Error })
+if ($invalidMultiTuCases.Count -gt 0) {
+	foreach ($case in $invalidMultiTuCases) {
+		Write-Host "ERROR: Invalid multi-TU case '$($case.Name)': $($case.Error)" -ForegroundColor Red
+		Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name $case.Name -Status "invalid-multi-tu" -Detail $case.Error
+	}
+	exit 1
+}
 
 # Filter to specific test files if provided
 if ($requestedTestNames.Count -gt 0) {
 	$referenceFiles = $referenceFiles | Where-Object { $requestedTestNames -contains $_.Name }
 	$failFiles = $failFiles | Where-Object { $requestedTestNames -contains $_.Name }
+	$multiTuCases = @($multiTuCases | Where-Object { $requestedTestNames -contains $_.Name })
 
-	$matchedNames = @($referenceFiles.Name) + @($failFiles.Name)
+	$matchedNames = @($referenceFiles.Name) + @($failFiles.Name) + @($multiTuCases.Name)
 	$missingNames = @($requestedTestNames | Where-Object { $matchedNames -notcontains $_ } | Select-Object -Unique)
 	if ($missingNames.Count -gt 0) {
 		Write-Host "ERROR: Test file(s) not found in tests/: $($missingNames -join ', ')" -ForegroundColor Red
+		foreach ($name in $missingNames) { Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name $name -Status "not-found" -Detail "requested test was not scheduled" }
 		exit 1
 	}
 }
 
 $totalFiles = $referenceFiles.Count
 $totalFailFiles = $failFiles.Count
-Write-Host "Found $totalFiles test files with main() in tests/ ($Jobs parallel jobs)"
+Write-Host "Found $totalFiles runnable or compile-only test files in tests/ ($Jobs parallel jobs)"
 Write-Host "Found $totalFailFiles _fail test files (expected to fail compilation)"
+Write-Host "Found $($multiTuCases.Count) multi-TU test cases"
+if ($excludedFiles.Count -gt 0) {
+	Write-Host "Explicitly excluded $($excludedFiles.Count) platform/support sources"
+	foreach ($excluded in $excludedFiles) { Write-Host "  $($excluded.File.Name): $($excluded.Reason)" }
+}
 Write-Host ""
 
 # Expected compile failures - files that are intentionally designed to fail compilation
@@ -224,7 +274,7 @@ $extraCHelpers = @{
 $mainFileCache = @{}
 foreach ($file in $referenceFiles) {
 	$sourceContent = Get-Content $file.FullName -Raw
-	$mainFileCache[$file.Name] = $sourceContent -match '\bint\s+main\s*\(' -or $sourceContent -match '\bvoid\s+main\s*\('
+	$mainFileCache[$file.Name] = $sourceContent -match '\b(?:int|void)\s+main\s*\('
 }
 
 # ──────────────────────────────────────────────────────
@@ -522,6 +572,65 @@ function Invoke-TestOneFailFile {
 	Set-Content -Path $resultFile -Value $resultLine -NoNewline
 }
 
+function Invoke-TestOneMultiTuCase {
+	param($case, $flashCppPath, $linkerPath, $libPath1, $libPath2, $libPath3, $repoRoot, $resultDir)
+
+	$ErrorActionPreference = "SilentlyContinue"
+	$uniqueSuffix = [guid]::NewGuid().ToString('N')
+	$objectFiles = @()
+	$exeFile = Join-Path $resultDir "run_$uniqueSuffix.exe"
+	$pdbFile = Join-Path $resultDir "$($case.Name)_$uniqueSuffix.pdb"
+	$resultLine = "COMPILE_FAIL|$($case.Name)|WORKER ERROR: unknown"
+	try {
+		foreach ($source in $case.Sources) {
+			$objFile = Join-Path $resultDir "$($source.BaseName)_$uniqueSuffix.obj"
+			$compileOutput = & $flashCppPath --log-level=1 -o $objFile $source.FullName 2>&1 | Out-String
+			if (-not (Test-Path -LiteralPath $objFile)) {
+				$detail = ($compileOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 3) -join "`n"
+				$resultLine = "COMPILE_FAIL|$($case.Name)|$($source.Name): $detail"
+				break
+			}
+			$objectFiles += $objFile
+		}
+
+		if ($objectFiles.Count -eq $case.Sources.Count) {
+			$linkArgs = @("/LIBPATH:$libPath1", "/SUBSYSTEM:CONSOLE", "/OUT:$exeFile", "/PDB:$pdbFile") + $objectFiles
+			$linkArgs += @("kernel32.lib", "libucrt.lib", "legacy_stdio_definitions.lib")
+			if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
+			if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
+			$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
+			if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exeFile)) {
+				$detail = ($linkOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 5) -join "`n"
+				$resultLine = "LINK_FAIL|$($case.Name)|$detail"
+			} else {
+				$process = Start-Process -FilePath $exeFile -WorkingDirectory $repoRoot -NoNewWindow -Wait -PassThru
+				$returnValue = $process.ExitCode
+				$windowsExceptionCodes = @(-1073741819, -1073740791, -1073741571, -1073740940, -1073741795, -529697949)
+				if ($windowsExceptionCodes -contains $returnValue) {
+					$signal = if ($returnValue -lt 0) { $returnValue + 4294967296 } else { $returnValue }
+					$resultLine = "RUNTIME_CRASH|$($case.Name)|0x$($signal.ToString('X8'))"
+				} else {
+					$returnValue = $returnValue -band 0xFF
+					$expectedValue = Get-FlashCppExpectedReturnValue -Name $case.Name
+					if ($returnValue -eq $expectedValue) {
+						$resultLine = "RETURN_OK|$($case.Name)|$returnValue|multi-tu"
+					} else {
+						$resultLine = "RETURN_MISMATCH|$($case.Name)|$expectedValue|$returnValue"
+					}
+				}
+			}
+		}
+	} catch {
+		$resultLine = "COMPILE_FAIL|$($case.Name)|WORKER ERROR: $_"
+	} finally {
+		foreach ($artifact in @($objectFiles) + @($exeFile, $pdbFile)) {
+			if ($artifact -and (Test-Path -LiteralPath $artifact)) { Remove-Item -LiteralPath $artifact -Force -ErrorAction SilentlyContinue }
+		}
+	}
+
+	Set-Content -LiteralPath (Join-Path $resultDir "$($case.Name).result") -Value $resultLine -NoNewline
+}
+
 $invokeTestOneFileDefinition = ${function:Invoke-TestOneFile}.ToString()
 $invokeTestOneFailFileDefinition = ${function:Invoke-TestOneFailFile}.ToString()
 $serialRetryRecovered = @()
@@ -672,6 +781,23 @@ if ($useParallel -and $failFiles.Count -gt 0) {
 	}
 }
 
+# Multi-TU cases are few and run sequentially so their per-translation-unit
+# compiler output stays grouped and actionable.
+if ($multiTuCases.Count -gt 0) {
+	Write-Host ""
+	Write-Host "=============================================="
+	Write-Host "Testing multi-translation-unit cases"
+	Write-Host "=============================================="
+	$currentCase = 0
+	foreach ($case in $multiTuCases) {
+		$currentCase++
+		Write-Host "[$currentCase/$($multiTuCases.Count)] Testing $($case.Name)... " -NoNewline
+		Invoke-TestOneMultiTuCase $case $flashCppPath $linkerPath $libPath1 $libPath2 $libPath3 $RepoRoot $resultDir
+		$status = ((Get-Content -LiteralPath (Join-Path $resultDir "$($case.Name).result") -Raw) -split '\|', 2)[0]
+		if ($status -eq "RETURN_OK") { Write-Host "OK" } else { Write-Host "[$status]" -ForegroundColor Red }
+	}
+}
+
 # ──────────────────────────────────────────────────────
 # Collect results from temp files
 # ──────────────────────────────────────────────────────
@@ -687,7 +813,7 @@ $failTestSuccess = @()
 $failTestFailed = @()
 $linkErrorDetails = @{}
 
-foreach ($file in $referenceFiles) {
+foreach ($file in @($referenceFiles) + @($multiTuCases)) {
 	$resultFile = Join-Path $resultDir "$($file.Name).result"
 	if (-not (Test-Path $resultFile)) {
 		$compileFailed += "$($file.Name) (no result)"
@@ -788,7 +914,8 @@ Write-Host "=============================================="
 Write-Host "                   SUMMARY"
 Write-Host "=============================================="
 Write-Host ""
-Write-Host "Total files tested: $totalFiles (with $Jobs parallel jobs)"
+Write-Host "Total single-file tests: $totalFiles (with $Jobs parallel jobs)"
+Write-Host "Total multi-TU cases: $($multiTuCases.Count)"
 Write-Host ""
 Write-Host "Regular Tests:"
 Write-Host "  Compilation:"
@@ -947,6 +1074,13 @@ else {
 		Write-Host "                  All tests ran successfully!" -ForegroundColor Green
 	}
 }
+
+foreach ($name in $compileFailed) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "compile-failed" -Detail "" }
+foreach ($name in $linkFailed) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "link-failed" -Detail "" }
+foreach ($name in $runtimeCrashes) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "runtime-crash" -Detail "" }
+foreach ($name in $returnMismatches) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "return-mismatch" -Detail "" }
+foreach ($name in $failTestFailed) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "unexpected-pass" -Detail "" }
+Write-FlashCppCiRecord -Path $CiOutput -Kind "summary" -Name "all" -Status $(if ($exitCode -eq 0) { "success" } else { "failed" }) -Detail "single=$totalFiles multi-tu=$($multiTuCases.Count) failures=$($failureReasons.Count)"
 
 Write-Host ""
 Write-Host "=============================================="
