@@ -580,6 +580,12 @@ int main_impl(int argc, char* argv[]) {
 	// IR conversion (visiting AST nodes)
 	size_t ir_conversion_error_count = 0;
 	bool has_compile_errors = false;
+	auto describeIrRootNode = [](const ASTNode& root) -> std::string {
+		if (root.is<FunctionDeclarationNode>()) {
+			return std::string(root.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
+		}
+		return std::string(root.type_name());
+	};
 	{
 		PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time, FlashCpp::AllocationPhase::IrConversion);
 		// Re-evaluate ast.size() each iteration so appended template/member
@@ -609,10 +615,9 @@ int main_impl(int argc, char* argv[]) {
 				// Exception: if the function still has unsubstituted placeholder (auto) parameter
 				// types it was never meant to be code-generated; downgrade to a warning so that
 				// valid user code is not incorrectly rejected.
-				std::string node_desc = node_handle.type_name();
+				const std::string node_desc = describeIrRootNode(node_handle);
 				bool has_unresolved_placeholder_signature = false;
 				if (node_handle.is<FunctionDeclarationNode>()) {
-					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
 					has_unresolved_placeholder_signature = functionHasUnresolvedPlaceholderSignature(node_handle.as<FunctionDeclarationNode>());
 				}
 				if (has_unresolved_placeholder_signature) {
@@ -626,43 +631,16 @@ int main_impl(int argc, char* argv[]) {
 					g_parser_instantiation_notes.clear();
 					has_compile_errors = true;
 				}
-			} catch (const std::bad_any_cast& e) {
-				// Log and skip nodes that cause bad_any_cast during IR conversion
-				// This allows compilation to continue past problematic template instantiations
-				std::string node_desc = node_handle.type_name();
-				if (node_handle.is<FunctionDeclarationNode>()) {
-					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
-				}
-				FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
-				++ir_conversion_error_count;
 			} catch (const InternalError& e) {
-				std::string node_desc = node_handle.type_name();
-				if (node_handle.is<FunctionDeclarationNode>()) {
-					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
-				}
-				// Functions with unsubstituted dependent parameter types (e.g. template
-				// functions instantiated during decltype evaluation for SFINAE probes)
-				// may legitimately fail codegen.  Log diagnostically but still count
-				// as errors so that genuinely broken code is not silently accepted.
-				bool has_dependent_signature = false;
-				if (node_handle.is<FunctionDeclarationNode>()) {
-					has_dependent_signature = functionHasUnresolvedPlaceholderSignature(node_handle.as<FunctionDeclarationNode>());
-				}
-				if (has_dependent_signature) {
-					// Match the CompileError placeholder path: these are SFINAE/decltype
-					// probes, not concrete functions that should fail the TU.
-					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
-							  "' with unsubstituted dependent signature types: ", e.what());
-				} else {
-					FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
-					++ir_conversion_error_count;
-				}
+				// An internal invariant fired while lowering this root. It must never be
+				// reported as success: count it as a top-level IR-conversion failure so
+				// the translation unit fails below.
+				FLASH_LOG(General, Error, "IR conversion failed for node '",
+						  describeIrRootNode(node_handle), "': ", e.what());
+				++ir_conversion_error_count;
 			} catch (const std::runtime_error& e) {
-				std::string node_desc = node_handle.type_name();
-				if (node_handle.is<FunctionDeclarationNode>()) {
-					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
-				}
-				FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+				FLASH_LOG(General, Error, "IR conversion failed for node '",
+						  describeIrRootNode(node_handle), "': ", e.what());
 				++ir_conversion_error_count;
 			}
 

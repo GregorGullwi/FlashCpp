@@ -336,14 +336,32 @@ approach.
 ### Documentation policy
 
 Do not create worklog, progress, completion-summary, investigation-summary, or
-branch-history documents for completed pull requests.
+branch-history documents for completed pull requests. The one exception is the
+migration progress ledger defined below.
 
 Use:
 
 - commits for implementation history;
 - regression tests for preserved behavior;
 - issues for unresolved defects;
-- execution briefs for the next pull request boundary.
+- execution briefs for the next pull request boundary;
+- `docs/MIGRATION_PROGRESS.md` for cross-run progress tracking.
+
+#### Migration progress snapshot
+
+`docs/MIGRATION_PROGRESS.md` is the single living-state record of the
+front-end migration so a fresh coordination run can restore position without
+conversation history. Contract:
+
+- It is a snapshot, not a history: each landed migration pull request
+  overwrites the file in place. Earlier states are recoverable from git.
+- The "remaining work" section fully replaces its previous content on every
+  update; resolved blockers and findings are deleted, never archived here.
+- Fixed sections and cells only. Content that does not fit belongs in an
+  issue, not in prose.
+- Updated inside the same pull request that lands the migration work, so
+  reviewers see the self-reported estimates.
+- Every other progress or summary form remains forbidden.
 
 Update this plan or another architecture document only when completed work:
 
