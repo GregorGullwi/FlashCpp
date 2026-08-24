@@ -284,3 +284,14 @@ from that base. Preserve the resolved base declaration identity during alias
 substitution, then require semantic special-member finalization to resolve every
 base. Codegen rejects an incomplete plan; do not restore name lookup or silently
 omit the unresolved base action.
+
+## Recursive class-template constant chains can overflow the native stack
+
+A generated benchmark probe using a recursively specialized class template
+whose static constant references `DepthValue<N - 1>::value` overflowed the
+shipping Windows compiler stack at shallow logical depth. The crash recursed
+through class-template materialization and expression substitution rather than
+producing an implementation-limit diagnostic. The throughput corpus avoids
+this construct; the query benchmark retains a separate 1,025-level logical
+dependency probe. Architecture boundary 7 must move the real instantiation and
+substitution path onto small arena-owned frames before this issue can be closed.

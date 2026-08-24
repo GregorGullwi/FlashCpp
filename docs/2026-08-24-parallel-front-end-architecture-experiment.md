@@ -5,6 +5,14 @@
 **Authority:** Subordinate to
 `docs/2026-08-24-front-end-rearchitecture-plan.md`
 
+**Implementation:** Runnable test-only prototypes, build commands, and the
+shipping baseline driver are indexed by
+`tests/parallel_frontend_experiment/README.md`. Initial measurements and the
+provisional retain-direct/retain-single-mutex decision are recorded under
+"Initial parallel-experiment evidence" in the main plan. Architecture boundary
+3A contains the handoff instructions for collecting the real canonical-type
+trace and deciding when the vertical slice may begin.
+
 ## Purpose
 
 Determine whether parallel parsing, semantic queries, coroutine suspension, and

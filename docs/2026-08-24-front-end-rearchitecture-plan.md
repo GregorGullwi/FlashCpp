@@ -270,6 +270,41 @@ and performance gates decide whether parallel sema or parsing enters this plan.
 The experiment is test-only and does not lift the concurrency deferral.
 Its vertical slice cannot begin before architecture boundaries 1 and 3A.
 
+### Initial parallel-experiment evidence
+
+The test-only boundary-2 and boundary-3 comparisons now live under
+`tests/parallel_frontend_experiment/`. On an AMD Ryzen 7 3700X using MSVC
+19.44 and clang 20.1, 32 seeded query schedules produced identical terminal
+and diagnostic hashes at one through eight workers. The same workloads passed
+clang AddressSanitizer. ThreadSanitizer remains required on a supported host.
+
+The fixed-seed 1,000-function `parallel_frontend_large` shipping baseline had
+an 8,905 ms median with a 55 ms interquartile range. Coarse exclusive phases
+were 46.1% parsing and 9.4% post-parse semantic analysis. Instrumented template
+instantiation was 215 ms, or 5.0% of parsing; the current build did not expose
+parser body-time or semantic critical-path span. These numbers therefore do
+not adjudicate boundary 1's 40% and theoretical-speedup stop gate.
+
+On the synthetic wide-query crossover, four-worker coroutine execution became
+worthwhile only between work multipliers 128 and 512. At multiplier 512 its
+one-worker overhead against direct execution was 3.1% with clang and 4.1% with
+MSVC, while four workers were 3.25 and 3.19 times faster than direct execution.
+The explicit worklist scheduler did not scale on this ready-queue design.
+This retains the coroutine prototype as a corpus-validation candidate but does
+not select it for production: the real query-size distribution is not measured.
+
+For 250,000 skewed canonical-type requests, the 32-shard table was 1.61 times
+faster than the one-mutex reference at four workers with clang and 1.52 times
+faster with MSVC. It regressed one-worker throughput by 43% and 59%, and its
+measured lock acquisition cost remained above the 10% gate. The read-through
+cache did not scale. Retain the single-mutex design until a corpus-derived type
+request trace demonstrates a candidate that passes both gates.
+
+These are provisional synthetic results. Concurrent front-end execution stays
+deferred, losing prototypes remain comparison fixtures, and the architecture
+outcome is not recorded until boundary-1 trace/span data and the gated vertical
+slice are available.
+
 ## Delivery rules
 
 - Keep `main` buildable and warning-clean after every change.
@@ -659,6 +694,27 @@ Exit criteria:
   semantic paths;
 - canonical type identity remains unchanged when string-table insertion order
   changes.
+
+### Parallel-experiment handoff at boundary 3A
+
+An agent completing this boundary must read both the initial evidence under
+Concurrency readiness and
+`docs/2026-08-24-parallel-front-end-architecture-experiment.md`. Start the
+canonical type table behind a single-mutex implementation boundary; the tested
+sharded and read-through-cache variants did not pass the one-worker and lock
+cost gates. Capture a corpus-derived structural type-request trace while the
+new canonicalizer is brought up, then rerun experiment boundary 3 before
+changing that implementation.
+
+Do not turn the explicit recursion worklists into the tested parallel
+ready-queue scheduler. Keep direct semantic execution as the production
+baseline and retain the coroutine prototype only for comparison against real
+query-size and dependency-span telemetry. After boundary 3A, begin the
+experiment's vertical slice only when architecture boundary 1 and all of its
+completion criteria are satisfied, and when the experiment's listed
+token-buffer, ownership, identity, arena, and persistent-scope prerequisites
+are actually present. The runnable prototypes and commands are
+indexed by `tests/parallel_frontend_experiment/README.md`.
 
 ## Architecture boundary 3B: ABI-conforming mangling
 
