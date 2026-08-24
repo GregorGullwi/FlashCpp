@@ -23,7 +23,7 @@ the current parser-to-sema annotation migration.
 ## Target pipeline
 
 ```text
-preprocessing tokens
+parser-facing token buffer
     -> syntax parser
     -> syntax AST
     -> persistent declarations, entities, and scopes
@@ -35,6 +35,9 @@ preprocessing tokens
 
 The target ownership model is:
 
+- The lexer and current preprocessing path feed an indexed parser-facing
+  `TokenBuffer`. Tokens have stable indices, source locations, and macro
+  provenance while retained.
 - The parser owns syntax and source fidelity.
 - Persistent scopes own lexical context.
 - A `DeclarationBuilder` owned by `FrontendContext` creates declarations,
@@ -82,6 +85,190 @@ The target ownership model is:
     semantics.
 14. Object format, calling convention, exception ABI, data model, and target
     architecture are separate target properties.
+15. Stable addresses are an arena implementation property, not semantic
+    identity. Cross-layer APIs use IDs rather than pointers.
+16. `StringHandle` identifies interned spelling only. Its numeric value cannot
+    identify declarations, entities, types, templates, specializations, or
+    emitted ABI names.
+
+## Memory and allocation policy
+
+Keep the existing allocation-oriented primitives, but narrow their roles.
+
+### `InlineVector`
+
+- Use it for collections with a measured small-size distribution.
+- Choose inline capacity from observed spill rates and record-size impact, not
+  convenience.
+- Avoid large inline capacities in hot AST, declaration, type, and expression
+  records. Replicated unused inline storage can cost more than occasional
+  allocation.
+- Remember that inline storage remains part of the object after a spill. As a
+  first-order estimate, compare `sizeof(container metadata) + N * sizeof(T)`
+  against the metadata-only heap container, weighted by the measured spill
+  rate.
+- Attribute spill telemetry to a named container family or call site. Template
+  instantiation alone is not enough when the same `InlineVector<T, N>` appears
+  in unrelated records.
+
+### `ChunkedVector<T>`
+
+- Use typed `ChunkedVector<T>` arenas for long-lived objects that need stable
+  addresses.
+- Expose stable IDs across subsystem boundaries. Do not expose the stable
+  address as identity.
+- Pin each arena for its lifetime. Arena objects must be non-copyable and
+  non-movable, or owned behind stable indirection. Existing `ChunkedVector<T>`
+  move and copy operations do not preserve element addresses across allocator
+  changes and must not be relied upon.
+- Treat the `ChunkSize` template parameter as an element count, not bytes.
+  Every new arena must pass an explicit measured element count rather than
+  using the current size-dependent default.
+- Keep hot records compact and move rare payloads into typed cold-storage
+  arenas indexed by ID.
+- Typed `ChunkedVector<T>` storage owns and destroys its elements. Do not also
+  register their destructors.
+
+### `ChunkedAnyVector`
+
+- Treat the existing global `ChunkedAnyVector` as a legacy AST bridge only.
+- Do not allocate new semantic declarations, entities, canonical types, or
+  normalized expressions in it.
+- Do not extend raw-pointer-keyed state around it.
+- Enforce the restriction at `ASTNode::emplace_node` with a compile-time legacy
+  node allow-list or an equivalent type-level guard.
+
+### `StringHandle`
+
+- Use `StringHandle` for interned source spelling, lookup keys, and diagnostics.
+- Resolve spelling to `DeclId`, `EntityId`, `TypeId`, or `TemplateDeclId`
+  before semantic identity is required.
+- Never hash or serialize the numeric handle into mangling, caches shared
+  across translation units in future implementations, or persistent artifacts.
+
+The shipping compiler already violates this rule: `StringHandle` and global
+`TypeIndex` slot values contribute to template argument hashes that feed the
+proprietary `$hash` symbol form. Architecture boundary 3B owns deletion of that
+behavior.
+
+### Lifetime domains
+
+`FrontendContext` owns separate allocation domains:
+
+1. a syntax arena for parsed source structure;
+2. a semantic arena for declarations, entities, canonical types, and
+   normalized expressions;
+3. monotonic scratch storage for tentative parsing and substitution probes;
+4. an IR arena whose lifetime ends after object emission.
+
+Typed `ChunkedVector<T>` arenas destroy their elements normally. Monotonic
+scratch storage and the legacy `ChunkedAnyVector` bridge need explicit
+destructor handling for objects with `std::string`, `std::vector`, or other
+owning members, or a representation whose payload lives in a destructible side
+arena. Releasing raw arena bytes alone does not release nested heap
+allocations.
+
+New cold storage is ID-indexed. Existing pointer-indexed `TypeInfo` cold arenas
+remain behind the legacy bridge until architecture boundary 11 converts or
+removes them.
+
+Do not optimize the current `TypeInfo` layout further unless the change either
+survives the recursive canonical type model or is required to keep the shipping
+compiler usable during migration. Do not swap the `gTypeInfo` container as a
+standalone optimization.
+
+## Stack and recursion policy
+
+Unbounded language recursion must not map directly to native C++ call depth.
+
+- Keep recursive descent where grammar composition is shallow and bounded.
+  Use loops or explicit parse-frame stacks for parser nesting controlled by
+  source input.
+- Process template instantiation through an explicit worklist of small
+  `InstantiationFrame` records stored in a typed arena.
+- Store frame parents, declarations, arguments, environments, points of
+  instantiation, and diagnostics by ID rather than copying AST or container
+  values into recursive calls.
+- Use iterative traversal for substitution, constraints, lookup, and
+  expression operations whose depth is controlled by source code.
+- Do not place large `InlineVector` instances, fixed arrays, AST values, or
+  template environments in recursive-path local variables.
+- Do not rely on tail-call optimization.
+- Measure compiler frames with the platform's stack-usage reports and maintain
+  a baseline-driven frame-size warning threshold.
+- Run deep template, constraint, and constexpr probes under the normal
+  operating-system stack limit. Do not use the current 64 MiB stack increase
+  to validate the new path.
+
+The target is support for at least 1024 levels of logical template
+instantiation with nearly constant native stack usage.
+
+## Parser token and checkpoint policy
+
+The replacement parser interface uses an indexed token buffer, not a
+destructive token queue. Consuming a token advances a cursor. Local lookahead
+and tentative parsing copy the cursor rather than removing and reinserting
+tokens.
+
+- Use stable `TokenIndex` values instead of raw lexer positions.
+- Keep the buffer append-only while a parser checkpoint may refer to it.
+  Chunked storage may release consumed prefixes after no cursor, checkpoint,
+  syntax node, or diagnostic refers to those tokens.
+- A parser checkpoint contains the token cursor, scratch-arena mark,
+  diagnostic mark, and transactional declaration or registry marks. Restoring
+  only the cursor is not rollback.
+- Limit checkpoints to local grammar ambiguity. Template instantiation,
+  delayed member handling, and semantic retries operate on AST patterns and
+  semantic IDs, never by restoring an old token cursor.
+- Parse source-controlled nesting with loops or small arena-owned parse frames
+  where practical. Retain ordinary recursive descent for grammar structure
+  whose maximum native depth is bounded.
+- Migrated template syntax must support at least 1024 levels of nesting under
+  the normal OS stack limit without native stack growth. A configurable logical
+  complexity budget may reject pathological input, but native recursion depth
+  is not a user-visible language limit.
+
+This policy does not require replacing the current preprocessing subsystem.
+The token buffer is the parser-facing boundary and can initially adapt the
+existing lexer and preprocessing path.
+
+## Concurrency readiness
+
+Concurrent front-end execution is deferred. Do not select a lane API, job
+system, dependency scheduler, or worker topology during the core migration.
+Preserve the properties that would be expensive to retrofit:
+
+- no observable output depends on numeric ID values, string-intern order,
+  discovery order, worker count, or unordered-container iteration;
+- syntax, semantic, scratch, and IR allocation ownership can be separated
+  without raw pointers crossing ownership boundaries;
+- semantic results can be frozen and consumed without mutation;
+- diagnostics and emitted fragments have deterministic source or symbol keys;
+- semantic recursion, constexpr, deduplication, and emission state is owned by
+  explicit compilation objects rather than hidden process-global or
+  `thread_local` state;
+- future parallel and single-worker execution must use the same semantic path
+  and produce byte-identical diagnostics and objects.
+
+Before semantic-AST lowering, close the emission set. This includes implicit
+special members, vtables, VTTs, thunks, RTTI, static-initialization functions,
+string literals, canonical types, and mangled names needed by lowering.
+Discovering semantic work during lowering is an internal error.
+
+Do not restructure the parser around speculative concurrency. The declaration
+outline remains a real source-ordered declaration parse, not a brace scanner.
+If profiling later justifies intra-translation-unit parallelism, evaluate
+frozen per-function lowering and emission before parser, template, constraint,
+or constexpr parallelism. Measure end-to-end phase time, work-size
+distribution, serial tails, peak memory, and interaction with external build
+parallelism before choosing an executor.
+
+Before selecting a production query, coroutine, interner, or parallel parsing
+model, execute
+`docs/2026-08-24-parallel-front-end-architecture-experiment.md`. Its correctness
+and performance gates decide whether parallel sema or parsing enters this plan.
+The experiment is test-only and does not lift the concurrency deferral.
+Its vertical slice cannot begin before architecture boundaries 1 and 3A.
 
 ## Delivery rules
 
@@ -126,7 +313,9 @@ execution brief containing:
 - validation commands;
 - compatibility code and counters affected;
 - code that must be deleted before the PR is complete;
-- known risks and conditions that require stopping for redesign.
+- known risks and conditions that require stopping for redesign;
+- expected allocation-domain, record-size, inline-capacity, and lifetime
+  effects when the change introduces or modifies stored data.
 
 An agent cannot declare completion while a listed regression still fails, a
 named deletion target remains reachable, a required counter moved in the wrong
@@ -247,7 +436,18 @@ points first:
 - count token replay in the lexer-position restore functions;
 - count unresolved semantic queries at the AST-to-IR entry boundary;
 - count old and new template routing inside the facade;
-- count diagnostics emitted outside `DiagnosticEngine`.
+- count diagnostics emitted outside `DiagnosticEngine`;
+- report current and peak bytes by allocation domain;
+- report object counts and bytes by major syntax and semantic record type;
+- report discarded scratch bytes;
+- report `InlineVector` spill counts for selected hot record families;
+- report string-table entry count and spelling bytes.
+
+This telemetry is new instrumentation. The existing `AllocationTracker` is
+compile-time gated and aggregates by compilation phase, so it cannot provide
+allocation-domain, record-family, spill-family, or scratch-discard data. Follow
+the existing always-available intern-statistics pattern and expose the detailed
+report through the migration/performance stats mode used by CI.
 
 Some legacy behavior, such as `'$'` string surgery or direct parser calls, has
 no shared entry point yet. For those cases:
@@ -287,7 +487,9 @@ Exit criteria:
 - choke-point counters and the remaining static inventories are visible in CI
   on a fixed corpus;
 - diagnostics emitted outside the engine have a baseline and a named removal
-  target in architecture boundary 11.
+  target in architecture boundary 11;
+- memory telemetry has a reproducible baseline for a small input, the fixed
+  migration corpus, and selected standard-header probes.
 
 ## Architecture boundary 1: front-end context, arenas, identities, and entities
 
@@ -297,7 +499,7 @@ It owns:
 
 - diagnostics;
 - target information;
-- syntax and semantic arenas;
+- syntax, semantic, scratch, and IR allocation domains;
 - scopes;
 - declarations and entities;
 - canonical types;
@@ -309,12 +511,16 @@ add process-global compiler state.
 
 ### Scoped arena
 
-Add an arena model with:
+Add typed arena models with:
 
 - stable handles;
+- pinned, non-copyable and non-movable typed `ChunkedVector<T>` storage for
+  committed semantic object families, or equivalent stable indirection;
+- explicit element-count chunk sizes for every new typed arena;
 - transactional registry checkpoints;
 - monotonic scratch allocation for tentative parsing and substitution probes;
-- destructor registration for objects owning heap storage;
+- destructor registration only for scratch or legacy untyped allocations with
+  owning members;
 - commit by publishing stable IDs and registry entries, without copying or
   relocating cyclic AST graphs.
 
@@ -326,6 +532,11 @@ silently.
 
 The existing `ChunkedAnyVector` remains available to the old AST during the
 bridge. New semantic nodes cannot use raw addresses as identity.
+
+Keep hot declaration, entity, type, and expression records compact. Optional
+template, constexpr, diagnostic, and source-detail payloads belong in typed
+cold-storage arenas when measurements show that inline storage is mostly
+unused.
 
 ### Declaration and entity model
 
@@ -368,6 +579,11 @@ Exit criteria:
 - discarded scratch bytes are measured and bounded;
 - IDs cannot be constructed from pointers;
 - no new semantic table is keyed by `const void*`;
+- no new semantic object is allocated in `ChunkedAnyVector`;
+- the legacy allocation choke point rejects non-legacy semantic node types at
+  compile time;
+- arena bytes, record counts, string-table bytes, and selected `InlineVector`
+  spill counts are reported through `FrontendContext`;
 - declaration merging passes its initial regression set;
 - every template instantiation entry point passes through the facade.
 
@@ -410,6 +626,10 @@ Delete the parallel pointer-level and array-dimension representation as
 semantic currency. Parser declarator structures may remain syntax-only until
 canonicalization.
 
+Store canonical type nodes in a typed arena owned by `FrontendContext`. `TypeId`
+is the external identity. Interned spellings may assist lookup and diagnostics,
+but `StringHandle` does not participate in canonical type equality.
+
 Exit criteria:
 
 - canonicalization does not inspect parser or member-context stacks;
@@ -418,7 +638,9 @@ Exit criteria:
 - interleaved pointer, array, function, and member-pointer declarators have one
   structural representation;
 - flat pointer-level and array-dimension fields are absent from migrated
-  semantic paths.
+  semantic paths;
+- canonical type identity remains unchanged when string-table insertion order
+  changes.
 
 ## Architecture boundary 3B: ABI-conforming mangling
 
@@ -587,8 +809,9 @@ Deliver:
 - shared P-against-A deduction;
 - proper non-deduced contexts;
 - partial-specialization matching and ordering;
-- point-of-instantiation work queue;
-- per-chain instantiation stack and diagnostics;
+- an iterative point-of-instantiation work queue;
+- small arena-owned `InstantiationFrame` records linked by ID for logical depth
+  and diagnostics;
 - conforming implementation limits without a sticky translation-unit cap.
 
 Exit criteria:
@@ -597,6 +820,8 @@ Exit criteria:
 - migrated probes commit no state on failure;
 - namespace, outer-binding, specialization, ADL, detection, and cross-TU
   regressions pass;
+- at least 1024 levels of logical instantiation run under the normal OS stack
+  limit without native stack usage growing with logical depth;
 - replay counters reach zero for migrated constructs;
 - each migrated old path is deleted.
 
@@ -639,6 +864,9 @@ Deliver:
 Exit criteria:
 
 - all semantic questions needed by lowering are answered before entry;
+- the emission set is closed before entry, and lowering cannot intern a new
+  string, create a canonical type, request an instantiation, or discover a new
+  emitted entity;
 - missing facts produce `InternalError`;
 - codegen-synthesized name-to-type maps are deleted;
 - lowering consumes only normalized semantic nodes and typed lowering records;
@@ -648,7 +876,14 @@ Exit criteria:
 
 Once sema and templates are independent of parser state:
 
+- introduce the indexed parser-facing `TokenBuffer`, stable `TokenIndex`, and
+  cheap cursor copies for lookahead;
+- make declaration outlining part of the real source-ordered declaration
+  parser rather than a token-level body-range scanner;
 - move tentative parsing onto scoped transactions;
+- make each transaction cover cursor position, scratch allocation,
+  diagnostics, declarations, and registry mutations;
+- convert source-controlled parser recursion to loops or explicit parse frames;
 - keep parser output syntax-only;
 - remove parser-owned overload resolution, constexpr decisions, access checks,
   template substitution, and instantiation;
@@ -658,6 +893,12 @@ Once sema and templates are independent of parser state:
 Exit criteria:
 
 - rollback never retains an instantiation or registry mutation;
+- local parser rollback restores every transaction component, not only the
+  token cursor;
+- no delayed semantic operation or template instantiation restores a saved
+  token cursor;
+- deep parser-nesting probes fail with a diagnostic at the implementation
+  limit or complete without native stack exhaustion;
 - `SemanticAnalysis` no longer stores a parser pointer;
 - constexpr cannot call parser methods;
 - `Parser_Templates_Inst_*` and replay helper files are deleted;
@@ -693,7 +934,9 @@ Do not combine these with the core migration without a concrete dependency:
 - a target triple and cross-compilation;
 - typed IR payloads and an IR verifier;
 - CFG, SSA, optimization, and global register allocation;
-- library-mode compilation and concurrent translation units.
+- enabling concurrent front-end execution. Concurrency-safe ownership,
+  deterministic publication, and equivalent single-worker behavior remain
+  requirements of the core migration.
 
 ## Decision gates
 
@@ -782,8 +1025,10 @@ This is an architectural PR and requires a strong implementation agent.
 ### Pull request boundary 5: `FrontendContext`, IDs, and scoped arena
 
 - Add the context and strong ID types.
-- Add monotonic scratch allocation, registry rollback, commit, and discarded
-  byte accounting tests.
+- Define syntax, semantic, scratch, and IR allocation domains.
+- Add monotonic scratch allocation, registry rollback, commit, destructor, and
+  discarded-byte accounting tests.
+- Add initial arena, string-table, and selected `InlineVector` telemetry.
 - Forward selected globals through the active context without behavior change.
 
 This is an architectural PR and requires a strong implementation agent.
