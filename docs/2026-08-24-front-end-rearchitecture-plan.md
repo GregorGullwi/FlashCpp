@@ -144,6 +144,33 @@ A reverted architectural attempt must add a written finding describing the
 failed invariant and root cause before another implementation retries the same
 approach.
 
+### Documentation policy
+
+Do not create worklog, progress, completion-summary, investigation-summary, or
+branch-history documents for completed pull requests.
+
+Use:
+
+- commits for implementation history;
+- regression tests for preserved behavior;
+- issues for unresolved defects;
+- execution briefs for the next pull request boundary.
+
+Update this plan or another architecture document only when completed work:
+
+- changes a public or cross-layer contract;
+- changes an architectural invariant or boundary;
+- exposes an unresolved blocker that affects the next pull request boundary;
+- changes the next execution brief or stop criteria.
+
+Agent reports remain in the task conversation unless one of those conditions
+requires a concise repository update. Do not copy agent summaries into the
+repository.
+
+A reverted attempt needs only the smallest written finding required to prevent
+the next implementation from repeating the same failed assumption. It is not a
+general worklog.
+
 ## Architecture boundary 0: diagnosability and measurement
 
 Architectural work cannot be judged with the current diagnostic and runner
