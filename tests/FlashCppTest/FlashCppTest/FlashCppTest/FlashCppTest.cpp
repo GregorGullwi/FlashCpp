@@ -4161,6 +4161,39 @@ TEST_SUITE("Diagnostics") {
 		CHECK(missing == "value 1");
 	}
 
+	TEST_CASE("Accumulated diagnostics own dynamic templates and text arguments") {
+		DiagnosticEngine engine;
+		uint32_t index = 0;
+		{
+			std::string message_template = "dynamic {}";
+			std::string argument_text = "before";
+			std::string note_template = "note {}";
+			std::string note_text = "detail";
+			const std::array<DiagnosticArgument, 1> arguments{
+				DiagnosticArgument::text(argument_text)};
+			const std::array<DiagnosticArgument, 1> note_arguments{
+				DiagnosticArgument::text(note_text)};
+			index = engine.report(
+				DiagnosticId::PointerToReferenceType, DiagnosticSeverity::Error,
+				SourceLocation::fromParts(1, 1, 0), message_template, arguments);
+			engine.attachNote(
+				index, DiagnosticId::NoteToMatchOpeningBracket,
+				SourceLocation::fromParts(1, 2, 0), note_template, note_arguments);
+
+			// Keep the allocations alive but overwrite their bytes. A borrowed
+			// string_view deterministically observes these mutations.
+			message_template.assign("XXXXXXXXXX");
+			argument_text.assign("mutate");
+			note_template.assign("YYYYYYY");
+			note_text.assign("change");
+		}
+
+		std::deque<std::string> paths{"owned.cpp"};
+		std::string rendered = renderDiagnostic(engine.diagnostic(index), engine, paths);
+		CHECK(rendered.find("dynamic before") != std::string::npos);
+		CHECK(rendered.find("note: note detail") != std::string::npos);
+	}
+
 	TEST_CASE("Notes attach through pool indices and render under the parent") {
 		DiagnosticEngine engine;
 		uint32_t index = engine.reportWithRange(
@@ -4274,8 +4307,46 @@ TEST_SUITE("Diagnostics") {
 		CHECK(diagnosticsEmittedOutsideEngineCount() == after_legacy);
 	}
 
+	TEST_CASE("Speculative ParseResult errors do not count as emitted diagnostics") {
+		uint64_t before = diagnosticsEmittedOutsideEngineCount();
+		ParseResult speculative_error = ParseResult::error(
+			"probe rejected", Token(Token::Type::Identifier, std::string_view("probe"), 1, 1, 0));
+		REQUIRE(speculative_error.is_error());
+		CHECK(diagnosticsEmittedOutsideEngineCount() == before);
+	}
+
+	TEST_CASE("Lexer maps diagnostic locations back to original source coordinates") {
+		const std::array<SourceLineMapping, 2> line_map{
+			SourceLineMapping{0, 40, 0},
+			SourceLineMapping{1, 7, 1}};
+		const std::deque<std::string> paths{"main.cpp", "included.hpp"};
+		Lexer lexer("first\nsecond\n", line_map, paths);
+		Token first = lexer.next_token();
+		Token second = lexer.next_token();
+
+		SourceLocation first_location = lexer.getSourceLocation(first);
+		SourceLocation second_location = lexer.getSourceLocation(second);
+		CHECK(first_location.line == 40u);
+		CHECK(first_location.file_index == 0u);
+		CHECK(second_location.line == 7u);
+		CHECK(second_location.file_index == 1u);
+		// Token columns follow the existing lexer convention and identify the
+		// column immediately after the token spelling.
+		CHECK(second_location.column == 7u);
+	}
+
 	TEST_CASE("Converted pointer-to-reference diagnostic carries structured payload end to end") {
-		std::string_view code = "using R = int&;\nint main(){ int x = sizeof(R*); return x; }\n";
+		std::string_view code = "using R = int&;\nint main(){ int x = sizeof(R(*)); return x; }\n";
+		Lexer location_lexer(code);
+		SourceLocation expected_pointer_location{};
+		while (true) {
+			Token token = location_lexer.next_token();
+			if (token.value() == "*") {
+				expected_pointer_location = location_lexer.getSourceLocation(token);
+				break;
+			}
+			REQUIRE(token.type() != Token::Type::EndOfFile);
+		}
 		Lexer lexer(code);
 		CompileContext local_context;
 		SemanticAnalysis parser_sema(local_context, gSymbolTable);
@@ -4290,7 +4361,9 @@ TEST_SUITE("Diagnostics") {
 			REQUIRE(payload != nullptr);
 			CHECK(payload->id == DiagnosticId::PointerToReferenceType);
 			CHECK(payload->severity == DiagnosticSeverity::Error);
-			CHECK(payload->location.line == 2u);
+			CHECK(payload->location.line == expected_pointer_location.line);
+			CHECK(payload->location.column == expected_pointer_location.column);
+			CHECK(payload->location.file_index == expected_pointer_location.file_index);
 			CHECK(std::string(caught.what()) == "Cannot form a pointer to reference type");
 
 			std::deque<std::string> paths{"probe.cpp"};

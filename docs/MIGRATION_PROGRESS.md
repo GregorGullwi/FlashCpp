@@ -14,10 +14,12 @@ Last updated: 2026-08-24 by branch `boundary1-diagnostic-engine`
   foundation: stable numeric diagnostic IDs, severity, compact
   `SourceLocation`/`SourceRange`, structured arguments, attached notes,
   template-instantiation context storage, engine-owned accumulation inside
-  `CompileContext`, `CompileError` bridge preserving `what()`, four converted
-  declarator-family diagnostics (including the silent double-`__asm`
-  acceptance fix), machine-consumable `[Name#number]` rendered tags, and the
-  always-available outside-engine counter
+  `CompileContext`, engine-owned message and argument text, original-source
+  line mapping, `CompileError` bridge preserving `what()`, four converted
+  declarator-family diagnostic sites (including the silent double-`__asm`
+  acceptance fix), machine-consumable `[Name#number]` rendered tags, and an
+  always-available outside-engine counter that excludes speculative parser
+  probes
 
 ## Criteria completion
 

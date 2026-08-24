@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "Token.h"
+#include "SourceLocation.h"
 #include "FileReader.h"	// For SourceLineMapping definition
 #include "StringLiteralTokenUtils.h"
 
@@ -161,6 +162,15 @@ public:
 		if (line_map_.empty() || preprocessed_line == 0 || preprocessed_line > line_map_.size())
 			return SIZE_MAX;
 		return line_map_[preprocessed_line - 1].source_file_index;
+	}
+
+	SourceLocation getSourceLocation(const Token& token) const {
+		const size_t source_line = getSourceLine(token.line());
+		const size_t source_file_index = getSourceFileIndex(token.line());
+		if (source_line == 0 || source_file_index == SIZE_MAX) {
+			return SourceLocation::fromToken(token);
+		}
+		return SourceLocation::fromParts(source_line, token.column(), source_file_index);
 	}
 
 	// Get the file path for a given file index.

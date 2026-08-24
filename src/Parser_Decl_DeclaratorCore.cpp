@@ -798,7 +798,7 @@ void Parser::parse_variable_declarator_suffixes(DeclarationNode& decl) {
 				context_.diagnostics(),
 				DiagnosticId::MultipleAsmSuffixesOnDeclarator,
 				DiagnosticSeverity::Error,
-				SourceLocation::fromToken(declarator_identifier),
+				lexer_.getSourceLocation(declarator_identifier),
 				"Multiple __asm suffixes on declarator '{}' are not supported",
 				arguments);
 		}
@@ -963,6 +963,7 @@ void Parser::addConstantArrayDimensionsToTypeSpec(
 // the token position restored when the tokens do not form such a group.
 std::optional<CVQualifier> Parser::scan_parenthesized_pointer_group(
 	CallingConvention& out_calling_conv,
+	Token& out_pointer_token,
 	Token& out_identifier,
 	bool& out_has_identifier) {
 	out_has_identifier = false;
@@ -978,6 +979,7 @@ std::optional<CVQualifier> Parser::scan_parenthesized_pointer_group(
 		restore_token_position(group_start);
 		return std::nullopt;
 	}
+	out_pointer_token = peek_info();
 	advance(); // consume '*'
 
 	const CVQualifier pointer_cv = parse_cv_qualifiers();
@@ -1011,10 +1013,11 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 		// order inside the group.
 		SaveHandle group_probe = save_token_position();
 		CallingConvention probe_calling_conv = CallingConvention::Default;
+		Token probe_pointer_token;
 		Token probe_identifier;
 		bool probe_has_identifier = false;
 		std::optional<CVQualifier> abstract_group_cv = scan_parenthesized_pointer_group(
-			probe_calling_conv, probe_identifier, probe_has_identifier);
+			probe_calling_conv, probe_pointer_token, probe_identifier, probe_has_identifier);
 		if (abstract_group_cv.has_value() && !probe_has_identifier) {
 			discard_saved_token(group_probe);
 			const CVQualifier ptr_cv = *abstract_group_cv;
@@ -1028,7 +1031,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					context_.diagnostics(),
 					DiagnosticId::PointerToReferenceType,
 					DiagnosticSeverity::Error,
-					SourceLocation::fromToken(peek_info()),
+					lexer_.getSourceLocation(probe_pointer_token),
 					"Cannot form a pointer to reference type",
 					{});
 			}

@@ -208,11 +208,7 @@ public:
 	ParseResult() : value_or_error_(std::monostate{}) {}
 	ParseResult(ASTNode node) : value_or_error_(node) {}
 	ParseResult(std::string error_message, Token token)
-		: value_or_error_(Error{std::move(error_message), std::move(token)}) {
-		// Parse errors are diagnostics emitted outside DiagnosticEngine while
-		// ParseResult remains the parser's reporting channel.
-		recordDiagnosticEmittedOutsideEngine();
-	}
+		: value_or_error_(Error{std::move(error_message), std::move(token)}) {}
 
 	bool is_error() const {
 		return std::holds_alternative<Error>(value_or_error_);
@@ -3997,7 +3993,7 @@ private:	 // Resume private methods
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
 	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id
 	void addConstantArrayDimensionsToTypeSpec(TypeSpecifierNode& type_spec, const std::vector<ASTNode>& dimension_exprs); // Constant-fold parsed "[expr]" bounds and apply all of them to the type-spec when every bound resolves
-	std::optional<CVQualifier> scan_parenthesized_pointer_group(CallingConvention& out_calling_conv, Token& out_identifier, bool& out_has_identifier); // Scan "(" [cc] "*" cv-seq? [id] ")" shared by named and abstract declarators
+	std::optional<CVQualifier> scan_parenthesized_pointer_group(CallingConvention& out_calling_conv, Token& out_pointer_token, Token& out_identifier, bool& out_has_identifier); // Scan "(" [cc] "*" cv-seq? [id] ")" shared by named and abstract declarators
 	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume ptr-operator then array abstract-declarators on a type-id
 	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id
 	bool consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec); // Consume a parenthesized abstract-declarator group in a cast type-id
