@@ -2,10 +2,6 @@
 // their pointee bounds (C++20 [dcl.ptr]/1, [dcl.arr]/1, [expr.sizeof]).
 // Before the fix the static-member path scaled storage by the pointee bounds.
 //
-// NOTE: out-of-line definitions of qualified static members spelled with
-// parenthesized declarators (long (*Registry::table)[2][4] = ...;) are not
-// parsed yet; this test uses in-class constexpr members.
-
 struct Registry {
 	static constexpr long (*table)[2][4] = nullptr;
 	static constexpr int (*cursor)[3] = nullptr;

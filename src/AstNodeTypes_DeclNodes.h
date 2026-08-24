@@ -2650,6 +2650,9 @@ public:
 	void set_type_node(const TypeSpecifierNode& type_node) { type_node_ = type_node; }
 	const Token& identifier_token() const { return identifier_; }
 	void set_identifier_token(Token token) { identifier_ = std::move(token); }
+	void set_qualified_declarator_owner(StringHandle owner) { qualified_declarator_owner_ = owner; }
+	StringHandle qualified_declarator_owner() const { return qualified_declarator_owner_; }
+	bool has_qualified_declarator_owner() const { return qualified_declarator_owner_.isValid(); }
 	uint32_t line_number() const { return identifier_.line(); }
 	bool is_array() const { return !array_dimensions_.empty() || is_unsized_array_; }
 	// True when the declared entity itself is an array object ([dcl.arr]).
@@ -2694,6 +2697,7 @@ public:
 		is_unsized_array_ = other.is_unsized_array_;
 		array_dimensions_ = other.array_dimensions_;
 		default_value_ = other.default_value_;
+		qualified_declarator_owner_ = other.qualified_declarator_owner_;
 	}
 
 	// Pre-computed external symbol name support (e.g. GNU __asm__("symbol") labels)
@@ -2710,6 +2714,7 @@ private:
 	bool is_parameter_pack_;			 // True for parameter packs like Args... args
 	bool is_unsized_array_;				// True for unsized arrays like int arr[] = {1, 2, 3}
 	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
+	StringHandle qualified_declarator_owner_;
 	StringHandle mangled_name_;
 };
 
