@@ -34,3 +34,15 @@ jobs:
             Write-Host "Reference files test failed!" -ForegroundColor Red
             exit 1
           }
+
+      - name: Migration counter baselines
+        shell: pwsh
+        run: |
+          # Enforce directional migration counters over the fixed corpus
+          # (architecture boundary 0; removal target for the outside-engine
+          # diagnostic counter is architecture boundary 11).
+          .\tests\run_migration_counters.ps1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Migration counter check failed!" -ForegroundColor Red
+            exit 1
+          }

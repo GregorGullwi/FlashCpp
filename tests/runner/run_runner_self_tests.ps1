@@ -52,6 +52,20 @@ try {
 	Assert-Runner ($ciLines.Count -eq 2 -and $ciLines[1] -match '^flashcpp-runner-v1\ttest\tfixture\tfailed\tline one line two$') "CI records use the stable tab-separated schema"
 	$ciBytes = [System.IO.File]::ReadAllBytes($ciPath)
 	Assert-Runner (-not ($ciBytes.Count -ge 3 -and $ciBytes[0] -eq 0xEF -and $ciBytes[1] -eq 0xBB -and $ciBytes[2] -eq 0xBF)) "CI records use UTF-8 without a byte-order mark"
+
+	$parsedCount = Get-FlashCppOutsideEngineDiagnosticCount -CompilerOutput "phase timing`nDiagnostics emitted outside DiagnosticEngine: 7`n"
+	Assert-Runner ($parsedCount -eq 7) "outside-engine telemetry line parses to its count"
+	$missingCount = Get-FlashCppOutsideEngineDiagnosticCount -CompilerOutput "compiler crashed without telemetry"
+	Assert-Runner ($null -eq $missingCount) "output without a telemetry line yields no count"
+
+	$okStatus = Test-FlashCppMigrationCounterBaseline -ActualCount 3 -BaselineCount 3
+	$improvedStatus = Test-FlashCppMigrationCounterBaseline -ActualCount 2 -BaselineCount 3
+	$regressedStatus = Test-FlashCppMigrationCounterBaseline -ActualCount 4 -BaselineCount 3
+	$untrackedStatus = Test-FlashCppMigrationCounterBaseline -ActualCount 4 -BaselineCount $null
+	Assert-Runner ($okStatus -eq "Ok") "counts equal to the baseline pass"
+	Assert-Runner ($improvedStatus -eq "Improved") "counts below the baseline ratchet down without failing"
+	Assert-Runner ($regressedStatus -eq "Regressed") "counts above the baseline are regressions"
+	Assert-Runner ($untrackedStatus -eq "MissingBaseline") "corpus entries without a baseline cannot pass silently"
 } finally {
 	Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

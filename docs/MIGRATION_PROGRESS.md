@@ -5,32 +5,35 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-24 by branch `boundary1-diagnostic-engine`
+Last updated: 2026-08-24 by branch `boundary0-counter-baseline`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Last landed slice: pull request boundary 1 item — bounded DiagnosticEngine
-  foundation: stable numeric diagnostic IDs, severity, compact
-  `SourceLocation`/`SourceRange`, structured arguments, attached notes,
-  template-instantiation context storage, engine-owned accumulation inside
-  `CompileContext`, engine-owned message and argument text, original-source
-  line mapping, `CompileError` bridge preserving `what()`, four converted
-  declarator-family diagnostic sites (including the silent double-`__asm`
-  acceptance fix), machine-consumable `[Name#number]` rendered tags, and an
-  always-available outside-engine counter that excludes speculative parser
-  probes
+- Last landed slice: pull request boundary 0 item — outside-engine diagnostic
+  counter wired to a fixed corpus and recorded baseline: telemetry now prints
+  on every post-parse exit path (`printOutsideDiagnosticTelemetry` in
+  `src/FlashCppMain.cpp`), pinned corpus with recorded counts lives in
+  `tests/migration_counters/corpus_baseline.tsv`, directional enforcement runs
+  through `tests/run_migration_counters.ps1` (fail on increase or unmeasurable
+  entry, ratchet down via `-UpdateBaseline`, LF fixed point), comparator and
+  parser helpers live in `RunnerCommon.ps1` with mutation-validated runner
+  self-tests, and the check is enforced in the `ci-msvc-primary` workflow
 
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 0/78 (0%)
+- Completed: 1/78 (1%)
+  - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
+    named removal target in architecture boundary 11"
 - Advanced, not completed:
-  - Boundary 0 "internal invariant failures cannot be reported as success"
-    and diagnosability machinery: diagnostic engine core and choke-point
-    counters landed this slice; outstanding boundary-0 items are the ASAN
-    crash investigation and giving the outside-engine counter its fixed
-    corpus, baseline, and static guard
+  - Boundary 0 "choke-point counters and the remaining static inventories are
+    visible in CI on a fixed corpus": the outside-engine counter is enforced
+    in Windows CI on a fixed corpus; outstanding are the replay, AST-to-IR
+    lookup, codegen-to-parser, post-parse typing, and template-routing
+    counters plus the `'$'` static inventory (pull request boundary 4), and
+    wiring this check into the Ubuntu lane once a Linux-generated baseline is
+    verified there
 
 ## Effort estimate
 
@@ -42,23 +45,32 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- None blocking. Runner mechanics can start consuming the `[Name#number]`
-  diagnostic identity tags and `file:line:col:` prefixes immediately.
+- None blocking.
 
 Then, in order:
 
-1. Pull request boundary 0 completion: ASAN crash investigation; wire the
-   outside-engine counter to a fixed corpus, recorded baseline, and static
-   guard (removal boundary remains architecture boundary 11).
+1. Pull request boundary 0 completion: ASAN standard-header crash
+   investigation.
 2. Pull request boundary 2: runner mechanics — diagnostic assertions over the
    `[Name#number]` contract, multi-TU and PIE modes, return-range validation,
    named expected-failure manifest with stale-entry detection.
 3. Pull request boundary 3: first architectural regression slices
    (promotion, namespace-template identity, ambiguous member lookup),
    mutation-validated.
+4. Pull request boundary 4: template facade plus the remaining choke-point
+   counters and the `'$'` inline-parsing static inventory.
 
 Named follow-ups carried forward:
 
+- Wire `tests/run_migration_counters.ps1` into `ci-ubuntu.yml` after
+  generating and verifying the baseline on a Linux build; corpus entries were
+  chosen for platform-stable compile behavior but counts are only recorded for
+  Windows so far.
+- Pre-ICE raw `std::cerr` context dumps at `src/IrGenerator_MemberAccess.cpp`
+  (struct-info-not-found and member-not-found paths) emit error text outside
+  both the engine and the counter before throwing `InternalError`; decide
+  their diagnostic ownership when ICE reporting moves behind
+  `DiagnosticEngine`.
 - Unify the ParseResult-channel pointer-to-reference twin at
   `src/Parser_Decl_DeclaratorCore.cpp:477` onto `DiagnosticId::
   PointerToReferenceType` once ParseResult carries structured diagnostics;
