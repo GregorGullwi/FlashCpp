@@ -5,32 +5,37 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-24 by branch
-`codex/boundary0-asan-standard-header`
+Last updated: 2026-08-24 by branch `boundary2-diagnostic-assertions`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Last completed slice: pull request boundary 0 ASAN crash-diagnosability item
-  — sanitizer-instrumented builds now leave fatal-signal ownership with ASAN
-  instead of masking its reports with FlashCpp's custom crash handler; normal
-  builds retain the existing platform crash handlers. A mutation-validated
-  ownership probe lives in `tests/crash_handler/`, and the restored Ubuntu
-  ASAN workflow runs runner self-tests, the ownership probe, and the full suite
-  on pushes to `pre-flight` only
+- Last completed slice: pull request boundary 2 item — file-based diagnostic
+  assertions: `_fail.cpp` tests can pin diagnostics through
+  `// expected-diag:` comments carrying severity, stable `[Name#number]` ID,
+  line, and column; both runners verify strict set equality against the plain
+  rendered output (decorated logger copies are structurally excluded), fail
+  as `DIAG_MISMATCH` naming missing and unexpected entries on any drift, and
+  stay byte-compatible for tests without assertions. Shared helpers live in
+  `RunnerCommon.ps1`/`runner_common.sh` with mutation-validated self-tests,
+  parallel worker runspaces receive the helpers explicitly, and the three
+  declarator-family `_fail` regressions converted in the DiagnosticEngine
+  slice now assert their exact diagnostics, including the attached note
 
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 1/78 (1%)
+- Completed: 2/78 (3%)
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
+  - Boundary 0 "structured diagnostics can be asserted by tests"
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure": the ASAN crash-handler
-    ownership defect now has a mutation-validated regression; the remaining
-    architectural regression corpus and expected-failure manifest are still
-    outstanding
+    ownership defect has a mutation-validated regression and the three
+    declarator-family diagnostics are assertion-pinned; the remaining
+    architectural regression corpus and the named expected-failure manifest
+    with stale-entry detection are still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
     in Windows CI on a fixed corpus; outstanding are the replay, AST-to-IR
@@ -41,7 +46,7 @@ Last updated: 2026-08-24 by branch
 
 ## Effort estimate
 
-- Implementation effort completed overall: 2-3%, confidence medium
+- Implementation effort completed overall: 3-5%, confidence medium
 
 ## Remaining work
 
@@ -53,9 +58,10 @@ Next blocker:
 
 Then, in order:
 
-1. Pull request boundary 2: runner mechanics — diagnostic assertions over the
-   `[Name#number]` contract, multi-TU and PIE modes, return-range validation,
-   named expected-failure manifest with stale-entry detection.
+1. Pull request boundary 2 remainder: named expected-failure manifest with
+   stale-entry detection plus the conversion backlog that requires every new
+   `_fail.cpp` test to carry `expected-diag` assertions while existing ones
+   migrate incrementally.
 2. Pull request boundary 3: first architectural regression slices
    (promotion, namespace-template identity, ambiguous member lookup),
    mutation-validated.

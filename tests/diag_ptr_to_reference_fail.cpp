@@ -7,3 +7,5 @@ int main() {
 	int x = sizeof(R*);
 	return x;
 }
+
+// expected-diag: error PointerToReferenceType#1001 7:18
