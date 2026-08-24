@@ -5,20 +5,19 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-24 by branch `boundary0-counter-baseline`
+Last updated: 2026-08-24 by branch
+`codex/boundary0-asan-standard-header`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Last landed slice: pull request boundary 0 item — outside-engine diagnostic
-  counter wired to a fixed corpus and recorded baseline: telemetry now prints
-  on every post-parse exit path (`printOutsideDiagnosticTelemetry` in
-  `src/FlashCppMain.cpp`), pinned corpus with recorded counts lives in
-  `tests/migration_counters/corpus_baseline.tsv`, directional enforcement runs
-  through `tests/run_migration_counters.ps1` (fail on increase or unmeasurable
-  entry, ratchet down via `-UpdateBaseline`, LF fixed point), comparator and
-  parser helpers live in `RunnerCommon.ps1` with mutation-validated runner
-  self-tests, and the check is enforced in the `ci-msvc-primary` workflow
+- Last completed slice: pull request boundary 0 ASAN crash-diagnosability item
+  — sanitizer-instrumented builds now leave fatal-signal ownership with ASAN
+  instead of masking its reports with FlashCpp's custom crash handler; normal
+  builds retain the existing platform crash handlers. A mutation-validated
+  ownership probe lives in `tests/crash_handler/`, and the restored Ubuntu
+  ASAN workflow runs runner self-tests, the ownership probe, and the full suite
+  on pushes to `pre-flight` only
 
 ## Criteria completion
 
@@ -27,6 +26,11 @@ Last updated: 2026-08-24 by branch `boundary0-counter-baseline`
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
 - Advanced, not completed:
+  - Boundary 0 "every known architectural defect has a mutation-validated
+    regression or a tracked expected failure": the ASAN crash-handler
+    ownership defect now has a mutation-validated regression; the remaining
+    architectural regression corpus and expected-failure manifest are still
+    outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
     in Windows CI on a fixed corpus; outstanding are the replay, AST-to-IR
@@ -49,15 +53,13 @@ Next blocker:
 
 Then, in order:
 
-1. Pull request boundary 0 completion: ASAN standard-header crash
-   investigation.
-2. Pull request boundary 2: runner mechanics — diagnostic assertions over the
+1. Pull request boundary 2: runner mechanics — diagnostic assertions over the
    `[Name#number]` contract, multi-TU and PIE modes, return-range validation,
    named expected-failure manifest with stale-entry detection.
-3. Pull request boundary 3: first architectural regression slices
+2. Pull request boundary 3: first architectural regression slices
    (promotion, namespace-template identity, ambiguous member lookup),
    mutation-validated.
-4. Pull request boundary 4: template facade plus the remaining choke-point
+3. Pull request boundary 4: template facade plus the remaining choke-point
    counters and the `'$'` inline-parsing static inventory.
 
 Named follow-ups carried forward:

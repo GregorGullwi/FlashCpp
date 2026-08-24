@@ -14,7 +14,32 @@
 // - On Linux/macOS, some functions used (backtrace, fprintf) are not strictly
 //   async-signal-safe, but are commonly used in crash handlers and work reliably
 
-#ifdef _WIN32
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define FLASHCPP_CRASH_HANDLER_DELEGATES_TO_ASAN 1
+#endif
+#endif
+
+#if defined(__SANITIZE_ADDRESS__)
+#define FLASHCPP_CRASH_HANDLER_DELEGATES_TO_ASAN 1
+#endif
+
+#ifndef FLASHCPP_CRASH_HANDLER_DELEGATES_TO_ASAN
+#define FLASHCPP_CRASH_HANDLER_DELEGATES_TO_ASAN 0
+#endif
+
+#if FLASHCPP_CRASH_HANDLER_DELEGATES_TO_ASAN
+
+// ASAN installs its exception and signal handlers before main(). Installing
+// ours afterwards masks sanitizer diagnostics, so it remains authoritative
+// for crash reporting in instrumented builds.
+namespace CrashHandler {
+inline bool install() {
+	return true;
+}
+} // namespace CrashHandler
+
+#elif defined(_WIN32)
 
 #include <windows.h>
 #include <dbghelp.h>
@@ -804,4 +829,6 @@ inline bool install() {
 }
 } // namespace CrashHandler
 
-#endif // _WIN32
+#endif // FLASHCPP_CRASH_HANDLER_DELEGATES_TO_ASAN / platform
+
+#undef FLASHCPP_CRASH_HANDLER_DELEGATES_TO_ASAN

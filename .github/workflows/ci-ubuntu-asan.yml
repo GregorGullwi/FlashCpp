@@ -1,0 +1,33 @@
+---
+name: CI - Ubuntu ASAN
+
+on:
+  push:
+    branches: [ pre-flight ]
+
+jobs:
+  ubuntu-asan:
+    name: Ubuntu - Clang - ASAN test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Run runner self-tests
+        run: bash tests/runner/run_runner_self_tests.sh
+
+      - name: Build FlashCpp with Make (ASAN)
+        run: make asan CXX=clang++
+
+      - name: Verify ASAN crash-report ownership
+        run: bash tests/crash_handler/run_asan_signal_ownership.sh
+
+      - name: Run all tests under ASAN
+        run: bash tests/run_all_tests.sh
