@@ -88,6 +88,20 @@ enum class CompilerExitStatus : int {
 	InternalFailure = 2,
 };
 
+// Renders every diagnostic accumulated in the engine during a rejected parse.
+// Used by the rejection paths whose own message is legacy text (no structured
+// diagnostic), so engine-reported records surface exactly once with their ID
+// tags. The categorized log copy carries the [ERROR][Parser] prefix; the
+// plain copy is the tool-readable line.
+void printAccumulatedEngineDiagnostics(CompileContext& context, const Lexer& lexer) {
+	for (const Diagnostic& diagnostic : context.diagnostics().diagnostics()) {
+		std::string rendered_diagnostic = renderDiagnostic(
+			diagnostic, context.diagnostics(), lexer.file_paths());
+		FLASH_LOG(Parser, Error, rendered_diagnostic);
+		std::cerr << rendered_diagnostic << std::endl;
+	}
+}
+
 constexpr int exitCode(CompilerExitStatus status) {
 	return static_cast<int>(status);
 }
@@ -542,6 +556,7 @@ int main_impl(int argc, char* argv[]) {
 			} else {
 				FLASH_LOG(Parser, Error, "error: ", parse_compile_error_message, parse_compile_error_notes);
 				std::cerr << "error: " << parse_compile_error_message << parse_compile_error_notes << std::endl;
+				printAccumulatedEngineDiagnostics(context, lexer);
 			}
 			return exitCode(CompilerExitStatus::SourceRejected);
 		}
@@ -553,14 +568,8 @@ int main_impl(int argc, char* argv[]) {
 		std::cerr << error_msg << std::endl;
 		// Diagnostics that were reported into the engine while the parser
 		// recovered through its ParseResult channel render here once, at this
-		// single rejection choke point. The categorized log copy carries the
-		// [ERROR][Parser] prefix; the plain copy is the tool-readable line.
-		for (const Diagnostic& diagnostic : context.diagnostics().diagnostics()) {
-			std::string rendered_diagnostic = renderDiagnostic(
-				diagnostic, context.diagnostics(), lexer.file_paths());
-			FLASH_LOG(Parser, Error, rendered_diagnostic);
-			std::cerr << rendered_diagnostic << std::endl;
-		}
+		// single rejection choke point.
+		printAccumulatedEngineDiagnostics(context, lexer);
 		return exitCode(CompilerExitStatus::SourceRejected);
 	}
 

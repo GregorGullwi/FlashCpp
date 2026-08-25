@@ -380,7 +380,7 @@ EvalResult Evaluator::apply_binary_op(
 				// ptr + n
 				const auto new_offset = safe_add(lhs.pointer_offset, rhs.as_int());
 				if (!new_offset.has_value()) {
-					return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression);
+					return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
 				}
 				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
@@ -396,7 +396,7 @@ EvalResult Evaluator::apply_binary_op(
 				// n + ptr
 				const auto new_offset = safe_add(rhs.pointer_offset, lhs.as_int());
 				if (!new_offset.has_value()) {
-					return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression);
+					return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
 				}
 				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(rhs.pointer_to_var),
@@ -415,7 +415,7 @@ EvalResult Evaluator::apply_binary_op(
 				// ptr - n
 				const auto new_offset = safe_sub(lhs.pointer_offset, rhs.as_int());
 				if (!new_offset.has_value()) {
-					return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression);
+					return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
 				}
 				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
@@ -562,12 +562,12 @@ EvalResult Evaluator::apply_binary_op(
 			return make_arith(lv * rv);
 		if (op == "/") {
 			if (rv == 0)
-				return EvalResult::error("Division by zero in constant expression", EvalErrorType::NotConstantExpression);
+				return EvalResult::error("Division by zero in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionDivisionByZero);
 			return make_arith(lv / rv);
 		}
 		if (op == "%") {
 			if (rv == 0)
-				return EvalResult::error("Modulo by zero in constant expression", EvalErrorType::NotConstantExpression);
+				return EvalResult::error("Modulo by zero in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionModuloByZero);
 			return make_arith(lv % rv);
 		}
 		if (op == "&")
@@ -579,14 +579,14 @@ EvalResult Evaluator::apply_binary_op(
 		if (op == "<<") {
 			const ShiftEvaluationInfo shift_info = get_shift_evaluation_info(lhs);
 			if (rv >= static_cast<unsigned long long>(shift_info.width_bits)) {
-				return EvalResult::error("Left shift count >= width of type in constant expression", EvalErrorType::NotConstantExpression);
+				return EvalResult::error("Left shift count >= width of type in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionShiftCountTooLarge);
 			}
 			return make_shift_result(shift_info.promoted_type, apply_uint_type_mask(lv << rv, shift_info.promoted_type));
 		}
 		if (op == ">>") {
 			const ShiftEvaluationInfo shift_info = get_shift_evaluation_info(lhs);
 			if (rv >= static_cast<unsigned long long>(shift_info.width_bits)) {
-				return EvalResult::error("Right shift count >= width of type in constant expression", EvalErrorType::NotConstantExpression);
+				return EvalResult::error("Right shift count >= width of type in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionShiftCountTooLarge);
 			}
 			return make_shift_result(shift_info.promoted_type, apply_uint_type_mask(lv >> rv, shift_info.promoted_type));
 		}
@@ -633,32 +633,32 @@ EvalResult Evaluator::apply_binary_op(
 		if (auto result = safe_add(lhs_val, rhs_val)) {
 			return make_signed(*result);
 		} else {
-			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
 		}
 	} else if (op == "-") {
 		if (auto result = safe_sub(lhs_val, rhs_val)) {
 			return make_signed(*result);
 		} else {
-			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
 		}
 	} else if (op == "*") {
 		if (auto result = safe_mul(lhs_val, rhs_val)) {
 			return make_signed(*result);
 		} else {
-			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
 		}
 	} else if (op == "/") {
 		if (rhs_val == 0) {
-			return EvalResult::error("Division by zero in constant expression", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Division by zero in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionDivisionByZero);
 		}
 		// Check for overflow in division (only happens with LLONG_MIN / -1)
 		if (lhs_val == LLONG_MIN && rhs_val == -1) {
-			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
 		}
 		return make_signed(lhs_val / rhs_val);
 	} else if (op == "%") {
 		if (rhs_val == 0) {
-			return EvalResult::error("Modulo by zero in constant expression", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Modulo by zero in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionModuloByZero);
 		}
 		return make_signed(lhs_val % rhs_val);
 	}
@@ -675,14 +675,14 @@ EvalResult Evaluator::apply_binary_op(
 		if (auto result = safe_shl(lhs_val, rhs_val, shift_info.width_bits)) {
 			return make_shift_result(shift_info.promoted_type, *result);
 		} else {
-			return EvalResult::error("Left shift overflow or invalid shift count in constant expression", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Left shift overflow or invalid shift count in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionShiftOperationInvalid);
 		}
 	} else if (op == ">>") {
 		const ShiftEvaluationInfo shift_info = get_shift_evaluation_info(lhs);
 		if (auto result = safe_shr(lhs_val, rhs_val, shift_info.width_bits)) {
 			return make_shift_result(shift_info.promoted_type, *result);
 		} else {
-			return EvalResult::error("Invalid shift count in constant expression", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Invalid shift count in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionShiftOperationInvalid);
 		}
 	}
 

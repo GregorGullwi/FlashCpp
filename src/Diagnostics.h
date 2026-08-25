@@ -30,6 +30,7 @@
 //   1001..1099  declarator and type-id syntax family
 //   1051..1079  note-level IDs belonging to the declarator family
 //   1101..1199  lexical numeric-literal family
+//   1201..1299  constant-expression evaluation family
 //   2000..2099  reserved for template instantiation family
 //   3000+    unallocated
 
@@ -68,6 +69,13 @@ enum class DiagnosticId : uint32_t {
 	// Lexical numeric-literal family (1101..1199).
 	HexFloatRequiresBinaryExponent = 1101,
 	InvalidIntegerLiteralSuffix = 1102,
+
+	// Constant-expression evaluation family (1201..1299).
+	ConstantExpressionDivisionByZero = 1201,
+	ConstantExpressionModuloByZero = 1202,
+	ConstantExpressionShiftCountTooLarge = 1203,
+	ConstantExpressionShiftOperationInvalid = 1204,
+	ConstantExpressionSignedIntegerOverflow = 1205,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -84,6 +92,16 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "HexFloatRequiresBinaryExponent";
 	case DiagnosticId::InvalidIntegerLiteralSuffix:
 		return "InvalidIntegerLiteralSuffix";
+	case DiagnosticId::ConstantExpressionDivisionByZero:
+		return "ConstantExpressionDivisionByZero";
+	case DiagnosticId::ConstantExpressionModuloByZero:
+		return "ConstantExpressionModuloByZero";
+	case DiagnosticId::ConstantExpressionShiftCountTooLarge:
+		return "ConstantExpressionShiftCountTooLarge";
+	case DiagnosticId::ConstantExpressionShiftOperationInvalid:
+		return "ConstantExpressionShiftOperationInvalid";
+	case DiagnosticId::ConstantExpressionSignedIntegerOverflow:
+		return "ConstantExpressionSignedIntegerOverflow";
 	case DiagnosticId::None:
 	default:
 		return "None";

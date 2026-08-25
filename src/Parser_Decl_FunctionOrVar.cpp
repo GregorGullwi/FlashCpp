@@ -1154,9 +1154,14 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				(is_constinit || (is_constexpr &&
 								  validation_error->error_type == ConstExpr::EvalErrorType::NotConstantExpression));
 			if (should_reject_validation_error) {
-				return ParseResult::error(
-					std::string(keyword_name) + " variable initializer must be a constant expression: " + validation_error->error_message,
-					identifier_token);
+				const std::string rejection_message =
+					std::string(keyword_name) + " variable initializer must be a constant expression: " + validation_error->error_message;
+				ConstExpr::reportConstantExpressionDiagnostic(
+					context_.diagnostics(),
+					validation_error->diagnostic_id,
+					lexer_.getSourceLocation(identifier_token),
+					rejection_message);
+				return ParseResult::error(rejection_message, identifier_token);
 			}
 
 			// Note: The evaluated value could be stored in the VariableDeclarationNode for later use

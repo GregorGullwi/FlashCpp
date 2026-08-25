@@ -2012,10 +2012,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					auto validation = ConstExpr::Evaluator::evaluate(*init_expr_opt, eval_ctx);
 					if (!validation.success() &&
 						validation.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
-						return ParseResult::error(
+						const std::string rejection_message =
 							"constexpr static data member initializer must be a constant expression: " +
-								validation.error_message,
-							decl.identifier_token());
+							validation.error_message;
+						ConstExpr::reportConstantExpressionDiagnostic(
+							context_.diagnostics(),
+							validation.diagnostic_id,
+							lexer_.getSourceLocation(decl.identifier_token()),
+							rejection_message);
+						return ParseResult::error(rejection_message, decl.identifier_token());
 					}
 				}
 			}

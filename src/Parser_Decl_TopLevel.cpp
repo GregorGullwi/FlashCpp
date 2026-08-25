@@ -427,9 +427,14 @@ ParseResult Parser::parse_static_assert() {
 			}
 			return saved_position.success();
 		}
-		return ParseResult::error(
-			"static_assert condition is not a constant expression: " + eval_result.error_message,
-			static_assert_keyword);
+		const std::string rejection_message =
+			"static_assert condition is not a constant expression: " + eval_result.error_message;
+		ConstExpr::reportConstantExpressionDiagnostic(
+			context_.diagnostics(),
+			eval_result.diagnostic_id,
+			lexer_.getSourceLocation(static_assert_keyword),
+			rejection_message);
+		return ParseResult::error(rejection_message, static_assert_keyword);
 	}
 
 	// Check if the assertion failed
