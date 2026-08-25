@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "Diagnostics.h"
 #include "TemplateRegistry.h"  // For gTemplateRegistry
 #include "TemplateEnvironment.h"
 #include "TypeTraitEvaluator.h"	// For evaluateTypeTrait
@@ -155,6 +156,10 @@ struct EvalResult {
 	bool is_null_member_pointer = false;
 	bool is_indeterminate = false;
 	std::vector<EvalResult> object_base_values;
+	// Stable family identity for constant-expression violations ([expr.const]).
+	// None for successful results and for evaluator-gap failures that terminal
+	// sites defer instead of reject.
+	DiagnosticId diagnostic_id = DiagnosticId::None;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -163,33 +168,41 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		EvalResult result{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
+		EvalResult result{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}, DiagnosticId::None};
 		result.set_exact_type(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 		return result;
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}, DiagnosticId::None};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}, DiagnosticId::None};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}, DiagnosticId::None};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}, DiagnosticId::None};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}, DiagnosticId::None};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false, false, {}, DiagnosticId::None};
+	}
+
+	// Constant-expression violations that belong to a stable diagnostic family
+	// carry their DiagnosticId from the fault site to the terminal rejection.
+	static EvalResult error(const std::string& msg, EvalErrorType type, DiagnosticId family_id) {
+		EvalResult result = error(msg, type);
+		result.diagnostic_id = family_id;
+		return result;
 	}
 
 	static EvalResult indeterminate() {
@@ -1282,6 +1295,20 @@ inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, std:
 	// Unsupported operator returns nullopt (result stays unset)
 
 	return result;
+}
+
+// Reports an evaluator-produced constant-expression violation into the engine
+// so the terminal rejection carries its stable family tag. Callers keep their
+// existing ParseResult recovery untouched; nothing here throws.
+inline void reportConstantExpressionDiagnostic(
+	DiagnosticEngine& diagnostics,
+	DiagnosticId diagnostic_id,
+	SourceLocation location,
+	const std::string& message) {
+	if (diagnostic_id == DiagnosticId::None) {
+		return;
+	}
+	diagnostics.report(diagnostic_id, DiagnosticSeverity::Error, location, message, {});
 }
 
 } // namespace ConstExpr

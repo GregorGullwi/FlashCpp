@@ -6,30 +6,36 @@ pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
 Last updated: 2026-08-25 by branch
-`plan-negative-diagnostic-boundaries-2b`
+`plan-negative-diagnostic-boundaries-2c`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2B landed: the lexer numeric-literal slice of the
-  frozen negative inventory. Ill-formed hexadecimal floating literals without
-  a binary exponent ([lex.fcon]) and invalid `u`/`l` integer-suffix
-  combinations ([lex.icon]) now lex as `Token::Type::ErrorLiteral`, are
-  classified from the spelling by the shared `findNumericLiteralAnomaly`
-  helper, and are reported through `DiagnosticEngine`
-  (`HexFloatRequiresBinaryExponent` 1101, `InvalidIntegerLiteralSuffix` 1102,
-  new block 1101..1199) at the primary-expression choke point without
-  throwing. Rejection still flows through the existing `ParseResult` channel;
-  accumulated engine diagnostics render once at the `FlashCppMain`
-  parse-rejection choke point. Three frozen tests were renamed to
-  `_e1101`/`_e1102` filename contracts and mutation-validated.
-- `test_default_arg_after_nondefault_fail.cpp` was deleted under the
-  incomplete-feature rule: its `[dcl.fct.default]/4` diagnostic fires
-  internally but is masked by the declaration-to-expression fallback (see
-  `docs/KNOWN_ISSUES.md`). The frozen legacy inventory is rebaselined at 255
-  names with updated count and SHA-256 guards in both runners. The seven-test
-  internal-failure compatibility is unchanged at 7 against baseline 7,
-  direction down, removal boundary 2F.
+- Pull request boundary 2B landed earlier the same day: the lexer
+  numeric-literal slice (IDs 1101-1102, block 1101..1199, `ErrorLiteral`
+  tokens, three `_e1101`/`_e1102` contracts).
+- Pull request boundary 2C first slice landed: the constant-expression
+  arithmetic-fault family of the frozen negative inventory. Division by zero,
+  modulo by zero, shift-count-too-large, invalid/overflowing shift operations,
+  and signed integer overflow now carry stable IDs (new block 1201..1299:
+  `ConstantExpressionDivisionByZero` 1201, `ConstantExpressionModuloByZero`
+  1202, `ConstantExpressionShiftCountTooLarge` 1203,
+  `ConstantExpressionShiftOperationInvalid` 1204,
+  `ConstantExpressionSignedIntegerOverflow` 1205). The identity travels on
+  `EvalResult::diagnostic_id`; the three terminal rejection sites
+  (static_assert condition in `Parser_Decl_TopLevel.cpp`, variable-initializer
+  validation in `Parser_Decl_FunctionOrVar.cpp`, constexpr static data member
+  initializer in `Parser_Decl_StructEnum.cpp`) report through the shared
+  `ConstExpr::reportConstantExpressionDiagnostic` helper without throwing and
+  keep their existing `ParseResult` recovery. `FlashCppMain` renders
+  accumulated engine records once per rejection on both channels
+  (`ParseResult` errors and legacy-string `CompileError`s without a structured
+  diagnostic). Five frozen tests were renamed to `_e1201`..`_e1204` filename
+  contracts and mutation-validated.
+- The frozen legacy inventory is rebaselined at 250 names with updated count
+  and SHA-256 guards in both runners. The seven-test internal-failure
+  compatibility is unchanged at 7 against baseline 7, direction down, removal
+  boundary 2F.
 
 ## Criteria completion
 
@@ -40,15 +46,14 @@ Last updated: 2026-08-25 by branch
   - Boundary 0 "structured diagnostics can be asserted by tests"
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
-    regression or a tracked expected failure": the ASAN crash-handler
-    ownership defect has a regression, declarator- and literal-family
-    diagnostics are filename-pinned and mutation-validated, and the positive
-    expected-failure manifest rejects stale stages; the remaining
+    regression or a tracked expected failure": the ASAN crash-handler defect,
+    declarator-, literal-, and constant-expression-arithmetic-family
+    diagnostics are filename-pinned and mutation-validated; the remaining
     architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
-    in Windows CI on a fixed corpus that now includes the encoded literal
-    tests; outstanding are the replay, AST-to-IR lookup, codegen-to-parser,
+    on Windows CI over the fixed corpus including the encoded literal tests;
+    outstanding are the replay, AST-to-IR lookup, codegen-to-parser,
     post-parse typing, and template-routing counters plus the `'$'` static
     inventory (pull request boundary 4), and wiring this check into the
     Ubuntu lane once a Linux-generated baseline is verified there
@@ -68,8 +73,12 @@ Next blocker:
 
 Then, in order:
 
-1. Pull request boundary 2C: convert the constexpr, initialization, and
-   constant-expression negative-test slice by shared diagnostic owner.
+1. Pull request boundary 2C continuation slices, each by shared diagnostic
+   owner within constant-expression evaluation: the indeterminate-read family
+   (default-init aggregates/scalars/new), the pointer arithmetic and
+   lifetime family (negative creation, out-of-bounds dereference,
+   different-array comparison, freed heap access), then the remaining
+   one-off reasons.
 2. Pull request boundaries 2D through 2F: continue converting the frozen
    legacy negative tests in bounded diagnostic-owner batches; boundary 2F
    deletes `_fail.cpp` classification, both frozen inventories, and the
@@ -86,6 +95,13 @@ Then, in order:
 
 Named follow-ups carried forward:
 
+- Pin `ConstantExpressionSignedIntegerOverflow` (1205) with an encoded
+  regression once the evaluator tracks promoted operand widths; it currently
+  evaluates integer arithmetic in 64-bit so 32-bit overflow goes undetected
+  (see `docs/KNOWN_ISSUES.md`).
+- Support message-less `static_assert` ([stmt.assert]/1) before converting
+  static_assert-owned diagnostics that standard headers hit through the
+  message-less form (see `docs/KNOWN_ISSUES.md`).
 - Wire `tests/run_migration_counters.ps1` into `ci-ubuntu.yml` after
   generating and verifying the baseline on a Linux build.
 - Pre-ICE raw `std::cerr` context dumps at `src/IrGenerator_MemberAccess.cpp`

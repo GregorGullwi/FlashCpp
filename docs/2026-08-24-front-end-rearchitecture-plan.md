@@ -1205,6 +1205,11 @@ A frozen test that fails only because an incomplete parser or sema
 implementation does not yet support the construct may be deleted instead of
 implementing the missing parser error.
 
+When two identical tests are found that exercise the same code paths, delete
+one of them. When two nearly identical positive (successful) tests are found,
+merge them if both are small. Leave medium or large test files alone and do
+not extend them.
+
 ### Pull request boundary 3: first architectural regression slices
 
 - Add promotion, namespace-template-identity, and ambiguous-member-lookup
