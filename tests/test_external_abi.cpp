@@ -8,6 +8,9 @@ extern "C" int external_many_params(int p1, int p2, int p3, int p4, int p5, int 
 									int p7, int p8, int p9, int p10);
 extern "C" double external_mixed_stack(int i1, double d1, int i2, double d2, int i3, double d3,
 									   int i4, double d4, int i5, double d5);
+extern "C" int external_check_mixed_positions(
+	int i0, double d1, int i2, double d3, int i4, double d5);
+extern "C" int external_call_flashcpp_mixed_positions();
 struct Big3 {
 	int a;
 	int b;
@@ -180,6 +183,30 @@ extern "C" int flashcpp_int_double_after_8_doubles(
 		static_cast<int>(value.b) + tail;
 }
 
+extern "C" int flashcpp_check_mixed_positions(
+	int i0, double d1, int i2, double d3, int i4, double d5) {
+	int mismatch = 0;
+	if (i0 != 11) {
+		mismatch |= 1;
+	}
+	if (d1 != 22.5) {
+		mismatch |= 2;
+	}
+	if (i2 != 33) {
+		mismatch |= 4;
+	}
+	if (d3 != 44.5) {
+		mismatch |= 8;
+	}
+	if (i4 != 55) {
+		mismatch |= 16;
+	}
+	if (d5 != 66.5) {
+		mismatch |= 32;
+	}
+	return mismatch;
+}
+
 extern "C" int main() {
 	int result = 0;
 
@@ -189,8 +216,9 @@ extern "C" int main() {
 		return 1; // Expected: 1+2+3+4+5+6 = 21
 	}
 
-	// Test 2: Mixed int/double parameters (separate register pools)
-	// On Linux: a→RDI, b→XMM0, c→RSI, d→XMM1
+	// Test 2: Mixed int/double parameters.
+	// SysV uses separate register banks. Win64 selects RCX, XMM1, R8, and XMM3
+	// from the arguments' absolute positions.
 	double test2 = external_mixed_params(10, 20.5, 30, 40.5);
 	if (test2 < 100.9 || test2 > 101.1) {
 		return 2; // Expected: 10+20.5+30+40.5 = 101.0
@@ -203,9 +231,8 @@ extern "C" int main() {
 		return 3; // Expected: sum(1..10) = 55
 	}
 
-	// Test 4: Mixed types with stack overflow (tests both register pools and stack)
-	// On Linux: i1-i6 use RDI,RSI,RDX,RCX,R8,R9; d1-d5 use XMM0-XMM4
-	// But we only have 6 int regs and 8 float regs, so some should go on stack
+	// Test 4: Mixed types. All values fit in SysV register banks. Win64 passes
+	// positions four and later on the stack after the 32-byte shadow area.
 	double test4 = external_mixed_stack(1, 2.5, 3, 4.5, 5, 6.5, 7, 8.5, 9, 10.5);
 	if (test4 < 57.4 || test4 > 57.6) {
 		return 4; // Expected: 1+2.5+3+4.5+5+6.5+7+8.5+9+10.5 = 57.5
@@ -414,6 +441,15 @@ extern "C" int main() {
 	DoubleOnly flashcpp_double_only = external_call_flashcpp_make_double_only(4.5);
 	if (flashcpp_double_only.value != 4.5) {
 		return 46;
+	}
+
+	// Tests 47-48: positional mixed scalar arguments in both cross-compiler
+	// directions. Positions four and five must use consecutive stack slots.
+	if (external_check_mixed_positions(11, 22.5, 33, 44.5, 55, 66.5) != 0) {
+		return 47;
+	}
+	if (external_call_flashcpp_mixed_positions() != 0) {
+		return 48;
 	}
 
 	return 0; // All tests passed!

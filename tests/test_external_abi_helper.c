@@ -1,5 +1,5 @@
 // Helper functions compiled with standard compiler to verify ABI compatibility
-// This file is compiled with gcc/clang and linked with code from FlashCpp
+// This file is compiled with the platform C compiler and linked with FlashCpp code.
 
 // Forward declare printf to avoid needing stdio.h
 extern int printf(const char* format, ...);
@@ -10,7 +10,8 @@ int external_int_6_params(int a, int b, int c, int d, int e, int f) {
 	return a + b + c + d + e + f;
 }
 
-// Test function with mixed int/float parameters (separate register pools)
+// SysV uses separate integer and floating-point register banks. Win64 selects
+// RCX, XMM1, R8, and XMM3 from the arguments' absolute positions.
 double external_mixed_params(int a, double b, int c, double d) {
 	printf("external_mixed_params: %d %.1f %d %.1f\n", a, b, c, d);
 	return a + b + c + d;
@@ -108,6 +109,36 @@ DoubleOnly flashcpp_make_double_only(double value);
 int flashcpp_int_double_after_8_doubles(
 	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
 	IntDouble value, int tail);
+int flashcpp_check_mixed_positions(
+	int i0, double d1, int i2, double d3, int i4, double d5);
+
+int external_check_mixed_positions(
+	int i0, double d1, int i2, double d3, int i4, double d5) {
+	int mismatch = 0;
+	if (i0 != 11) {
+		mismatch |= 1;
+	}
+	if (d1 != 22.5) {
+		mismatch |= 2;
+	}
+	if (i2 != 33) {
+		mismatch |= 4;
+	}
+	if (d3 != 44.5) {
+		mismatch |= 8;
+	}
+	if (i4 != 55) {
+		mismatch |= 16;
+	}
+	if (d5 != 66.5) {
+		mismatch |= 32;
+	}
+	return mismatch;
+}
+
+int external_call_flashcpp_mixed_positions(void) {
+	return flashcpp_check_mixed_positions(11, 22.5, 33, 44.5, 55, 66.5);
+}
 
 int external_sum_big3(Big3 value) {
 	printf("external_sum_big3: %d %d %d\n", value.a, value.b, value.c);

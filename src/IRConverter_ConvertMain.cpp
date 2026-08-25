@@ -2025,7 +2025,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		func_stack_space.shadow_stack_space |=
 			(0x20 * (instruction.getOpcode() == IrOpcode::FunctionCall ||
 					 instruction.getOpcode() == IrOpcode::ConstructorCall ||
-					 instruction.getOpcode() == IrOpcode::IndirectCall));
+					 instruction.getOpcode() == IrOpcode::IndirectCall ||
+					 instruction.getOpcode() == IrOpcode::VirtualCall));
 
 			// Pre-reserve the catch funclet return slot on Windows: the funclet needs
 			// a fixed-size slot (16 bytes) above the normal locals so that
@@ -2080,28 +2081,13 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 		if (instruction.getOpcode() == IrOpcode::FunctionCall && instruction.hasTypedPayload()) {
 			if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-					// For Windows variadic calls: ALL args on stack starting at RSP+0
-					// For Windows normal calls: Args beyond 4 on stack starting at RSP+32 (shadow space)
-					// For Linux: Args beyond 6 on stack starting at RSP+0
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
-				size_t arg_count = call_op->args.size();
 				size_t outgoing_bytes = 0;
 
 				if (is_coff_format) {
-					if (call_op->is_variadic) {
-							// Windows variadic: ALL args on stack, starting at RSP+0
-							// Need at least 32 bytes shadow space for first 4 register params
-							// Align to 16 bytes for stack alignment requirements
-						outgoing_bytes = std::max(arg_count * 8, static_cast<size_t>(32));
-						outgoing_bytes = (outgoing_bytes + 15) & ~static_cast<size_t>(15);
-					} else {
-							// Windows normal: First 4 in registers, rest on stack starting at RSP+32
-						if (arg_count > 4) {
-							outgoing_bytes = 32 + (arg_count - 4) * 8;
-						} else {
-							outgoing_bytes = 32;	 // Shadow space even if all args in registers
-						}
-					}
+					const size_t occupied_positions =
+						call_op->args.size() + (call_op->usesReturnSlot() ? 1 : 0);
+					outgoing_bytes = getWin64OutgoingArgumentAreaSize(occupied_positions);
 				} else {
 						// Linux SysV AMD64: hidden return param consumes int reg 0 when present.
 					size_t int_slots_start = call_op->usesReturnSlot() ? 1 : 0;
@@ -2119,16 +2105,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 				size_t outgoing_bytes = 0;
 				if (is_coff_format) {
-						// Win64 indirect calls still need caller-reserved shadow space, and any
-						// explicit arguments beyond the first 4 positions spill above it.
-						// `arg_count` already includes the hidden aggregate return slot when present,
-						// so the spill threshold shifts automatically in those cases.
-					size_t arg_count = call_op->arguments.size() + (call_op->usesReturnSlot() ? 1 : 0);
-					if (arg_count > 4) {
-						outgoing_bytes = 32 + (arg_count - 4) * 8;
-					} else {
-						outgoing_bytes = 32;
-					}
+					const size_t occupied_positions =
+						call_op->arguments.size() + (call_op->usesReturnSlot() ? 1 : 0);
+					outgoing_bytes = getWin64OutgoingArgumentAreaSize(occupied_positions);
 				} else {
 						// SysV uses a dynamically-sized overflow area. A hidden aggregate return
 						// slot shifts the integer-register starting position by one.
@@ -2142,22 +2121,14 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			}
 		}
 
-			// Constructor calls: 'this' always occupies integer register 0, so explicit
-			// arguments start with int_slots_used = 1.
 		if (instruction.getOpcode() == IrOpcode::ConstructorCall && instruction.hasTypedPayload()) {
 			if (const ConstructorCallOp* ctor_op = std::any_cast<ConstructorCallOp>(&instruction.getTypedPayload())) {
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
-				size_t arg_count = ctor_op->arguments.size();
 				size_t outgoing_bytes = 0;
 
 				if (is_coff_format) {
-						// Windows: 'this' uses position 0, so effective arg count = args + 1
-					size_t total = arg_count + 1;  // +1 for 'this'
-					if (total > 4) {
-						outgoing_bytes = 32 + (total - 4) * 8;
-					} else {
-						outgoing_bytes = 32;	 // Shadow space
-					}
+					const size_t occupied_positions = ctor_op->arguments.size() + 1;
+					outgoing_bytes = getWin64OutgoingArgumentAreaSize(occupied_positions);
 				} else {
 						// Linux SysV: 'this' consumes 1 int register slot
 					outgoing_bytes = computeSysVOutgoingBytes(ctor_op->arguments, /*int_slots_start=*/1);
@@ -2165,6 +2136,18 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 				if (outgoing_bytes > max_outgoing_arg_bytes) {
 					max_outgoing_arg_bytes = outgoing_bytes;
+				}
+			}
+		}
+
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (instruction.getOpcode() == IrOpcode::VirtualCall && instruction.hasTypedPayload()) {
+				if (const VirtualCallOp* call_op = std::any_cast<VirtualCallOp>(&instruction.getTypedPayload())) {
+					const size_t occupied_positions = call_op->arguments.size() + 1;
+					const size_t outgoing_bytes = getWin64OutgoingArgumentAreaSize(occupied_positions);
+					if (outgoing_bytes > max_outgoing_arg_bytes) {
+						max_outgoing_arg_bytes = outgoing_bytes;
+					}
 				}
 			}
 		}
@@ -4450,17 +4433,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			}
 		}
 
-			// Enhanced stack overflow logic: Track both int and float register usage independently
-			// to correctly identify which arguments overflow to stack.
-			// For variadic functions, register-passed args (first 4 on Windows, 6 on Linux) go in
-			// registers as normal. Only args beyond the register count go on the stack at RSP+32+
-			// (Windows) or RSP+0+ (Linux). The callee is responsible for homing its own register
-			// parameters to shadow space; the caller must not pre-populate shadow space since it
-			// overlaps with local variable storage in the caller's frame.
-			//
-			// Windows x64 ABI uses a UNIFIED position counter: position 0 is always RCX or XMM0,
-			// position 1 is always RDX or XMM1, etc. — float and int arguments share the same
-			// 4 register slots. Linux SysV AMD64 uses SEPARATE banks (6 int + 8 float).
+			// Process overflow arguments before loading the long-lived parameter registers.
+			// Win64 assigns one absolute position to every scalar argument. SysV keeps
+			// independent integer and SSE register banks.
 		size_t temp_int_idx = param_shift;  // Account for hidden return param (same as second pass)
 		size_t temp_float_idx = 0;
 		size_t stack_arg_count = 0;
@@ -4469,7 +4444,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			const auto& arg = call_op.args[i];
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
-			bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
+			bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) &&
+				!arg.pointer_depth.is_pointer() && !arg.is_reference();
 			bool promote_vararg_float = call_op.is_variadic &&
 										i >= call_op.fixed_argument_count &&
 										arg.effectiveIrType() == IrType::Float;
@@ -4477,15 +4453,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 				// Determine if this argument goes on stack (overflows register file)
 			bool goes_on_stack = false;
-			if (is_coff_format && call_op.is_variadic) {
-					// Windows x64 VARIADIC: unified position counter — int and float share the same 4 slots.
-					// Position i uses RCX/XMM0 (i=0), RDX/XMM1 (i=1), R8/XMM2 (i=2), R9/XMM3 (i=3).
-					// Any arg at position i >= max_int_regs goes to the stack.
-				goes_on_stack = (i + param_shift >= max_int_regs);
-				if (is_float_arg)
-					temp_float_idx++;
-				else
-					temp_int_idx++;
+			if (is_coff_format) {
+				const size_t position = i + static_cast<size_t>(param_shift);
+				goes_on_stack = position >= WIN64_INT_PARAM_REGS.size();
 			} else if (sysv_aggregate.has_value()) {
 				const size_t integer_register_count = sysv_aggregate->integerRegisterCount();
 				const size_t sse_register_count = sysv_aggregate->sseRegisterCount();
@@ -4498,8 +4468,6 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					temp_float_idx += sse_register_count;
 				}
 			} else {
-					// Linux SysV (all calls) and Windows non-variadic: separate register banks.
-					// Both caller and callee agree on this sequential convention, so it works.
 				if (is_float_arg) {
 					if (temp_float_idx >= max_float_regs) {
 						goes_on_stack = true;
@@ -4514,10 +4482,10 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			}
 
 			if (goes_on_stack) {
-					// Stack args placement:
-					// Windows: RSP+32 (shadow space) + stack_arg_count*8
-					// Linux: RSP+0 (no shadow space) + stack_arg_count*8
-				int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+				const int stack_offset = is_coff_format
+											 ? static_cast<int>(getWin64CallerOverflowOffset(
+												   i + static_cast<size_t>(param_shift)))
+											 : static_cast<int>(shadow_space + stack_arg_count * 8);
 
 					// Determine if this stack argument needs to pass an address instead of its value.
 					// For SysV variadic two-register structs, pass bytes directly (not a pointer) —
@@ -4600,10 +4568,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			regAlloc.release(reg);
 		}
 
-			// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
-			// Note: max_int_regs and max_float_regs already declared above for stack arg processing
-			// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
-			// If function uses return slot, start at index param_shift to leave room for hidden parameter
+			// Now process register arguments. SysV uses separate counters; Win64
+			// selects the register from the argument's absolute position.
 		size_t int_reg_index = param_shift;	// Start at param_shift if hidden return param present
 		size_t float_reg_index = 0;
 
@@ -4613,19 +4579,16 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Determine if this is a floating-point argument
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
-			bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
+			bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) &&
+				!arg.pointer_depth.is_pointer() && !arg.is_reference();
 			bool promote_vararg_float = call_op.is_variadic &&
 										i >= call_op.fixed_argument_count &&
 										arg.effectiveIrType() == IrType::Float;
 			const std::optional<SysVAbiValueLayout> sysv_aggregate = classifySysVAggregate(arg);
 
-				// Check if this argument fits in a register (accounting for param_shift)
-				// Windows x64 variadic: unified position counter — int and float share the same 4 slots.
-				// Windows x64 non-variadic + Linux SysV: separate integer and float register banks.
 			bool use_register = false;
-			if (is_coff_format && call_op.is_variadic) {
-					// Windows x64 VARIADIC: position (i + param_shift) determines register use
-				use_register = (i + param_shift < max_int_regs);
+			if (is_coff_format) {
+				use_register = i + static_cast<size_t>(param_shift) < WIN64_INT_PARAM_REGS.size();
 			} else if (sysv_aggregate.has_value()) {
 				use_register = !sysv_aggregate->isMemory() &&
 					int_reg_index + sysv_aggregate->integerRegisterCount() <= max_int_regs &&
@@ -4642,6 +4605,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 				// Skip arguments that go on stack (already handled)
 			if (!use_register) {
+				if (is_coff_format) {
+					continue;
+				}
 				if (sysv_aggregate.has_value()) {
 					// SysV reverts tentative aggregate register assignments when either
 					// register bank lacks room, so later arguments may still use them.
@@ -4658,21 +4624,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				continue;
 			}
 
-				// Get the platform-specific calling convention register
-				// Windows x64 variadic: position-aligned registers (position = i + param_shift)
-				// Windows x64 non-variadic + Linux SysV: separate int and float indices
 			X64Register target_reg;
-			if (is_coff_format && call_op.is_variadic) {
-					// Windows x64 VARIADIC: both int and float use the same position counter.
-					// This ensures the shadow-space homing + va_arg walking lines up correctly.
-				size_t position = i + param_shift;
-				target_reg = is_float_arg
-								 ? getFloatParamReg<TWriterClass>(position)
-								 : getIntParamReg<TWriterClass>(position);
-				if (is_float_arg)
-					float_reg_index++;
-				else
-					int_reg_index++;
+			if (is_coff_format) {
+				const size_t position = i + static_cast<size_t>(param_shift);
+				const Win64ScalarArgumentClass argument_class =
+					is_float_arg ? Win64ScalarArgumentClass::FloatingPoint
+								 : Win64ScalarArgumentClass::Integer;
+				target_reg = getWin64ScalarArgumentRegister(position, argument_class);
 			} else {
 				target_reg = is_float_arg
 								 ? getFloatParamReg<TWriterClass>(float_reg_index++)
@@ -5184,28 +5142,29 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		}
 	}
 
-		// Load the address of the object into the first parameter register ('this' pointer)
-		// Use platform-specific register: RDI on Linux, RCX on Windows
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);
 
 	FLASH_LOG_FORMAT(Codegen, Debug,
 					 "Constructor call for {}: object_is_pointer={}, object_offset={}, base_class_offset={}",
 					 resolved_struct_name, object_is_pointer, object_offset, ctor_op.base_class_offset);
 
-	if (object_is_pointer) {
-			// For pointers (this, heap-allocated): reload the pointer value (not its address)
-			// MOV this_reg, [RBP + object_offset]
-		emitMovFromFrame(this_reg, object_offset);
-			// Add base_class_offset for multiple inheritance (adjust pointer to base subobject)
-		if (ctor_op.base_class_offset != 0) {
-			emitAddRegImm32(textSectionData, this_reg, ctor_op.base_class_offset);
+	auto loadThisArgument = [&]() {
+		if (object_is_pointer) {
+			emitMovFromFrame(this_reg, object_offset);
+			if (ctor_op.base_class_offset != 0) {
+				emitAddRegImm32(textSectionData, this_reg, ctor_op.base_class_offset);
+			}
+		} else {
+			auto lea_inst = generateLeaFromFrame(this_reg, object_offset + ctor_op.base_class_offset);
+			textSectionData.insert(
+				textSectionData.end(),
+				lea_inst.op_codes.begin(),
+				lea_inst.op_codes.begin() + lea_inst.size_in_bytes);
 		}
-	} else {
-			// For regular stack objects: get the address
-			// LEA this_reg, [RBP + object_offset + base_class_offset]
-			// The base_class_offset adjusts for multiple inheritance
-		auto lea_inst = generateLeaFromFrame(this_reg, object_offset + ctor_op.base_class_offset);
-		textSectionData.insert(textSectionData.end(), lea_inst.op_codes.begin(), lea_inst.op_codes.begin() + lea_inst.size_in_bytes);
+	};
+
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		loadThisArgument();
 	}
 
 		// Process constructor parameters (if any) - similar to function call
@@ -5262,8 +5221,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	const size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 	size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 
-		// First pass: identify and place stack arguments (params that don't fit in registers)
-		// Register index 0 is used by 'this', so effective int reg capacity is max_int_regs - 1
+		// First pass: identify and place stack arguments.
 	{
 		size_t temp_int_idx = 1;	 // Start at 1 because 'this' uses register 0
 		size_t temp_float_idx = 0;
@@ -5277,13 +5235,16 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 												: arg.is_reference();
 			const bool is_float_arg = param_type_spec
 										  ? (isIrFloatingPointType(toIrType(param_type_spec->type())) && param_type_spec->pointer_depth() == 0 && !is_reference_param)
-										  : (isIrFloatingPointType(arg.effectiveIrType()) && !arg.is_reference());
+										  : (isIrFloatingPointType(arg.effectiveIrType()) && !arg.pointer_depth.is_pointer() && !arg.is_reference());
 			const std::optional<SysVAbiValueLayout> sysv_aggregate =
 				is_reference_param ? std::nullopt : classifySysVAggregate(arg);
 			const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
 			bool goes_on_stack = false;
-			if (sysv_aggregate.has_value()) {
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				const size_t position = i + 1;
+				goes_on_stack = position >= WIN64_INT_PARAM_REGS.size();
+			} else if (sysv_aggregate.has_value()) {
 				if (sysv_aggregate->isMemory() ||
 					temp_int_idx + sysv_aggregate->integerRegisterCount() > max_int_regs ||
 					temp_float_idx + sysv_aggregate->sseRegisterCount() > max_float_regs) {
@@ -5305,7 +5266,9 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			}
 
 			if (goes_on_stack) {
-				int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+				const int stack_offset = std::is_same_v<TWriterClass, ElfFileWriter>
+											 ? static_cast<int>(shadow_space + stack_arg_count * 8)
+											 : static_cast<int>(getWin64CallerOverflowOffset(i + 1));
 
 				if (is_float_arg) {
 					X64Register temp_xmm = allocateXMMRegisterWithSpilling();
@@ -5357,9 +5320,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		}
 	}
 
-		// Second pass: load register arguments
-		// Integer regs: index 0 is 'this', so start at index 1 for first explicit param
-		// Float regs: XMM0-XMM7 for floating-point parameters
+		// Second pass: load register arguments.
 	size_t int_reg_index = 1;  // Start at 1 because index 0 (RDI/RCX) is 'this' pointer
 	size_t float_reg_index = 0;
 
@@ -5374,10 +5335,86 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 									: arg.is_reference();
 		const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
-		bool is_float_arg = (paramType == TypeCategory::Float || paramType == TypeCategory::Double) && (!param_type_spec || param_type_spec->pointer_depth() == 0) && !arg_is_reference;
+		bool is_float_arg =
+			(paramType == TypeCategory::Float || paramType == TypeCategory::Double) &&
+			(param_type_spec ? param_type_spec->pointer_depth() == 0 : !arg.pointer_depth.is_pointer()) &&
+			!arg_is_reference;
 		bool is_reference_param = arg_is_reference;
 		const std::optional<SysVAbiValueLayout> sysv_aggregate =
 			is_reference_param ? std::nullopt : classifySysVAggregate(arg);
+
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			const size_t position = i + 1;
+			if (position >= WIN64_INT_PARAM_REGS.size()) {
+				continue;
+			}
+
+			const Win64ScalarArgumentClass argument_class =
+				is_float_arg ? Win64ScalarArgumentClass::FloatingPoint
+							 : Win64ScalarArgumentClass::Integer;
+			const X64Register target_reg =
+				getWin64ScalarArgumentRegister(position, argument_class);
+
+			if (is_float_arg) {
+				if (std::holds_alternative<double>(paramValue)) {
+					double float_value = std::get<double>(paramValue);
+					uint64_t bits;
+					if (paramType == TypeCategory::Float) {
+						float float_val = static_cast<float>(float_value);
+						uint32_t float_bits;
+						std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+						bits = float_bits;
+					} else {
+						std::memcpy(&bits, &float_value, sizeof(bits));
+					}
+					X64Register temp_gpr = allocateRegisterWithSpilling();
+					emitMovImm64(temp_gpr, bits);
+					emitMovqGprToXmm(temp_gpr, target_reg);
+					regAlloc.release(temp_gpr);
+				} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&paramValue)) {
+					int param_offset = getStackOffsetFromTempVar(*temp_var_ptr);
+					emitFloatMovFromFrame(target_reg, param_offset, paramType == TypeCategory::Float);
+				} else if (const auto* name_ptr = std::get_if<StringHandle>(&paramValue)) {
+					int param_offset = getVariableOffsetOrThrow(
+						*name_ptr,
+						"handleConstructorCall register float arg");
+					emitFloatMovFromFrame(target_reg, param_offset, paramType == TypeCategory::Float);
+				}
+				continue;
+			}
+
+			const bool should_pass_address = is_reference_param || shouldPassStructByAddress(arg);
+			if (should_pass_address &&
+				(std::holds_alternative<StringHandle>(paramValue) ||
+				 std::holds_alternative<TempVar>(paramValue))) {
+				if (!emitLoadAddressLikeArgument(target_reg, arg, source_base_adjustment)) {
+					throw InternalError("Register constructor argument marked pass-by-address is not addressable");
+				}
+				continue;
+			}
+
+			if (std::holds_alternative<unsigned long long>(paramValue)) {
+				unsigned long long value = std::get<unsigned long long>(paramValue);
+				if (paramSize == 32) {
+					emitMovImm32(target_reg, static_cast<uint32_t>(value));
+				} else {
+					emitMovImm64(target_reg, value);
+				}
+			} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&paramValue)) {
+				int param_offset = getStackOffsetFromTempVar(*temp_var_ptr);
+				emitMovFromFrameSized(
+					SizedRegister{target_reg, 64, false},
+					SizedStackSlot{param_offset, paramSize, isSignedType(paramType)});
+			} else if (const auto* name_ptr = std::get_if<StringHandle>(&paramValue)) {
+				int param_offset = getVariableOffsetOrThrow(
+					*name_ptr,
+					"handleConstructorCall register integer arg");
+				emitMovFromFrameSized(
+					SizedRegister{target_reg, 64, false},
+					SizedStackSlot{param_offset, paramSize, isSignedType(paramType)});
+			}
+			continue;
+		}
 
 		if (sysv_aggregate.has_value()) {
 			const bool fits_registers = !sysv_aggregate->isMemory() &&
@@ -5482,6 +5519,10 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			}
 		}
 			// Args that don't fit in registers were already placed on the stack in the first pass above
+	}
+
+	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+		loadThisArgument();
 	}
 
 		// Generate the call instruction
@@ -5618,119 +5659,160 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		object_offset = getVariableOffsetOrThrow(var_name_handle, "handleVirtualCall object");
 	}
 
-		// Virtual call sequence varies based on whether object is a pointer or direct:
-		// For pointers (is_pointer_access == true, e.g., ptr->method()):
-		//   1. Load object pointer value → 2. Load vptr from [pointer] → 3. Load func from [vptr + index*8] → 4. Call
-		// For direct objects (is_pointer_access == false, e.g., obj.method()):
-		//   1. Get object address → 2. Load vptr from [address] → 3. Load func from [vptr + index*8] → 4. Call
-
 	const X64Register this_reg = getIntParamReg<TWriterClass>(0); // First parameter register
 
-		// Use is_pointer_access flag to determine if object is a pointer or direct object
-		// Previously we used (op.object_size == 64) but that's wrong for small structs (like those with only vptr)
-	bool is_pointer_object = op.is_pointer_access;
+	auto loadVirtualTarget = [&]() {
+		if (op.is_pointer_access) {
+			emitMovFromFrame(this_reg, object_offset);
+		} else {
+			emitLeaFromFrame(this_reg, object_offset);
+		}
 
-	if (is_pointer_object) {
-			// Step 1a: Load pointer value from stack into this_reg
-			// MOV this_reg, [RBP + object_offset]
-		emitMovFromFrame(this_reg, object_offset);
-
-			// Step 2a: Load vptr from object (dereference the pointer)
-			// MOV RAX, [this_reg + 0]
 		emitMovRegFromMemRegSized(X64Register::RAX, this_reg, 64);
-	} else {
-			// Step 1b: Load object address into this_reg
-			// LEA this_reg, [RBP + object_offset]
-		emitLeaFromFrame(this_reg, object_offset);
+		const int vtable_offset = op.vtable_index * 8;
+		if (vtable_offset == 0) {
+			emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
+		} else if (vtable_offset >= -128 && vtable_offset <= 127) {
+			emitMovRegFromMemRegDisp8(
+				X64Register::RAX,
+				X64Register::RAX,
+				static_cast<int8_t>(vtable_offset));
+		} else {
+			emitMovFromMemory(X64Register::RAX, X64Register::RAX, vtable_offset, 8);
+		}
+	};
 
-			// Step 2b: Load vptr from object (object address is in this_reg)
-			// MOV RAX, [this_reg + 0]
-		emitMovRegFromMemRegSized(X64Register::RAX, this_reg, 64);
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		loadVirtualTarget();
 	}
 
-		// Step 3: Load function pointer from vtable into RAX
-		// MOV RAX, [RAX + vtable_index * 8]
-	int vtable_offset = op.vtable_index * 8;
-	if (vtable_offset == 0) {
-			// No offset, use simple dereference
-		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
-	} else if (vtable_offset >= -128 && vtable_offset <= 127) {
-			// Use 8-bit displacement
-		emitMovRegFromMemRegDisp8(X64Register::RAX, X64Register::RAX, static_cast<int8_t>(vtable_offset));
-	} else {
-			// Use 32-bit displacement with emitMovFromMemory
-		emitMovFromMemory(X64Register::RAX, X64Register::RAX, vtable_offset, 8);
-	}
-
-		// Step 4: 'this' pointer is already in the correct register from Step 1
-		// No need to recalculate or reload - it's preserved throughout
-
-		// Step 5: Handle additional function arguments (beyond 'this')
-		// Virtual member functions have 'this' as first parameter (already in this_reg)
-		// Additional arguments start at parameter index 1
+		// Win64 loads explicit arguments before the this register and call target.
 	if (!op.arguments.empty()) {
-			// Get platform-specific parameter counts
 		size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 		size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 		size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 
-			// Start at index 1 because 'this' is already in parameter register 0
 		size_t int_reg_index = 1;
 		size_t float_reg_index = 0;
 		size_t stack_arg_count = 0;
 
-			// First pass: handle stack arguments
 		for (size_t i = 0; i < op.arguments.size(); ++i) {
 			const auto& arg = op.arguments[i];
-			bool is_float_arg = is_floating_point_type(arg.category());
+			const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) &&
+				!arg.pointer_depth.is_pointer() && !arg.is_reference();
 
 			bool use_register = false;
-			if (is_float_arg) {
-				use_register = (float_reg_index < max_float_regs);
-				float_reg_index++;
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				use_register = i + 1 < WIN64_INT_PARAM_REGS.size();
 			} else {
-				use_register = (int_reg_index < max_int_regs);
-				int_reg_index++;
+				if (is_float_arg) {
+					use_register = float_reg_index < max_float_regs;
+					float_reg_index++;
+				} else {
+					use_register = int_reg_index < max_int_regs;
+					int_reg_index++;
+				}
 			}
 
 			if (!use_register) {
-					// Argument goes on stack
-				int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
-				X64Register temp_reg = loadTypedValueIntoRegister(arg);
-				emitStoreToRSP(textSectionData, temp_reg, stack_offset);
-				regAlloc.release(temp_reg);
+				const int stack_offset = std::is_same_v<TWriterClass, ElfFileWriter>
+											 ? static_cast<int>(shadow_space + stack_arg_count * 8)
+											 : static_cast<int>(getWin64CallerOverflowOffset(i + 1));
+				if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+					if (is_float_arg) {
+						X64Register temp_xmm = allocateXMMRegisterWithSpilling();
+						if (const auto* literal = std::get_if<double>(&arg.value)) {
+							uint64_t bits;
+							if (arg.effectiveIrType() == IrType::Float) {
+								const float float_value = static_cast<float>(*literal);
+								uint32_t float_bits;
+								std::memcpy(&float_bits, &float_value, sizeof(float_bits));
+								bits = float_bits;
+							} else {
+								std::memcpy(&bits, literal, sizeof(bits));
+							}
+							X64Register temp_gpr = allocateRegisterWithSpilling();
+							emitMovImm64(temp_gpr, bits);
+							emitMovqGprToXmm(temp_gpr, temp_xmm);
+							regAlloc.release(temp_gpr);
+						} else if (const auto* temp_var = std::get_if<TempVar>(&arg.value)) {
+							const int var_offset = getStackOffsetFromTempVar(*temp_var);
+							emitFloatMovFromFrame(
+								temp_xmm,
+								var_offset,
+								arg.effectiveIrType() == IrType::Float);
+						} else if (const auto* name = std::get_if<StringHandle>(&arg.value)) {
+							const int var_offset =
+								getVariableOffsetOrThrow(*name, "handleVirtualCall stack float arg");
+							emitFloatMovFromFrame(
+								temp_xmm,
+								var_offset,
+								arg.effectiveIrType() == IrType::Float);
+						}
+						emitFloatStoreToRSP(
+							textSectionData,
+							temp_xmm,
+							stack_offset,
+							arg.effectiveIrType() == IrType::Float);
+						regAlloc.release(temp_xmm);
+					} else if (arg.is_reference() || shouldPassStructByAddress(arg)) {
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						if (!emitLoadAddressLikeArgument(temp_reg, arg)) {
+							throw InternalError("Stack virtual-call argument marked pass-by-address is not addressable");
+						}
+						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+						regAlloc.release(temp_reg);
+					} else {
+						X64Register temp_reg = loadTypedValueIntoRegister(arg);
+						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+						regAlloc.release(temp_reg);
+					}
+				} else {
+					X64Register temp_reg = loadTypedValueIntoRegister(arg);
+					emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+					regAlloc.release(temp_reg);
+				}
 				stack_arg_count++;
 			}
 		}
 
-			// Second pass: handle register arguments
 		int_reg_index = 1;  // Reset, 'this' is in register 0
 		float_reg_index = 0;
 
 		for (size_t i = 0; i < op.arguments.size(); ++i) {
 			const auto& arg = op.arguments[i];
-			bool is_float_arg = is_floating_point_type(arg.category());
+			const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) &&
+				!arg.pointer_depth.is_pointer() && !arg.is_reference();
 
 			bool use_register = false;
-			X64Register target_reg;
-			if (is_float_arg) {
-				if (float_reg_index < max_float_regs) {
-					use_register = true;
-					target_reg = getFloatParamReg<TWriterClass>(float_reg_index);
+			X64Register target_reg = X64Register::Count;
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				const size_t position = i + 1;
+				use_register = position < WIN64_INT_PARAM_REGS.size();
+				if (use_register) {
+					const Win64ScalarArgumentClass argument_class =
+						is_float_arg ? Win64ScalarArgumentClass::FloatingPoint
+									 : Win64ScalarArgumentClass::Integer;
+					target_reg = getWin64ScalarArgumentRegister(position, argument_class);
 				}
-				float_reg_index++;
 			} else {
-				if (int_reg_index < max_int_regs) {
-					use_register = true;
-					target_reg = getIntParamReg<TWriterClass>(int_reg_index);
+				if (is_float_arg) {
+					if (float_reg_index < max_float_regs) {
+						use_register = true;
+						target_reg = getFloatParamReg<TWriterClass>(float_reg_index);
+					}
+					float_reg_index++;
+				} else {
+					if (int_reg_index < max_int_regs) {
+						use_register = true;
+						target_reg = getIntParamReg<TWriterClass>(int_reg_index);
+					}
+					int_reg_index++;
 				}
-				int_reg_index++;
 			}
 
 			if (use_register) {
-					// Load argument into parameter register
 				if (is_float_arg) {
-						// Handle float arguments
 					if (std::holds_alternative<double>(arg.value)) {
 						double float_value = std::get<double>(arg.value);
 						uint64_t bits;
@@ -5757,7 +5839,16 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
 					}
 				} else {
-						// Handle integer/pointer arguments
+					if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+						if ((arg.is_reference() || shouldPassStructByAddress(arg)) &&
+							(std::holds_alternative<StringHandle>(arg.value) ||
+							 std::holds_alternative<TempVar>(arg.value))) {
+							if (!emitLoadAddressLikeArgument(target_reg, arg)) {
+								throw InternalError("Register virtual-call argument marked pass-by-address is not addressable");
+							}
+							continue;
+						}
+					}
 					if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value)) {
 						uint64_t imm_value = *ull_val;
 						emitMovImm64(target_reg, imm_value);
@@ -5774,8 +5865,10 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		}
 	}
 
-		// Step 6: Call through function pointer in RAX
-		// CALL RAX
+	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+		loadVirtualTarget();
+	}
+
 	textSectionData.push_back(0xFF); // CALL r/m64
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
@@ -8242,7 +8335,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// System V AMD64: hidden param in RDI (first register)
 			// Windows x64: hidden param in RCX (first register)
 	if (func_decl.has_hidden_return_param) {
-		int return_slot_offset = -(coff_eh_param_home_bias + 1) * 8;	 // Hidden return parameter is always first
+		int return_slot_offset = -(coff_eh_param_home_bias + 1) * 8;
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (is_variadic) {
+				return_slot_offset = getWin64CalleeArgumentHomeOffset(0);
+			}
+		}
 		variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
 
 		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);  // Always first register
@@ -8263,8 +8361,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Static member functions have no 'this' pointer
 	int this_offset_saved = 0;  // Will be set if this is a member function
 	if (!struct_name.empty() && !func_decl.is_static_member) {
-				// 'this' offset depends on whether there's a hidden return parameter
 		int this_offset = (param_offset_adjustment + coff_eh_param_home_bias + 1) * -8;
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (is_variadic) {
+				this_offset = getWin64CalleeArgumentHomeOffset(
+					static_cast<size_t>(param_offset_adjustment));
+			}
+		}
 		this_offset_saved = this_offset;	 // Save for later indirect_stack_info_ registration
 		current_function_this_offset_ = this_offset;
 		variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
@@ -8344,22 +8447,24 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				// so they should use integer registers regardless of the underlying type
 			bool is_float_param = (param_type == TypeCategory::Float || param_type == TypeCategory::Double) && param_pointer_depth == 0 && !is_reference;
 
-				// Determine the register count threshold for this parameter type
 			size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
 			size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
 
 				// Calculate offset based on whether this parameter comes from a register or stack.
-				// For Windows variadic functions: ALL parameters are on caller's stack starting at [RBP+16]
+				// Win64 variadic callees use the positional home slots starting at [RBP+16].
 				// For SysV two-register structs: struct base = more-negative slot so field_offset-based
 				// access (base + field_offset) works correctly:
 				//   bytes 0-7 (first reg)  stored at offset       = (param_slot_index+2)*-8
 				//   bytes 8-15 (second reg) stored at offset+8    = (param_slot_index+1)*-8
 			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 			int offset;
-			if (is_variadic && is_coff_format) {
-					// Windows x64 variadic: ALL params at positive offsets from RBP
-					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
-				offset = 16 + (paramNumber - param_offset_adjustment) * 8;
+			if (is_coff_format) {
+				const size_t position = static_cast<size_t>(paramNumber);
+				if (is_variadic || position >= WIN64_INT_PARAM_REGS.size()) {
+					offset = getWin64CalleeArgumentHomeOffset(position);
+				} else {
+					offset = -(coff_eh_param_home_bias + paramNumber + 1) * 8;
+				}
 				param_slot_index++;
 			} else if (type_specific_index + (is_two_reg_struct ? 2 : 1) <= reg_threshold) {
 					// Parameter comes from register - allocate home/shadow space.
@@ -8411,11 +8516,19 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
-				// Check if parameter fits in a register using separate int/float counters
 			bool use_register = false;
 			X64Register src_reg = X64Register::Count;
 			X64Register second_reg = X64Register::Count;
-			if (is_float_param) {
+			if (is_coff_format) {
+				const size_t position = static_cast<size_t>(paramNumber);
+				if (position < WIN64_INT_PARAM_REGS.size()) {
+					const Win64ScalarArgumentClass argument_class =
+						is_float_param ? Win64ScalarArgumentClass::FloatingPoint
+									   : Win64ScalarArgumentClass::Integer;
+					src_reg = getWin64ScalarArgumentRegister(position, argument_class);
+					use_register = true;
+				}
+			} else if (is_float_param) {
 				if (float_param_reg_index < max_float_regs) {
 					src_reg = getFloatParamReg<TWriterClass>(float_param_reg_index++);
 					use_register = true;
@@ -8517,10 +8630,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				//   bytes 8-15 (second reg) stored at offset+8     = (param_slot_index+1)*-8
 			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 			int offset;
-			if (is_variadic && is_coff_format) {
-					// Windows x64 variadic: ALL params at positive offsets from RBP
-					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
-				offset = 16 + (paramNumber - param_offset_adjustment) * 8;
+			if (is_coff_format) {
+				const size_t position = static_cast<size_t>(paramNumber);
+				if (is_variadic || position >= WIN64_INT_PARAM_REGS.size()) {
+					offset = getWin64CalleeArgumentHomeOffset(position);
+				} else {
+					offset = -(coff_eh_param_home_bias + paramNumber + 1) * 8;
+				}
 				param_slot_index++;
 			} else if (aggregate_fits_registers || (!sysv_aggregate_layout.has_value() && scalar_fits_register)) {
 				const size_t home_slot_count = sysv_aggregate_layout.has_value() ? aggregate_slot_count : 1;
@@ -8565,11 +8681,19 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			std::string param_name_str(StringTable::getStringView(param.getName()));
 			writer.add_function_parameter(param_name_str, param_type_index, offset);
 
-				// Check if parameter fits in a register using separate int/float counters
 			bool use_register = false;
 			X64Register src_reg = X64Register::Count;
 			std::array<X64Register, 2> aggregate_registers{X64Register::Count, X64Register::Count};
-			if (aggregate_fits_registers) {
+			if (is_coff_format) {
+				const size_t position = static_cast<size_t>(paramNumber);
+				if (position < WIN64_INT_PARAM_REGS.size()) {
+					const Win64ScalarArgumentClass argument_class =
+						is_float_param ? Win64ScalarArgumentClass::FloatingPoint
+									   : Win64ScalarArgumentClass::Integer;
+					src_reg = getWin64ScalarArgumentRegister(position, argument_class);
+					use_register = true;
+				}
+			} else if (aggregate_fits_registers) {
 				use_register = true;
 				size_t integer_index = int_param_reg_index;
 				size_t sse_index = float_param_reg_index;
@@ -8626,8 +8750,10 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// share those addresses). The callee owns shadow space homing per the x64 ABI.
 		const size_t max_regs = getMaxIntParamRegs<TWriterClass>();
 		for (size_t i = 0; i < max_regs; ++i) {
-			int slot_offset = 16 + static_cast<int>(i) * 8;
-			emitMovToFrame(getIntParamReg<TWriterClass>(i), slot_offset, 64);
+			const int slot_offset = getWin64CalleeArgumentHomeOffset(i);
+			const X64Register source_reg = getIntParamReg<TWriterClass>(i);
+			emitMovToFrame(source_reg, slot_offset, 64);
+			regAlloc.release(source_reg);
 		}
 	} else {
 		for (const auto& param : parameters) {
@@ -15179,7 +15305,8 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	for (size_t i = 0; i < op.arguments.size(); ++i) {
 		const auto& arg = op.arguments[i];
 		const bool is_reference_arg = arg.is_reference();
-		const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) && !is_reference_arg;
+		const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) &&
+			!arg.pointer_depth.is_pointer() && !is_reference_arg;
 		const bool promote_vararg_float = op.is_variadic &&
 										 i >= op.fixed_argument_count &&
 										 arg.effectiveIrType() == IrType::Float;
@@ -15187,27 +15314,11 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 
 		bool goes_on_stack = false;
 		int stack_offset = 0;
-		if (is_coff_format && op.is_variadic) {
-				// Windows x64 variadic calls use unified argument positions across GPR/XMM registers.
+		if (is_coff_format) {
 			size_t position = win_position_idx++;
-			goes_on_stack = position >= max_int_regs;
+			goes_on_stack = position >= WIN64_INT_PARAM_REGS.size();
 			if (goes_on_stack) {
-				stack_offset = static_cast<int>(shadow_space + (position - max_int_regs) * 8);
-			}
-		} else if (is_coff_format) {
-				// Non-variadic Win64 calls use separate integer and floating-point register banks.
-			if (is_float_arg) {
-				goes_on_stack = float_reg_index >= max_float_regs;
-				float_reg_index++;
-				if (goes_on_stack) {
-					stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
-				}
-			} else {
-				goes_on_stack = int_reg_index + 1 > max_int_regs;
-				int_reg_index++;
-				if (goes_on_stack) {
-					stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
-				}
+				stack_offset = static_cast<int>(getWin64CallerOverflowOffset(position));
 			}
 		} else if (sysv_aggregate.has_value()) {
 			goes_on_stack = sysv_aggregate->isMemory() ||
@@ -15307,7 +15418,8 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		const auto& arg = op.arguments[i];
 		const TypeCategory arg_type = arg.typeEnum();
 		const bool is_reference_arg = arg.is_reference();
-		const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) && !is_reference_arg;
+		const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) &&
+			!arg.pointer_depth.is_pointer() && !is_reference_arg;
 		const bool promote_vararg_float = op.is_variadic &&
 										 i >= op.fixed_argument_count &&
 										 arg.effectiveIrType() == IrType::Float;
@@ -15315,24 +15427,14 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 
 		bool use_register = false;
 		X64Register target_reg = X64Register::RAX;
-		if (is_coff_format && op.is_variadic) {
+		if (is_coff_format) {
 			size_t position = win_position_idx++;
-			use_register = position < max_int_regs;
+			use_register = position < WIN64_INT_PARAM_REGS.size();
 			if (use_register) {
-				target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(position) : getIntParamReg<TWriterClass>(position);
-			}
-		} else if (is_coff_format) {
-			if (is_float_arg) {
-				if (float_reg_index < max_float_regs) {
-					use_register = true;
-					target_reg = getFloatParamReg<TWriterClass>(float_reg_index++);
-				}
-			} else {
-				if (int_reg_index + 1 <= max_int_regs) {
-					use_register = true;
-					target_reg = getIntParamReg<TWriterClass>(int_reg_index);
-					int_reg_index++;
-				}
+				const Win64ScalarArgumentClass argument_class =
+					is_float_arg ? Win64ScalarArgumentClass::FloatingPoint
+								 : Win64ScalarArgumentClass::Integer;
+				target_reg = getWin64ScalarArgumentRegister(position, argument_class);
 			}
 		} else if (sysv_aggregate.has_value()) {
 			use_register = !sysv_aggregate->isMemory() &&
