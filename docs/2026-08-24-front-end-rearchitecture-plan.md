@@ -443,10 +443,17 @@ Introduce:
 
 ### Runner hardening
 
-- Require diagnostic ID, source line, and source column for every new
-  `_fail.cpp` test.
-- Maintain a named conversion backlog for existing `_fail.cpp` tests and
-  migrate them incrementally.
+- Encode the exact expected diagnostic ID multiset in every new negative-test
+  filename: `_e1001.cpp`, `_e1003_e1051.cpp`, and so on. Diagnostic location,
+  severity, name, and note role are not part of this runner contract.
+- Reserve `_fail.cpp` for the frozen legacy negative-test inventory. Reject any
+  new `_fail.cpp` name, and migrate the inventory to `_e<number>` filenames in
+  bounded diagnostic-owner batches.
+- Require a clean source-rejection exit status for negative tests. Internal
+  compiler errors, driver failures, timeouts, crashes, and missing results
+  cannot satisfy either the legacy or filename-encoded contract.
+- Compare diagnostic IDs as a multiset. Repeated `_e<number>` segments require
+  the same number of emitted occurrences.
 - Add multi-translation-unit compile and link cases.
 - Add a PIE link variant.
 - Fail on discovered but skipped test files.
@@ -1066,10 +1073,10 @@ normalized code.
 
 ## Initial pull request boundaries
 
-Pull request boundaries 1 through 3 advance architecture boundary 0. Pull
-request boundary 4 closes its tracking work and introduces the template facade
-needed by architecture boundary 1. Pull request boundaries 5 and 6 continue
-architecture boundary 1.
+Pull request boundary 1, boundaries 2A through 2F, and boundary 3 advance
+architecture boundary 0. Pull request boundary 4 closes its tracking work and
+introduces the template facade needed by architecture boundary 1. Pull request
+boundaries 5 and 6 continue architecture boundary 1.
 
 ### Pull request boundary 1: diagnostics and crash diagnosability
 
@@ -1080,11 +1087,36 @@ architecture boundary 1.
 - Install the alternate signal stack and reentry guard.
 - Remove `InternalError` and `bad_any_cast` downgrades.
 
-### Pull request boundary 2: runner mechanics and expected-failure manifest
+### Pull request boundary 2A: filename diagnostic contract and expected-failure manifest
 
-- Add diagnostic assertions, multi-TU mode, PIE mode, return-range validation,
-  and skipped-test reporting.
+- Replace inline negative-test assertions with the `_e<number>` filename
+  grammar and exact diagnostic-ID multiset matching.
+- Give clean source rejection and internal compiler or driver failure distinct
+  exit statuses, and make the runners reject every non-source failure.
+- Freeze the existing `_fail.cpp` inventory so no new legacy entry can be
+  added. Rename the already structured declarator-family tests first.
 - Add the named expected-failure manifest and enforce stale-entry detection.
+  This manifest is only for positive tests blocked by known compiler defects;
+  it cannot contain negative-test filenames.
+
+### Pull request boundaries 2B through 2F: legacy negative-test conversion
+
+Convert the frozen `_fail.cpp` inventory by diagnostic owner. Each pull request
+must name its exact test slice and compiler emission sites before editing,
+assign distinct stable `DiagnosticId` values at shared semantic choke points,
+rename the converted tests to `_e<number>` form, and mutation-validate the
+filename expectation.
+
+- 2B: lexer, parser, declarator, and source-structure diagnostics;
+- 2C: constexpr, initialization, and constant-expression diagnostics;
+- 2D: conversions, overload resolution, operators, and access diagnostics;
+- 2E: templates, lookup, deduction, constraints, and substitution diagnostics;
+- 2F: remaining semantic and lowering diagnostics, followed by deletion of
+  `_fail.cpp` classification and the frozen inventory.
+
+Do not introduce a generic legacy diagnostic ID, derive IDs from message text,
+or assign IDs per test. A conversion batch must stop and split again if its
+rejection paths do not share a bounded diagnostic owner.
 
 ### Pull request boundary 3: first architectural regression slices
 

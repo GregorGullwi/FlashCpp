@@ -5,7 +5,8 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-24 by branch `boundary2-diagnostic-assertions`
+Last updated: 2026-08-25 by branch
+`boundary2-filename-diagnostics-manifest`
 
 ## Position
 
@@ -58,14 +59,19 @@ Next blocker:
 
 Then, in order:
 
-1. Pull request boundary 2 remainder: named expected-failure manifest with
-   stale-entry detection plus the conversion backlog that requires every new
-   `_fail.cpp` test to carry `expected-diag` assertions while existing ones
-   migrate incrementally.
-2. Pull request boundary 3: first architectural regression slices
+1. Pull request boundary 2A: replace inline negative-test assertions with
+   filename-encoded diagnostic ID multisets, distinguish clean source rejection
+   from internal compiler or driver failure, freeze the legacy `_fail.cpp`
+   inventory, migrate the three structured declarator-family tests, and add the
+   separate named expected-failure manifest with stale-entry detection.
+2. Pull request boundaries 2B through 2F: convert the frozen legacy negative
+   tests in bounded diagnostic-owner batches. Each batch assigns stable IDs at
+   shared compiler emission sites and renames only its exact inventory slice;
+   boundary 2F deletes `_fail.cpp` classification and the frozen inventory.
+3. Pull request boundary 3: first architectural regression slices
    (promotion, namespace-template identity, ambiguous member lookup),
    mutation-validated.
-3. Pull request boundary 4: template facade plus the remaining choke-point
+4. Pull request boundary 4: template facade plus the remaining choke-point
    counters and the `'$'` inline-parsing static inventory.
 
 Named follow-ups carried forward:
