@@ -413,6 +413,21 @@ A reverted attempt needs only the smallest written finding required to prevent
 the next implementation from repeating the same failed assumption. It is not a
 general worklog.
 
+## Normative references
+
+Clause tags such as `[class.member.lookup]` refer to the C++20 standard,
+ISO/IEC 14882:2020 (final draft N4861):
+
+- stable per-section HTML: `https://timsong-cpp.github.io/cppwp/n4861/<tag>`;
+- PDF: `https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/n4861`;
+- normative LaTeX source: `https://github.com/cplusplus/draft`;
+- cppreference indexes these sections but is not a correctness authority.
+
+Each architecture boundary below carries an "Implements:" list naming the
+clauses its work must satisfy. Execution follows boundary order, not clause
+order; the tags are correctness targets for tests and execution briefs.
+Mangling is the exception: it is defined by ABI documents, not ISO clauses.
+
 ## Architecture boundary 0: diagnosability and measurement
 
 Architectural work cannot be judged with the current diagnostic and runner
@@ -618,6 +633,10 @@ Deliver:
 - merge rules for default arguments, exception specifications, `inline`,
   `constexpr`, attributes, friend declarations, and template declarations.
 
+Implements: [basic.def], [basic.link], [dcl.fct.default], [except.spec],
+[dcl.inline], [dcl.constexpr], [dcl.attr], [class.friend],
+[namespace.memdef].
+
 ### Persistent scopes
 
 Deliver:
@@ -628,6 +647,8 @@ Deliver:
 - namespace and class ownership;
 - source-order positions for point-sensitive lookup;
 - `ScopeId` recorded at declaration and expression lookup sites.
+
+Implements: [basic.scope], [basic.lookup.unqual], [basic.lookup.qual].
 
 ### Template facade shell
 
@@ -664,6 +685,10 @@ Deliver:
 - correct `.data.rel.ro` placement and relocation kinds for RTTI and vtables;
 - PIE-safe output.
 
+Implements: [basic.def.odr], [basic.link], [dcl.inline], [temp.spec],
+[temp.inst]. Section layout, COMDAT groups, `.eh_frame`, and relocation
+kinds follow the Itanium psABI and Microsoft x64 ABI, not ISO clauses.
+
 Exit criteria:
 
 - two translation units sharing inline functions, template instantiations,
@@ -684,6 +709,10 @@ Replace flat type descriptions with recursive canonical nodes for:
 - template parameters;
 - template specializations;
 - dependent types.
+
+Implements: [basic.types], [basic.fundamental], [basic.compound],
+[dcl.type], [dcl.ptr], [dcl.ref], [dcl.array], [dcl.fct], [dcl.mptr],
+[class], [dcl.enum], [temp.param], [temp.spec], [temp.dep.type].
 
 Delete the parallel pointer-level and array-dimension representation as
 semantic currency. Parser declarator structures may remain syntax-only until
@@ -735,6 +764,10 @@ Implement:
 - constructor and destructor variants required by each ABI;
 - mangling from `EntityId`, canonical types, and target ABI only.
 
+Correctness sources here are the Itanium C++ ABI mangling specification and
+Microsoft x64 name-mangling documentation; ISO clauses do not define mangled
+names.
+
 Exit criteria:
 
 - parse-order changes do not alter mangled output;
@@ -764,6 +797,10 @@ Start with:
 4. conditional expressions;
 5. calls.
 
+Implements: [conv.prom], [expr.arith.conv], [conv.qual], [dcl.init.ref],
+[dcl.init.list], [expr.cond], [expr.ass], [expr.call], [over.best.ics],
+[expr.const].
+
 Use shadow comparison before switching each expression family.
 
 Exit criteria:
@@ -792,6 +829,13 @@ Deliver:
 - one overload engine with complete implicit conversion sequences,
   derived-to-base distance, template ordering hooks, and candidate diagnostics;
 - declaration-keyed constexpr bindings.
+
+Implements: [basic.scope], [basic.lookup.unqual], [basic.lookup.qual],
+[basic.lookup.udir], [basic.lookup.classref], [basic.lookup.argdep],
+[class.member.lookup], [class.access], [class.access.base],
+[over.match.funcs], [over.match.viable], [over.match.best],
+[over.match.oper], [over.best.ics], [over.ics.rank],
+[temp.deduct.partial].
 
 Migration order:
 
@@ -830,6 +874,10 @@ Deliver:
 - adapters from old representations with named deletion architecture
   boundaries.
 
+Implements: [temp.param], [temp.arg], [temp.names], [temp.res],
+[temp.dep], [temp.spec], [temp.alias], [temp.variadic], [temp.fct],
+[temp.over.link].
+
 Exit criteria:
 
 - same-named templates in different namespaces never collide or overwrite;
@@ -857,6 +905,11 @@ Deliver:
 - simple, type, compound, and nested requirements;
 - `noexcept` and return-type requirements as parts of compound requirements;
 - instantiation-context diagnostics.
+
+Implements: [temp.deduct], [temp.constr], [temp.constr.normal],
+[temp.constr.atomic], [temp.constr.op], [expr.prim.req],
+[expr.prim.req.simple], [expr.prim.req.type], [expr.prim.req.compound],
+[expr.prim.req.nested], [temp.point].
 
 Exit criteria:
 
@@ -898,6 +951,12 @@ Deliver:
   and diagnostics;
 - conforming implementation limits without a sticky translation-unit cap.
 
+Implements: [temp.spec], [temp.inst], [temp.explicit],
+[temp.spec.partial], [temp.spec.partial.match],
+[temp.spec.partial.order], [temp.deduct], [temp.deduct.call],
+[temp.deduct.type], [temp.deduct.guide], [temp.deduct.partial],
+[temp.point], [temp.variadic].
+
 Exit criteria:
 
 - migrated constructs never restore saved lexer positions;
@@ -920,6 +979,9 @@ Deliver:
 - constrained function-template ordering layered on the new function-template
   partial-ordering implementation;
 - diagnostics for incomparable and unsatisfied constraints.
+
+Implements: [temp.constr.order], [temp.constr.atomic],
+[over.match.best].
 
 Exit criteria:
 
@@ -944,6 +1006,10 @@ Deliver:
   materialization, or parser callbacks;
 - no writes from AST-to-IR into semantic state;
 - adapters to the existing flat IR while the backend remains unchanged.
+
+Implements: [stmt.ranged], [class.temporary], [class.copy.elision],
+[class.conv], [dcl.init], [over.match.list], [over.match.copy],
+[over.match.ref], [expr.ref], [except.ctor].
 
 Exit criteria:
 
@@ -973,6 +1039,11 @@ Once sema and templates are independent of parser state:
   template substitution, and instantiation;
 - remove parser-to-sema cycles;
 - remove parser callbacks from constexpr.
+
+Tentative parsing exists only where the grammar itself is ambiguous;
+[dcl.ambig.res], [stmt.ambig], and [temp.names] bound how much rollback the
+language actually requires, and those clauses are the correctness target for
+the scoped transactions below.
 
 ### Block ranges in the token buffer
 
