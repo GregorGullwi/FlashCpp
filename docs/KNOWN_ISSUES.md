@@ -356,14 +356,6 @@ root; unrelated to the DiagnosticEngine slice that surfaced it. Suspect shared
 static state across earlier TEST_CASEs in the same process. Owner: sema query
 lifecycle; fix by isolating per-test semantic state or resetting query slots.
 
-## Win64 virtual calls cannot return hidden-slot aggregates
-
-`VirtualCallOp` has no return-slot field. On Win64, a virtual function returning an
-aggregate that requires an indirect return would need a hidden pointer in argument
-position zero and `this` in position one. IR generation now rejects this unsupported
-shape instead of emitting a call with misplaced arguments. The proper fix is to add
-return-slot metadata to `VirtualCallOp` and lower it like other indirect calls.
-
 ## Clang release build has an unrelated warning error
 
 `make release` currently fails because `current_struct_type` is set but unused in
