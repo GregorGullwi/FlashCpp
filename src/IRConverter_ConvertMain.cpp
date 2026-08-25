@@ -2123,6 +2123,33 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 		if (instruction.getOpcode() == IrOpcode::ConstructorCall && instruction.hasTypedPayload()) {
 			if (const ConstructorCallOp* ctor_op = std::any_cast<ConstructorCallOp>(&instruction.getTypedPayload())) {
+				if (!ctor_op->is_heap_allocated) {
+					if (const auto* object_temp = std::get_if<TempVar>(&ctor_op->object)) {
+						TypeIndex constructed_type_index = ctor_op->target_type_index;
+						if (!constructed_type_index.is_valid() && ctor_op->resolved_constructor != nullptr) {
+							constructed_type_index = ctor_op->resolved_constructor->owning_type_index();
+						}
+						const TypeInfo* constructed_type_info = tryGetTypeInfo(constructed_type_index);
+						if (constructed_type_info == nullptr ||
+							!constructed_type_info->sizeInBits().is_set()) {
+							throw InternalError(
+								"ConstructorCallOp stack destination requires a complete constructed type");
+						}
+						const int object_size_bits = constructed_type_info->sizeInBits().value;
+						if (object_size_bits <= 0) {
+							throw InternalError(
+								"ConstructorCallOp stack destination has a non-positive object size");
+						}
+						const StringHandle object_temp_handle =
+							StringTable::getOrInternStringHandle(object_temp->name());
+						auto [size_it, inserted] =
+							temp_var_sizes_.try_emplace(object_temp_handle, object_size_bits);
+						if (!inserted && size_it->second < object_size_bits) {
+							size_it->second = object_size_bits;
+						}
+					}
+				}
+
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 				size_t outgoing_bytes = 0;
 
