@@ -2167,14 +2167,22 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			}
 		}
 
-		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-			if (instruction.getOpcode() == IrOpcode::VirtualCall && instruction.hasTypedPayload()) {
-				if (const VirtualCallOp* call_op = std::any_cast<VirtualCallOp>(&instruction.getTypedPayload())) {
-					const size_t occupied_positions = call_op->arguments.size() + 1;
-					const size_t outgoing_bytes = getWin64OutgoingArgumentAreaSize(occupied_positions);
-					if (outgoing_bytes > max_outgoing_arg_bytes) {
-						max_outgoing_arg_bytes = outgoing_bytes;
-					}
+		if (instruction.getOpcode() == IrOpcode::VirtualCall && instruction.hasTypedPayload()) {
+			if (const VirtualCallOp* call_op = std::any_cast<VirtualCallOp>(&instruction.getTypedPayload())) {
+				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+				size_t outgoing_bytes = 0;
+				if (is_coff_format) {
+					const size_t occupied_positions =
+						call_op->arguments.size() + 1 + (call_op->usesReturnSlot() ? 1 : 0);
+					outgoing_bytes = getWin64OutgoingArgumentAreaSize(occupied_positions);
+				} else {
+						// SysV: 'this' consumes int slot 0; a hidden return slot shifts it
+						// to slot 1 and every explicit argument up by one more.
+					const size_t int_slots_start = 1 + (call_op->usesReturnSlot() ? 1 : 0);
+					outgoing_bytes = computeSysVOutgoingBytes(call_op->arguments, int_slots_start);
+				}
+				if (outgoing_bytes > max_outgoing_arg_bytes) {
+					max_outgoing_arg_bytes = outgoing_bytes;
 				}
 			}
 		}
@@ -2293,6 +2301,22 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						}
 						temp_var_sizes_[StringTable::getOrInternStringHandle(indirect_call_op->result.name())] = result_size;
 						handled_by_typed_payload = true;
+					}
+					// Try VirtualCallOp (vtable-dispatched calls)
+					else if (const VirtualCallOp* virtual_call_op = std::any_cast<VirtualCallOp>(&instruction.getTypedPayload())) {
+						if (const auto* result_temp = std::get_if<TempVar>(&virtual_call_op->result.value)) {
+							int result_size = virtual_call_op->result.size_in_bits.value;
+							if (result_size == 0) {
+								int computed_size = get_type_size_bits(virtual_call_op->result.typeEnum());
+								if (computed_size > 0) {
+									result_size = computed_size;
+								} else {
+									result_size = static_cast<int>(sizeof(void*) * 8);
+								}
+							}
+							temp_var_sizes_[StringTable::getOrInternStringHandle(result_temp->name())] = result_size;
+							handled_by_typed_payload = true;
+						}
 					}
 					// Try ArrayAccessOp (array element load)
 					else if (const ArrayAccessOp* array_op = std::any_cast<ArrayAccessOp>(&instruction.getTypedPayload())) {
@@ -5670,6 +5694,11 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 
 	flushAllDirtyRegisters();
 
+		// A hidden aggregate return slot occupies argument position zero on both ABIs,
+		// so 'this' shifts from position zero to position one when one is present.
+	const bool uses_return_slot = op.usesReturnSlot();
+	const size_t param_shift = uses_return_slot ? 1 : 0;
+
 		// Get result offset
 	assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
 	const TempVar& result_var = std::get<TempVar>(op.result.value);
@@ -5686,7 +5715,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		object_offset = getVariableOffsetOrThrow(var_name_handle, "handleVirtualCall object");
 	}
 
-	const X64Register this_reg = getIntParamReg<TWriterClass>(0); // First parameter register
+	const X64Register this_reg = getIntParamReg<TWriterClass>(param_shift);
 
 	auto loadVirtualTarget = [&]() {
 		if (op.is_pointer_access) {
@@ -5709,17 +5738,14 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		}
 	};
 
-	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		loadVirtualTarget();
-	}
-
-		// Win64 loads explicit arguments before the this register and call target.
+		// Win64 and SysV both load explicit arguments before the call target: every
+		// spill pass allocates temporaries that could otherwise clobber 'this' or RAX.
 	if (!op.arguments.empty()) {
 		size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 		size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 		size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 
-		size_t int_reg_index = 1;
+		size_t int_reg_index = 1 + param_shift;
 		size_t float_reg_index = 0;
 		size_t stack_arg_count = 0;
 
@@ -5730,7 +5756,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 
 			bool use_register = false;
 			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-				use_register = i + 1 < WIN64_INT_PARAM_REGS.size();
+				use_register = i + 1 + param_shift < WIN64_INT_PARAM_REGS.size();
 			} else {
 				if (is_float_arg) {
 					use_register = float_reg_index < max_float_regs;
@@ -5744,7 +5770,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			if (!use_register) {
 				const int stack_offset = std::is_same_v<TWriterClass, ElfFileWriter>
 											 ? static_cast<int>(shadow_space + stack_arg_count * 8)
-											 : static_cast<int>(getWin64CallerOverflowOffset(i + 1));
+											 : static_cast<int>(getWin64CallerOverflowOffset(i + 1 + param_shift));
 				if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 					if (is_float_arg) {
 						X64Register temp_xmm = allocateXMMRegisterWithSpilling();
@@ -5803,7 +5829,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			}
 		}
 
-		int_reg_index = 1;  // Reset, 'this' is in register 0
+		int_reg_index = 1 + param_shift;  // Reset; slot 0 is the hidden return slot, then 'this'
 		float_reg_index = 0;
 
 		for (size_t i = 0; i < op.arguments.size(); ++i) {
@@ -5814,7 +5840,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			bool use_register = false;
 			X64Register target_reg = X64Register::Count;
 			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-				const size_t position = i + 1;
+				const size_t position = i + 1 + param_shift;
 				use_register = position < WIN64_INT_PARAM_REGS.size();
 				if (use_register) {
 					const Win64ScalarArgumentClass argument_class =
@@ -5892,15 +5918,26 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		}
 	}
 
-	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-		loadVirtualTarget();
+	loadVirtualTarget();
+
+		// Load the hidden return slot after argument setup so temporary register traffic in
+		// the spill/register passes cannot overwrite the ABI-mandated first parameter.
+	if (uses_return_slot) {
+		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
+		emitLeaFromFrame(return_slot_reg, result_offset);
+
+		FLASH_LOG_FORMAT(Codegen, Debug,
+						 "Virtual call passes return slot address (offset {}) in register {}",
+						 result_offset, static_cast<int>(return_slot_reg));
 	}
 
 	textSectionData.push_back(0xFF); // CALL r/m64
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
-		// Step 7: Store return value from RAX to result variable using the correct size
-	if (op.result.effectiveIrType() != IrType::Void) {
+		// Step 7: Store return value from RAX to result variable using the correct size.
+		// A hidden-slot aggregate was constructed directly into the result location by
+		// the callee, so RAX (the returned slot pointer) must not be stored over it.
+	if (op.result.effectiveIrType() != IrType::Void && !uses_return_slot) {
 		emitMovToFrameSized(
 			SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
 			SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.typeEnum())}	// dest
@@ -14392,8 +14429,12 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 	} else {
 		auto value_var = std::get<TempVar>(op.value.value);
 		int32_t value_offset = getStackOffsetFromTempVar(value_var);
+			// Only reuse a cached GPR. Floating-point temporaries stay registered in
+			// XMM slots, and handing an XMM register to the general-purpose store below
+			// would encode it as a wrong GPR. Float values are always mirrored to their
+			// frame slot by storeArithmeticResult, so loading from memory is exact.
 		auto existing_reg = regAlloc.findRegisterForStackOffset(value_offset);
-		if (existing_reg.has_value()) {
+		if (existing_reg.has_value() && existing_reg.value() < X64Register::XMM0) {
 			value_reg = existing_reg.value();
 		} else {
 			emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits.value);

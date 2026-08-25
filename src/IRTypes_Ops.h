@@ -729,6 +729,13 @@ struct VirtualCallOp {
 	bool returns_reference = false;					// True if function returns T& or T&&
 	bool returns_rvalue_reference = false;		   // True if function returns T&&
 	SizeInBits referenced_value_size_in_bits{};		// Referenced object size for T&/T&& returns
+	std::optional<TempVar> return_slot;				// Optional temp var representing the return slot location
+
+	// Returns true if the aggregate return uses a hidden slot pointer in argument
+	// position zero ('this' shifts to position one), matching CallOp/IndirectCallOp
+	bool usesReturnSlot() const {
+		return return_slot.has_value();
+	}
 };
 
 // String literal

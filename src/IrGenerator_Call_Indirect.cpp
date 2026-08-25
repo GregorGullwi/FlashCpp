@@ -1345,9 +1345,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
 				? *expression_return_type
 				: declared_return_type;
-		if (context_->isLLP64() && needsHiddenReturnParam(return_type, true)) {
-			throw InternalError(
-				"Win64 virtual calls with hidden aggregate returns require return-slot IR support");
+		if (needsHiddenReturnParam(return_type, context_->isLLP64())) {
+				// The aggregate is returned through a hidden slot pointer in argument
+				// position zero on both ABIs; 'this' shifts to position one.
+			vcall_op.return_slot = ret_var;
 		}
 		vcall_op.result.setType(return_type.category());
 		vcall_op.result.ir_type = toIrType(return_type.type());
