@@ -29,6 +29,7 @@
 //   0        reserved (None)
 //   1001..1099  declarator and type-id syntax family
 //   1051..1079  note-level IDs belonging to the declarator family
+//   1101..1199  lexical numeric-literal family
 //   2000..2099  reserved for template instantiation family
 //   3000+    unallocated
 
@@ -63,6 +64,10 @@ enum class DiagnosticId : uint32_t {
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
+
+	// Lexical numeric-literal family (1101..1199).
+	HexFloatRequiresBinaryExponent = 1101,
+	InvalidIntegerLiteralSuffix = 1102,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -75,6 +80,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ExpectedCloseBracketAfterArraySize";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
+	case DiagnosticId::HexFloatRequiresBinaryExponent:
+		return "HexFloatRequiresBinaryExponent";
+	case DiagnosticId::InvalidIntegerLiteralSuffix:
+		return "InvalidIntegerLiteralSuffix";
 	case DiagnosticId::None:
 	default:
 		return "None";

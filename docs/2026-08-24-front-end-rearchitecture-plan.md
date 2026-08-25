@@ -1130,6 +1130,10 @@ Do not introduce a generic legacy diagnostic ID, derive IDs from message text,
 or assign IDs per test. A conversion batch must stop and split again if its
 rejection paths do not share a bounded diagnostic owner.
 
+A frozen test that fails only because an incomplete parser or sema
+implementation does not yet support the construct may be deleted instead of
+implementing the missing parser error.
+
 ### Pull request boundary 3: first architectural regression slices
 
 - Add promotion, namespace-template-identity, and ambiguous-member-lookup
