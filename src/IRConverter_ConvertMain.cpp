@@ -9496,8 +9496,15 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 									bytes_copied += 1;
 								}
 
+								regAlloc.release(dest_reg);
+
 								FLASH_LOG_FORMAT(Codegen, Debug,
 												 "Struct copy complete: copied {} bytes", bytes_copied);
+
+								// Both Win64 and SysV require the hidden return-slot pointer in
+								// RAX so callers that forward aggregates observe a valid source.
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+								emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
 							}
 						} else if (is_float_return) {
 								// Load floating-point value into XMM0
@@ -9625,8 +9632,15 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 									bytes_copied += 1;
 								}
 
+								regAlloc.release(dest_reg);
+
 								FLASH_LOG_FORMAT(Codegen, Debug,
 												 "Struct copy complete: copied {} bytes", bytes_copied);
+
+								// Both Win64 and SysV require the hidden return-slot pointer in
+								// RAX so callers that forward aggregates observe a valid source.
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+								emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
 							}
 						} else if (is_float_return) {
 								// Load floating-point value into XMM0
