@@ -5,8 +5,8 @@
 // Platform-Specific Calling Conventions
 // ============================================================================
 // Windows x64 (Win64 ABI): Uses Microsoft x64 calling convention
-//   - Integer/pointer args: RCX, RDX, R8, R9 (4 registers)
-//   - Float args: XMM0-XMM3 (4 registers)
+//   - The first four argument positions select RCX/XMM0, RDX/XMM1,
+//     R8/XMM2, or R9/XMM3 according to the argument's scalar class
 //   - Shadow space: 32 bytes (4 * 8) for spilling register parameters
 //   - Stack alignment: 16 bytes at call instruction
 //
@@ -20,18 +20,55 @@
 
 // Win64 calling convention register mapping (Windows)
 static constexpr std::array<X64Register, 4> WIN64_INT_PARAM_REGS = {
-	X64Register::RCX,  // First integer/pointer argument
-	X64Register::RDX,  // Second integer/pointer argument
-	X64Register::R8,	 // Third integer/pointer argument
-	X64Register::R9	// Fourth integer/pointer argument
+	X64Register::RCX,  // Position 0 integer/pointer argument
+	X64Register::RDX,  // Position 1 integer/pointer argument
+	X64Register::R8,	 // Position 2 integer/pointer argument
+	X64Register::R9	// Position 3 integer/pointer argument
 };
 
 static constexpr std::array<X64Register, 4> WIN64_FLOAT_PARAM_REGS = {
-	X64Register::XMM0, // First floating point argument
-	X64Register::XMM1, // Second floating point argument
-	X64Register::XMM2, // Third floating point argument
-	X64Register::XMM3  // Fourth floating point argument
+	X64Register::XMM0, // Position 0 floating-point argument
+	X64Register::XMM1, // Position 1 floating-point argument
+	X64Register::XMM2, // Position 2 floating-point argument
+	X64Register::XMM3  // Position 3 floating-point argument
 };
+
+enum class Win64ScalarArgumentClass : uint8_t {
+	Integer,
+	FloatingPoint,
+};
+
+constexpr X64Register getWin64ScalarArgumentRegister(size_t position, Win64ScalarArgumentClass argument_class) {
+	if (position >= WIN64_INT_PARAM_REGS.size()) {
+		return X64Register::Count;
+	}
+	return argument_class == Win64ScalarArgumentClass::FloatingPoint
+			   ? WIN64_FLOAT_PARAM_REGS[position]
+			   : WIN64_INT_PARAM_REGS[position];
+}
+
+constexpr size_t getWin64CallerOverflowOffset(size_t position) {
+	return position * 8;
+}
+
+constexpr int getWin64CalleeArgumentHomeOffset(size_t position) {
+	return 16 + static_cast<int>(position * 8);
+}
+
+constexpr size_t getWin64OutgoingArgumentAreaSize(size_t occupied_positions) {
+	const size_t reserved_positions = occupied_positions < WIN64_INT_PARAM_REGS.size()
+										  ? WIN64_INT_PARAM_REGS.size()
+										  : occupied_positions;
+	return reserved_positions * 8;
+}
+
+static_assert(getWin64ScalarArgumentRegister(0, Win64ScalarArgumentClass::Integer) == X64Register::RCX);
+static_assert(getWin64ScalarArgumentRegister(1, Win64ScalarArgumentClass::FloatingPoint) == X64Register::XMM1);
+static_assert(getWin64ScalarArgumentRegister(4, Win64ScalarArgumentClass::Integer) == X64Register::Count);
+static_assert(getWin64CallerOverflowOffset(4) == 32);
+static_assert(getWin64CalleeArgumentHomeOffset(4) == 48);
+static_assert(getWin64OutgoingArgumentAreaSize(0) == 32);
+static_assert(getWin64OutgoingArgumentAreaSize(6) == 48);
 
 // System V AMD64 calling convention register mapping (Linux/Unix)
 static constexpr std::array<X64Register, 6> SYSV_INT_PARAM_REGS = {
