@@ -551,6 +551,16 @@ int main_impl(int argc, char* argv[]) {
 		FLASH_LOG(Parser, Error, error_msg);
 		// Also print to stderr to ensure error is visible even with minimal logging
 		std::cerr << error_msg << std::endl;
+		// Diagnostics that were reported into the engine while the parser
+		// recovered through its ParseResult channel render here once, at this
+		// single rejection choke point. The categorized log copy carries the
+		// [ERROR][Parser] prefix; the plain copy is the tool-readable line.
+		for (const Diagnostic& diagnostic : context.diagnostics().diagnostics()) {
+			std::string rendered_diagnostic = renderDiagnostic(
+				diagnostic, context.diagnostics(), lexer.file_paths());
+			FLASH_LOG(Parser, Error, rendered_diagnostic);
+			std::cerr << rendered_diagnostic << std::endl;
+		}
 		return exitCode(CompilerExitStatus::SourceRejected);
 	}
 

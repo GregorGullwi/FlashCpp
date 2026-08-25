@@ -243,7 +243,7 @@ try {
 		-CompatibilityPath (Join-Path $repoRoot "tests\legacy_internal_failure_tests.txt") `
 		-LegacyInventoryPath $missingLegacyMembership
 	Assert-Runner (-not $compatibilityMembership.Valid -and
-		$compatibilityMembership.Error -match "not in the frozen legacy inventory") "compatibility entries outside the frozen 259-name inventory are rejected"
+		$compatibilityMembership.Error -match "not in the frozen legacy inventory") "compatibility entries outside the frozen legacy-name inventory are rejected"
 
 	$manifestTests = Join-Path $tempRoot "manifest_tests"
 	New-Item -ItemType Directory -Path $manifestTests -Force | Out-Null

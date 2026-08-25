@@ -1,5 +1,20 @@
 # Known Issues
 
+## Declaration-parse errors are masked by the expression-statement fallback
+
+When `parse_function_declaration` returns a `ParseResult` error, the top-level
+declaration dispatcher restores the saved token position and retries the line
+as an expression statement. The fallback's own error then replaces the
+originating one in terminal output. Example: the `[dcl.fct.default]/4` check
+(`Parser_FunctionHeaders.cpp`) produces `Missing default argument on parameter`
+for `(int a = 10, int b)`, but the surfaced message is the fallback's
+`Unexpected keyword in expression context`. Consequences for boundaries 2C-2F:
+converting such a `ParseResult` site to a structured ID would pin the fallback's
+diagnostic, not the rule's. A masked site must first route its rejection
+through the shared declaration/expression dispatch, or its test is deleted
+under the incomplete-feature rule (`test_default_arg_after_nondefault_fail.cpp`
+was deleted for exactly this reason). Owner: parser declaration dispatch.
+
 ## Seven legacy negative tests terminate through internal-failure paths
 
 Boundary 2A gives clean source rejection exit status 1 and internal/compiler

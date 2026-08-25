@@ -12,6 +12,7 @@ public:
 		Identifier,
 		Keyword,
 		Literal,
+		ErrorLiteral,
 		StringLiteral,
 		CharacterLiteral,
 		Operator,
@@ -53,6 +54,7 @@ private:
 		case Type::Identifier:
 			return TokenKind::ident();
 		case Type::Literal:
+		case Type::ErrorLiteral:
 			return TokenKind::literal();
 		case Type::StringLiteral:
 			return TokenKind::string_literal();
@@ -86,6 +88,7 @@ private:
 		switch (type) {
 		case Type::Identifier:
 		case Type::Literal:
+		case Type::ErrorLiteral:
 		case Type::StringLiteral:
 		case Type::CharacterLiteral:
 		case Type::Keyword:

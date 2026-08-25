@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cctype>
+#include <cstdint>
 #include <string_view>
 #include <unordered_set>
 #include <unordered_map>
@@ -14,6 +15,70 @@
 #include "SourceLocation.h"
 #include "FileReader.h"	// For SourceLineMapping definition
 #include "StringLiteralTokenUtils.h"
+
+// Lexical validity of numeric-literal spellings ([lex.icon], [lex.fcon]).
+// Shared by the lexer, which forms ErrorLiteral tokens, and the parser, which
+// reports the structured diagnostic for such tokens.
+enum class NumericLiteralAnomaly : uint8_t {
+	None,
+	HexFloatRequiresBinaryExponent,
+	InvalidIntegerLiteralSuffix,
+};
+
+// A trailing run made only of 'u'/'l' characters must form one of the
+// [lex.icon] integer-suffix combinations in any letter case. Longer runs and
+// every other trailing character stay on the permissive pp-number path so
+// user-defined-literal spellings remain untouched here.
+inline bool isValidIntegerSuffixRun(std::string_view run) {
+	// No trailing u/l characters means there is no integer suffix at all.
+	if (run.empty()) {
+		return true;
+	}
+	if (run.size() > 3) {
+		return false;
+	}
+	char lowered[3];
+	for (size_t i = 0; i < run.size(); ++i) {
+		lowered[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(run[i])));
+		if (lowered[i] != 'u' && lowered[i] != 'l') {
+			return false;
+		}
+	}
+	const std::string_view normalized(lowered, run.size());
+	return normalized == "u" || normalized == "l" || normalized == "ul" ||
+		   normalized == "lu" || normalized == "ll" || normalized == "ull" ||
+		   normalized == "llu";
+}
+
+inline NumericLiteralAnomaly findNumericLiteralAnomaly(std::string_view text) {
+	const bool is_hex = text.size() > 1 && text[0] == '0' &&
+						(text[1] == 'x' || text[1] == 'X');
+	if (is_hex) {
+		// [lex.fcon]: a hexadecimal floating literal with a fractional part
+		// requires a binary-exponent-part (p/P).
+		const size_t dot = text.find('.');
+		if (dot != std::string_view::npos &&
+			text.find('p', dot + 1) == std::string_view::npos &&
+			text.find('P', dot + 1) == std::string_view::npos) {
+			return NumericLiteralAnomaly::HexFloatRequiresBinaryExponent;
+		}
+		return NumericLiteralAnomaly::None;
+	}
+
+	size_t run_start = text.size();
+	while (run_start > 0) {
+		const char lowered_char =
+			static_cast<char>(std::tolower(static_cast<unsigned char>(text[run_start - 1])));
+		if (lowered_char != 'u' && lowered_char != 'l') {
+			break;
+		}
+		--run_start;
+	}
+	if (isValidIntegerSuffixRun(text.substr(run_start))) {
+		return NumericLiteralAnomaly::None;
+	}
+	return NumericLiteralAnomaly::InvalidIntegerLiteralSuffix;
+}
 
 struct TokenPosition {
 	size_t cursor_;
@@ -360,11 +425,10 @@ private:
 			// Hexadecimal floating literals may have a fractional part after the
 			// hex digits and use a 'p' exponent (e.g. 0x1.0p-3).
 			// Per C++20 [lex.fcon], a hex float REQUIRES a binary-exponent-part
-			// (p/P). If no 'p'/'P' follows, the '.' is not part of the literal
-			// and we must backtrack so it is tokenized separately.
+			// (p/P). A fractional part without one is ill-formed; the whole
+			// pp-number is consumed here and classified by
+			// findNumericLiteralAnomaly() so the parser can diagnose it.
 			if (cursor_ < source_size_ && source_[cursor_] == '.') {
-				size_t saved_cursor = cursor_;
-				size_t saved_column = column_;
 				++cursor_;
 				++column_;
 				while (cursor_ < source_size_ && (std::isxdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
@@ -385,10 +449,6 @@ private:
 						++cursor_;
 						++column_;
 					}
-				} else {
-					// No binary exponent — backtrack: '.' is not part of this hex literal.
-					cursor_ = saved_cursor;
-					column_ = saved_column;
 				}
 			} else if (cursor_ < source_size_ && (source_[cursor_] == 'p' || source_[cursor_] == 'P')) {
 				// Hex float without fractional part but with exponent (e.g. 0x1p10)
@@ -482,6 +542,9 @@ private:
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
+		if (findNumericLiteralAnomaly(value) != NumericLiteralAnomaly::None) {
+			return Token(Token::Type::ErrorLiteral, value, line_, column_, current_file_index_);
+		}
 		return Token(Token::Type::Literal, value, line_, column_, current_file_index_);
 	}
 

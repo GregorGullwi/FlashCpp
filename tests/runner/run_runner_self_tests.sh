@@ -205,7 +205,7 @@ else
 	printf '%s' "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR" | grep -qF 'not in the frozen legacy inventory' &&
 		compatibility_membership_ok=true || compatibility_membership_ok=false
 fi
-assert_runner "$compatibility_membership_ok" "compatibility entries outside the frozen 259-name inventory are rejected"
+assert_runner "$compatibility_membership_ok" "compatibility entries outside the frozen legacy-name inventory are rejected"
 
 mkdir -p "$temp_root/manifest_tests"
 touch "$temp_root/manifest_tests/positive_ret0.cpp"

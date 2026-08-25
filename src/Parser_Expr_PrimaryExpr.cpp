@@ -12,6 +12,7 @@
 #include "TypeTraitEvaluator.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <type_traits>
 
@@ -3421,6 +3422,42 @@ ParseResult Parser::tryParseExplicitTemplateBraceInitialization(
 		identifier_token,
 		explicit_template_args);
 }
+
+namespace {
+// Reports the lexical anomaly carried by a Token::Type::ErrorLiteral through
+// the engine. The caller recovers through its normal error channel; nothing
+// here throws.
+void reportNumericLiteralAnomaly(DiagnosticEngine& diagnostics,
+								 const Token& token,
+								 SourceLocation location) {
+	switch (findNumericLiteralAnomaly(token.value())) {
+	case NumericLiteralAnomaly::HexFloatRequiresBinaryExponent: {
+		const std::array<DiagnosticArgument, 1> arguments{
+			DiagnosticArgument::text(token.value())};
+		diagnostics.report(
+			DiagnosticId::HexFloatRequiresBinaryExponent,
+			DiagnosticSeverity::Error,
+			location,
+			"Hexadecimal floating literal '{}' requires a binary exponent part",
+			arguments);
+		return;
+	}
+	case NumericLiteralAnomaly::InvalidIntegerLiteralSuffix: {
+		const std::array<DiagnosticArgument, 1> arguments{
+			DiagnosticArgument::text(token.value())};
+		diagnostics.report(
+			DiagnosticId::InvalidIntegerLiteralSuffix,
+			DiagnosticSeverity::Error,
+			location,
+			"Invalid integer literal '{}'",
+			arguments);
+		return;
+	}
+	case NumericLiteralAnomaly::None:
+		return;
+	}
+}
+} // namespace
 
 ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 #if WITH_PARSER_RUNTIME_STATS
@@ -11118,6 +11155,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 		}
+	} else if (current_token_.type() == Token::Type::ErrorLiteral) {
+		reportNumericLiteralAnomaly(
+			context_.diagnostics(),
+			current_token_,
+			lexer_.getSourceLocation(current_token_));
+		return ParseResult::error("Expected numeric literal", current_token_);
 	} else if (current_token_.type() == Token::Type::Literal) {
 		auto literal_type = get_numeric_literal_type(current_token_.value());
 		if (!literal_type) {
