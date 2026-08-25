@@ -82,6 +82,16 @@ void printTimingSummary(double preprocessing_time, double lexer_setup_time, doub
 // Forward declaration
 int main_impl(int argc, char* argv[]);
 
+enum class CompilerExitStatus : int {
+	Success = 0,
+	SourceRejected = 1,
+	InternalFailure = 2,
+};
+
+constexpr int exitCode(CompilerExitStatus status) {
+	return static_cast<int>(status);
+}
+
 #if !defined(_WIN32)
 #include <sys/resource.h>
 #endif
@@ -160,22 +170,25 @@ int main(int argc, char* argv[]) {
 	// continuing silently unprotected.
 	if (!CrashHandler::install()) {
 		std::cerr << "Fatal error: failed to install crash handler" << std::endl;
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	}
 
 	try {
 		return main_impl(argc, argv);
+	} catch (const CompileError& e) {
+		std::cerr << "error: " << e.what() << std::endl;
+		return exitCode(CompilerExitStatus::SourceRejected);
 	} catch (const std::bad_any_cast& e) {
 		std::cerr << "Fatal error: std::bad_any_cast - " << e.what() << std::endl;
 		std::cerr << "This indicates an internal compiler error where a std::any was cast to the wrong type." << std::endl;
 		std::cerr << "This usually happens during IR conversion or template instantiation." << std::endl;
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	} catch (const std::exception& e) {
 		std::cerr << "Fatal error: " << e.what() << std::endl;
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	} catch (...) {
 		std::cerr << "Fatal error: Unknown exception caught" << std::endl;
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	}
 }
 
@@ -217,7 +230,7 @@ int main_impl(int argc, char* argv[]) {
 
 	if (argsparser.hasOption("h"_opt) || argsparser.hasOption("help"_opt)) {
 		CommandLineParser::printHelp();
-		return 0;
+		return exitCode(CompilerExitStatus::Success);
 	}
 
 	if (argsparser.hasOption("o"_opt)) {
@@ -290,11 +303,20 @@ int main_impl(int argc, char* argv[]) {
 	const auto& inputFileArgs = argsparser.inputFileArgs();
 	if (inputFileArgs.empty()) {
 		FLASH_LOG(General, Error, "No input file specified\n");
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	}
 	std::filesystem::path inputFilePath(inputFileArgs.front());
 	inputFilePath = std::filesystem::absolute(inputFilePath);
 	context.setInputFile(inputFilePath.string());
+	{
+		std::error_code input_status_error;
+		const bool input_is_regular_file = std::filesystem::is_regular_file(inputFilePath, input_status_error);
+		std::ifstream input_probe(inputFilePath, std::ios::binary);
+		if (input_status_error || !input_is_regular_file || !input_probe) {
+			FLASH_LOG(General, Error, "Cannot read input file: ", inputFilePath.string());
+			return exitCode(CompilerExitStatus::InternalFailure);
+		}
+	}
 
 	// If no output file was specified, generate default output filename
 	if (context.getOutputFile().empty()) {
@@ -393,9 +415,9 @@ int main_impl(int argc, char* argv[]) {
 	{
 		PhaseTimer timer("Preprocessing", false, &preprocessing_time, FlashCpp::AllocationPhase::Preprocessing);
 		if (!file_reader.readFile(context.getInputFile().value())) {
-			FLASH_LOG(General, Error, "Failed to read input file: ", context.getInputFile().value());
-			std::cerr << "Error: Failed to read input file: " << context.getInputFile().value() << std::endl;
-			return 1;
+			FLASH_LOG(General, Error, "Preprocessing rejected input file: ", context.getInputFile().value());
+			std::cerr << "Error: Preprocessing rejected input file: " << context.getInputFile().value() << std::endl;
+			return exitCode(CompilerExitStatus::SourceRejected);
 		}
 	}
 
@@ -406,7 +428,7 @@ int main_impl(int argc, char* argv[]) {
 
 	// If preprocessor-only mode, we're done - the preprocessor already output the result
 	if (context.isPreprocessorOnlyMode()) {
-		return 0;
+		return exitCode(CompilerExitStatus::Success);
 	}
 
 	FLASH_LOG(General, Debug, "Verbose mode = ", (context.isVerboseMode() ? "true" : "false"));
@@ -521,7 +543,7 @@ int main_impl(int argc, char* argv[]) {
 				FLASH_LOG(Parser, Error, "error: ", parse_compile_error_message, parse_compile_error_notes);
 				std::cerr << "error: " << parse_compile_error_message << parse_compile_error_notes << std::endl;
 			}
-			return 1;
+			return exitCode(CompilerExitStatus::SourceRejected);
 		}
 		// Print formatted error with file:line:column information and include stack
 		recordDiagnosticEmittedOutsideEngine();
@@ -529,7 +551,7 @@ int main_impl(int argc, char* argv[]) {
 		FLASH_LOG(Parser, Error, error_msg);
 		// Also print to stderr to ensure error is visible even with minimal logging
 		std::cerr << error_msg << std::endl;
-		return 1;
+		return exitCode(CompilerExitStatus::SourceRejected);
 	}
 
 	const auto& ast = parser->get_nodes();
@@ -556,18 +578,18 @@ int main_impl(int argc, char* argv[]) {
 				std::string rendered_error = renderDiagnostic(
 					*structured_error, context.diagnostics(), lexer.file_paths());
 				FLASH_LOG(General, Error, rendered_error);
-				return 1;
+				return exitCode(CompilerExitStatus::SourceRejected);
 			}
 			std::string notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
 			FLASH_LOG(General, Error, "error: ", e.what(), notes);
-			return 1;
+			return exitCode(CompilerExitStatus::SourceRejected);
 		} catch (const InternalError& e) {
 			if (show_perf_stats) {
 				printOutsideDiagnosticTelemetry();
 			}
 			FLASH_LOG(General, Error, "internal error: ", e.what());
-			return 1;
+			return exitCode(CompilerExitStatus::InternalFailure);
 		}
 
 		if (show_perf_stats) {
@@ -731,7 +753,7 @@ int main_impl(int argc, char* argv[]) {
 		if (show_perf_stats) {
 			printOutsideDiagnosticTelemetry();
 		}
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	}
 
 	// Semantic compile errors (explicit constructor violations, etc.) are fatal
@@ -740,7 +762,7 @@ int main_impl(int argc, char* argv[]) {
 		if (show_perf_stats) {
 			printOutsideDiagnosticTelemetry();
 		}
-		return 1;
+		return exitCode(CompilerExitStatus::SourceRejected);
 	}
 
 	// Platform detection: Use ELF on Linux/Unix, COFF on Windows
@@ -778,7 +800,7 @@ int main_impl(int argc, char* argv[]) {
 			StackStringStats::print_stats();
 			printOutsideDiagnosticTelemetry();
 		}
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	} catch (const std::exception& e) {
 		FLASH_LOG(General, Error, "Code generation failed: ", e.what());
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
@@ -786,7 +808,7 @@ int main_impl(int argc, char* argv[]) {
 			StackStringStats::print_stats();
 			printOutsideDiagnosticTelemetry();
 		}
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	} catch (...) {
 		FLASH_LOG(General, Error, "Code generation failed with unknown exception");
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
@@ -794,7 +816,7 @@ int main_impl(int argc, char* argv[]) {
 			StackStringStats::print_stats();
 			printOutsideDiagnosticTelemetry();
 		}
-		return 1;
+		return exitCode(CompilerExitStatus::InternalFailure);
 	}
 
 	// Print final timing summary
@@ -838,5 +860,5 @@ int main_impl(int argc, char* argv[]) {
 		FlashCpp::AllocationTracker::printStats();
 	}
 
-	return 0;
+	return exitCode(CompilerExitStatus::Success);
 }

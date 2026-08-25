@@ -1,7 +1,6 @@
 # Reference Files Test Script for FlashCpp (PowerShell)
 # This script compiles and links all .cpp files in tests/ and reports any failures
 # Supports parallel execution with -Jobs N (default: number of CPU cores)
-# OPTIMIZED VERSION - uses call operator instead of Start-Process for better performance
 
 param(
 	[Parameter(Position = 0, ValueFromRemainingArguments = $true)]
@@ -154,14 +153,39 @@ if ($libPath2) { Write-Host "  $libPath2" }
 if ($libPath3) { Write-Host "  $libPath3" }
 Write-Host ""
 
-# Get all .cpp files from tests/.  Full-suite runs intentionally stay at the
-# historical tests/*.cpp scope; explicit test requests may name files under
-# tests/std or another test subdirectory.
-if ($requestedTestNames.Count -gt 0) {
-	$allTestFiles = Get-ChildItem -Path "tests" -Recurse -Filter "*.cpp" | Sort-Object FullName
-} else {
-	$allTestFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
+$negativeNameValidation = Test-FlashCppNegativeNames -RepoRoot $RepoRoot
+if (-not $negativeNameValidation.Valid) {
+	Write-Host "ERROR: $($negativeNameValidation.Error)" -ForegroundColor Red
+	Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name "negative-names" -Status "invalid" -Detail $negativeNameValidation.Error
+	exit 1
 }
+$inventoryValidation = Test-FlashCppLegacyNegativeInventory -RepoRoot $RepoRoot -InventoryPath (Join-Path $ScriptDir "legacy_negative_tests.txt")
+if (-not $inventoryValidation.Valid) {
+	Write-Host "ERROR: $($inventoryValidation.Error)" -ForegroundColor Red
+	Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name "legacy-inventory" -Status "invalid" -Detail $inventoryValidation.Error
+	exit 1
+}
+$legacyInternalCompatibility = Test-FlashCppLegacyInternalCompatibility `
+	-RepoRoot $RepoRoot `
+	-CompatibilityPath (Join-Path $ScriptDir "legacy_internal_failure_tests.txt") `
+	-LegacyInventoryPath (Join-Path $ScriptDir "legacy_negative_tests.txt")
+if (-not $legacyInternalCompatibility.Valid) {
+	Write-Host "ERROR: $($legacyInternalCompatibility.Error)" -ForegroundColor Red
+	Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name "legacy-internal-compatibility" -Status "invalid" -Detail $legacyInternalCompatibility.Error
+	exit 1
+}
+$legacyInternalCompatibilityNames = @($legacyInternalCompatibility.ActiveNames)
+$legacyInternalCompatibilityRemovalBoundary = $legacyInternalCompatibility.RemovalBoundary
+$expectedFailures = Read-FlashCppExpectedFailures -ManifestPath (Join-Path $ScriptDir "expected_failures.tsv") -TestsRoot $ScriptDir
+if (-not $expectedFailures.Valid) {
+	Write-Host "ERROR: $($expectedFailures.Error)" -ForegroundColor Red
+	Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name "expected-failures" -Status "invalid" -Detail $expectedFailures.Error
+	exit 1
+}
+
+# Both runners discover the root tests/*.cpp suite. Nested fixture, future, and
+# standard-header directories require their dedicated runners.
+$allTestFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
 
 # Linux-specific test files that should not run on Windows
 $linuxOnlyTests = @(
@@ -174,15 +198,7 @@ $supportSources = @(
 	"linux_exception_stubs.cpp"
 )
 
-# This legacy probe keeps all ill-formed constexpr expressions commented out;
-# it verifies that their surrounding definitions compile without crashing.
-$compileOnlyOverrides = @(
-	"test_ub_fail.cpp"
-)
-
-# Expected runtime crashes - files that compile and link but crash at runtime
-$expectedRuntimeCrashes = @(
-)
+$compileOnlyOverrides = @()
 
 # Classify every discovered source. Compile-only tests are intentionally run;
 # this prevents a missing or unusually-spelled main from silently dropping a test.
@@ -198,6 +214,12 @@ foreach ($file in $allTestFiles) {
 		"CompileOnly" { $regularFiles += $file }
 		"PlatformExcluded" { $excludedFiles += [pscustomobject]@{ File = $file; Reason = "Linux-only" } }
 		"SupportSource" { $excludedFiles += [pscustomobject]@{ File = $file; Reason = "link support source" } }
+		"MalformedNegative" {
+			$message = "Malformed diagnostic filename: $($file.Name)"
+			Write-Host "ERROR: $message" -ForegroundColor Red
+			Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name $file.Name -Status "invalid-negative-name" -Detail $message
+			exit 1
+		}
 		default {
 			$message = "Eligible test file was discovered but not classified: $($file.FullName)"
 			Write-Host "ERROR: $message" -ForegroundColor Red
@@ -205,6 +227,14 @@ foreach ($file in $allTestFiles) {
 			exit 1
 		}
 	}
+}
+
+$expectedFailureSchedule = Test-FlashCppExpectedFailureSchedule -ExpectedFailures $expectedFailures `
+	-ScheduledNames @($regularFiles | ForEach-Object { $_.Name })
+if (-not $expectedFailureSchedule.Valid) {
+	Write-Host "ERROR: $($expectedFailureSchedule.Error)" -ForegroundColor Red
+	Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name "expected-failures" -Status "invalid" -Detail $expectedFailureSchedule.Error
+	exit 1
 }
 
 $referenceFiles = $regularFiles
@@ -229,12 +259,12 @@ if ($invalidMultiTuCases.Count -gt 0) {
 
 # Filter to specific test files if provided
 if ($requestedTestNames.Count -gt 0) {
-	$referenceFiles = $referenceFiles | Where-Object { $requestedTestNames -contains $_.Name }
-	$failFiles = $failFiles | Where-Object { $requestedTestNames -contains $_.Name }
-	$multiTuCases = @($multiTuCases | Where-Object { $requestedTestNames -contains $_.Name })
+	$referenceFiles = $referenceFiles | Where-Object { $requestedTestNames -ccontains $_.Name }
+	$failFiles = $failFiles | Where-Object { $requestedTestNames -ccontains $_.Name }
+	$multiTuCases = @($multiTuCases | Where-Object { $requestedTestNames -ccontains $_.Name })
 
 	$matchedNames = @($referenceFiles.Name) + @($failFiles.Name) + @($multiTuCases.Name)
-	$missingNames = @($requestedTestNames | Where-Object { $matchedNames -notcontains $_ } | Select-Object -Unique)
+	$missingNames = @($requestedTestNames | Where-Object { $matchedNames -cnotcontains $_ } | Select-Object -Unique)
 	if ($missingNames.Count -gt 0) {
 		Write-Host "ERROR: Test file(s) not found in tests/: $($missingNames -join ', ')" -ForegroundColor Red
 		foreach ($name in $missingNames) { Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name $name -Status "not-found" -Detail "requested test was not scheduled" }
@@ -245,27 +275,13 @@ if ($requestedTestNames.Count -gt 0) {
 $totalFiles = $referenceFiles.Count
 $totalFailFiles = $failFiles.Count
 Write-Host "Found $totalFiles runnable or compile-only test files in tests/ ($Jobs parallel jobs)"
-Write-Host "Found $totalFailFiles _fail test files (expected to fail compilation)"
+Write-Host "Found $totalFailFiles negative compile tests"
 Write-Host "Found $($multiTuCases.Count) multi-TU test cases"
 if ($excludedFiles.Count -gt 0) {
 	Write-Host "Explicitly excluded $($excludedFiles.Count) platform/support sources"
 	foreach ($excluded in $excludedFiles) { Write-Host "  $($excluded.File.Name): $($excluded.Reason)" }
 }
 Write-Host ""
-
-# Expected compile failures - files that are intentionally designed to fail compilation
-# or use features not yet implemented in FlashCpp
-# NOTE: Files with _fail.cpp suffix are automatically tested separately
-#
-# Intentionally invalid code (tests error detection):
-#
-# Unimplemented features:
-$expectedCompileFailures = @(
-)
-
-# Expected link failures - files that compile but have known link issues
-# These are typically due to features not yet implemented in FlashCpp
-$expectedLinkFailures = @()
 
 # Tests that require additional C helper objects for linking.
 $extraCHelpers = @{
@@ -382,7 +398,7 @@ function Wait-ParallelResultJob {
 # Worker function for testing a single regular file
 # ──────────────────────────────────────────────────────
 function Invoke-TestOneFile {
-	param($filePath, $fileName, $baseName, $flashCppPath, $linkerPath, $cCompilerPath, $libPath1, $libPath2, $libPath3, $hasMain, $expectedLinkFailures, $expectedCompileFailures, $expectedRuntimeCrashes, $extraCHelpers, $repoRoot, $resultDir)
+	param($filePath, $fileName, $baseName, $flashCppPath, $linkerPath, $cCompilerPath, $libPath1, $libPath2, $libPath3, $hasMain, $sourceRejectionExit, $internalFailureExit, $extraCHelpers, $repoRoot, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
 
@@ -394,14 +410,14 @@ function Invoke-TestOneFile {
 	$pdbFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.pdb"
 	$helperObjFiles = @()
 
-	# Parse expected return value from filename
-	$expectedReturnValue = $null
+	# Match the ELF runner: tests without a _ret<N> suffix must return zero.
+	$expectedReturnValue = 0
 	if ($fileName -match '_ret(\d+)\.cpp$') {
 		$expectedReturnValue = [int]$matches[1]
 	}
 
 	# Fallback: if the worker dies unexpectedly the result file still gets written
-	$resultLine = "COMPILE_FAIL|$fileName|WORKER ERROR: unknown"
+	$resultLine = "WORKER_ERROR|$fileName|unknown worker failure"
 	try {
 		# Compile with FlashCpp; -o directs the object file to the unique temp path
 		$flashCppArgs = @("--log-level=1", "-o", $objFile, $filePath)
@@ -409,10 +425,34 @@ function Invoke-TestOneFile {
 			$flashCppArgs = @("-fno-access-control") + $flashCppArgs
 		}
 
-		$compileOutput = & $flashCppPath $flashCppArgs 2>&1 | Out-String
-		$compileExitCode = $LASTEXITCODE
+		$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments $flashCppArgs -TimeoutSeconds 30
+		$compileOutput = $compilerResult.Output
+		$compileExitCode = $compilerResult.ExitCode
 
-		if (Test-Path $objFile) {
+		if (-not $compilerResult.Started) {
+			$resultLine = "COMPILER_DRIVER_FAIL|$fileName|$compileOutput"
+		} elseif ($compilerResult.TimedOut) {
+			$resultLine = "COMPILER_TIMEOUT|$fileName|compiler timed out"
+		} elseif ($compileExitCode -eq $internalFailureExit) {
+			$resultLine = "COMPILER_INTERNAL|$fileName|compiler reported internal failure"
+		} elseif ($compileExitCode -eq $sourceRejectionExit) {
+			if (Test-Path $objFile) {
+				$resultLine = "COMPILER_DRIVER_FAIL|$fileName|source rejection produced an object file"
+			} else {
+				$allLines = $compileOutput -split "`n" | Where-Object {
+					$_.Trim() -ne "" -and
+					$_ -notmatch "===== FLASHCPP VERSION" -and
+					$_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL|\|)"
+				}
+				$errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
+				$detail = if ($errorLines) { ($errorLines | Select-Object -Last 3) -join "`n" } else { ($allLines | Select-Object -Last 3) -join "`n" }
+				$resultLine = "COMPILE_FAIL|$fileName|$detail"
+			}
+		} elseif ($compileExitCode -ne 0) {
+			$resultLine = "COMPILER_DRIVER_FAIL|$fileName|compiler returned unexpected status $compileExitCode"
+		} elseif (-not (Test-Path $objFile)) {
+			$resultLine = "COMPILER_DRIVER_FAIL|$fileName|successful compiler status produced no object file"
+		} else {
 			if (-not $hasMain) {
 				$resultLine = "COMPILE_LINK_OK|$fileName|0|no main"
 			} else {
@@ -434,14 +474,14 @@ function Invoke-TestOneFile {
 							if ([string]::IsNullOrWhiteSpace($helperErrors)) {
 								$helperErrors = ($helperCompileOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 5) -join "`n"
 							}
-							$resultLine = "LINK_FAIL|$fileName|Failed to compile helper $helperFileName`n$helperErrors"
+							$resultLine = "SUPPORT_COMPILE_FAIL|$fileName|Failed to compile helper $helperFileName`n$helperErrors"
 							break
 						}
 						$helperObjFiles += $helperObjFile
 					}
 				}
 
-				if ($resultLine.StartsWith("LINK_FAIL|")) {
+				if ($resultLine.StartsWith("SUPPORT_COMPILE_FAIL|")) {
 					return
 				}
 
@@ -463,8 +503,18 @@ function Invoke-TestOneFile {
 				if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
 
 				$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
+				$linkExitCode = $LASTEXITCODE
+				$windowsExceptionCodes = @(
+					-1073741819, -1073740791, -1073741571, -1073740940, -1073741795,
+					-529697949  # 0xE06D7363 = uncaught MSVC C++ exception
+				)
 
-					if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
+				if ($windowsExceptionCodes -contains $linkExitCode) {
+					$signal = if ($linkExitCode -lt 0) { $linkExitCode + 4294967296 } else { $linkExitCode }
+					$resultLine = "LINKER_CRASH|$fileName|0x$($signal.ToString('X8'))"
+				} elseif ($linkExitCode -eq 0 -and -not (Test-Path $exeFile)) {
+					$resultLine = "LINKER_DRIVER_FAIL|$fileName|successful linker status produced no executable"
+				} elseif ($linkExitCode -eq 0 -and (Test-Path $exeFile)) {
 						$exePath = (Get-Item $exeFile).FullName
 						$cmdArgs = '/d /c ""' + $exePath + '""'
 						$proc = New-Object System.Diagnostics.Process
@@ -473,79 +523,53 @@ function Invoke-TestOneFile {
 						$proc.StartInfo.CreateNoWindow = $true
 						$proc.StartInfo.WorkingDirectory = $repoRoot
 						$proc.Start() | Out-Null
-						$proc.WaitForExit()
+						if (-not $proc.WaitForExit(5000)) {
+							$proc.Kill()
+							$proc.WaitForExit()
+							$resultLine = "RUNTIME_TIMEOUT|$fileName|process timed out"
+							$proc.Dispose()
+							return
+						}
 						$returnValue = $proc.ExitCode
 						$proc.Dispose()
 
-					$windowsExceptionCodes = @(
-						-1073741819, -1073740791, -1073741571, -1073740940, -1073741795,
-						-529697949  # 0xE06D7363 = uncaught MSVC C++ exception
-					)
 					$isWindowsCrash = $windowsExceptionCodes -contains $returnValue
 
 					if ($isWindowsCrash) {
-						if ($expectedRuntimeCrashes -contains $fileName) {
-							$resultLine = "EXPECTED_CRASH|$fileName|"
-						} else {
-							$signal = if ($returnValue -lt 0) { $returnValue + 4294967296 } else { $returnValue }
-							$resultLine = "RUNTIME_CRASH|$fileName|0x$($signal.ToString('X8'))"
-						}
+						$signal = if ($returnValue -lt 0) { $returnValue + 4294967296 } else { $returnValue }
+						$resultLine = "RUNTIME_CRASH|$fileName|0x$($signal.ToString('X8'))"
 					} else {
 						# Linux truncates exit codes to 8 bits (0-255); apply the same
 						# truncation here so return-value checks are consistent across platforms.
 						$returnValue = $returnValue -band 0xFF
-						if ($expectedReturnValue -ne $null) {
-							if ($returnValue -ne $expectedReturnValue) {
-								$resultLine = "RETURN_MISMATCH|$fileName|$expectedReturnValue|$returnValue"
-							} else {
-								$resultLine = "RETURN_OK|$fileName|$returnValue|"
-							}
+						if ($returnValue -ne $expectedReturnValue) {
+							$resultLine = "RETURN_MISMATCH|$fileName|$expectedReturnValue|$returnValue"
 						} else {
 							$resultLine = "RETURN_OK|$fileName|$returnValue|"
 						}
 					}
 				} else {
-					if ($expectedLinkFailures -contains $fileName) {
-						$resultLine = "EXPECTED_LINK_FAIL|$fileName|"
-					} else {
-						$errors = ($linkOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -Last 5) -join "`n"
-						$resultLine = "LINK_FAIL|$fileName|$errors"
-					}
+					$errors = ($linkOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -Last 5) -join "`n"
+					$resultLine = "LINK_FAIL|$fileName|$errors"
 				}
-			}
-		} else {
-			if ($expectedCompileFailures -contains $fileName) {
-				$resultLine = "EXPECTED_COMPILE_FAIL|$fileName|"
-			} else {
-				$allLines = $compileOutput -split "`n" | Where-Object {
-					$_.Trim() -ne "" -and
-					$_ -notmatch "===== FLASHCPP VERSION" -and
-					$_ -notmatch "(Compilation Timing|Phase.*Time|Percentage|---|TOTAL|\|)"
-				}
-				$errorLines = $allLines | Where-Object { $_ -match "\[ERROR\]|\[FATAL\]|error:" }
-				$detail = if ($errorLines) { ($errorLines | Select-Object -Last 3) -join "`n" } else { ($allLines | Select-Object -Last 3) -join "`n" }
-				$resultLine = "COMPILE_FAIL|$fileName|$detail"
 			}
 		}
 	} catch {
-		$resultLine = "COMPILE_FAIL|$fileName|WORKER ERROR: $_"
+		$resultLine = "WORKER_ERROR|$fileName|$_"
 		} finally {
 		# Always clean up temp artifacts
 			foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile) + $helperObjFiles) {
 			if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 		}
+		Set-Content -Path (Join-Path $resultDir "$fileName.result") -Value $resultLine -NoNewline
 	}
-
-	# Write result (always executes, even if the worker threw)
-	$resultFile = Join-Path $resultDir "$fileName.result"
-	Set-Content -Path $resultFile -Value $resultLine -NoNewline
 }
 
 # ──────────────────────────────────────────────────────
-# Worker function for testing a single _fail file
+# Worker function for testing a single negative file
 # ──────────────────────────────────────────────────────
 function Invoke-TestOneFailFile {
-	param($filePath, $fileName, $baseName, $flashCppPath, $resultDir)
+	param($filePath, $fileName, $baseName, $flashCppPath, $sourceRejectionExit, $internalFailureExit, $legacyInternalCompatibilityNames, $legacyInternalCompatibilityRemovalBoundary, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
 
@@ -556,61 +580,65 @@ function Invoke-TestOneFailFile {
 	$pdbFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.pdb"
 
 	# Fallback result in case the worker encounters a terminating error
-	$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: unknown"
+	$resultLine = "FAIL_BAD|$fileName|unknown worker failure"
 	try {
-		$failOutput = & $flashCppPath --log-level=1 -o $objFile $filePath 2>&1 | Out-String
-
-		if (Test-Path $objFile) {
-			$resultLine = "FAIL_BAD|$fileName|should have failed"
-		} else {
-			# When the test pins its diagnostics, severity, stable ID name and
-			# number, line, and column must all match the plain rendered output.
-			$expected = Get-FlashCppExpectedDiagnostics -SourceContent (Get-Content -LiteralPath $filePath -Raw)
-			if ($expected.Count -gt 0) {
-				$emitted = Get-FlashCppPlainEmittedDiagnostics -CompilerOutput $failOutput
-				$comparison = Compare-FlashCppDiagnosticSets -Expected $expected -Emitted $emitted
-				if ($comparison.Matched) {
-					$resultLine = "FAIL_OK|$fileName|"
-				} else {
-					$problems = @()
-					foreach ($key in $comparison.UnmatchedExpected) { $problems += "missing $key" }
-					foreach ($key in $comparison.UnexpectedEmitted) { $problems += "unexpected $key" }
-					$detail = ($problems -join "; ") -replace "[`r`n]", " "
-					$resultLine = "DIAG_MISMATCH|$fileName|$detail"
-				}
-			} else {
-				$resultLine = "FAIL_OK|$fileName|"
-			}
+		$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments @("--log-level=1", "-o", $objFile, $filePath) -TimeoutSeconds 30
+		$failOutput = $compilerResult.Output
+		$negativeResult = Test-FlashCppNegativeCompileResult -FileName $fileName -Started $compilerResult.Started `
+			-TimedOut $compilerResult.TimedOut -ExitCode $compilerResult.ExitCode -ObjectExists (Test-Path $objFile) `
+			-CompilerOutput $failOutput -SourceRejectionExit $sourceRejectionExit -InternalFailureExit $internalFailureExit `
+			-LegacyInternalCompatibilityNames $legacyInternalCompatibilityNames `
+			-LegacyInternalCompatibilityRemovalBoundary $legacyInternalCompatibilityRemovalBoundary
+		switch ($negativeResult.Status) {
+			"Ok" { $resultLine = "FAIL_OK|$fileName|" }
+			"LegacyInternalCompatibility" { $resultLine = "FAIL_INTERNAL_COMPAT|$fileName|$($negativeResult.Detail)" }
+			"DiagnosticMismatch" { $resultLine = "DIAG_MISMATCH|$fileName|$($negativeResult.Detail)" }
+			default { $resultLine = "FAIL_BAD|$fileName|$($negativeResult.Detail)" }
 		}
 	} catch {
-		$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: $_"
+		$resultLine = "FAIL_BAD|$fileName|worker error: $_"
 	} finally {
 		# Always clean up temp artifacts
 		foreach ($f in @($objFile, $ilkFile, $pdbFile)) {
 			if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 		}
+		Set-Content -Path (Join-Path $resultDir "$fileName.result") -Value $resultLine -NoNewline
 	}
-
-	$resultFile = Join-Path $resultDir "$fileName.result"
-	Set-Content -Path $resultFile -Value $resultLine -NoNewline
 }
 
 function Invoke-TestOneMultiTuCase {
-	param($case, $flashCppPath, $linkerPath, $libPath1, $libPath2, $libPath3, $repoRoot, $resultDir)
+	param($case, $flashCppPath, $linkerPath, $libPath1, $libPath2, $libPath3, $sourceRejectionExit, $internalFailureExit, $repoRoot, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
 	$uniqueSuffix = [guid]::NewGuid().ToString('N')
 	$objectFiles = @()
 	$exeFile = Join-Path $resultDir "run_$uniqueSuffix.exe"
 	$pdbFile = Join-Path $resultDir "$($case.Name)_$uniqueSuffix.pdb"
-	$resultLine = "COMPILE_FAIL|$($case.Name)|WORKER ERROR: unknown"
+	$resultLine = "WORKER_ERROR|$($case.Name)|unknown worker failure"
 	try {
 		foreach ($source in $case.Sources) {
 			$objFile = Join-Path $resultDir "$($source.BaseName)_$uniqueSuffix.obj"
-			$compileOutput = & $flashCppPath --log-level=1 -o $objFile $source.FullName 2>&1 | Out-String
-			if (-not (Test-Path -LiteralPath $objFile)) {
+			$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments @("--log-level=1", "-o", $objFile, $source.FullName) -TimeoutSeconds 30
+			$compileOutput = $compilerResult.Output
+			if (-not $compilerResult.Started) {
+				$resultLine = "COMPILER_DRIVER_FAIL|$($case.Name)|$($source.Name): $compileOutput"
+				break
+			}
+			if ($compilerResult.TimedOut) {
+				$resultLine = "COMPILER_TIMEOUT|$($case.Name)|$($source.Name): compiler timed out"
+				break
+			}
+			if ($compilerResult.ExitCode -eq $internalFailureExit) {
+				$resultLine = "COMPILER_INTERNAL|$($case.Name)|$($source.Name): compiler reported internal failure"
+				break
+			}
+			if ($compilerResult.ExitCode -eq $sourceRejectionExit -and -not (Test-Path -LiteralPath $objFile)) {
 				$detail = ($compileOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 3) -join "`n"
 				$resultLine = "COMPILE_FAIL|$($case.Name)|$($source.Name): $detail"
+				break
+			}
+			if ($compilerResult.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $objFile)) {
+				$resultLine = "COMPILER_DRIVER_FAIL|$($case.Name)|$($source.Name): inconsistent compiler result (exit: $($compilerResult.ExitCode))"
 				break
 			}
 			$objectFiles += $objFile
@@ -622,13 +650,27 @@ function Invoke-TestOneMultiTuCase {
 			if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
 			if ($libPath3) { $linkArgs = @("/LIBPATH:$libPath3") + $linkArgs }
 			$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
-			if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $exeFile)) {
+			$linkExitCode = $LASTEXITCODE
+			$windowsExceptionCodes = @(-1073741819, -1073740791, -1073741571, -1073740940, -1073741795, -529697949)
+			if ($windowsExceptionCodes -contains $linkExitCode) {
+				$signal = if ($linkExitCode -lt 0) { $linkExitCode + 4294967296 } else { $linkExitCode }
+				$resultLine = "LINKER_CRASH|$($case.Name)|0x$($signal.ToString('X8'))"
+			} elseif ($linkExitCode -eq 0 -and -not (Test-Path -LiteralPath $exeFile)) {
+				$resultLine = "LINKER_DRIVER_FAIL|$($case.Name)|successful linker status produced no executable"
+			} elseif ($linkExitCode -ne 0 -or -not (Test-Path -LiteralPath $exeFile)) {
 				$detail = ($linkOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 5) -join "`n"
 				$resultLine = "LINK_FAIL|$($case.Name)|$detail"
 			} else {
-				$process = Start-Process -FilePath $exeFile -WorkingDirectory $repoRoot -NoNewWindow -Wait -PassThru
+				$process = Start-Process -FilePath $exeFile -WorkingDirectory $repoRoot -NoNewWindow -PassThru
+				if (-not $process.WaitForExit(5000)) {
+					$process.Kill()
+					$process.WaitForExit()
+					$resultLine = "RUNTIME_TIMEOUT|$($case.Name)|process timed out"
+					$process.Dispose()
+					return
+				}
 				$returnValue = $process.ExitCode
-				$windowsExceptionCodes = @(-1073741819, -1073740791, -1073741571, -1073740940, -1073741795, -529697949)
+				$process.Dispose()
 				if ($windowsExceptionCodes -contains $returnValue) {
 					$signal = if ($returnValue -lt 0) { $returnValue + 4294967296 } else { $returnValue }
 					$resultLine = "RUNTIME_CRASH|$($case.Name)|0x$($signal.ToString('X8'))"
@@ -644,24 +686,24 @@ function Invoke-TestOneMultiTuCase {
 			}
 		}
 	} catch {
-		$resultLine = "COMPILE_FAIL|$($case.Name)|WORKER ERROR: $_"
+		$resultLine = "WORKER_ERROR|$($case.Name)|$_"
 	} finally {
 		foreach ($artifact in @($objectFiles) + @($exeFile, $pdbFile)) {
 			if ($artifact -and (Test-Path -LiteralPath $artifact)) { Remove-Item -LiteralPath $artifact -Force -ErrorAction SilentlyContinue }
 		}
+		Set-Content -LiteralPath (Join-Path $resultDir "$($case.Name).result") -Value $resultLine -NoNewline
 	}
-
-	Set-Content -LiteralPath (Join-Path $resultDir "$($case.Name).result") -Value $resultLine -NoNewline
 }
 
 $invokeTestOneFileDefinition = ${function:Invoke-TestOneFile}.ToString()
 	$invokeTestOneFailFileDefinition = ${function:Invoke-TestOneFailFile}.ToString()
-	# Parallel runspaces receive only explicitly injected state; the fail worker
-	# needs its diagnostic-assertion helpers serialized alongside it.
-	$getFlashCppExpectedDiagnosticsDefinition = ${function:Get-FlashCppExpectedDiagnostics}.ToString()
-	$getFlashCppPlainEmittedDiagnosticsDefinition = ${function:Get-FlashCppPlainEmittedDiagnostics}.ToString()
-	$compareFlashCppDiagnosticSetsDefinition = ${function:Compare-FlashCppDiagnosticSets}.ToString()
-$serialRetryRecovered = @()
+	$invokeFlashCppCompilerProcessDefinition = ${function:Invoke-FlashCppCompilerProcess}.ToString()
+	$getFlashCppNegativeNameInfoDefinition = ${function:Get-FlashCppNegativeNameInfo}.ToString()
+	$getFlashCppPlainDiagnosticIdsDefinition = ${function:Get-FlashCppPlainDiagnosticIds}.ToString()
+	$compareFlashCppDiagnosticIdMultisetsDefinition = ${function:Compare-FlashCppDiagnosticIdMultisets}.ToString()
+	$testFlashCppNegativeCompileResultDefinition = ${function:Test-FlashCppNegativeCompileResult}.ToString()
+$sourceRejectionExit = $script:FlashCppSourceRejectionExit
+$internalFailureExit = $script:FlashCppInternalFailureExit
 
 # ──────────────────────────────────────────────────────
 # Run regular tests
@@ -671,9 +713,10 @@ if ($useParallel) {
 	$regularParallelJob = $referenceFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
 		Set-Location $using:RepoRoot
 		${function:Invoke-TestOneFile} = $using:invokeTestOneFileDefinition
+		${function:Invoke-FlashCppCompilerProcess} = $using:invokeFlashCppCompilerProcessDefinition
 		$file = $_
 		$hasMain = ($using:mainFileCache)[$file.Name]
-		Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:linkerPath $using:cCompilerPath $using:libPath1 $using:libPath2 $using:libPath3 $hasMain $using:expectedLinkFailures $using:expectedCompileFailures $using:expectedRuntimeCrashes $using:extraCHelpers $using:RepoRoot $using:resultDir
+		Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:linkerPath $using:cCompilerPath $using:libPath1 $using:libPath2 $using:libPath3 $hasMain $using:sourceRejectionExit $using:internalFailureExit $using:extraCHelpers $using:RepoRoot $using:resultDir
 	} -AsJob
 	Wait-ParallelResultJob -Job $regularParallelJob -Label "Regular tests" -TotalCount $totalFiles -ResultDir $resultDir
 } else {
@@ -686,7 +729,7 @@ if ($useParallel) {
 		$currentFile++
 		Write-Host "[$currentFile/$totalFiles] Testing $($file.Name)... " -NoNewline
 		$hasMain = $mainFileCache[$file.Name]
-			Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $cCompilerPath $libPath1 $libPath2 $libPath3 $hasMain $expectedLinkFailures $expectedCompileFailures $expectedRuntimeCrashes $extraCHelpers $RepoRoot $resultDir
+			Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $cCompilerPath $libPath1 $libPath2 $libPath3 $hasMain $sourceRejectionExit $internalFailureExit $extraCHelpers $RepoRoot $resultDir
 
 		# Read and display result inline for sequential mode
 		$resultFile = Join-Path $resultDir "$($file.Name).result"
@@ -699,81 +742,26 @@ if ($useParallel) {
 				"COMPILE_LINK_OK"       { Write-Host "OK (no main - link skipped)" }
 				"RETURN_MISMATCH"       { Write-Host "[RETURN MISMATCH] expected $($parts[2]) got $($parts[3])" -ForegroundColor Red }
 				"RUNTIME_CRASH"         { Write-Host "[RUNTIME CRASH] $($parts[2])" -ForegroundColor Red }
-				"EXPECTED_CRASH"        { Write-Host "OK (expected runtime crash)" }
 				"LINK_FAIL"             {
 					Write-Host "[LINK FAILED]" -ForegroundColor Red
 						Write-DetailSnippet -Detail $detail
 				}
-				"EXPECTED_LINK_FAIL"    { Write-Host "OK (expected link fail)" }
 				"COMPILE_FAIL"          {
 					Write-Host "[COMPILE FAILED]" -ForegroundColor Red
 						Write-DetailSnippet -Detail $detail
 				}
-				"EXPECTED_COMPILE_FAIL" { Write-Host "OK (expected fail)" }
-			}
-		}
-	}
-}
-
-# Parallel compiler/linker/process startup can occasionally fail under load on
-# Windows even though the same test succeeds immediately in isolation. Retry
-# only unexpected failures once in the parent runspace before summarizing. A
-# deterministic failure remains in the result file and is still reported.
-if ($useParallel) {
-	$retryableStatuses = @(
-		"COMPILE_FAIL",
-		"LINK_FAIL",
-		"RETURN_MISMATCH",
-		"RUNTIME_CRASH"
-	)
-	$filesToRetry = @()
-	foreach ($file in $referenceFiles) {
-		$resultFile = Join-Path $resultDir "$($file.Name).result"
-		if (-not (Test-Path $resultFile)) {
-			$filesToRetry += $file
-			continue
-		}
-		$resultStatus = (Get-Content $resultFile -Raw) -split '\|', 2
-		if ($retryableStatuses -contains $resultStatus[0]) {
-			$filesToRetry += $file
-		}
-	}
-
-	if ($filesToRetry.Count -gt 0) {
-		Write-Host ""
-		Write-Host "Retrying $($filesToRetry.Count) unexpected parallel failure(s) serially..."
-		foreach ($file in $filesToRetry) {
-			$resultFile = Join-Path $resultDir "$($file.Name).result"
-			$initialStatus = if (Test-Path $resultFile) {
-				((Get-Content $resultFile -Raw) -split '\|', 2)[0]
-			} else {
-				"NO_RESULT"
-			}
-			$hasMain = $mainFileCache[$file.Name]
-			Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $cCompilerPath $libPath1 $libPath2 $libPath3 $hasMain $expectedLinkFailures $expectedCompileFailures $expectedRuntimeCrashes $extraCHelpers $RepoRoot $resultDir
-
-			$retryStatus = if (Test-Path $resultFile) {
-				((Get-Content $resultFile -Raw) -split '\|', 2)[0]
-			} else {
-				"NO_RESULT"
-			}
-			if ($retryableStatuses -notcontains $retryStatus -and
-				$retryStatus -ne "NO_RESULT") {
-				$serialRetryRecovered += "$($file.Name) ($initialStatus)"
-				Write-Host "  $($file.Name): recovered from $initialStatus"
-			} else {
-				Write-Host "  $($file.Name): still $retryStatus" -ForegroundColor Red
+				default                 { Write-Host "[$($parts[0])] $detail" -ForegroundColor Red }
 			}
 		}
 	}
 }
 
 # ──────────────────────────────────────────────────────
-# Run _fail tests
+# Run negative tests
 # ──────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "=============================================="
-Write-Host "Testing _fail.cpp files (expected to fail)"
+Write-Host "Testing negative compile tests"
 Write-Host "=============================================="
 Write-Host ""
 
@@ -786,19 +774,21 @@ if ($useParallel -and $failFiles.Count -gt 0) {
 	$failParallelJob = $failFiles | ForEach-Object -ThrottleLimit $Jobs -Parallel {
 		Set-Location $using:RepoRoot
 		${function:Invoke-TestOneFailFile} = $using:invokeTestOneFailFileDefinition
-		${function:Get-FlashCppExpectedDiagnostics} = $using:getFlashCppExpectedDiagnosticsDefinition
-		${function:Get-FlashCppPlainEmittedDiagnostics} = $using:getFlashCppPlainEmittedDiagnosticsDefinition
-		${function:Compare-FlashCppDiagnosticSets} = $using:compareFlashCppDiagnosticSetsDefinition
+		${function:Invoke-FlashCppCompilerProcess} = $using:invokeFlashCppCompilerProcessDefinition
+		${function:Get-FlashCppNegativeNameInfo} = $using:getFlashCppNegativeNameInfoDefinition
+		${function:Get-FlashCppPlainDiagnosticIds} = $using:getFlashCppPlainDiagnosticIdsDefinition
+		${function:Compare-FlashCppDiagnosticIdMultisets} = $using:compareFlashCppDiagnosticIdMultisetsDefinition
+		${function:Test-FlashCppNegativeCompileResult} = $using:testFlashCppNegativeCompileResultDefinition
 		$file = $_
-		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:resultDir
+		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:sourceRejectionExit $using:internalFailureExit $using:legacyInternalCompatibilityNames $using:legacyInternalCompatibilityRemovalBoundary $using:resultDir
 	} -AsJob
-	Wait-ParallelResultJob -Job $failParallelJob -Label "_fail tests" -TotalCount $failFiles.Count -ResultDir $resultDir -InitialCompleted $initialFailCompleted
+	Wait-ParallelResultJob -Job $failParallelJob -Label "Negative tests" -TotalCount $failFiles.Count -ResultDir $resultDir -InitialCompleted $initialFailCompleted
 } else {
 	$currentFile = 0
 	foreach ($file in $failFiles) {
 		$currentFile++
 		Write-Host "[$currentFile/$totalFailFiles] Testing $($file.Name)... " -NoNewline
-		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $flashCppPath $resultDir
+		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $flashCppPath $sourceRejectionExit $internalFailureExit $legacyInternalCompatibilityNames $legacyInternalCompatibilityRemovalBoundary $resultDir
 
 		$resultFile = Join-Path $resultDir "$($file.Name).result"
 		if (Test-Path $resultFile) {
@@ -806,7 +796,8 @@ if ($useParallel -and $failFiles.Count -gt 0) {
 			$parts = $line -split '\|', 3
 			switch ($parts[0]) {
 				"FAIL_OK"       { Write-Host "OK (failed as expected)" }
-				"FAIL_BAD"      { Write-Host "[UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red }
+				"FAIL_INTERNAL_COMPAT" { Write-Host "OK (temporary legacy internal-failure compatibility)" -ForegroundColor Yellow }
+				"FAIL_BAD"      { Write-Host "[NEGATIVE CONTRACT FAILURE] $($parts[2])" -ForegroundColor Red }
 				"DIAG_MISMATCH" {
 					Write-Host "[DIAGNOSTIC MISMATCH] $($parts[2])" -ForegroundColor Red
 				}
@@ -826,7 +817,7 @@ if ($multiTuCases.Count -gt 0) {
 	foreach ($case in $multiTuCases) {
 		$currentCase++
 		Write-Host "[$currentCase/$($multiTuCases.Count)] Testing $($case.Name)... " -NoNewline
-		Invoke-TestOneMultiTuCase $case $flashCppPath $linkerPath $libPath1 $libPath2 $libPath3 $RepoRoot $resultDir
+		Invoke-TestOneMultiTuCase $case $flashCppPath $linkerPath $libPath1 $libPath2 $libPath3 $sourceRejectionExit $internalFailureExit $RepoRoot $resultDir
 		$status = ((Get-Content -LiteralPath (Join-Path $resultDir "$($case.Name).result") -Raw) -split '\|', 2)[0]
 		if ($status -eq "RETURN_OK") { Write-Host "OK" } else { Write-Host "[$status]" -ForegroundColor Red }
 	}
@@ -844,19 +835,60 @@ $runFailed = @()
 $runtimeCrashes = @()
 $returnMismatches = @()
 $failTestSuccess = @()
+$legacyInternalCompatibilityUsed = @()
 $failTestFailed = @()
+$expectedFailureMatches = @()
+$staleExpectations = @()
+$staleExpectationDetails = @{}
+$nonWaivableFailures = @()
+$nonWaivableFailureDetails = @{}
 $linkErrorDetails = @{}
 
 foreach ($file in @($referenceFiles) + @($multiTuCases)) {
 	$resultFile = Join-Path $resultDir "$($file.Name).result"
 	if (-not (Test-Path $resultFile)) {
-		$compileFailed += "$($file.Name) (no result)"
+		$nonWaivableFailures += $file.Name
+		$nonWaivableFailureDetails[$file.Name] = "missing worker result"
 		continue
 	}
 	$line = Get-Content $resultFile -Raw
 	$parts = $line -split '\|', 4
 	$status = $parts[0]
 		$detail = Get-ResultDetail -Parts $parts
+	$expectedStage = if ($expectedFailures.Stages.ContainsKey($file.Name)) {
+		$expectedFailures.Stages[$file.Name]
+	} else {
+		""
+	}
+	$actualStage = switch ($status) {
+		"COMPILE_FAIL" { "compile"; break }
+		"LINK_FAIL" { "link"; break }
+		"RETURN_MISMATCH" { "run"; break }
+		"RETURN_OK" { "success"; break }
+		"COMPILE_LINK_OK" { "success"; break }
+		default { $status.ToLowerInvariant(); break }
+	}
+	$expectation = Compare-FlashCppExpectedStage -ExpectedStage $expectedStage -ActualStage $actualStage
+	if ($expectation.Result -eq "Expected") {
+		$expectedFailureMatches += "$($file.Name) ($expectedStage)"
+		switch ($status) {
+			"LINK_FAIL" { $compileSuccess += $file.Name }
+			"RETURN_MISMATCH" { $compileSuccess += $file.Name; $linkSuccess += $file.Name }
+		}
+		continue
+	}
+	if ($expectation.Result -eq "Stale") {
+		switch ($status) {
+			"RETURN_OK" { $compileSuccess += $file.Name; $linkSuccess += $file.Name }
+			"COMPILE_LINK_OK" { $compileSuccess += $file.Name }
+			"LINK_FAIL" { $compileSuccess += $file.Name }
+			"RETURN_MISMATCH" { $compileSuccess += $file.Name; $linkSuccess += $file.Name }
+		}
+		$staleExpectations += $file.Name
+		$staleExpectationDetails[$file.Name] = $expectation.Detail
+		Write-Host "$($file.Name) - [STALE EXPECTATION] $($expectation.Detail)" -ForegroundColor Red
+		continue
+	}
 
 	switch ($status) {
 		"RETURN_OK" {
@@ -880,11 +912,6 @@ foreach ($file in @($referenceFiles) + @($multiTuCases)) {
 				Write-Host "$($file.Name) - [RUNTIME CRASH] $($parts[2])" -ForegroundColor Red
 			}
 		}
-		"EXPECTED_CRASH" {
-			$compileSuccess += $file.Name
-			$linkSuccess += $file.Name
-			$runSuccess += $file.Name
-		}
 		"LINK_FAIL" {
 			$compileSuccess += $file.Name
 			$linkFailed += $file.Name
@@ -902,10 +929,6 @@ foreach ($file in @($referenceFiles) + @($multiTuCases)) {
 			$compileSuccess += $file.Name
 			$linkSuccess += $file.Name
 		}
-		"EXPECTED_LINK_FAIL" {
-			$compileSuccess += $file.Name
-			$linkSuccess += $file.Name
-		}
 		"COMPILE_FAIL" {
 			$compileFailed += $file.Name
 			if ($useParallel) {
@@ -913,9 +936,29 @@ foreach ($file in @($referenceFiles) + @($multiTuCases)) {
 					Write-DetailSnippet -Detail $detail
 			}
 		}
-		"EXPECTED_COMPILE_FAIL" {
-			# Don't count expected compile failures
+		"COMPILER_TIMEOUT" {}
+		"COMPILER_CRASH" {}
+		"COMPILER_INTERNAL" {}
+		"COMPILER_DRIVER_FAIL" {}
+		"SUPPORT_COMPILE_FAIL" {}
+		"LINKER_CRASH" {}
+		"LINKER_DRIVER_FAIL" {}
+		"RUNTIME_TIMEOUT" {}
+		"WORKER_ERROR" {}
+		default {
+			$nonWaivableFailures += $file.Name
+			$nonWaivableFailureDetails[$file.Name] = "$status`: $detail"
+			Write-Host "$($file.Name) - [NON-WAIVABLE FAILURE] $status`: $detail" -ForegroundColor Red
 		}
+	}
+	if ($status -in @(
+		"COMPILER_TIMEOUT", "COMPILER_CRASH", "COMPILER_INTERNAL", "COMPILER_DRIVER_FAIL",
+		"SUPPORT_COMPILE_FAIL", "LINKER_CRASH", "LINKER_DRIVER_FAIL", "RUNTIME_TIMEOUT",
+		"WORKER_ERROR"
+	)) {
+		$nonWaivableFailures += $file.Name
+		$nonWaivableFailureDetails[$file.Name] = "$status`: $detail"
+		Write-Host "$($file.Name) - [NON-WAIVABLE FAILURE] $status`: $detail" -ForegroundColor Red
 	}
 }
 
@@ -930,10 +973,14 @@ foreach ($file in $failFiles) {
 
 	switch ($parts[0]) {
 		"FAIL_OK"  { $failTestSuccess += $file.Name }
+		"FAIL_INTERNAL_COMPAT" {
+			$failTestSuccess += $file.Name
+			$legacyInternalCompatibilityUsed += $file.Name
+		}
 		"FAIL_BAD" {
 			$failTestFailed += $file.Name
 			if ($useParallel) {
-				Write-Host "$($file.Name) - [UNEXPECTED SUCCESS - SHOULD FAIL]" -ForegroundColor Red
+				Write-Host "$($file.Name) - [NEGATIVE CONTRACT FAILURE] $($parts[2])" -ForegroundColor Red
 			}
 		}
 		"DIAG_MISMATCH" {
@@ -972,18 +1019,12 @@ Write-Host "    Success: $runtimePass" -ForegroundColor Green
 Write-Host "    Crashed: $($runtimeCrashes.Count)" -ForegroundColor Red
 Write-Host "    Mismatches: $($returnMismatches.Count)" -ForegroundColor Red
 Write-Host ""
-Write-Host "_fail Tests (expected to fail compilation):"
+Write-Host "Negative compile tests:"
 Write-Host "  Failed as expected: $($failTestSuccess.Count)" -ForegroundColor Green
-Write-Host "  Unexpectedly passed: $($failTestFailed.Count)" -ForegroundColor Red
+Write-Host "  Contract failures: $($failTestFailed.Count)" -ForegroundColor Red
+Write-Host "  Legacy internal compatibility: $($legacyInternalCompatibility.ActiveCount) active / $($legacyInternalCompatibility.Baseline) baseline, $($legacyInternalCompatibilityUsed.Count) used in this run; direction down, remove by boundary $($legacyInternalCompatibility.RemovalBoundary)" -ForegroundColor Yellow
+Write-Host "  Expected positive failures matched: $($expectedFailureMatches.Count)" -ForegroundColor Green
 Write-Host ""
-
-if ($serialRetryRecovered.Count -gt 0) {
-	Write-Host "Recovered parallel-run failures after one serial retry:" -ForegroundColor Yellow
-	$serialRetryRecovered | Sort-Object | ForEach-Object {
-		Write-Host "  - $_" -ForegroundColor Yellow
-	}
-	Write-Host ""
-}
 
 if ($compileFailed.Count -gt 0) {
 	Write-Host "=== Files that failed to compile ===" -ForegroundColor Red
@@ -1058,37 +1099,35 @@ if ($returnMismatches.Count -gt 0) {
 	Write-Host ""
 }
 
+if ($staleExpectations.Count -gt 0) {
+	Write-Host "=== Stale expected failures ===" -ForegroundColor Red
+	foreach ($name in ($staleExpectations | Sort-Object)) {
+		Write-Host "  - $name`: $($staleExpectationDetails[$name])"
+	}
+	Write-Host ""
+}
+
+if ($nonWaivableFailures.Count -gt 0) {
+	Write-Host "=== Non-waivable runner/compiler failures ===" -ForegroundColor Red
+	foreach ($name in ($nonWaivableFailures | Sort-Object)) {
+		Write-Host "  - $name`: $($nonWaivableFailureDetails[$name])"
+	}
+	Write-Host ""
+}
+
 if ($failTestFailed.Count -gt 0) {
-	Write-Host "=== _fail files that unexpectedly succeeded ===" -ForegroundColor Red
-	Write-Host "(These files should fail compilation but compiled successfully)" -ForegroundColor Red
+	Write-Host "=== Negative tests that failed their contract ===" -ForegroundColor Red
 	$failTestFailed | Sort-Object | ForEach-Object {
 		Write-Host "  - $_"
 	}
 	Write-Host ""
 }
 
-# Check for expected failures that don't contain "fail" in the filename
-# These might be legitimate tests that should be fixed rather than permanently excluded
-$expectedFailuresWithoutFail = $expectedCompileFailures + $expectedLinkFailures | Where-Object {
-	$_ -notmatch "fail"
-} | Sort-Object -Unique
-
-if (-not $TestFile -and $expectedFailuresWithoutFail.Count -gt 0) {
-	Write-Host "=== Expected failure files without 'fail' in name ===" -ForegroundColor Yellow
-	Write-Host "(These files are marked as expected failures but may be legitimate tests to fix)" -ForegroundColor Yellow
-	$expectedFailuresWithoutFail | ForEach-Object {
-		Write-Host "  - $_" -ForegroundColor Yellow
-	}
-	Write-Host ""
-}
-
-# Exit with error if any compilation or linking failed, if any _fail test unexpectedly passed,
-# or if any test crashed at runtime.
 $exitCode = 0
 $failureReasons = @()
 
 if ($failTestFailed.Count -gt 0) {
-	$failureReasons += "Some _fail tests unexpectedly succeeded"
+	$failureReasons += "Some negative tests failed their diagnostic contract"
 }
 if ($compileFailed.Count -gt 0) {
 	$failureReasons += "Some files did not compile successfully"
@@ -1102,6 +1141,12 @@ if ($runtimeCrashes.Count -gt 0) {
 if ($returnMismatches.Count -gt 0) {
 	$failureReasons += "Some tests returned unexpected values"
 }
+if ($staleExpectations.Count -gt 0) {
+	$failureReasons += "Some expected failures are stale"
+}
+if ($nonWaivableFailures.Count -gt 0) {
+	$failureReasons += "Some tests had non-waivable runner or compiler failures"
+}
 
 if ($failureReasons.Count -gt 0) {
 	$exitCode = 1
@@ -1109,7 +1154,7 @@ if ($failureReasons.Count -gt 0) {
 }
 else {
 	Write-Host "RESULT: SUCCESS - All files compiled and linked successfully!" -ForegroundColor Green
-	Write-Host "                  All _fail tests failed as expected!" -ForegroundColor Green
+	Write-Host "                  All negative tests matched their contracts!" -ForegroundColor Green
 	if ($runtimeCrashes.Count -eq 0 -and $returnMismatches.Count -eq 0) {
 		Write-Host "                  All tests ran successfully!" -ForegroundColor Green
 	}
@@ -1119,8 +1164,11 @@ foreach ($name in $compileFailed) { Write-FlashCppCiRecord -Path $CiOutput -Kind
 foreach ($name in $linkFailed) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "link-failed" -Detail "" }
 foreach ($name in $runtimeCrashes) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "runtime-crash" -Detail "" }
 foreach ($name in $returnMismatches) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "return-mismatch" -Detail "" }
-foreach ($name in $failTestFailed) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "unexpected-pass" -Detail "" }
-Write-FlashCppCiRecord -Path $CiOutput -Kind "summary" -Name "all" -Status $(if ($exitCode -eq 0) { "success" } else { "failed" }) -Detail "single=$totalFiles multi-tu=$($multiTuCases.Count) failures=$($failureReasons.Count)"
+foreach ($name in $failTestFailed) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "negative-contract-failed" -Detail "" }
+foreach ($name in $staleExpectations) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "stale-expectation" -Detail $staleExpectationDetails[$name] }
+foreach ($name in $nonWaivableFailures) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "non-waivable-failure" -Detail $nonWaivableFailureDetails[$name] }
+Write-FlashCppCiRecord -Path $CiOutput -Kind "compatibility" -Name "legacy-internal-failure" -Status "active" -Detail "count=$($legacyInternalCompatibility.ActiveCount) baseline=$($legacyInternalCompatibility.Baseline) selected=$($legacyInternalCompatibilityUsed.Count) direction=down removal-boundary=$($legacyInternalCompatibility.RemovalBoundary)"
+Write-FlashCppCiRecord -Path $CiOutput -Kind "summary" -Name "all" -Status $(if ($exitCode -eq 0) { "success" } else { "failed" }) -Detail "single=$totalFiles multi-tu=$($multiTuCases.Count) failures=$($failureReasons.Count) legacy-internal=$($legacyInternalCompatibility.ActiveCount)/$($legacyInternalCompatibility.Baseline)"
 
 Write-Host ""
 Write-Host "=============================================="

@@ -18,6 +18,10 @@ jobs:
       - name: Setup MSBuild (Visual Studio)
         uses: microsoft/setup-msbuild@v3
 
+      - name: Run runner self-tests
+        shell: pwsh
+        run: .\tests\runner\run_runner_self_tests.ps1
+
       - name: Build FlashCppMSVC project (Sharded)
         shell: powershell
         run: |

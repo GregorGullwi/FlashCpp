@@ -1,7 +1,6 @@
-// EXPECTED FAIL TEST: Standard C++20 Header Support
-// This file is designed to test FlashCpp's ability to handle standard library headers
-// It should be expected to fail compilation (hence the _fail.cpp suffix)
-// The goal is to document what features FlashCpp is missing to support std headers
+// Standard C++20 header support coverage.
+// Active rejection tests use filename-encoded DiagnosticIds; this positive
+// runtime test documents supported standard-library features.
 
 // This test intentionally uses features commonly found in standard headers
 // to help identify missing compiler features

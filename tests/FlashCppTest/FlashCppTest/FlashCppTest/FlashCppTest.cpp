@@ -2964,9 +2964,9 @@ TEST_CASE("ConstExpr:VarRef") {
 }
 
 TEST_CASE("ConstExpr:UB") {
- // This test is expected to fail compilation, but for now we just run it to ensure it doesn't crash the compiler
- // In a real scenario, we would want to assert that compilation fails with specific errors
-	run_test_from_file("test_ub_fail.cpp", "Constexpr UB detection", false);
+	// This remains a neutral compile-only probe until constexpr UB rejection has
+	// a stable shared DiagnosticId and an active encoded negative test.
+	run_test_from_file("test_ub_compile_only.cpp", "Constexpr UB detection", false);
 }
 
 TEST_CASE("ConstExpr:InheritedStaticMember") {

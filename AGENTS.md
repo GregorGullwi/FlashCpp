@@ -73,7 +73,10 @@ To show IR, use `--log-level=Codegen:debug`
 * If a needed change requires an architectural edit: Make a plan in form of a todo list.
 * If you discover bugs in the compiler: document it as a todo or add it to docs/KNOWN_ISSUES.md
 * If you fix a bug, make a test first in the tests/folder that demonstrates that behavior and submit it. Append a _retX.cpp to the file name and make the return value dependent on the non-buggy behavior, so we can easily test if the bug appears again later.
-* If you want to submit a test that is supposed to fail, just add "_fail.cpp" at the end and the script will handle it
+* New negative tests encode the exact expected `DiagnosticId` number multiset
+  in terminal filename segments such as `_e1001.cpp` or
+  `_e1003_e1051.cpp`. `_fail.cpp` is reserved for the immutable legacy
+  inventory and new names using it fail discovery.
 * Make proper implementation of features, don't just leave TODOs or skip tokens when parsing.
 * If you encounter existing bugs while testing, notify the user. If it's close to the area you are already working on, make an effort to investigste and fix it.
 * Try to make complete C++20 standard compliant solutions. If you deviate from that, notify the user and make a TODO.

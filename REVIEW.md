@@ -16,9 +16,21 @@ How does the change fit into the overall compiler and architecture? Is code gene
 # Test File Conventions
 
 - **`tests/test_*_ret<N>.cpp`** — Runtime tests. The test must compile, link, run, and `main()` must return `<N>`. The suffix encodes the expected return value. A return mismatch fails CI.
-- **`tests/test_*_fail.cpp`** — Negative compile tests. The compiler is expected to **reject** the file (produce a compile error). If it compiles successfully, CI reports `[UNEXPECTED PASS]` and fails.
+- **`tests/*_e<ID>.cpp`** — Negative compile tests. One or more terminal
+  `_e<number>` segments encode the exact expected `DiagnosticId` number
+  multiset. The compiler must reject the source cleanly and emit exactly those
+  IDs. Location, severity, diagnostic name, and note role are not asserted.
+- **Frozen `tests/*_fail.cpp` inventory** — Legacy negative tests awaiting
+  bounded diagnostic-owner conversion. New `_fail.cpp` names fail discovery.
+- **`tests/expected_failures.tsv`** — Positive tests blocked by known compiler
+  defects. Entries name the expected terminal stage and removal boundary;
+  success or a different failure stage is stale. Negative tests cannot enter
+  this manifest.
 - **`tests/test_*_ret0.cpp`** — The most common pattern. Multiple sub-tests inside `main()` return distinct non-zero values on failure (e.g., `return 1`, `return 2`, …) so the exit code identifies which sub-test failed.
-- Test files are auto-discovered by `tests/run_all_tests.sh` (Linux) and `tests/run_all_tests.ps1` (Windows) by scanning for `int main(` in `tests/*.cpp`.
+- Both runners discover every root `tests/*.cpp` file. Encoded and frozen
+  legacy names select negative compilation; files without `main` are
+  compile-only tests.
 - Tests requiring external C helper objects are listed in the `EXTRA_C_HELPERS` variable in `run_all_tests.sh`.
 - Every bug fix should include a `_ret0.cpp` test that exercises the fix and returns 0 on success.
-- Every feature that should be rejected by the compiler should have a `_fail.cpp` test.
+- Every new rejection test must use `_e<number>` filename segments. Do not add
+  a legacy `_fail.cpp` test or a per-test diagnostic ID.

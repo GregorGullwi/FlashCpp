@@ -3,7 +3,7 @@
 0	tests/comparison_operators_ret1.cpp
 0	tests/concept_comprehensive_ret15.cpp
 0	tests/concept_error_test_fail.cpp
-0	tests/diag_array_size_close_bracket_fail.cpp
-0	tests/diag_multiple_asm_suffix_fail.cpp
-0	tests/diag_ptr_to_reference_fail.cpp
+0	tests/diag_array_size_close_bracket_e1003_e1051.cpp
+0	tests/diag_multiple_asm_suffix_e1002.cpp
+0	tests/diag_ptr_to_reference_e1001.cpp
 0	tests/test_template_recursive_static_constexpr_member_ret0.cpp

@@ -9,9 +9,14 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 . "$SCRIPT_DIR/runner/runner_common.sh"
 export -f runner_expected_return_value
-export -f runner_expected_diagnostics
-export -f runner_plain_emitted_diagnostics
-export -f runner_compare_diagnostic_sets
+export -f runner_classify_negative_name
+export -f runner_expected_diagnostic_ids
+export -f runner_plain_emitted_diagnostic_ids
+export -f runner_compare_diagnostic_id_multisets
+export -f runner_evaluate_negative_result
+export RUNNER_SOURCE_REJECTION_EXIT
+export RUNNER_INTERNAL_FAILURE_EXIT
+export RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY
 
 # Help FlashCpp's Linux startup policy: deep template instantiation needs a
 # stack well above the 8MB default. Raise the SOFT limit only (-S): setting the
@@ -172,19 +177,30 @@ print_flashcpp_build_info() {
 print_flashcpp_build_info
 echo ""
 
-# Expected failures
-EXPECTED_FAIL=(
-    # Standard header tests have been moved to tests/std/
-    # They are no longer run by this script to avoid timeouts and failures
-    # See tests/std/STANDARD_HEADERS_MISSING_FEATURES.md for detailed analysis
-)
-
-# Expected link failures - files that compile but require external C helper files
-# Note: test_dynamic_cast_debug_ret10.cpp and test_abstract_class_ret98.cpp now work - RTTI support has been implemented
-# Note: test_virtual_inheritance.cpp, test_covariant_return.cpp, test_varargs.cpp link successfully but may have runtime issues
-# Note: test_placement_new_parsing_ret42.cpp now compiles and links successfully with array initializer support
-EXPECTED_LINK_FAIL=(
-)
+if ! runner_validate_negative_names "$REPO_ROOT"; then
+	echo -e "${RED}ERROR:${NC} $RUNNER_NEGATIVE_NAME_ERROR"
+	runner_ci_record "$CI_OUTPUT" discovery negative-names invalid "$RUNNER_NEGATIVE_NAME_ERROR"
+	exit 1
+fi
+if ! runner_validate_legacy_inventory "$REPO_ROOT" "$REPO_ROOT/tests/legacy_negative_tests.txt"; then
+	echo -e "${RED}ERROR:${NC} $RUNNER_INVENTORY_ERROR"
+	runner_ci_record "$CI_OUTPUT" discovery legacy-inventory invalid "$RUNNER_INVENTORY_ERROR"
+	exit 1
+fi
+if ! runner_validate_legacy_internal_compatibility \
+	"$REPO_ROOT" \
+	"$REPO_ROOT/tests/legacy_internal_failure_tests.txt" \
+	"$REPO_ROOT/tests/legacy_negative_tests.txt"; then
+	echo -e "${RED}ERROR:${NC} $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR"
+	runner_ci_record "$CI_OUTPUT" discovery legacy-internal-compatibility invalid "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR"
+	exit 1
+fi
+export RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES
+if ! runner_validate_expected_failures "$REPO_ROOT/tests/expected_failures.tsv" "$REPO_ROOT/tests"; then
+	echo -e "${RED}ERROR:${NC} $RUNNER_EXPECTED_FAILURE_ERROR"
+	runner_ci_record "$CI_OUTPUT" discovery expected-failures invalid "$RUNNER_EXPECTED_FAILURE_ERROR"
+	exit 1
+fi
 
 # Tests that require additional C helper objects for linking.
 # Format: "test_file.cpp:helper_file.c" pairs, space-separated.
@@ -192,10 +208,6 @@ EXPECTED_LINK_FAIL=(
 # This is exported so the parallel worker function can access it.
 EXTRA_C_HELPERS="test_external_abi.cpp:test_external_abi_helper.c test_external_abi_simple.cpp:test_external_abi_simple_helper.c test_atomic_builtin_pointer_intrinsics_ret0.cpp:test_atomic_builtin_pointer_intrinsics_helper.c test_extern_var_ret42.cpp:test_extern_var_ret42_helper.c test_declspec_dllimport_var_ret42.cpp:test_declspec_dllimport_var_ret42_helper.c"
 export EXTRA_C_HELPERS
-
-# Expected runtime crashes - files that compile and link but crash at runtime
-EXPECTED_RUNTIME_CRASH=(
-)
 
 contains() {
     local e match="$1"
@@ -212,10 +224,15 @@ COMPILE_ONLY_FILES=()
 EXCLUDED_FILES=()
 PLATFORM_EXCLUSIONS=""
 SUPPORT_SOURCES="linux_exception_stubs.cpp"
-COMPILE_ONLY_OVERRIDES="test_ub_fail.cpp"
+COMPILE_ONLY_OVERRIDES=""
 for candidate in tests/test_seh_*.cpp; do
 	[ -f "$candidate" ] && PLATFORM_EXCLUSIONS+=" $(basename "$candidate")"
 done
+if ! runner_validate_expected_failure_schedule "$PLATFORM_EXCLUSIONS $SUPPORT_SOURCES"; then
+	echo -e "${RED}ERROR:${NC} $RUNNER_EXPECTED_FAILURE_ERROR"
+	runner_ci_record "$CI_OUTPUT" discovery expected-failures invalid "$RUNNER_EXPECTED_FAILURE_ERROR"
+	exit 1
+fi
 
 DISCOVERY_FILES=()
 if [ ${#REQUESTED_TEST_NAMES[@]} -gt 0 ]; then
@@ -248,24 +265,37 @@ for f in "${DISCOVERY_FILES[@]}"; do
 	if [ "$USE_MAIN_CACHE" -eq 0 ]; then
 		runner_classify_test "$base" "$f" "$PLATFORM_EXCLUSIONS" "$SUPPORT_SOURCES" "$COMPILE_ONLY_OVERRIDES"
 		kind="$RUNNER_TEST_KIND"
-	elif [[ " $PLATFORM_EXCLUSIONS " == *" $base "* ]]; then
-		kind="platform-excluded"
-	elif [[ " $SUPPORT_SOURCES " == *" $base "* ]]; then
-		kind="support-source"
-	elif [[ " $COMPILE_ONLY_OVERRIDES " == *" $base "* ]]; then
-		kind="compile-only"
-	elif [[ "$base" == *_fail.cpp ]]; then
-		kind="compile-failure"
-	elif [ "${FILES_WITH_MAIN[$base]+present}" = "present" ]; then
-		kind="runnable"
 	else
+		runner_classify_negative_name "$base"
+		if [ "$RUNNER_NEGATIVE_NAME_KIND" = "malformed" ]; then
+			kind="malformed-negative"
+		elif [ "$RUNNER_NEGATIVE_NAME_KIND" = "encoded" ]; then
+			kind="compile-failure"
+		elif [[ " $PLATFORM_EXCLUSIONS " == *" $base "* ]]; then
+		kind="platform-excluded"
+		elif [[ " $SUPPORT_SOURCES " == *" $base "* ]]; then
+		kind="support-source"
+		elif [[ " $COMPILE_ONLY_OVERRIDES " == *" $base "* ]]; then
 		kind="compile-only"
+		elif [[ "$base" == *_fail.cpp ]]; then
+		kind="compile-failure"
+		elif [ "${FILES_WITH_MAIN[$base]+present}" = "present" ]; then
+		kind="runnable"
+		else
+		kind="compile-only"
+		fi
 	fi
 	case "$kind" in
 		platform-excluded|support-source) EXCLUDED_FILES+=("$base:$kind") ;;
 		compile-failure) FAIL_FILES+=("$base"); ((DISCOVERED_ELIGIBLE++)) ;;
 		runnable) TEST_FILES+=("$base"); ((DISCOVERED_ELIGIBLE++)) ;;
 		compile-only) TEST_FILES+=("$base"); COMPILE_ONLY_FILES+=("$base"); ((DISCOVERED_ELIGIBLE++)) ;;
+		malformed-negative)
+			message="Malformed diagnostic filename: $base"
+			echo -e "${RED}ERROR:${NC} $message"
+			runner_ci_record "$CI_OUTPUT" discovery "$base" invalid-negative-name "$message"
+			exit 1
+			;;
 		*)
 			message="Eligible test file was discovered but not classified: $f"
 			echo -e "${RED}ERROR:${NC} $message"
@@ -383,8 +413,8 @@ trap "rm -rf '$RESULT_DIR'" EXIT
 # Worker: test one regular file
 #   Writes a single result line to $RESULT_DIR/<base>.result
 #   Format:  STATUS|filename|detail
-#   STATUS: COMPILE_OK, COMPILE_FAIL, LINK_OK, LINK_FAIL,
-#           RUNTIME_CRASH, RETURN_MISMATCH, RETURN_OK, EXPECTED_LINK_FAIL, EXPECTED_FAIL
+#   Workers report raw compile, link, and run outcomes. Expected-failure
+#   matching happens only in central result collection.
 # ──────────────────────────────────────────────────────
 link_and_run_objects() {
 	local base="$1"
@@ -405,6 +435,20 @@ link_and_run_objects() {
 		link_output=$(clang++ "${link_args[@]}" -o "$exe" "${objects[@]}" -lstdc++ -lc 2>&1)
 	fi
 	link_exit_code=$?
+	if [ "$link_exit_code" -gt 128 ]; then
+		echo "LINKER_CRASH|$base|$variant: linker crashed (exit: $link_exit_code)" > "$result_file"
+		rm -f "$exe"
+		return
+	fi
+	if [ "$link_exit_code" -eq 126 ] || [ "$link_exit_code" -eq 127 ]; then
+		echo "LINKER_DRIVER_FAIL|$base|$variant: linker could not start (exit: $link_exit_code)" > "$result_file"
+		rm -f "$exe"
+		return
+	fi
+	if [ "$link_exit_code" -eq 0 ] && [ ! -f "$exe" ]; then
+		echo "LINKER_DRIVER_FAIL|$base|$variant: successful linker status produced no executable" > "$result_file"
+		return
+	fi
 	if [ "$link_exit_code" -ne 0 ]; then
 		local link_errors
 		link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed|relocation.*PIE" | head -1)
@@ -416,7 +460,7 @@ link_and_run_objects() {
 	stderr_output=$(timeout 5 "$exe" 2>&1 > /dev/null)
 	return_value=$?
 	if [ "$return_value" -eq 124 ]; then
-		echo "RUNTIME_CRASH|$base|$variant: TIMEOUT" > "$result_file"
+		echo "RUNTIME_TIMEOUT|$base|$variant: TIMEOUT" > "$result_file"
 		rm -f "$exe"
 		return
 	fi
@@ -463,43 +507,71 @@ test_one_file() {
     fi
     local compile_exit=$?
 
-    # Check if compiler crashed (any signal kill returns 128+signal; e.g. 134=SIGABRT,
-    # 135=SIGBUS, 136=SIGFPE, 137=SIGKILL, 139=SIGSEGV, etc.)
-    if [ $compile_exit -gt 128 ]; then
-        echo "COMPILE_FAIL|$base|CRASHED (exit: $compile_exit)" > "$result_file"
+    if [ "$compile_exit" -eq 124 ]; then
+        echo "COMPILER_TIMEOUT|$base|compiler timed out" > "$result_file"
         rm -f "$obj"
         return
     fi
-
-    if [ -f "$obj" ]; then
-		if [[ "$COMPILE_ONLY_TESTS" == *" $base "* ]]; then
-			echo "COMPILE_ONLY_OK|$base|no main" > "$result_file"
-			rm -f "$obj"
-			return
-		fi
-
-        # Compile any C helper files required for this test (from EXTRA_C_HELPERS env var)
-        local extra_objs=()
-        for mapping in $EXTRA_C_HELPERS; do
-            local map_base="${mapping%%:*}"
-            local map_helper="${mapping##*:}"
-            if [ "$map_base" = "$base" ]; then
-                local helper_obj="/tmp/${map_helper%.c}_$$.o"
-                local helper_cflags=()
-                if [ "$map_helper" = "test_atomic_builtin_pointer_intrinsics_helper.c" ]; then
-                    helper_cflags+=("-fno-builtin")
-                fi
-                clang "${helper_cflags[@]}" -c "$repo_root/tests/$map_helper" -o "$helper_obj" 2>/dev/null
-                extra_objs+=("$helper_obj")
-            fi
-        done
-
-		link_and_run_objects "$base" "$result_file" "$obj" "${extra_objs[@]}"
-    else
-        local first_error
-        first_error=$(echo "$compile_output" | grep -i "error" | head -1)
-        echo "COMPILE_FAIL|$base|$first_error" > "$result_file"
+    if [ "$compile_exit" -gt 128 ]; then
+        echo "COMPILER_CRASH|$base|compiler crashed (exit: $compile_exit)" > "$result_file"
+        rm -f "$obj"
+        return
     fi
+    if [ "$compile_exit" -eq "$RUNNER_INTERNAL_FAILURE_EXIT" ]; then
+        echo "COMPILER_INTERNAL|$base|compiler reported internal failure" > "$result_file"
+        rm -f "$obj"
+        return
+    fi
+    if [ "$compile_exit" -ne 0 ] && [ "$compile_exit" -ne "$RUNNER_SOURCE_REJECTION_EXIT" ]; then
+        echo "COMPILER_DRIVER_FAIL|$base|compiler returned unexpected status $compile_exit" > "$result_file"
+        rm -f "$obj"
+        return
+    fi
+    if [ "$compile_exit" -eq "$RUNNER_SOURCE_REJECTION_EXIT" ]; then
+        if [ -f "$obj" ]; then
+            echo "COMPILER_DRIVER_FAIL|$base|source rejection produced an object file" > "$result_file"
+        else
+            local first_error
+            first_error=$(echo "$compile_output" | grep -i "error" | head -1)
+            echo "COMPILE_FAIL|$base|$first_error" > "$result_file"
+        fi
+        rm -f "$obj"
+        return
+    fi
+    if [ ! -f "$obj" ]; then
+        echo "COMPILER_DRIVER_FAIL|$base|successful compiler status produced no object file" > "$result_file"
+        return
+    fi
+
+	if [[ "$COMPILE_ONLY_TESTS" == *" $base "* ]]; then
+		echo "COMPILE_ONLY_OK|$base|no main" > "$result_file"
+		rm -f "$obj"
+		return
+	fi
+
+    # Compile any C helper files required for this test (from EXTRA_C_HELPERS env var)
+    local extra_objs=()
+    for mapping in $EXTRA_C_HELPERS; do
+        local map_base="${mapping%%:*}"
+        local map_helper="${mapping##*:}"
+        if [ "$map_base" = "$base" ]; then
+            local helper_obj="/tmp/${map_helper%.c}_$$.o"
+            local helper_cflags=()
+            if [ "$map_helper" = "test_atomic_builtin_pointer_intrinsics_helper.c" ]; then
+                helper_cflags+=("-fno-builtin")
+            fi
+            clang "${helper_cflags[@]}" -c "$repo_root/tests/$map_helper" -o "$helper_obj" 2>/dev/null
+            local helper_exit=$?
+            if [ "$helper_exit" -ne 0 ] || [ ! -f "$helper_obj" ]; then
+                echo "SUPPORT_COMPILE_FAIL|$base|failed to compile helper $map_helper" > "$result_file"
+                rm -f "$obj" "$helper_obj" "${extra_objs[@]}"
+                return
+            fi
+            extra_objs+=("$helper_obj")
+        fi
+    done
+
+	link_and_run_objects "$base" "$result_file" "$obj" "${extra_objs[@]}"
     rm -f "$obj"
     rm -f "${extra_objs[@]}"
 }
@@ -522,8 +594,28 @@ test_one_multi_tu_case() {
 			compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "$source" -o "$obj" 2>&1)
 		fi
 		compile_exit=$?
-		if [ "$compile_exit" -gt 128 ] || [ ! -f "$obj" ]; then
+		if [ "$compile_exit" -eq 124 ]; then
+			echo "COMPILER_TIMEOUT|$case_name|$(basename "$source"): compiler timed out" > "$result_file"
+			rm -f "${objects[@]}" "$obj"
+			return
+		fi
+		if [ "$compile_exit" -gt 128 ]; then
+			echo "COMPILER_CRASH|$case_name|$(basename "$source"): compiler crashed (exit: $compile_exit)" > "$result_file"
+			rm -f "${objects[@]}" "$obj"
+			return
+		fi
+		if [ "$compile_exit" -eq "$RUNNER_INTERNAL_FAILURE_EXIT" ]; then
+			echo "COMPILER_INTERNAL|$case_name|$(basename "$source"): compiler reported internal failure" > "$result_file"
+			rm -f "${objects[@]}" "$obj"
+			return
+		fi
+		if [ "$compile_exit" -eq "$RUNNER_SOURCE_REJECTION_EXIT" ] && [ ! -f "$obj" ]; then
 			echo "COMPILE_FAIL|$case_name|$(basename "$source"): $(echo "$compile_output" | grep -i error | head -1)" > "$result_file"
+			rm -f "${objects[@]}" "$obj"
+			return
+		fi
+		if [ "$compile_exit" -ne 0 ] || [ ! -f "$obj" ]; then
+			echo "COMPILER_DRIVER_FAIL|$case_name|$(basename "$source"): inconsistent compiler result (exit: $compile_exit)" > "$result_file"
 			rm -f "${objects[@]}" "$obj"
 			return
 		fi
@@ -557,40 +649,16 @@ test_one_fail_file() {
     fi
     local compile_exit=$?
 
-    # Check if compiler crashed (any signal kill returns 128+signal; e.g. 134=SIGABRT,
-    # 135=SIGBUS, 136=SIGFPE, 137=SIGKILL, 139=SIGSEGV, etc.)
-    # A crash must be treated as a failure even for _fail tests — the compiler is
-    # expected to report a clean compile error, not to crash.
-    if [ $compile_exit -gt 128 ]; then
-        echo "FAIL_BAD|$base|CRASHED (exit: $compile_exit)" > "$result_file"
-        rm -f "$obj"
-        return
-    fi
-
-    if [ -f "$obj" ]; then
-        echo "FAIL_BAD|$base|should have failed" > "$result_file"
-        rm -f "$obj"
-        return
-    fi
-
-    # When the test pins its diagnostics via expected-diag comments, severity,
-    # stable ID name and number, line, and column must all match the plain
-    # rendered compiler output exactly.
-    local expected
-    expected=$(runner_expected_diagnostics "$(cat "$f")")
-    if [ -n "$expected" ]; then
-        local emitted detail comparison
-        emitted=$(runner_plain_emitted_diagnostics "$compile_output")
-        runner_compare_diagnostic_sets "$expected" "$emitted"
-        if [ "$RUNNER_DIAG_COMPARISON" = "match" ]; then
-            echo "FAIL_OK|$base|" > "$result_file"
-        else
-            echo "DIAG_MISMATCH|$base|$RUNNER_DIAG_DETAIL" > "$result_file"
-        fi
-        return
-    fi
-
-    echo "FAIL_OK|$base|" > "$result_file"
+    local object_exists=no
+    [ -f "$obj" ] && object_exists=yes
+    runner_evaluate_negative_result "$base" "$compile_exit" "$object_exists" "$compile_output"
+    case "$RUNNER_NEGATIVE_RESULT" in
+        ok) echo "FAIL_OK|$base|" > "$result_file" ;;
+        legacy-internal-compatibility) echo "FAIL_INTERNAL_COMPAT|$base|$RUNNER_NEGATIVE_DETAIL" > "$result_file" ;;
+        diag-mismatch) echo "DIAG_MISMATCH|$base|$RUNNER_NEGATIVE_DETAIL" > "$result_file" ;;
+        *) echo "FAIL_BAD|$base|$RUNNER_NEGATIVE_DETAIL" > "$result_file" ;;
+    esac
+    rm -f "$obj"
 }
 export -f test_one_fail_file
 
@@ -603,7 +671,7 @@ if [ ${#TEST_FILES[@]} -gt 0 ]; then
 fi
 
 # ──────────────────────────────────────────────────────
-# Run _fail tests in parallel
+# Run negative tests in parallel
 # ──────────────────────────────────────────────────────
 if [ ${#FAIL_FILES[@]} -gt 0 ]; then
     printf '%s\n' "${FAIL_FILES[@]}" | \
@@ -626,24 +694,64 @@ declare -a LINK_OK=()
 declare -a LINK_FAIL=()
 declare -a LINK_FAIL_DETAILS=()
 declare -a FAIL_OK=()
+declare -a FAIL_INTERNAL_COMPAT=()
 declare -a FAIL_BAD=()
 declare -a FAIL_BAD_DETAILS=()
 declare -a RUNTIME_CRASH=()
 declare -a RUNTIME_CRASH_DETAILS=()
 declare -a RETURN_MISMATCH=()
 declare -a RETURN_MISMATCH_DETAILS=()
+declare -a EXPECTED_FAILURES=()
+declare -a STALE_EXPECTATIONS=()
+declare -a STALE_EXPECTATION_DETAILS=()
+declare -a NONWAIVABLE_FAILURES=()
+declare -a NONWAIVABLE_FAILURE_DETAILS=()
 declare -a FAILED_TEST_NAMES=()
 
 RESULT_CASES=("${TEST_FILES[@]}" "${MULTI_TU_CASES[@]}")
 for base in "${RESULT_CASES[@]}"; do
     result_file="$RESULT_DIR/$base.result"
     if [ ! -f "$result_file" ]; then
-        COMPILE_FAIL+=("$base (no result)")
-        COMPILE_FAIL_DETAILS+=("")
+        NONWAIVABLE_FAILURES+=("$base")
+        NONWAIVABLE_FAILURE_DETAILS+=("missing worker result")
         FAILED_TEST_NAMES+=("$base")
         continue
     fi
     IFS='|' read -r status file detail < "$result_file"
+	expected_stage=""
+	if [ "${RUNNER_EXPECTED_STAGE_BY_NAME[$base]+present}" = "present" ]; then
+		expected_stage="${RUNNER_EXPECTED_STAGE_BY_NAME[$base]}"
+	fi
+	actual_stage="$status"
+	case "$status" in
+		COMPILE_FAIL) actual_stage="compile" ;;
+		LINK_FAIL) actual_stage="link" ;;
+		RETURN_MISMATCH) actual_stage="run" ;;
+		RETURN_OK|COMPILE_ONLY_OK) actual_stage="success" ;;
+	esac
+	runner_evaluate_expected_stage "$expected_stage" "$actual_stage"
+	if [ "$RUNNER_EXPECTATION_RESULT" = "expected" ]; then
+		EXPECTED_FAILURES+=("$base ($expected_stage)")
+		case "$status" in
+			LINK_FAIL) COMPILE_OK+=("$base") ;;
+			RETURN_MISMATCH) COMPILE_OK+=("$base"); LINK_OK+=("$base") ;;
+		esac
+		[ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected $expected_stage failure)" >&2
+		continue
+	fi
+	if [ "$RUNNER_EXPECTATION_RESULT" = "stale" ]; then
+		case "$status" in
+			RETURN_OK) COMPILE_OK+=("$base"); LINK_OK+=("$base") ;;
+			COMPILE_ONLY_OK) COMPILE_OK+=("$base") ;;
+			LINK_FAIL) COMPILE_OK+=("$base") ;;
+			RETURN_MISMATCH) COMPILE_OK+=("$base"); LINK_OK+=("$base") ;;
+		esac
+		STALE_EXPECTATIONS+=("$base")
+		STALE_EXPECTATION_DETAILS+=("$RUNNER_EXPECTATION_DETAIL")
+		FAILED_TEST_NAMES+=("$base")
+		echo -e "${RED}[STALE EXPECTATION]${NC} $base ($RUNNER_EXPECTATION_DETAIL)"
+		continue
+	fi
     case "$status" in
         RETURN_OK)
             COMPILE_OK+=("$base")
@@ -665,41 +773,37 @@ for base in "${RESULT_CASES[@]}"; do
         RUNTIME_CRASH)
             COMPILE_OK+=("$base")
             LINK_OK+=("$base")
-            # Check if this is an expected runtime crash
-            if contains "$base" "${EXPECTED_RUNTIME_CRASH[@]}"; then
-                [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected runtime crash)" >&2
-            else
-                RUNTIME_CRASH+=("$base")
-                RUNTIME_CRASH_DETAILS+=("$detail")
-                FAILED_TEST_NAMES+=("$base")
-                echo -e "${RED}[RUNTIME CRASH]${NC} $base ($detail)"
-            fi
+            RUNTIME_CRASH+=("$base")
+            RUNTIME_CRASH_DETAILS+=("$detail")
+            FAILED_TEST_NAMES+=("$base")
+            echo -e "${RED}[RUNTIME CRASH]${NC} $base ($detail)"
             ;;
         LINK_FAIL)
             COMPILE_OK+=("$base")
-            # Check if this is an expected link failure
-            if contains "$base" "${EXPECTED_LINK_FAIL[@]}"; then
-                LINK_OK+=("$base")
-                [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected link fail)" >&2
-            else
-                LINK_FAIL+=("$base")
-                LINK_FAIL_DETAILS+=("$detail")
-                FAILED_TEST_NAMES+=("$base")
-                echo -e "${RED}[LINK FAIL]${NC} $base"
-                [ -n "$detail" ] && echo "  $detail" | sed 's/^/  /'
-            fi
+            LINK_FAIL+=("$base")
+            LINK_FAIL_DETAILS+=("$detail")
+            FAILED_TEST_NAMES+=("$base")
+            echo -e "${RED}[LINK FAIL]${NC} $base"
+            [ -n "$detail" ] && echo "  $detail" | sed 's/^/  /'
             ;;
         COMPILE_FAIL)
-            # Check if this is an expected failure
-            if contains "$base" "${EXPECTED_FAIL[@]}"; then
-                [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected fail)" >&2
-            else
-                COMPILE_FAIL+=("$base")
-                COMPILE_FAIL_DETAILS+=("$detail")
-                FAILED_TEST_NAMES+=("$base")
-                echo -e "${RED}[COMPILE FAIL]${NC} $base"
-                [ -n "$detail" ] && echo "  $detail"
-            fi
+            COMPILE_FAIL+=("$base")
+            COMPILE_FAIL_DETAILS+=("$detail")
+            FAILED_TEST_NAMES+=("$base")
+            echo -e "${RED}[COMPILE FAIL]${NC} $base"
+            [ -n "$detail" ] && echo "  $detail"
+            ;;
+		COMPILER_TIMEOUT|COMPILER_CRASH|COMPILER_INTERNAL|COMPILER_DRIVER_FAIL|SUPPORT_COMPILE_FAIL|LINKER_CRASH|LINKER_DRIVER_FAIL|RUNTIME_TIMEOUT)
+			NONWAIVABLE_FAILURES+=("$base")
+			NONWAIVABLE_FAILURE_DETAILS+=("$status: $detail")
+			FAILED_TEST_NAMES+=("$base")
+			echo -e "${RED}[NON-WAIVABLE FAILURE]${NC} $base ($status: $detail)"
+			;;
+		*)
+			NONWAIVABLE_FAILURES+=("$base")
+			NONWAIVABLE_FAILURE_DETAILS+=("unknown worker status $status: $detail")
+			FAILED_TEST_NAMES+=("$base")
+			echo -e "${RED}[NON-WAIVABLE FAILURE]${NC} $base (unknown worker status $status)"
             ;;
     esac
 done
@@ -718,15 +822,16 @@ for base in "${FAIL_FILES[@]}"; do
             FAIL_OK+=("$base")
             [ "$VERBOSE" = "1" ] && echo "  $base ... OK (failed as expected)" >&2
             ;;
+        FAIL_INTERNAL_COMPAT)
+            FAIL_OK+=("$base")
+            FAIL_INTERNAL_COMPAT+=("$base")
+            [ "$VERBOSE" = "1" ] && echo "  $base ... OK (temporary legacy internal-failure compatibility)" >&2
+            ;;
         FAIL_BAD)
             FAIL_BAD+=("$base")
             FAIL_BAD_DETAILS+=("$detail")
             FAILED_TEST_NAMES+=("$base")
-            if [[ "$detail" == CRASHED* ]]; then
-                echo -e "${RED}[COMPILER CRASH]${NC} $base ($detail)"
-            else
-                echo -e "${RED}[UNEXPECTED PASS]${NC} $base ($detail)"
-            fi
+            echo -e "${RED}[NEGATIVE CONTRACT FAILURE]${NC} $base ($detail)"
             ;;
         DIAG_MISMATCH)
             FAIL_BAD+=("$base")
@@ -746,7 +851,13 @@ echo "Total: $TOTAL single-file tests and ${#MULTI_TU_CASES[@]} multi-TU cases (
 printf "Compile: ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#COMPILE_OK[@]}" "${#COMPILE_FAIL[@]}"
 printf "Link:    ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#LINK_OK[@]}" "${#LINK_FAIL[@]}"
 printf "Runtime: ${GREEN}%d pass${NC} / ${RED}%d crash${NC} / ${RED}%d mismatch${NC}\n" "$((${#LINK_OK[@]} - ${#RUNTIME_CRASH[@]} - ${#RETURN_MISMATCH[@]}))" "${#RUNTIME_CRASH[@]}" "${#RETURN_MISMATCH[@]}"
-[ ${#FAIL_FILES[@]} -gt 0 ] && printf "_fail:   ${GREEN}%d correct${NC} / ${RED}%d wrong${NC}\n" "${#FAIL_OK[@]}" "${#FAIL_BAD[@]}"
+[ ${#FAIL_FILES[@]} -gt 0 ] && printf "Negative: ${GREEN}%d correct${NC} / ${RED}%d wrong${NC}\n" "${#FAIL_OK[@]}" "${#FAIL_BAD[@]}"
+printf "Legacy internal compatibility: ${YELLOW}%d active${NC} / %d baseline, %d used in this run; direction down, remove by boundary %s\n" \
+	"$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" \
+	"$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE" \
+	"${#FAIL_INTERNAL_COMPAT[@]}" \
+	"$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY"
+[ ${#EXPECTED_FAILURES[@]} -gt 0 ] && printf "Expected positive failures: ${GREEN}%d matched${NC}\n" "${#EXPECTED_FAILURES[@]}"
 
 # Show failures with details
 if [ ${#COMPILE_FAIL[@]} -gt 0 ]; then
@@ -802,8 +913,22 @@ if [ ${#RETURN_MISMATCH[@]} -gt 0 ]; then
     done
 fi
 
+[ ${#STALE_EXPECTATIONS[@]} -gt 0 ] && {
+	echo -e "\n${RED}Stale expected failures:${NC}"
+	for i in "${!STALE_EXPECTATIONS[@]}"; do
+		echo "  ${STALE_EXPECTATIONS[$i]} — ${STALE_EXPECTATION_DETAILS[$i]}"
+	done
+}
+
+[ ${#NONWAIVABLE_FAILURES[@]} -gt 0 ] && {
+	echo -e "\n${RED}Non-waivable runner/compiler failures:${NC}"
+	for i in "${!NONWAIVABLE_FAILURES[@]}"; do
+		echo "  ${NONWAIVABLE_FAILURES[$i]} — ${NONWAIVABLE_FAILURE_DETAILS[$i]}"
+	done
+}
+
 [ ${#FAIL_BAD[@]} -gt 0 ] && {
-    echo -e "\n${RED}_fail files that passed:${NC}"
+    echo -e "\n${RED}Negative tests that failed their contract:${NC}"
     for i in "${!FAIL_BAD[@]}"; do
         if [ -n "${FAIL_BAD_DETAILS[$i]}" ]; then
             echo "  ${FAIL_BAD[$i]} — ${FAIL_BAD_DETAILS[$i]}"
@@ -814,18 +939,23 @@ fi
 }
 
 echo ""
-# NOTE: Return value mismatches now fail the build since __has_builtin has been fixed; runtime crashes also now fail the build
-if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ] && [ ${#RETURN_MISMATCH[@]} -eq 0 ] && [ ${#RUNTIME_CRASH[@]} -eq 0 ]; then
+runner_ci_record "$CI_OUTPUT" compatibility legacy-internal-failure active \
+	"count=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT baseline=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE selected=${#FAIL_INTERNAL_COMPAT[@]} direction=down removal-boundary=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY"
+if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ] &&
+	[ ${#RETURN_MISMATCH[@]} -eq 0 ] && [ ${#RUNTIME_CRASH[@]} -eq 0 ] &&
+	[ ${#STALE_EXPECTATIONS[@]} -eq 0 ] && [ ${#NONWAIVABLE_FAILURES[@]} -eq 0 ]; then
     echo -e "${GREEN}RESULT: SUCCESS${NC}"
-	runner_ci_record "$CI_OUTPUT" summary all success "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]} link=$LINK_MODE"
+	runner_ci_record "$CI_OUTPUT" summary all success "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]} link=$LINK_MODE legacy-internal=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT/$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE"
     exit 0
 else
 	for name in "${COMPILE_FAIL[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" compile-failed ""; done
 	for name in "${LINK_FAIL[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" link-failed ""; done
-	for name in "${FAIL_BAD[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" unexpected-pass ""; done
+	for name in "${FAIL_BAD[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" negative-contract-failed ""; done
 	for name in "${RETURN_MISMATCH[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" return-mismatch ""; done
 	for name in "${RUNTIME_CRASH[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" runtime-crash ""; done
-	runner_ci_record "$CI_OUTPUT" summary all failed "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]} link=$LINK_MODE"
+	for name in "${STALE_EXPECTATIONS[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" stale-expectation ""; done
+	for name in "${NONWAIVABLE_FAILURES[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" non-waivable-failure ""; done
+	runner_ci_record "$CI_OUTPUT" summary all failed "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]} link=$LINK_MODE legacy-internal=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT/$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE"
     if [ "${FLASHCPP_RERUN_PHASE:-0}" != "1" ] && [ ${#FAILED_TEST_NAMES[@]} -gt 0 ]; then
         echo "Re-running failing tests sequentially for diagnostics..."
         echo ""

@@ -449,9 +449,12 @@ Introduce:
 - Reserve `_fail.cpp` for the frozen legacy negative-test inventory. Reject any
   new `_fail.cpp` name, and migrate the inventory to `_e<number>` filenames in
   bounded diagnostic-owner batches.
-- Require a clean source-rejection exit status for negative tests. Internal
-  compiler errors, driver failures, timeouts, crashes, and missing results
-  cannot satisfy either the legacy or filename-encoded contract.
+- Require a clean source-rejection exit status for negative tests. A separate
+  immutable seven-name inventory temporarily permits internal status 2 only
+  for a still-present original legacy `_fail.cpp` that produced no object.
+  Driver failures, timeouts, crashes, missing results, unlisted legacy tests,
+  and every filename-encoded test remain strict. Delete the exception at
+  boundary 2F.
 - Compare diagnostic IDs as a multiset. Repeated `_e<number>` segments require
   the same number of emitted occurrences.
 - Add multi-translation-unit compile and link cases.
@@ -1095,6 +1098,14 @@ boundaries 5 and 6 continue architecture boundary 1.
   exit statuses, and make the runners reject every non-source failure.
 - Freeze the existing `_fail.cpp` inventory so no new legacy entry can be
   added. Rename the already structured declarator-family tests first.
+- Run the complete frozen inventory under the new process-status contract.
+  Freeze the seven legacy tests that currently reach internal-failure status 2
+  in a second immutable inventory. Only a still-present original `_fail.cpp`
+  representation in that inventory may use the temporary exception, and only
+  when no object was produced. Encoded successors, unlisted legacy tests,
+  crashes, timeouts, driver failures, worker failures, and missing results
+  remain hard failures. Report the active count against a baseline of 7 with
+  direction down and removal boundary 2F.
 - Add the named expected-failure manifest and enforce stale-entry detection.
   This manifest is only for positive tests blocked by known compiler defects;
   it cannot contain negative-test filenames.
@@ -1112,7 +1123,8 @@ filename expectation.
 - 2D: conversions, overload resolution, operators, and access diagnostics;
 - 2E: templates, lookup, deduction, constraints, and substitution diagnostics;
 - 2F: remaining semantic and lowering diagnostics, followed by deletion of
-  `_fail.cpp` classification and the frozen inventory.
+  `_fail.cpp` classification, the frozen inventories, and the seven-test
+  internal-failure compatibility.
 
 Do not introduce a generic legacy diagnostic ID, derive IDs from message text,
 or assign IDs per test. A conversion batch must stop and split again if its

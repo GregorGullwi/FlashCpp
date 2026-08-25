@@ -6,5 +6,3 @@ int x __asm("sym_a") __asm("sym_b");
 int main() {
 	return x;
 }
-
-// expected-diag: error MultipleAsmSuffixesOnDeclarator#1002 4:6

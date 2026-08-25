@@ -1,5 +1,39 @@
 # Known Issues
 
+## Seven legacy negative tests terminate through internal-failure paths
+
+Boundary 2A gives clean source rejection exit status 1 and internal/compiler
+failure exit status 2. The frozen negative suite now exposes seven tests that
+previously passed only because the runner treated any missing object as an
+acceptable rejection:
+
+- `test_constexpr_aggregate_brace_narrowing_fail.cpp` records the intended
+  constexpr narrowing error, then hits `sema missed return conversion`;
+- `test_deleted_move_ctor_brace_init_xvalue_fail.cpp` reaches
+  `Sema did not annotate constructor for normalized body`;
+- `test_if_constexpr_active_branch_invalid_fail.cpp` reaches a no-runtime-size
+  direct-call return invariant;
+- `test_operator_subscript_const_ambiguity_fail.cpp` reaches the
+  struct-without-conversion-operator fallback invariant;
+- `test_static_member_ctor_overload_ambiguity_fail.cpp` escapes with a missing
+  resolved-constructor invariant;
+- `test_template_lazy_static_member_implicit_this_fail.cpp` reaches code
+  generation with an invalid implicit `this` lookup;
+- `test_template_out_of_line_static_member_implicit_this_fail.cpp` reaches the
+  same invalid code-generation lookup.
+
+Boundary 2A tracks these names in the immutable
+`tests/legacy_internal_failure_tests.txt` inventory. A still-present original
+`_fail.cpp` in that list may temporarily satisfy its legacy negative contract
+with internal status 2 only when the compiler produces no object. The exception
+does not apply to encoded successors or any other legacy test. Crashes,
+timeouts, driver or worker failures, and missing results still fail.
+
+Both runners report the active count against baseline 7. The count may only
+fall. Their shared diagnostic owners belong to the bounded 2C through 2F
+conversion slices, and boundary 2F deletes this compatibility after the last
+owner migrates.
+
 ## Pointer-to-array declarator coverage gaps
 
 `sizeof`/`alignof` type-ids with pointer-to-array declarators (`int(*)[3]`,
