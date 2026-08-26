@@ -2238,9 +2238,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				}
 				// Compound assignment reads the current value — reject indeterminate targets.
 				if (target.is_indeterminate) {
-					return EvalResult::error(
-						"Read of indeterminate value in constant expression "
-						"(object was default-initialized without an initializer)");
+					return indeterminateValueReadError();
 				}
 				// Strip the trailing '=' to get the base operator (e.g., "+=" → "+")
 				std::string_view base_op = op.substr(0, op.size() - 1);
@@ -2695,9 +2693,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				target.has_value() && target->slot != nullptr) {
 				EvalResult current = *target->slot;
 				if (current.is_indeterminate) {
-					return EvalResult::error(
-						"Read of indeterminate value in constant expression "
-						"(uninitialized object)");
+					return indeterminateValueReadError();
 				}
 
 				EvalResult one = EvalResult::from_int(1);
