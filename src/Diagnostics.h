@@ -76,6 +76,7 @@ enum class DiagnosticId : uint32_t {
 	ConstantExpressionShiftCountTooLarge = 1203,
 	ConstantExpressionShiftOperationInvalid = 1204,
 	ConstantExpressionSignedIntegerOverflow = 1205,
+	ConstantExpressionIndeterminateValueRead = 1206,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -102,6 +103,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstantExpressionShiftOperationInvalid";
 	case DiagnosticId::ConstantExpressionSignedIntegerOverflow:
 		return "ConstantExpressionSignedIntegerOverflow";
+	case DiagnosticId::ConstantExpressionIndeterminateValueRead:
+		return "ConstantExpressionIndeterminateValueRead";
 	case DiagnosticId::None:
 	default:
 		return "None";

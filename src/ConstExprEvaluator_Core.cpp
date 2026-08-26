@@ -1069,9 +1069,7 @@ std::optional<FlashCpp::NonTypeValueIdentity> makeStructuralClassValueIdentity(
 
 EvalResult validateConstexprRead(const EvalResult& heap_val) {
 	if (heap_val.is_indeterminate) {
-		return EvalResult::error(
-			"Read of indeterminate value in constant expression "
-			"(object was default-initialized without an initializer)");
+		return indeterminateValueReadError();
 	}
 	return heap_val;
 }

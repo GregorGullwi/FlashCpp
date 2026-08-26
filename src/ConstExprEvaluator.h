@@ -1297,6 +1297,18 @@ inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, std:
 	return result;
 }
 
+// Reads of indeterminate storage during constant evaluation form one stable
+// diagnostic family: default-initialized scalars, aggregate members without
+// default member initializers, and bare new objects all violate the same
+// core-constant-expression requirement ([expr.const], [dcl.init]).
+inline EvalResult indeterminateValueReadError() {
+	return EvalResult::error(
+		"Read of indeterminate value in constant expression "
+		"(object was default-initialized without an initializer)",
+		EvalErrorType::Other,
+		DiagnosticId::ConstantExpressionIndeterminateValueRead);
+}
+
 // Reports an evaluator-produced constant-expression violation into the engine
 // so the terminal rejection carries its stable family tag. Callers keep their
 // existing ParseResult recovery untouched; nothing here throws.

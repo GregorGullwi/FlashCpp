@@ -5,34 +5,29 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-25 by branch
-`plan-negative-diagnostic-boundaries-2c`
+Last updated: 2026-08-26 by branch
+`boundary2c-indeterminate-read-diagnostics`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2B landed earlier the same day: the lexer
-  numeric-literal slice (IDs 1101-1102, block 1101..1199, `ErrorLiteral`
-  tokens, three `_e1101`/`_e1102` contracts).
-- Pull request boundary 2C first slice landed: the constant-expression
-  arithmetic-fault family of the frozen negative inventory. Division by zero,
-  modulo by zero, shift-count-too-large, invalid/overflowing shift operations,
-  and signed integer overflow now carry stable IDs (new block 1201..1299:
-  `ConstantExpressionDivisionByZero` 1201, `ConstantExpressionModuloByZero`
-  1202, `ConstantExpressionShiftCountTooLarge` 1203,
-  `ConstantExpressionShiftOperationInvalid` 1204,
-  `ConstantExpressionSignedIntegerOverflow` 1205). The identity travels on
-  `EvalResult::diagnostic_id`; the three terminal rejection sites
-  (static_assert condition in `Parser_Decl_TopLevel.cpp`, variable-initializer
-  validation in `Parser_Decl_FunctionOrVar.cpp`, constexpr static data member
-  initializer in `Parser_Decl_StructEnum.cpp`) report through the shared
-  `ConstExpr::reportConstantExpressionDiagnostic` helper without throwing and
-  keep their existing `ParseResult` recovery. `FlashCppMain` renders
-  accumulated engine records once per rejection on both channels
-  (`ParseResult` errors and legacy-string `CompileError`s without a structured
-  diagnostic). Five frozen tests were renamed to `_e1201`..`_e1204` filename
-  contracts and mutation-validated.
-- The frozen legacy inventory is rebaselined at 250 names with updated count
+- Pull request boundary 2C second slice landed: reads of indeterminate
+  storage during constant evaluation carry the stable identity
+  `ConstantExpressionIndeterminateValueRead` (new number 1206 in block
+  1201..1299). Default-initialized scalars, aggregate members without default
+  member initializers, and bare `new` objects all violate the same
+  core-constant-expression requirement, so one ID owns the family. It
+  originates at the three shared evaluator fault sites —
+  `validateConstexprRead` (heap, array-element, member, and bound-identifier
+  reads), compound assignment on an indeterminate target, and `++`/`--` on an
+  indeterminate target — through the shared
+  `ConstExpr::indeterminateValueReadError` factory, travels on
+  `EvalResult::diagnostic_id`, and reports through the existing terminal
+  static_assert rejection without changing recovery behavior. Seven frozen
+  tests were renamed to `_e1206` filename contracts; each emits exactly one
+  `#1206` occurrence and was mutation-validated by cutting ID propagation at
+  the shared factory.
+- The frozen legacy inventory is rebaselined at 243 names with updated count
   and SHA-256 guards in both runners. The seven-test internal-failure
   compatibility is unchanged at 7 against baseline 7, direction down, removal
   boundary 2F.
@@ -47,9 +42,10 @@ Last updated: 2026-08-25 by branch
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure": the ASAN crash-handler defect,
-    declarator-, literal-, and constant-expression-arithmetic-family
-    diagnostics are filename-pinned and mutation-validated; the remaining
-    architectural regression corpus is still outstanding
+    declarator-, literal-, constant-expression-arithmetic, and
+    indeterminate-read-family diagnostics are filename-pinned and
+    mutation-validated; the remaining architectural regression corpus is
+    still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
     on Windows CI over the fixed corpus including the encoded literal tests;
@@ -60,7 +56,7 @@ Last updated: 2026-08-25 by branch
 
 ## Effort estimate
 
-- Implementation effort completed overall: 4-6%, confidence medium
+- Implementation effort completed overall: 5-7%, confidence medium
 
 ## Remaining work
 
@@ -74,11 +70,10 @@ Next blocker:
 Then, in order:
 
 1. Pull request boundary 2C continuation slices, each by shared diagnostic
-   owner within constant-expression evaluation: the indeterminate-read family
-   (default-init aggregates/scalars/new), the pointer arithmetic and
-   lifetime family (negative creation, out-of-bounds dereference,
-   different-array comparison, freed heap access), then the remaining
-   one-off reasons.
+   owner within constant-expression evaluation: the pointer arithmetic and
+   lifetime family first (negative pointer creation, out-of-bounds
+   dereference, different-array comparison, freed heap access), then the
+   remaining one-off reasons.
 2. Pull request boundaries 2D through 2F: continue converting the frozen
    legacy negative tests in bounded diagnostic-owner batches; boundary 2F
    deletes `_fail.cpp` classification, both frozen inventories, and the
@@ -112,9 +107,10 @@ Named follow-ups carried forward:
   `src/Parser_Decl_DeclaratorCore.cpp:477` onto
   `DiagnosticId::PointerToReferenceType` once ParseResult carries structured
   diagnostics.
-- Declaration-to-expression fallback masking (KNOWN_ISSUES): any masked
-  rejection site must route through the shared declaration dispatch or its
-  test is deleted before a structured ID is assigned.
+- Declaration-parse errors masked by the top-level expression-statement
+  fallback: any masked rejection site must route through the shared
+  declaration dispatch or its test is deleted before a structured ID is
+  assigned (see `docs/KNOWN_ISSUES.md`).
 - Blanket `noexcept` on member functions stays deferred until boundaries 5-8
   shrink the exception surface to invariant-only paths.
 
@@ -136,3 +132,11 @@ Current findings only; delete entries when their resolution lands.
 - Declaration-parse errors can be masked by the top-level expression-statement
   fallback; details and the conversion rule for affected sites live in
   docs/KNOWN_ISSUES.md. Owner: parser declaration dispatch.
+- Linux full-suite runs at `-j$(nproc)` flake: the fixed five-second runtime
+  limit trips under 24-way parallel load even for instant-return programs
+  (341 `RUNTIME_TIMEOUT` results in one observed run, including
+  `test_minimal_ret42.cpp`; the failing set shifts between runs and the same
+  names pass in isolation and in smaller batches, independent of code state).
+  Treat mass `RUNTIME_TIMEOUT` on this lane as scheduler noise until the
+  runner gains load-aware timeouts or a bounded default job count. Owner:
+  runner timeout/scheduling policy.
