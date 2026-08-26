@@ -394,3 +394,23 @@ FlashCpp currently defines `_WIN32`, `_WIN64`, and `_MSC_VER` even for its LP64
 ELF target, where it also defines `__ELF__`. Portable source cannot use `_WIN32`
 alone to distinguish the generated object format. The Win64-only virtual ABI
 regression therefore uses `__ELF__` as its target guard.
+
+## Direct-subscript constexpr evaluation has dispatch gaps
+
+Two constructs bypass every array bounds check during constant evaluation,
+each failing with a generic evaluator error instead of reaching the tagged
+subscript sites:
+
+- A nested subscript on a global multi-dimensional constexpr array
+  (`grid[2][0]` where `grid` is `constexpr int grid[2][2]`) reports
+  `Array subscript on unsupported expression type`. The same construct over a
+  local binding is bounds-checked correctly
+  (tests/test_constexpr_subscript_oob_multidim_read_e1212.cpp).
+- A member-array subscript through a local struct binding
+  (`Holder h; return h.data[9];` where `data` is `int[4]`) reports
+  `AST node is not an expression` before any bounds check runs.
+
+Both are acceptance-side gaps only when combined with an eager-validation
+bypass; single-dimension global and local subscripts reject correctly since
+DiagnosticId::ConstantExpressionArrayIndexOutOfBounds (1212) landed. Owner:
+constexpr subscript dispatch.

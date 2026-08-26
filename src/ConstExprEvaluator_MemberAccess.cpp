@@ -3017,7 +3017,9 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 
 	size_t element_index = static_cast<size_t>(evaluated_index);
 	if (element_index >= elements->size()) {
-		return EvalResult::error("Array index " + std::to_string(element_index) + " out of bounds (size " + std::to_string(elements->size()) + ")");
+		return EvalResult::error("Array index " + std::to_string(element_index) + " out of bounds (size " + std::to_string(elements->size()) + ")",
+								 EvalErrorType::NotConstantExpression,
+								 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 	}
 
 	const ASTNode& array_element = (*elements)[element_index];
