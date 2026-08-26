@@ -1554,6 +1554,16 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 				StringTable::getStringView(operand_result.pointer_to_var),
 				context, operand_result.pointer_offset);
 		}
+			if (!operand_result.pointer_to_var.isValid() &&
+				operand_result.exact_type.has_value() &&
+				(operand_result.exact_type->category() == TypeCategory::Nullptr ||
+				 (!operand_result.exact_type->pointer_levels().empty() &&
+				  operand_result.as_uint_raw() == 0))) {
+				return EvalResult::error(
+					"Dereference of null pointer in constant expression",
+					EvalErrorType::NotConstantExpression,
+					DiagnosticId::ConstantExpressionNullPointerDereference);
+			}
 		return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 	}
 

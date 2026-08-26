@@ -6,12 +6,24 @@ pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
 Last updated: 2026-08-26 by branch
-`boundary2c-subscript-oob-diagnostics`
+`boundary2c-oneoff-constexpr-diagnostics`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2C fourth slice landed: direct-subscript
+- Pull request boundary 2C fifth slice landed: the remaining one-off pointer
+  reasons carry stable identities. Null-pointer dereference is
+  ConstantExpressionNullPointerDereference (1213); detection treats a
+  pointer-typed operand with value zero as null because parameter binding
+  overwrites the argument's spelling type with the declared pointer type.
+  Pointer-plus-pointer addition is ConstantExpressionPointerPlusPointer
+  (1214), reachable because auto variable initialization now surfaces a
+  structured constant-expression rejection before its generic deduction
+  failure when the evaluator already owns the error. Negative-offset
+  creation with dereference converted to the existing
+  ConstantExpressionPointerCreationOutsideObject (1207). Three frozen tests
+  renamed to encoded contracts; all mutation-validated per rule. The frozen
+  legacy inventory is rebaselined at 231 names. direct-subscript
   out-of-bounds reads and writes during constant evaluation carry the stable
   identity `ConstantExpressionArrayIndexOutOfBounds` (1212), wired across the
   bound-array subscript, subscript/multi-dimensional assignment,
@@ -28,7 +40,7 @@ Last updated: 2026-08-26 by branch
   ID propagation at every tagged site.
 - Earlier slices this boundary: arithmetic faults (1201-1205),
   indeterminate-read family (1206), pointer arithmetic and lifetime family
-  (1207-1211).
+  (1207-1211), direct-subscript out-of-bounds family (1212).
 - The full ELF suite ran green end to end on Linux under the hardened
   timeout policy (`runner-timeout-resilience`), confirming the mitigation.
 - The frozen legacy inventory is rebaselined at 234 names with updated count
@@ -91,14 +103,12 @@ Next blocker:
 
 Then, in order:
 
-1. Pull request boundary 2C continuation slices by shared diagnostic owner:
-   null-pointer dereference, pointer-plus-pointer rejection, then the
-   remaining one-off constant-expression reasons. Two adjacent evaluator gaps
-   surfaced by this slice need their own reduced tests before IDs can be
-   assigned: nested subscripts on global multi-dimensional arrays fail with
-   "Array subscript on unsupported expression type", and member-array
+1. Two adjacent evaluator gaps need reduced tests and fixes before IDs can
+   be assigned: nested subscripts on global multi-dimensional arrays fail
+   with "Array subscript on unsupported expression type", and member-array
    subscripts through a local struct binding fail with "AST node is not an
-   expression" instead of reaching any bounds check.
+   expression" instead of reaching any bounds check. With these, boundary 2C
+   constant-expression conversion is complete and boundaries 2D-2F follow.
 2. Pull request boundaries 2D through 2F: continue converting the frozen
    legacy negative tests in bounded diagnostic-owner batches; boundary 2F
    deletes `_fail.cpp` classification, both frozen inventories, and the
