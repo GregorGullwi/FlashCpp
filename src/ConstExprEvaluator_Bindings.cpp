@@ -810,18 +810,24 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 		auto heap_it = context.constexpr_heap.find(heap_key);
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
-				return EvalResult::error("Arrow member access on freed heap pointer: use after free in constant expression");
+				return EvalResult::error("Arrow member access on freed heap pointer: use after free in constant expression",
+										 EvalErrorType::Other,
+										 DiagnosticId::ConstantExpressionUseAfterFree);
 			}
 			const EvalResult& heap_obj = heap_it->second.value;
 			int64_t offset = object_result->pointer_offset;
 			const EvalResult* target_obj = &heap_obj;
 			if (heap_obj.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_obj.array_elements.size()) {
-					return EvalResult::error("Arrow member access: pointer offset out of bounds for heap struct array");
+					return EvalResult::error("Arrow member access: pointer offset out of bounds for heap struct array",
+											 EvalErrorType::Other,
+											 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 				}
 				target_obj = &heap_obj.array_elements[static_cast<size_t>(offset)];
 			} else if (offset != 0) {
-				return EvalResult::error("Arrow member access: non-zero pointer offset on non-array heap object");
+				return EvalResult::error("Arrow member access: non-zero pointer offset on non-array heap object",
+										 EvalErrorType::Other,
+										 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 			}
 			auto member_it = target_obj->object_member_bindings.find(member_access.member_name());
 			if (member_it != target_obj->object_member_bindings.end()) {
@@ -2384,7 +2390,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 								if (ptr_result.pointer_offset != 0) {
 									return EvalResult::error(
 										"Non-zero pointer offset on non-array local variable '"
-										+ std::string(local_name) + "' in constexpr dereference assignment");
+										+ std::string(local_name) + "' in constexpr dereference assignment",
+										EvalErrorType::Other,
+										DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 								}
 								// Evaluate the RHS before mutating.
 								auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
@@ -2399,7 +2407,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return EvalResult::error("Dereference assignment: pointer target is neither a heap allocation nor a local binding in constant expression");
 						}
 						if (heap_it->second.freed) {
-							return EvalResult::error("Dereference assignment: use after free in constant expression");
+							return EvalResult::error("Dereference assignment: use after free in constant expression",
+													 EvalErrorType::Other,
+													 DiagnosticId::ConstantExpressionUseAfterFree);
 						}
 						int64_t offset = ptr_result.pointer_offset;
 
@@ -2412,12 +2422,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						if (heap_val.is_array) {
 							// Pointer into an array: update the element at offset
 							if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
-								return EvalResult::error("Array index out of bounds in constexpr dereference assignment");
+								return EvalResult::error("Array index out of bounds in constexpr dereference assignment",
+														 EvalErrorType::Other,
+														 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 							}
 							return apply_op_to(heap_val.array_elements[static_cast<size_t>(offset)], rhs_result);
 						} else {
 							if (offset != 0) {
-								return EvalResult::error("Non-zero pointer offset on non-array heap object in constexpr assignment");
+								return EvalResult::error("Non-zero pointer offset on non-array heap object in constexpr assignment",
+														 EvalErrorType::Other,
+														 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 							}
 							return apply_op_to(heap_val, rhs_result);
 						}
@@ -2448,12 +2462,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							if (object_binding->is_array) {
 								if (ptr_result.pointer_offset < 0 ||
 									static_cast<size_t>(ptr_result.pointer_offset) >= object_binding->array_elements.size()) {
-									return EvalResult::error("Arrow assignment: pointer offset out of bounds for local struct array");
+									return EvalResult::error("Arrow assignment: pointer offset out of bounds for local struct array",
+															 EvalErrorType::Other,
+															 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 								}
 								object_slot = &object_binding->array_elements[static_cast<size_t>(ptr_result.pointer_offset)];
 							} else if (ptr_result.pointer_offset != 0) {
 								return EvalResult::error(
-									"Arrow assignment: non-zero pointer offset on non-array local object in constexpr assignment");
+									"Arrow assignment: non-zero pointer offset on non-array local object in constexpr assignment",
+									EvalErrorType::Other,
+									DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 							}
 							auto member_it = object_slot->object_member_bindings.find(ma.member_name());
 							if (member_it == object_slot->object_member_bindings.end()) {
@@ -2469,7 +2487,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return assign_result;
 						}
 						if (heap_it->second.freed) {
-							return EvalResult::error("Arrow assignment: use after free in constant expression");
+							return EvalResult::error("Arrow assignment: use after free in constant expression",
+													 EvalErrorType::Other,
+													 DiagnosticId::ConstantExpressionUseAfterFree);
 						}
 						// Evaluate the RHS
 						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
@@ -2482,7 +2502,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						if (heap_val.is_array) {
 							// Arrow on an element of a heap struct array
 							if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
-								return EvalResult::error("Arrow assignment: pointer offset out of bounds for heap struct array");
+								return EvalResult::error("Arrow assignment: pointer offset out of bounds for heap struct array",
+														 EvalErrorType::Other,
+														 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 							}
 							auto& elem = heap_val.array_elements[static_cast<size_t>(offset)];
 							auto m_it = elem.object_member_bindings.find(ma.member_name());
@@ -2490,10 +2512,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 								return EvalResult::error("Arrow assignment: member not found in heap struct array element: " + std::string(ma.member_name()));
 							}
 							member_slot = &m_it->second;
-						} else {
-							if (offset != 0) {
-								return EvalResult::error("Arrow assignment: non-zero pointer offset on non-array heap object in constexpr assignment");
-							}
+							} else {
+								if (offset != 0) {
+									return EvalResult::error("Arrow assignment: non-zero pointer offset on non-array heap object in constexpr assignment",
+															 EvalErrorType::Other,
+															 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
+								}
 							auto m_it = heap_val.object_member_bindings.find(ma.member_name());
 							if (m_it == heap_val.object_member_bindings.end()) {
 								return EvalResult::error("Arrow assignment: member not found in heap struct: " + std::string(ma.member_name()));
