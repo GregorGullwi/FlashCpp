@@ -329,8 +329,10 @@ ParseResult Parser::parse_static_assert() {
 	std::string message;
 	if (consume(","_tok)) {
 		// Parse the message string literal(s) - C++ allows adjacent string literals to be concatenated
+		bool has_message_literal = false;
 		while (peek().is_string_literal()) {
 			auto message_token = advance();
+			has_message_literal = true;
 			if (message_token.value().size() >= 2 &&
 				message_token.value().front() == '"' &&
 				message_token.value().back() == '"') {
@@ -338,7 +340,7 @@ ParseResult Parser::parse_static_assert() {
 				message += std::string(message_token.value().substr(1, message_token.value().size() - 2));
 			}
 		}
-		if (message.empty()) {
+		if (!has_message_literal) {
 			return ParseResult::error("Expected string literal for static_assert message", current_token_);
 		}
 	}

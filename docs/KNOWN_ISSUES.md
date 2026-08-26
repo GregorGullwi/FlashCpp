@@ -26,13 +26,6 @@ unreachable for 32-bit overflow; it fires only at the `long long` boundaries.
 Pin it with an encoded regression once the evaluator tracks promoted operand
 widths. Owner: constexpr evaluation fidelity.
 
-## Message-less `static_assert` is unsupported
-
-C++20 [stmt.assert]/1 makes the message optional (`static_assert(cond);`),
-but the parser requires a string literal message and rejects the message-less
-form with `Expected string literal for static_assert message`. Standard
-headers rely on the optional form. Owner: parser statement syntax.
-
 ## Seven legacy negative tests terminate through internal-failure paths
 
 Boundary 2A gives clean source rejection exit status 1 and internal/compiler
