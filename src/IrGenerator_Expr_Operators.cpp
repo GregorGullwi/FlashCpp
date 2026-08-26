@@ -253,20 +253,17 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		const StringHandle owner_name = (last_scope_pos == std::string_view::npos)
 											? StringHandle{}
 											: StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
-		const TypeInfo* current_struct_type = nullptr;
-		if (current_struct_name_.isValid()) {
-			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
-			if (current_struct_it != getTypesByNameMap().end()) {
-				current_struct_type = current_struct_it->second;
-			}
-		}
-
 		const StructStaticMember* static_member = findStaticMemberInStruct(owner_name);
 		const bool owner_matches_current_pattern =
 			current_struct_name_.isValid() && current_struct_name_ != owner_name &&
 			matchesPatternQualifiedName(current_struct_name_, owner_name);
 		if (!static_member && owner_matches_current_pattern) {
 #ifndef NDEBUG
+			const TypeInfo* current_struct_type = nullptr;
+			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+			if (current_struct_it != getTypesByNameMap().end()) {
+				current_struct_type = current_struct_it->second;
+			}
 			assert(current_struct_type && hasInstantiationBindings(current_struct_type) &&
 				   "Template-instantiated current struct missing InstantiationContext for static member resolution");
 #endif

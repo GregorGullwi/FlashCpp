@@ -367,20 +367,6 @@ root; unrelated to the DiagnosticEngine slice that surfaced it. Suspect shared
 static state across earlier TEST_CASEs in the same process. Owner: sema query
 lifecycle; fix by isolating per-test semantic state or resetting query slots.
 
-## Clang release build has an unrelated warning error
-
-`make release` currently fails because `current_struct_type` is set but unused in
-`src/IrGenerator_Expr_Operators.cpp` when `NDEBUG` removes its only use. The Win64
-ABI hotfix does not touch that code path. The release configuration treats the
-warning as an error.
-
-## Clang modular build has missing declarations
-
-`make modular` currently fails in `src/ExpressionSubstitutor.cpp` because the
-translation unit cannot see declarations for `ConstExpr::evaluate_fold_expression`
-and `ConstExpr::tryGetConstexprTypeSizeBytes`. The sharded and debug unity builds
-compile successfully. The Win64 ABI hotfix does not change these declarations.
-
 ## ELF preprocessing also defines Windows target macros
 
 FlashCpp currently defines `_WIN32`, `_WIN64`, and `_MSC_VER` even for its LP64
