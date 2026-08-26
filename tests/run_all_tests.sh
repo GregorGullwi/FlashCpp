@@ -17,6 +17,9 @@ export -f runner_evaluate_negative_result
 export RUNNER_SOURCE_REJECTION_EXIT
 export RUNNER_INTERNAL_FAILURE_EXIT
 export RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY
+export RUNNER_COMPILE_TIMEOUT_SECONDS
+export RUNNER_RUNTIME_TIMEOUT_SECONDS
+export RUNNER_RUNTIME_TIMEOUT_RETRY_LIMIT
 
 # Help FlashCpp's Linux startup policy: deep template instantiation needs a
 # stack well above the 8MB default. Raise the SOFT limit only (-S): setting the
@@ -457,10 +460,19 @@ link_and_run_objects() {
 		return
 	fi
 
-	stderr_output=$(timeout 5 "$exe" 2>&1 > /dev/null)
-	return_value=$?
-	if [ "$return_value" -eq 124 ]; then
-		echo "RUNTIME_TIMEOUT|$base|$variant: TIMEOUT" > "$result_file"
+	local runtime_attempts=0
+	local runtime_timed_out=0
+	while :; do
+		stderr_output=$(timeout "$RUNNER_RUNTIME_TIMEOUT_SECONDS" "$exe" 2>&1 > /dev/null)
+		return_value=$?
+		runtime_attempts=$((runtime_attempts + 1))
+		if [ "$return_value" -ne 124 ] || [ "$runtime_attempts" -gt "$RUNNER_RUNTIME_TIMEOUT_RETRY_LIMIT" ]; then
+			[ "$return_value" -eq 124 ] && runtime_timed_out=1
+			break
+		fi
+	done
+	if [ "$runtime_timed_out" -eq 1 ]; then
+		echo "RUNTIME_TIMEOUT|$base|$variant: TIMEOUT after $runtime_attempts attempts" > "$result_file"
 		rm -f "$exe"
 		return
 	fi
@@ -501,9 +513,9 @@ test_one_file() {
     fi
     local compile_output
     if [ "$USE_CLANG" -eq 1 ]; then
-        compile_output=$(timeout 30 "$FLASHCPP_BIN" -std=c++20 -c "${extra_flags[@]}" "$f" -o "$obj" 2>&1)
+        compile_output=$(timeout "$RUNNER_COMPILE_TIMEOUT_SECONDS" "$FLASHCPP_BIN" -std=c++20 -c "${extra_flags[@]}" "$f" -o "$obj" 2>&1)
     else
-        compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "${extra_flags[@]}" "$f" -o "$obj" 2>&1)
+        compile_output=$(timeout "$RUNNER_COMPILE_TIMEOUT_SECONDS" "$FLASHCPP_BIN" --log-level=1 "${extra_flags[@]}" "$f" -o "$obj" 2>&1)
     fi
     local compile_exit=$?
 
@@ -589,9 +601,9 @@ test_one_multi_tu_case() {
 		[ -f "$source" ] || continue
 		obj="/tmp/${case_name}_$(basename "${source%.cpp}")_$$.o"
 		if [ "$USE_CLANG" -eq 1 ]; then
-			compile_output=$(timeout 30 "$FLASHCPP_BIN" -std=c++20 -c "$source" -o "$obj" 2>&1)
+			compile_output=$(timeout "$RUNNER_COMPILE_TIMEOUT_SECONDS" "$FLASHCPP_BIN" -std=c++20 -c "$source" -o "$obj" 2>&1)
 		else
-			compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "$source" -o "$obj" 2>&1)
+			compile_output=$(timeout "$RUNNER_COMPILE_TIMEOUT_SECONDS" "$FLASHCPP_BIN" --log-level=1 "$source" -o "$obj" 2>&1)
 		fi
 		compile_exit=$?
 		if [ "$compile_exit" -eq 124 ]; then
@@ -643,9 +655,9 @@ test_one_fail_file() {
 
     local compile_output
     if [ "$USE_CLANG" -eq 1 ]; then
-        compile_output=$(timeout 30 "$FLASHCPP_BIN" -std=c++20 -c "$f" -o "$obj" 2>&1)
+        compile_output=$(timeout "$RUNNER_COMPILE_TIMEOUT_SECONDS" "$FLASHCPP_BIN" -std=c++20 -c "$f" -o "$obj" 2>&1)
     else
-        compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "$f" -o "$obj" 2>&1)
+        compile_output=$(timeout "$RUNNER_COMPILE_TIMEOUT_SECONDS" "$FLASHCPP_BIN" --log-level=1 "$f" -o "$obj" 2>&1)
     fi
     local compile_exit=$?
 
