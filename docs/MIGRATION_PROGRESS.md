@@ -6,65 +6,28 @@ pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
 Last updated: 2026-08-26 by branch
-`boundary2c-oneoff-constexpr-diagnostics`
+`codex/boundary-2c-subscript-dispatch`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2C fifth slice landed: the remaining one-off pointer
-  reasons carry stable identities. Null-pointer dereference is
-  ConstantExpressionNullPointerDereference (1213); detection treats a
-  pointer-typed operand with value zero as null because parameter binding
-  overwrites the argument's spelling type with the declared pointer type.
-  Pointer-plus-pointer addition is ConstantExpressionPointerPlusPointer
-  (1214), reachable because auto variable initialization now surfaces a
-  structured constant-expression rejection before its generic deduction
-  failure when the evaluator already owns the error. Negative-offset
-  creation with dereference converted to the existing
-  ConstantExpressionPointerCreationOutsideObject (1207). Three frozen tests
-  renamed to encoded contracts; all mutation-validated per rule. The frozen
-  legacy inventory is rebaselined at 231 names. direct-subscript
-  out-of-bounds reads and writes during constant evaluation carry the stable
-  identity `ConstantExpressionArrayIndexOutOfBounds` (1212), wired across the
-  bound-array subscript, subscript/multi-dimensional assignment,
-  materialization (typed, inline, static-member, and multi-dim row paths),
-  member-array access, and lvalue-resolution sites. The sites report
-  `EvalErrorType::NotConstantExpression`, which the eager global
-  constexpr/constinit initializer validator requires before rejecting;
-  identifier-array subscripts previously slipped through that validator as
-  evaluator-gap failures, so unused out-of-bounds global initializers such as
-  `constexpr int bad = arr[5];` were silently accepted with garbage values.
-  They now reject. Five encoded regressions pin the family (global init,
-  negative index, local write, multi-dim read under 1212; heap struct-array
-  element access under existing 1208); all were mutation-validated by cutting
-  ID propagation at every tagged site.
+- Pull request boundary 2C follow-on slice closed the two remaining direct
+  subscript dispatch gaps. Nested subscripts rooted at a global
+  multidimensional constexpr array now walk materialized rows and check each
+  dimension before descending. A subscript on an array member of a
+  default-initialized local object now checks the selected member's bounds
+  before unrelated indeterminate members are read. Both paths report
+  `ConstantExpressionArrayIndexOutOfBounds` (1212), with two new encoded
+  regressions; existing valid multidimensional and member-array tests remain
+  green.
 - Earlier slices this boundary: arithmetic faults (1201-1205),
   indeterminate-read family (1206), pointer arithmetic and lifetime family
   (1207-1211), direct-subscript out-of-bounds family (1212).
-- The full ELF suite ran green end to end on Linux under the hardened
-  timeout policy (`runner-timeout-resilience`), confirming the mitigation.
-- The frozen legacy inventory is rebaselined at 234 names with updated count
-  and SHA-256 guards in both runners. The seven-test internal-failure
-  compatibility is unchanged at 7 against baseline 7, direction down, removal
-  boundary 2F. pointer arithmetic and
-  lifetime violations during constant evaluation carry five stable IDs in
-  block 1201..1299 — pointer creation outside the pointee object (1207),
-  out-of-bounds access through a computed pointer (1208), subtraction across
-  different objects (1209), relational comparison across different objects
-  (1210), and use after free (1211). The identity is wired at every evaluator
-  site owning those rules: `make_checked_constexpr_pointer_result` formation
-  checks, the dereference and arrow read/write paths, the heap-use-after-free
-  guards, and the pointer subtraction/relational operators. Error
-  classifications and recovery behavior are unchanged; only identity was
-  added. Nine frozen tests were renamed to filename-encoded contracts, each
-  emitting exactly one occurrence, mutation-validated by cutting ID
-  propagation per rule.
-- Earlier slices this boundary: arithmetic faults (1201-1205) and the
-  indeterminate-read family (1206).
-- The frozen legacy inventory is rebaselined at 234 names with updated count
-  and SHA-256 guards in both runners. The seven-test internal-failure
-  compatibility is unchanged at 7 against baseline 7, direction down, removal
-  boundary 2F.
+- The full Windows suite ran green: 2,946 regular tests, 265 negative tests,
+  and one multi-translation-unit case; no crashes or mismatches occurred.
+- The frozen legacy inventory remains rebaselined at 231 names. The seven-test
+  internal-failure compatibility is unchanged at 7 against baseline 7,
+  direction down, removal boundary 2F.
 
 ## Criteria completion
 
@@ -77,9 +40,10 @@ Last updated: 2026-08-26 by branch
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure": the ASAN crash-handler defect,
     declarator-, literal-, constant-expression-arithmetic,
-    indeterminate-read, and pointer-arithmetic/lifetime-family diagnostics
-    are filename-pinned and mutation-validated; the remaining architectural
-    regression corpus is still outstanding
+    indeterminate-read, pointer-arithmetic/lifetime-family, and direct
+    multidimensional/member-subscript diagnostics are filename-pinned and
+    mutation-validated; the remaining architectural regression corpus is
+    still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
     on Windows CI over the fixed corpus including the encoded literal tests;
@@ -98,29 +62,23 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- None blocking the next conversion batch locally. PowerShell runner and
-  Windows compiler validation remain CI-only in the current environment.
+- None blocking the next conversion batch locally; the full Windows
+  validation is green.
 
 Then, in order:
 
-1. Two adjacent evaluator gaps need reduced tests and fixes before IDs can
-   be assigned: nested subscripts on global multi-dimensional arrays fail
-   with "Array subscript on unsupported expression type", and member-array
-   subscripts through a local struct binding fail with "AST node is not an
-   expression" instead of reaching any bounds check. With these, boundary 2C
-   constant-expression conversion is complete and boundaries 2D-2F follow.
-2. Pull request boundaries 2D through 2F: continue converting the frozen
+1. Pull request boundaries 2D through 2F: continue converting the frozen
    legacy negative tests in bounded diagnostic-owner batches; boundary 2F
    deletes `_fail.cpp` classification, both frozen inventories, and the
    seven-test internal-failure compatibility.
-3. Preprocessor-directive diagnostics stay unconverted in the frozen
+2. Preprocessor-directive diagnostics stay unconverted in the frozen
    inventory (`#include_next` file-not-found; recursive macro expansion
    surfacing as a generic parser error) and need their own owner batch or
    deletion review.
-4. Pull request boundary 3: first architectural regression slices
+3. Pull request boundary 3: first architectural regression slices
    (promotion, namespace-template identity, ambiguous member lookup),
    mutation-validated.
-5. Pull request boundary 4: template facade plus the remaining choke-point
+4. Pull request boundary 4: template facade plus the remaining choke-point
    counters and the `'$'` inline-parsing static inventory.
 
 Named follow-ups carried forward:
