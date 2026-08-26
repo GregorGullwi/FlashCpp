@@ -6,12 +6,35 @@ pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
 Last updated: 2026-08-26 by branch
-`boundary2c-pointer-lifetime-diagnostics`
+`boundary2c-subscript-oob-diagnostics`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2C third slice landed: pointer arithmetic and
+- Pull request boundary 2C fourth slice landed: direct-subscript
+  out-of-bounds reads and writes during constant evaluation carry the stable
+  identity `ConstantExpressionArrayIndexOutOfBounds` (1212), wired across the
+  bound-array subscript, subscript/multi-dimensional assignment,
+  materialization (typed, inline, static-member, and multi-dim row paths),
+  member-array access, and lvalue-resolution sites. The sites report
+  `EvalErrorType::NotConstantExpression`, which the eager global
+  constexpr/constinit initializer validator requires before rejecting;
+  identifier-array subscripts previously slipped through that validator as
+  evaluator-gap failures, so unused out-of-bounds global initializers such as
+  `constexpr int bad = arr[5];` were silently accepted with garbage values.
+  They now reject. Five encoded regressions pin the family (global init,
+  negative index, local write, multi-dim read under 1212; heap struct-array
+  element access under existing 1208); all were mutation-validated by cutting
+  ID propagation at every tagged site.
+- Earlier slices this boundary: arithmetic faults (1201-1205),
+  indeterminate-read family (1206), pointer arithmetic and lifetime family
+  (1207-1211).
+- The full ELF suite ran green end to end on Linux under the hardened
+  timeout policy (`runner-timeout-resilience`), confirming the mitigation.
+- The frozen legacy inventory is rebaselined at 234 names with updated count
+  and SHA-256 guards in both runners. The seven-test internal-failure
+  compatibility is unchanged at 7 against baseline 7, direction down, removal
+  boundary 2F. pointer arithmetic and
   lifetime violations during constant evaluation carry five stable IDs in
   block 1201..1299 — pointer creation outside the pointee object (1207),
   out-of-bounds access through a computed pointer (1208), subtraction across
@@ -69,10 +92,13 @@ Next blocker:
 Then, in order:
 
 1. Pull request boundary 2C continuation slices by shared diagnostic owner:
-   the direct-subscript out-of-bounds family (plain `arr[i]` index checks in
-   materialization, member access, and lvalue resolution), null-pointer
-   dereference, pointer-plus-pointer rejection, then the remaining one-off
-   constant-expression reasons.
+   null-pointer dereference, pointer-plus-pointer rejection, then the
+   remaining one-off constant-expression reasons. Two adjacent evaluator gaps
+   surfaced by this slice need their own reduced tests before IDs can be
+   assigned: nested subscripts on global multi-dimensional arrays fail with
+   "Array subscript on unsupported expression type", and member-array
+   subscripts through a local struct binding fail with "AST node is not an
+   expression" instead of reaching any bounds check.
 2. Pull request boundaries 2D through 2F: continue converting the frozen
    legacy negative tests in bounded diagnostic-owner batches; boundary 2F
    deletes `_fail.cpp` classification, both frozen inventories, and the
@@ -140,4 +166,5 @@ Current findings only; delete entries when their resolution lands.
   retry of a timed-out program before classifying failure; deterministic
   timeouts still fail. Residual risk: a host stall longer than one timeout
   plus retry cycle can still flap affected tests. Owner: runner scheduling
-  policy.
+  policy. Follow-up: the full suite completed green on Linux under this
+  policy on 2026-08-26.

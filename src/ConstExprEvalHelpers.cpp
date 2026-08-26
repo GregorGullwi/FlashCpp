@@ -1350,7 +1350,9 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 		return std::nullopt;
 	};
 	auto failArrayIndexOutOfBounds = [&]() -> std::optional<BoundWriteTarget> {
-		resolve_error = EvalResult::error("Array index out of bounds in constant expression");
+		resolve_error = EvalResult::error("Array index out of bounds in constant expression",
+			EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 		return std::nullopt;
 	};
 	auto failNonArrayOffset = [&](std::string_view var_name) -> std::optional<BoundWriteTarget> {
@@ -1513,7 +1515,9 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 			}
 			final_index = array_result.pointer_offset + index;
 			if (final_index < 0) {
-				resolve_error = EvalResult::error("Array index out of bounds while resolving constexpr lvalue");
+				resolve_error = EvalResult::error("Array index out of bounds while resolving constexpr lvalue",
+					EvalErrorType::NotConstantExpression,
+					DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 				return std::nullopt;
 			}
 
@@ -1573,7 +1577,9 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 
 		expandArrayElements(*base_target->slot);
 		if (index < 0 || static_cast<size_t>(index) >= base_target->slot->array_elements.size()) {
-			resolve_error = EvalResult::error("Array index out of bounds while resolving constexpr lvalue");
+			resolve_error = EvalResult::error("Array index out of bounds while resolving constexpr lvalue",
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 			return std::nullopt;
 		}
 
@@ -1655,7 +1661,9 @@ std::optional<EvalResult> tryMaterializeMultidimArrayRow(
 		return materialized;
 	}
 	if (index >= materialized.array_elements.size()) {
-		return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")");
+		return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")",
+											 EvalErrorType::NotConstantExpression,
+											 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 	}
 	return materialized.array_elements[index];
 }

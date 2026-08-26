@@ -1839,7 +1839,9 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 			return ptr.pointer_value_snapshot[0];
 		}
 		if (idx >= ptr.pointer_value_snapshot.size()) {
-			return EvalResult::error("Array index out of bounds in constant expression");
+			return EvalResult::error("Array index out of bounds in constant expression",
+									 EvalErrorType::Other,
+									 DiagnosticId::ConstantExpressionOutOfBoundsAccess);
 		}
 		return ptr.pointer_value_snapshot[idx];
 	}

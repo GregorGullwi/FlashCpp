@@ -1304,7 +1304,9 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 
 	long long index = index_result.as_int();
 	if (index < 0) {
-		return EvalResult::error("Negative array index in constant expression");
+		return EvalResult::error("Negative array index in constant expression",
+								 EvalErrorType::NotConstantExpression,
+								 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 	}
 
 	// Get the array expression - this could be:
@@ -1346,7 +1348,9 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 	// constexpr const char* whose initializer evaluates to a string-char array).
 	if (arr_result.success() && arr_result.is_array && !arr_result.array_elements.empty()) {
 		if (static_cast<size_t>(index) >= arr_result.array_elements.size()) {
-			return EvalResult::error("Array index out of bounds in constant expression");
+			return EvalResult::error("Array index out of bounds in constant expression",
+										 EvalErrorType::NotConstantExpression,
+										 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 		}
 		return arr_result.array_elements[static_cast<size_t>(index)];
 	}
@@ -1429,7 +1433,9 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 						.append(" out of bounds (size "sv)
 						.append(array_value.array_elements.size())
 						.append(")"sv)
-						.commit()));
+						.commit()),
+					EvalErrorType::NotConstantExpression,
+					DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 			}
 			return array_value.array_elements[index];
 		}
@@ -1441,7 +1447,9 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 					.append(" out of bounds (size "sv)
 					.append(array_value.array_values.size())
 					.append(")"sv)
-					.commit()));
+					.commit()),
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 		}
 		return EvalResult::from_int(array_value.array_values[index]);
 	};
@@ -1507,7 +1515,9 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 		}
 		const auto& elements = init_list.initializers();
 		if (index >= elements.size()) {
-			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
+			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")",
+											 EvalErrorType::NotConstantExpression,
+											 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 		}
 
 		if (!resolved_member.evaluation_bindings.empty()) {
@@ -1584,7 +1594,9 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 				return materialized;
 			}
 			if (index >= materialized.array_elements.size()) {
-				return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")");
+				return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(materialized.array_elements.size()) + ")",
+											 EvalErrorType::NotConstantExpression,
+											 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 			}
 			return materialized.array_elements[index];
 		}
@@ -1593,7 +1605,9 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		}
 		const auto& elements = init_list.initializers();
 		if (index >= elements.size()) {
-			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
+			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")",
+											 EvalErrorType::NotConstantExpression,
+											 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 		}
 		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
 		const ASTNode& elem = elements[index];

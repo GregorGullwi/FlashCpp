@@ -1024,12 +1024,16 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	}
 	if (!array_result->array_elements.empty()) {
 		if (static_cast<size_t>(index) >= array_result->array_elements.size()) {
-			return EvalResult::error("Array index out of bounds in constant expression");
+			return EvalResult::error("Array index out of bounds in constant expression",
+									 EvalErrorType::NotConstantExpression,
+									 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 		}
 		return array_result->array_elements[static_cast<size_t>(index)];
 	}
 	if (static_cast<size_t>(index) >= array_result->array_values.size()) {
-		return EvalResult::error("Array index out of bounds in constant expression");
+		return EvalResult::error("Array index out of bounds in constant expression",
+								 EvalErrorType::NotConstantExpression,
+								 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 	}
 
 	return EvalResult::from_int(array_result->array_values[static_cast<size_t>(index)]);
@@ -2598,7 +2602,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							if (heap_val.is_array) {
 								int64_t final_idx = base_offset + idx;
 								if (final_idx < 0 || static_cast<size_t>(final_idx) >= heap_val.array_elements.size()) {
-									return EvalResult::error("Array index out of bounds in constexpr subscript assignment");
+									return EvalResult::error("Array index out of bounds in constexpr subscript assignment",
+															 EvalErrorType::NotConstantExpression,
+															 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 								}
 								return apply_op_to(heap_val.array_elements[static_cast<size_t>(final_idx)], rhs_result);
 							}
@@ -2611,7 +2617,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						EvalResult* bound = findMutableBindingValue(arr_name, bindings, context);
 						if (bound && bound->is_array) {
 							if (idx < 0 || static_cast<size_t>(idx) >= bound->array_elements.size()) {
-								return EvalResult::error("Array index out of bounds in constexpr subscript assignment");
+								return EvalResult::error("Array index out of bounds in constexpr subscript assignment",
+														 EvalErrorType::NotConstantExpression,
+														 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 							}
 							auto result = apply_op_to(bound->array_elements[static_cast<size_t>(idx)], rhs_result);
 							if (result.success()) {
@@ -2647,7 +2655,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 											return EvalResult::error("Subscript assignment target is not an array in constexpr multi-dimensional subscript assignment");
 										}
 										if (current_idx < 0 || static_cast<size_t>(current_idx) >= current->array_elements.size()) {
-											return EvalResult::error("Array index out of bounds in constexpr multi-dimensional subscript assignment");
+											return EvalResult::error("Array index out of bounds in constexpr multi-dimensional subscript assignment",
+																	 EvalErrorType::NotConstantExpression,
+																	 DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
 										}
 										if (it + 1 == nested_indices.rend()) {
 											auto result = apply_op_to(current->array_elements[static_cast<size_t>(current_idx)], rhs_result);
