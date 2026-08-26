@@ -1314,6 +1314,53 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 	// 2. An identifier (e.g., arr or ptr)
 	// 3. A pointer expression (e.g., (ptr + 1)[i] → *(ptr + 1 + i))
 	const ASTNode& array_expr = subscript.array_expr();
+	// Walk nested identifier-rooted subscripts as one multidimensional access.
+	// Evaluating the inner subscript first can lose the row shape or replace an
+	// inner bounds failure with the outer unsupported-expression fallback.
+	std::vector<const ArraySubscriptNode*> subscript_chain;
+	const ArraySubscriptNode* current_subscript = &subscript;
+	const ASTNode* root_expr = &array_expr;
+	while (current_subscript != nullptr) {
+		subscript_chain.push_back(current_subscript);
+		const ASTNode& next_expr = current_subscript->array_expr();
+		const ArraySubscriptNode* next_subscript = tryGetNode<ArraySubscriptNode>(next_expr);
+		if (next_subscript == nullptr) {
+			root_expr = &next_expr;
+			break;
+		}
+		current_subscript = next_subscript;
+	}
+	if (subscript_chain.size() > 1 && context.local_bindings == nullptr) {
+		const IdentifierNode* root_identifier = tryGetIdentifier(*root_expr);
+		if (root_identifier != nullptr) {
+			EvalResult nested_result = evaluate(*root_expr, context);
+			if (nested_result.success() && nested_result.is_array) {
+				bool fully_subscripted = true;
+				for (auto it = subscript_chain.rbegin(); it != subscript_chain.rend(); ++it) {
+					auto nested_index_result = evaluate((*it)->index_expr(), context);
+					if (!nested_index_result.success()) {
+						return nested_index_result;
+					}
+					long long nested_index = nested_index_result.as_int();
+					if (nested_index < 0 || static_cast<size_t>(nested_index) >= nested_result.array_elements.size()) {
+						return EvalResult::error(
+							"Array index out of bounds in constant expression",
+							EvalErrorType::NotConstantExpression,
+							DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
+					}
+					EvalResult selected_element = nested_result.array_elements[static_cast<size_t>(nested_index)];
+					nested_result = std::move(selected_element);
+					if (it + 1 != subscript_chain.rend() && !nested_result.is_array) {
+						fully_subscripted = false;
+						break;
+					}
+				}
+				if (fully_subscripted) {
+					return nested_result;
+				}
+			}
+		}
+	}
 
 	// Check if it's a member access (e.g., obj.data[0])
 	if (array_expr.is<ExpressionNode>()) {

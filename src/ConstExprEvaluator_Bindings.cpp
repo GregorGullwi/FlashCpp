@@ -894,6 +894,28 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	}
 
 	const ASTNode& array_expr = subscript.array_expr();
+	if (const MemberAccessNode* member_access = tryGetNode<MemberAccessNode>(array_expr)) {
+		if (const IdentifierNode* object_id = tryGetIdentifier(member_access->object())) {
+			// Read the bound object directly.  The ordinary identifier read
+			// validates the complete object, which would reject an indeterminate
+			// sibling element before this subscript can report its own bounds.
+			if (const EvalResult* object_result = findBindingValue(object_id->name(), bindings, context)) {
+				const EvalResult* member_value = findConstexprObjectMemberRecursive(
+					*object_result,
+					StringTable::getOrInternStringHandle(member_access->member_name()));
+				if (member_value != nullptr && member_value->is_array && member_value->is_indeterminate) {
+					if (static_cast<size_t>(index) >= member_value->array_elements.size()) {
+						return EvalResult::error(
+							"Array index out of bounds in constant expression",
+							EvalErrorType::NotConstantExpression,
+							DiagnosticId::ConstantExpressionArrayIndexOutOfBounds);
+					}
+					return member_value->array_elements[static_cast<size_t>(index)];
+				}
+			}
+		}
+	}
+
 	ResolvedBoundEvalResult resolved_array = resolve_bound_eval_result(array_expr, bindings, context);
 	if (resolved_array.error.has_value()) {
 		return resolved_array.error.value();
