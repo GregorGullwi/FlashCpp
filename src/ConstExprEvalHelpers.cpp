@@ -1140,7 +1140,8 @@ EvalResult make_checked_constexpr_pointer_result(
 	if (offset < 0) {
 		return EvalResult::error("Pointer arithmetic produced negative offset " + std::to_string(offset) +
 									 " in constant expression",
-								 EvalErrorType::NotConstantExpression);
+								 EvalErrorType::NotConstantExpression,
+								 DiagnosticId::ConstantExpressionPointerCreationOutsideObject);
 	}
 
 	const auto upper_bound = try_get_constexpr_pointer_upper_bound(var_name, context, bindings);
@@ -1152,7 +1153,8 @@ EvalResult make_checked_constexpr_pointer_result(
 		return EvalResult::error("Pointer arithmetic produced offset " + std::to_string(offset) +
 									 " outside the valid range [0, " + std::to_string(*upper_bound) +
 									 "] for '" + std::string(var_name) + "' in constant expression",
-								 EvalErrorType::NotConstantExpression);
+								 EvalErrorType::NotConstantExpression,
+								 DiagnosticId::ConstantExpressionPointerCreationOutsideObject);
 	}
 
 	return EvalResult::from_pointer(var_name, offset);
@@ -1405,7 +1407,9 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 			auto heap_it = context.constexpr_heap.find(heap_key);
 			if (heap_it != context.constexpr_heap.end()) {
 				if (heap_it->second.freed) {
-					resolve_error = EvalResult::error("Use after free in constant expression");
+					resolve_error = EvalResult::error("Use after free in constant expression",
+													  EvalErrorType::Other,
+													  DiagnosticId::ConstantExpressionUseAfterFree);
 					return std::nullopt;
 				}
 
@@ -1517,7 +1521,9 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 			auto heap_it = context.constexpr_heap.find(pointer_target);
 			if (heap_it != context.constexpr_heap.end()) {
 				if (heap_it->second.freed) {
-					resolve_error = EvalResult::error("Use after free in constant expression");
+					resolve_error = EvalResult::error("Use after free in constant expression",
+													  EvalErrorType::Other,
+													  DiagnosticId::ConstantExpressionUseAfterFree);
 					return std::nullopt;
 				}
 				EvalResult& heap_value = heap_it->second.value;

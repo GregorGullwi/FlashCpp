@@ -77,6 +77,11 @@ enum class DiagnosticId : uint32_t {
 	ConstantExpressionShiftOperationInvalid = 1204,
 	ConstantExpressionSignedIntegerOverflow = 1205,
 	ConstantExpressionIndeterminateValueRead = 1206,
+	ConstantExpressionPointerCreationOutsideObject = 1207,
+	ConstantExpressionOutOfBoundsAccess = 1208,
+	ConstantExpressionPointerSubtractionDifferentObjects = 1209,
+	ConstantExpressionRelationalComparisonDifferentObjects = 1210,
+	ConstantExpressionUseAfterFree = 1211,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -105,6 +110,16 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstantExpressionSignedIntegerOverflow";
 	case DiagnosticId::ConstantExpressionIndeterminateValueRead:
 		return "ConstantExpressionIndeterminateValueRead";
+	case DiagnosticId::ConstantExpressionPointerCreationOutsideObject:
+		return "ConstantExpressionPointerCreationOutsideObject";
+	case DiagnosticId::ConstantExpressionOutOfBoundsAccess:
+		return "ConstantExpressionOutOfBoundsAccess";
+	case DiagnosticId::ConstantExpressionPointerSubtractionDifferentObjects:
+		return "ConstantExpressionPointerSubtractionDifferentObjects";
+	case DiagnosticId::ConstantExpressionRelationalComparisonDifferentObjects:
+		return "ConstantExpressionRelationalComparisonDifferentObjects";
+	case DiagnosticId::ConstantExpressionUseAfterFree:
+		return "ConstantExpressionUseAfterFree";
 	case DiagnosticId::None:
 	default:
 		return "None";

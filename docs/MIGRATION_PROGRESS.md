@@ -6,28 +6,27 @@ pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
 Last updated: 2026-08-26 by branch
-`boundary2c-indeterminate-read-diagnostics`
+`boundary2c-pointer-lifetime-diagnostics`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2C second slice landed: reads of indeterminate
-  storage during constant evaluation carry the stable identity
-  `ConstantExpressionIndeterminateValueRead` (new number 1206 in block
-  1201..1299). Default-initialized scalars, aggregate members without default
-  member initializers, and bare `new` objects all violate the same
-  core-constant-expression requirement, so one ID owns the family. It
-  originates at the three shared evaluator fault sites —
-  `validateConstexprRead` (heap, array-element, member, and bound-identifier
-  reads), compound assignment on an indeterminate target, and `++`/`--` on an
-  indeterminate target — through the shared
-  `ConstExpr::indeterminateValueReadError` factory, travels on
-  `EvalResult::diagnostic_id`, and reports through the existing terminal
-  static_assert rejection without changing recovery behavior. Seven frozen
-  tests were renamed to `_e1206` filename contracts; each emits exactly one
-  `#1206` occurrence and was mutation-validated by cutting ID propagation at
-  the shared factory.
-- The frozen legacy inventory is rebaselined at 243 names with updated count
+- Pull request boundary 2C third slice landed: pointer arithmetic and
+  lifetime violations during constant evaluation carry five stable IDs in
+  block 1201..1299 — pointer creation outside the pointee object (1207),
+  out-of-bounds access through a computed pointer (1208), subtraction across
+  different objects (1209), relational comparison across different objects
+  (1210), and use after free (1211). The identity is wired at every evaluator
+  site owning those rules: `make_checked_constexpr_pointer_result` formation
+  checks, the dereference and arrow read/write paths, the heap-use-after-free
+  guards, and the pointer subtraction/relational operators. Error
+  classifications and recovery behavior are unchanged; only identity was
+  added. Nine frozen tests were renamed to filename-encoded contracts, each
+  emitting exactly one occurrence, mutation-validated by cutting ID
+  propagation per rule.
+- Earlier slices this boundary: arithmetic faults (1201-1205) and the
+  indeterminate-read family (1206).
+- The frozen legacy inventory is rebaselined at 234 names with updated count
   and SHA-256 guards in both runners. The seven-test internal-failure
   compatibility is unchanged at 7 against baseline 7, direction down, removal
   boundary 2F.
@@ -42,10 +41,10 @@ Last updated: 2026-08-26 by branch
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure": the ASAN crash-handler defect,
-    declarator-, literal-, constant-expression-arithmetic, and
-    indeterminate-read-family diagnostics are filename-pinned and
-    mutation-validated; the remaining architectural regression corpus is
-    still outstanding
+    declarator-, literal-, constant-expression-arithmetic,
+    indeterminate-read, and pointer-arithmetic/lifetime-family diagnostics
+    are filename-pinned and mutation-validated; the remaining architectural
+    regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
     on Windows CI over the fixed corpus including the encoded literal tests;
@@ -69,11 +68,11 @@ Next blocker:
 
 Then, in order:
 
-1. Pull request boundary 2C continuation slices, each by shared diagnostic
-   owner within constant-expression evaluation: the pointer arithmetic and
-   lifetime family first (negative pointer creation, out-of-bounds
-   dereference, different-array comparison, freed heap access), then the
-   remaining one-off reasons.
+1. Pull request boundary 2C continuation slices by shared diagnostic owner:
+   the direct-subscript out-of-bounds family (plain `arr[i]` index checks in
+   materialization, member access, and lvalue resolution), null-pointer
+   dereference, pointer-plus-pointer rejection, then the remaining one-off
+   constant-expression reasons.
 2. Pull request boundaries 2D through 2F: continue converting the frozen
    legacy negative tests in bounded diagnostic-owner batches; boundary 2F
    deletes `_fail.cpp` classification, both frozen inventories, and the
