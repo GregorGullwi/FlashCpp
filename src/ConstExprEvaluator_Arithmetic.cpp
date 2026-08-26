@@ -410,7 +410,9 @@ EvalResult Evaluator::apply_binary_op(
 				}
 				return result;
 			}
-			return EvalResult::error("Addition of two pointers is not allowed in constant expressions", EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Addition of two pointers is not allowed in constant expressions",
+										 EvalErrorType::NotConstantExpression,
+										 DiagnosticId::ConstantExpressionPointerPlusPointer);
 		}
 		if (op == "-") {
 			if (lhs_is_ptr && !rhs_is_ptr) {

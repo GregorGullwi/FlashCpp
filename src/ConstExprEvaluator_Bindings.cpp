@@ -2822,6 +2822,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			if (operand_result.pointer_to_var.isValid()) {
 				return deref_pointer_with_bindings(operand_result, bindings, context);
 			}
+				if (!operand_result.pointer_to_var.isValid() &&
+					operand_result.exact_type.has_value() &&
+					(operand_result.exact_type->category() == TypeCategory::Nullptr ||
+					 (!operand_result.exact_type->pointer_levels().empty() &&
+					  operand_result.as_uint_raw() == 0))) {
+					return EvalResult::error(
+						"Dereference of null pointer in constant expression",
+						EvalErrorType::NotConstantExpression,
+						DiagnosticId::ConstantExpressionNullPointerDereference);
+				}
 			return EvalResult::error(
 				"Dereference operator (*) on a non-pointer value in constant expressions",
 				EvalErrorType::NotConstantExpression);
@@ -3118,6 +3128,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			if (operand_result.pointer_to_var.isValid()) {
 				return deref_pointer_with_bindings(operand_result, bindings, context);
 			}
+				if (!operand_result.pointer_to_var.isValid() &&
+					operand_result.exact_type.has_value() &&
+					(operand_result.exact_type->category() == TypeCategory::Nullptr ||
+					 (!operand_result.exact_type->pointer_levels().empty() &&
+					  operand_result.as_uint_raw() == 0))) {
+					return EvalResult::error(
+						"Dereference of null pointer in constant expression",
+						EvalErrorType::NotConstantExpression,
+						DiagnosticId::ConstantExpressionNullPointerDereference);
+				}
 			return EvalResult::error(
 				"Dereference operator (*) on a non-pointer value in constant expressions",
 				EvalErrorType::NotConstantExpression);

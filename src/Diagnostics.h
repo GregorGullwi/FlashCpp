@@ -83,6 +83,8 @@ enum class DiagnosticId : uint32_t {
 	ConstantExpressionRelationalComparisonDifferentObjects = 1210,
 	ConstantExpressionUseAfterFree = 1211,
 	ConstantExpressionArrayIndexOutOfBounds = 1212,
+	ConstantExpressionNullPointerDereference = 1213,
+	ConstantExpressionPointerPlusPointer = 1214,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -123,6 +125,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstantExpressionUseAfterFree";
 	case DiagnosticId::ConstantExpressionArrayIndexOutOfBounds:
 		return "ConstantExpressionArrayIndexOutOfBounds";
+	case DiagnosticId::ConstantExpressionNullPointerDereference:
+		return "ConstantExpressionNullPointerDereference";
+	case DiagnosticId::ConstantExpressionPointerPlusPointer:
+		return "ConstantExpressionPointerPlusPointer";
 	case DiagnosticId::None:
 	default:
 		return "None";

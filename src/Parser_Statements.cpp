@@ -1694,6 +1694,23 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 					return init_expr_result;
 				}
 				if (deduction_result.status != ExpressionTypeDeductionStatus::Deduced) {
+					// Type deduction can fail because the initializer is not a
+					// constant expression at all (for example pointer + pointer).
+					// Surface the evaluator's structured rejection instead of a
+					// generic deduction message when it owns the failure.
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+					eval_ctx.storage_duration = ConstExpr::StorageDuration::Global;
+					auto eval_failure = ConstExpr::Evaluator::evaluate(*initializer, eval_ctx);
+					if (!eval_failure.success() && eval_failure.diagnostic_id != DiagnosticId::None) {
+						const std::string rejection_message =
+							"auto variable initializer must be a constant expression: " + eval_failure.error_message;
+						ConstExpr::reportConstantExpressionDiagnostic(
+							context_.diagnostics(),
+							eval_failure.diagnostic_id,
+							lexer_.getSourceLocation(decl_node.identifier_token()),
+							rejection_message);
+						return ParseResult::error(rejection_message, decl_node.identifier_token());
+					}
 					throw CompileError(std::string(StringBuilder()
 													   .append("Could not deduce auto type from initializer for '")
 													   .append(decl_node.identifier_token().value())
