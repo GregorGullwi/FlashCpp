@@ -425,7 +425,7 @@ function Invoke-TestOneFile {
 			$flashCppArgs = @("-fno-access-control") + $flashCppArgs
 		}
 
-		$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments $flashCppArgs -TimeoutSeconds 30
+		$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments $flashCppArgs -TimeoutSeconds 120
 		$compileOutput = $compilerResult.Output
 		$compileExitCode = $compilerResult.ExitCode
 
@@ -515,23 +515,39 @@ function Invoke-TestOneFile {
 				} elseif ($linkExitCode -eq 0 -and -not (Test-Path $exeFile)) {
 					$resultLine = "LINKER_DRIVER_FAIL|$fileName|successful linker status produced no executable"
 				} elseif ($linkExitCode -eq 0 -and (Test-Path $exeFile)) {
-						$exePath = (Get-Item $exeFile).FullName
-						$cmdArgs = '/d /c ""' + $exePath + '""'
+					$exePath = (Get-Item $exeFile).FullName
+					$cmdArgs = '/d /c ""' + $exePath + '""'
+					# Runtime timeout policy (mirrors runner_common.sh): generous
+					# window for parallel-load inflation, one retry so a transient
+					# host stall cannot fail an instant-return program.
+					$runtimeAttempts = 0
+					$runtimeTimedOut = $false
+					while ($true) {
 						$proc = New-Object System.Diagnostics.Process
 						$proc.StartInfo = New-Object System.Diagnostics.ProcessStartInfo("cmd.exe", $cmdArgs)
 						$proc.StartInfo.UseShellExecute = $false
 						$proc.StartInfo.CreateNoWindow = $true
 						$proc.StartInfo.WorkingDirectory = $repoRoot
 						$proc.Start() | Out-Null
-						if (-not $proc.WaitForExit(5000)) {
+						if (-not $proc.WaitForExit(30000)) {
 							$proc.Kill()
 							$proc.WaitForExit()
-							$resultLine = "RUNTIME_TIMEOUT|$fileName|process timed out"
-							$proc.Dispose()
-							return
+							$runtimeAttempts += 1
+							if ($runtimeAttempts -gt 1) {
+								$runtimeTimedOut = $true
+								break
+							}
+							continue
 						}
-						$returnValue = $proc.ExitCode
+						break
+					}
+					if ($runtimeTimedOut) {
+						$resultLine = "RUNTIME_TIMEOUT|$fileName|process timed out after $runtimeAttempts attempts"
 						$proc.Dispose()
+						return
+					}
+					$returnValue = $proc.ExitCode
+					$proc.Dispose()
 
 					$isWindowsCrash = $windowsExceptionCodes -contains $returnValue
 
@@ -582,7 +598,7 @@ function Invoke-TestOneFailFile {
 	# Fallback result in case the worker encounters a terminating error
 	$resultLine = "FAIL_BAD|$fileName|unknown worker failure"
 	try {
-		$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments @("--log-level=1", "-o", $objFile, $filePath) -TimeoutSeconds 30
+		$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments @("--log-level=1", "-o", $objFile, $filePath) -TimeoutSeconds 120
 		$failOutput = $compilerResult.Output
 		$negativeResult = Test-FlashCppNegativeCompileResult -FileName $fileName -Started $compilerResult.Started `
 			-TimedOut $compilerResult.TimedOut -ExitCode $compilerResult.ExitCode -ObjectExists (Test-Path $objFile) `
@@ -618,7 +634,7 @@ function Invoke-TestOneMultiTuCase {
 	try {
 		foreach ($source in $case.Sources) {
 			$objFile = Join-Path $resultDir "$($source.BaseName)_$uniqueSuffix.obj"
-			$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments @("--log-level=1", "-o", $objFile, $source.FullName) -TimeoutSeconds 30
+			$compilerResult = Invoke-FlashCppCompilerProcess -FilePath $flashCppPath -Arguments @("--log-level=1", "-o", $objFile, $source.FullName) -TimeoutSeconds 120
 			$compileOutput = $compilerResult.Output
 			if (-not $compilerResult.Started) {
 				$resultLine = "COMPILER_DRIVER_FAIL|$($case.Name)|$($source.Name): $compileOutput"
@@ -661,11 +677,27 @@ function Invoke-TestOneMultiTuCase {
 				$detail = ($linkOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 5) -join "`n"
 				$resultLine = "LINK_FAIL|$($case.Name)|$detail"
 			} else {
-				$process = Start-Process -FilePath $exeFile -WorkingDirectory $repoRoot -NoNewWindow -PassThru
-				if (-not $process.WaitForExit(5000)) {
-					$process.Kill()
-					$process.WaitForExit()
-					$resultLine = "RUNTIME_TIMEOUT|$($case.Name)|process timed out"
+				# Runtime timeout policy (mirrors runner_common.sh): generous
+				# window for parallel-load inflation, one retry so a transient
+				# host stall cannot fail an instant-return program.
+				$runtimeAttempts = 0
+				$runtimeTimedOut = $false
+				while ($true) {
+					$process = Start-Process -FilePath $exeFile -WorkingDirectory $repoRoot -NoNewWindow -PassThru
+					if (-not $process.WaitForExit(30000)) {
+						$process.Kill()
+						$process.WaitForExit()
+						$runtimeAttempts += 1
+						if ($runtimeAttempts -gt 1) {
+							$runtimeTimedOut = $true
+							break
+						}
+						continue
+					}
+					break
+				}
+				if ($runtimeTimedOut) {
+					$resultLine = "RUNTIME_TIMEOUT|$($case.Name)|process timed out after $runtimeAttempts attempts"
 					$process.Dispose()
 					return
 				}

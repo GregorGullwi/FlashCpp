@@ -131,11 +131,13 @@ Current findings only; delete entries when their resolution lands.
 - Declaration-parse errors can be masked by the top-level expression-statement
   fallback; details and the conversion rule for affected sites live in
   docs/KNOWN_ISSUES.md. Owner: parser declaration dispatch.
-- Linux full-suite runs at `-j$(nproc)` flake: the fixed five-second runtime
-  limit trips under 24-way parallel load even for instant-return programs
-  (341 `RUNTIME_TIMEOUT` results in one observed run, including
-  `test_minimal_ret42.cpp`; the failing set shifts between runs and the same
-  names pass in isolation and in smaller batches, independent of code state).
-  Treat mass `RUNTIME_TIMEOUT` on this lane as scheduler noise until the
-  runner gains load-aware timeouts or a bounded default job count. Owner:
-  runner timeout/scheduling policy.
+- Linux full-suite runs at `-j$(nproc)` flaked with mass `RUNTIME_TIMEOUT`
+  under parallel load (341 results in one observed run against the previous
+  fixed five-second limit, including `test_minimal_ret42.cpp`; the failing
+  set shifted between runs while the same names passed in isolation,
+  independent of code state). Mitigated in branch `runner-timeout-resilience`:
+  both runners now use a 120 s compile window, a 30 s runtime window, and one
+  retry of a timed-out program before classifying failure; deterministic
+  timeouts still fail. Residual risk: a host stall longer than one timeout
+  plus retry cycle can still flap affected tests. Owner: runner scheduling
+  policy.

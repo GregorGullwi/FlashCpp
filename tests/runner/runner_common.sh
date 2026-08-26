@@ -2,6 +2,13 @@
 
 RUNNER_SOURCE_REJECTION_EXIT=1
 RUNNER_INTERNAL_FAILURE_EXIT=2
+# Per-test timeout policy. Values are generous because wall time inflates
+# under parallel load; instant-return programs only reach them when the host
+# stalls. The runtime phase additionally retries once so a transient load
+# spike cannot fail a test that passes immediately afterwards.
+RUNNER_COMPILE_TIMEOUT_SECONDS=120
+RUNNER_RUNTIME_TIMEOUT_SECONDS=30
+RUNNER_RUNTIME_TIMEOUT_RETRY_LIMIT=1
 RUNNER_LEGACY_INVENTORY_COUNT=234
 RUNNER_LEGACY_INVENTORY_SHA256=838d9c44cb8446123fc521bc59cf8de61b3be9b1ba6ed23d78da2ed4e5e09a82
 RUNNER_LEGACY_INTERNAL_COMPATIBILITY_COUNT=7
