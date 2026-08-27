@@ -19,12 +19,21 @@ struct MemberResolutionResult {
 	TypeIndex owner_type_index;			// Stable owner identity for cache invalidation
 	size_t adjusted_offset;				// Offset adjusted for inheritance
 	bool from_cache;					 // Whether this result came from cache
+	bool is_ambiguous;					 // Multiple distinct reachable member declarations
 
 	MemberResolutionResult()
-		: member(nullptr), owner_struct(nullptr), owner_type_index(), adjusted_offset(0), from_cache(false) {}
+		: member(nullptr), owner_struct(nullptr), owner_type_index(), adjusted_offset(0), from_cache(false),
+		  is_ambiguous(false) {}
 
 	MemberResolutionResult(const StructMember* m, const StructTypeInfo* owner, TypeIndex owner_type, size_t offset, bool cached)
-		: member(m), owner_struct(owner), owner_type_index(owner_type), adjusted_offset(offset), from_cache(cached) {}
+		: member(m), owner_struct(owner), owner_type_index(owner_type), adjusted_offset(offset), from_cache(cached),
+		  is_ambiguous(false) {}
+
+	static MemberResolutionResult ambiguous() {
+		MemberResolutionResult result;
+		result.is_ambiguous = true;
+		return result;
+	}
 
 	explicit operator bool() const { return member != nullptr; }
 };
@@ -220,6 +229,7 @@ private:
 
 		std::queue<std::pair<const StructTypeInfo*, size_t>> to_visit;
 		std::unordered_set<SubobjectVisitKey, SubobjectVisitKeyHash> visited;
+		MemberResolutionResult result;
 
 		to_visit.push({struct_info, initial_offset});
 
@@ -233,22 +243,44 @@ private:
 			}
 			visited.insert(visit_key);
 
+			bool found_local_member = false;
 			for (const auto& member : current_struct->members) {
 				if (member.getName() == member_name) {
-					return MemberResolutionResult(
+					found_local_member = true;
+					MemberResolutionResult candidate(
 						&member,
 						current_struct,
 						current_struct->own_type_index_.value_or(TypeIndex{}),
 						member.offset + current_offset,
 						false);
+					if (!result) {
+						result = candidate;
+					} else if (result.member != candidate.member ||
+							   result.owner_struct != candidate.owner_struct ||
+							   result.adjusted_offset != candidate.adjusted_offset) {
+						return MemberResolutionResult::ambiguous();
+					}
 				}
 			}
 
-			enqueueBases(current_struct->virtual_bases, current_struct, current_offset, to_visit);
-			enqueueBases(current_struct->base_classes, current_struct, current_offset, to_visit);
+			// A declaration in this class hides members with the same name in its
+			// bases.  Keep visiting sibling subobjects so independently inherited
+			// declarations still produce an ambiguity.
+			if (found_local_member) {
+				continue;
+			}
+
+			// virtual_bases is the complete object's deduplicated virtual-subobject
+			// set.  Search it from the root only; traversing a non-virtual base's
+			// virtual bases would rediscover the same shared subobject through each
+			// inheritance path and incorrectly make its member ambiguous.
+			if (current_struct == struct_info && current_offset == initial_offset) {
+				enqueueBases(current_struct->virtual_bases, current_struct, current_offset, to_visit);
+			}
+			enqueueNonVirtualBases(current_struct->base_classes, current_struct, current_offset, to_visit);
 		}
 
-		return MemberResolutionResult();
+		return result;
 	}
 
 	// context_ns: the namespace from which to start the innermost-first walk.
@@ -318,6 +350,24 @@ private:
 		size_t current_offset,
 		std::queue<std::pair<const StructTypeInfo*, size_t>>& to_visit) const {
 		for (const auto& base : bases) {
+			if (const StructTypeInfo* base_info = resolveStructInfo(
+					base.type_index,
+					base.name,
+					current_struct->getNamespaceHandle())) {
+				to_visit.push({base_info, current_offset + base.offset});
+			}
+		}
+	}
+
+	void enqueueNonVirtualBases(
+		std::span<const BaseClassSpecifier> bases,
+		const StructTypeInfo* current_struct,
+		size_t current_offset,
+		std::queue<std::pair<const StructTypeInfo*, size_t>>& to_visit) const {
+		for (const BaseClassSpecifier& base : bases) {
+			if (base.is_virtual) {
+				continue;
+			}
 			if (const StructTypeInfo* base_info = resolveStructInfo(
 					base.type_index,
 					base.name,
