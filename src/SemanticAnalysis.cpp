@@ -7354,10 +7354,14 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 				}
 				if (target_name.empty())
 					target_name = getTypeName(to_desc.category());
-				throw CompileError("cannot implicitly convert from scoped enum '" +
-								   std::string(StringTable::getStringView(ei->name)) +
-								   "' to '" + target_name +
-								   "'" + std::string(context_description) + "; use static_cast");
+				throw makeStructuredCompileError(
+					context_.diagnostics(), DiagnosticId::ScopedEnumImplicitConversion,
+					DiagnosticSeverity::Error, SourceLocation(),
+					"cannot implicitly convert from scoped enum '" +
+						std::string(StringTable::getStringView(ei->name)) + "' to '" +
+						target_name + "'" + std::string(context_description) +
+						"; use static_cast",
+					{});
 			}
 		}
 	}
@@ -7516,9 +7520,13 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(BinaryOperatorNode& bin_
 	const std::string enum_name = lhs_scoped
 									  ? getScopedEnumName(lhs_desc)
 									  : getScopedEnumName(rhs_desc);
-	throw CompileError("invalid operands to binary expression involving scoped enum '" +
-					   enum_name + "' with operator '" + std::string(op) +
-					   "'; use static_cast for explicit conversion");
+	throw makeStructuredCompileError(
+		context_.diagnostics(), DiagnosticId::ScopedEnumBinaryOperand,
+		DiagnosticSeverity::Error, SourceLocation::fromToken(bin_op.get_token()),
+		"invalid operands to binary expression involving scoped enum '" +
+			enum_name + "' with operator '" + std::string(op) +
+			"'; use static_cast for explicit conversion",
+		{});
 }
 
 // --- Conversion operator existence helper (Phase 5, Phase 21 Item 2) ---
@@ -11244,9 +11252,13 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 				}
 			} else {
 				// No arity match at all; diagnose against the first constructor parameter we can find.
-				throw CompileError("cannot implicitly convert from scoped enum '" +
-								   std::string(StringTable::getStringView(ei->name)) +
-								   "' in constructor argument; use static_cast");
+				throw makeStructuredCompileError(
+					context_.diagnostics(), DiagnosticId::ScopedEnumImplicitConversion,
+					DiagnosticSeverity::Error, SourceLocation(),
+					"cannot implicitly convert from scoped enum '" +
+						std::string(StringTable::getStringView(ei->name)) +
+						"' in constructor argument; use static_cast",
+					{});
 			}
 		}
 		return;

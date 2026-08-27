@@ -32,6 +32,7 @@
 //   1101..1199  lexical numeric-literal family
 //   1201..1299  constant-expression evaluation family
 //   1301..1399  operator family
+//   1401..1499  implicit enum conversion family
 //   2000..2099  reserved for template instantiation family
 //   3000+    unallocated
 
@@ -92,6 +93,10 @@ enum class DiagnosticId : uint32_t {
 	FloatingPointBitwiseCompoundAssignment = 1302,
 	FloatingPointShiftOperator = 1303,
 	FloatingPointBitwiseOperator = 1304,
+
+	// Implicit enum conversion family (1401..1499).
+	ScopedEnumImplicitConversion = 1401,
+	ScopedEnumBinaryOperand = 1402,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -144,6 +149,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "FloatingPointShiftOperator";
 	case DiagnosticId::FloatingPointBitwiseOperator:
 		return "FloatingPointBitwiseOperator";
+	case DiagnosticId::ScopedEnumImplicitConversion:
+		return "ScopedEnumImplicitConversion";
+	case DiagnosticId::ScopedEnumBinaryOperand:
+		return "ScopedEnumBinaryOperand";
 	case DiagnosticId::None:
 	default:
 		return "None";
