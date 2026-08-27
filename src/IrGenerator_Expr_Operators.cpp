@@ -77,6 +77,23 @@ bool isBitwiseOperator(std::string_view op) {
 		{});
 }
 
+[[noreturn]] void throwAmbiguousOperatorOverloadDiagnostic(
+	CompileContext& context,
+	const Token& token,
+	std::string_view op) {
+	std::string message = std::string(StringBuilder()
+		.append("Ambiguous overload for operator"sv)
+		.append(op)
+		.commit());
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::AmbiguousOperatorOverload,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		message,
+		{});
+}
+
 [[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
 	const char* assignment_kind = prefer_move ? "move" : "copy";
 	std::string_view error_msg = StringBuilder()
@@ -2214,7 +2231,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 
 			if (overload_result.is_ambiguous) {
-				throw CompileError("Ambiguous overload for operator=");
+				throwAmbiguousOperatorOverloadDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 			}
 
 			if (overload_result.has_match) {
@@ -2595,7 +2612,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		}
 
 		if (overload_result.is_ambiguous) {
-			throw CompileError("Ambiguous overload for operator" + std::string(op));
+			throwAmbiguousOperatorOverloadDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 		}
 
 		bool requires_user_defined_operator = false;

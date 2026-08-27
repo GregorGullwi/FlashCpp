@@ -5,19 +5,24 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-27 by branch `boundary2d-scoped-enum-diagnostics`
+Last updated: 2026-08-27 by branch `main`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2E is in progress: the scoped-enum sema batch
-  converted the nine frozen `test_scoped_enum_*` legacy negative tests to
-  structured diagnostics through the centralized sema owners
-  (`SemanticAnalysis::diagnoseScopedEnumConversion`,
-  `SemanticAnalysis::diagnoseScopedEnumBinaryOperands`, and the
-  constructor-argument no-arity-match site). New IDs:
+- Pull request boundary 2E continues past the scoped-enum sema batch with the
+  operator overload ambiguity batch: the four frozen
+  `test_operator_ambiguity*` / `test_operator_member_free_exact_ambiguous`
+  legacy negative tests converted to structured diagnostics through the single
+  bounded owner `AstToIr::generateBinaryOperatorIr` (both the generic binary
+  ambiguity site and the struct-assignment `operator=` ambiguity site).
+  New ID: `AmbiguousOperatorOverload` (1305) in the operator family
+  (1301..1399). The scoped-enum batch before it added
   `ScopedEnumImplicitConversion` (1401) and `ScopedEnumBinaryOperand` (1402)
-  in the new implicit enum conversion family (1401..1499).
+  in the implicit enum conversion family (1401..1499) through the centralized
+  sema owners (`SemanticAnalysis::diagnoseScopedEnumConversion`,
+  `SemanticAnalysis::diagnoseScopedEnumBinaryOperands`, and the
+  constructor-argument no-arity-match site).
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -28,12 +33,13 @@ Last updated: 2026-08-27 by branch `boundary2d-scoped-enum-diagnostics`
   `FloatingPointShiftOperator` (1303), and
   `FloatingPointBitwiseOperator` (1304) across the direct, compound,
   constexpr, global, local, member, and indirect paths covered by their
-  regressions.
+  regressions. Boundary 2E adds `AmbiguousOperatorOverload` (1305) for the
+  ambiguous binary operator overload resolution owner.
 - The last recorded full Windows-suite validation is the boundary-2C run:
   2,946 regular tests, 265 negative tests, and one multi-translation-unit case;
   no crashes or mismatches occurred. The 2D and 2E slices still require their
   own next full-suite snapshot.
-- The frozen legacy inventory is rebaselined at 218 names. The seven-test
+- The frozen legacy inventory is rebaselined at 214 names. The seven-test
   internal-failure compatibility is unchanged at 7 against baseline 7,
   direction down, removal boundary 2F.
 
@@ -52,7 +58,8 @@ Last updated: 2026-08-27 by branch `boundary2d-scoped-enum-diagnostics`
     multidimensional/member-subscript, and scoped-enum (1401/1402, sema-owned)
     diagnostics are filename-pinned and mutation-validated; floating-point
     modulo, bitwise-compound, shift, and plain-bitwise operator diagnostics
-    have also entered the 2D encoded corpus;
+    have also entered the 2D encoded corpus, and the operator overload
+    ambiguity diagnostic (1305) is mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced

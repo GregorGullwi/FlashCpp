@@ -4081,6 +4081,7 @@ TEST_SUITE("Diagnostics") {
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointBitwiseCompoundAssignment) == 1302u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointShiftOperator) == 1303u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointBitwiseOperator) == 1304u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousOperatorOverload) == 1305u);
 
 		CHECK(diagnosticIdName(DiagnosticId::PointerToReferenceType) == "PointerToReferenceType");
 		CHECK(diagnosticIdName(DiagnosticId::NoteToMatchOpeningBracket) == "NoteToMatchOpeningBracket");
@@ -4088,6 +4089,7 @@ TEST_SUITE("Diagnostics") {
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointBitwiseCompoundAssignment) == "FloatingPointBitwiseCompoundAssignment");
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointShiftOperator) == "FloatingPointShiftOperator");
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointBitwiseOperator) == "FloatingPointBitwiseOperator");
+		CHECK(diagnosticIdName(DiagnosticId::AmbiguousOperatorOverload) == "AmbiguousOperatorOverload");
 
 		// Same ID must serve different message templates without identity drift.
 		DiagnosticEngine engine;
