@@ -514,7 +514,18 @@ EvalResult Evaluator::apply_binary_op(
 				return EvalResult::error("Division by zero in constant expression");
 			return EvalResult::from_double(lv / rv);
 		}
-		// Bitwise operators are not valid on floating-point types.
+		if (op == "&" || op == "|" || op == "^") {
+			return EvalResult::error(
+				"Operator '" + std::string(op) + "' is not defined for floating-point operands",
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::FloatingPointBitwiseOperator);
+		}
+		if (op == "<<" || op == ">>") {
+			return EvalResult::error(
+				"Operator " + std::string(op) + " is not defined for floating-point operands",
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::FloatingPointShiftOperator);
+		}
 		if (op == "==")
 			return EvalResult::from_bool(lv == rv);
 		if (op == "!=")

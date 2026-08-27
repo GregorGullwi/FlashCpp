@@ -25,6 +25,10 @@ bool isBitwiseCompoundAssignment(std::string_view op) {
 	return op == "&=" || op == "|=" || op == "^=";
 }
 
+bool isBitwiseOperator(std::string_view op) {
+	return op == "&" || op == "|" || op == "^" || isBitwiseCompoundAssignment(op);
+}
+
 [[noreturn]] void throwFloatingPointBitwiseCompoundDiagnostic(
 	CompileContext& context,
 	const Token& token) {
@@ -34,6 +38,24 @@ bool isBitwiseCompoundAssignment(std::string_view op) {
 		DiagnosticSeverity::Error,
 		SourceLocation::fromToken(token),
 		"Bitwise compound assignment is not defined for floating-point operands (C++20 [expr.bit.and]/1)",
+		{});
+}
+
+[[noreturn]] void throwFloatingPointBitwiseDiagnostic(
+	CompileContext& context,
+	const Token& token,
+	std::string_view op) {
+	std::string message = std::string(StringBuilder()
+		.append("Operator "sv)
+		.append(op)
+		.append(" is not defined for floating-point operands (C++20 [expr.bit.and]/1)"sv)
+		.commit());
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::FloatingPointBitwiseOperator,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		message,
 		{});
 }
 
@@ -3784,12 +3806,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 									rhsCat,
 									is_shift_op);
 	TypeCategory commonType = commonTypeInfo.commonType;
+	const bool either_operand_is_floating_point =
+		is_floating_point_type(lhsCat) || is_floating_point_type(rhsCat);
 	if (is_shift_op &&
-		is_standard_arithmetic_type(commonTypeInfo.lhsCategory) &&
-		is_standard_arithmetic_type(commonTypeInfo.rhsCategory) &&
-		(is_floating_point_type(commonTypeInfo.lhsCategory) ||
-		 is_floating_point_type(commonTypeInfo.rhsCategory))) {
+		either_operand_is_floating_point &&
+		!binaryOperatorNode.has_resolved_operator_overload()) {
 		throwFloatingPointShiftDiagnostic(*context_, binaryOperatorNode.get_token(), op);
+	}
+	if (isBitwiseOperator(op) &&
+		!isBitwiseCompoundAssignment(op) &&
+		either_operand_is_floating_point &&
+		!binaryOperatorNode.has_resolved_operator_overload()) {
+		throwFloatingPointBitwiseDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 	}
 	if (isBitwiseCompoundAssignment(op) &&
 		is_floating_point_type(commonType) &&
