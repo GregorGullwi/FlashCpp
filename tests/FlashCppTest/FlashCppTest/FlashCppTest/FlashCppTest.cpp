@@ -4078,10 +4078,12 @@ TEST_SUITE("Diagnostics") {
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ExpectedCloseBracketAfterArraySize) == 1003u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::NoteToMatchOpeningBracket) == 1051u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointModuloOperator) == 1301u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointBitwiseCompoundAssignment) == 1302u);
 
 		CHECK(diagnosticIdName(DiagnosticId::PointerToReferenceType) == "PointerToReferenceType");
 		CHECK(diagnosticIdName(DiagnosticId::NoteToMatchOpeningBracket) == "NoteToMatchOpeningBracket");
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointModuloOperator) == "FloatingPointModuloOperator");
+		CHECK(diagnosticIdName(DiagnosticId::FloatingPointBitwiseCompoundAssignment) == "FloatingPointBitwiseCompoundAssignment");
 
 		// Same ID must serve different message templates without identity drift.
 		DiagnosticEngine engine;

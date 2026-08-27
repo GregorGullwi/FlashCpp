@@ -1,4 +1,5 @@
 // C++20 [expr.bit.and]: bitwise operators require integral operands.
+// This encoded regression protects the shared floating-point diagnostic owner.
 // int &= double is ill-formed because the common type is double (floating-point).
 // The compiler should reject this instead of silently emitting wrong code.
 int main() {

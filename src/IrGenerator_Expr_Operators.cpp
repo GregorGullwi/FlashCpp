@@ -21,6 +21,22 @@ namespace {
 		{});
 }
 
+bool isBitwiseCompoundAssignment(std::string_view op) {
+	return op == "&=" || op == "|=" || op == "^=";
+}
+
+[[noreturn]] void throwFloatingPointBitwiseCompoundDiagnostic(
+	CompileContext& context,
+	const Token& token) {
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::FloatingPointBitwiseCompoundAssignment,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		"Bitwise compound assignment is not defined for floating-point operands (C++20 [expr.bit.and]/1)",
+		{});
+}
+
 [[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
 	const char* assignment_kind = prefer_move ? "move" : "copy";
 	std::string_view error_msg = StringBuilder()
@@ -1814,7 +1830,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					if (arith_opcode == IrOpcode::Modulo)
 						throwFloatingPointModuloDiagnostic(*context_, binaryOperatorNode.get_token(), true);
 					if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
-						throw CompileError("Bitwise compound assignment is not defined for floating-point operands");
+						throwFloatingPointBitwiseCompoundDiagnostic(*context_, binaryOperatorNode.get_token());
 					// Shifts on floating-point are ill-formed; the RHS check above catches the
 					// float-RHS case; this catches float-LHS (e.g., float g; g <<= 1;).
 					if (arith_opcode == IrOpcode::ShiftLeft || arith_opcode == IrOpcode::ShiftRight)
@@ -3747,6 +3763,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 									rhsCat,
 									is_shift_op);
 	TypeCategory commonType = commonTypeInfo.commonType;
+	if (isBitwiseCompoundAssignment(op) &&
+		is_floating_point_type(commonType) &&
+		is_standard_arithmetic_type(lhsCat) &&
+		is_standard_arithmetic_type(rhsCat)) {
+		throwFloatingPointBitwiseCompoundDiagnostic(*context_, binaryOperatorNode.get_token());
+	}
 	const bool is_comparison_op =
 		op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=";
 	auto isScopedEnumTypeIndex = [&](TypeIndex type_index) {
@@ -3840,7 +3862,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					throwFloatingPointModuloDiagnostic(*context_, binaryOperatorNode.get_token(), true);
 				// C++20 [expr.bit.and], [expr.bit.or], [expr.bit.xor]: bitwise ops require integral operands.
 				if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
-					throw CompileError("Bitwise compound assignment is not defined for floating-point operands");
+					throwFloatingPointBitwiseCompoundDiagnostic(*context_, binaryOperatorNode.get_token());
 				if (arith_opcode == IrOpcode::Add)
 					arith_opcode = IrOpcode::FloatAdd;
 				else if (arith_opcode == IrOpcode::Subtract)
@@ -5902,6 +5924,20 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 				false);
 		if (is_floating_point_type(common_type_info.commonType))
 			throwFloatingPointModuloDiagnostic(*context_, token, true);
+	}
+	if (isBitwiseCompoundAssignment(op)) {
+		const BinaryCommonTypeInfo common_type_info =
+			computeBinaryCommonTypeInfo(
+				lhs_operands.type_index,
+				lhs_operands.category(),
+				rhs_operands.type_index,
+				rhs_operands.category(),
+				false);
+		if (is_floating_point_type(common_type_info.commonType) &&
+			is_standard_arithmetic_type(lhs_operands.category()) &&
+			is_standard_arithmetic_type(rhs_operands.category())) {
+			throwFloatingPointBitwiseCompoundDiagnostic(*context_, token);
+		}
 	}
 	IrOpcode operation_opcode = *base_opcode;
 
