@@ -1197,6 +1197,62 @@ filename expectation.
   `_fail.cpp` classification, the frozen inventories, and the seven-test
   internal-failure compatibility.
 
+#### Diagnostic-contract durability and legacy-investment stop rule
+
+The durable product of these pull requests is the diagnostic contract and its
+regression, not the location of the temporary emission call. A
+`DiagnosticId` names the rejected C++ rule and remains stable when authority
+moves from parser, template replay, constexpr, or AST-to-IR code into the new
+semantic services. The later migration moves the emission call; it does not
+renumber the diagnostic or replace the regression merely because its original
+owner was deleted.
+
+A conversion may attach a stable ID at an existing bounded rejection choke
+point when doing so adds no new semantic decision, recovery behavior, replay,
+lookup, substitution state, or fallback. Its execution brief must name the
+architecture boundary that takes ownership of the emission and the old call
+that boundary deletes.
+
+A conversion must stop rather than add or improve any of the following solely
+to empty the frozen inventory:
+
+- saved-token replay or parser-mode-controlled substitution;
+- spelling, mangled-name, arity, or raw-pointer identity recovery;
+- parser-owned lookup, overload resolution, access checking, deduction,
+  constraint handling, or template instantiation;
+- AST-to-IR lookup or semantic reconstruction;
+- lowering-time recovery for a semantic fact that the normalized lowering
+  contract requires on entry.
+
+When the stop rule applies, the approved execution brief must choose one of
+these outcomes explicitly:
+
+1. delete the test when it covers an incomplete unsupported implementation or
+   duplicates another regression, as permitted below;
+2. land a separately reviewed vertical slice through the new authoritative
+   component when that component's architectural prerequisites are present;
+3. amend this roadmap before implementation to defer the named test slice to
+   its owning architecture boundary and move every affected inventory,
+   compatibility-count, and cleanup target with it.
+
+Do not use option 3 implicitly. Until such an amendment lands, boundary 2F
+still owns deletion of `_fail.cpp` classification, both frozen inventories,
+and the seven-test internal-failure compatibility.
+
+For boundary 2E, parser-level template syntax diagnostics may be converted at
+their existing bounded parser owner. Deduction, substitution, constraint, and
+instantiation diagnostics may receive stable IDs at an existing shared
+rejection choke point, but the conversion cannot restructure the old engine;
+architecture boundaries 6 through 8 own their semantic implementation.
+
+For boundary 2F, distinguish a source-language rejection from a missing
+lowering fact. A valid source rejection temporarily discovered in AST-to-IR
+may receive its stable ID there only when the conversion introduces no new
+semantic query or recovery and names architecture boundary 4 or 5 as the
+relocation owner. A missing fact required by normalized lowering is an
+`InternalError`, not a new source diagnostic; architecture boundary 9 owns
+enforcement of that invariant.
+
 Do not introduce a generic legacy diagnostic ID, derive IDs from message text,
 or assign IDs per test. A conversion batch must stop and split again if its
 rejection paths do not share a bounded diagnostic owner.

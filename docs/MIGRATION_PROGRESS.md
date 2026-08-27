@@ -5,27 +5,27 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-26 by branch
-`codex/boundary-2c-subscript-dispatch`
+Last updated: 2026-08-27 by branch `main`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2C follow-on slice closed the two remaining direct
-  subscript dispatch gaps. Nested subscripts rooted at a global
-  multidimensional constexpr array now walk materialized rows and check each
-  dimension before descending. A subscript on an array member of a
-  default-initialized local object now checks the selected member's bounds
-  before unrelated indeterminate members are read. Both paths report
-  `ConstantExpressionArrayIndexOutOfBounds` (1212), with two new encoded
-  regressions; existing valid multidimensional and member-array tests remain
-  green.
-- Earlier slices this boundary: arithmetic faults (1201-1205),
-  indeterminate-read family (1206), pointer arithmetic and lifetime family
-  (1207-1211), direct-subscript out-of-bounds family (1212).
-- The full Windows suite ran green: 2,946 regular tests, 265 negative tests,
-  and one multi-translation-unit case; no crashes or mismatches occurred.
-- The frozen legacy inventory remains rebaselined at 231 names. The seven-test
+- Pull request boundary 2D is in progress. The first operator slices assign
+  `FloatingPointModuloOperator` (1301),
+  `FloatingPointBitwiseCompoundAssignment` (1302),
+  `FloatingPointShiftOperator` (1303), and
+  `FloatingPointBitwiseOperator` (1304) across the direct, compound,
+  constexpr, global, local, member, and indirect paths covered by their
+  regressions.
+- Earlier completed boundary-2 slices cover declarator and source-structure
+  diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
+  (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
+  lifetime (1207-1211), and direct-subscript bounds checking (1212).
+- The last recorded full Windows-suite validation is the boundary-2C run:
+  2,946 regular tests, 265 negative tests, and one multi-translation-unit case;
+  no crashes or mismatches occurred. The later 2D slices require their own
+  next full-suite snapshot.
+- The frozen legacy inventory is rebaselined at 227 names. The seven-test
   internal-failure compatibility is unchanged at 7 against baseline 7,
   direction down, removal boundary 2F.
 
@@ -42,8 +42,9 @@ Last updated: 2026-08-26 by branch
     declarator-, literal-, constant-expression-arithmetic,
     indeterminate-read, pointer-arithmetic/lifetime-family, and direct
     multidimensional/member-subscript diagnostics are filename-pinned and
-    mutation-validated; the remaining architectural regression corpus is
-    still outstanding
+    mutation-validated; floating-point modulo, bitwise-compound, shift, and
+    plain-bitwise operator diagnostics have also entered the 2D encoded corpus;
+    the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
     on Windows CI over the fixed corpus including the encoded literal tests;
@@ -62,15 +63,20 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- None blocking the next conversion batch locally; the full Windows
-  validation is green.
+- None known locally. The current 2D state still needs a full Windows-suite
+  run before the next migration snapshot may claim validation.
 
 Then, in order:
 
 1. Pull request boundaries 2D through 2F: continue converting the frozen
-   legacy negative tests in bounded diagnostic-owner batches; boundary 2F
-   deletes `_fail.cpp` classification, both frozen inventories, and the
-   seven-test internal-failure compatibility.
+   legacy negative tests in bounded diagnostic-owner batches. Apply the
+   diagnostic-contract durability and legacy-investment stop rule: attaching a
+   stable ID at an existing bounded owner is allowed, but a batch cannot extend
+   replay, parser-owned semantic work, identity recovery, AST-to-IR lookup, or
+   lowering recovery merely to convert a test. Boundary 2F still deletes
+   `_fail.cpp` classification, both frozen inventories, and the seven-test
+   internal-failure compatibility unless a later approved roadmap amendment
+   moves a named blocked slice and all of its cleanup targets together.
 2. Preprocessor-directive diagnostics stay unconverted in the frozen
    inventory (`#include_next` file-not-found; recursive macro expansion
    surfacing as a generic parser error) and need their own owner batch or
