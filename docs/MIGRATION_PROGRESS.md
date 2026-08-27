@@ -92,11 +92,11 @@ Then, in order:
    deletion review.
 3. Pull request boundary 3: first architectural regression slices
    (promotion, namespace-template identity, ambiguous member lookup),
-   mutation-validated. The `auto`, overload-ranking, constexpr, and
-   template-deduction promotion probes plus the two namespace-template and
-   ambiguous-member probes are tracked positive expected failures; the
-   `sizeof` promotion probe currently passes. This advances architecture
-   boundary 0 only and does not complete boundaries 4, 5, or 6.
+   mutation-validated. The `auto`, constexpr, and template-deduction promotion
+   probes plus the two namespace-template and ambiguous-member probes are
+   tracked positive expected failures; the `sizeof` and overload-ranking
+   promotion probes currently pass. This advances architecture boundary 0 only
+   and does not complete boundaries 4, 5, or 6.
 4. Pull request boundary 4: template facade plus the remaining choke-point
    counters and the `'$'` inline-parsing static inventory.
 

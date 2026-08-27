@@ -296,11 +296,14 @@ inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCatego
 	if (isIntegralType(from_category) && isIntegralType(to_category)) {
 		const int INT_RANK = 3; // rank of int/unsigned int in get_integer_rank()
 		const int from_rank = get_integer_rank(from_category);
-		const int to_rank = get_integer_rank(to_category);
 
-		// C++20 [conv.prom]: IntegralPromotion applies only to types with rank < int
-		// being promoted to exactly int or unsigned int (rank == INT_RANK).
-		if (from_rank < INT_RANK && to_rank == INT_RANK) {
+		// C++20 [conv.prom]: the target of integral promotion is determined from
+		// the source type and target data model.  int and unsigned int share an
+		// integer conversion rank, but only promote_integer_type(from_category)
+		// is a promotion target; conversion to the other type is an integral
+		// conversion and therefore ranks lower in overload resolution.
+		if (from_rank < INT_RANK &&
+			to_category == promote_integer_type(from_category)) {
 			return {ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
 		}
 		return {ConversionRank::Conversion, StandardConversionKind::IntegralConversion, true};
