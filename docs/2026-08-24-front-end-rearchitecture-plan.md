@@ -1024,39 +1024,121 @@ Exit criteria:
 
 ## Architecture boundary 10: parser ownership replacement
 
-Once sema and templates are independent of parser state:
+Architecture boundaries 7, 8A, 8B, and 9 are preconditions. Boundary 10 does
+not begin while sema, templates, constexpr, or lowering still require parser
+state, saved-token replay, or parser callbacks.
 
-- introduce the indexed parser-facing `TokenBuffer`, stable `TokenIndex`, and
-  cheap cursor copies for lookahead;
-- make declaration outlining part of the real source-ordered declaration
-  parser rather than a token-level body-range scanner;
-- move tentative parsing onto scoped transactions;
-- make each transaction cover cursor position, scratch allocation,
-  diagnostics, declarations, and registry mutations;
-- convert source-controlled parser recursion to loops or explicit parse frames;
-- keep parser output syntax-only;
-- remove parser-owned overload resolution, constexpr decisions, access checks,
-  template substitution, and instantiation;
-- remove parser-to-sema cycles;
-- remove parser callbacks from constexpr.
+Boundary 10 transforms the current parser behind one translation-unit parse
+entry point. It does not introduce two complete parsers that can both accept
+the same construct. A replacement parser component may be introduced for a
+bounded syntax family behind that entry point, but the family dispatcher must
+select exactly one implementation. Shadow parsing is forbidden because token,
+diagnostic, scratch, and declaration side effects make it a second authority.
 
-Tentative parsing exists only where the grammar itself is ambiguous;
-[dcl.ambig.res], [stmt.ambig], and [temp.names] bound how much rollback the
-language actually requires, and those clauses are the correctness target for
-the scoped transactions below.
+Before each boundary-10 pull request, its execution brief must contain a
+routing table with one row per affected syntax family:
 
-### Block ranges in the token buffer
+```text
+family | current parser entry | target syntax entry | output representation
+       | semantic calls removed | compatibility adapter and counter
+       | compile-time routing guard | old code deleted by this PR
+```
+
+An unmigrated family may still produce a legacy AST bridge node. A migrated
+family produces syntax-owned structure and publishes declarations only through
+`DeclarationBuilder`; it cannot allocate a parallel semantic object in
+`ChunkedAnyVector` or fall back to the legacy family parser after failure. Each
+source declaration maps to one `DeclId` and one canonical `EntityId` result,
+never one legacy registration plus one new registration. Remaining bridge
+nodes and adapters have counters and named deletion targets in boundary 10F or
+11.
+
+### Architecture boundary 10A: single entry point and indexed token input
+
+Introduce the indexed parser-facing `TokenBuffer`, stable `TokenIndex`, and
+cheap cursor copies for lookahead. The existing lexer and preprocessing path
+feed the buffer through an adapter; this boundary does not replace
+preprocessing or change accepted language behavior.
+
+The current parser consumes tokens through the single parser-facing cursor.
+Remove destructive token-queue operations and direct lexer-position ownership
+from the migrated input path. Syntax nodes and diagnostics retain token indices
+or source ranges, never token addresses.
 
 Record each balanced block (`{...}`, `(...)`, `[...]`) in the `TokenBuffer` as
-a `{TokenIndex begin, TokenIndex end}` range so parsers can jump to the start
-or end of a block without rescanning. Ranges must be computed over the
-post-preprocessing token stream so tokens produced by macro expansion are
-included. Block ranges give O(1) skip-to-end for body scanning, error
-recovery, and checkpointing; they replace repeated balanced-bracket scans;
-and they supply whole-block `SourceRange` payloads for structured diagnostics
-and future fix-it hints. Ranges are stable indices, never addresses.
+a `{TokenIndex begin, TokenIndex end}` range over the post-preprocessing token
+stream. Tokens produced by macro expansion are included. Block ranges provide
+O(1) skip-to-end for body handling, error recovery, and checkpointing; replace
+repeated balanced-bracket scans as their caller families migrate.
 
-Exit criteria:
+### Architecture boundary 10B: transactional parser state
+
+Move tentative parsing onto scoped transactions. A parser checkpoint contains
+the token cursor, scratch-arena mark, diagnostic mark, and transactional marks
+for declarations and registries. Commit publishes the chosen parse once;
+rollback restores every component and leaves no observable declaration,
+entity, type, diagnostic, or instantiation.
+
+Tentative parsing exists only where the grammar is ambiguous.
+[dcl.ambig.res], [stmt.ambig], and [temp.names] bound the allowed rollback
+sites. Delayed semantic work and template instantiation cannot create or
+restore a parser checkpoint.
+
+### Architecture boundary 10C: syntax-only declarations
+
+Make declaration outlining part of the real source-ordered declaration parser,
+not a token-level body-range scanner. Migrate declaration families in an order
+listed by the execution brief. Each migrated family creates source-faithful
+syntax and invokes `DeclarationBuilder` for declaration and entity publication.
+
+Delete parser-owned entity creation, redeclaration merging, linkage decisions,
+and scope reconstruction for each family when it switches. The compatibility
+adapter may translate an unmigrated legacy syntax node into the declaration
+API, but it cannot create a second declaration identity or write a second
+semantic result.
+
+### Architecture boundary 10D: syntax-only expressions and statements
+
+Migrate expression and statement families behind the same single parser entry
+and family dispatcher. The parser records syntax, token ranges, and grammar
+structure only. It does not write expression types, selected declarations,
+conversion sequences, overload results, access decisions, constexpr results,
+template substitutions, lowering records, or backend names.
+
+Delete the corresponding parser-owned semantic operation when each family
+switches. A migrated family must consume the authoritative results from sema
+and cannot retry through the legacy expression or statement parser.
+
+### Architecture boundary 10E: bounded parser control flow
+
+Convert source-controlled parser recursion to loops or small arena-owned parse
+frames. Use block ranges for direct jumps instead of rescanning balanced input.
+Keep ordinary recursive descent only for grammar composition with a bounded
+native depth.
+
+Measure changed recursive-path frames where the toolchain supports stack-usage
+output. Deep declaration, expression, statement, template-syntax, and balanced
+block probes must run under the normal operating-system stack limit. A
+configurable logical complexity limit may diagnose pathological input; raising
+the process stack is not validation.
+
+### Architecture boundary 10F: delete the parser service locator
+
+Close the parser-facing interface to syntax production and declaration
+publication. Remove parser-to-sema cycles, parser callbacks from constexpr,
+parser-owned overload resolution, constexpr decisions, access checks,
+template substitution, and instantiation. Delete `Parser_Templates_Inst_*`,
+saved-token replay helpers, and parser includes used only to request semantic
+services.
+
+Drive the token-restore, parser semantic-call, parser callback, legacy family
+routing, and legacy parser-allocation counters to zero on the fixed migration
+corpus. Make former service entry points private or delete their signatures so
+new direct callers fail to compile. Delete boundary-10 compatibility adapters
+when their final family switches; only bridge storage explicitly assigned to
+boundary 11 may remain.
+
+Combined boundary-10 exit criteria:
 
 - rollback never retains an instantiation or registry mutation;
 - local parser rollback restores every transaction component, not only the
@@ -1068,10 +1150,14 @@ Exit criteria:
 - `SemanticAnalysis` no longer stores a parser pointer;
 - constexpr cannot call parser methods;
 - `Parser_Templates_Inst_*` and replay helper files are deleted;
-- the parser exposes a bounded syntax-facing interface instead of acting as a
-  compiler service locator.
+- the single parser entry point exposes a bounded syntax-facing interface
+  instead of acting as a compiler service locator, and no syntax family is
+  routable to both legacy and migrated implementations.
 
 ## Architecture boundary 11: delete transitional storage
+
+Begin only after architecture boundary 10F has closed the parser-facing
+interface and deleted the parser service locator.
 
 Delete:
 
@@ -1125,8 +1211,8 @@ ranking for the scalar and member-lookup corpus.
 
 ### Gate 3: template replacement viability
 
-Do not begin parser ownership replacement until architecture boundaries 7, 8A,
-and 8B pass:
+Do not begin architecture boundary 10A until architecture boundaries 7, 8A,
+8B, and 9 pass:
 
 - cross-TU specialization identity;
 - namespace-separated same-name templates;
@@ -1321,7 +1407,7 @@ Stop the current sequence if any of these occurs:
    answers.
 5. A construct remains supported by both engines after the architecture
    boundary that declares the new engine authoritative.
-6. After architecture boundary 10, `SemanticAnalysis::parser_` or
+6. After architecture boundary 10F, `SemanticAnalysis::parser_` or
    `ConstExpr::EvaluationContext::parser` still exists, or a non-parser,
    non-bridge translation unit includes `Parser.h` to request a semantic
    service.

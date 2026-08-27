@@ -102,6 +102,12 @@ Then, in order:
 
 Named follow-ups carried forward:
 
+- Before architecture boundary 10A, approve a parser-family routing table for
+  the single translation-unit parse entry point. Boundaries 10A through 10F
+  now separate indexed token input, parser transactions, syntax-only
+  declarations, syntax-only expressions and statements, bounded parser control
+  flow, and deletion of the parser service locator; no family may be routable
+  to both legacy and migrated parsers.
 - Pin `ConstantExpressionSignedIntegerOverflow` (1205) with an encoded
   regression once the evaluator tracks promoted operand widths; it currently
   evaluates integer arithmetic in 64-bit so 32-bit overflow goes undetected
