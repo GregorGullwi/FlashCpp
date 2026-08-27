@@ -5,27 +5,35 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-27 by branch `main`
+Last updated: 2026-08-27 by branch `boundary2d-scoped-enum-diagnostics`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2D is in progress. The first operator slices assign
-  `FloatingPointModuloOperator` (1301),
+- Pull request boundary 2E is in progress: the scoped-enum sema batch
+  converted the nine frozen `test_scoped_enum_*` legacy negative tests to
+  structured diagnostics through the centralized sema owners
+  (`SemanticAnalysis::diagnoseScopedEnumConversion`,
+  `SemanticAnalysis::diagnoseScopedEnumBinaryOperands`, and the
+  constructor-argument no-arity-match site). New IDs:
+  `ScopedEnumImplicitConversion` (1401) and `ScopedEnumBinaryOperand` (1402)
+  in the new implicit enum conversion family (1401..1499).
+- Earlier completed boundary-2 slices cover declarator and source-structure
+  diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
+  (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
+  lifetime (1207-1211), direct-subscript bounds checking (1212),
+  null-pointer dereference (1213), and pointer-plus-pointer (1214).
+  Boundary 2D then assigned `FloatingPointModuloOperator` (1301),
   `FloatingPointBitwiseCompoundAssignment` (1302),
   `FloatingPointShiftOperator` (1303), and
   `FloatingPointBitwiseOperator` (1304) across the direct, compound,
   constexpr, global, local, member, and indirect paths covered by their
   regressions.
-- Earlier completed boundary-2 slices cover declarator and source-structure
-  diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
-  (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
-  lifetime (1207-1211), and direct-subscript bounds checking (1212).
 - The last recorded full Windows-suite validation is the boundary-2C run:
   2,946 regular tests, 265 negative tests, and one multi-translation-unit case;
-  no crashes or mismatches occurred. The later 2D slices require their own
-  next full-suite snapshot.
-- The frozen legacy inventory is rebaselined at 227 names. The seven-test
+  no crashes or mismatches occurred. The 2D and 2E slices still require their
+  own next full-suite snapshot.
+- The frozen legacy inventory is rebaselined at 218 names. The seven-test
   internal-failure compatibility is unchanged at 7 against baseline 7,
   direction down, removal boundary 2F.
 
@@ -40,10 +48,11 @@ Last updated: 2026-08-27 by branch `main`
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure": the ASAN crash-handler defect,
     declarator-, literal-, constant-expression-arithmetic,
-    indeterminate-read, pointer-arithmetic/lifetime-family, and direct
-    multidimensional/member-subscript diagnostics are filename-pinned and
-    mutation-validated; floating-point modulo, bitwise-compound, shift, and
-    plain-bitwise operator diagnostics have also entered the 2D encoded corpus;
+    indeterminate-read, pointer-arithmetic/lifetime-family, direct
+    multidimensional/member-subscript, and scoped-enum (1401/1402, sema-owned)
+    diagnostics are filename-pinned and mutation-validated; floating-point
+    modulo, bitwise-compound, shift, and plain-bitwise operator diagnostics
+    have also entered the 2D encoded corpus;
     the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
