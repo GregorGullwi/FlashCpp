@@ -90,6 +90,7 @@ enum class DiagnosticId : uint32_t {
 	// Operator family (1301..1399).
 	FloatingPointModuloOperator = 1301,
 	FloatingPointBitwiseCompoundAssignment = 1302,
+	FloatingPointShiftOperator = 1303,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -138,6 +139,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "FloatingPointModuloOperator";
 	case DiagnosticId::FloatingPointBitwiseCompoundAssignment:
 		return "FloatingPointBitwiseCompoundAssignment";
+	case DiagnosticId::FloatingPointShiftOperator:
+		return "FloatingPointShiftOperator";
 	case DiagnosticId::None:
 	default:
 		return "None";

@@ -37,6 +37,24 @@ bool isBitwiseCompoundAssignment(std::string_view op) {
 		{});
 }
 
+[[noreturn]] void throwFloatingPointShiftDiagnostic(
+	CompileContext& context,
+	const Token& token,
+	std::string_view op) {
+	std::string message = std::string(StringBuilder()
+		.append("Operator "sv)
+		.append(op)
+		.append(" is not defined for floating-point operands (C++20 [expr.shift]/1)"sv)
+		.commit());
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::FloatingPointShiftOperator,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		message,
+		{});
+}
+
 [[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
 	const char* assignment_kind = prefer_move ? "move" : "copy";
 	std::string_view error_msg = StringBuilder()
@@ -1745,13 +1763,16 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Special handling for compound assignment to global/static local variables
 	// (e.g., static int n = 0; n += 21;)
 	if (isCompoundAssignmentOp(op) &&
+		!binaryOperatorNode.has_resolved_operator_overload() &&
 		binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 		const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 			const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 			const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-			if (gsi.is_global_or_static && gsi.type_index.category() != TypeCategory::Void && gsi.size_in_bits.is_set()) {
+			if (gsi.is_global_or_static &&
+				gsi.type_index.category() != TypeCategory::Void &&
+				gsi.size_in_bits.is_set()) {
 				// Load current value from global
 				TempVar loaded = var_counter.next();
 				GlobalLoadOp load_op;
@@ -1784,9 +1805,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 												is_shift_op);
 				const TypeCategory commonType = commonTypeInfo.commonType;
 
-				// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
-				if (is_shift_op && is_floating_point_type(gsi.type_index.category()))
-					throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
+				if (is_shift_op &&
+					!binaryOperatorNode.has_resolved_operator_overload() &&
+					is_standard_arithmetic_type(commonTypeInfo.lhsCategory) &&
+					is_standard_arithmetic_type(commonTypeInfo.rhsCategory) &&
+					(is_floating_point_type(commonTypeInfo.lhsCategory) ||
+					 is_floating_point_type(commonTypeInfo.rhsCategory)))
+					throwFloatingPointShiftDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 
 				ExprResult lhs_operand = makeExprResult(nativeTypeIndex(gsi.type_index.category()), gsi.size_in_bits, IrOperand{loaded}, PointerDepth{}, ValueStorage::ContainsData);
 				if (gsi.type_index.category() != commonType) {
@@ -1802,9 +1827,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				// NOT conversion to the LHS/result type. Other operators convert RHS to commonType.
 				// Phase 15: prefer sema annotation; log warning on fallback.
 				if (is_shift_op) {
-					// Reject float RHS before promotion to avoid unnecessary conversion work.
-					if (is_floating_point_type(rhs_result.typeEnum()))
-						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 					const TypeCategory promoted_rhs = promote_integer_type(commonTypeInfo.rhsCategory);
 					if (rhs_result.category() != promoted_rhs) {
 						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
@@ -1831,10 +1853,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						throwFloatingPointModuloDiagnostic(*context_, binaryOperatorNode.get_token(), true);
 					if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
 						throwFloatingPointBitwiseCompoundDiagnostic(*context_, binaryOperatorNode.get_token());
-					// Shifts on floating-point are ill-formed; the RHS check above catches the
-					// float-RHS case; this catches float-LHS (e.g., float g; g <<= 1;).
-					if (arith_opcode == IrOpcode::ShiftLeft || arith_opcode == IrOpcode::ShiftRight)
-						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 					if (arith_opcode == IrOpcode::Add)
 						arith_opcode = IrOpcode::FloatAdd;
 					else if (arith_opcode == IrOpcode::Subtract)
@@ -1905,6 +1923,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Use LValueAddress context for the LHS, similar to regular assignment
 	// Helper lambda to check if operator is a compound assignment
 	if (isCompoundAssignmentOp(op) &&
+		!binaryOperatorNode.has_resolved_operator_overload() &&
 		binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 		const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 
@@ -1990,6 +2009,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Try unified metadata-based handler for compound assignments on identifiers
 	// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
 	if (isCompoundAssignmentOp(op) &&
+		!binaryOperatorNode.has_resolved_operator_overload() &&
+		lhsExprResult.category() != TypeCategory::Enum &&
 		handleLValueCompoundAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token(), op)) {
 		FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for compound assignment");
 		return lhsExprResult;
@@ -3763,6 +3784,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 									rhsCat,
 									is_shift_op);
 	TypeCategory commonType = commonTypeInfo.commonType;
+	if (is_shift_op &&
+		is_standard_arithmetic_type(commonTypeInfo.lhsCategory) &&
+		is_standard_arithmetic_type(commonTypeInfo.rhsCategory) &&
+		(is_floating_point_type(commonTypeInfo.lhsCategory) ||
+		 is_floating_point_type(commonTypeInfo.rhsCategory))) {
+		throwFloatingPointShiftDiagnostic(*context_, binaryOperatorNode.get_token(), op);
+	}
 	if (isBitwiseCompoundAssignment(op) &&
 		is_floating_point_type(commonType) &&
 		is_standard_arithmetic_type(lhsCat) &&
@@ -5924,6 +5952,20 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 				false);
 		if (is_floating_point_type(common_type_info.commonType))
 			throwFloatingPointModuloDiagnostic(*context_, token, true);
+	}
+	if (op == "<<=" || op == ">>=") {
+		const bool lhs_is_builtin_shift_operand =
+			is_standard_arithmetic_type(lhs_operands.category()) ||
+			lhs_operands.category() == TypeCategory::Enum;
+		const bool rhs_is_builtin_shift_operand =
+			is_standard_arithmetic_type(rhs_operands.category()) ||
+			rhs_operands.category() == TypeCategory::Enum;
+		if (lhs_is_builtin_shift_operand &&
+			rhs_is_builtin_shift_operand &&
+			(is_floating_point_type(lhs_operands.category()) ||
+			 is_floating_point_type(rhs_operands.category()))) {
+			throwFloatingPointShiftDiagnostic(*context_, token, op);
+		}
 	}
 	if (isBitwiseCompoundAssignment(op)) {
 		const BinaryCommonTypeInfo common_type_info =
