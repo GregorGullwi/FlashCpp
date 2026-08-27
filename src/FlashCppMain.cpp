@@ -702,7 +702,13 @@ int main_impl(int argc, char* argv[]) {
 					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
 							  "' with unsubstituted placeholder signature types: ", e.what());
 				} else {
-					FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
+					if (const Diagnostic* structured_error = e.structuredDiagnostic()) {
+						std::string rendered_error = renderDiagnostic(
+							*structured_error, context.diagnostics(), lexer.file_paths());
+						FLASH_LOG(General, Error, rendered_error);
+					} else {
+						FLASH_LOG(General, Error, "Compile error in '", node_desc, "': ", e.what());
+					}
 					// Clear any stale parse-phase instantiation notes here without printing them.
 					// These notes describe parse-time template context that is unrelated to this
 					// codegen-phase error, so attaching them would be misleading.
