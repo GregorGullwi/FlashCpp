@@ -31,6 +31,7 @@
 //   1051..1079  note-level IDs belonging to the declarator family
 //   1101..1199  lexical numeric-literal family
 //   1201..1299  constant-expression evaluation family
+//   1301..1399  operator family
 //   2000..2099  reserved for template instantiation family
 //   3000+    unallocated
 
@@ -85,6 +86,9 @@ enum class DiagnosticId : uint32_t {
 	ConstantExpressionArrayIndexOutOfBounds = 1212,
 	ConstantExpressionNullPointerDereference = 1213,
 	ConstantExpressionPointerPlusPointer = 1214,
+
+	// Operator family (1301..1399).
+	FloatingPointModuloOperator = 1301,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -129,6 +133,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstantExpressionNullPointerDereference";
 	case DiagnosticId::ConstantExpressionPointerPlusPointer:
 		return "ConstantExpressionPointerPlusPointer";
+	case DiagnosticId::FloatingPointModuloOperator:
+		return "FloatingPointModuloOperator";
 	case DiagnosticId::None:
 	default:
 		return "None";

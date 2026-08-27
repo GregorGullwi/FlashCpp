@@ -6,6 +6,21 @@
 #include "TypeSizeQuery.h"
 
 namespace {
+[[noreturn]] void throwFloatingPointModuloDiagnostic(
+	CompileContext& context,
+	const Token& token,
+	bool compound_assignment) {
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::FloatingPointModuloOperator,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		compound_assignment
+			? "Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)"
+			: "Operator % is not defined for floating-point operands (C++20 [expr.mul]/4)",
+		{});
+}
+
 [[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
 	const char* assignment_kind = prefer_move ? "move" : "copy";
 	std::string_view error_msg = StringBuilder()
@@ -1797,7 +1812,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				IrOpcode arith_opcode = *base_opcode;
 				if (is_floating_point_type(commonType)) {
 					if (arith_opcode == IrOpcode::Modulo)
-						throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
+						throwFloatingPointModuloDiagnostic(*context_, binaryOperatorNode.get_token(), true);
 					if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
 						throw CompileError("Bitwise compound assignment is not defined for floating-point operands");
 					// Shifts on floating-point are ill-formed; the RHS check above catches the
@@ -3822,7 +3837,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (is_floating_point_type(commonType)) {
 				// C++20 [expr.mul]/4: % requires integral operands; diagnose ill-formed code.
 				if (arith_opcode == IrOpcode::Modulo)
-					throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
+					throwFloatingPointModuloDiagnostic(*context_, binaryOperatorNode.get_token(), true);
 				// C++20 [expr.bit.and], [expr.bit.or], [expr.bit.xor]: bitwise ops require integral operands.
 				if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
 					throw CompileError("Bitwise compound assignment is not defined for floating-point operands");
@@ -3928,7 +3943,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Modulo operations (typed): signed vs. unsigned; float is ill-formed (C++20 [expr.mul]/4)
 	else if (op == "%") {
 		if (is_floating_point_op)
-			throw CompileError("Operator % is not defined for floating-point operands (C++20 [expr.mul]/4)");
+			throwFloatingPointModuloDiagnostic(*context_, binaryOperatorNode.get_token(), false);
 		opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedModulo : IrOpcode::Modulo;
 
 		BinaryOp bin_op{
@@ -5876,6 +5891,17 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 	if (!base_opcode.has_value()) {
 		FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
 		return false;
+	}
+	if (op == "%=") {
+		const BinaryCommonTypeInfo common_type_info =
+			computeBinaryCommonTypeInfo(
+				lhs_operands.type_index,
+				lhs_operands.category(),
+				rhs_operands.type_index,
+				rhs_operands.category(),
+				false);
+		if (is_floating_point_type(common_type_info.commonType))
+			throwFloatingPointModuloDiagnostic(*context_, token, true);
 	}
 	IrOpcode operation_opcode = *base_opcode;
 

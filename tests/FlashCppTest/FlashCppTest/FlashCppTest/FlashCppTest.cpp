@@ -4077,9 +4077,11 @@ TEST_SUITE("Diagnostics") {
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::MultipleAsmSuffixesOnDeclarator) == 1002u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ExpectedCloseBracketAfterArraySize) == 1003u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::NoteToMatchOpeningBracket) == 1051u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointModuloOperator) == 1301u);
 
 		CHECK(diagnosticIdName(DiagnosticId::PointerToReferenceType) == "PointerToReferenceType");
 		CHECK(diagnosticIdName(DiagnosticId::NoteToMatchOpeningBracket) == "NoteToMatchOpeningBracket");
+		CHECK(diagnosticIdName(DiagnosticId::FloatingPointModuloOperator) == "FloatingPointModuloOperator");
 
 		// Same ID must serve different message templates without identity drift.
 		DiagnosticEngine engine;
