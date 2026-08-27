@@ -1,5 +1,4 @@
 test	stage	removal_boundary	reason
-test_ambiguous_member_lookup_multiple_bases_ret0.cpp	run	boundary-5	missing class-member lookup ambiguity handling
 test_injected_identity_namespace_collision_ret0.cpp	run	boundary-6	template registry aliases same-named namespace owners
 test_integral_promotion_auto_ret0.cpp	run	boundary-4	auto deduction misses integral-promotion result type
 test_integral_promotion_constexpr_ret0.cpp	run	boundary-4	constant evaluation misses integral promotion before unary complement
