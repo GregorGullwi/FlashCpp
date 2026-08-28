@@ -5176,6 +5176,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			pattern_args.size() == primary_template_params.size() &&
 			is_bare_echo_of_partial_parameters(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size())) &&
 			!has_constrained_template_parameter()) {
+			context_.diagnostics().report(
+				DiagnosticId::PartialSpecializationParameterListInvalid,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				"Partial specialization argument list cannot match the primary template parameter list",
+				{});
 			return ParseResult::error("Partial specialization argument list cannot match the primary template parameter list", current_token_);
 		}
 
