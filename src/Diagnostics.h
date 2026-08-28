@@ -109,6 +109,8 @@ enum class DiagnosticId : uint32_t {
 	DeletedCopyConstructor = 1316,
 	DeletedMoveConstructor = 1317,
 	AssignmentToConstObject = 1318,
+	OperatorOverloadNotFound = 1319,
+	DeletedOperatorFunction = 1320,
 
 	// Implicit enum conversion family (1401..1499).
 	ScopedEnumImplicitConversion = 1401,
@@ -121,6 +123,9 @@ enum class DiagnosticId : uint32_t {
 
 	// Semantic validity family (1601..1699).
 	RangeForBeginEndRequired = 1601,
+	AmbiguousDerivedToBasePointerConversion = 1602,
+	InaccessibleDerivedToBasePointerConversion = 1603,
+	AmbiguousBuiltInSubscriptConversion = 1604,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -201,6 +206,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DeletedMoveConstructor";
 	case DiagnosticId::AssignmentToConstObject:
 		return "AssignmentToConstObject";
+	case DiagnosticId::OperatorOverloadNotFound:
+		return "OperatorOverloadNotFound";
+	case DiagnosticId::DeletedOperatorFunction:
+		return "DeletedOperatorFunction";
 	case DiagnosticId::ScopedEnumImplicitConversion:
 		return "ScopedEnumImplicitConversion";
 	case DiagnosticId::ScopedEnumBinaryOperand:
@@ -213,6 +222,12 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ExplicitConstructorCopyInitialization";
 	case DiagnosticId::RangeForBeginEndRequired:
 		return "RangeForBeginEndRequired";
+	case DiagnosticId::AmbiguousDerivedToBasePointerConversion:
+		return "AmbiguousDerivedToBasePointerConversion";
+	case DiagnosticId::InaccessibleDerivedToBasePointerConversion:
+		return "InaccessibleDerivedToBasePointerConversion";
+	case DiagnosticId::AmbiguousBuiltInSubscriptConversion:
+		return "AmbiguousBuiltInSubscriptConversion";
 	case DiagnosticId::None:
 	default:
 		return "None";
