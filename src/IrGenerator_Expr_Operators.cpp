@@ -94,6 +94,42 @@ bool isBitwiseOperator(std::string_view op) {
 		{});
 }
 
+[[noreturn]] void throwOperatorOverloadNotFoundDiagnostic(
+	CompileContext& context,
+	const Token& token,
+	std::string_view op) {
+	std::string message = std::string(StringBuilder()
+		.append("Operator")
+		.append(op)
+		.append(" not defined for operand types")
+		.commit());
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::OperatorOverloadNotFound,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		message,
+		{});
+}
+
+[[noreturn]] void throwDeletedOperatorFunctionDiagnostic(
+	CompileContext& context,
+	const Token& token,
+	std::string_view op) {
+	std::string message = std::string(StringBuilder()
+		.append("Call to deleted function 'operator")
+		.append(op)
+		.append("'")
+		.commit());
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::DeletedOperatorFunction,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		message,
+		{});
+}
+
 [[noreturn]] void throwDeletedSameTypeAssignmentCompileError(
 	CompileContext& context,
 	const StructTypeInfo& struct_info,
@@ -2269,7 +2305,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					}
 				}
 				if (func_decl.is_deleted()) {
-					throw CompileError("Call to deleted function 'operator='");
+					throwDeletedOperatorFunctionDiagnostic(*context_, binaryOperatorNode.get_token(), "="sv);
 				}
 
 				// Check if the parameter type matches RHS type
@@ -2654,7 +2690,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			!overload_result.has_match && requires_user_defined_operator && lhsCat == TypeCategory::Struct && (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=");
 
 		if (!overload_result.has_match && requires_user_defined_operator && !can_try_spaceship_rewrite) {
-			throw CompileError("Operator" + std::string(op) + " not defined for operand types");
+			throwOperatorOverloadNotFoundDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 		}
 
 		if (overload_result.has_match && overload_result.is_free_function) {
@@ -2663,7 +2699,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			const FunctionDeclarationNode& func_decl = *overload_result.free_function_overload;
 			if (func_decl.is_deleted()) {
-				throw CompileError("Call to deleted function 'operator" + std::string(op) + "'");
+				throwDeletedOperatorFunctionDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 			}
 			TypeSpecifierNode return_type = func_decl.decl_node().type_specifier_node();
 
@@ -2821,7 +2857,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				}
 			}
 			if (func_decl.is_deleted()) {
-				throw CompileError("Call to deleted function 'operator" + std::string(op) + "'");
+				throwDeletedOperatorFunctionDiagnostic(*context_, binaryOperatorNode.get_token(), op);
 			}
 
 			// Get struct name for mangling

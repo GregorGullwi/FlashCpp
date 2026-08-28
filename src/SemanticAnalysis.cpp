@@ -6082,8 +6082,17 @@ std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperan
 			const TypeInfo* type_info = tryGetTypeInfo(desc.type_index);
 			const std::string_view type_name =
 				type_info ? StringTable::getStringView(type_info->name()) : "<unknown>";
-			throw CompileError("ambiguous built-in subscript: '" + std::string(type_name) +
-							   "' has multiple pointer conversion operators with different element types");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::AmbiguousBuiltInSubscriptConversion,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				StringBuilder()
+					.append("ambiguous built-in subscript: '")
+					.append(type_name)
+					.append("' has multiple pointer conversion operators with different element types")
+					.commit(),
+				{});
 		}
 		if (auto pointer_conversion = findStructPointerConversionOperator(desc, nullptr, *this, 0)) {
 			return pointer_conversion->target_type_id;
@@ -7757,9 +7766,21 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		const DerivedBaseConversionInfo base_conversion =
 			classifyDerivedBaseConversion(from_desc.type_index, to_desc.type_index);
 		if (base_conversion.kind == DerivedBaseConversionKind::Ambiguous)
-			throw CompileError("Ambiguous derived-to-base pointer conversion");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::AmbiguousDerivedToBasePointerConversion,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				"Ambiguous derived-to-base pointer conversion",
+				{});
 		if (base_conversion.kind == DerivedBaseConversionKind::Inaccessible)
-			throw CompileError("Cannot convert to an inaccessible base class");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::InaccessibleDerivedToBasePointerConversion,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				"Cannot convert to an inaccessible base class",
+				{});
 		if (base_conversion.kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 			base_conversion.kind == DerivedBaseConversionKind::PublicVirtual) {
 			ImplicitCastInfo cast_info;
