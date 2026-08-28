@@ -140,6 +140,7 @@ enum class DiagnosticId : uint32_t {
 
 	// Template and lookup family (1801..1899).
 	NonDependentNameNotDeclaredBeforeTemplateDefinition = 1801,
+	PartialSpecializationParameterListInvalid = 1802,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -262,6 +263,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AmbiguousCallOperator";
 	case DiagnosticId::NonDependentNameNotDeclaredBeforeTemplateDefinition:
 		return "NonDependentNameNotDeclaredBeforeTemplateDefinition";
+	case DiagnosticId::PartialSpecializationParameterListInvalid:
+		return "PartialSpecializationParameterListInvalid";
 	case DiagnosticId::None:
 	default:
 		return "None";
