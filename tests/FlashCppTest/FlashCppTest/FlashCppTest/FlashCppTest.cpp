@@ -4082,6 +4082,7 @@ TEST_SUITE("Diagnostics") {
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointShiftOperator) == 1303u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointBitwiseOperator) == 1304u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousOperatorOverload) == 1305u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::StaticOperatorMustBeNonStaticMember) == 1306u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstinitInitializerNotConstant) == 1501u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == 1502u);
 
@@ -4092,6 +4093,7 @@ TEST_SUITE("Diagnostics") {
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointShiftOperator) == "FloatingPointShiftOperator");
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointBitwiseOperator) == "FloatingPointBitwiseOperator");
 		CHECK(diagnosticIdName(DiagnosticId::AmbiguousOperatorOverload) == "AmbiguousOperatorOverload");
+		CHECK(diagnosticIdName(DiagnosticId::StaticOperatorMustBeNonStaticMember) == "StaticOperatorMustBeNonStaticMember");
 		CHECK(diagnosticIdName(DiagnosticId::ConstinitInitializerNotConstant) == "ConstinitInitializerNotConstant");
 		CHECK(diagnosticIdName(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == "ConstexprStaticMemberInitializerNotConstant");
 

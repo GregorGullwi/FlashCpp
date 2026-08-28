@@ -95,6 +95,7 @@ enum class DiagnosticId : uint32_t {
 	FloatingPointShiftOperator = 1303,
 	FloatingPointBitwiseOperator = 1304,
 	AmbiguousOperatorOverload = 1305,
+	StaticOperatorMustBeNonStaticMember = 1306,
 
 	// Implicit enum conversion family (1401..1499).
 	ScopedEnumImplicitConversion = 1401,
@@ -157,6 +158,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "FloatingPointBitwiseOperator";
 	case DiagnosticId::AmbiguousOperatorOverload:
 		return "AmbiguousOperatorOverload";
+	case DiagnosticId::StaticOperatorMustBeNonStaticMember:
+		return "StaticOperatorMustBeNonStaticMember";
 	case DiagnosticId::ScopedEnumImplicitConversion:
 		return "ScopedEnumImplicitConversion";
 	case DiagnosticId::ScopedEnumBinaryOperand:
