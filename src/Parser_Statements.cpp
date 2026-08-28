@@ -2238,14 +2238,18 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
 	}
 
-	// If the type has user-declared constructors, brace-init must perform constructor
-	// overload resolution rather than falling through to aggregate initialization.
+	// If the type has user-defined constructors, or a deleted same-type special
+	// member that needs the semantic deleted-constructor diagnostic, brace-init
+	// must perform constructor overload resolution rather than falling through to
+	// aggregate initialization.
 	// Also keep the old member-less special case: those cannot be aggregate-initialized
 	// meaningfully and must use constructor initialization too.
 	// This handles patterns like:
 	//   inline constexpr nullopt_t nullopt { nullopt_t::_Construct::_Token };
 	//   Widget w{42};  // when Widget has a user-declared constructor
-	if (struct_info.members.empty() || struct_info.hasUserDefinedConstructor()) {
+	const bool has_deleted_same_type_constructor =
+		struct_info.isCopyConstructorDeleted() || struct_info.isMoveConstructorDeleted();
+	if (struct_info.members.empty() || struct_info.hasUserDefinedConstructor() || has_deleted_same_type_constructor) {
 		// Must use constructor initialization here.
 		// Parse all the brace elements first
 		std::vector<ASTNode> elements;
@@ -2301,7 +2305,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
 		};
 
-		if (struct_info.hasUserDefinedConstructor()) {
+		if (struct_info.hasUserDefinedConstructor() || has_deleted_same_type_constructor) {
 			// Semantic analysis now owns constructor overload selection and diagnostics
 			// for user-declared-constructor brace-init paths.
 			return make_constructor_call(elements);

@@ -1,5 +1,6 @@
 // Deleted copy constructor should be diagnosed for direct initialization.
 
+// Diagnostic regression for deleted copy constructor.
 struct NoCopy {
 	NoCopy() = default;
 	NoCopy(const NoCopy&) = delete;

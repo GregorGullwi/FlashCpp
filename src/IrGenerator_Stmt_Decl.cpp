@@ -7,7 +7,11 @@
 #include "TypeSizeQuery.h"
 
 namespace {
-[[noreturn]] void throwDeletedSameTypeConstructorCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
+[[noreturn]] void throwDeletedSameTypeConstructorCompileError(
+	CompileContext& context,
+	const StructTypeInfo& struct_info,
+	bool prefer_move,
+	const Token& token) {
 	const char* ctor_kind = prefer_move ? "move" : "copy";
 	std::string_view error_msg = StringBuilder()
 									 .append("Call to deleted ")
@@ -16,13 +20,23 @@ namespace {
 									 .append(StringTable::getStringView(struct_info.name))
 									 .append("'")
 									 .commit();
-	throw CompileError(std::string(error_msg));
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		prefer_move ? DiagnosticId::DeletedMoveConstructor : DiagnosticId::DeletedCopyConstructor,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		error_msg,
+		{});
 }
 
-void diagnoseDeletedSameTypeConstructorUsage(const StructTypeInfo& struct_info, bool prefer_move) {
+void diagnoseDeletedSameTypeConstructorUsage(
+	CompileContext& context,
+	const StructTypeInfo& struct_info,
+	bool prefer_move,
+	const Token& token) {
 	if (prefer_move) {
 		if (struct_info.isMoveConstructorDeleted()) {
-			throwDeletedSameTypeConstructorCompileError(struct_info, true);
+			throwDeletedSameTypeConstructorCompileError(context, struct_info, true, token);
 		}
 		if (struct_info.findMoveConstructor(true)) {
 			return;
@@ -30,7 +44,7 @@ void diagnoseDeletedSameTypeConstructorUsage(const StructTypeInfo& struct_info, 
 	}
 
 	if (struct_info.isCopyConstructorDeleted()) {
-		throwDeletedSameTypeConstructorCompileError(struct_info, false);
+		throwDeletedSameTypeConstructorCompileError(context, struct_info, false, token);
 	}
 }
 
@@ -1578,7 +1592,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										}
 
 										if (init_is_same_struct_type) {
-											diagnoseDeletedSameTypeConstructorUsage(struct_info, prefer_move_ctor);
+											diagnoseDeletedSameTypeConstructorUsage(*context_, struct_info, prefer_move_ctor, decl.identifier_token());
 											const StructMemberFunction* same_type_ctor =
 												struct_info.findPreferredSameTypeConstructor(prefer_move_ctor, true);
 											if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
@@ -2277,7 +2291,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							const TypeInfo* target_type_info = tryGetTypeInfo(type_node.type_index());
 							const StructTypeInfo* target_struct_info = target_type_info ? target_type_info->getStructInfo() : nullptr;
 							if (target_struct_info) {
-								diagnoseDeletedSameTypeConstructorUsage(*target_struct_info, true);
+								diagnoseDeletedSameTypeConstructorUsage(*context_, *target_struct_info, true, decl.identifier_token());
 							}
 							// For same-type rvalues (function returning T), use direct initialization
 							appendExprResultToOperands(init_operands);
@@ -2629,7 +2643,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 									// Only select same-type special members if argument is of the same struct type
 									if (arg_is_same_struct_type) {
-										diagnoseDeletedSameTypeConstructorUsage(*type_info->getStructInfo(), prefer_move_ctor);
+										diagnoseDeletedSameTypeConstructorUsage(*context_, *type_info->getStructInfo(), prefer_move_ctor, decl.identifier_token());
 										const StructMemberFunction* same_type_ctor_func =
 											type_info->getStructInfo()->findPreferredSameTypeConstructor(prefer_move_ctor, true);
 										if (same_type_ctor_func && same_type_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
@@ -3188,7 +3202,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								isSameTypeXValueSource(init_node, init_operands, type_node);
 							const bool is_prvalue_same_type_source = isExprResultPRValue(init_operands);
 							if (!is_prvalue_same_type_source) {
-								diagnoseDeletedSameTypeConstructorUsage(*type_info->getStructInfo(), prefer_move_ctor);
+								diagnoseDeletedSameTypeConstructorUsage(*context_, *type_info->getStructInfo(), prefer_move_ctor, decl.identifier_token());
 							}
 							const StructMemberFunction* same_type_ctor =
 								type_info->getStructInfo()->findPreferredSameTypeConstructor(prefer_move_ctor, true);
