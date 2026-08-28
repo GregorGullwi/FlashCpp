@@ -136,6 +136,9 @@ enum class DiagnosticId : uint32_t {
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
+
+	// Template and lookup family (1801..1899).
+	NonDependentNameNotDeclaredBeforeTemplateDefinition = 1801,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -254,6 +257,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AmbiguousBuiltInSubscriptConversion";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
+	case DiagnosticId::NonDependentNameNotDeclaredBeforeTemplateDefinition:
+		return "NonDependentNameNotDeclaredBeforeTemplateDefinition";
 	case DiagnosticId::None:
 	default:
 		return "None";
