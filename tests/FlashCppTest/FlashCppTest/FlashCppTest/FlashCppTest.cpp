@@ -4083,6 +4083,12 @@ TEST_SUITE("Diagnostics") {
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointBitwiseOperator) == 1304u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousOperatorOverload) == 1305u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::StaticOperatorMustBeNonStaticMember) == 1306u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::OperatorDefaultArgumentsForbidden) == 1307u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::AssignmentOperatorArity) == 1308u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::SubscriptOperatorArity) == 1309u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::ArrowOperatorArity) == 1310u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::IncrementDecrementOperatorForm) == 1311u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::OrdinaryOperatorArity) == 1312u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstinitInitializerNotConstant) == 1501u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == 1502u);
 
@@ -4094,6 +4100,12 @@ TEST_SUITE("Diagnostics") {
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointBitwiseOperator) == "FloatingPointBitwiseOperator");
 		CHECK(diagnosticIdName(DiagnosticId::AmbiguousOperatorOverload) == "AmbiguousOperatorOverload");
 		CHECK(diagnosticIdName(DiagnosticId::StaticOperatorMustBeNonStaticMember) == "StaticOperatorMustBeNonStaticMember");
+		CHECK(diagnosticIdName(DiagnosticId::OperatorDefaultArgumentsForbidden) == "OperatorDefaultArgumentsForbidden");
+		CHECK(diagnosticIdName(DiagnosticId::AssignmentOperatorArity) == "AssignmentOperatorArity");
+		CHECK(diagnosticIdName(DiagnosticId::SubscriptOperatorArity) == "SubscriptOperatorArity");
+		CHECK(diagnosticIdName(DiagnosticId::ArrowOperatorArity) == "ArrowOperatorArity");
+		CHECK(diagnosticIdName(DiagnosticId::IncrementDecrementOperatorForm) == "IncrementDecrementOperatorForm");
+		CHECK(diagnosticIdName(DiagnosticId::OrdinaryOperatorArity) == "OrdinaryOperatorArity");
 		CHECK(diagnosticIdName(DiagnosticId::ConstinitInitializerNotConstant) == "ConstinitInitializerNotConstant");
 		CHECK(diagnosticIdName(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == "ConstexprStaticMemberInitializerNotConstant");
 

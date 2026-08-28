@@ -1,3 +1,4 @@
+// Diagnostic regression for operator[] arity.
 struct MatrixLike {
 	int data[4];
 

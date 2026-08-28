@@ -217,18 +217,23 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const {
 	const OverloadableOperator operator_kind =
 		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
-	auto reportNonStaticMemberRequired = [&]() -> ParseResult {
-		const std::string message = std::string(StringBuilder()
-			.append(func_decl.decl_node().identifier_token().value())
-			.append(" must be a non-static member function")
-			.commit());
+	const Token& operator_token = func_decl.decl_node().identifier_token();
+	const SourceLocation operator_location = lexer_.getSourceLocation(operator_token);
+	auto reportSignatureError = [&](DiagnosticId diagnostic_id, std::string_view message) -> ParseResult {
 		context_.diagnostics().report(
-			DiagnosticId::StaticOperatorMustBeNonStaticMember,
+			diagnostic_id,
 			DiagnosticSeverity::Error,
-			lexer_.getSourceLocation(func_decl.decl_node().identifier_token()),
+			operator_location,
 			message,
 			{});
-		return ParseResult::error(message, func_decl.decl_node().identifier_token());
+		return ParseResult::error(std::string(message), operator_token);
+	};
+	auto reportNonStaticMemberRequired = [&]() -> ParseResult {
+		const std::string message = std::string(StringBuilder()
+			.append(operator_token.value())
+			.append(" must be a non-static member function")
+			.commit());
+		return reportSignatureError(DiagnosticId::StaticOperatorMustBeNonStaticMember, message);
 	};
 	if (is_member &&
 		func_decl.is_static() &&
@@ -248,23 +253,27 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 	if (operator_kind != OverloadableOperator::None &&
 		!operatorDeclarationAllowsDefaultArguments(operator_kind) &&
 		std::ranges::any_of(func_decl.parameter_nodes(), hasDefaultArgument)) {
-		return ParseResult::error("operator overloads other than operator() must not have default arguments",
-								  func_decl.decl_node().identifier_token());
+		return reportSignatureError(
+			DiagnosticId::OperatorDefaultArgumentsForbidden,
+			"operator overloads other than operator() must not have default arguments");
 	}
 	if (operator_kind == OverloadableOperator::Assign &&
 		func_decl.parameter_nodes().size() != 1) {
-		return ParseResult::error("operator= must have exactly one parameter",
-								  func_decl.decl_node().identifier_token());
+		return reportSignatureError(
+			DiagnosticId::AssignmentOperatorArity,
+			"operator= must have exactly one parameter");
 	}
 	if (operator_kind == OverloadableOperator::Subscript &&
 		func_decl.parameter_nodes().size() != 1) {
-		return ParseResult::error("operator[] must have exactly one parameter",
-								  func_decl.decl_node().identifier_token());
+		return reportSignatureError(
+			DiagnosticId::SubscriptOperatorArity,
+			"operator[] must have exactly one parameter");
 	}
 	if (operator_kind == OverloadableOperator::Arrow &&
 		!func_decl.parameter_nodes().empty()) {
-		return ParseResult::error("operator-> must have no parameters",
-								  func_decl.decl_node().identifier_token());
+		return reportSignatureError(
+			DiagnosticId::ArrowOperatorArity,
+			"operator-> must have no parameters");
 	}
 	if (operator_kind == OverloadableOperator::Increment ||
 		operator_kind == OverloadableOperator::Decrement) {
@@ -276,8 +285,9 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 			if (params.size() == 1 && isPlainIntIncDecPostfixParameter(params[0])) {
 				return ParseResult::success();
 			}
-			return ParseResult::error("member operator++/operator-- must be prefix with no parameters or postfix with one int parameter",
-									  func_decl.decl_node().identifier_token());
+			return reportSignatureError(
+				DiagnosticId::IncrementDecrementOperatorForm,
+				"member operator++/operator-- must be prefix with no parameters or postfix with one int parameter");
 		}
 		if (params.size() == 1) {
 			return ParseResult::success();
@@ -285,8 +295,9 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 		if (params.size() == 2 && isPlainIntIncDecPostfixParameter(params[1])) {
 			return ParseResult::success();
 		}
-		return ParseResult::error("non-member operator++/operator-- must be prefix with one parameter or postfix with two parameters where the second is int",
-								  func_decl.decl_node().identifier_token());
+		return reportSignatureError(
+			DiagnosticId::IncrementDecrementOperatorForm,
+			"non-member operator++/operator-- must be prefix with one parameter or postfix with two parameters where the second is int");
 	}
 
 	const OrdinaryOperatorArityKind arity_kind = classifyOrdinaryOperatorArity(operator_kind);
@@ -312,10 +323,10 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 	if (!valid) {
 		const std::string message = std::string(StringBuilder()
 			.append(effective_is_member ? "member " : "non-member ")
-			.append(func_decl.decl_node().identifier_token().value())
+			.append(operator_token.value())
 			.append(" has invalid parameter count for its operator form")
 			.commit());
-		return ParseResult::error(message, func_decl.decl_node().identifier_token());
+		return reportSignatureError(DiagnosticId::OrdinaryOperatorArity, message);
 	}
 	return ParseResult::success();
 }

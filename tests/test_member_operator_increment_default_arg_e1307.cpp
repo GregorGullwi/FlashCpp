@@ -1,3 +1,4 @@
+// Diagnostic regression for forbidden operator default arguments.
 struct Counter {
 	Counter operator++(int = 0) {
 		return *this;
