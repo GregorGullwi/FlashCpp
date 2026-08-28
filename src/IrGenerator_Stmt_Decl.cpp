@@ -630,6 +630,25 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		auto staticStorageKeyword = [&]() -> const char* {
 			return node.is_constinit() ? "constinit" : "constexpr";
 		};
+		auto makeStaticStorageEvaluationError = [&](const ConstExpr::EvalResult& eval_result) -> CompileError {
+			const std::string message =
+				std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
+				"' initializer is not a constant expression: " + eval_result.error_message;
+			DiagnosticId diagnostic_id = eval_result.diagnostic_id;
+			if (diagnostic_id == DiagnosticId::None && node.is_constinit()) {
+				diagnostic_id = DiagnosticId::ConstinitInitializerNotConstant;
+			}
+			if (diagnostic_id != DiagnosticId::None) {
+				return makeStructuredCompileError(
+					context_->diagnostics(),
+					diagnostic_id,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(decl.identifier_token()),
+					message,
+					{});
+			}
+			return CompileError(message);
+		};
 
 			// Helper to evaluate a constexpr and get the raw value
 		auto evalToValue = [&](const ASTNode& expr, TypeCategory target_type) -> unsigned long long {
@@ -638,8 +657,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 			if (!eval_result.success()) {
 				if (shouldRejectStaticStorageEvalFailure(eval_result.error_type)) {
-					throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
-									   "' initializer is not a constant expression: " + eval_result.error_message);
+					throw makeStaticStorageEvaluationError(eval_result);
 				}
 					// For non-constexpr globals or remaining evaluator limitations (Other), warn and zero-initialize.
 				FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '",
@@ -741,8 +759,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								0);
 						} else {
 							if (shouldRejectStaticStorageEvalFailure(object_result.error_type)) {
-								throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
-												   "' initializer is not a constant expression: " + object_result.error_message);
+								throw makeStaticStorageEvaluationError(object_result);
 							}
 							op.init_data.resize(toSizeT(struct_info_ptr->sizeInBytes()), 0);
 							fillAggregateInitData(op.init_data, *struct_info_ptr, init_list, evalToValue);
@@ -770,8 +787,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							packArrayResultIntoInitData(op.init_data, array_result, type_node.type(), op.element_count, element_size);
 							materialized_as_constexpr_array = true;
 						} else if (shouldRejectStaticStorageEvalFailure(array_result.error_type)) {
-							throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
-											   "' initializer is not a constant expression: " + array_result.error_message);
+							throw makeStaticStorageEvaluationError(array_result);
 						}
 					}
 
@@ -809,8 +825,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												0);
 										} else {
 											if (shouldRejectStaticStorageEvalFailure(element_result.error_type)) {
-												throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
-																   "' initializer is not a constant expression: " + element_result.error_message);
+												throw makeStaticStorageEvaluationError(element_result);
 											}
 											fillAggregateInitData(
 												op.init_data,
@@ -1106,9 +1121,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				} else {
 						// Evaluation failed: for constexpr variables this is an error;
 						// for non-constexpr globals, warn and zero-initialize.
-					if (shouldRejectStaticStorageEvalFailure(eval_result.error_type)) {
-							throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
-											   "' initializer is not a constant expression: " + eval_result.error_message);
+						if (shouldRejectStaticStorageEvalFailure(eval_result.error_type)) {
+							throw makeStaticStorageEvaluationError(eval_result);
 						}
 						FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '",
 								  decl.identifier_token().value(), "' at line ", decl.identifier_token().line());

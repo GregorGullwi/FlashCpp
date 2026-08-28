@@ -98,6 +98,9 @@ enum class DiagnosticId : uint32_t {
 	// Implicit enum conversion family (1401..1499).
 	ScopedEnumImplicitConversion = 1401,
 	ScopedEnumBinaryOperand = 1402,
+
+	// Initialization family (1501..1599).
+	ConstinitInitializerNotConstant = 1501,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -156,6 +159,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ScopedEnumImplicitConversion";
 	case DiagnosticId::ScopedEnumBinaryOperand:
 		return "ScopedEnumBinaryOperand";
+	case DiagnosticId::ConstinitInitializerNotConstant:
+		return "ConstinitInitializerNotConstant";
 	case DiagnosticId::None:
 	default:
 		return "None";
