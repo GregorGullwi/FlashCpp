@@ -1,5 +1,6 @@
 // Deleted move assignment should be diagnosed through array element assignment.
 
+// Diagnostic regression for deleted move assignment.
 struct NoMoveAssign {
 	NoMoveAssign() = default;
 	NoMoveAssign& operator=(NoMoveAssign&&) = delete;
