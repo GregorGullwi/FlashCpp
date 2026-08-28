@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `codex/boundary-2e-template-phase1-diagnostics`
+Last updated: 2026-08-28 by branch `codex/boundary-2d-call-operator-ambiguity`
 
 ## Position
 
@@ -48,6 +48,9 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-template-phase1-diagnostic
   `NonDependentNameNotDeclaredBeforeTemplateDefinition` (1801) at the two
   existing delayed template-body rejection points and converts three frozen
   tests. It adds no replay or lookup behavior.
+- The current call-operator batch assigns `AmbiguousCallOperator` (1702) at
+  the existing concrete postfix-call rejection point and converts two frozen
+  tests. It adds no new overload-resolution behavior.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -63,7 +66,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-template-phase1-diagnostic
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 131 names. The temporary internal-failure
+- The frozen legacy inventory is now 129 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -89,8 +92,9 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-template-phase1-diagnostic
     (1306-1312), deleted copy/move assignment diagnostics (1313/1314),
     non-constant immediate invocation diagnostics (1315), and the
     explicit-initialization, declarator-constraint, semantic-validity, and
-    ordinary-call ambiguity, dllimport-constraint, and template phase-1
-    diagnostics (1004-1007, 1318-1320, 1503-1506, 1601-1604, 1701, 1801),
+    ordinary-call and call-operator ambiguity, dllimport-constraint, and
+    template phase-1 diagnostics (1004-1007, 1318-1320, 1503-1506,
+    1601-1604, 1701-1702, 1801),
     including the static-member constructor path, are
     mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding

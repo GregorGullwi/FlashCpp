@@ -757,6 +757,14 @@ ParseResult Parser::finalizePostfixCallExpression(
 	if (const std::optional<std::string_view> hard_failure =
 			consumeConcreteCallOperatorFailure(call_operator_resolution.state, func_ref);
 		hard_failure.has_value()) {
+		if (*hard_failure == "call to overloaded operator() is ambiguous"sv) {
+			context_.diagnostics().report(
+				DiagnosticId::AmbiguousCallOperator,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(paren_token),
+				*hard_failure,
+				{});
+		}
 		return ParseResult::error(std::string(*hard_failure), paren_token);
 	}
 	if (!func_ref) {
