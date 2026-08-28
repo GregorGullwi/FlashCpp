@@ -8443,9 +8443,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										std::vector<ASTNode> member_template_arg_nodes;
 										if (!has_template_keyword &&
 											looksLikeDependentMemberTemplateWithoutKeyword()) {
-											return ParseResult::error(
-												"Missing 'template' before dependent qualified member template name",
-												final_identifier);
+											const std::string message = "Missing 'template' before dependent qualified member template name";
+											context_.diagnostics().report(
+												DiagnosticId::MissingTemplateKeyword,
+												DiagnosticSeverity::Error,
+												lexer_.getSourceLocation(final_identifier),
+												message,
+												{});
+											return ParseResult::error(message, final_identifier);
 										}
 										if ((has_template_keyword ||
 											 materialized_owner_names_current_instantiation) &&
@@ -8599,9 +8604,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										restore_token_position(
 											deferred_member_chain_start);
 										pending_explicit_template_args_.reset();
-										return ParseResult::error(
-											"Missing 'template' before dependent qualified member template name",
-											deferred_final_identifier);
+										const std::string message = "Missing 'template' before dependent qualified member template name";
+										context_.diagnostics().report(
+											DiagnosticId::MissingTemplateKeyword,
+											DiagnosticSeverity::Error,
+											lexer_.getSourceLocation(deferred_final_identifier),
+											message,
+											{});
+										return ParseResult::error(message, deferred_final_identifier);
 									}
 									if ((has_template_keyword ||
 										 materialized_owner_names_current_instantiation) &&
@@ -9600,9 +9610,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								std::vector<ASTNode> member_template_arg_nodes;
 								if (!has_template_keyword &&
 									looksLikeDependentMemberTemplateWithoutKeyword()) {
-									return ParseResult::error(
-										"Missing 'template' before dependent qualified member template name",
-										final_identifier);
+									const std::string message = "Missing 'template' before dependent qualified member template name";
+									context_.diagnostics().report(
+										DiagnosticId::MissingTemplateKeyword,
+										DiagnosticSeverity::Error,
+										lexer_.getSourceLocation(final_identifier),
+										message,
+										{});
+									return ParseResult::error(message, final_identifier);
 								}
 								if ((has_template_keyword ||
 									 materialized_owner_names_current_instantiation) &&
@@ -9754,9 +9769,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								restore_token_position(
 									deferred_member_chain_start);
 								pending_explicit_template_args_.reset();
-								return ParseResult::error(
-									"Missing 'template' before dependent qualified member template name",
-									deferred_final_identifier);
+								const std::string message = "Missing 'template' before dependent qualified member template name";
+								context_.diagnostics().report(
+									DiagnosticId::MissingTemplateKeyword,
+									DiagnosticSeverity::Error,
+									lexer_.getSourceLocation(deferred_final_identifier),
+									message,
+									{});
+								return ParseResult::error(message, deferred_final_identifier);
 							}
 							if ((has_template_keyword ||
 								 materialized_owner_names_current_instantiation) &&

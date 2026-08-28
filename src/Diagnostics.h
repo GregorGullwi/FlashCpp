@@ -146,6 +146,7 @@ enum class DiagnosticId : uint32_t {
 	NonDependentNameNotDeclaredBeforeTemplateDefinition = 1801,
 	PartialSpecializationParameterListInvalid = 1802,
 	HiddenFriendCallWithoutAssociatedArgument = 1803,
+	MissingTemplateKeyword = 1804,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -280,6 +281,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "PartialSpecializationParameterListInvalid";
 	case DiagnosticId::HiddenFriendCallWithoutAssociatedArgument:
 		return "HiddenFriendCallWithoutAssociatedArgument";
+	case DiagnosticId::MissingTemplateKeyword:
+		return "MissingTemplateKeyword";
 	case DiagnosticId::None:
 	default:
 		return "None";
