@@ -7910,10 +7910,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return make_call_result(*instantiated_func);
 					}
 					if (gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
-						return ParseResult::error(
-							"'" + std::string(identifier_token.value()) + "\' is a hidden friend and is only "
-																		  "accessible via argument-dependent lookup when an argument of the associated class type is provided",
-							identifier_token);
+						const std::string message = std::string(StringBuilder()
+							.append("'")
+							.append(identifier_token.value())
+							.append("' is a hidden friend and is only accessible via argument-dependent lookup when an argument of the associated class type is provided")
+							.commit());
+						context_.diagnostics().report(
+							DiagnosticId::HiddenFriendCallWithoutAssociatedArgument,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(identifier_token),
+							message,
+							{});
+						return ParseResult::error(message, identifier_token);
 					}
 					if (!isHardUseLikeInstantiationMode()) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
@@ -7939,10 +7947,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Before falling back to stub, check if this is a hidden friend with no
 					// ADL-providing arguments — that should be a compile error.
 					if (gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
-						return ParseResult::error(
-							"'" + std::string(identifier_token.value()) + "\' is a hidden friend and is only "
-																		  "accessible via argument-dependent lookup when an argument of the associated class type is provided",
-							identifier_token);
+						const std::string message = std::string(StringBuilder()
+							.append("'")
+							.append(identifier_token.value())
+							.append("' is a hidden friend and is only accessible via argument-dependent lookup when an argument of the associated class type is provided")
+							.commit());
+						context_.diagnostics().report(
+							DiagnosticId::HiddenFriendCallWithoutAssociatedArgument,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(identifier_token),
+							message,
+							{});
+						return ParseResult::error(message, identifier_token);
 					}
 					return make_call_result(*identifierType);
 				}
