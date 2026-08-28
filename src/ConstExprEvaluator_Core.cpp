@@ -2437,12 +2437,14 @@ EvalResult Evaluator::evaluate_throw_expression(const ThrowExpressionNode& throw
 	if (throw_expr.is_rethrow()) {
 		return EvalResult::error(
 			"rethrow expression is not allowed in a constant expression",
-			EvalErrorType::NotConstantExpression);
+			EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionThrow);
 	}
 
 	return EvalResult::error(
 		"throw expression is not allowed in a constant expression",
-		EvalErrorType::NotConstantExpression);
+		EvalErrorType::NotConstantExpression,
+		DiagnosticId::ConstantExpressionThrow);
 }
 
 bool Evaluator::is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context) {
@@ -2547,7 +2549,8 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 		context.storage_duration != ConstExpr::StorageDuration::Static) {
 		return EvalResult::error(
 			"Function in constant expression must be constexpr or consteval: " + std::string(func_name),
-			EvalErrorType::NotConstantExpression);
+			EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionNonConstexprCall);
 	}
 
 	const auto& definition = resolved_func->get_definition();
@@ -3088,7 +3091,8 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, arg_result)) {
 			return EvalResult::error(
 				"Narrowing conversion in direct-list-initialization",
-				EvalErrorType::NotConstantExpression);
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::ConstantExpressionNarrowingConversion);
 		}
 	}
 
@@ -3188,7 +3192,8 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 		!typesMatchIgnoringCvAndRef(target_type, *source_type)) {
 		return EvalResult::error(
 			"const_cast in constant expression may only change cv-qualification",
-			EvalErrorType::NotConstantExpression);
+			EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionConstCastTypeChange);
 	}
 
 	maybe_set_exact_type(result, target_type);
@@ -3598,7 +3603,8 @@ EvalResult Evaluator::evaluate_new_expression(
 			if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, arg_result)) {
 				return EvalResult::error(
 					"Narrowing conversion in direct-list-initialization",
-					EvalErrorType::NotConstantExpression);
+					EvalErrorType::NotConstantExpression,
+					DiagnosticId::ConstantExpressionNarrowingConversion);
 			}
 		}
 		// Apply the type conversion to the evaluated value.
@@ -5863,7 +5869,8 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		context.storage_duration != ConstExpr::StorageDuration::Static) {
 		return EvalResult::error(
 			"Function in constant expression must be constexpr or consteval: " + std::string(func_name),
-			EvalErrorType::NotConstantExpression);
+			EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionNonConstexprCall);
 	}
 
 	// Get the function body
@@ -6027,7 +6034,9 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// Check this at the outermost function call (depth returning to 0).
 	if (result.success() && context.current_depth == 0 && context.has_unfreed_heap_allocations()) {
 		return EvalResult::error("constexpr evaluation: memory allocated with 'new' was not freed "
-								 "before the end of the constant expression (C++20 [expr.const]/p5)");
+								 "before the end of the constant expression (C++20 [expr.const]/p5)",
+								 EvalErrorType::Other,
+								 DiagnosticId::ConstantExpressionHeapAllocationLeak);
 	}
 	return result;
 }

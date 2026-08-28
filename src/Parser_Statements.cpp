@@ -2511,6 +2511,12 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// Check for designated initializer syntax: .member = value
 		if (peek() == "."_tok) {
 			if (has_positional_initializer || has_seen_pack_expansion) {
+				context_.diagnostics().report(
+					DiagnosticId::DesignatedInitializerAfterPositional,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(current_token_),
+					"Designated initializers cannot follow positional initializers",
+					{});
 				return ParseResult::error("Designated initializers cannot follow positional initializers", current_token_);
 			}
 			has_designated = true;
@@ -2547,6 +2553,12 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				return ParseResult::error("Member '" + std::string(member_name) + "' already initialized", current_token_);
 			}
 			if (target_member_index < next_designated_member_index) {
+				context_.diagnostics().report(
+					DiagnosticId::DesignatedInitializerOutOfOrder,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(current_token_),
+					"Designated initializers must appear in declaration order",
+					{});
 				return ParseResult::error("Designated initializers must appear in declaration order", current_token_);
 			}
 			used_members.insert(member_name);

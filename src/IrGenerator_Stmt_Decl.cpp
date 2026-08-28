@@ -658,10 +658,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			const std::string message =
 				std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
 				"' initializer is not a constant expression: " + eval_result.error_message;
-			DiagnosticId diagnostic_id = eval_result.diagnostic_id;
-			if (diagnostic_id == DiagnosticId::None && node.is_constinit()) {
-				diagnostic_id = DiagnosticId::ConstinitInitializerNotConstant;
-			}
+			DiagnosticId diagnostic_id = node.is_constinit()
+				? DiagnosticId::ConstinitInitializerNotConstant
+				: eval_result.diagnostic_id;
 			if (diagnostic_id != DiagnosticId::None) {
 				return makeStructuredCompileError(
 					context_->diagnostics(),

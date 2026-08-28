@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `codex/boundary-2f-incomplete-sizeof-diagnostics`
+Last updated: 2026-08-28 by branch `codex/boundary-2c-constexpr-diagnostics`
 
 ## Position
 
@@ -66,6 +66,13 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-incomplete-sizeof-diagnost
 - The current incomplete-`sizeof` batch assigns `IncompleteSizeofOperand`
   (1605) at the existing parser rejection point and converts two frozen tests.
   It adds no type-completeness recovery.
+- The current constant-expression batch assigns the existing evaluator/parser
+  rejection points to `DesignatedInitializerAfterPositional` (1011),
+  `DesignatedInitializerOutOfOrder` (1012), and
+  `ConstantExpressionConstCastTypeChange`/`ConstantExpressionNarrowingConversion`/
+  `ConstantExpressionNonConstexprCall`/`ConstantExpressionThrow`/
+  `ConstantExpressionHeapAllocationLeak` (1215-1220), converting ten frozen
+  tests. It adds no evaluator fallback or initializer recovery.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -81,7 +88,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-incomplete-sizeof-diagnost
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 114 names. The temporary internal-failure
+- The frozen legacy inventory is now 104 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -109,8 +116,8 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-incomplete-sizeof-diagnost
     explicit-initialization, declarator-constraint, semantic-validity, and
     ordinary-call and call-operator ambiguity, dllimport-constraint, template
     phase-1, partial-specialization, namespace, and structured-binding
-    diagnostics (1004-1010, 1318-1320, 1503-1506, 1601-1605, 1701-1702,
-    1801-1803),
+    diagnostics (1004-1012, 1201-1220, 1318-1320, 1503-1506, 1601-1605,
+    1701-1702, 1801-1804),
     including the static-member constructor path, are
     mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding

@@ -1174,7 +1174,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			if (should_reject_validation_error) {
 				const std::string rejection_message =
 					std::string(keyword_name) + " variable initializer must be a constant expression: " + validation_error->error_message;
-				if (is_constinit && validation_error->diagnostic_id == DiagnosticId::None) {
+				if (is_constinit) {
 					ConstExpr::reportConstinitDiagnostic(
 						context_.diagnostics(),
 						lexer_.getSourceLocation(identifier_token),
