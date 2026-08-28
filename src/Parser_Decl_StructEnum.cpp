@@ -2015,11 +2015,18 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						const std::string rejection_message =
 							"constexpr static data member initializer must be a constant expression: " +
 							validation.error_message;
-						ConstExpr::reportConstantExpressionDiagnostic(
-							context_.diagnostics(),
-							validation.diagnostic_id,
-							lexer_.getSourceLocation(decl.identifier_token()),
-							rejection_message);
+						if (validation.diagnostic_id == DiagnosticId::None) {
+							ConstExpr::reportConstexprStaticMemberDiagnostic(
+								context_.diagnostics(),
+								lexer_.getSourceLocation(decl.identifier_token()),
+								rejection_message);
+						} else {
+							ConstExpr::reportConstantExpressionDiagnostic(
+								context_.diagnostics(),
+								validation.diagnostic_id,
+								lexer_.getSourceLocation(decl.identifier_token()),
+								rejection_message);
+						}
 						return ParseResult::error(rejection_message, decl.identifier_token());
 					}
 				}

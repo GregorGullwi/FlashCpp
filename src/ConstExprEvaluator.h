@@ -1335,4 +1335,16 @@ inline void reportConstinitDiagnostic(
 		{});
 }
 
+inline void reportConstexprStaticMemberDiagnostic(
+	DiagnosticEngine& diagnostics,
+	SourceLocation location,
+	std::string_view message) {
+	diagnostics.report(
+		DiagnosticId::ConstexprStaticMemberInitializerNotConstant,
+		DiagnosticSeverity::Error,
+		location,
+		message,
+		{});
+}
+
 } // namespace ConstExpr

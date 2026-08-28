@@ -1269,11 +1269,30 @@ void AstToIr::generateStaticMemberDeclarations() {
 							defer_constexpr_initializer = true;
 							return;
 						}
-						throw CompileError(
+						const std::string message =
 							std::string("static constexpr member initializer for '") +
 							std::string(qualified_name) +
 							"' is not a constant expression: " +
-							std::string(reason));
+							std::string(reason);
+						SourceLocation location{};
+						if (static_member.declaration.has_value()) {
+							const DeclarationNode* declaration = nullptr;
+							if (static_member.declaration->is<DeclarationNode>()) {
+								declaration = &static_member.declaration->as<DeclarationNode>();
+							} else if (static_member.declaration->is<VariableDeclarationNode>()) {
+								declaration = &static_member.declaration->as<VariableDeclarationNode>().declaration();
+							}
+							if (declaration != nullptr) {
+								location = SourceLocation::fromToken(declaration->identifier_token());
+							}
+						}
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::ConstexprStaticMemberInitializerNotConstant,
+							DiagnosticSeverity::Error,
+							location,
+							message,
+							{});
 					}
 				};
 				auto write_back_constant_bytes = [&]() {

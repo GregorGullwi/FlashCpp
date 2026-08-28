@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-27 by branch `main`
+Last updated: 2026-08-28 by branch `boundary-2f-legacy-cleanup`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2E continues past the scoped-enum sema batch with the
+- Pull request boundary 2F continues past the scoped-enum sema batch and the
   operator overload ambiguity batch: the four frozen
   `test_operator_ambiguity*` / `test_operator_member_free_exact_ambiguous`
   legacy negative tests converted to structured diagnostics through the single
@@ -23,6 +23,11 @@ Last updated: 2026-08-27 by branch `main`
   sema owners (`SemanticAnalysis::diagnoseScopedEnumConversion`,
   `SemanticAnalysis::diagnoseScopedEnumBinaryOperands`, and the
   constructor-argument no-arity-match site).
+- The current 2F batch converts the four frozen static-`constexpr` member
+  initializer failures to `ConstexprStaticMemberInitializerNotConstant`
+  (1502). The existing parser validation and AST-to-IR rejection choke points
+  now report the same initialization-family ID, and the four tests use
+  `_e1502` filenames.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -39,7 +44,7 @@ Last updated: 2026-08-27 by branch `main`
   2,946 regular tests, 265 negative tests, and one multi-translation-unit case;
   no crashes or mismatches occurred. The 2D and 2E slices still require their
   own next full-suite snapshot.
-- The frozen legacy inventory is rebaselined at 214 names. The seven-test
+- The frozen legacy inventory is rebaselined at 207 names. The seven-test
   internal-failure compatibility is unchanged at 7 against baseline 7,
   direction down, removal boundary 2F.
 
@@ -59,7 +64,8 @@ Last updated: 2026-08-27 by branch `main`
     diagnostics are filename-pinned and mutation-validated; floating-point
     modulo, bitwise-compound, shift, and plain-bitwise operator diagnostics
     have also entered the 2D encoded corpus, and the operator overload
-    ambiguity diagnostic (1305) is mutation-validated on the same terms;
+    ambiguity diagnostic (1305) and static-`constexpr` member initializer
+    diagnostic (1502) are mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
@@ -79,7 +85,7 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- None known locally. The current 2D state still needs a full Windows-suite
+- None known locally. The current 2F state still needs a full Windows-suite
   run before the next migration snapshot may claim validation.
 
 Then, in order:
