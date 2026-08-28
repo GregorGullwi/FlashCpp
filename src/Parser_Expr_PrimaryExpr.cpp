@@ -10288,6 +10288,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								call_operator_resolution.state,
 								operator_call_func);
 						hard_failure.has_value()) {
+						if (*hard_failure == "call to overloaded operator() is ambiguous"sv) {
+							context_.diagnostics().report(
+								DiagnosticId::AmbiguousCallOperator,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(identifier_token),
+								*hard_failure,
+								{});
+						}
 						return ParseResult::error(
 							std::string(*hard_failure),
 							identifier_token);
