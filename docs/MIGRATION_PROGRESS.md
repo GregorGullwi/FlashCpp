@@ -5,73 +5,45 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `boundary-2f-call-lowering-diagnostics`
+Last updated: 2026-08-28 by branch `codex/boundary-2f-constructor-ambiguity`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundary 2F continues past the scoped-enum sema batch and the
-  operator overload ambiguity batch: the four frozen
-  `test_operator_ambiguity*` / `test_operator_member_free_exact_ambiguous`
-  legacy negative tests converted to structured diagnostics through the single
-  bounded owner `AstToIr::generateBinaryOperatorIr` (both the generic binary
-  ambiguity site and the struct-assignment `operator=` ambiguity site).
-  New ID: `AmbiguousOperatorOverload` (1305) in the operator family
-  (1301..1399). The scoped-enum batch before it added
-  `ScopedEnumImplicitConversion` (1401) and `ScopedEnumBinaryOperand` (1402)
-  in the implicit enum conversion family (1401..1499) through the centralized
-  sema owners (`SemanticAnalysis::diagnoseScopedEnumConversion`,
-  `SemanticAnalysis::diagnoseScopedEnumBinaryOperands`, and the
-  constructor-argument no-arity-match site).
-- The current 2F batch converts the four frozen static-`constexpr` member
-  initializer failures to `ConstexprStaticMemberInitializerNotConstant`
-  (1502). The existing parser validation and AST-to-IR rejection choke points
-  now report the same initialization-family ID, and the four tests use
-  `_e1502` filenames.
-- The current operator-signature batch converts twelve frozen tests and adds
-  one reduced regression through `Parser::validateOperatorSignature`.
-  `StaticOperatorMustBeNonStaticMember` (1306) covers the five non-member-only
-  operator cases, including the previously converted static-member test. The
-  batch adds
-  `OperatorDefaultArgumentsForbidden` (1307),
-  `AssignmentOperatorArity` (1308), `SubscriptOperatorArity` (1309),
-  `ArrowOperatorArity` (1310), `IncrementDecrementOperatorForm` (1311), and
-  `OrdinaryOperatorArity` (1312). Every converted test now uses an `_e1306`
-  through `_e1312` filename. Three free-operator declarations that fail
-  earlier in incomplete parser recovery and the subscript overload ambiguity
-  test remain with their original owners.
-- The current deleted-assignment batch converts nine frozen tests through the
-  shared AST-to-IR owner `diagnoseDeletedSameTypeAssignmentUsage`. The five
-  copy-assignment tests use `DeletedCopyAssignment` (1313), and the four
-  move-assignment tests use `DeletedMoveAssignment` (1314). Their encoded
-  successors cover ordinary, member, indirect, array-element, and xvalue
-  assignment paths.
-- The current call-lowering batch converts three frozen consteval invocation
-  failures through `AstToIr::generateFunctionCallIr` and
-  `AstToIr::generateMemberFunctionCallIr`. They use
-  `ImmediateInvocationNotConstant` (1315). The two explicit-constructor
-  function-argument tests remain with their semantic and parser owners.
+- Pull request boundary 2F now includes the explicit-initialization batch on
+  branch `codex/boundary-2f-explicit-initialization` (commit `a136a23c`). It
+  assigns `AssignmentToConstObject` (1318),
+  `ExplicitConstructorCopyInitialization` (1503), and
+  `RangeForBeginEndRequired` (1601) at existing bounded semantic owners.
+  The operator/access batch on branch
+  `codex/boundary-2f-operator-access` (commit `eb4292bf`) adds
+  `OperatorOverloadNotFound` (1319), `DeletedOperatorFunction` (1320), and
+  the bounded pointer/subscript validity IDs 1602-1604.
+- The existing-diagnostic inventory batch on branch
+  `codex/boundary-2f-existing-diagnostics` (commit `17cff091`) converts twelve
+  already-structured legacy tests to encoded successors and removes one
+  resolved entry from the temporary internal-failure compatibility inventory.
+  The constructor-ambiguity batch on the current branch (commit `0e4bdb48`)
+  adds `AmbiguousConstructorCall` (1504) at the existing overload-resolution
+  choke points and converts three more frozen tests. No replay, lookup,
+  recovery, or lowering query was added for these conversions.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
   lifetime (1207-1211), direct-subscript bounds checking (1212),
   null-pointer dereference (1213), and pointer-plus-pointer (1214).
-  Boundary 2D then assigned `FloatingPointModuloOperator` (1301),
-  `FloatingPointBitwiseCompoundAssignment` (1302),
-  `FloatingPointShiftOperator` (1303), and
-  `FloatingPointBitwiseOperator` (1304) across the direct, compound,
-  constexpr, global, local, member, and indirect paths covered by their
-  regressions. Boundary 2E adds `AmbiguousOperatorOverload` (1305) for the
-  ambiguous binary operator overload resolution owner.
-- The last recorded full Windows-suite validation is the boundary-2C run:
-  2,946 regular tests, 265 negative tests, and one multi-translation-unit case;
-  no crashes or mismatches occurred. The latest Linux full-suite run for this
-  batch covered 2,929 single-file tests, 281 negative tests, one
+  Boundary 2D then assigned the floating-point operator family (1301-1304),
+  followed by operator ambiguity, operator signatures, deleted assignment,
+  and immediate-invocation diagnostics (1305-1315).
+- The full Windows-suite validation on 2026-08-28 covered 2,959 regular tests,
+  281 negative tests, and one multi-translation-unit case; all compile/link
+  phases passed, with no crashes, runtime mismatches, or negative-contract
+  failures. Five tracked positive expected failures matched. The latest Linux
+  full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
-  it had no crashes or mismatches. A Windows full-suite snapshot is still
-  required.
-- The frozen legacy inventory is rebaselined at 182 names. The seven-test
-  internal-failure compatibility is unchanged at 7 against baseline 7,
+  it had no crashes or mismatches.
+- The frozen legacy inventory is now 148 names. The temporary internal-failure
+  compatibility is down to 6 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
 ## Criteria completion
@@ -92,9 +64,10 @@ Last updated: 2026-08-28 by branch `boundary-2f-call-lowering-diagnostics`
     have also entered the 2D encoded corpus, and the operator overload
     ambiguity diagnostic (1305) and static-`constexpr` member initializer
     diagnostic (1502), the complete converted operator-signature family
-    (1306-1312), deleted copy/move assignment diagnostics (1313/1314), and
-    non-constant immediate invocation diagnostics (1315), are
-    mutation-validated on the same terms;
+    (1306-1312), deleted copy/move assignment diagnostics (1313/1314),
+    non-constant immediate invocation diagnostics (1315), and the
+    explicit-initialization and semantic-validity diagnostics (1318-1320,
+    1503-1504, 1601-1604), are mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
@@ -114,9 +87,8 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- The current 2F state still needs a full Windows-suite run before the next
-  migration snapshot may claim cross-platform validation. `pwsh` is not
-  available in this Linux environment; the Linux full suite is green.
+- There is no cross-platform validation blocker for the current 2F snapshot:
+  the full Windows suite is green and the frozen inventory is below 150.
 
 Then, in order:
 
@@ -126,7 +98,7 @@ Then, in order:
    stable ID at an existing bounded owner is allowed, but a batch cannot extend
    replay, parser-owned semantic work, identity recovery, AST-to-IR lookup, or
    lowering recovery merely to convert a test. Boundary 2F still deletes
-   `_fail.cpp` classification, both frozen inventories, and the seven-test
+   `_fail.cpp` classification, both frozen inventories, and the six-entry
    internal-failure compatibility unless a later approved roadmap amendment
    moves a named blocked slice and all of its cleanup targets together.
 2. Preprocessor-directive diagnostics stay unconverted in the frozen
@@ -176,8 +148,8 @@ Named follow-ups carried forward:
 
 Current findings only; delete entries when their resolution lands.
 
-- Seven legacy negative tests use the immutable, status-2 compatibility
-  inventory. The active count is 7 against baseline 7 and may only fall.
+- Six legacy negative tests use the immutable, status-2 compatibility
+  inventory. The active count is 6 against baseline 7 and may only fall.
   Details live in `docs/KNOWN_ISSUES.md`; deletion target is boundary 2F.
 - The unity doctest target's MSBuild ClangCL configuration crashes the clang
   frontend against the VS18 STL headers (LLVM 20.1 vs STL 14.51 mismatch).
