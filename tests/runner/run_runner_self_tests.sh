@@ -109,7 +109,6 @@ else
 	inventory_ok=false
 fi
 assert_runner "$inventory_ok" "the frozen legacy inventory matches exactly one current representation per entry"
-
 [ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_COUNT" ] &&
 	[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -lt "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE" ] &&
 	internal_compatibility_inventory_ok=true || internal_compatibility_inventory_ok=false
@@ -176,7 +175,7 @@ if runner_validate_legacy_internal_compatibility \
 	"$compatibility_repo" \
 	"$compatibility_repo/legacy_internal_failure_tests.txt" \
 	"$compatibility_repo/legacy_negative_tests.txt" &&
-		[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq 5 ] &&
+	[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq 5 ] &&
 	[[ " $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES " != *" $first_compatibility_entry "* ]]; then
 	encoded_successor_mapping_ok=true
 else
