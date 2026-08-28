@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `codex/boundary-2f-static-member-constructor`
+Last updated: 2026-08-28 by branch `codex/boundary-2b-declarator-constraints`
 
 ## Position
 
@@ -32,6 +32,11 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-static-member-constructor`
   normalization, converting `test_static_member_ctor_overload_ambiguity` and
   removing its former missing-resolved-constructor compatibility entry. No
   fallback resolution or new semantic query was added.
+- The current declarator-constraint batch assigns
+  `DecltypeAutoCvQualifier` (1004), `DecltypeAutoPointerOrReference` (1005),
+  `DecltypeAutoStructuredBinding` (1006), and `ParameterPackDataMember` (1007)
+  at existing parser rejection points and converts six frozen tests. No
+  `ParseResult` ownership or semantic fallback was added.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -47,7 +52,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-static-member-constructor`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 147 names. The temporary internal-failure
+- The frozen legacy inventory is now 141 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -61,7 +66,8 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-static-member-constructor`
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure": the ASAN crash-handler defect,
-    declarator-, literal-, constant-expression-arithmetic,
+    declarator-, `decltype(auto)`-, parameter-pack-, literal-,
+    constant-expression-arithmetic,
     indeterminate-read, pointer-arithmetic/lifetime-family, direct
     multidimensional/member-subscript, and scoped-enum (1401/1402, sema-owned)
     diagnostics are filename-pinned and mutation-validated; floating-point
@@ -71,7 +77,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-static-member-constructor`
     diagnostic (1502), the complete converted operator-signature family
     (1306-1312), deleted copy/move assignment diagnostics (1313/1314),
     non-constant immediate invocation diagnostics (1315), and the
-    explicit-initialization and semantic-validity diagnostics (1318-1320,
+    explicit-initialization, declarator-constraint, and semantic-validity diagnostics (1004-1007, 1318-1320,
     1503-1504, 1601-1604), including the static-member constructor path, are
     mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
@@ -94,7 +100,8 @@ Replaces the previous remaining-work section entirely on every update.
 Next blocker:
 
 - There is no cross-platform validation blocker for the current 2F snapshot:
-  the full Windows suite is green and the frozen inventory is below 150.
+  the full Windows suite is green and the frozen inventory is below 150; the
+  current coordination target is below 120.
 
 Then, in order:
 

@@ -2953,6 +2953,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			if (member_result.node()->is<DeclarationNode>()) {
 				const DeclarationNode& member_decl = member_result.node()->as<DeclarationNode>();
 				if (member_decl.is_parameter_pack()) {
+					context_.diagnostics().report(
+						DiagnosticId::ParameterPackDataMember,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(member_decl.identifier_token()),
+						"Only function and template parameters can be parameter packs",
+						{});
 					return ParseResult::error("Only function and template parameters can be parameter packs", member_decl.identifier_token());
 				}
 			}
