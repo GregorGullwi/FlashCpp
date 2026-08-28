@@ -537,6 +537,12 @@ ParseResult Parser::parse_namespace() {
 		}
 
 		if (is_inline_namespace && nested_names.size() > 1) {
+			context_.diagnostics().report(
+				DiagnosticId::InlineNamespaceNestedPrefix,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(peek_info()),
+				"Nested namespace definitions cannot be prefixed with 'inline'; use 'namespace A::inline B { }'",
+				{});
 			return ParseResult::error("Nested namespace definitions cannot be prefixed with 'inline'; use 'namespace A::inline B { }'", peek_info());
 		}
 
@@ -618,6 +624,12 @@ ParseResult Parser::parse_namespace() {
 				for (size_t j = 0; j < entered_namespace_count; ++j) {
 					gSymbolTable.exit_scope();
 				}
+				context_.diagnostics().report(
+					DiagnosticId::InlineNamespaceReopenAsInline,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(peek_info()),
+					"Cannot reopen a non-inline namespace as inline",
+					{});
 				return ParseResult::error("Cannot reopen a non-inline namespace as inline", peek_info());
 			}
 			if (this_ns_is_inline && next_handle.isValid()) {

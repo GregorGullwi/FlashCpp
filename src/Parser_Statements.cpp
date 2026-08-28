@@ -1010,6 +1010,12 @@ ParseResult Parser::parse_variable_declaration() {
 
 		// Validate: structured bindings cannot have storage class specifiers
 		if (storage_class != StorageClass::None || specs.is_thread_local) {
+			context_.diagnostics().report(
+				DiagnosticId::StructuredBindingStorageClass,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				"Structured bindings cannot have storage class specifiers (static, extern, etc.)",
+				{});
 			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", current_token_);
 		}
 
