@@ -1,6 +1,7 @@
 // Deleted copy assignment should still be diagnosed for xvalue assignment
 // when no move assignment operator exists.
 
+// Diagnostic regression for deleted copy assignment.
 struct NoCopyAssignFallback {
 	NoCopyAssignFallback() = default;
 	~NoCopyAssignFallback() {}

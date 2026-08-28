@@ -1,5 +1,6 @@
 // Deleted copy assignment should be diagnosed through member lvalue assignment.
 
+// Diagnostic regression for deleted copy assignment.
 struct NoAssign {
 	NoAssign() = default;
 	NoAssign& operator=(const NoAssign&) = delete;

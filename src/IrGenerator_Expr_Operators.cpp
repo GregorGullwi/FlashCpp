@@ -94,7 +94,11 @@ bool isBitwiseOperator(std::string_view op) {
 		{});
 }
 
-[[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
+[[noreturn]] void throwDeletedSameTypeAssignmentCompileError(
+	CompileContext& context,
+	const StructTypeInfo& struct_info,
+	bool prefer_move,
+	const Token& token) {
 	const char* assignment_kind = prefer_move ? "move" : "copy";
 	std::string_view error_msg = StringBuilder()
 									 .append("Call to deleted ")
@@ -103,13 +107,23 @@ bool isBitwiseOperator(std::string_view op) {
 									 .append(StringTable::getStringView(struct_info.name))
 									 .append("'")
 									 .commit();
-	throw CompileError(std::string(error_msg));
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		prefer_move ? DiagnosticId::DeletedMoveAssignment : DiagnosticId::DeletedCopyAssignment,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		error_msg,
+		{});
 }
 
-void diagnoseDeletedSameTypeAssignmentUsage(const StructTypeInfo& struct_info, bool prefer_move) {
+void diagnoseDeletedSameTypeAssignmentUsage(
+	CompileContext& context,
+	const StructTypeInfo& struct_info,
+	bool prefer_move,
+	const Token& token) {
 	if (prefer_move) {
 		if (struct_info.isMoveAssignmentDeleted()) {
-			throwDeletedSameTypeAssignmentCompileError(struct_info, true);
+			throwDeletedSameTypeAssignmentCompileError(context, struct_info, true, token);
 		}
 		if (struct_info.findMoveAssignmentOperator(true)) {
 			return;
@@ -117,7 +131,7 @@ void diagnoseDeletedSameTypeAssignmentUsage(const StructTypeInfo& struct_info, b
 	}
 
 	if (struct_info.isCopyAssignmentDeleted()) {
-		throwDeletedSameTypeAssignmentCompileError(struct_info, false);
+		throwDeletedSameTypeAssignmentCompileError(context, struct_info, false, token);
 	}
 }
 
@@ -2249,7 +2263,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 						if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
 							same_type_assignment_kind.has_value()) {
-							diagnoseDeletedSameTypeAssignmentUsage(*struct_info, *same_type_assignment_kind);
+							diagnoseDeletedSameTypeAssignmentUsage(
+								*context_, *struct_info, *same_type_assignment_kind, binaryOperatorNode.get_token());
 						}
 					}
 				}
@@ -2799,7 +2814,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 						if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
 							same_type_assignment_kind.has_value()) {
-							diagnoseDeletedSameTypeAssignmentUsage(*struct_info, *same_type_assignment_kind);
+							diagnoseDeletedSameTypeAssignmentUsage(
+								*context_, *struct_info, *same_type_assignment_kind, binaryOperatorNode.get_token());
 						}
 					}
 				}
@@ -3722,7 +3738,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	if (op == "=") {
 		if (lhsCat == TypeCategory::Struct && rhsCat == TypeCategory::Struct && lhsExprResult.type_index.is_valid() && rhsExprResult.type_index.is_valid() && lhsExprResult.type_index == rhsExprResult.type_index) {
 			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(lhsExprResult.type_index)) {
-				diagnoseDeletedSameTypeAssignmentUsage(*struct_info, shouldPreferMoveAssignment(rhsExprResult));
+				diagnoseDeletedSameTypeAssignmentUsage(
+					*context_, *struct_info, shouldPreferMoveAssignment(rhsExprResult), binaryOperatorNode.get_token());
 			}
 		}
 
@@ -5752,7 +5769,8 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		}
 
 		if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
-			diagnoseDeletedSameTypeAssignmentUsage(*struct_info, shouldPreferMoveAssignment(rhs_operands));
+			diagnoseDeletedSameTypeAssignmentUsage(
+				*context_, *struct_info, shouldPreferMoveAssignment(rhs_operands), token);
 		}
 	};
 
