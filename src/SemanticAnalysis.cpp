@@ -10886,8 +10886,15 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		resolution.selected_overload = resolveUniqueArityConstructor(*struct_info, num_args);
 	}
 	resolution.selected_overload = ensureSelectedConstructorMaterialized(*struct_info, resolution.selected_overload);
-	if (resolution.is_ambiguous && require_constructor_match)
-		throw CompileError(buildConstructorDiagnostic("Ambiguous constructor call", num_args));
+	if (resolution.is_ambiguous) {
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::AmbiguousConstructorCall,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(call_node.called_from()),
+			"Ambiguous constructor call",
+			{});
+	}
 	if (!resolution.selected_overload) {
 		if (require_constructor_match)
 			throw CompileError(buildConstructorDiagnostic("No matching constructor", num_args));

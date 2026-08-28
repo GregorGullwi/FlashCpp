@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `codex/boundary-2f-constructor-ambiguity`
+Last updated: 2026-08-28 by branch `codex/boundary-2f-static-member-constructor`
 
 ## Position
 
@@ -27,6 +27,11 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-constructor-ambiguity`
   adds `AmbiguousConstructorCall` (1504) at the existing overload-resolution
   choke points and converts three more frozen tests. No replay, lookup,
   recovery, or lowering query was added for these conversions.
+- The static-member constructor batch on the current branch extends the same
+  `AmbiguousConstructorCall` (1504) contract through constructor-call
+  normalization, converting `test_static_member_ctor_overload_ambiguity` and
+  removing its former missing-resolved-constructor compatibility entry. No
+  fallback resolution or new semantic query was added.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -42,8 +47,8 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-constructor-ambiguity`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 148 names. The temporary internal-failure
-  compatibility is down to 6 active entries against its baseline of 7,
+- The frozen legacy inventory is now 147 names. The temporary internal-failure
+  compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
 ## Criteria completion
@@ -67,7 +72,8 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-constructor-ambiguity`
     (1306-1312), deleted copy/move assignment diagnostics (1313/1314),
     non-constant immediate invocation diagnostics (1315), and the
     explicit-initialization and semantic-validity diagnostics (1318-1320,
-    1503-1504, 1601-1604), are mutation-validated on the same terms;
+    1503-1504, 1601-1604), including the static-member constructor path, are
+    mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
@@ -98,7 +104,7 @@ Then, in order:
    stable ID at an existing bounded owner is allowed, but a batch cannot extend
    replay, parser-owned semantic work, identity recovery, AST-to-IR lookup, or
    lowering recovery merely to convert a test. Boundary 2F still deletes
-   `_fail.cpp` classification, both frozen inventories, and the six-entry
+   `_fail.cpp` classification, both frozen inventories, and the five-entry
    internal-failure compatibility unless a later approved roadmap amendment
    moves a named blocked slice and all of its cleanup targets together.
 2. Preprocessor-directive diagnostics stay unconverted in the frozen
@@ -148,8 +154,8 @@ Named follow-ups carried forward:
 
 Current findings only; delete entries when their resolution lands.
 
-- Six legacy negative tests use the immutable, status-2 compatibility
-  inventory. The active count is 6 against baseline 7 and may only fall.
+- Five legacy negative tests use the immutable, status-2 compatibility
+  inventory. The active count is 5 against baseline 7 and may only fall.
   Details live in `docs/KNOWN_ISSUES.md`; deletion target is boundary 2F.
 - The unity doctest target's MSBuild ClangCL configuration crashes the clang
   frontend against the VS18 STL headers (LLVM 20.1 vs STL 14.51 mismatch).
