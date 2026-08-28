@@ -217,16 +217,25 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const {
 	const OverloadableOperator operator_kind =
 		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
+	auto reportNonStaticMemberRequired = [&]() -> ParseResult {
+		const std::string message = std::string(StringBuilder()
+			.append(func_decl.decl_node().identifier_token().value())
+			.append(" must be a non-static member function")
+			.commit());
+		context_.diagnostics().report(
+			DiagnosticId::StaticOperatorMustBeNonStaticMember,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(func_decl.decl_node().identifier_token()),
+			message,
+			{});
+		return ParseResult::error(message, func_decl.decl_node().identifier_token());
+	};
 	if (is_member &&
 		func_decl.is_static() &&
 		operator_kind != OverloadableOperator::None &&
 		operator_kind != OverloadableOperator::Call &&
 		operator_kind != OverloadableOperator::Subscript) {
-		return ParseResult::error(std::string(StringBuilder()
-			.append(func_decl.decl_node().identifier_token().value())
-			.append(" must be a non-static member function")
-			.commit()),
-			func_decl.decl_node().identifier_token());
+		return reportNonStaticMemberRequired();
 	}
 	const bool treat_static_operator_as_member =
 		func_decl.is_static() &&
@@ -234,11 +243,7 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 		 operator_kind == OverloadableOperator::Subscript);
 	const bool effective_is_member = is_member || treat_static_operator_as_member;
 	if (!effective_is_member && mustBeMemberOperator(operator_kind)) {
-		return ParseResult::error(std::string(StringBuilder()
-			.append(func_decl.decl_node().identifier_token().value())
-			.append(" must be a non-static member function")
-			.commit()),
-			func_decl.decl_node().identifier_token());
+		return reportNonStaticMemberRequired();
 	}
 	if (operator_kind != OverloadableOperator::None &&
 		!operatorDeclarationAllowsDefaultArguments(operator_kind) &&
