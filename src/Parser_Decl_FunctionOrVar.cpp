@@ -1012,6 +1012,12 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 		// Validate: constexpr/constinit are incompatible with dllimport
 		if (specs.linkage == Linkage::DllImport && (is_constexpr || is_constinit)) {
+			context_.diagnostics().report(
+				DiagnosticId::DllImportConstexprConflict,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(global_decl_node.declaration().identifier_token()),
+				"'constexpr' and '__declspec(dllimport)' are incompatible",
+				{});
 			return ParseResult::error("'constexpr' and '__declspec(dllimport)' are incompatible", global_decl_node.declaration().identifier_token());
 		}
 
@@ -1094,6 +1100,12 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 		// Validate: __declspec(dllimport) data must not have a definition (initializer)
 		if (specs.linkage == Linkage::DllImport && initializer.has_value()) {
+			context_.diagnostics().report(
+				DiagnosticId::DllImportDataDefinition,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(identifier_token),
+				"definition of dllimport data is not allowed",
+				{});
 			return ParseResult::error("definition of dllimport data is not allowed", identifier_token);
 		}
 
@@ -1218,6 +1230,12 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 				// Validate: constexpr/constinit are incompatible with dllimport
 				if (specs.linkage == Linkage::DllImport && (is_constexpr || is_constinit)) {
+					context_.diagnostics().report(
+						DiagnosticId::DllImportConstexprConflict,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(next_identifier_token),
+						"'constexpr' and '__declspec(dllimport)' are incompatible",
+						{});
 					return ParseResult::error("'constexpr' and '__declspec(dllimport)' are incompatible", next_identifier_token);
 				}
 
@@ -1263,6 +1281,12 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 				// Validate: __declspec(dllimport) data must not have a definition (initializer)
 				if (specs.linkage == Linkage::DllImport && next_initializer.has_value()) {
+					context_.diagnostics().report(
+						DiagnosticId::DllImportDataDefinition,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(next_identifier_token),
+						"definition of dllimport data is not allowed",
+						{});
 					return ParseResult::error("definition of dllimport data is not allowed", next_identifier_token);
 				}
 
