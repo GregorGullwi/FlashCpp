@@ -131,6 +131,9 @@ enum class DiagnosticId : uint32_t {
 	AmbiguousDerivedToBasePointerConversion = 1602,
 	InaccessibleDerivedToBasePointerConversion = 1603,
 	AmbiguousBuiltInSubscriptConversion = 1604,
+
+	// Call-expression family (1701..1799).
+	AmbiguousFunctionCall = 1701,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -243,6 +246,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "InaccessibleDerivedToBasePointerConversion";
 	case DiagnosticId::AmbiguousBuiltInSubscriptConversion:
 		return "AmbiguousBuiltInSubscriptConversion";
+	case DiagnosticId::AmbiguousFunctionCall:
+		return "AmbiguousFunctionCall";
 	case DiagnosticId::None:
 	default:
 		return "None";

@@ -7951,7 +7951,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution.has_match, ", is_ambiguous=", resolution.is_ambiguous);
 
 				if (resolution.is_ambiguous) {
-					return ParseResult::error("Ambiguous call to overloaded function '" + std::string(identifier_token.value()) + "\'", identifier_token);
+					const std::string message = std::string(StringBuilder()
+						.append("Ambiguous call to overloaded function '")
+						.append(identifier_token.value())
+						.append("'")
+						.commit());
+					context_.diagnostics().report(
+						DiagnosticId::AmbiguousFunctionCall,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(identifier_token),
+						message,
+						{});
+					return ParseResult::error(message, identifier_token);
 				}
 				if (!resolution.has_match) {
 					if (auto synthetic_builtin = try_synthesize_atomic_builtin_overload(identifier_token.value(), arg_types, identifier_token); synthetic_builtin.has_value()) {
@@ -10980,7 +10991,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution_result.has_match, ", is_ambiguous=", resolution_result.is_ambiguous);
 
 										if (resolution_result.is_ambiguous) {
-											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(identifier_token.value()) + "'", identifier_token);
+											const std::string message = std::string(StringBuilder()
+												.append("Ambiguous call to overloaded function '")
+												.append(identifier_token.value())
+												.append("'")
+												.commit());
+											context_.diagnostics().report(
+												DiagnosticId::AmbiguousFunctionCall,
+												DiagnosticSeverity::Error,
+												lexer_.getSourceLocation(identifier_token),
+												message,
+												{});
+											return ParseResult::error(message, identifier_token);
 										} else if (!resolution_result.has_match) {
 											if (auto synthetic_builtin = try_synthesize_atomic_builtin_overload(identifier_token.value(), arg_types, identifier_token); synthetic_builtin.has_value()) {
 												const DeclarationNode* decl_ptr = getDeclarationNode(*synthetic_builtin);
