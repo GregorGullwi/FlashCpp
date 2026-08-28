@@ -2531,7 +2531,13 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 				return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
 			}
 		}
-		throw CompileError("range-based for loop requires type to either provide member begin()/end() methods or be used with free functions begin()/end() found via argument-dependent lookup");
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::RangeForBeginEndRequired,
+			DiagnosticSeverity::Error,
+			SourceLocation(),
+			"range-based for loop requires type to either provide member begin()/end() methods or be used with free functions begin()/end() found via argument-dependent lookup",
+			{});
 	}
 
 	if (!has_member_begin || !has_member_end) {
@@ -4644,8 +4650,13 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					if (assignment_lhs_type_id &&
 						isCanonicalObjectConstQualified(
 							type_context_.get(assignment_lhs_type_id))) {
-						throw CompileError(
-							"Assignment to const-qualified expression is not allowed");
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::AssignmentToConstObject,
+							DiagnosticSeverity::Error,
+							SourceLocation(),
+							"Assignment to const-qualified expression is not allowed",
+							{});
 					}
 				}
 				// For simple assignment, annotate the RHS with the LHS type.
@@ -8263,7 +8274,13 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 			FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for target type '",
 					  StringTable::getStringView(to_type_info->name()), "' from type category ",
 					  static_cast<int>(from_desc.category()), context_description);
-			throw CompileError("Cannot use copy initialization with explicit constructor");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::ExplicitConstructorCopyInitialization,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				"Cannot use copy initialization with explicit constructor",
+				{});
 		}
 		return false;
 	}
