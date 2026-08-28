@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `codex/boundary-2d-ambiguous-function-call`
+Last updated: 2026-08-28 by branch `codex/boundary-2f-dllimport-constraints`
 
 ## Position
 
@@ -40,6 +40,10 @@ Last updated: 2026-08-28 by branch `codex/boundary-2d-ambiguous-function-call`
 - The current overload-resolution batch assigns `AmbiguousFunctionCall` (1701)
   at the two existing ordinary-call parser rejection points and converts four
   frozen tests. It adds no new overload decision or recovery path.
+- The current declaration-constraint batch assigns
+  `DllImportConstexprConflict` (1505) and `DllImportDataDefinition` (1506) at
+  existing parser rejection points and converts three frozen tests. It adds no
+  new linkage or initialization decision.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -55,7 +59,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2d-ambiguous-function-call`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 137 names. The temporary internal-failure
+- The frozen legacy inventory is now 134 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -81,8 +85,9 @@ Last updated: 2026-08-28 by branch `codex/boundary-2d-ambiguous-function-call`
     (1306-1312), deleted copy/move assignment diagnostics (1313/1314),
     non-constant immediate invocation diagnostics (1315), and the
     explicit-initialization, declarator-constraint, semantic-validity, and
-    ordinary-call ambiguity diagnostics (1004-1007, 1318-1320, 1503-1504,
-    1601-1604, 1701), including the static-member constructor path, are
+    ordinary-call ambiguity, and dllimport-constraint diagnostics
+    (1004-1007, 1318-1320, 1503-1506, 1601-1604, 1701), including the
+    static-member constructor path, are
     mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
