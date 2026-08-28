@@ -496,6 +496,12 @@ ParseResult Parser::parse_template_parameter() {
 	if (nttp_type.is_reference() &&
 		nttp_type.type() != TypeCategory::Auto &&
 		nttp_type.type() != TypeCategory::DeclTypeAuto) {
+		context_.diagnostics().report(
+			DiagnosticId::ReferenceNonTypeTemplateParameterUnsupported,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(type_result.node()->as<TypeSpecifierNode>().token()),
+			"Reference non-type template parameters are not supported yet",
+			{});
 		return ParseResult::error(
 			"Reference non-type template parameters are not supported yet",
 			type_result.node()->as<TypeSpecifierNode>().token());

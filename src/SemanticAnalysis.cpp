@@ -10621,10 +10621,17 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 		}
 		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);
 		if (hasDiagnosableAmbiguousReceiverMemberCall()) {
-			throw CompileError(
+			const std::string message =
 				std::string("Ambiguous member function overload for '") +
 				std::string(callee_decl.identifier_token().value()) +
-				"'");
+				"'";
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::AmbiguousMemberFunctionCall,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(callee_decl.identifier_token()),
+				message,
+				{});
 		}
 
 		const std::string_view call_name = call_info.qualified_name.isValid()
