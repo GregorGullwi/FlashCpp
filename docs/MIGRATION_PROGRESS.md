@@ -81,7 +81,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2f-incomplete-sizeof-diagnost
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 116 names. The temporary internal-failure
+- The frozen legacy inventory is now 114 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
