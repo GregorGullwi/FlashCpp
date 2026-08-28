@@ -985,8 +985,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 		}
 		if (!eval_result.success()) {
-			throw CompileError("call to consteval function '" + std::string(func_name_sv) +
-							   "' cannot be used in a non-constant context: " + eval_result.error_message);
+			const std::string message =
+				"call to consteval function '" + std::string(func_name_sv) +
+				"' cannot be used in a non-constant context: " + eval_result.error_message;
+			throw makeStructuredCompileError(
+				context_->diagnostics(),
+				DiagnosticId::ImmediateInvocationNotConstant,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(callExprNode.called_from()),
+				message,
+				{});
 		}
 		// Materialize the constant result — reuse the same scalar/struct helpers as the direct path.
 		const TypeSpecifierNode& ret_spec =

@@ -4091,6 +4091,7 @@ TEST_SUITE("Diagnostics") {
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::OrdinaryOperatorArity) == 1312u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::DeletedCopyAssignment) == 1313u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::DeletedMoveAssignment) == 1314u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::ImmediateInvocationNotConstant) == 1315u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstinitInitializerNotConstant) == 1501u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == 1502u);
 
@@ -4110,6 +4111,7 @@ TEST_SUITE("Diagnostics") {
 		CHECK(diagnosticIdName(DiagnosticId::OrdinaryOperatorArity) == "OrdinaryOperatorArity");
 		CHECK(diagnosticIdName(DiagnosticId::DeletedCopyAssignment) == "DeletedCopyAssignment");
 		CHECK(diagnosticIdName(DiagnosticId::DeletedMoveAssignment) == "DeletedMoveAssignment");
+		CHECK(diagnosticIdName(DiagnosticId::ImmediateInvocationNotConstant) == "ImmediateInvocationNotConstant");
 		CHECK(diagnosticIdName(DiagnosticId::ConstinitInitializerNotConstant) == "ConstinitInitializerNotConstant");
 		CHECK(diagnosticIdName(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == "ConstexprStaticMemberInitializerNotConstant");
 
