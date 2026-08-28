@@ -1,3 +1,4 @@
+// Diagnostic regression for operators that must be non-static members.
 struct Value {};
 
 int operator[](const Value&, int) {

@@ -28,10 +28,18 @@ Last updated: 2026-08-28 by branch `boundary-2f-next-diagnostics`
   (1502). The existing parser validation and AST-to-IR rejection choke points
   now report the same initialization-family ID, and the four tests use
   `_e1502` filenames.
-- The current operator-signature batch converts
-  `test_static_member_operator_plus_fail.cpp` to
-  `StaticOperatorMustBeNonStaticMember` (1306) through
-  `Parser::validateOperatorSignature`; the regression now uses `_e1306`.
+- The current operator-signature batch converts twelve frozen tests and adds
+  one reduced regression through `Parser::validateOperatorSignature`.
+  `StaticOperatorMustBeNonStaticMember` (1306) covers the five non-member-only
+  operator cases, including the previously converted static-member test. The
+  batch adds
+  `OperatorDefaultArgumentsForbidden` (1307),
+  `AssignmentOperatorArity` (1308), `SubscriptOperatorArity` (1309),
+  `ArrowOperatorArity` (1310), `IncrementDecrementOperatorForm` (1311), and
+  `OrdinaryOperatorArity` (1312). Every converted test now uses an `_e1306`
+  through `_e1312` filename. Three free-operator declarations that fail
+  earlier in incomplete parser recovery and the subscript overload ambiguity
+  test remain with their original owners.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -46,9 +54,12 @@ Last updated: 2026-08-28 by branch `boundary-2f-next-diagnostics`
   ambiguous binary operator overload resolution owner.
 - The last recorded full Windows-suite validation is the boundary-2C run:
   2,946 regular tests, 265 negative tests, and one multi-translation-unit case;
-  no crashes or mismatches occurred. The 2D and 2E slices still require their
-  own next full-suite snapshot.
-- The frozen legacy inventory is rebaselined at 206 names. The seven-test
+  no crashes or mismatches occurred. The latest Linux full-suite run for this
+  batch covered 2,929 single-file tests, 281 negative tests, one
+  multi-translation-unit case, and five tracked positive expected failures;
+  it had no crashes or mismatches. A Windows full-suite snapshot is still
+  required.
+- The frozen legacy inventory is rebaselined at 194 names. The seven-test
   internal-failure compatibility is unchanged at 7 against baseline 7,
   direction down, removal boundary 2F.
 
@@ -69,8 +80,8 @@ Last updated: 2026-08-28 by branch `boundary-2f-next-diagnostics`
     modulo, bitwise-compound, shift, and plain-bitwise operator diagnostics
     have also entered the 2D encoded corpus, and the operator overload
     ambiguity diagnostic (1305) and static-`constexpr` member initializer
-    diagnostic (1502), plus the static-operator signature diagnostic (1306),
-    are mutation-validated on the same terms;
+    diagnostic (1502), plus the complete converted operator-signature family
+    (1306-1312), are mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
@@ -90,8 +101,9 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- None known locally. The current 2F state still needs a full Windows-suite
-  run before the next migration snapshot may claim validation.
+- The current 2F state still needs a full Windows-suite run before the next
+  migration snapshot may claim cross-platform validation. `pwsh` is not
+  available in this Linux environment; the Linux full suite is green.
 
 Then, in order:
 

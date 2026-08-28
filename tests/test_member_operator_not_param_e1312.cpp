@@ -1,3 +1,4 @@
+// Diagnostic regression for ordinary operator arity.
 struct Value {
 	bool operator!(int extra) const {
 		return extra != 0;

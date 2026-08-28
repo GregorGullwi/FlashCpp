@@ -1,3 +1,4 @@
+// Diagnostic regression for forbidden operator default arguments.
 struct CopyAssignWithDefaultArg {
 	int value;
 
