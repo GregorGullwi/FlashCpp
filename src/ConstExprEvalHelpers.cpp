@@ -1056,7 +1056,8 @@ EvalResult applyAggregateMemberScalarInitialization(
 				value)) {
 			return EvalResult::error(
 				"Narrowing conversion in direct-list-initialization",
-				EvalErrorType::NotConstantExpression);
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::ConstantExpressionNarrowingConversion);
 		}
 	}
 

@@ -627,7 +627,8 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	if (!func_decl.is_constexpr() && !func_decl.is_consteval() &&
 		context.storage_duration != ConstExpr::StorageDuration::Static) {
 		return EvalResult::error("Function in constant expression must be constexpr or consteval: " + std::string(func_name),
-								 EvalErrorType::NotConstantExpression);
+								 EvalErrorType::NotConstantExpression,
+								 DiagnosticId::ConstantExpressionNonConstexprCall);
 	}
 
 	if (!func_decl.is_static() && context.struct_info) {
@@ -3358,7 +3359,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			!typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
 			return EvalResult::error(
 				"const_cast in constant expression may only change cv-qualification",
-				EvalErrorType::NotConstantExpression);
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::ConstantExpressionConstCastTypeChange);
 		}
 		// Only update the type metadata — no value conversion needed.
 		inner_result.set_exact_type(type_spec);

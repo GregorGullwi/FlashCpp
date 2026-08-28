@@ -73,6 +73,8 @@ enum class DiagnosticId : uint32_t {
 	InlineNamespaceNestedPrefix = 1008,
 	InlineNamespaceReopenAsInline = 1009,
 	StructuredBindingStorageClass = 1010,
+	DesignatedInitializerAfterPositional = 1011,
+	DesignatedInitializerOutOfOrder = 1012,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -96,6 +98,11 @@ enum class DiagnosticId : uint32_t {
 	ConstantExpressionArrayIndexOutOfBounds = 1212,
 	ConstantExpressionNullPointerDereference = 1213,
 	ConstantExpressionPointerPlusPointer = 1214,
+	ConstantExpressionConstCastTypeChange = 1215,
+	ConstantExpressionNarrowingConversion = 1217,
+	ConstantExpressionNonConstexprCall = 1218,
+	ConstantExpressionThrow = 1219,
+	ConstantExpressionHeapAllocationLeak = 1220,
 
 	// Operator family (1301..1399).
 	FloatingPointModuloOperator = 1301,
@@ -171,6 +178,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "InlineNamespaceReopenAsInline";
 	case DiagnosticId::StructuredBindingStorageClass:
 		return "StructuredBindingStorageClass";
+	case DiagnosticId::DesignatedInitializerAfterPositional:
+		return "DesignatedInitializerAfterPositional";
+	case DiagnosticId::DesignatedInitializerOutOfOrder:
+		return "DesignatedInitializerOutOfOrder";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:
@@ -205,6 +216,16 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstantExpressionNullPointerDereference";
 	case DiagnosticId::ConstantExpressionPointerPlusPointer:
 		return "ConstantExpressionPointerPlusPointer";
+	case DiagnosticId::ConstantExpressionConstCastTypeChange:
+		return "ConstantExpressionConstCastTypeChange";
+	case DiagnosticId::ConstantExpressionNarrowingConversion:
+		return "ConstantExpressionNarrowingConversion";
+	case DiagnosticId::ConstantExpressionNonConstexprCall:
+		return "ConstantExpressionNonConstexprCall";
+	case DiagnosticId::ConstantExpressionThrow:
+		return "ConstantExpressionThrow";
+	case DiagnosticId::ConstantExpressionHeapAllocationLeak:
+		return "ConstantExpressionHeapAllocationLeak";
 	case DiagnosticId::FloatingPointModuloOperator:
 		return "FloatingPointModuloOperator";
 	case DiagnosticId::FloatingPointBitwiseCompoundAssignment:
