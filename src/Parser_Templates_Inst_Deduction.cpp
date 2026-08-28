@@ -1477,8 +1477,14 @@ void Parser::reparse_template_function_body(
 	if (phase1_violation_token_.has_value()) {
 		auto tok = *phase1_violation_token_;
 		phase1_violation_token_.reset();
-		throw CompileError(
-			std::string("non-dependent name '").append(tok.value()).append("' was not declared before the template definition (C++20 [temp.res]/9)"));
+		DiagnosticArgument name_argument = DiagnosticArgument::text(tok.value());
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::NonDependentNameNotDeclaredBeforeTemplateDefinition,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(tok),
+			"non-dependent name '{}' was not declared before the template definition (C++20 [temp.res]/9)",
+			std::span<const DiagnosticArgument>(&name_argument, 1));
 	}
 	// template_scope RAII guard removes TypeInfo entries automatically.
 }
