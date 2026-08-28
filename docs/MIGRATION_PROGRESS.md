@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `codex/boundary-2e-hidden-friend-lookup`
+Last updated: 2026-08-28 by branch `codex/boundary-2f-incomplete-sizeof-diagnostics`
 
 ## Position
 
@@ -63,6 +63,9 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-hidden-friend-lookup`
   `HiddenFriendCallWithoutAssociatedArgument` (1803) at the existing ordinary
   call rejection points and converts two frozen tests. It adds no lookup or
   recovery behavior.
+- The current incomplete-`sizeof` batch assigns `IncompleteSizeofOperand`
+  (1605) at the existing parser rejection point and converts two frozen tests.
+  It adds no type-completeness recovery.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -78,7 +81,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-hidden-friend-lookup`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 122 names. The temporary internal-failure
+- The frozen legacy inventory is now 116 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -106,7 +109,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-hidden-friend-lookup`
     explicit-initialization, declarator-constraint, semantic-validity, and
     ordinary-call and call-operator ambiguity, dllimport-constraint, template
     phase-1, partial-specialization, namespace, and structured-binding
-    diagnostics (1004-1010, 1318-1320, 1503-1506, 1601-1604, 1701-1702,
+    diagnostics (1004-1010, 1318-1320, 1503-1506, 1601-1605, 1701-1702,
     1801-1803),
     including the static-member constructor path, are
     mutation-validated on the same terms;

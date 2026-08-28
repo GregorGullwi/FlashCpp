@@ -896,7 +896,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 					if (std::optional<StringHandle> invalid_type =
 							SemanticValidation::findInvalidConcreteSizeofTypeOperand(sizeof_expr);
 						invalid_type.has_value()) {
-						throw CompileError("sizeof operand is an incomplete or invalid type");
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::IncompleteSizeofOperand,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(sizeof_token),
+							"sizeof operand is an incomplete or invalid type",
+							{});
 					}
 				}
 				return ParseResult::success(sizeof_expr);
