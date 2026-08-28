@@ -4000,7 +4000,22 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	// Check for semantic errors during finalization (e.g., overriding final function)
 	if (!finalize_success) {
-		return ParseResult::error(struct_info->getFinalizationError(), Token());
+		const std::string& finalization_error = struct_info->getFinalizationError();
+		DiagnosticId diagnostic_id = DiagnosticId::None;
+		if (finalization_error.find("marked 'override' but does not override") != std::string::npos) {
+			diagnostic_id = DiagnosticId::OverrideSpecifierNoBase;
+		} else if (finalization_error.starts_with("cannot override final function")) {
+			diagnostic_id = DiagnosticId::OverrideFinalFunction;
+		}
+		if (diagnostic_id != DiagnosticId::None) {
+			context_.diagnostics().report(
+				diagnostic_id,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				finalization_error,
+				{});
+		}
+		return ParseResult::error(finalization_error, Token());
 	}
 
 	// Check if template class has static members before moving struct_info

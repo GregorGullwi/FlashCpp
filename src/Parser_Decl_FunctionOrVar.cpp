@@ -1034,7 +1034,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		TypeSpecifierNode& type_specifier = registered_decl.type_specifier_node();
 		const Token& identifier_token = registered_decl.identifier_token();
 		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
-			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+			context_.diagnostics().report(
+				DiagnosticId::DuplicateDeclaration,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(identifier_token),
+				"Redefined symbol with different value",
+				{});
+		return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
 		}
 
 		// Phase 3 Consolidation: Use shared copy initialization helper for = and = {} forms

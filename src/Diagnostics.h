@@ -144,16 +144,21 @@ enum class DiagnosticId : uint32_t {
 	InaccessibleDerivedToBasePointerConversion = 1603,
 	AmbiguousBuiltInSubscriptConversion = 1604,
 	IncompleteSizeofOperand = 1605,
+	DuplicateDeclaration = 1606,
+	OverrideSpecifierNoBase = 1607,
+	OverrideFinalFunction = 1608,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
 	AmbiguousCallOperator = 1702,
+	AmbiguousMemberFunctionCall = 1703,
 
 	// Template and lookup family (1801..1899).
 	NonDependentNameNotDeclaredBeforeTemplateDefinition = 1801,
 	PartialSpecializationParameterListInvalid = 1802,
 	HiddenFriendCallWithoutAssociatedArgument = 1803,
 	MissingTemplateKeyword = 1804,
+	ReferenceNonTypeTemplateParameterUnsupported = 1805,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -292,10 +297,18 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AmbiguousBuiltInSubscriptConversion";
 	case DiagnosticId::IncompleteSizeofOperand:
 		return "IncompleteSizeofOperand";
+	case DiagnosticId::DuplicateDeclaration:
+		return "DuplicateDeclaration";
+	case DiagnosticId::OverrideSpecifierNoBase:
+		return "OverrideSpecifierNoBase";
+	case DiagnosticId::OverrideFinalFunction:
+		return "OverrideFinalFunction";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
 		return "AmbiguousCallOperator";
+	case DiagnosticId::AmbiguousMemberFunctionCall:
+		return "AmbiguousMemberFunctionCall";
 	case DiagnosticId::NonDependentNameNotDeclaredBeforeTemplateDefinition:
 		return "NonDependentNameNotDeclaredBeforeTemplateDefinition";
 	case DiagnosticId::PartialSpecializationParameterListInvalid:
@@ -304,6 +317,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "HiddenFriendCallWithoutAssociatedArgument";
 	case DiagnosticId::MissingTemplateKeyword:
 		return "MissingTemplateKeyword";
+	case DiagnosticId::ReferenceNonTypeTemplateParameterUnsupported:
+		return "ReferenceNonTypeTemplateParameterUnsupported";
 	case DiagnosticId::None:
 	default:
 		return "None";
