@@ -190,7 +190,15 @@ int main(int argc, char* argv[]) {
 	try {
 		return main_impl(argc, argv);
 	} catch (const CompileError& e) {
-		std::cerr << "error: " << e.what() << std::endl;
+		std::cerr << "error: " << e.what();
+		if (const Diagnostic* structured_error = e.structuredDiagnostic()) {
+			std::cerr << " [";
+			std::cerr << diagnosticIdName(structured_error->id);
+			std::cerr << '#';
+			std::cerr << diagnosticIdNumber(structured_error->id);
+			std::cerr << ']';
+		}
+		std::cerr << std::endl;
 		return exitCode(CompilerExitStatus::SourceRejected);
 	} catch (const std::bad_any_cast& e) {
 		std::cerr << "Fatal error: std::bad_any_cast - " << e.what() << std::endl;

@@ -33,6 +33,7 @@
 //   1201..1299  constant-expression evaluation family
 //   1301..1399  operator family
 //   1401..1499  implicit enum conversion family
+//   1501..1599  initialization family
 //   2000..2099  reserved for template instantiation family
 //   3000+    unallocated
 
@@ -101,6 +102,7 @@ enum class DiagnosticId : uint32_t {
 
 	// Initialization family (1501..1599).
 	ConstinitInitializerNotConstant = 1501,
+	ConstexprStaticMemberInitializerNotConstant = 1502,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -161,6 +163,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ScopedEnumBinaryOperand";
 	case DiagnosticId::ConstinitInitializerNotConstant:
 		return "ConstinitInitializerNotConstant";
+	case DiagnosticId::ConstexprStaticMemberInitializerNotConstant:
+		return "ConstexprStaticMemberInitializerNotConstant";
 	case DiagnosticId::None:
 	default:
 		return "None";
