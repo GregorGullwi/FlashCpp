@@ -166,14 +166,14 @@ try {
 		$internalCompatibilityValidation.ActiveCount -lt $script:FlashCppLegacyInternalCompatibilityBaseline) "the legacy internal-failure compatibility inventory is below its directional baseline"
 
 	$savedInternalCompatibilityBaseline = $script:FlashCppLegacyInternalCompatibilityBaseline
-	$script:FlashCppLegacyInternalCompatibilityBaseline = 5
+	$script:FlashCppLegacyInternalCompatibilityBaseline = 4
 	$internalCompatibilityRegression = Test-FlashCppLegacyInternalCompatibility `
 		-RepoRoot $repoRoot `
 		-CompatibilityPath (Join-Path $repoRoot "tests\legacy_internal_failure_tests.txt") `
 		-LegacyInventoryPath (Join-Path $repoRoot "tests\legacy_negative_tests.txt")
 	$script:FlashCppLegacyInternalCompatibilityBaseline = $savedInternalCompatibilityBaseline
 	Assert-Runner (-not $internalCompatibilityRegression.Valid -and
-		$internalCompatibilityRegression.Error -match "above baseline 5") "the compatibility count cannot rise above its directional baseline"
+		$internalCompatibilityRegression.Error -match "above baseline 4") "the compatibility count cannot rise above its directional baseline"
 
 	$inventoryRepo = Join-Path $tempRoot "inventory_repo"
 	$inventoryTests = Join-Path $inventoryRepo "tests"
@@ -223,7 +223,7 @@ try {
 		-CompatibilityPath $compatibilityInventory `
 		-LegacyInventoryPath $compatibilityLegacyInventory
 	Assert-Runner ($encodedSuccessorMapping.Valid -and
-		$encodedSuccessorMapping.ActiveCount -eq 5 -and
+		$encodedSuccessorMapping.ActiveCount -eq 4 -and
 		$encodedSuccessorMapping.ActiveNames -cnotcontains $firstCompatibilityEntry) "an encoded successor satisfies historical representation but loses the compatibility exception"
 
 	Remove-Item -LiteralPath (Join-Path $compatibilityTests "${firstCompatibilityStem}_e1001.cpp")

@@ -1,9 +1,9 @@
 $script:FlashCppSourceRejectionExit = 1
 $script:FlashCppInternalFailureExit = 2
-$script:FlashCppLegacyInventoryCount = 148
-$script:FlashCppLegacyInventorySha256 = "249bae83db2ecacc225fcb5484e0a7757cb4a0f009a5a65be3e6db0201665d03"
-$script:FlashCppLegacyInternalCompatibilityCount = 6
-$script:FlashCppLegacyInternalCompatibilitySha256 = "e3ddf6167b7742c9258e36976bc6bcf200596727a1543daf101332779d4508d9"
+$script:FlashCppLegacyInventoryCount = 147
+$script:FlashCppLegacyInventorySha256 = "a72c17f794a4823035a39d548da0c7111b3d82ec7c4ea9dc730001d2535774c6"
+$script:FlashCppLegacyInternalCompatibilityCount = 5
+$script:FlashCppLegacyInternalCompatibilitySha256 = "0dc664dec6df08f10b0dcf301d3f3cd6590dac95301ac9057a11a27c3fe23f0b"
 $script:FlashCppLegacyInternalCompatibilityBaseline = 7
 $script:FlashCppLegacyInternalCompatibilityRemovalBoundary = "2F"
 

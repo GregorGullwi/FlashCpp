@@ -26,23 +26,19 @@ unreachable for 32-bit overflow; it fires only at the `long long` boundaries.
 Pin it with an encoded regression once the evaluator tracks promoted operand
 widths. Owner: constexpr evaluation fidelity.
 
-## Seven legacy negative tests terminate through internal-failure paths
+## Five legacy negative tests terminate through internal-failure paths
 
 Boundary 2A gives clean source rejection exit status 1 and internal/compiler
-failure exit status 2. The frozen negative suite now exposes seven tests that
+failure exit status 2. The frozen negative suite now exposes five tests that
 previously passed only because the runner treated any missing object as an
 acceptable rejection:
 
 - `test_constexpr_aggregate_brace_narrowing_fail.cpp` records the intended
   constexpr narrowing error, then hits `sema missed return conversion`;
-- `test_deleted_move_ctor_brace_init_xvalue_fail.cpp` reaches
-  `Sema did not annotate constructor for normalized body`;
 - `test_if_constexpr_active_branch_invalid_fail.cpp` reaches a no-runtime-size
   direct-call return invariant;
 - `test_operator_subscript_const_ambiguity_fail.cpp` reaches the
   struct-without-conversion-operator fallback invariant;
-- `test_static_member_ctor_overload_ambiguity_fail.cpp` escapes with a missing
-  resolved-constructor invariant;
 - `test_template_lazy_static_member_implicit_this_fail.cpp` reaches code
   generation with an invalid implicit `this` lookup;
 - `test_template_out_of_line_static_member_implicit_this_fail.cpp` reaches the
