@@ -58,10 +58,22 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
 	if (type_spec.category() == TypeCategory::DeclTypeAuto) {
 		if (type_spec.cv_qualifier() != CVQualifier::None) {
+			context_.diagnostics().report(
+				DiagnosticId::DecltypeAutoCvQualifier,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				"'decltype(auto)' cannot have cv-qualifiers",
+				{});
 			return ParseResult::error("'decltype(auto)' cannot have cv-qualifiers", current_token_);
 		}
 
 		if (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
+			context_.diagnostics().report(
+				DiagnosticId::DecltypeAutoPointerOrReference,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				"'decltype(auto)' cannot be combined with pointer or reference declarators",
+				{});
 			return ParseResult::error("'decltype(auto)' cannot be combined with pointer or reference declarators", current_token_);
 		}
 
@@ -71,6 +83,12 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		bool is_structured_binding = (peek() == "["_tok);
 		restore_token_position(sb_check);
 		if (is_structured_binding) {
+			context_.diagnostics().report(
+				DiagnosticId::DecltypeAutoStructuredBinding,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				"'decltype(auto)' cannot be used in structured bindings",
+				{});
 			return ParseResult::error("'decltype(auto)' cannot be used in structured bindings", current_token_);
 		}
 	}

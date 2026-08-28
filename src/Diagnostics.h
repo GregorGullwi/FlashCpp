@@ -66,6 +66,10 @@ enum class DiagnosticId : uint32_t {
 	PointerToReferenceType = 1001,
 	MultipleAsmSuffixesOnDeclarator = 1002,
 	ExpectedCloseBracketAfterArraySize = 1003,
+	DecltypeAutoCvQualifier = 1004,
+	DecltypeAutoPointerOrReference = 1005,
+	DecltypeAutoStructuredBinding = 1006,
+	ParameterPackDataMember = 1007,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -137,6 +141,14 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "MultipleAsmSuffixesOnDeclarator";
 	case DiagnosticId::ExpectedCloseBracketAfterArraySize:
 		return "ExpectedCloseBracketAfterArraySize";
+	case DiagnosticId::DecltypeAutoCvQualifier:
+		return "DecltypeAutoCvQualifier";
+	case DiagnosticId::DecltypeAutoPointerOrReference:
+		return "DecltypeAutoPointerOrReference";
+	case DiagnosticId::DecltypeAutoStructuredBinding:
+		return "DecltypeAutoStructuredBinding";
+	case DiagnosticId::ParameterPackDataMember:
+		return "ParameterPackDataMember";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:

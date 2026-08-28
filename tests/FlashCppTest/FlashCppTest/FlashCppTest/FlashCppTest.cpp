@@ -4076,6 +4076,10 @@ TEST_SUITE("Diagnostics") {
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::PointerToReferenceType) == 1001u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::MultipleAsmSuffixesOnDeclarator) == 1002u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ExpectedCloseBracketAfterArraySize) == 1003u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::DecltypeAutoCvQualifier) == 1004u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::DecltypeAutoPointerOrReference) == 1005u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::DecltypeAutoStructuredBinding) == 1006u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::ParameterPackDataMember) == 1007u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::NoteToMatchOpeningBracket) == 1051u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointModuloOperator) == 1301u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointBitwiseCompoundAssignment) == 1302u);
@@ -4108,6 +4112,10 @@ TEST_SUITE("Diagnostics") {
 
 		CHECK(diagnosticIdName(DiagnosticId::PointerToReferenceType) == "PointerToReferenceType");
 		CHECK(diagnosticIdName(DiagnosticId::NoteToMatchOpeningBracket) == "NoteToMatchOpeningBracket");
+		CHECK(diagnosticIdName(DiagnosticId::DecltypeAutoCvQualifier) == "DecltypeAutoCvQualifier");
+		CHECK(diagnosticIdName(DiagnosticId::DecltypeAutoPointerOrReference) == "DecltypeAutoPointerOrReference");
+		CHECK(diagnosticIdName(DiagnosticId::DecltypeAutoStructuredBinding) == "DecltypeAutoStructuredBinding");
+		CHECK(diagnosticIdName(DiagnosticId::ParameterPackDataMember) == "ParameterPackDataMember");
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointModuloOperator) == "FloatingPointModuloOperator");
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointBitwiseCompoundAssignment) == "FloatingPointBitwiseCompoundAssignment");
 		CHECK(diagnosticIdName(DiagnosticId::FloatingPointShiftOperator) == "FloatingPointShiftOperator");
