@@ -1261,8 +1261,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);
 		auto eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
 		if (!eval_result.success()) {
-			throw CompileError("call to consteval function '" + std::string(func_name_view) +
-							   "' cannot be used in a non-constant context: " + eval_result.error_message);
+			const std::string message =
+				"call to consteval function '" + std::string(func_name_view) +
+				"' cannot be used in a non-constant context: " + eval_result.error_message;
+			throw makeStructuredCompileError(
+				context_->diagnostics(),
+				DiagnosticId::ImmediateInvocationNotConstant,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(callExprNode.called_from()),
+				message,
+				{});
 		}
 		// Materialize the constant result into an ExprResult without emitting a call instruction.
 		const TypeSpecifierNode& ret_spec =

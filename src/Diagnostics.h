@@ -104,6 +104,7 @@ enum class DiagnosticId : uint32_t {
 	OrdinaryOperatorArity = 1312,
 	DeletedCopyAssignment = 1313,
 	DeletedMoveAssignment = 1314,
+	ImmediateInvocationNotConstant = 1315,
 
 	// Implicit enum conversion family (1401..1499).
 	ScopedEnumImplicitConversion = 1401,
@@ -184,6 +185,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DeletedCopyAssignment";
 	case DiagnosticId::DeletedMoveAssignment:
 		return "DeletedMoveAssignment";
+	case DiagnosticId::ImmediateInvocationNotConstant:
+		return "ImmediateInvocationNotConstant";
 	case DiagnosticId::ScopedEnumImplicitConversion:
 		return "ScopedEnumImplicitConversion";
 	case DiagnosticId::ScopedEnumBinaryOperand:

@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `boundary-2f-deleted-assignment-diagnostics`
+Last updated: 2026-08-28 by branch `boundary-2f-call-lowering-diagnostics`
 
 ## Position
 
@@ -46,6 +46,11 @@ Last updated: 2026-08-28 by branch `boundary-2f-deleted-assignment-diagnostics`
   move-assignment tests use `DeletedMoveAssignment` (1314). Their encoded
   successors cover ordinary, member, indirect, array-element, and xvalue
   assignment paths.
+- The current call-lowering batch converts three frozen consteval invocation
+  failures through `AstToIr::generateFunctionCallIr` and
+  `AstToIr::generateMemberFunctionCallIr`. They use
+  `ImmediateInvocationNotConstant` (1315). The two explicit-constructor
+  function-argument tests remain with their semantic and parser owners.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -65,7 +70,7 @@ Last updated: 2026-08-28 by branch `boundary-2f-deleted-assignment-diagnostics`
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches. A Windows full-suite snapshot is still
   required.
-- The frozen legacy inventory is rebaselined at 185 names. The seven-test
+- The frozen legacy inventory is rebaselined at 182 names. The seven-test
   internal-failure compatibility is unchanged at 7 against baseline 7,
   direction down, removal boundary 2F.
 
@@ -87,8 +92,9 @@ Last updated: 2026-08-28 by branch `boundary-2f-deleted-assignment-diagnostics`
     have also entered the 2D encoded corpus, and the operator overload
     ambiguity diagnostic (1305) and static-`constexpr` member initializer
     diagnostic (1502), the complete converted operator-signature family
-    (1306-1312), and deleted copy/move assignment diagnostics (1313/1314),
-    are mutation-validated on the same terms;
+    (1306-1312), deleted copy/move assignment diagnostics (1313/1314), and
+    non-constant immediate invocation diagnostics (1315), are
+    mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus": the outside-engine counter is enforced
