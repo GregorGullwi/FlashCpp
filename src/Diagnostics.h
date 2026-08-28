@@ -70,6 +70,9 @@ enum class DiagnosticId : uint32_t {
 	DecltypeAutoPointerOrReference = 1005,
 	DecltypeAutoStructuredBinding = 1006,
 	ParameterPackDataMember = 1007,
+	InlineNamespaceNestedPrefix = 1008,
+	InlineNamespaceReopenAsInline = 1009,
+	StructuredBindingStorageClass = 1010,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -159,6 +162,12 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DecltypeAutoStructuredBinding";
 	case DiagnosticId::ParameterPackDataMember:
 		return "ParameterPackDataMember";
+	case DiagnosticId::InlineNamespaceNestedPrefix:
+		return "InlineNamespaceNestedPrefix";
+	case DiagnosticId::InlineNamespaceReopenAsInline:
+		return "InlineNamespaceReopenAsInline";
+	case DiagnosticId::StructuredBindingStorageClass:
+		return "StructuredBindingStorageClass";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:

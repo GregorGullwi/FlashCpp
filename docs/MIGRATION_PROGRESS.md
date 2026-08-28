@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `codex/boundary-2e-partial-specialization-constraints`
+Last updated: 2026-08-28 by branch `codex/boundary-2b-namespace-structure-diagnostics`
 
 ## Position
 
@@ -55,6 +55,10 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-partial-specialization-con
   `PartialSpecializationParameterListInvalid` (1802) at the existing template
   parameter-list rejection point and converts two frozen tests. It adds no
   template matching or recovery behavior.
+- The current namespace/structured-binding batch assigns
+  `InlineNamespaceNestedPrefix` (1008), `InlineNamespaceReopenAsInline` (1009),
+  and `StructuredBindingStorageClass` (1010) at existing parser rejection
+  points and converts three frozen tests. It adds no scope or binding recovery.
 - Earlier completed boundary-2 slices cover declarator and source-structure
   diagnostics in 2B, followed in 2C by constant-expression arithmetic faults
   (1201-1205), the indeterminate-read family (1206), pointer arithmetic and
@@ -70,7 +74,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-partial-specialization-con
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 127 names. The temporary internal-failure
+- The frozen legacy inventory is now 124 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -97,8 +101,9 @@ Last updated: 2026-08-28 by branch `codex/boundary-2e-partial-specialization-con
     non-constant immediate invocation diagnostics (1315), and the
     explicit-initialization, declarator-constraint, semantic-validity, and
     ordinary-call and call-operator ambiguity, dllimport-constraint, template
-    phase-1, and partial-specialization diagnostics
-    (1004-1007, 1318-1320, 1503-1506, 1601-1604, 1701-1702, 1801-1802),
+    phase-1, partial-specialization, namespace, and structured-binding
+    diagnostics (1004-1010, 1318-1320, 1503-1506, 1601-1604, 1701-1702,
+    1801-1802),
     including the static-member constructor path, are
     mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
