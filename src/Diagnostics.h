@@ -34,6 +34,7 @@
 //   1301..1399  operator family
 //   1401..1499  implicit enum conversion family
 //   1501..1599  initialization family
+//   1601..1699  semantic validity family
 //   2000..2099  reserved for template instantiation family
 //   3000+    unallocated
 
@@ -107,6 +108,7 @@ enum class DiagnosticId : uint32_t {
 	ImmediateInvocationNotConstant = 1315,
 	DeletedCopyConstructor = 1316,
 	DeletedMoveConstructor = 1317,
+	AssignmentToConstObject = 1318,
 
 	// Implicit enum conversion family (1401..1499).
 	ScopedEnumImplicitConversion = 1401,
@@ -115,6 +117,10 @@ enum class DiagnosticId : uint32_t {
 	// Initialization family (1501..1599).
 	ConstinitInitializerNotConstant = 1501,
 	ConstexprStaticMemberInitializerNotConstant = 1502,
+	ExplicitConstructorCopyInitialization = 1503,
+
+	// Semantic validity family (1601..1699).
+	RangeForBeginEndRequired = 1601,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -193,6 +199,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DeletedCopyConstructor";
 	case DiagnosticId::DeletedMoveConstructor:
 		return "DeletedMoveConstructor";
+	case DiagnosticId::AssignmentToConstObject:
+		return "AssignmentToConstObject";
 	case DiagnosticId::ScopedEnumImplicitConversion:
 		return "ScopedEnumImplicitConversion";
 	case DiagnosticId::ScopedEnumBinaryOperand:
@@ -201,6 +209,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstinitInitializerNotConstant";
 	case DiagnosticId::ConstexprStaticMemberInitializerNotConstant:
 		return "ConstexprStaticMemberInitializerNotConstant";
+	case DiagnosticId::ExplicitConstructorCopyInitialization:
+		return "ExplicitConstructorCopyInitialization";
+	case DiagnosticId::RangeForBeginEndRequired:
+		return "RangeForBeginEndRequired";
 	case DiagnosticId::None:
 	default:
 		return "None";
