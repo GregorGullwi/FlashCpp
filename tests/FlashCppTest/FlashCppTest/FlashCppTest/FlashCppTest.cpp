@@ -4100,6 +4100,7 @@ TEST_SUITE("Diagnostics") {
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstinitInitializerNotConstant) == 1501u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == 1502u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::ExplicitConstructorCopyInitialization) == 1503u);
+		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousConstructorCall) == 1504u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::RangeForBeginEndRequired) == 1601u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousDerivedToBasePointerConversion) == 1602u);
 		REQUIRE(static_cast<uint32_t>(DiagnosticId::InaccessibleDerivedToBasePointerConversion) == 1603u);
@@ -4130,6 +4131,7 @@ TEST_SUITE("Diagnostics") {
 		CHECK(diagnosticIdName(DiagnosticId::ConstinitInitializerNotConstant) == "ConstinitInitializerNotConstant");
 		CHECK(diagnosticIdName(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == "ConstexprStaticMemberInitializerNotConstant");
 		CHECK(diagnosticIdName(DiagnosticId::ExplicitConstructorCopyInitialization) == "ExplicitConstructorCopyInitialization");
+		CHECK(diagnosticIdName(DiagnosticId::AmbiguousConstructorCall) == "AmbiguousConstructorCall");
 		CHECK(diagnosticIdName(DiagnosticId::RangeForBeginEndRequired) == "RangeForBeginEndRequired");
 		CHECK(diagnosticIdName(DiagnosticId::AmbiguousDerivedToBasePointerConversion) == "AmbiguousDerivedToBasePointerConversion");
 		CHECK(diagnosticIdName(DiagnosticId::InaccessibleDerivedToBasePointerConversion) == "InaccessibleDerivedToBasePointerConversion");

@@ -7,6 +7,16 @@
 #include "TypeSizeQuery.h"
 
 namespace {
+[[noreturn]] void throwAmbiguousConstructorCallDiagnostic(CompileContext& context) {
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::AmbiguousConstructorCall,
+		DiagnosticSeverity::Error,
+		SourceLocation(),
+		"Ambiguous constructor call",
+		{});
+}
+
 [[noreturn]] void throwDeletedSameTypeConstructorCompileError(
 	CompileContext& context,
 	const StructTypeInfo& struct_info,
@@ -915,7 +925,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						if (arg_types.size() == ctor_call.arguments().size()) {
 							auto resolution = resolve_constructor_overload(*si, arg_types, false);
 							if (resolution.is_ambiguous) {
-								throw CompileError("Ambiguous constructor call");
+								throwAmbiguousConstructorCallDiagnostic(*context_);
 							}
 							matching_ctor = resolution.selected_overload;
 						}
@@ -1682,7 +1692,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												resolution.is_ambiguous = false;
 											}
 											if (resolution.is_ambiguous) {
-												throw CompileError("Ambiguous constructor call");
+												throwAmbiguousConstructorCallDiagnostic(*context_);
 											}
 											if (resolution.selected_overload != nullptr || resolution.has_match) {
 												matching_ctor = resolution.selected_overload;
@@ -2669,7 +2679,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									if (arg_types.size() == num_args) {
 										auto resolution = resolve_constructor_overload(*type_info->getStructInfo(), arg_types, false);
 										if (resolution.is_ambiguous) {
-											throw CompileError("Ambiguous constructor call");
+											throwAmbiguousConstructorCallDiagnostic(*context_);
 										}
 										bool template_ctor_ambiguous = false;
 										matching_ctor = parser_.materializeMatchingConstructorTemplate(
@@ -2679,7 +2689,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											resolution.selected_overload,
 											template_ctor_ambiguous);
 										if (template_ctor_ambiguous) {
-											throw CompileError("Ambiguous constructor call");
+											throwAmbiguousConstructorCallDiagnostic(*context_);
 										}
 										if (!matching_ctor) {
 											matching_ctor = resolution.selected_overload;

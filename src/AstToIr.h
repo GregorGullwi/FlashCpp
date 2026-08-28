@@ -924,7 +924,13 @@ private:
 		if (arg_types.size() == num_args) {
 			auto resolution = resolve_constructor_overload(target_struct_info, arg_types, false);
 			if (resolution.is_ambiguous) {
-				throw CompileError("Ambiguous constructor call");
+				throw makeStructuredCompileError(
+					context_->diagnostics(),
+					DiagnosticId::AmbiguousConstructorCall,
+					DiagnosticSeverity::Error,
+					SourceLocation(),
+					"Ambiguous constructor call",
+					{});
 			}
 			bool template_ctor_ambiguous = false;
 			const ConstructorDeclarationNode* materialized_ctor =
@@ -935,7 +941,13 @@ private:
 					resolution.selected_overload,
 					template_ctor_ambiguous);
 			if (template_ctor_ambiguous) {
-				throw CompileError("Ambiguous constructor call");
+				throw makeStructuredCompileError(
+					context_->diagnostics(),
+					DiagnosticId::AmbiguousConstructorCall,
+					DiagnosticSeverity::Error,
+					SourceLocation(),
+					"Ambiguous constructor call",
+					{});
 			}
 			if (materialized_ctor) {
 				return queueResolvedConstructor(materialized_ctor);

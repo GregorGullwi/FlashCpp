@@ -8233,7 +8233,13 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	}
 
 	if (ambiguous_non_explicit) {
-		throw CompileError("Ambiguous constructor call");
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::AmbiguousConstructorCall,
+			DiagnosticSeverity::Error,
+			SourceLocation(),
+			"Ambiguous constructor call",
+			{});
 	}
 	if (!best_non_explicit) {
 		if (is_struct_object_derived_to_base) {
