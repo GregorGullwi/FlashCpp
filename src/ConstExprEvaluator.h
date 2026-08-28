@@ -1323,4 +1323,16 @@ inline void reportConstantExpressionDiagnostic(
 	diagnostics.report(diagnostic_id, DiagnosticSeverity::Error, location, message, {});
 }
 
+inline void reportConstinitDiagnostic(
+	DiagnosticEngine& diagnostics,
+	SourceLocation location,
+	std::string_view message) {
+	diagnostics.report(
+		DiagnosticId::ConstinitInitializerNotConstant,
+		DiagnosticSeverity::Error,
+		location,
+		message,
+		{});
+}
+
 } // namespace ConstExpr
