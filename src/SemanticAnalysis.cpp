@@ -10816,6 +10816,12 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		}
 		return;
 	}
+	if (num_args == 1) {
+		diagnoseDeletedSameTypeConstructorUsage(
+			*struct_info,
+			arg_types.front(),
+			SourceLocation::fromToken(call_node.called_from()));
+	}
 
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
@@ -11154,7 +11160,6 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		}
 
 		TypeSpecifierNode source_type = arg_types.front();
-		const bool source_is_lvalue = source_type.is_lvalue_reference();
 		const bool source_is_xvalue = source_type.is_rvalue_reference();
 		source_type.set_reference_qualifier(ReferenceQualifier::None);
 		if (source_type.category() != TypeCategory::Struct ||
@@ -11162,29 +11167,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 			return nullptr;
 		}
 
+		diagnoseDeletedSameTypeConstructorUsage(struct_info, arg_types.front(), SourceLocation());
+
 		const bool prefer_move_ctor = source_is_xvalue;
-		if (prefer_move_ctor) {
-			if (struct_info.isMoveConstructorDeleted()) {
-				throw CompileError(std::string(StringBuilder()
-					.append("Call to deleted move constructor of '")
-					.append(StringTable::getStringView(struct_info.getName()))
-					.append("'")
-					.commit()));
-			}
-			if (struct_info.findMoveConstructor(true) == nullptr && struct_info.isCopyConstructorDeleted()) {
-				throw CompileError(std::string(StringBuilder()
-					.append("Call to deleted copy constructor of '")
-					.append(StringTable::getStringView(struct_info.getName()))
-					.append("'")
-					.commit()));
-			}
-		} else if (source_is_lvalue && struct_info.isCopyConstructorDeleted()) {
-			throw CompileError(std::string(StringBuilder()
-				.append("Call to deleted copy constructor of '")
-				.append(StringTable::getStringView(struct_info.getName()))
-				.append("'")
-				.commit()));
-		}
 
 		const StructMemberFunction* same_type_ctor =
 			struct_info.findPreferredSameTypeConstructor(prefer_move_ctor, true);
@@ -11293,6 +11278,56 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 			tryAnnotateConversion(arg, param_type_id, arg_type_id);
 		}
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
+	}
+}
+
+void SemanticAnalysis::diagnoseDeletedSameTypeConstructorUsage(
+	const StructTypeInfo& struct_info,
+	const TypeSpecifierNode& source_type,
+	SourceLocation location) {
+	TypeIndex target_struct_type_index{};
+	if (const TypeInfo* target_type_info = findTypeByName(struct_info.getName())) {
+		target_struct_type_index = target_type_info->registeredTypeIndex();
+	}
+	if (!target_struct_type_index.is_valid()) {
+		return;
+	}
+
+	const bool source_is_lvalue = source_type.is_lvalue_reference();
+	const bool source_is_xvalue = source_type.is_rvalue_reference();
+	TypeSpecifierNode unqualified_source_type = source_type;
+	unqualified_source_type.set_reference_qualifier(ReferenceQualifier::None);
+	if (unqualified_source_type.category() != TypeCategory::Struct ||
+		unqualified_source_type.type_index() != target_struct_type_index) {
+		return;
+	}
+
+	auto throw_deleted_constructor = [&](bool is_move) {
+		const std::string_view error_message = StringBuilder()
+			.append("Call to deleted ")
+			.append(is_move ? "move" : "copy")
+			.append(" constructor of '")
+			.append(StringTable::getStringView(struct_info.getName()))
+			.append("'")
+			.commit();
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			is_move ? DiagnosticId::DeletedMoveConstructor : DiagnosticId::DeletedCopyConstructor,
+			DiagnosticSeverity::Error,
+			location,
+			error_message,
+			{});
+	};
+
+	if (source_is_xvalue) {
+		if (struct_info.isMoveConstructorDeleted()) {
+			throw_deleted_constructor(true);
+		}
+		if (struct_info.findMoveConstructor(true) == nullptr && struct_info.isCopyConstructorDeleted()) {
+			throw_deleted_constructor(false);
+		}
+	} else if (source_is_lvalue && struct_info.isCopyConstructorDeleted()) {
+		throw_deleted_constructor(false);
 	}
 }
 

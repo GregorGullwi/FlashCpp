@@ -1,6 +1,7 @@
 // Deleted copy constructor should still be diagnosed for xvalue copy-init
 // when no move constructor exists.
 
+// Diagnostic regression for deleted copy constructor.
 struct NoCopyCtorFallback {
 	NoCopyCtorFallback() = default;
 	~NoCopyCtorFallback() {}

@@ -633,6 +633,10 @@ private:
 	// Annotate InitializerListNode elements used as constructor arguments
 	// with their parameter-type conversions (for direct-init syntax like `Type obj(args...)`).
 	void tryAnnotateInitListConstructorArgs(const InitializerListNode& init_list, const StructTypeInfo& struct_info);
+	void diagnoseDeletedSameTypeConstructorUsage(
+		const StructTypeInfo& struct_info,
+		const TypeSpecifierNode& source_type,
+		SourceLocation location);
 
 	// Annotate ternary operator branches with common-type conversions
 	// (C++20 [expr.cond]/7: usual arithmetic conversions on the second and third operands).
