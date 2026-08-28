@@ -109,19 +109,21 @@ else
 	inventory_ok=false
 fi
 assert_runner "$inventory_ok" "the frozen legacy inventory matches exactly one current representation per entry"
-[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq 7 ] &&
+
+[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_COUNT" ] &&
+	[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -lt "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE" ] &&
 	internal_compatibility_inventory_ok=true || internal_compatibility_inventory_ok=false
-assert_runner "$internal_compatibility_inventory_ok" "the seven-entry legacy internal-failure compatibility inventory is active at its baseline"
+assert_runner "$internal_compatibility_inventory_ok" "the legacy internal-failure compatibility inventory is below its directional baseline"
 
 saved_internal_compatibility_baseline=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE
-RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE=6
+RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE=5
 if runner_validate_legacy_internal_compatibility \
 	"$REPO_ROOT" \
 	"$REPO_ROOT/tests/legacy_internal_failure_tests.txt" \
 	"$REPO_ROOT/tests/legacy_negative_tests.txt"; then
 	internal_compatibility_direction_ok=false
 else
-	printf '%s' "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR" | grep -qF 'above baseline 6' &&
+	printf '%s' "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR" | grep -qF 'above baseline 5' &&
 		internal_compatibility_direction_ok=true || internal_compatibility_direction_ok=false
 fi
 RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE=$saved_internal_compatibility_baseline
@@ -174,7 +176,7 @@ if runner_validate_legacy_internal_compatibility \
 	"$compatibility_repo" \
 	"$compatibility_repo/legacy_internal_failure_tests.txt" \
 	"$compatibility_repo/legacy_negative_tests.txt" &&
-	[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq 6 ] &&
+		[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq 5 ] &&
 	[[ " $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES " != *" $first_compatibility_entry "* ]]; then
 	encoded_successor_mapping_ok=true
 else
@@ -285,7 +287,7 @@ if command -v clang++ >/dev/null 2>&1 && timeout --version 2>/dev/null | grep -q
 	success_output="$temp_root/success.out"
 	bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/multi_tu_success" --ci-output "$success_ci" runner_self_multi_ret42 >"$success_output" 2>&1
 	[ $? -eq 0 ] &&
-		grep -q $'flashcpp-runner-v1\tcompatibility\tlegacy-internal-failure\tactive\tcount=7 baseline=7 selected=0 direction=down removal-boundary=2F' "$success_ci" &&
+		grep -q $'flashcpp-runner-v1\tcompatibility\tlegacy-internal-failure\tactive\tcount=6 baseline=7 selected=0 direction=down removal-boundary=2F' "$success_ci" &&
 		grep -q $'flashcpp-runner-v1\tsummary\tall\tsuccess' "$success_ci" &&
 		grep -q 'link mode: no-pie' "$success_output" &&
 		multi_success_ok=true || multi_success_ok=false
