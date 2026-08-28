@@ -3756,7 +3756,13 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			if (ctor_arg_types.size() == num_args) {
 				auto resolution = resolve_constructor_overload(*struct_info, ctor_arg_types, false);
 				if (resolution.is_ambiguous) {
-					throw CompileError("Ambiguous constructor call");
+					throw makeStructuredCompileError(
+						context_->diagnostics(),
+						DiagnosticId::AmbiguousConstructorCall,
+						DiagnosticSeverity::Error,
+						SourceLocation(),
+						"Ambiguous constructor call",
+						{});
 				}
 				matching_ctor = resolution.selected_overload;
 			}

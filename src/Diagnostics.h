@@ -120,6 +120,7 @@ enum class DiagnosticId : uint32_t {
 	ConstinitInitializerNotConstant = 1501,
 	ConstexprStaticMemberInitializerNotConstant = 1502,
 	ExplicitConstructorCopyInitialization = 1503,
+	AmbiguousConstructorCall = 1504,
 
 	// Semantic validity family (1601..1699).
 	RangeForBeginEndRequired = 1601,
@@ -220,6 +221,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstexprStaticMemberInitializerNotConstant";
 	case DiagnosticId::ExplicitConstructorCopyInitialization:
 		return "ExplicitConstructorCopyInitialization";
+	case DiagnosticId::AmbiguousConstructorCall:
+		return "AmbiguousConstructorCall";
 	case DiagnosticId::RangeForBeginEndRequired:
 		return "RangeForBeginEndRequired";
 	case DiagnosticId::AmbiguousDerivedToBasePointerConversion:

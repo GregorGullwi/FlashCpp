@@ -1616,7 +1616,13 @@ void AstToIr::generateStaticMemberDeclarations() {
 										if (arg_types.size() == ctor_call.arguments().size()) {
 											auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
 											if (resolution.is_ambiguous) {
-												throw CompileError("Ambiguous constructor call");
+												throw makeStructuredCompileError(
+													context_->diagnostics(),
+													DiagnosticId::AmbiguousConstructorCall,
+													DiagnosticSeverity::Error,
+													SourceLocation(),
+													"Ambiguous constructor call",
+													{});
 											}
 											matching_ctor = resolution.selected_overload;
 										}
