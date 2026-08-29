@@ -548,7 +548,14 @@ ParseResult Parser::parse_type_specifier() {
 			return ParseResult::success(makeDependentUnderlyingType(arg_type));
 		}
 
-		return ParseResult::error("__underlying_type requires an enumeration type", underlying_token);
+		const std::string message = "__underlying_type requires an enumeration type";
+		context_.diagnostics().report(
+			DiagnosticId::UnderlyingTypeRequiresEnum,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(underlying_token),
+			message,
+			{});
+		return ParseResult::error(message, underlying_token);
 	};
 
 	// Check for __underlying_type(T) which returns the underlying type of an enum

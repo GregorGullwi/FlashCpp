@@ -4690,7 +4690,13 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					!e.has_resolved_member_operator_overload() &&
 					!e.has_resolved_free_function_operator_overload() &&
 					inferExpressionValueCategory(e.get_lhs()) != ValueCategory::LValue) {
-					throw CompileError("Assignment requires a modifiable lvalue");
+					throw makeStructuredCompileError(
+						context_.diagnostics(),
+						DiagnosticId::AssignmentRequiresModifiableLvalue,
+						DiagnosticSeverity::Error,
+						SourceLocation::fromToken(e.get_token()),
+						"Assignment requires a modifiable lvalue",
+						{});
 				}
 				if (needs_binary_type_inference) {
 					lhs_type_id = inferExpressionType(e.get_lhs());
@@ -4757,7 +4763,13 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					tryResolveUnaryAddressOfOperator(e);
 					if (!getResolvedUnaryAddressOfOperator(&e) &&
 						inferExpressionValueCategory(e.get_operand()) != ValueCategory::LValue) {
-						throw CompileError("Address-of operand must be an lvalue");
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::AddressOfNonLvalue,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(e.get_token()),
+							"Address-of operand must be an lvalue",
+							{});
 					}
 				}
 			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
@@ -7921,10 +7933,17 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 			// Diagnose the ill-formed conversion with a clang-compatible message.
 			const TypeSpecifierNode from_ts = materializeTypeSpecifier(from_desc);
 			const TypeSpecifierNode to_ts = materializeTypeSpecifier(to_desc);
-			throw CompileError(std::string("cannot initialize a variable of type '") +
-							   to_ts.getReadableString() +
-							   "' with an lvalue of type '" +
-							   from_ts.getReadableString() + "'");
+			const std::string message = std::string("cannot initialize a variable of type '") +
+				to_ts.getReadableString() +
+				"' with an lvalue of type '" +
+				from_ts.getReadableString() + "'";
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::InvalidArrayToScalarInitialization,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				message,
+				{});
 		}
 		return false; // array → array: handled elsewhere
 	}

@@ -583,9 +583,16 @@ ASTNode ExpressionSubstitutor::substituteSizeofPack(const SizeofPackNode& sizeof
 				return ASTNode::emplace_node<ExpressionNode>(sizeof_pack);
 			}
 		}
-		throw CompileError(
+		const std::string message =
 			"'" + std::string(sizeof_pack.pack_name()) +
-			"' does not refer to the name of a parameter pack");
+			"' does not refer to the name of a parameter pack";
+		throw makeStructuredCompileError(
+			parser_.context_.diagnostics(),
+			DiagnosticId::InvalidSizeofPackOperand,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(sizeof_pack.sizeof_token()),
+			message,
+			{});
 	}
 
 	StringBuilder size_builder;

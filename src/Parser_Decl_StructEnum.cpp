@@ -4006,6 +4006,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			diagnostic_id = DiagnosticId::OverrideSpecifierNoBase;
 		} else if (finalization_error.starts_with("cannot override final function")) {
 			diagnostic_id = DiagnosticId::OverrideFinalFunction;
+		} else if (finalization_error.starts_with("duplicate direct base class")) {
+			diagnostic_id = DiagnosticId::DuplicateDirectBaseClass;
 		}
 		if (diagnostic_id != DiagnosticId::None) {
 			context_.diagnostics().report(

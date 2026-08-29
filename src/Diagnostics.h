@@ -75,6 +75,7 @@ enum class DiagnosticId : uint32_t {
 	StructuredBindingStorageClass = 1010,
 	DesignatedInitializerAfterPositional = 1011,
 	DesignatedInitializerOutOfOrder = 1012,
+	AutoReturnTypeMismatch = 1013,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -125,10 +126,14 @@ enum class DiagnosticId : uint32_t {
 	AssignmentToConstObject = 1318,
 	OperatorOverloadNotFound = 1319,
 	DeletedOperatorFunction = 1320,
+	DeletedFunctionCall = 1321,
+	DeletedDefaultConstructorCall = 1322,
 
 	// Implicit enum conversion family (1401..1499).
 	ScopedEnumImplicitConversion = 1401,
 	ScopedEnumBinaryOperand = 1402,
+	TypeTraitArgumentMustBeType = 1403,
+	UnderlyingTypeRequiresEnum = 1404,
 
 	// Initialization family (1501..1599).
 	ConstinitInitializerNotConstant = 1501,
@@ -147,6 +152,10 @@ enum class DiagnosticId : uint32_t {
 	DuplicateDeclaration = 1606,
 	OverrideSpecifierNoBase = 1607,
 	OverrideFinalFunction = 1608,
+	DuplicateDirectBaseClass = 1609,
+	AssignmentRequiresModifiableLvalue = 1610,
+	AddressOfNonLvalue = 1611,
+	InvalidArrayToScalarInitialization = 1612,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -165,6 +174,7 @@ enum class DiagnosticId : uint32_t {
 	HiddenFriendCallWithoutAssociatedArgument = 1803,
 	MissingTemplateKeyword = 1804,
 	ReferenceNonTypeTemplateParameterUnsupported = 1805,
+	InvalidSizeofPackOperand = 1806,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -193,6 +203,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DesignatedInitializerAfterPositional";
 	case DiagnosticId::DesignatedInitializerOutOfOrder:
 		return "DesignatedInitializerOutOfOrder";
+	case DiagnosticId::AutoReturnTypeMismatch:
+		return "AutoReturnTypeMismatch";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:
@@ -277,10 +289,18 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "OperatorOverloadNotFound";
 	case DiagnosticId::DeletedOperatorFunction:
 		return "DeletedOperatorFunction";
+	case DiagnosticId::DeletedFunctionCall:
+		return "DeletedFunctionCall";
+	case DiagnosticId::DeletedDefaultConstructorCall:
+		return "DeletedDefaultConstructorCall";
 	case DiagnosticId::ScopedEnumImplicitConversion:
 		return "ScopedEnumImplicitConversion";
 	case DiagnosticId::ScopedEnumBinaryOperand:
 		return "ScopedEnumBinaryOperand";
+	case DiagnosticId::TypeTraitArgumentMustBeType:
+		return "TypeTraitArgumentMustBeType";
+	case DiagnosticId::UnderlyingTypeRequiresEnum:
+		return "UnderlyingTypeRequiresEnum";
 	case DiagnosticId::ConstinitInitializerNotConstant:
 		return "ConstinitInitializerNotConstant";
 	case DiagnosticId::ConstexprStaticMemberInitializerNotConstant:
@@ -309,6 +329,14 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "OverrideSpecifierNoBase";
 	case DiagnosticId::OverrideFinalFunction:
 		return "OverrideFinalFunction";
+	case DiagnosticId::DuplicateDirectBaseClass:
+		return "DuplicateDirectBaseClass";
+	case DiagnosticId::AssignmentRequiresModifiableLvalue:
+		return "AssignmentRequiresModifiableLvalue";
+	case DiagnosticId::AddressOfNonLvalue:
+		return "AddressOfNonLvalue";
+	case DiagnosticId::InvalidArrayToScalarInitialization:
+		return "InvalidArrayToScalarInitialization";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
@@ -337,6 +365,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "MissingTemplateKeyword";
 	case DiagnosticId::ReferenceNonTypeTemplateParameterUnsupported:
 		return "ReferenceNonTypeTemplateParameterUnsupported";
+	case DiagnosticId::InvalidSizeofPackOperand:
+		return "InvalidSizeofPackOperand";
 	case DiagnosticId::None:
 	default:
 		return "None";
