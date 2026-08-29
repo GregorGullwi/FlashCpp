@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-29 by branch `codex/boundary-2f-semantic-diagnostics`
+Last updated: 2026-08-29 by branch `codex/boundary-2f-template-diagnostics`
 
 ## Position
 
@@ -24,6 +24,11 @@ Last updated: 2026-08-29 by branch `codex/boundary-2f-semantic-diagnostics`
   (1321-1322), builtin type rejection (1403-1404), duplicate bases and
   invalid value categories/conversions (1609-1612), and invalid `sizeof...`
   operands (1806) at existing parser and semantic owners.
+- The current template/constant-expression batch assigns explicit-instantiation
+  IDs (1807-1811), constexpr materialization and evaluation IDs (1221-1223),
+  the const-receiver call ID (1710), and the structured-binding protocol ID
+  (1613). It converts thirteen more bounded failures without adding replay or
+  recovery behavior.
 - Pull request boundary 2F now includes the explicit-initialization batch on
   branch `codex/boundary-2f-explicit-initialization` (commit `a136a23c`). It
   assigns `AssignmentToConstObject` (1318),
@@ -107,7 +112,7 @@ Last updated: 2026-08-29 by branch `codex/boundary-2f-semantic-diagnostics`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 72 names. The temporary internal-failure
+- The frozen legacy inventory is now 59 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 

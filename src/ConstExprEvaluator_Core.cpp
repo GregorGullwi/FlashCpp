@@ -3384,7 +3384,10 @@ EvalResult Evaluator::evaluate_new_expression(
 			return EvalResult::error("new[]: negative array size in constant expression");
 		}
 		if (static_cast<size_t>(n) > context.max_steps) {
-			return EvalResult::error("new[]: array size exceeds constexpr evaluation limit");
+			return EvalResult::error(
+				"new[]: array size exceeds constexpr evaluation limit",
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::ConstantExpressionEvaluationLimit);
 		}
 		EvalResult array_result = EvalResult::from_int(0LL);
 		array_result.is_array = true;
@@ -6387,7 +6390,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						"No matching constructor for '" +
 						std::string(StringTable::getStringView(si->getName())) +
 						"' with " + std::to_string(init_list.size()) +
-						" argument(s) in constexpr evaluation");
+						" argument(s) in constexpr evaluation",
+						EvalErrorType::NotConstantExpression,
+						DiagnosticId::ConstantExpressionNoMatchingConstructor);
 				}
 
 				EvalResult result = EvalResult::from_int(0LL); // struct result; value is a placeholder
@@ -6597,7 +6602,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 									"No matching constructor for '" +
 									std::string(StringTable::getStringView(struct_info->getName())) +
 									"' with " + std::to_string(init_list.size()) +
-									" argument(s) in constexpr evaluation");
+									" argument(s) in constexpr evaluation",
+									EvalErrorType::NotConstantExpression,
+									DiagnosticId::ConstantExpressionNoMatchingConstructor);
 							}
 							auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context, &bindings);
 							if (!object_result.success()) {

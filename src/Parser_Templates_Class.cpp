@@ -248,11 +248,18 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
 					FLASH_LOG(Templates, Debug, "Successfully explicitly instantiated: ", name_token.value());
 				} else {
-					throw CompileError(std::string(StringBuilder()
+					const std::string message = std::string(StringBuilder()
 						.append("Could not explicitly instantiate template '")
 						.append(name_token.value())
 						.append("'")
-						.commit()));
+						.commit());
+					throw makeStructuredCompileError(
+						context_.diagnostics(),
+						DiagnosticId::ExplicitInstantiationNonClassTemplate,
+						DiagnosticSeverity::Error,
+						SourceLocation::fromToken(name_token),
+						message,
+						{});
 				}
 			} else if (is_extern) {
 				// extern template - suppresses implicit instantiation

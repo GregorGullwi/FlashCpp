@@ -31,7 +31,9 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 			.append("Type '"sv)
 			.append(StringTable::getStringView(struct_info->getName()))
 			.append("' has user-declared constructors and is not an aggregate"sv)
-			.commit()), EvalErrorType::NotConstantExpression);
+			.commit()),
+			EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionNonAggregateInitialization);
 	}
 
 	EvalResult object_result = EvalResult::from_int(0);
@@ -203,7 +205,10 @@ EvalResult Evaluator::materialize_constructor_object_value(
 			.append(" argument(s) in constexpr evaluation"sv)
 			.commit()));
 	}
-	return EvalResult::error("No matching constructor found for constexpr object");
+	return EvalResult::error(
+		"No matching constructor found for constexpr object",
+		EvalErrorType::NotConstantExpression,
+		DiagnosticId::ConstantExpressionNoMatchingConstructor);
 }
 
 EvalResult Evaluator::materialize_array_value(
