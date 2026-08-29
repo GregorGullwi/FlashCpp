@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-29 by branch `codex/boundary-2f-call-diagnostics`
+Last updated: 2026-08-29 by branch `codex/boundary-2f-semantic-diagnostics`
 
 ## Position
 
@@ -19,6 +19,11 @@ Last updated: 2026-08-29 by branch `codex/boundary-2f-call-diagnostics`
   member overloads, lambda return mismatch, class-scope member calls, and
   callable/member-template failures. No overload decision or recovery path
   was added.
+- The current semantic-diagnostics batch assigns stable IDs for auto-return
+  mismatches (1013), deleted function and default-constructor calls
+  (1321-1322), builtin type rejection (1403-1404), duplicate bases and
+  invalid value categories/conversions (1609-1612), and invalid `sizeof...`
+  operands (1806) at existing parser and semantic owners.
 - Pull request boundary 2F now includes the explicit-initialization batch on
   branch `codex/boundary-2f-explicit-initialization` (commit `a136a23c`). It
   assigns `AssignmentToConstObject` (1318),
@@ -102,7 +107,7 @@ Last updated: 2026-08-29 by branch `codex/boundary-2f-call-diagnostics`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 82 names. The temporary internal-failure
+- The frozen legacy inventory is now 72 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 

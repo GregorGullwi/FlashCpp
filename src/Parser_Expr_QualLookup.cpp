@@ -4269,15 +4269,21 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 				first_type.pointer_depth() != current_type.pointer_depth() ||
 				first_type.reference_qualifier() != current_type.reference_qualifier() ||
 				first_type.cv_qualifier() != current_type.cv_qualifier()) {
-				throw CompileError(std::string(StringBuilder()
-					.append("function '")
-					.append(decl_node.identifier_token().value())
-					.append("' has inconsistent deduced auto return types: first return has type '")
-					.append(type_to_string(first_type))
-					.append("', but another return has type '")
-					.append(type_to_string(current_type))
-					.append("'")
-					.commit()));
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::AutoReturnTypeMismatch,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(decl_node.identifier_token()),
+					std::string(StringBuilder()
+						.append("function '")
+						.append(decl_node.identifier_token().value())
+						.append("' has inconsistent deduced auto return types: first return has type '")
+						.append(type_to_string(first_type))
+						.append("', but another return has type '")
+						.append(type_to_string(current_type))
+						.append("'")
+						.commit()),
+					{});
 			}
 		}
 	}

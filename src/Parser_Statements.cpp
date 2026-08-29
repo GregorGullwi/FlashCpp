@@ -1280,7 +1280,14 @@ ParseResult Parser::parse_variable_declaration() {
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_idx); type_info && type_info->getStructInfo()) {
 				const StructTypeInfo& struct_info = *type_info->getStructInfo();
 				if (struct_info.isDefaultConstructorDeleted()) {
-					return ParseResult::error("Call to deleted constructor of '" + std::string(StringTable::getStringView(type_info->name())) + "'", first_decl.identifier_token());
+					const std::string message = "Call to deleted constructor of '" + std::string(StringTable::getStringView(type_info->name())) + "'";
+					context_.diagnostics().report(
+						DiagnosticId::DeletedDefaultConstructorCall,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(first_decl.identifier_token()),
+						message,
+						{});
+					return ParseResult::error(message, first_decl.identifier_token());
 				}
 			}
 		}

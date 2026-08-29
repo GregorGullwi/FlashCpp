@@ -4140,7 +4140,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Parse the first type argument
 				ParseResult type_result = parse_type_specifier();
 				if (type_result.is_error() || !type_result.node().has_value()) {
-					return ParseResult::error("Expected type in type trait intrinsic", current_token_);
+					const std::string message = "Expected type in type trait intrinsic";
+					context_.diagnostics().report(
+						DiagnosticId::TypeTraitArgumentMustBeType,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(trait_token),
+						message,
+						{});
+					return ParseResult::error(message, trait_token);
 				}
 
 				// Parse pointer/reference modifiers after the base type (ptr-operator in C++20 grammar)
@@ -7926,7 +7933,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (has_deferred_template_call_args) {
 								return make_dependent_call_result();
 							}
-							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
+							const std::string message = "Call to deleted function '" + std::string(identifier_token.value()) + "'";
+							context_.diagnostics().report(
+								DiagnosticId::DeletedFunctionCall,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(identifier_token),
+								message,
+								{});
+							return ParseResult::error(message, identifier_token);
 						}
 						if (const FunctionDeclarationNode* func_decl =
 								get_function_decl_node(*instantiated_func);
@@ -8031,7 +8045,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (has_deferred_template_call_args) {
 								return make_dependent_call_result();
 							}
-							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
+							const std::string message = "Call to deleted function '" + std::string(identifier_token.value()) + "'";
+							context_.diagnostics().report(
+								DiagnosticId::DeletedFunctionCall,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(identifier_token),
+								message,
+								{});
+							return ParseResult::error(message, identifier_token);
 						}
 						if (const FunctionDeclarationNode* func_decl =
 								get_function_decl_node(*instantiated_func);
@@ -10846,7 +10867,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (has_deferred_call_args) {
 												return make_late_dependent_call_result();
 											}
-											return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
+											const std::string message = "Call to deleted function '" + std::string(identifier_token.value()) + "'";
+											context_.diagnostics().report(
+												DiagnosticId::DeletedFunctionCall,
+												DiagnosticSeverity::Error,
+												lexer_.getSourceLocation(identifier_token),
+												message,
+												{});
+											return ParseResult::error(message, identifier_token);
 										}
 										if (const FunctionDeclarationNode* func_decl =
 												get_function_decl_node(*instantiated_func);
@@ -11017,7 +11045,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												if (has_deferred_call_args) {
 													return make_late_dependent_call_result();
 												}
-												return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
+												const std::string message = "Call to deleted function '" + std::string(identifier_token.value()) + "'";
+												context_.diagnostics().report(
+													DiagnosticId::DeletedFunctionCall,
+													DiagnosticSeverity::Error,
+													lexer_.getSourceLocation(identifier_token),
+													message,
+													{});
+												return ParseResult::error(message, identifier_token);
 											}
 											if (const FunctionDeclarationNode* func_decl =
 													get_function_decl_node(*instantiated_func);
@@ -11125,7 +11160,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													if (has_deferred_call_args) {
 														return make_late_dependent_call_result();
 													}
-													return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
+													const std::string message = "Call to deleted function '" + std::string(identifier_token.value()) + "'";
+													context_.diagnostics().report(
+														DiagnosticId::DeletedFunctionCall,
+														DiagnosticSeverity::Error,
+														lexer_.getSourceLocation(identifier_token),
+														message,
+														{});
+													return ParseResult::error(message, identifier_token);
 												}
 												// Successfully instantiated template
 												const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
