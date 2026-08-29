@@ -152,6 +152,12 @@ enum class DiagnosticId : uint32_t {
 	AmbiguousFunctionCall = 1701,
 	AmbiguousCallOperator = 1702,
 	AmbiguousMemberFunctionCall = 1703,
+	NoViableFunctionCall = 1704,
+	NoViableMemberFunctionCall = 1705,
+	LambdaReturnTypeMismatch = 1706,
+	NonStaticMemberFunctionCall = 1707,
+	NoViableMemberFunctionTemplateCall = 1708,
+	NoViableCallOperator = 1709,
 
 	// Template and lookup family (1801..1899).
 	NonDependentNameNotDeclaredBeforeTemplateDefinition = 1801,
@@ -309,6 +315,18 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AmbiguousCallOperator";
 	case DiagnosticId::AmbiguousMemberFunctionCall:
 		return "AmbiguousMemberFunctionCall";
+	case DiagnosticId::NoViableFunctionCall:
+		return "NoViableFunctionCall";
+	case DiagnosticId::NoViableMemberFunctionCall:
+		return "NoViableMemberFunctionCall";
+	case DiagnosticId::LambdaReturnTypeMismatch:
+		return "LambdaReturnTypeMismatch";
+	case DiagnosticId::NonStaticMemberFunctionCall:
+		return "NonStaticMemberFunctionCall";
+	case DiagnosticId::NoViableMemberFunctionTemplateCall:
+		return "NoViableMemberFunctionTemplateCall";
+	case DiagnosticId::NoViableCallOperator:
+		return "NoViableCallOperator";
 	case DiagnosticId::NonDependentNameNotDeclaredBeforeTemplateDefinition:
 		return "NonDependentNameNotDeclaredBeforeTemplateDefinition";
 	case DiagnosticId::PartialSpecializationParameterListInvalid:

@@ -1007,6 +1007,12 @@ ParseResult Parser::parse_lambda_expression() {
 					error_msg += "'";
 
 					FLASH_LOG(Parser, Error, error_msg);
+					context_.diagnostics().report(
+						DiagnosticId::LambdaReturnTypeMismatch,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(all_return_types[i].second),
+						error_msg,
+						{});
 					return ParseResult::error(error_msg, all_return_types[i].second);
 				}
 			}

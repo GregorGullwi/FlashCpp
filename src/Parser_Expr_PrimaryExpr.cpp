@@ -6104,8 +6104,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				identifierType.has_value() &&
 				identifierType->is<FunctionDeclarationNode>() &&
 				!identifierType->as<FunctionDeclarationNode>().is_static()) {
+				const std::string message =
+					"Call of non-static member function requires an object";
+				context_.diagnostics().report(
+					DiagnosticId::NonStaticMemberFunctionCall,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(identifier_token),
+					message,
+					{});
 				return ParseResult::error(
-					"Call of non-static member function requires an object",
+					message,
 					identifier_token);
 			}
 		}
@@ -7652,6 +7660,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			// Unified resolution pipeline: ordinary lookup + ADL + overload resolution + template fallback.
 			// Used by both the early path (foo(args)) and the late path (foo<T>(args)).
+			auto reportNoViableFunctionCall = [&](const Token& token) -> ParseResult {
+				const std::string message = std::string(StringBuilder()
+					.append("No matching function for call to '")
+					.append(token.value())
+					.append("'")
+					.commit());
+				context_.diagnostics().report(
+					DiagnosticId::NoViableFunctionCall,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(token),
+					message,
+					{});
+				return ParseResult::error(message, token);
+			};
 			auto unified_resolve_function_call = [&](ChunkedVector<ASTNode>& args_ref) -> ParseResult {
 				auto appendMissingDefaultArguments = [&](const FunctionDeclarationNode& func_decl) -> std::optional<ParseResult> {
 					const auto& params = func_decl.parameter_nodes();
@@ -7692,9 +7714,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 							args_ref.push_back(def_val);
 						} else {
-							return ParseResult::error(
-								"No matching function for call to '" + std::string(identifier_token.value()) + "\'",
-								identifier_token);
+							const std::string message = std::string(StringBuilder()
+								.append("No matching function for call to '")
+								.append(identifier_token.value())
+								.append("'")
+								.commit());
+							context_.diagnostics().report(
+								DiagnosticId::NoViableFunctionCall,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(identifier_token),
+								message,
+								{});
+							return ParseResult::error(message, identifier_token);
 						}
 					}
 					return std::nullopt;
@@ -7814,10 +7845,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 						}
 						if (!materialized_resolved_decl.has_value()) {
-							return ParseResult::error(
-								"No matching function for call to '" +
-									std::string(identifier_token.value()) + "\'",
-								identifier_token);
+							return reportNoViableFunctionCall(identifier_token);
 						}
 						call_target = &*materialized_resolved_decl;
 						if (const FunctionDeclarationNode* func_decl =
@@ -7930,7 +7958,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (has_deferred_template_call_args) {
 						return make_dependent_call_result();
 					}
-					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
+					return reportNoViableFunctionCall(identifier_token);
 				}
 
 				FLASH_LOG(Parser, Debug, "Function call to '", identifier_token.value(), "': found ", all_overloads.size(), " overload(s), ", arg_types.size(), " argument(s)");
@@ -8026,7 +8054,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (has_deferred_template_call_args) {
 						return make_dependent_call_result();
 					}
-					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
+					return reportNoViableFunctionCall(identifier_token);
 				}
 
 				if (resolution.selected_overload->is<FunctionDeclarationNode>()) {
@@ -10287,10 +10315,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								return ParseResult::error("Cannot use multi-element braced-init-list as default argument for non-aggregate parameter '" + std::string(params[i].as<DeclarationNode>().identifier_token().value()) + "'",
 														  identifier_token);
 							}
-							args.push_back(def_val);
-						} else {
-							return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "'", identifier_token);
-						}
+												args.push_back(def_val);
+											} else {
+												const std::string message = std::string(StringBuilder()
+													.append("No matching function for call to '")
+													.append(identifier_token.value())
+													.append("'")
+													.commit());
+												context_.diagnostics().report(
+													DiagnosticId::NoViableFunctionCall,
+													DiagnosticSeverity::Error,
+													lexer_.getSourceLocation(identifier_token),
+													message,
+													{});
+												return ParseResult::error(message, identifier_token);
+											}
 					}
 
 					return std::nullopt;
@@ -11025,7 +11064,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												// The requires expression will treat this as "constraint not satisfied"
 												result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 											} else {
-												return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "'", identifier_token);
+											const std::string message = std::string(StringBuilder()
+												.append("No matching function for call to '")
+												.append(identifier_token.value())
+												.append("'")
+												.commit());
+											context_.diagnostics().report(
+												DiagnosticId::NoViableFunctionCall,
+												DiagnosticSeverity::Error,
+												lexer_.getSourceLocation(identifier_token),
+												message,
+												{});
+											return ParseResult::error(message, identifier_token);
 											}
 										}
 									} else {
@@ -11114,7 +11164,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												// Create a placeholder node to indicate failed lookup
 													result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 												} else {
-													return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "'", identifier_token);
+											const std::string message = std::string(StringBuilder()
+												.append("No matching function for call to '")
+												.append(identifier_token.value())
+												.append("'")
+												.commit());
+											context_.diagnostics().report(
+												DiagnosticId::NoViableFunctionCall,
+												DiagnosticSeverity::Error,
+												lexer_.getSourceLocation(identifier_token),
+												message,
+												{});
+											return ParseResult::error(message, identifier_token);
 												}
 											}
 										} else {
@@ -11138,10 +11199,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													}
 												}
 												if (!materialized_selected_overload.has_value()) {
-													return ParseResult::error(
-														"No matching function for call to '" +
-															std::string(identifier_token.value()) + "'",
-														identifier_token);
+									const std::string message = std::string(StringBuilder()
+										.append("No matching function for call to '")
+										.append(identifier_token.value())
+										.append("'")
+										.commit());
+									context_.diagnostics().report(
+										DiagnosticId::NoViableFunctionCall,
+										DiagnosticSeverity::Error,
+										lexer_.getSourceLocation(identifier_token),
+										message,
+										{});
+									return ParseResult::error(message, identifier_token);
 												}
 												selected_overload =
 													&*materialized_selected_overload;
