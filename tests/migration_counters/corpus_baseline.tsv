@@ -1,5 +1,5 @@
 # FlashCpp migration counter baseline.
-1	tests/auto_return_inconsistent_fail.cpp
+0	tests/auto_return_inconsistent_e1013.cpp
 0	tests/comparison_operators_ret1.cpp
 0	tests/concept_comprehensive_ret15.cpp
 0	tests/concept_error_test_fail.cpp
