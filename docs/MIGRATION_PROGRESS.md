@@ -5,11 +5,20 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-28 by branch `codex/boundary-2b-parser-lookup-diagnostics`
+Last updated: 2026-08-29 by branch `codex/boundary-2f-call-diagnostics`
 
 ## Position
 
 - Architecture boundary in progress: 0 (diagnosability and measurement)
+- The current call-diagnostics batch assigns `NoViableFunctionCall` (1704),
+  `NoViableMemberFunctionCall` (1705), `LambdaReturnTypeMismatch` (1706),
+  `NonStaticMemberFunctionCall` (1707),
+  `NoViableMemberFunctionTemplateCall` (1708), and
+  `NoViableCallOperator` (1709) at existing parser rejection choke points.
+  It converts seventeen frozen tests covering invalid conversions, hidden
+  member overloads, lambda return mismatch, class-scope member calls, and
+  callable/member-template failures. No overload decision or recovery path
+  was added.
 - Pull request boundary 2F now includes the explicit-initialization batch on
   branch `codex/boundary-2f-explicit-initialization` (commit `a136a23c`). It
   assigns `AssignmentToConstObject` (1318),
@@ -93,7 +102,7 @@ Last updated: 2026-08-28 by branch `codex/boundary-2b-parser-lookup-diagnostics`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 99 names. The temporary internal-failure
+- The frozen legacy inventory is now 82 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -146,7 +155,7 @@ Next blocker:
 
 - There is no cross-platform validation blocker for the current 2F snapshot:
   the full Windows suite is green and the frozen inventory is below 150; the
-  current coordination target is below 120.
+  current coordination target is below 60.
 
 Then, in order:
 

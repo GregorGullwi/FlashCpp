@@ -764,6 +764,13 @@ ParseResult Parser::finalizePostfixCallExpression(
 				lexer_.getSourceLocation(paren_token),
 				*hard_failure,
 				{});
+		} else {
+			context_.diagnostics().report(
+				DiagnosticId::NoViableCallOperator,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(paren_token),
+				*hard_failure,
+				{});
 		}
 		return ParseResult::error(std::string(*hard_failure), paren_token);
 	}
@@ -947,9 +954,15 @@ std::optional<ParseResult> Parser::diagnoseHardUseConcreteReceiverNamedMember(
 	if (known_member != nullptr && owner_struct != nullptr) {
 		return std::nullopt;
 	}
-	return ParseResult::error(
-		"No matching member function for call to '" + std::string(member_name) + "'",
-		error_token);
+	const std::string message =
+		"No matching member function for call to '" + std::string(member_name) + "'";
+	context_.diagnostics().report(
+		DiagnosticId::NoViableMemberFunctionCall,
+		DiagnosticSeverity::Error,
+		lexer_.getSourceLocation(error_token),
+		message,
+		{});
+	return ParseResult::error(message, error_token);
 }
 
 ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token) {
@@ -1055,9 +1068,15 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		}
 
 		if (!functionAcceptsArgumentCount(*known_member_func, args.size())) {
-			return ParseResult::error(
-				"No matching member function for call to '" + std::string(operator_name) + "'",
-				member_operator_name_token);
+			const std::string message =
+				"No matching member function for call to '" + std::string(operator_name) + "'";
+			context_.diagnostics().report(
+				DiagnosticId::NoViableMemberFunctionCall,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(member_operator_name_token),
+				message,
+				{});
+			return ParseResult::error(message, member_operator_name_token);
 		}
 
 		result = emplace_node<ExpressionNode>(
@@ -1473,24 +1492,42 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				concreteOwnerHasMemberFunctionTemplate(
 					*object_type_info,
 					member_name_token.handle())) {
-				return ParseResult::error(
-					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
-					member_name_token);
+				const std::string message =
+					"No matching member function for call to '" + std::string(member_name_token.value()) + "'";
+				context_.diagnostics().report(
+					DiagnosticId::NoViableMemberFunctionCall,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(member_name_token),
+					message,
+					{});
+				return ParseResult::error(message, member_name_token);
 			}
 		}
 		if (explicit_template_args &&
 			object_struct_name.has_value() &&
 			isHardUseLikeInstantiationMode() &&
 			!instantiated_func.has_value()) {
-			return ParseResult::error(
-				"No matching member function template for call to '" + std::string(member_name_token.value()) + "'",
-				member_name_token);
+			const std::string message =
+				"No matching member function template for call to '" + std::string(member_name_token.value()) + "'";
+			context_.diagnostics().report(
+				DiagnosticId::NoViableMemberFunctionTemplateCall,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(member_name_token),
+				message,
+				{});
+			return ParseResult::error(message, member_name_token);
 		}
 		if (known_member_func && !instantiated_func.has_value()) {
 			if (!functionAcceptsArgumentCount(*known_member_func, args.size())) {
-				return ParseResult::error(
-					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
-					member_name_token);
+				const std::string message =
+					"No matching member function for call to '" + std::string(member_name_token.value()) + "'";
+				context_.diagnostics().report(
+					DiagnosticId::NoViableMemberFunctionCall,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(member_name_token),
+					message,
+					{});
+				return ParseResult::error(message, member_name_token);
 			}
 		}
 
@@ -1528,9 +1565,15 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 						}
 					}
 					if (has_any_local_overload && !has_arity_match) {
-						return ParseResult::error(
-							"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
-							member_name_token);
+						const std::string message =
+							"No matching member function for call to '" + std::string(member_name_token.value()) + "'";
+						context_.diagnostics().report(
+							DiagnosticId::NoViableMemberFunctionCall,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(member_name_token),
+							message,
+							{});
+						return ParseResult::error(message, member_name_token);
 					}
 				}
 			}
