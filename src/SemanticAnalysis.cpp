@@ -4466,7 +4466,13 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			}
 		}
 		if (!tuple_element_decl) {
-			throw CompileError("structured binding tuple-like protocol failed: missing tuple_element specialization");
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::StructuredBindingTupleLikeProtocolFailure,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				"structured binding tuple-like protocol failed: missing tuple_element specialization",
+				{});
 		}
 
 		const TypeAliasDecl* type_alias = nullptr;
@@ -10624,19 +10630,30 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 				diagnosableConstReceiverMemberName();
 			member_name.has_value()) {
 			if (is_callable_operator) {
-				if (!member_name->empty()) {
-					throw CompileError(
-						std::string("callable object '") +
+				const std::string message = member_name->empty()
+					? "callable object cannot call non-const operator() through a const receiver"
+					: std::string("callable object '") +
 						*member_name +
-						"' cannot call non-const operator() through a const receiver");
-				}
-				throw CompileError(
-					"callable object cannot call non-const operator() through a const receiver");
+						"' cannot call non-const operator() through a const receiver";
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::NonConstCallThroughConstReceiver,
+					DiagnosticSeverity::Error,
+					SourceLocation::fromToken(callee_decl.identifier_token()),
+					message,
+					{});
 			}
-			throw CompileError(
+			const std::string message =
 				std::string("member function '") +
 				*member_name +
-				"' cannot be called through a const receiver");
+				"' cannot be called through a const receiver";
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::NonConstCallThroughConstReceiver,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(callee_decl.identifier_token()),
+				message,
+				{});
 		}
 		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);
 		if (hasDiagnosableAmbiguousReceiverMemberCall()) {
@@ -10725,10 +10742,17 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 		!func_decl->is_static() &&
 		!func_decl->is_const_member_function() &&
 		localCallableReceiverIsConst()) {
-		throw CompileError(
+		const std::string message =
 			std::string("callable object '") +
 			std::string(callee_decl.identifier_token().value()) +
-			"' cannot call non-const operator() through a const receiver");
+			"' cannot call non-const operator() through a const receiver";
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::NonConstCallThroughConstReceiver,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(callee_decl.identifier_token()),
+			message,
+			{});
 	}
 	if (call_info.has_receiver &&
 		!call_info.is_indirect &&
@@ -10738,10 +10762,17 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 		const std::optional<TypeSpecifierNode> receiver_arg_type =
 			buildOverloadResolutionArgType(call_info.receiver, nullptr);
 		if (receiver_arg_type.has_value() && receiver_arg_type->is_const()) {
-			throw CompileError(
+			const std::string message =
 				std::string("member function '") +
 				std::string(callee_decl.identifier_token().value()) +
-				"' cannot be called through a const receiver");
+				"' cannot be called through a const receiver";
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::NonConstCallThroughConstReceiver,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(callee_decl.identifier_token()),
+				message,
+				{});
 		}
 	}
 

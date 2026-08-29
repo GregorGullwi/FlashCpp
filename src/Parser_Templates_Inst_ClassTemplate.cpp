@@ -1800,13 +1800,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					if (filled_args_for_pattern_match.size() == size_before) {
-						throw CompileError(std::string(StringBuilder()
+						const std::string message = std::string(StringBuilder()
 							.append("Could not evaluate non-type template default for parameter ")
 							.append(std::to_string(i))
 							.append(" of '")
 							.append(template_name)
 							.append("'")
-							.commit()));
+							.commit());
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::NonTypeTemplateDefaultEvaluationFailure,
+							DiagnosticSeverity::Error,
+							SourceLocation(),
+							message,
+							{});
 					}
 				}
 			}
@@ -5025,7 +5032,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string error_msg = buildDeferredStaticAssertInstantiationError(
 						eval_result.error_message, deferred_assert.message, true);
 					if (!is_implicit_instantiation) {
-						throw CompileError(error_msg);
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::TemplateStaticAssertFailure,
+							DiagnosticSeverity::Error,
+							SourceLocation(),
+							error_msg,
+							{});
 					}
 					FLASH_LOG(Templates, Error, error_msg);
 					return std::nullopt;
@@ -5036,7 +5049,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string error_msg = buildDeferredStaticAssertInstantiationError(
 						std::string_view(), deferred_assert.message, false);
 					if (!is_implicit_instantiation) {
-						throw CompileError(error_msg);
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::TemplateStaticAssertFailure,
+							DiagnosticSeverity::Error,
+							SourceLocation(),
+							error_msg,
+							{});
 					}
 					FLASH_LOG(Templates, Error, error_msg);
 					return std::nullopt;
@@ -5211,7 +5230,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				.append("'")
 				.commit());
 			if (force_eager) {
-				throw CompileError(error_msg);
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::ExplicitInstantiationMissingPrimaryTemplate,
+					DiagnosticSeverity::Error,
+					SourceLocation(),
+					error_msg,
+					{});
 			}
 			FLASH_LOG(Templates, Error, error_msg);
 			return std::nullopt; // No template with this name
@@ -5227,7 +5252,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			.append("' is not a class template")
 			.commit());
 		if (force_eager) {
-			throw CompileError(error_msg);
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::ExplicitInstantiationNonClassTemplate,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				error_msg,
+				{});
 		}
 		FLASH_LOG(Templates, Error, error_msg);
 		return std::nullopt; // Not a class template
@@ -5868,13 +5899,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string("Could not resolve template-template default for param ") +
 					std::to_string(i) + " of '" + std::string(template_name) + "'");
 			} else {
-				throw CompileError(std::string(StringBuilder()
+				const std::string message = std::string(StringBuilder()
 					.append("Could not evaluate non-type template default for parameter ")
 					.append(std::to_string(i))
 					.append(" of '")
 					.append(template_name)
 					.append("'")
-					.commit()));
+					.commit());
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::NonTypeTemplateDefaultEvaluationFailure,
+					DiagnosticSeverity::Error,
+					SourceLocation(),
+					message,
+					{});
 			}
 		}
 	}
@@ -10478,7 +10516,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (std::optional<StringHandle> unresolved_type =
 									findUnresolvedHardUseTypeSpecifier(substituted_body);
 								unresolved_type.has_value()) {
-								throw CompileError(std::string(StringBuilder()
+								const std::string message = std::string(StringBuilder()
 									.append("Explicit instantiation left unresolved dependent type '")
 									.append(unresolved_type->isValid()
 										? StringTable::getStringView(*unresolved_type)
@@ -10486,7 +10524,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									.append("' in member function '")
 									.append(decl.identifier_token().value())
 									.append("'")
-									.commit()));
+									.commit());
+								throw makeStructuredCompileError(
+									context_.diagnostics(),
+									DiagnosticId::ExplicitInstantiationUnresolvedType,
+									DiagnosticSeverity::Error,
+									SourceLocation::fromToken(decl.identifier_token()),
+									message,
+									{});
 							}
 						}
 						new_func_ref.set_definition(substituted_body);
@@ -13141,7 +13186,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::string error_msg = buildDeferredStaticAssertInstantiationError(
 				eval_result.error_message, deferred_assert.message, true);
 			if (force_eager) {
-				throw CompileError(error_msg);
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::TemplateStaticAssertFailure,
+					DiagnosticSeverity::Error,
+					SourceLocation(),
+					error_msg,
+					{});
 			}
 			FLASH_LOG(Templates, Error, error_msg);
 			return std::nullopt;
@@ -13152,7 +13203,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::string error_msg = buildDeferredStaticAssertInstantiationError(
 				std::string_view(), deferred_assert.message, false);
 			if (force_eager) {
-				throw CompileError(error_msg);
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::TemplateStaticAssertFailure,
+					DiagnosticSeverity::Error,
+					SourceLocation(),
+					error_msg,
+					{});
 			}
 			FLASH_LOG(Templates, Error, error_msg);
 			return std::nullopt;

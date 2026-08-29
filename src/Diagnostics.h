@@ -104,6 +104,9 @@ enum class DiagnosticId : uint32_t {
 	ConstantExpressionNonConstexprCall = 1218,
 	ConstantExpressionThrow = 1219,
 	ConstantExpressionHeapAllocationLeak = 1220,
+	ConstantExpressionNonAggregateInitialization = 1221,
+	ConstantExpressionNoMatchingConstructor = 1222,
+	ConstantExpressionEvaluationLimit = 1223,
 
 	// Operator family (1301..1399).
 	FloatingPointModuloOperator = 1301,
@@ -156,6 +159,7 @@ enum class DiagnosticId : uint32_t {
 	AssignmentRequiresModifiableLvalue = 1610,
 	AddressOfNonLvalue = 1611,
 	InvalidArrayToScalarInitialization = 1612,
+	StructuredBindingTupleLikeProtocolFailure = 1613,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -167,6 +171,7 @@ enum class DiagnosticId : uint32_t {
 	NonStaticMemberFunctionCall = 1707,
 	NoViableMemberFunctionTemplateCall = 1708,
 	NoViableCallOperator = 1709,
+	NonConstCallThroughConstReceiver = 1710,
 
 	// Template and lookup family (1801..1899).
 	NonDependentNameNotDeclaredBeforeTemplateDefinition = 1801,
@@ -175,6 +180,11 @@ enum class DiagnosticId : uint32_t {
 	MissingTemplateKeyword = 1804,
 	ReferenceNonTypeTemplateParameterUnsupported = 1805,
 	InvalidSizeofPackOperand = 1806,
+	ExplicitInstantiationUnresolvedType = 1807,
+	ExplicitInstantiationMissingPrimaryTemplate = 1808,
+	ExplicitInstantiationNonClassTemplate = 1809,
+	TemplateStaticAssertFailure = 1810,
+	NonTypeTemplateDefaultEvaluationFailure = 1811,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -249,6 +259,12 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstantExpressionThrow";
 	case DiagnosticId::ConstantExpressionHeapAllocationLeak:
 		return "ConstantExpressionHeapAllocationLeak";
+	case DiagnosticId::ConstantExpressionNonAggregateInitialization:
+		return "ConstantExpressionNonAggregateInitialization";
+	case DiagnosticId::ConstantExpressionNoMatchingConstructor:
+		return "ConstantExpressionNoMatchingConstructor";
+	case DiagnosticId::ConstantExpressionEvaluationLimit:
+		return "ConstantExpressionEvaluationLimit";
 	case DiagnosticId::FloatingPointModuloOperator:
 		return "FloatingPointModuloOperator";
 	case DiagnosticId::FloatingPointBitwiseCompoundAssignment:
@@ -337,6 +353,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AddressOfNonLvalue";
 	case DiagnosticId::InvalidArrayToScalarInitialization:
 		return "InvalidArrayToScalarInitialization";
+	case DiagnosticId::StructuredBindingTupleLikeProtocolFailure:
+		return "StructuredBindingTupleLikeProtocolFailure";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
@@ -355,6 +373,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "NoViableMemberFunctionTemplateCall";
 	case DiagnosticId::NoViableCallOperator:
 		return "NoViableCallOperator";
+	case DiagnosticId::NonConstCallThroughConstReceiver:
+		return "NonConstCallThroughConstReceiver";
 	case DiagnosticId::NonDependentNameNotDeclaredBeforeTemplateDefinition:
 		return "NonDependentNameNotDeclaredBeforeTemplateDefinition";
 	case DiagnosticId::PartialSpecializationParameterListInvalid:
@@ -367,6 +387,16 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ReferenceNonTypeTemplateParameterUnsupported";
 	case DiagnosticId::InvalidSizeofPackOperand:
 		return "InvalidSizeofPackOperand";
+	case DiagnosticId::ExplicitInstantiationUnresolvedType:
+		return "ExplicitInstantiationUnresolvedType";
+	case DiagnosticId::ExplicitInstantiationMissingPrimaryTemplate:
+		return "ExplicitInstantiationMissingPrimaryTemplate";
+	case DiagnosticId::ExplicitInstantiationNonClassTemplate:
+		return "ExplicitInstantiationNonClassTemplate";
+	case DiagnosticId::TemplateStaticAssertFailure:
+		return "TemplateStaticAssertFailure";
+	case DiagnosticId::NonTypeTemplateDefaultEvaluationFailure:
+		return "NonTypeTemplateDefaultEvaluationFailure";
 	case DiagnosticId::None:
 	default:
 		return "None";
