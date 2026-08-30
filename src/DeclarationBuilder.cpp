@@ -4,6 +4,25 @@
 #include "CompileError.h"
 #include "SymbolTable.h"
 
+PreparedFunctionPublication::PreparedFunctionPublication(
+	PublishStatus status,
+	EntityId entity_id,
+	ScopeId lexical_scope_id,
+	OwnerId owner_id,
+	StringHandle name,
+	TypeId signature_id,
+	TypeId return_type_id,
+	uint8_t flags)
+	: status_(status)
+	, entity_id_(entity_id)
+	, lexical_scope_id_(lexical_scope_id)
+	, owner_id_(owner_id)
+	, name_(name)
+	, signature_id_(signature_id)
+	, return_type_id_(return_type_id)
+	, flags_(flags) {
+}
+
 PublishResult DeclarationBuilder::makeRejected(EntityId existing_entity) {
 	return PublishResult{PublishStatus::Rejected, DeclId{}, existing_entity};
 }
@@ -111,56 +130,33 @@ const EntityRecord& DeclarationBuilder::entity(EntityId entity_id) const {
 	return entities_[entity_id.value - 1];
 }
 
-DeclarationBuilder::Checkpoint DeclarationBuilder::mark() const {
-	Checkpoint checkpoint;
-	checkpoint.declaration_count = declarations_.size();
-	checkpoint.entity_count = entities_.size();
-	checkpoint.entities.reserve(checkpoint.entity_count);
-	for (std::size_t index = 0; index < entities_.size(); ++index) {
-		checkpoint.entities.push_back(entities_[index]);
-	}
-	checkpoint.declarator_types = declarator_type_canon_;
-	checkpoint.parameter_lists = parameter_list_ids_;
-	return checkpoint;
-}
-
-void DeclarationBuilder::rebuildEntityLookupFromEntities() {
-	entity_by_key_.clear();
-	for (const EntityRecord& entity : entities_) {
-		const EntityLookupKey key{
-			entity.owner_id.value,
-			entity.name.handle,
-			entity.signature_id.value};
-		entity_by_key_.emplace(key, entity.id);
-	}
-}
-
-void DeclarationBuilder::rollbackTo(const Checkpoint& checkpoint) {
-	while (declarations_.size() > checkpoint.declaration_count) {
-		declarations_.pop_back();
-	}
-	while (entities_.size() > checkpoint.entity_count) {
-		entities_.pop_back();
-	}
-	for (std::size_t index = 0; index < checkpoint.entity_count; ++index) {
-		entities_[index] = checkpoint.entities[index];
-	}
-	declarator_type_canon_ = checkpoint.declarator_types;
-	parameter_list_ids_ = checkpoint.parameter_lists;
-	rebuildEntityLookupFromEntities();
-}
-
-PublishResult DeclarationBuilder::classifyPublishFunction(
+PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 	const FunctionDeclRequest& request,
 	const SymbolTable& symbol_table) const {
 	if (!isValidRequest(request)) {
-		return makeRejected(EntityId{});
+		return PreparedFunctionPublication(
+			PublishStatus::Rejected,
+			EntityId{},
+			ScopeId{},
+			OwnerId{},
+			StringHandle{},
+			TypeId{},
+			TypeId{},
+			0);
 	}
 
 	const std::optional<PublicationTarget> target =
 		resolvePublicationTarget(symbol_table, request.lexical_scope_id);
 	if (!target.has_value()) {
-		return makeRejected(EntityId{});
+		return PreparedFunctionPublication(
+			PublishStatus::Rejected,
+			EntityId{},
+			ScopeId{},
+			OwnerId{},
+			StringHandle{},
+			TypeId{},
+			TypeId{},
+			0);
 	}
 
 	const EntityLookupKey key{
@@ -171,73 +167,103 @@ PublishResult DeclarationBuilder::classifyPublishFunction(
 	const uint8_t incoming_flags = requestFlags(request);
 	const auto existing = entity_by_key_.find(key);
 	if (existing == entity_by_key_.end()) {
-		return PublishResult{PublishStatus::Created, DeclId{}, EntityId{}};
+		return PreparedFunctionPublication(
+			PublishStatus::Created,
+			EntityId{},
+			request.lexical_scope_id,
+			target->owner_id,
+			request.name,
+			request.signature_id,
+			request.return_type_id,
+			incoming_flags);
 	}
 
 	const EntityRecord& live_entity = entities_[existing->second.value - 1];
 	const EntityId entity_id = live_entity.id;
 
 	if (live_entity.return_type_id != request.return_type_id) {
-		return makeRejected(entity_id);
+		return PreparedFunctionPublication(
+			PublishStatus::Rejected,
+			entity_id,
+			ScopeId{},
+			OwnerId{},
+			StringHandle{},
+			TypeId{},
+			TypeId{},
+			0);
 	}
 
 	const bool prior_constexpr = hasFlag(live_entity.flags, DeclarationFlags::IsConstexpr);
 	if (prior_constexpr != request.is_constexpr) {
-		return makeRejected(entity_id);
+		return PreparedFunctionPublication(
+			PublishStatus::Rejected,
+			entity_id,
+			ScopeId{},
+			OwnerId{},
+			StringHandle{},
+			TypeId{},
+			TypeId{},
+			0);
 	}
 
 	const bool prior_definition = hasFlag(live_entity.flags, DeclarationFlags::IsDefinition);
 	if (request.is_definition && prior_definition) {
-		return makeRejected(entity_id);
+		return PreparedFunctionPublication(
+			PublishStatus::Rejected,
+			entity_id,
+			ScopeId{},
+			OwnerId{},
+			StringHandle{},
+			TypeId{},
+			TypeId{},
+			0);
 	}
 
 	const bool prior_inline = hasFlag(live_entity.flags, DeclarationFlags::IsInline);
 	if (request.is_inline && prior_definition && !prior_inline) {
-		return makeRejected(entity_id);
+		return PreparedFunctionPublication(
+			PublishStatus::Rejected,
+			entity_id,
+			ScopeId{},
+			OwnerId{},
+			StringHandle{},
+			TypeId{},
+			TypeId{},
+			0);
 	}
 
-	return PublishResult{PublishStatus::MergedRedeclaration, DeclId{}, entity_id};
+	return PreparedFunctionPublication(
+		PublishStatus::MergedRedeclaration,
+		entity_id,
+		request.lexical_scope_id,
+		target->owner_id,
+		request.name,
+		request.signature_id,
+		request.return_type_id,
+		incoming_flags);
 }
 
-PublishResult DeclarationBuilder::publishFunction(
-	const FunctionDeclRequest& request,
-	const SymbolTable& symbol_table) {
-	const PublishResult classification = classifyPublishFunction(request, symbol_table);
-	if (classification.status == PublishStatus::Rejected) {
-		return classification;
-	}
-	return commitClassifiedPublishFunction(classification, request, symbol_table);
-}
-
-PublishResult DeclarationBuilder::commitClassifiedPublishFunction(
-	const PublishResult& classification,
-	const FunctionDeclRequest& request,
-	const SymbolTable& symbol_table) {
-	if (classification.status == PublishStatus::Rejected) {
-		return classification;
-	}
-
-	const std::optional<PublicationTarget> target =
-		resolvePublicationTarget(symbol_table, request.lexical_scope_id);
-	if (!target.has_value()) {
-		return makeRejected(EntityId{});
+PublishResult DeclarationBuilder::commitFunctionPublication(
+	const PreparedFunctionPublication& prepared,
+	PublicationTransaction& transaction) {
+	if (prepared.isRejected()) {
+		return prepared.rejection();
 	}
 
 	const EntityLookupKey key{
-		target->owner_id.value,
-		request.name.handle,
-		request.signature_id.value};
+		prepared.owner_id_.value,
+		prepared.name_.handle,
+		prepared.signature_id_.value};
 
-	const uint8_t incoming_flags = requestFlags(request);
-	if (classification.status == PublishStatus::Created) {
+	if (prepared.status_ == PublishStatus::Created) {
 		EntityRecord entity_record{};
-		entity_record.owner_id = target->owner_id;
-		entity_record.name = request.name;
-		entity_record.signature_id = request.signature_id;
-		entity_record.return_type_id = request.return_type_id;
+		entity_record.owner_id = prepared.owner_id_;
+		entity_record.name = prepared.name_;
+		entity_record.signature_id = prepared.signature_id_;
+		entity_record.return_type_id = prepared.return_type_id_;
 		entity_record.kind = static_cast<uint8_t>(DeclKind::Function);
 		entity_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
-		entity_record.flags = incoming_flags;
+		entity_record.flags = prepared.flags_;
 		entity_record.reserved = 0;
 
 		const EntityId entity_id = allocateEntity(entity_record);
@@ -245,13 +271,13 @@ PublishResult DeclarationBuilder::commitClassifiedPublishFunction(
 		DeclarationRecord decl_record{};
 		decl_record.entity_id = entity_id;
 		decl_record.previous_decl_id = DeclId{};
-		decl_record.lexical_scope_id = request.lexical_scope_id;
-		decl_record.name = request.name;
-		decl_record.signature_id = request.signature_id;
-		decl_record.return_type_id = request.return_type_id;
+		decl_record.lexical_scope_id = prepared.lexical_scope_id_;
+		decl_record.name = prepared.name_;
+		decl_record.signature_id = prepared.signature_id_;
+		decl_record.return_type_id = prepared.return_type_id_;
 		decl_record.kind = static_cast<uint8_t>(DeclKind::Function);
 		decl_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
-		decl_record.flags = incoming_flags;
+		decl_record.flags = prepared.flags_;
 		decl_record.reserved = 0;
 
 		DeclId decl_id{};
@@ -260,6 +286,7 @@ PublishResult DeclarationBuilder::commitClassifiedPublishFunction(
 			EntityRecord& live_entity = entities_[entity_id.value - 1];
 			live_entity.first_decl_id = decl_id;
 			live_entity.latest_decl_id = decl_id;
+			transaction.noteEntityLookupInsert(key);
 			entity_by_key_.emplace(key, entity_id);
 		} catch (...) {
 			if (decl_id) {
@@ -272,31 +299,45 @@ PublishResult DeclarationBuilder::commitClassifiedPublishFunction(
 		return PublishResult{PublishStatus::Created, decl_id, entity_id};
 	}
 
-	EntityRecord& live_entity = entities_[classification.entity_id.value - 1];
+	EntityRecord& live_entity = entities_[prepared.entity_id_.value - 1];
 	const EntityId entity_id = live_entity.id;
+	transaction.noteEntityMutation(entity_id, live_entity);
 
 	DeclarationRecord decl_record{};
 	decl_record.entity_id = entity_id;
 	decl_record.previous_decl_id = live_entity.latest_decl_id;
-	decl_record.lexical_scope_id = request.lexical_scope_id;
-	decl_record.name = request.name;
-	decl_record.signature_id = request.signature_id;
-	decl_record.return_type_id = request.return_type_id;
+	decl_record.lexical_scope_id = prepared.lexical_scope_id_;
+	decl_record.name = prepared.name_;
+	decl_record.signature_id = prepared.signature_id_;
+	decl_record.return_type_id = prepared.return_type_id_;
 	decl_record.kind = static_cast<uint8_t>(DeclKind::Function);
 	decl_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
-	decl_record.flags = incoming_flags;
+	decl_record.flags = prepared.flags_;
 	decl_record.reserved = 0;
 
 	const DeclId decl_id = allocateDeclaration(decl_record);
 	live_entity.latest_decl_id = decl_id;
-	if (request.is_definition) {
+	if (hasFlag(prepared.flags_, DeclarationFlags::IsDefinition)) {
 		live_entity.flags = static_cast<uint8_t>(live_entity.flags | DeclarationFlags::IsDefinition);
 	}
-	if (request.is_inline || request.is_constexpr) {
+	if (hasFlag(prepared.flags_, DeclarationFlags::IsInline)) {
 		live_entity.flags = static_cast<uint8_t>(live_entity.flags | DeclarationFlags::IsInline);
 	}
 
 	return PublishResult{PublishStatus::MergedRedeclaration, decl_id, entity_id};
+}
+
+PublishResult DeclarationBuilder::publishFunction(
+	const FunctionDeclRequest& request,
+	const SymbolTable& symbol_table) {
+	const PreparedFunctionPublication prepared = prepareFunctionPublication(request, symbol_table);
+	if (prepared.isRejected()) {
+		return prepared.rejection();
+	}
+	PublicationTransaction transaction(*this);
+	const PublishResult result = commitFunctionPublication(prepared, transaction);
+	transaction.commit();
+	return result;
 }
 
 TypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
@@ -311,7 +352,8 @@ TypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_sp
 
 TypeId DeclarationBuilder::internParameterListSignature(
 	std::span<const ASTNode> parameter_nodes,
-	bool is_variadic) {
+	bool is_variadic,
+	PublicationTransaction* transaction) {
 	ParameterListKey key;
 	key.is_variadic = is_variadic;
 	key.param_type_ids.reserve(parameter_nodes.size());
@@ -326,6 +368,9 @@ TypeId DeclarationBuilder::internParameterListSignature(
 	}
 
 	const TypeId signature_id{static_cast<uint32_t>(parameter_list_ids_.size() + 1)};
+	if (transaction != nullptr) {
+		transaction->noteParameterListInsert(key);
+	}
 	parameter_list_ids_.emplace(std::move(key), signature_id);
 	return signature_id;
 }
@@ -340,8 +385,32 @@ FunctionDeclRequest buildFreeFunctionDeclRequest(
 	request.name = func_decl.decl_node().identifier_token().handle();
 	request.signature_id = builder.internParameterListSignature(
 		func_decl.parameter_nodes(),
-		func_decl.is_variadic());
-	request.return_type_id = builder.internDeclaratorType(func_decl.decl_node().type_specifier_node());
+		func_decl.is_variadic(),
+		nullptr);
+	request.return_type_id =
+		builder.internDeclaratorType(func_decl.decl_node().type_specifier_node());
+	request.language_linkage = LanguageLinkage::CPlusPlus;
+	request.is_definition = is_definition;
+	request.is_inline = func_decl.is_inline();
+	request.is_constexpr = func_decl.is_constexpr();
+	return request;
+}
+
+FunctionDeclRequest buildFreeFunctionDeclRequest(
+	DeclarationBuilder& builder,
+	PublicationTransaction& transaction,
+	const FunctionDeclarationNode& func_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition) {
+	FunctionDeclRequest request{};
+	request.lexical_scope_id = lexical_scope_id;
+	request.name = func_decl.decl_node().identifier_token().handle();
+	request.signature_id = builder.internParameterListSignature(
+		func_decl.parameter_nodes(),
+		func_decl.is_variadic(),
+		&transaction);
+	request.return_type_id =
+		builder.internDeclaratorType(func_decl.decl_node().type_specifier_node());
 	request.language_linkage = LanguageLinkage::CPlusPlus;
 	request.is_definition = is_definition;
 	request.is_inline = func_decl.is_inline();
@@ -378,31 +447,80 @@ PublishResult publishParserFreeFunction(
 
 PublicationTransaction::PublicationTransaction(DeclarationBuilder& builder)
 	: builder_(builder)
-	, checkpoint_(builder.mark()) {
+	, checkpoint_{
+		  builder.declarations_.size(),
+		  builder.entities_.size(),
+		  builder.declarator_type_canon_.size()} {
+	if (builder.active_publication_transactions_ != 0) {
+		throw InternalError("PublicationTransaction: nested transactions are forbidden");
+	}
+	++builder.active_publication_transactions_;
+	registered_ = true;
 }
 
-PublicationTransaction::~PublicationTransaction() {
+PublicationTransaction::~PublicationTransaction() noexcept {
 	if (!committed_ && !rolled_back_) {
 		rollback();
 	}
+	if (registered_) {
+		--builder_.active_publication_transactions_;
+	}
 }
 
-void PublicationTransaction::commit() {
+void PublicationTransaction::commit() noexcept {
 	committed_ = true;
+	if (registered_) {
+		--builder_.active_publication_transactions_;
+		registered_ = false;
+	}
 }
 
-void PublicationTransaction::rollback() {
-	builder_.rollbackTo(checkpoint_);
+void PublicationTransaction::rollback() noexcept {
+	if (rolled_back_ || committed_) {
+		return;
+	}
+
+	while (builder_.declarations_.size() > checkpoint_.declaration_count) {
+		builder_.declarations_.pop_back();
+	}
+
+	if (entity_undo_.has_value()) {
+		EntityRecord& live_entity = builder_.entities_[entity_undo_->id.value - 1];
+		live_entity = entity_undo_->previous;
+	}
+
+	while (builder_.entities_.size() > checkpoint_.entity_count) {
+		builder_.entities_.pop_back();
+	}
+
+	if (inserted_entity_lookup_.has_value()) {
+		builder_.entity_by_key_.erase(*inserted_entity_lookup_);
+	}
+
+	while (builder_.declarator_type_canon_.size() > checkpoint_.declarator_type_count) {
+		builder_.declarator_type_canon_.pop_back();
+	}
+
+	for (const DeclarationBuilder::ParameterListKey& key : inserted_parameter_lists_) {
+		builder_.parameter_list_ids_.erase(key);
+	}
+
 	rolled_back_ = true;
 }
 
-namespace {
-
-PublishResult publicationTransactionFailure(EntityId entity_id) {
-	return PublishResult{PublishStatus::Rejected, DeclId{}, entity_id};
+void PublicationTransaction::noteEntityMutation(EntityId entity_id, const EntityRecord& previous) {
+	if (!entity_undo_.has_value()) {
+		entity_undo_ = EntityUndo{entity_id, previous};
+	}
 }
 
-} // namespace
+void PublicationTransaction::noteEntityLookupInsert(const DeclarationBuilder::EntityLookupKey& key) {
+	inserted_entity_lookup_ = key;
+}
+
+void PublicationTransaction::noteParameterListInsert(const DeclarationBuilder::ParameterListKey& key) {
+	inserted_parameter_lists_.push_back(key);
+}
 
 PublishResult commitParserFreeFunctionPublication(
 	DeclarationBuilder& builder,
@@ -411,30 +529,20 @@ PublishResult commitParserFreeFunctionPublication(
 	bool is_definition,
 	const SymbolTable& symbol_table) {
 	PublicationTransaction transaction(builder);
-	const FunctionDeclRequest request =
-		buildFreeFunctionDeclRequest(builder, func_decl, lexical_scope_id, is_definition);
-	const PublishResult classified = builder.classifyPublishFunction(request, symbol_table);
-	if (classified.status == PublishStatus::Rejected) {
+	const FunctionDeclRequest request = buildFreeFunctionDeclRequest(
+		builder,
+		transaction,
+		func_decl,
+		lexical_scope_id,
+		is_definition);
+	const PreparedFunctionPublication prepared =
+		builder.prepareFunctionPublication(request, symbol_table);
+	if (prepared.isRejected()) {
 		transaction.rollback();
-		return classified;
+		return prepared.rejection();
 	}
 
-	const PublishResult committed =
-		builder.commitClassifiedPublishFunction(classified, request, symbol_table);
-	if (committed.status == PublishStatus::Rejected) {
-		transaction.rollback();
-		return committed;
-	}
-	if (committed.status != classified.status) {
-		transaction.rollback();
-		return publicationTransactionFailure(classified.entity_id);
-	}
-	if (classified.status == PublishStatus::MergedRedeclaration &&
-		committed.entity_id != classified.entity_id) {
-		transaction.rollback();
-		return publicationTransactionFailure(classified.entity_id);
-	}
-
+	const PublishResult result = builder.commitFunctionPublication(prepared, transaction);
 	transaction.commit();
-	return committed;
+	return result;
 }

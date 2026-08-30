@@ -15,6 +15,7 @@
 
 class ASTNode;
 class FunctionDeclarationNode;
+class PublicationTransaction;
 class SymbolTable;
 class TypeSpecifierNode;
 
@@ -118,7 +119,46 @@ inline constexpr uint8_t IsInline = 1u << 1;
 inline constexpr uint8_t IsConstexpr = 1u << 2;
 }
 
+class PreparedFunctionPublication {
+	friend class DeclarationBuilder;
+
+	PreparedFunctionPublication(
+		PublishStatus status,
+		EntityId entity_id,
+		ScopeId lexical_scope_id,
+		OwnerId owner_id,
+		StringHandle name,
+		TypeId signature_id,
+		TypeId return_type_id,
+		uint8_t flags);
+
+public:
+	PreparedFunctionPublication() = delete;
+	PreparedFunctionPublication(const PreparedFunctionPublication&) = default;
+	PreparedFunctionPublication& operator=(const PreparedFunctionPublication&) = default;
+
+	bool isRejected() const {
+		return status_ == PublishStatus::Rejected;
+	}
+
+	PublishResult rejection() const {
+		return PublishResult{status_, DeclId{}, entity_id_};
+	}
+
+private:
+	PublishStatus status_ = PublishStatus::Rejected;
+	EntityId entity_id_;
+	ScopeId lexical_scope_id_;
+	OwnerId owner_id_;
+	StringHandle name_;
+	TypeId signature_id_;
+	TypeId return_type_id_;
+	uint8_t flags_ = 0;
+};
+
 class DeclarationBuilder {
+	friend class PublicationTransaction;
+
 public:
 	static constexpr uint32_t kDeclarationArenaChunkSize = 64;
 	static constexpr uint32_t kEntityArenaChunkSize = 64;
@@ -133,22 +173,22 @@ public:
 
 	PublishResult publishFunction(const FunctionDeclRequest& request, const SymbolTable& symbol_table);
 
-	// Read-only merge decision for preflight publication. Does not mutate
-	// declaration, entity, or telemetry intern registries.
-	PublishResult classifyPublishFunction(
+	PreparedFunctionPublication prepareFunctionPublication(
 		const FunctionDeclRequest& request,
 		const SymbolTable& symbol_table) const;
 
-	PublishResult commitClassifiedPublishFunction(
-		const PublishResult& classification,
-		const FunctionDeclRequest& request,
-		const SymbolTable& symbol_table);
+	PublishResult commitFunctionPublication(
+		const PreparedFunctionPublication& prepared,
+		PublicationTransaction& transaction);
 
 	// Telemetry-only opaque keys until architecture boundary 3A canonical types.
 	// Uses TypeSpecifierNode::matches_signature(), which does not compare nested
 	// FunctionSignature payloads; do not use for merge authority.
 	TypeId internDeclaratorType(const TypeSpecifierNode& type_spec);
-	TypeId internParameterListSignature(std::span<const ASTNode> parameter_nodes, bool is_variadic);
+	TypeId internParameterListSignature(
+		std::span<const ASTNode> parameter_nodes,
+		bool is_variadic,
+		PublicationTransaction* transaction);
 
 	const DeclarationRecord& declaration(DeclId decl_id) const;
 	const EntityRecord& entity(EntityId entity_id) const;
@@ -159,6 +199,14 @@ public:
 
 	std::size_t entityCount() const {
 		return entities_.size();
+	}
+
+	std::size_t telemetryDeclaratorInternCount() const {
+		return declarator_type_canon_.size();
+	}
+
+	std::size_t telemetryParameterListInternCount() const {
+		return parameter_list_ids_.size();
 	}
 
 private:
@@ -201,19 +249,6 @@ private:
 		}
 	};
 
-public:
-	struct Checkpoint {
-		std::size_t declaration_count = 0;
-		std::size_t entity_count = 0;
-		std::vector<EntityRecord> entities;
-		std::vector<TypeSpecifierNode> declarator_types;
-		std::unordered_map<ParameterListKey, TypeId, ParameterListKeyHash> parameter_lists;
-	};
-
-	Checkpoint mark() const;
-	void rollbackTo(const Checkpoint& checkpoint);
-
-private:
 	static PublishResult makeRejected(EntityId existing_entity);
 	static uint8_t requestFlags(const FunctionDeclRequest& request);
 	static bool hasFlag(uint8_t flags, uint8_t bit);
@@ -230,30 +265,57 @@ private:
 	std::unordered_map<EntityLookupKey, EntityId, EntityLookupKeyHash> entity_by_key_;
 	std::vector<TypeSpecifierNode> declarator_type_canon_;
 	std::unordered_map<ParameterListKey, TypeId, ParameterListKeyHash> parameter_list_ids_;
+	std::uint32_t active_publication_transactions_ = 0;
+};
 
-	void rebuildEntityLookupFromEntities();
+struct DeclarationBuilderCheckpoint {
+	std::size_t declaration_count = 0;
+	std::size_t entity_count = 0;
+	std::size_t declarator_type_count = 0;
+};
+
+struct EntityUndo {
+	EntityId id;
+	EntityRecord previous;
 };
 
 class PublicationTransaction {
+	friend class DeclarationBuilder;
+
 public:
 	explicit PublicationTransaction(DeclarationBuilder& builder);
-	~PublicationTransaction();
+	~PublicationTransaction() noexcept;
 
 	PublicationTransaction(const PublicationTransaction&) = delete;
 	PublicationTransaction& operator=(const PublicationTransaction&) = delete;
 
-	void commit();
-	void rollback();
+	void commit() noexcept;
+	void rollback() noexcept;
 
 private:
+	void noteEntityMutation(EntityId entity_id, const EntityRecord& previous);
+	void noteEntityLookupInsert(const DeclarationBuilder::EntityLookupKey& key);
+	void noteParameterListInsert(const DeclarationBuilder::ParameterListKey& key);
+
 	DeclarationBuilder& builder_;
-	DeclarationBuilder::Checkpoint checkpoint_;
+	DeclarationBuilderCheckpoint checkpoint_;
+	std::optional<EntityUndo> entity_undo_;
+	std::optional<DeclarationBuilder::EntityLookupKey> inserted_entity_lookup_;
+	std::vector<DeclarationBuilder::ParameterListKey> inserted_parameter_lists_;
 	bool committed_ = false;
 	bool rolled_back_ = false;
+	bool registered_ = false;
 };
 
 FunctionDeclRequest buildFreeFunctionDeclRequest(
 	DeclarationBuilder& builder,
+	const FunctionDeclarationNode& func_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition);
+
+FunctionDeclRequest buildFreeFunctionDeclRequest(
+	DeclarationBuilder& builder,
+	PublicationTransaction& transaction,
 	const FunctionDeclarationNode& func_decl,
 	ScopeId lexical_scope_id,
 	bool is_definition);
@@ -268,9 +330,9 @@ PublishResult publishParserFreeFunction(
 	bool is_definition,
 	const SymbolTable& symbol_table);
 
-// Build request, classify once, and commit through a publication transaction.
+// Build request, prepare once, and commit through a publication transaction.
 // SymbolTable insert must already have succeeded. SymbolTable remains lookup
-// authority when classify rejects after insert.
+// authority when prepare rejects after insert.
 PublishResult commitParserFreeFunctionPublication(
 	DeclarationBuilder& builder,
 	const FunctionDeclarationNode& func_decl,
