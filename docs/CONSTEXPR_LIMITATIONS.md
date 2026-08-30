@@ -12,6 +12,7 @@ FlashCpp implements a custom constexpr evaluator used for `static_assert`, templ
 - All primitive types (`bool`, `char`, `signed/unsigned char/short/int/long/long long`, `float`, `double`, `long double`) as constexpr variables and in arithmetic/comparisons.
 - Mixed-type arithmetic follows C++ usual arithmetic conversions.
 - Unsigned wrapping at the declared type's width (`unsigned int`, `unsigned char`, etc.) for arithmetic and all compound-assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`), including `++`/`--`.
+- Signed overflow rejection at the promoted operand width (`int`, `short`, etc.) under C++20 [expr.const]/4, including unary negation of the type minimum and `INT_MIN / -1`.
 - Shift-count validation against the promoted left-operand width.
 - C-style casts and `static_cast` / cv-only `const_cast` inside constexpr function bodies, including discard-value `void` casts (`(void)expr`, `static_cast<void>(expr)`).
 - `sizeof(expr)` and `alignof(expr)` for common expression operands.

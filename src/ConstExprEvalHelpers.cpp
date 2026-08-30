@@ -1197,6 +1197,57 @@ unsigned long long apply_uint_type_mask(
 	return value & ((1ULL << bits) - 1);
 }
 
+int get_integer_type_width_bits(const std::optional<TypeSpecifierNode>& type_opt) {
+	if (!type_opt.has_value()) {
+		return kDefaultShiftWidthBits;
+	}
+	const int bits = type_opt->size_in_bits();
+	if (bits <= 0 || bits >= kDefaultShiftWidthBits) {
+		return kDefaultShiftWidthBits;
+	}
+	return bits;
+}
+
+long long signed_type_min_for_width(int width_bits) {
+	if (width_bits <= 0 || width_bits >= kDefaultShiftWidthBits) {
+		return LLONG_MIN;
+	}
+	return -(1LL << (width_bits - 1));
+}
+
+long long signed_type_max_for_width(int width_bits) {
+	if (width_bits <= 0 || width_bits >= kDefaultShiftWidthBits) {
+		return LLONG_MAX;
+	}
+	return (1LL << (width_bits - 1)) - 1;
+}
+
+bool signed_value_fits_width(long long value, int width_bits) {
+	return value >= signed_type_min_for_width(width_bits) &&
+		   value <= signed_type_max_for_width(width_bits);
+}
+
+long long truncate_signed_to_width(long long value, int width_bits) {
+	if (width_bits <= 0 || width_bits >= kDefaultShiftWidthBits) {
+		return value;
+	}
+	const unsigned long long mask = (1ULL << width_bits) - 1ULL;
+	unsigned long long truncated = static_cast<unsigned long long>(value) & mask;
+	const unsigned long long sign_bit = 1ULL << (width_bits - 1);
+	if ((truncated & sign_bit) != 0) {
+		truncated |= ~mask;
+	}
+	return static_cast<long long>(truncated);
+}
+
+bool is_signed_division_overflow(long long lhs, long long rhs, int width_bits) {
+	return rhs == -1 && lhs == signed_type_min_for_width(width_bits);
+}
+
+bool is_signed_negation_overflow(long long value, int width_bits) {
+	return value == signed_type_min_for_width(width_bits);
+}
+
 // Keep alias-chain traversal bounded so malformed/self-referential bindings do
 // not cause unbounded recursion/loops during constexpr evaluation.
 

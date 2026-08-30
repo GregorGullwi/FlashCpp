@@ -636,57 +636,68 @@ EvalResult Evaluator::apply_binary_op(
 	// uses the correct operand width (e.g. (a + b) << 33 is rejected when a, b
 	// are int).
 	const auto signed_result_type = get_binary_arithmetic_result_type(lhs, rhs);
+	const int signed_result_width_bits = get_integer_type_width_bits(signed_result_type);
 
-	const auto make_signed = [&](long long val) -> EvalResult {
-		EvalResult result = EvalResult::from_int(val);
+	const auto signed_overflow_error = []() {
+		return EvalResult::error(
+			"Signed integer overflow in constant expression",
+			EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionSignedIntegerOverflow);
+	};
+
+	const auto make_signed_truncated = [&](long long val) -> EvalResult {
+		EvalResult result = EvalResult::from_int(truncate_signed_to_width(val, signed_result_width_bits));
 		if (signed_result_type) {
 			result.set_exact_type(*signed_result_type);
 		}
 		return result;
 	};
 
+	const auto make_signed_checked = [&](long long val) -> EvalResult {
+		if (!signed_value_fits_width(val, signed_result_width_bits)) {
+			return signed_overflow_error();
+		}
+		return make_signed_truncated(val);
+	};
+
 	// Handle arithmetic operators with overflow checking
 	if (op == "+") {
 		if (auto result = safe_add(lhs_val, rhs_val)) {
-			return make_signed(*result);
-		} else {
-			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
+			return make_signed_checked(*result);
 		}
+		return signed_overflow_error();
 	} else if (op == "-") {
 		if (auto result = safe_sub(lhs_val, rhs_val)) {
-			return make_signed(*result);
-		} else {
-			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
+			return make_signed_checked(*result);
 		}
+		return signed_overflow_error();
 	} else if (op == "*") {
 		if (auto result = safe_mul(lhs_val, rhs_val)) {
-			return make_signed(*result);
-		} else {
-			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
+			return make_signed_checked(*result);
 		}
+		return signed_overflow_error();
 	} else if (op == "/") {
 		if (rhs_val == 0) {
 			return EvalResult::error("Division by zero in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionDivisionByZero);
 		}
-		// Check for overflow in division (only happens with LLONG_MIN / -1)
-		if (lhs_val == LLONG_MIN && rhs_val == -1) {
-			return EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionSignedIntegerOverflow);
+		if (is_signed_division_overflow(lhs_val, rhs_val, signed_result_width_bits)) {
+			return signed_overflow_error();
 		}
-		return make_signed(lhs_val / rhs_val);
+		return make_signed_truncated(lhs_val / rhs_val);
 	} else if (op == "%") {
 		if (rhs_val == 0) {
 			return EvalResult::error("Modulo by zero in constant expression", EvalErrorType::NotConstantExpression, DiagnosticId::ConstantExpressionModuloByZero);
 		}
-		return make_signed(lhs_val % rhs_val);
+		return make_signed_truncated(lhs_val % rhs_val);
 	}
 
 	// Handle bitwise operators
 	else if (op == "&") {
-		return make_signed(lhs_val & rhs_val);
+		return make_signed_truncated(lhs_val & rhs_val);
 	} else if (op == "|") {
-		return make_signed(lhs_val | rhs_val);
+		return make_signed_truncated(lhs_val | rhs_val);
 	} else if (op == "^") {
-		return make_signed(lhs_val ^ rhs_val);
+		return make_signed_truncated(lhs_val ^ rhs_val);
 	} else if (op == "<<") {
 		const ShiftEvaluationInfo shift_info = get_shift_evaluation_info(lhs);
 		if (auto result = safe_shl(lhs_val, rhs_val, shift_info.width_bits)) {
@@ -760,7 +771,7 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 
 	// Helper: build a signed result and propagate exact_type.
 	const auto make_sint = [&](long long val) {
-		EvalResult result = EvalResult::from_int(val);
+		EvalResult result = EvalResult::from_int(truncate_signed_to_width(val, get_integer_type_width_bits(operand.exact_type)));
 		if (operand.exact_type.has_value()) {
 			result.set_exact_type(*operand.exact_type);
 		}
@@ -783,10 +794,14 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 			// Unary minus on unsigned: wraps at declared type width (e.g. -(1u) == UINT_MAX)
 			return make_uint(static_cast<unsigned long long>(0) - operand.as_uint_raw());
 		}
-		// Check for overflow: negating LLONG_MIN overflows
+		// Check for overflow: negating the most-negative value of the operand type.
 		const long long val = operand.as_int();
-		if (val == LLONG_MIN) {
-			return EvalResult::error("Signed integer overflow in unary minus", EvalErrorType::NotConstantExpression);
+		const int operand_width_bits = get_integer_type_width_bits(operand.exact_type);
+		if (is_signed_negation_overflow(val, operand_width_bits)) {
+			return EvalResult::error(
+				"Signed integer overflow in unary minus",
+				EvalErrorType::NotConstantExpression,
+				DiagnosticId::ConstantExpressionSignedIntegerOverflow);
 		}
 		return make_sint(-val);
 	} else if (op == "+") {

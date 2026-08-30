@@ -140,6 +140,13 @@ std::optional<TypeSpecifierNode> get_binary_arithmetic_result_type(
 	const EvalResult& lhs, const EvalResult& rhs);
 unsigned long long apply_uint_type_mask(
 	unsigned long long value, const std::optional<TypeSpecifierNode>& type_opt);
+int get_integer_type_width_bits(const std::optional<TypeSpecifierNode>& type_opt);
+long long signed_type_min_for_width(int width_bits);
+long long signed_type_max_for_width(int width_bits);
+bool signed_value_fits_width(long long value, int width_bits);
+long long truncate_signed_to_width(long long value, int width_bits);
+bool is_signed_division_overflow(long long lhs, long long rhs, int width_bits);
+bool is_signed_negation_overflow(long long value, int width_bits);
 const EvalResult* findLocalBinding(std::string_view name, EvaluationContext& context);
 EvalResult* findMutableLocalBinding(std::string_view name, EvaluationContext& context);
 const EvalResult* findBindingValue(
