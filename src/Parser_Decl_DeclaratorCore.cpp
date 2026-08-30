@@ -492,7 +492,14 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		ptr_cv |= parse_cv_qualifiers();
 
 		if (type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-			return ParseResult::error("Cannot form a pointer to reference type", current_token_);
+			const std::string message = "Cannot form a pointer to reference type";
+			context_.diagnostics().report(
+				DiagnosticId::PointerToReferenceType,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				message,
+				{});
+			return ParseResult::error(message, current_token_);
 		}
 		type_spec.add_pointer_level(ptr_cv);
 	}

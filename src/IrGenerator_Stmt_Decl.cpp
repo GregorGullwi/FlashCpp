@@ -1547,7 +1547,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									.append(StringTable::getStringView(struct_info.name))
 									.append(" - default constructor is deleted")
 									.commit();
-								throw CompileError(std::string(error_msg));
+								throw makeStructuredCompileError(
+									context_->diagnostics(),
+									DiagnosticId::DeletedDefaultConstructorCall,
+									DiagnosticSeverity::Error,
+									SourceLocation::fromToken(decl.identifier_token()),
+									error_msg,
+									{});
 							}
 
 								// Check if this is a designated initializer list or aggregate initialization
@@ -1878,7 +1884,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// But first check if default constructor is deleted
 								if (num_initializers == 0 && default_constructor_is_deleted) {
 									std::string_view error_msg = StringBuilder().append("Cannot default-initialize struct ").append(StringTable::getStringView(struct_info.name)).append(" - default constructor is deleted").commit();
-									throw CompileError(std::string(error_msg));
+									throw makeStructuredCompileError(
+										context_->diagnostics(),
+										DiagnosticId::DeletedDefaultConstructorCall,
+										DiagnosticSeverity::Error,
+										SourceLocation::fromToken(decl.identifier_token()),
+										error_msg,
+										{});
 								}
 
 								// Build a map of member names to initializer expressions

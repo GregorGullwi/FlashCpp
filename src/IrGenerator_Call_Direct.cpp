@@ -428,13 +428,18 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
 	if (pre_resolved_direct_target && pre_resolved_direct_target->is_deleted()) {
-		throw CompileError(
-			std::string{
-				StringBuilder()
-					.append("Call to deleted function '"sv)
-					.append(func_name_view)
-					.append("'"sv)
-					.commit()});
+		const std::string message = std::string(StringBuilder()
+			.append("Call to deleted function '"sv)
+			.append(func_name_view)
+			.append("'"sv)
+			.commit());
+		throw makeStructuredCompileError(
+			context_->diagnostics(),
+			DiagnosticId::DeletedFunctionCall,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(callExprNode.called_from()),
+			message,
+			{});
 	}
 
 	// Check for compiler intrinsics and handle them specially
