@@ -94,6 +94,7 @@
 #include "AllocationTracker.cpp"
 #include "ParserProfilingReport.cpp"
 #include "ArenaDomains.cpp"
+#include "DeclarationBuilder.cpp"
 #endif
 
 #if defined(UNITY_SHARD_PARSER_CORE)

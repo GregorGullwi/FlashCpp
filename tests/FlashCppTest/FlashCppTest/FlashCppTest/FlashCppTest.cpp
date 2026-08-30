@@ -4314,6 +4314,188 @@ TEST_SUITE("FrontendContext") {
 		CHECK(context.scopeCount() == 4u);
 	}
 
+	TEST_CASE("DeclarationBuilder creates DeclId and EntityId for first function") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_first");
+		const FunctionDeclRequest request{
+			ScopeId{1},
+			name,
+			TypeId{10},
+			TypeId{20},
+			LanguageLinkage::CPlusPlus,
+			false,
+			false,
+			false};
+		const PublishResult result = builder.publishFunction(request);
+		CHECK(result.status == PublishStatus::Created);
+		CHECK(result.decl_id.value == 1u);
+		CHECK(result.entity_id.value == 1u);
+		CHECK(builder.declarationCount() == 1u);
+		CHECK(builder.entityCount() == 1u);
+		CHECK(context.declarationCount() == 1u);
+		CHECK(context.entityCount() == 1u);
+		CHECK(sizeof(DeclarationRecord) == 32u);
+		CHECK(sizeof(EntityRecord) == 32u);
+		const DeclarationRecord& decl = builder.declaration(result.decl_id);
+		CHECK(decl.entity_id == result.entity_id);
+		CHECK_FALSE(decl.previous_decl_id);
+		CHECK(decl.signature_id == TypeId{10});
+		CHECK(decl.return_type_id == TypeId{20});
+	}
+
+	TEST_CASE("DeclarationBuilder merges compatible function redeclaration into one EntityId") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_redecl");
+		const FunctionDeclRequest first{
+			ScopeId{1}, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult created = builder.publishFunction(first);
+		REQUIRE(created.status == PublishStatus::Created);
+
+		const FunctionDeclRequest second{
+			ScopeId{1}, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult merged = builder.publishFunction(second);
+		CHECK(merged.status == PublishStatus::MergedRedeclaration);
+		CHECK(merged.entity_id == created.entity_id);
+		CHECK(merged.decl_id.value == 2u);
+		CHECK(builder.declarationCount() == 2u);
+		CHECK(builder.entityCount() == 1u);
+
+		const DeclarationRecord& second_decl = builder.declaration(merged.decl_id);
+		CHECK(second_decl.previous_decl_id == created.decl_id);
+		const EntityRecord& entity = builder.entity(merged.entity_id);
+		CHECK(entity.first_decl_id == created.decl_id);
+		CHECK(entity.latest_decl_id == merged.decl_id);
+		CHECK((entity.flags & DeclarationFlags::IsDefinition) != 0);
+	}
+
+	TEST_CASE("DeclarationBuilder rejects duplicate function definition without committing") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_dup_def");
+		const FunctionDeclRequest first{
+			ScopeId{1}, name, TypeId{12}, TypeId{22}, LanguageLinkage::CPlusPlus, true, false, false};
+		REQUIRE(builder.publishFunction(first).status == PublishStatus::Created);
+		const std::size_t decls = builder.declarationCount();
+		const std::size_t entities = builder.entityCount();
+
+		const FunctionDeclRequest second{
+			ScopeId{1}, name, TypeId{12}, TypeId{22}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult rejected = builder.publishFunction(second);
+		CHECK(rejected.status == PublishStatus::Rejected);
+		CHECK(rejected.entity_id.value == 1u);
+		CHECK_FALSE(rejected.decl_id);
+		CHECK(builder.declarationCount() == decls);
+		CHECK(builder.entityCount() == entities);
+	}
+
+	TEST_CASE("DeclarationBuilder creates separate entities for C++ overloads") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_overload");
+		const FunctionDeclRequest first{
+			ScopeId{1}, name, TypeId{31}, TypeId{41}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest second{
+			ScopeId{1}, name, TypeId{32}, TypeId{41}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult a = builder.publishFunction(first);
+		const PublishResult b = builder.publishFunction(second);
+		CHECK(a.status == PublishStatus::Created);
+		CHECK(b.status == PublishStatus::Created);
+		CHECK(a.entity_id != b.entity_id);
+		CHECK(builder.entityCount() == 2u);
+	}
+
+	TEST_CASE("DeclarationBuilder rejects return-type conflict on same signature") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_ret_conflict");
+		const FunctionDeclRequest first{
+			ScopeId{1}, name, TypeId{33}, TypeId{50}, LanguageLinkage::CPlusPlus, false, false, false};
+		REQUIRE(builder.publishFunction(first).status == PublishStatus::Created);
+		const std::size_t decls = builder.declarationCount();
+
+		const FunctionDeclRequest conflict{
+			ScopeId{1}, name, TypeId{33}, TypeId{51}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult rejected = builder.publishFunction(conflict);
+		CHECK(rejected.status == PublishStatus::Rejected);
+		CHECK(builder.declarationCount() == decls);
+	}
+
+	TEST_CASE("DeclarationBuilder requires matching constexpr on redeclaration") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_constexpr");
+		const FunctionDeclRequest first{
+			ScopeId{1}, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, false, false, true};
+		REQUIRE(builder.publishFunction(first).status == PublishStatus::Created);
+
+		const FunctionDeclRequest mismatch{
+			ScopeId{1}, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, false, false, false};
+		CHECK(builder.publishFunction(mismatch).status == PublishStatus::Rejected);
+
+		const FunctionDeclRequest match{
+			ScopeId{1}, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, true, false, true};
+		const PublishResult merged = builder.publishFunction(match);
+		CHECK(merged.status == PublishStatus::MergedRedeclaration);
+		CHECK((builder.entity(merged.entity_id).flags & DeclarationFlags::IsInline) != 0);
+		CHECK((builder.entity(merged.entity_id).flags & DeclarationFlags::IsConstexpr) != 0);
+	}
+
+	TEST_CASE("DeclarationBuilder rejects inline after non-inline definition") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_inline_order");
+		const FunctionDeclRequest definition{
+			ScopeId{1}, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, true, false, false};
+		REQUIRE(builder.publishFunction(definition).status == PublishStatus::Created);
+		const std::size_t decls = builder.declarationCount();
+
+		const FunctionDeclRequest inline_after{
+			ScopeId{1}, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, false, true, false};
+		CHECK(builder.publishFunction(inline_after).status == PublishStatus::Rejected);
+		CHECK(builder.declarationCount() == decls);
+
+		FrontendContext context2;
+		DeclarationBuilder& builder2 = context2.declarationBuilder();
+		const FunctionDeclRequest inline_first{
+			ScopeId{1}, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, false, true, false};
+		REQUIRE(builder2.publishFunction(inline_first).status == PublishStatus::Created);
+		const FunctionDeclRequest definition_after{
+			ScopeId{1}, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult merged = builder2.publishFunction(definition_after);
+		CHECK(merged.status == PublishStatus::MergedRedeclaration);
+		CHECK((builder2.entity(merged.entity_id).flags & DeclarationFlags::IsInline) != 0);
+		CHECK((builder2.entity(merged.entity_id).flags & DeclarationFlags::IsDefinition) != 0);
+	}
+
+	TEST_CASE("DeclarationBuilder keeps distinct entities across target scopes") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_scopes");
+		const FunctionDeclRequest global_fn{
+			ScopeId{1}, name, TypeId{36}, TypeId{54}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest nested_fn{
+			ScopeId{2}, name, TypeId{36}, TypeId{54}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult a = builder.publishFunction(global_fn);
+		const PublishResult b = builder.publishFunction(nested_fn);
+		CHECK(a.status == PublishStatus::Created);
+		CHECK(b.status == PublishStatus::Created);
+		CHECK(a.entity_id != b.entity_id);
+		CHECK(builder.entityCount() == 2u);
+	}
+
+	TEST_CASE("DeclarationBuilder rejects invalid requests without committing") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_invalid");
+		const FunctionDeclRequest invalid_scope{
+			ScopeId{}, name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		CHECK(builder.publishFunction(invalid_scope).status == PublishStatus::Rejected);
+		CHECK(builder.declarationCount() == 0u);
+		CHECK(builder.entityCount() == 0u);
+	}
+
 	TEST_CASE("buildNamespaceHandleForStructName rejects unregistered qualified spelling") {
 		StringHandle qualified = StringTable::getOrInternStringHandle("ns::Widget");
 		NamespaceHandle handle = buildNamespaceHandleForStructName(qualified);
