@@ -160,6 +160,7 @@ function Get-FlashCppMigrationCounterValues {
 		codegen_to_parser = 'Codegen-to-parser callbacks:\s*(\d+)'
 		template_old_engine = 'TemplateEngine old-engine routes:\s*(\d+)'
 		dollar_identity = 'Dollar identity recoveries:\s*(\d+)'
+		declaration_builder_publish = 'DeclarationBuilder publishes:\s*(\d+)'
 	}
 	$values = @{}
 	foreach ($entry in $patterns.GetEnumerator()) {

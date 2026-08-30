@@ -1,5 +1,6 @@
 #include "DeclarationBuilder.h"
 
+#include "AstNodeTypes.h"
 #include "CompileError.h"
 #include "SymbolTable.h"
 
@@ -217,4 +218,81 @@ PublishResult DeclarationBuilder::publishFunction(
 	}
 
 	return PublishResult{PublishStatus::MergedRedeclaration, decl_id, entity_id};
+}
+
+TypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
+	for (std::size_t index = 0; index < declarator_type_canon_.size(); ++index) {
+		if (declarator_type_canon_[index].matches_signature(type_spec)) {
+			return TypeId{static_cast<uint32_t>(index + 1)};
+		}
+	}
+	declarator_type_canon_.push_back(type_spec);
+	return TypeId{static_cast<uint32_t>(declarator_type_canon_.size())};
+}
+
+TypeId DeclarationBuilder::internParameterListSignature(
+	std::span<const ASTNode> parameter_nodes,
+	bool is_variadic) {
+	ParameterListKey key;
+	key.is_variadic = is_variadic;
+	key.param_type_ids.reserve(parameter_nodes.size());
+	for (const ASTNode& parameter_node : parameter_nodes) {
+		const TypeSpecifierNode& param_type = parameter_node.as<DeclarationNode>().type_specifier_node();
+		key.param_type_ids.push_back(internDeclaratorType(param_type).value);
+	}
+
+	const auto existing = parameter_list_ids_.find(key);
+	if (existing != parameter_list_ids_.end()) {
+		return existing->second;
+	}
+
+	const TypeId signature_id{static_cast<uint32_t>(parameter_list_ids_.size() + 1)};
+	parameter_list_ids_.emplace(std::move(key), signature_id);
+	return signature_id;
+}
+
+FunctionDeclRequest buildFreeFunctionDeclRequest(
+	DeclarationBuilder& builder,
+	const FunctionDeclarationNode& func_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition) {
+	FunctionDeclRequest request{};
+	request.lexical_scope_id = lexical_scope_id;
+	request.name = func_decl.decl_node().identifier_token().handle();
+	request.signature_id = builder.internParameterListSignature(
+		func_decl.parameter_nodes(),
+		func_decl.is_variadic());
+	request.return_type_id = builder.internDeclaratorType(func_decl.decl_node().type_specifier_node());
+	request.language_linkage = LanguageLinkage::CPlusPlus;
+	request.is_definition = is_definition;
+	request.is_inline = func_decl.is_inline();
+	request.is_constexpr = func_decl.is_constexpr();
+	return request;
+}
+
+bool shouldPublishParserFreeFunction(const FunctionDeclarationNode& func_decl, ScopeType scope_type) {
+	if (func_decl.is_member_function()) {
+		return false;
+	}
+	if (func_decl.is_template_pattern()) {
+		return false;
+	}
+	if (func_decl.linkage() == Linkage::C) {
+		return false;
+	}
+	if (scope_type != ScopeType::Global && scope_type != ScopeType::Namespace) {
+		return false;
+	}
+	return true;
+}
+
+PublishResult publishParserFreeFunction(
+	DeclarationBuilder& builder,
+	const FunctionDeclarationNode& func_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition,
+	const SymbolTable& symbol_table) {
+	const FunctionDeclRequest request =
+		buildFreeFunctionDeclRequest(builder, func_decl, lexical_scope_id, is_definition);
+	return builder.publishFunction(request, symbol_table);
 }

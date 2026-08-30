@@ -8,10 +8,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
+class ASTNode;
+class FunctionDeclarationNode;
 class SymbolTable;
+class TypeSpecifierNode;
 
 enum class ScopeType;
 
@@ -128,6 +133,9 @@ public:
 
 	PublishResult publishFunction(const FunctionDeclRequest& request, const SymbolTable& symbol_table);
 
+	TypeId internDeclaratorType(const TypeSpecifierNode& type_spec);
+	TypeId internParameterListSignature(std::span<const ASTNode> parameter_nodes, bool is_variadic);
+
 	const DeclarationRecord& declaration(DeclId decl_id) const;
 	const EntityRecord& entity(EntityId entity_id) const;
 
@@ -162,6 +170,23 @@ private:
 		OwnerId owner_id;
 	};
 
+	struct ParameterListKey {
+		std::vector<uint32_t> param_type_ids;
+		bool is_variadic = false;
+
+		friend bool operator==(const ParameterListKey&, const ParameterListKey&) = default;
+	};
+
+	struct ParameterListKeyHash {
+		std::size_t operator()(const ParameterListKey& key) const {
+			std::size_t hash = key.is_variadic ? 1u : 0u;
+			for (uint32_t type_id : key.param_type_ids) {
+				hash ^= static_cast<std::size_t>(type_id) + 0x9e3779b9u + (hash << 6) + (hash >> 2);
+			}
+			return hash;
+		}
+	};
+
 	static PublishResult makeRejected(EntityId existing_entity);
 	static uint8_t requestFlags(const FunctionDeclRequest& request);
 	static bool hasFlag(uint8_t flags, uint8_t bit);
@@ -176,4 +201,21 @@ private:
 	ChunkedVector<DeclarationRecord, kDeclarationArenaChunkSize> declarations_;
 	ChunkedVector<EntityRecord, kEntityArenaChunkSize> entities_;
 	std::unordered_map<EntityLookupKey, EntityId, EntityLookupKeyHash> entity_by_key_;
+	std::vector<TypeSpecifierNode> declarator_type_canon_;
+	std::unordered_map<ParameterListKey, TypeId, ParameterListKeyHash> parameter_list_ids_;
 };
+
+FunctionDeclRequest buildFreeFunctionDeclRequest(
+	DeclarationBuilder& builder,
+	const FunctionDeclarationNode& func_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition);
+
+bool shouldPublishParserFreeFunction(const FunctionDeclarationNode& func_decl, ScopeType scope_type);
+
+PublishResult publishParserFreeFunction(
+	DeclarationBuilder& builder,
+	const FunctionDeclarationNode& func_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition,
+	const SymbolTable& symbol_table);
