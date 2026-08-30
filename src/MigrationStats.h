@@ -16,6 +16,7 @@ inline uint64_t gAstToIrSemanticQueryCount = 0;
 inline uint64_t gCodegenToParserCallbackCount = 0;
 inline uint64_t gTemplateEngineOldEngineRouteCount = 0;
 inline uint64_t gDollarIdentityRecoveryCount = 0;
+inline uint64_t gDeclarationBuilderPublishCount = 0;
 
 inline void recordTokenReplay() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gTokenReplayCount);
@@ -39,6 +40,10 @@ inline void recordTemplateEngineOldEngineRoute() {
 
 inline void recordDollarIdentityRecovery() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gDollarIdentityRecoveryCount);
+}
+
+inline void recordDeclarationBuilderPublish() {
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gDeclarationBuilderPublishCount);
 }
 
 inline uint64_t tokenReplayCount() {
@@ -65,6 +70,10 @@ inline uint64_t dollarIdentityRecoveryCount() {
 	return gDollarIdentityRecoveryCount;
 }
 
+inline uint64_t declarationBuilderPublishCount() {
+	return gDeclarationBuilderPublishCount;
+}
+
 inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "\nToken replays: ", gTokenReplayCount);
 	FLASH_LOG(General, Info, "Post-parse parser typing queries: ", gPostParseParserTypingQueryCount);
@@ -72,5 +81,6 @@ inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "Codegen-to-parser callbacks: ", gCodegenToParserCallbackCount);
 	FLASH_LOG(General, Info, "TemplateEngine old-engine routes: ", gTemplateEngineOldEngineRouteCount);
 	FLASH_LOG(General, Info, "Dollar identity recoveries: ", gDollarIdentityRecoveryCount);
+	FLASH_LOG(General, Info, "DeclarationBuilder publishes: ", gDeclarationBuilderPublishCount);
 	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
 }

@@ -5,20 +5,21 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 after pull request boundary 7
+Last updated: 2026-08-30 after pull request boundary 8
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 7 are complete; architecture
+  and entities). Pull request boundaries 1 through 8 are complete; architecture
   boundary 1 exit criteria remain open through follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
   `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
   registry identity), not lexical `ScopeId`. Publication targets are validated
   through `SymbolTable` scope metadata (`resolvePublicationTarget`); lexical
   `ScopeId` is recorded on each `DeclarationRecord`. Initial free-function
-  redeclaration merging is proven in unit tests; the live parser still inserts
-  only through `SymbolTable`.
+  redeclaration merging is proven in unit tests and wired for namespace/global
+  C++-linkage non-template free functions at
+  `Parser::parse_declaration_or_function_definition()` after `SymbolTable::insert`.
 - Persistent scopes still live in `SymbolTable` (cursor exit, `ScopeId` on
   insert and lookup). `FrontendContext` publishes that state for telemetry.
   `ScopeId` is not yet stored on declaration AST nodes.
@@ -27,7 +28,7 @@ Last updated: 2026-08-30 after pull request boundary 7
   declaration/entity counts); syntax/semantic/IR domain bytes and broader
   per-record counts remain unwired.
 
-## Pull request boundary status (1–7)
+## Pull request boundary status (1–8)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -38,6 +39,7 @@ Last updated: 2026-08-30 after pull request boundary 7
 | 5 | `FrontendContext`, strong IDs, scratch arena, arena telemetry |
 | 6 | Persistent scopes, `ScopeId` on lookup, first spelling recovery deletion |
 | 7 | `DeclarationBuilder` shell, `OwnerId` entity keys, scope-validated publication, initial function merge set |
+| 8 | Parser wire for namespace/global C++ free functions, opaque `TypeId` bridge, `declaration_builder_publish` counter |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -80,7 +82,7 @@ boundary 1 is started, not finished.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 14-17%, confidence medium
+- Implementation effort completed overall: 15-18%, confidence medium
 
 ## Remaining work
 
@@ -88,10 +90,10 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Wire syntax-parser declaration sites through `DeclarationBuilder` for one
-  reduced declaration family, or move scope storage ownership from
-  `SymbolTable` into `FrontendContext`, without introducing a second semantic
-  authority.
+- Delete or bypass `SymbolTable::insert` function redeclaration merge for the
+  wired free-function family so `DeclarationBuilder` is the sole merge
+  authority, or expand the parser wire to the next declaration family (member
+  functions, variables, templates) without introducing dual semantic authority.
 
 Then, in order:
 
@@ -136,3 +138,6 @@ Current findings only; delete entries when their resolution lands.
 - Declaration-parse errors can be masked by the top-level expression-statement
   fallback; details and the conversion rule for affected sites live in
   docs/KNOWN_ISSUES.md. Owner: parser declaration dispatch.
+- `DeclarationBuilder` rejection after successful `SymbolTable::insert` leaves
+  lookup state committed on error paths until merge authority moves to the
+  builder. Owner: boundary-1 declaration wire follow-up.

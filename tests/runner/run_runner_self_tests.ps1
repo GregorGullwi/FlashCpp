@@ -82,7 +82,8 @@ try {
 		"AST-to-IR semantic queries: 4",
 		"Codegen-to-parser callbacks: 5",
 		"TemplateEngine old-engine routes: 6",
-		"Dollar identity recoveries: 7"
+		"Dollar identity recoveries: 7",
+		"DeclarationBuilder publishes: 8"
 	) -join "`n"
 	$migrationValues = Get-FlashCppMigrationCounterValues -CompilerOutput $migrationOutput
 	Assert-Runner ($migrationValues.outside_engine -eq 1) "migration telemetry parses outside-engine count"

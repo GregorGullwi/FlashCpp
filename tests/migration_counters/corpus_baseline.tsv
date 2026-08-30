@@ -1,6 +1,7 @@
 # FlashCpp migration counter baseline (path<TAB>counter<TAB>count).
 tests/auto_return_inconsistent_e1013.cpp	ast_to_ir_semantic	0
 tests/auto_return_inconsistent_e1013.cpp	codegen_to_parser	0
+tests/auto_return_inconsistent_e1013.cpp	declaration_builder_publish	1
 tests/auto_return_inconsistent_e1013.cpp	dollar_identity	0
 tests/auto_return_inconsistent_e1013.cpp	outside_engine	0
 tests/auto_return_inconsistent_e1013.cpp	post_parse_typing	0
@@ -8,6 +9,7 @@ tests/auto_return_inconsistent_e1013.cpp	template_old_engine	0
 tests/auto_return_inconsistent_e1013.cpp	token_replay	7
 tests/comparison_operators_ret1.cpp	ast_to_ir_semantic	40
 tests/comparison_operators_ret1.cpp	codegen_to_parser	0
+tests/comparison_operators_ret1.cpp	declaration_builder_publish	8
 tests/comparison_operators_ret1.cpp	dollar_identity	0
 tests/comparison_operators_ret1.cpp	outside_engine	0
 tests/comparison_operators_ret1.cpp	post_parse_typing	0
@@ -15,6 +17,7 @@ tests/comparison_operators_ret1.cpp	template_old_engine	0
 tests/comparison_operators_ret1.cpp	token_replay	124
 tests/concept_comprehensive_ret15.cpp	ast_to_ir_semantic	16
 tests/concept_comprehensive_ret15.cpp	codegen_to_parser	0
+tests/concept_comprehensive_ret15.cpp	declaration_builder_publish	1
 tests/concept_comprehensive_ret15.cpp	dollar_identity	0
 tests/concept_comprehensive_ret15.cpp	outside_engine	0
 tests/concept_comprehensive_ret15.cpp	post_parse_typing	0
@@ -22,6 +25,7 @@ tests/concept_comprehensive_ret15.cpp	template_old_engine	0
 tests/concept_comprehensive_ret15.cpp	token_replay	78
 tests/diag_array_size_close_bracket_e1003_e1051.cpp	ast_to_ir_semantic	0
 tests/diag_array_size_close_bracket_e1003_e1051.cpp	codegen_to_parser	0
+tests/diag_array_size_close_bracket_e1003_e1051.cpp	declaration_builder_publish	1
 tests/diag_array_size_close_bracket_e1003_e1051.cpp	dollar_identity	0
 tests/diag_array_size_close_bracket_e1003_e1051.cpp	outside_engine	0
 tests/diag_array_size_close_bracket_e1003_e1051.cpp	post_parse_typing	0
@@ -29,6 +33,7 @@ tests/diag_array_size_close_bracket_e1003_e1051.cpp	template_old_engine	0
 tests/diag_array_size_close_bracket_e1003_e1051.cpp	token_replay	9
 tests/diag_multiple_asm_suffix_e1002.cpp	ast_to_ir_semantic	0
 tests/diag_multiple_asm_suffix_e1002.cpp	codegen_to_parser	0
+tests/diag_multiple_asm_suffix_e1002.cpp	declaration_builder_publish	0
 tests/diag_multiple_asm_suffix_e1002.cpp	dollar_identity	0
 tests/diag_multiple_asm_suffix_e1002.cpp	outside_engine	0
 tests/diag_multiple_asm_suffix_e1002.cpp	post_parse_typing	0
@@ -36,6 +41,7 @@ tests/diag_multiple_asm_suffix_e1002.cpp	template_old_engine	0
 tests/diag_multiple_asm_suffix_e1002.cpp	token_replay	7
 tests/diag_ptr_to_reference_e1001.cpp	ast_to_ir_semantic	0
 tests/diag_ptr_to_reference_e1001.cpp	codegen_to_parser	0
+tests/diag_ptr_to_reference_e1001.cpp	declaration_builder_publish	1
 tests/diag_ptr_to_reference_e1001.cpp	dollar_identity	0
 tests/diag_ptr_to_reference_e1001.cpp	outside_engine	0
 tests/diag_ptr_to_reference_e1001.cpp	post_parse_typing	0
@@ -43,6 +49,7 @@ tests/diag_ptr_to_reference_e1001.cpp	template_old_engine	0
 tests/diag_ptr_to_reference_e1001.cpp	token_replay	12
 tests/test_inline_ns_qual_ambiguous_e1618.cpp	ast_to_ir_semantic	0
 tests/test_inline_ns_qual_ambiguous_e1618.cpp	codegen_to_parser	0
+tests/test_inline_ns_qual_ambiguous_e1618.cpp	declaration_builder_publish	1
 tests/test_inline_ns_qual_ambiguous_e1618.cpp	dollar_identity	0
 tests/test_inline_ns_qual_ambiguous_e1618.cpp	outside_engine	0
 tests/test_inline_ns_qual_ambiguous_e1618.cpp	post_parse_typing	0
@@ -50,6 +57,7 @@ tests/test_inline_ns_qual_ambiguous_e1618.cpp	template_old_engine	0
 tests/test_inline_ns_qual_ambiguous_e1618.cpp	token_replay	11
 tests/test_template_recursive_static_constexpr_member_ret0.cpp	ast_to_ir_semantic	0
 tests/test_template_recursive_static_constexpr_member_ret0.cpp	codegen_to_parser	0
+tests/test_template_recursive_static_constexpr_member_ret0.cpp	declaration_builder_publish	1
 tests/test_template_recursive_static_constexpr_member_ret0.cpp	dollar_identity	0
 tests/test_template_recursive_static_constexpr_member_ret0.cpp	outside_engine	0
 tests/test_template_recursive_static_constexpr_member_ret0.cpp	post_parse_typing	0

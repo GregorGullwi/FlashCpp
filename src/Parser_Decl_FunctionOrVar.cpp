@@ -1,5 +1,8 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "DeclarationBuilder.h"
+#include "FrontendContext.h"
+#include "MigrationStats.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
@@ -920,6 +923,24 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				// Note: With overloading support, insert() now allows multiple functions with same name
 				// It only returns false for non-function duplicate symbols
 				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+			}
+
+			if (FrontendContext* front_end = frontendContext()) {
+				FunctionDeclarationNode& func_decl = func_node->as<FunctionDeclarationNode>();
+				const ScopeType scope_type = gSymbolTable.get_current_scope_type();
+				if (shouldPublishParserFreeFunction(func_decl, scope_type)) {
+					const bool is_definition = peek() != ";"_tok;
+					const PublishResult publish_result = publishParserFreeFunction(
+						front_end->declarationBuilder(),
+						func_decl,
+						gSymbolTable.lastDeclaringScopeId(),
+						is_definition,
+						gSymbolTable);
+					if (publish_result.status == PublishStatus::Rejected) {
+						return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+					}
+					recordDeclarationBuilderPublish();
+				}
 			}
 		}
 
