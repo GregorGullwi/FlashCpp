@@ -24,7 +24,13 @@
 #include <utility>
 #include <vector>
 
+#include "MigrationTelemetryConfig.h"
+
 namespace FlashCpp {
+
+#if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
+inline thread_local uint64_t gInlineVectorSpillCount = 0;
+#endif
 
 /**
  * InlineVector - A small-buffer-optimized vector
@@ -526,6 +532,9 @@ private:
 			return;
 		}
 
+#if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
+		++gInlineVectorSpillCount;
+#endif
 		heap_data_.reserve(capacity);
 		heap_data_.insert(
 			heap_data_.end(),
@@ -589,6 +598,14 @@ private:
 	bool using_inline_storage_ = true;
 	std::vector<T> heap_data_;
 };
+
+inline uint64_t inlineVectorSpillCount() {
+#if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
+	return gInlineVectorSpillCount;
+#else
+	return 0;
+#endif
+}
 
 } // namespace FlashCpp
 

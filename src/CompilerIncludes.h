@@ -36,7 +36,9 @@
 #include "ObjFileWriter.h"
 #include "Parser.h"
 #include "TemplateEngine.h"
+#include "MigrationTelemetryConfig.h"
 #include "MigrationStats.h"
+#include "FrontendContext.h"
 #include "IrGenerator.h"
 #include "Log.h"
 #include "NameMangling.h"
@@ -91,6 +93,7 @@
 #include "SemanticAnalysis.cpp"
 #include "AllocationTracker.cpp"
 #include "ParserProfilingReport.cpp"
+#include "ArenaDomains.cpp"
 #endif
 
 #if defined(UNITY_SHARD_PARSER_CORE)

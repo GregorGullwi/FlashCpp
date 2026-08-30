@@ -173,6 +173,9 @@ static void printOutsideDiagnosticTelemetry() {
 	FLASH_LOG(General, Info, "\nDiagnostics emitted outside DiagnosticEngine: ",
 			  diagnosticsEmittedOutsideEngineCount());
 	printMigrationTelemetry();
+	if (FrontendContext* active = FrontendContext::active()) {
+		active->printArenaTelemetry();
+	}
 }
 
 int main(int argc, char* argv[]) {
@@ -219,6 +222,7 @@ int main_impl(int argc, char* argv[]) {
 	auto total_start = std::chrono::high_resolution_clock::now();
 
 	CompileContext context;
+	FrontendContext frontend_context;
 	CommandLineParser argsparser(argc, argv, context);
 
 	// Use the constexpr lookup helpers from Log.h (single source of truth)

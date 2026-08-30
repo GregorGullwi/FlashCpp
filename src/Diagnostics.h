@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "InlineVector.h"
+#include "MigrationTelemetryConfig.h"
 #include "SourceLocation.h"
 #include "StringTable.h"
 #include "StringBuilder.h"
@@ -537,13 +538,13 @@ struct Diagnostic {
 	}
 };
 
-// Always-available inventory of diagnostics still emitted outside this engine
-// (legacy CompileError strings and ParseResult errors). Directional evidence
-// for boundary 11 burn-down; never compile-time gated.
+// Inventory of diagnostics still emitted outside this engine (legacy CompileError
+// strings and ParseResult errors). Disabled when
+// FLASHCPP_TRACK_OUTSIDE_ENGINE_DIAGNOSTICS=0.
 inline uint64_t gDiagnosticsEmittedOutsideEngine = 0;
 
 inline void recordDiagnosticEmittedOutsideEngine() {
-	++gDiagnosticsEmittedOutsideEngine;
+	FLASHCPP_OUTSIDE_ENGINE_DIAGNOSTIC_BODY(++gDiagnosticsEmittedOutsideEngine);
 }
 
 inline uint64_t diagnosticsEmittedOutsideEngineCount() {
