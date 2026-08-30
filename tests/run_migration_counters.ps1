@@ -1,10 +1,8 @@
 # Migration counter baseline check for FlashCpp (PowerShell)
 #
 # Enforces directional compatibility counters over a fixed corpus
-# (front-end rearchitecture, architecture boundary 0). Each corpus entry
-# records the number of diagnostics emitted outside DiagnosticEngine for a
-# --perf-stats run. Counts may only ratchet downward; an increase fails the
-# run. Removal boundary for this counter is architecture boundary 11.
+# (front-end rearchitecture, architecture boundaries 0 and 4). Counts may
+# only ratchet downward; an increase fails the run.
 #
 # Usage:
 #   pwsh tests/run_migration_counters.ps1                 # enforce baseline
@@ -22,14 +20,12 @@ Set-Location $repoRoot
 . (Join-Path $scriptDir "runner\RunnerCommon.ps1")
 
 $baselinePath = Join-Path $scriptDir "migration_counters\corpus_baseline.tsv"
-$outsideEngineLine = "Diagnostics emitted outside DiagnosticEngine"
 
 Write-Host "=============================================="
 Write-Host "FlashCpp Migration Counter Check"
 Write-Host "=============================================="
 Write-Host ""
 
-# Find the newest compiler executable, mirroring run_all_tests.ps1.
 $flashCppPath = ""
 $allExes = Get-ChildItem -Path "x64" -Recurse -Include "FlashCpp.exe","FlashCppMSVC.exe" -ErrorAction SilentlyContinue
 if ($allExes) {
@@ -53,27 +49,32 @@ if (-not (Test-Path -LiteralPath $baselinePath)) {
 	exit 1
 }
 
-# Baseline entries are "count<TAB>path" relative to the repository root.
+# Baseline format: path<TAB>counter<TAB>count
 $entries = @()
 foreach ($line in Get-Content -LiteralPath $baselinePath) {
 	if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) { continue }
 	$parts = $line -split "`t"
-	if ($parts.Count -lt 2) {
-		Write-Host "ERROR: Malformed baseline line: $line" -ForegroundColor Red
+	if ($parts.Count -lt 3) {
+		Write-Host "ERROR: Malformed baseline line (expected path, counter, count): $line" -ForegroundColor Red
 		exit 1
 	}
 	$count = 0L
-	if (-not [long]::TryParse($parts[0], [ref]$count)) {
+	if (-not [long]::TryParse($parts[2], [ref]$count)) {
 		Write-Host "ERROR: Malformed count in baseline line: $line" -ForegroundColor Red
 		exit 1
 	}
-	$entries += [pscustomobject]@{ Path = $parts[1].Trim(); Baseline = $count }
+	$entries += [pscustomobject]@{
+		Path = $parts[0].Trim()
+		Counter = $parts[1].Trim()
+		Baseline = $count
+	}
 }
 if ($entries.Count -eq 0) {
 	Write-Host "ERROR: Baseline file contains no corpus entries." -ForegroundColor Red
 	exit 1
 }
 
+$uniquePaths = $entries | Select-Object -ExpandProperty Path -Unique
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "flashcpp_counters_$PID"
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
@@ -82,27 +83,44 @@ $improvements = @()
 $unmeasurable = @()
 $measurements = @()
 $index = 0
+$compiledOutput = @{}
 
 try {
-	foreach ($entry in ($entries | Sort-Object Path)) {
-		$sourcePath = Join-Path $repoRoot $entry.Path
+	foreach ($path in ($uniquePaths | Sort-Object)) {
+		$sourcePath = Join-Path $repoRoot $path
 		if (-not (Test-Path -LiteralPath $sourcePath)) {
-			$unmeasurable += "$($entry.Path) (missing source file)"
+			$unmeasurable += "$path (missing source file)"
 			continue
 		}
 		$index++
 		$objPath = Join-Path $tempDir "corpus_$index.obj"
 		$output = & $flashCppPath --perf-stats -o $objPath $sourcePath 2>&1 | Out-String
-		$actual = Get-FlashCppOutsideEngineDiagnosticCount -CompilerOutput $output
-		if ($null -eq $actual) {
-			$unmeasurable += "$($entry.Path) (no telemetry line; compiler crashed or exited early)"
+		$actualValues = Get-FlashCppMigrationCounterValues -CompilerOutput $output
+		if ($null -eq $actualValues) {
+			$unmeasurable += "$path (missing telemetry; compiler crashed or exited early)"
 			continue
 		}
-		$measurements += [pscustomobject]@{ Path = $entry.Path; Actual = $actual; Baseline = $entry.Baseline }
+		$compiledOutput[$path] = $actualValues
+	}
+
+	foreach ($entry in ($entries | Sort-Object Path, Counter)) {
+		if (-not $compiledOutput.ContainsKey($entry.Path)) { continue }
+		$actualValues = $compiledOutput[$entry.Path]
+		if (-not $actualValues.ContainsKey($entry.Counter)) {
+			$unmeasurable += "$($entry.Path) ($($entry.Counter) telemetry missing)"
+			continue
+		}
+		$actual = $actualValues[$entry.Counter]
+		$measurements += [pscustomobject]@{
+			Path = $entry.Path
+			Counter = $entry.Counter
+			Actual = $actual
+			Baseline = $entry.Baseline
+		}
 		$status = Test-FlashCppMigrationCounterBaseline -ActualCount $actual -BaselineCount $entry.Baseline
 		switch ($status) {
-			"Regressed" { $regressions += "$($entry.Path): baseline $($entry.Baseline), now $actual" }
-			"Improved" { $improvements += "$($entry.Path): baseline $($entry.Baseline), now $actual" }
+			"Regressed" { $regressions += "$($entry.Path) [$($entry.Counter)]: baseline $($entry.Baseline), now $actual" }
+			"Improved" { $improvements += "$($entry.Path) [$($entry.Counter)]: baseline $($entry.Baseline), now $actual" }
 		}
 	}
 } finally {
@@ -115,20 +133,21 @@ if ($UpdateBaseline) {
 		$unmeasurable | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
 		exit 1
 	}
-	$lines = @("# FlashCpp migration counter baseline.")
-	foreach ($measurement in ($measurements | Sort-Object Path)) {
-		$lines += "$($measurement.Actual)`t$($measurement.Path)"
+	$lines = @("# FlashCpp migration counter baseline (path<TAB>counter<TAB>count).")
+	foreach ($path in ($compiledOutput.Keys | Sort-Object)) {
+		foreach ($counter in ($compiledOutput[$path].Keys | Sort-Object)) {
+			$lines += "$path`t$counter`t$($compiledOutput[$path][$counter])"
+		}
 	}
-	# LF endings keep the regenerated file byte-identical to the committed one.
 	[System.IO.File]::WriteAllText($baselinePath, ($lines -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
-	Write-Host "Baseline updated with $($measurements.Count) measured entr(ies): $baselinePath"
+	Write-Host "Baseline updated with $($lines.Count - 1) measured entr(ies): $baselinePath"
 	exit 0
 }
 
-foreach ($measurement in ($measurements | Sort-Object Path)) {
+foreach ($measurement in ($measurements | Sort-Object Path, Counter)) {
 	$status = Test-FlashCppMigrationCounterBaseline -ActualCount $measurement.Actual -BaselineCount $measurement.Baseline
-	Write-Host ("{0}  outside-engine={1}  baseline={2}  [{3}]" -f `
-		$measurement.Path, $measurement.Actual, $measurement.Baseline, $status)
+	Write-Host ("{0}  {1}={2}  baseline={3}  [{4}]" -f `
+		$measurement.Path, $measurement.Counter, $measurement.Actual, $measurement.Baseline, $status)
 }
 
 Write-Host ""
@@ -137,7 +156,7 @@ if ($unmeasurable.Count -gt 0) {
 	$unmeasurable | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
 }
 if ($regressions.Count -gt 0) {
-	Write-Host "=== Counter regressions (legacy diagnostic emissions increased) ===" -ForegroundColor Red
+	Write-Host "=== Counter regressions ===" -ForegroundColor Red
 	$regressions | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
 }
 if ($improvements.Count -gt 0) {

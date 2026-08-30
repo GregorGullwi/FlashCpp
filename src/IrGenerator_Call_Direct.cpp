@@ -411,7 +411,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	const bool has_dependent_qualified_lookup =
 		callExprNode.has_dependent_qualified_lookup_record();
 	const ResolvedFunctionQueryResult sema_resolved_direct_query =
-		sema_services.getResolvedDirectCallQuery(sema_call_key);
+		sema_services.getResolvedDirectCallQueryFromLowering(sema_call_key);
 	const FunctionDeclarationNode* const sema_resolved_direct_target =
 		!has_dependent_qualified_lookup &&
 		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available
@@ -478,7 +478,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (arg_node.is<ExpressionNode>()) {
 			auto getInlineAlwaysArgType = [&]() -> std::optional<TypeSpecifierNode> {
 				TypeSpecifierQueryResult sema_arg_type_query =
-					sema_.parserSemanticServices().getOverloadResolutionArgTypeQuery(arg_node);
+					sema_.parserSemanticServices().getOverloadResolutionArgTypeQueryFromLowering(arg_node);
 				if (sema_normalized_current_function_ &&
 					sema_arg_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
 					throw InternalError("Normalized inline_always argument type query remained NotYetAnalyzed");

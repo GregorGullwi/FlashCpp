@@ -35,6 +35,8 @@
 #include "CrashHandler.h"
 #include "ObjFileWriter.h"
 #include "Parser.h"
+#include "TemplateEngine.h"
+#include "MigrationStats.h"
 #include "IrGenerator.h"
 #include "Log.h"
 #include "NameMangling.h"

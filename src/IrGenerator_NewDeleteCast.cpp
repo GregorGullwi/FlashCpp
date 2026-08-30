@@ -1178,7 +1178,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		const ASTNode& operand_node = typeidNode.operand();
 		const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 		TypeSpecifierQueryResult static_expr_type_query =
-			sema_.parserSemanticServices().getExpressionTypeQuery(operand_node);
+			sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(operand_node);
 		std::optional<TypeSpecifierNode> static_expr_type =
 			static_expr_type_query.state == TypeSpecifierQueryResult::State::Available
 				? static_expr_type_query.type

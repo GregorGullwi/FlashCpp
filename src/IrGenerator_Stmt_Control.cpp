@@ -636,7 +636,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 	} else {
 		std::optional<TypeSpecifierNode> inferred_range_type;
 		TypeSpecifierQueryResult sema_range_type_query =
-			sema_services.getExpressionTypeQuery(range_expr);
+			sema_services.getExpressionTypeQueryFromLowering(range_expr);
 		const bool sema_range_type_not_yet_analyzed =
 			sema_range_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;
 		if (sema_normalized_current_function_ && sema_range_type_not_yet_analyzed) {

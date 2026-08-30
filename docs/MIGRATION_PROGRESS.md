@@ -5,34 +5,30 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 by branch `codex/boundary-3-regression-validation`
+Last updated: 2026-08-30 by branch `codex/boundary-4-template-facade-counters`
 
 ## Position
 
-- Architecture boundary in progress: 0 (diagnosability and measurement)
-- Pull request boundaries 1 through 3 are complete. The filename-encoded
-  diagnostic contract is authoritative, the legacy `_fail.cpp` inventory and
-  internal-failure compatibility are removed, and the legacy-entry count is
-  zero.
-- Boundary 3 has eight mutation-validated probes. The `auto`, constexpr,
-  template-deduction, and two namespace-template identity probes remain tracked
-  runtime expected failures; the `sizeof`, overload-ranking, and ambiguous-
-  member-lookup probes pass.
-- The full Windows-suite validation on 2026-08-30 covered 2,959 regular tests,
-  253 encoded negative tests, and one multi-translation-unit case; all
-  compile/link phases passed, with no crashes, runtime mismatches, or
-  negative-contract failures. Five tracked positive expected failures matched.
-  The latest Linux full-suite run covered 2,929 single-file tests, 281
-  negative tests, one multi-translation-unit case, and five tracked positive
-  expected failures; it had no crashes or mismatches.
+- Architecture boundary in progress: 1 (front-end context, arenas, identities,
+  and entities) after closing pull request boundary 4
+- Pull request boundaries 1 through 4 are complete. Boundary 4 introduced the
+  `TemplateEngine` facade shell, routed external template-instantiation entry
+  points through it, instrumented token replay, post-parse parser typing,
+  AST-to-IR semantic queries, codegen-to-parser callbacks, template old-engine
+  routes, and dollar-identity recovery counters, and added the static
+  `find('$')` inventory guard.
+- The fixed migration corpus now baselines all seven runtime counters plus the
+  dollar inventory (17 inline `find('$')` sites in `src/`).
 
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 2/78 (3%)
+- Completed: 3/78 (4%)
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
   - Boundary 0 "structured diagnostics can be asserted by tests"
+  - Boundary 0 "choke-point counters and the remaining static inventories are
+    visible in CI on a fixed corpus"
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure": converted diagnostic families
@@ -40,17 +36,16 @@ Last updated: 2026-08-30 by branch `codex/boundary-3-regression-validation`
     member-lookup probes are mutation-validated; five boundary-3 cases remain
     tracked runtime expected failures, and the remaining architectural corpus
     is still outstanding
-  - Boundary 0 "choke-point counters and the remaining static inventories are
-    visible in CI on a fixed corpus": the outside-engine counter is enforced
-    on Windows CI over the fixed corpus including the encoded literal tests;
-    outstanding are the replay, AST-to-IR lookup, codegen-to-parser,
-    post-parse typing, and template-routing counters plus the `'$'` static
-    inventory (pull request boundary 4), and wiring this check into the
-    Ubuntu lane once a Linux-generated baseline is verified there
+  - Boundary 1 "every template instantiation entry point passes through the
+    facade": external subsystem callers now route through `TemplateEngine`;
+    parser-internal instantiation paths remain direct until boundary 6/8A
+  - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
+    InlineVector spill counts are reported through FrontendContext": not started
+    (pull request boundary 5)
 
 ## Effort estimate
 
-- Implementation effort completed overall: 5-7%, confidence medium
+- Implementation effort completed overall: 7-9%, confidence medium
 
 ## Remaining work
 
@@ -58,14 +53,13 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- There is no local validation blocker for the boundary-3 snapshot. All eight
-  architectural probes pass or match their declared runtime expected-failure
-  stage, and every decisive assertion rejects an inverted mutation.
+- Pull request boundary 5: `FrontendContext`, strong ID types, scoped arena
+  domains, scratch rollback tests, and arena telemetry forwarding.
 
 Then, in order:
 
-1. Pull request boundary 4: template facade plus the remaining choke-point
-   counters and the `'$'` inline-parsing static inventory.
+1. Pull request boundary 6: persistent scopes and first spelling-based recovery
+   deletion.
 
 Named follow-ups carried forward:
 

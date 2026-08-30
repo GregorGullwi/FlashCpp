@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "MigrationStats.h"
 #include "SemanticAnalysis.h"
 #include "TypeTraitEvaluator.h"
 
@@ -148,6 +149,7 @@ void AstToIr::generateDeferredInlineFunctions() {
 		auto saved_namespace = current_namespace_stack_;
 		current_function_name_ = StringHandle();
 		try {
+			recordCodegenToParserCallback();
 			parser_.enqueuePendingSemanticRootIfNeeded(function_node);
 			normalizePendingSemanticRoots();
 			visitFunctionDeclarationNode(func);

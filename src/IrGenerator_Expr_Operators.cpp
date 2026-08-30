@@ -1390,9 +1390,9 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// annotation was recorded for either branch.
 	if (common_cat == TypeCategory::Invalid) {
 		TypeSpecifierQueryResult true_type_query =
-			sema_.parserSemanticServices().getExpressionTypeQuery(ternaryNode.true_expr());
+			sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(ternaryNode.true_expr());
 		TypeSpecifierQueryResult false_type_query =
-			sema_.parserSemanticServices().getExpressionTypeQuery(ternaryNode.false_expr());
+			sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(ternaryNode.false_expr());
 		if (sema_normalized_current_function_ &&
 			(true_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed ||
 			 false_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed)) {
@@ -3398,7 +3398,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		lhs_pointer_depth = lhsExprResult.pointer_depth.value;
 	}
 	if (lhs_pointer_depth == 0) {
-		TypeSpecifierQueryResult lhs_type_query = sema_.parserSemanticServices().getExpressionTypeQuery(binaryOperatorNode.get_lhs());
+		TypeSpecifierQueryResult lhs_type_query = sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(binaryOperatorNode.get_lhs());
 		if (lhs_type_query.state == TypeSpecifierQueryResult::State::Available &&
 			lhs_type_query.type.has_value()) {
 			lhs_pointer_depth = static_cast<int>(lhs_type_query.type->pointer_depth());
@@ -3432,7 +3432,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		rhs_pointer_depth = rhsExprResult.pointer_depth.value;
 	}
 	if (rhs_pointer_depth == 0) {
-		TypeSpecifierQueryResult rhs_type_query = sema_.parserSemanticServices().getExpressionTypeQuery(binaryOperatorNode.get_rhs());
+		TypeSpecifierQueryResult rhs_type_query = sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(binaryOperatorNode.get_rhs());
 		if (rhs_type_query.state == TypeSpecifierQueryResult::State::Available &&
 			rhs_type_query.type.has_value()) {
 			rhs_pointer_depth = static_cast<int>(rhs_type_query.type->pointer_depth());

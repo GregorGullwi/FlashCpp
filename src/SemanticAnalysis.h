@@ -92,6 +92,12 @@ public:
 
 	TypeSpecifierQueryResult getExpressionTypeQuery(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	TypeSpecifierQueryResult getExpressionTypeQueryFromLowering(const ASTNode& node) const;
+	std::optional<TypeSpecifierNode> getExpressionTypeFromLowering(const ASTNode& node) const;
+	TypeSpecifierQueryResult getOverloadResolutionArgTypeQueryFromLowering(const ASTNode& arg) const;
+	ResolvedFunctionQueryResult getResolvedOpSubscriptQueryFromLowering(const ArraySubscriptNode* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQueryFromLowering(const CallExprNode* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQueryFromLowering(const void* key) const;
 	TypeSpecifierNode applyDecltypeAutoReturnValueCategory(
 		const ASTNode& expression,
 		TypeSpecifierNode type);

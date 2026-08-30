@@ -445,6 +445,8 @@
     <ClInclude Include="src\CommandLineParser.h" />
     <ClInclude Include="src\CompileContext.h" />
     <ClInclude Include="src\Diagnostics.h" />
+    <ClInclude Include="src\MigrationStats.h" />
+    <ClInclude Include="src\TemplateEngine.h" />
     <ClInclude Include="src\CompileError.h" />
     <ClInclude Include="src\CompilerIncludes.h" />
     <ClInclude Include="src\VariantUtils.h" />

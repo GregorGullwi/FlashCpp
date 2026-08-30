@@ -75,6 +75,21 @@ try {
 	$missingCount = Get-FlashCppOutsideEngineDiagnosticCount -CompilerOutput "compiler crashed without telemetry"
 	Assert-Runner ($null -eq $missingCount) "output without a telemetry line yields no count"
 
+	$migrationOutput = @(
+		"Diagnostics emitted outside DiagnosticEngine: 1",
+		"Token replays: 2",
+		"Post-parse parser typing queries: 3",
+		"AST-to-IR semantic queries: 4",
+		"Codegen-to-parser callbacks: 5",
+		"TemplateEngine old-engine routes: 6",
+		"Dollar identity recoveries: 7"
+	) -join "`n"
+	$migrationValues = Get-FlashCppMigrationCounterValues -CompilerOutput $migrationOutput
+	Assert-Runner ($migrationValues.outside_engine -eq 1) "migration telemetry parses outside-engine count"
+	Assert-Runner ($migrationValues.template_old_engine -eq 6) "migration telemetry parses template route count"
+	$missingMigration = Get-FlashCppMigrationCounterValues -CompilerOutput "compiler crashed without telemetry"
+	Assert-Runner ($null -eq $missingMigration) "output missing migration telemetry yields no values"
+
 	$okStatus = Test-FlashCppMigrationCounterBaseline -ActualCount 3 -BaselineCount 3
 	$improvedStatus = Test-FlashCppMigrationCounterBaseline -ActualCount 2 -BaselineCount 3
 	$regressedStatus = Test-FlashCppMigrationCounterBaseline -ActualCount 4 -BaselineCount 3

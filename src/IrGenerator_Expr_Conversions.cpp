@@ -1634,7 +1634,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		TypeIndex operand_type_index = operandIrOperands.type_index;
 		if (!operand_type_index.is_valid() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			TypeSpecifierQueryResult operand_type_query =
-				sema_.parserSemanticServices().getExpressionTypeQuery(unaryOperatorNode.get_operand());
+				sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(unaryOperatorNode.get_operand());
 			if (operand_type_query.state == TypeSpecifierQueryResult::State::Available &&
 				operand_type_query.type.has_value()) {
 				operand_type_index = operand_type_query.type->type_index();
@@ -2426,7 +2426,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 									 const char* normalized_not_yet_analyzed_message,
 									 const char* unresolved_message) -> std::optional<TypeSpecifierNode> {
 			TypeSpecifierQueryResult sema_type_query =
-				sema_.parserSemanticServices().getExpressionTypeQuery(node);
+				sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(node);
 			std::optional<TypeSpecifierNode> sema_type =
 				sema_type_query.state == TypeSpecifierQueryResult::State::Available
 					? sema_type_query.type

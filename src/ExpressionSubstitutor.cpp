@@ -1398,7 +1398,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 						}
 						if (!base_template_name.empty()) {
 							Parser::AliasTemplateMaterializationResult materialized_nested =
-								parser_.materializeTemplateInstantiationForLookup(
+								parser_.templateEngine().materializeTemplateInstantiationForLookup(
 									base_template_name,
 									nested_materialized_args.args);
 							const TypeInfo* resolved_nested_type =
@@ -1406,7 +1406,7 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 							if (resolved_nested_type == nullptr &&
 								qualified_base_template_name != arg_type_info->baseTemplateName()) {
 								materialized_nested =
-									parser_.materializeTemplateInstantiationForLookup(
+									parser_.templateEngine().materializeTemplateInstantiationForLookup(
 										StringTable::getStringView(arg_type_info->baseTemplateName()),
 										nested_materialized_args.args);
 								resolved_nested_type = materialized_nested.resolved_type_info;
@@ -1524,7 +1524,7 @@ InlineVector<TemplateTypeArg, 4> ExpressionSubstitutor::materializeDependentReco
 					depth + 1);
 				if (!templateArgsStillDependent(nested_args.args)) {
 					Parser::AliasTemplateMaterializationResult materialized_type =
-						parser_.materializeCanonicalOwnerTypeForLookup(
+						parser_.templateEngine().materializeCanonicalOwnerTypeForLookup(
 							*arg_type_info,
 							nested_args.args);
 					const TypeInfo* resolved_type_info = materialized_type.resolved_type_info;
@@ -1581,12 +1581,12 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 						return false;
 					}
 					Parser::ResolvedQualifiedOwner current_context_owner =
-						parser_.resolveQualifiedOwnerForLookup(
+						parser_.templateEngine().resolveQualifiedOwnerForLookup(
 							candidate_owner_name);
 					if (current_context_owner.resolved_from_current_context) {
 						if (current_context_owner.type_info != nullptr) {
 							materialized_owner =
-								parser_.materializeCanonicalOwnerTypeForLookup(
+								parser_.templateEngine().materializeCanonicalOwnerTypeForLookup(
 									*current_context_owner.type_info,
 									owner_args);
 						} else if (!current_context_owner.lookup_name.empty()) {
@@ -1626,7 +1626,7 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 								return false;
 							}
 							materialized_owner =
-								parser_.materializeTemplateInstantiationForLookup(
+								parser_.templateEngine().materializeTemplateInstantiationForLookup(
 									StringBuilder()
 										.append(owner_prefix)
 										.append("::")
@@ -1705,7 +1705,7 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 				return materialized_owner;
 			}
 			materialized_owner =
-				parser_.materializeCanonicalOwnerTypeForLookup(owner_arg);
+				parser_.templateEngine().materializeCanonicalOwnerTypeForLookup(owner_arg);
 			if (materialized_owner.instantiated_name.empty() &&
 				materialized_owner.resolved_type_info == nullptr) {
 				assign_owner_type(tryGetTypeInfo(owner_arg.type_index));
@@ -1955,7 +1955,7 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 			materialized_prefix_chain.push_back(templated_member_access);
 
 			if (std::optional<ASTNode> instantiated_member_template =
-					parser_.try_instantiate_class_template(
+					parser_.templateEngine().tryInstantiateClassTemplate(
 						qualified_owner_name,
 						member_args,
 						false);
@@ -2182,7 +2182,7 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 			/*evaluate_dependent_member_values=*/true,
 			depth);
 	Parser::AliasTemplateMaterializationResult materialized_base =
-		parser_.materializeTemplateInstantiationForLookup(
+		parser_.templateEngine().materializeTemplateInstantiationForLookup(
 			base_template_name,
 			concrete_base_args.args);
 	std::string_view materialized_base_name = materialized_base.canonicalName();
@@ -2457,7 +2457,7 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 	};
 
 	std::optional<InlineVector<TemplateTypeArg, 4>> concrete_args =
-		parser_.materializeConcreteCallTemplateArguments(call.template_arguments());
+		parser_.templateEngine().materializeConcreteCallTemplateArguments(call.template_arguments());
 	if (!concrete_args.has_value()) {
 		std::vector<ASTNode> rebound_template_args;
 		rebound_template_args.reserve(call.template_arguments().size());
@@ -2482,7 +2482,7 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 			return std::nullopt;
 		}
 
-		concrete_args = parser_.materializeConcreteCallTemplateArguments(rebound_template_args);
+		concrete_args = parser_.templateEngine().materializeConcreteCallTemplateArguments(rebound_template_args);
 		if (!concrete_args.has_value()) {
 			return std::nullopt;
 		}
@@ -2679,7 +2679,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			owner_name,
 			member_name,
 			[this](StringHandle owner_handle) {
-				parser_.instantiateLazyClassToPhase(
+				parser_.templateEngine().instantiateLazyClassToPhase(
 					owner_handle,
 					ClassInstantiationPhase::Full);
 			},
@@ -2704,7 +2704,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		}
 
 		std::optional<ASTNode> instantiated_member_template =
-			parser_.try_instantiate_member_function_template(
+			parser_.templateEngine().tryInstantiateMemberFunctionTemplate(
 				owner_name,
 				member_name,
 				substituted_arg_types);
@@ -3017,7 +3017,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								substitute(arg_node));
 						}
 						std::optional<ASTNode> instantiated =
-							parser_.resolveDefinitionBoundQualifiedTemplateCall(
+							parser_.templateEngine().resolveDefinitionBoundQualifiedTemplateCall(
 								*call.definition_lookup_record(),
 								template_name,
 								std::span<const ASTNode>(
@@ -3030,7 +3030,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						}
 						return instantiated;
 					}
-					std::optional<ASTNode> instantiated = parser_.try_instantiate_template_explicit(
+					std::optional<ASTNode> instantiated = parser_.templateEngine().tryInstantiateTemplateExplicit(
 						template_name,
 						substituted_template_args,
 						substituted_arg_types);
@@ -3039,7 +3039,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					}
 					return instantiated;
 				}
-				std::optional<ASTNode> instantiated = parser_.try_instantiate_template_explicit(template_name, substituted_template_args);
+				std::optional<ASTNode> instantiated = parser_.templateEngine().tryInstantiateTemplateExplicit(template_name, substituted_template_args);
 				if (instantiated.has_value()) {
 					normalizePendingSemanticRoots();
 				}
@@ -3079,7 +3079,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				FLASH_LOG(Templates, Trace,
 					"Member template canonical owner resolved to ", member_owner_name);
 				std::optional<ASTNode> instantiated =
-					parser_.try_instantiate_member_function_template_explicit(
+					parser_.templateEngine().tryInstantiateMemberFunctionTemplateExplicit(
 						member_owner_name,
 						member_name,
 						substituted_template_args);
@@ -3165,7 +3165,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					return std::nullopt;
 				}
 				std::optional<ASTNode> instantiated =
-					parser_.try_instantiate_member_function_template_explicit(
+					parser_.templateEngine().tryInstantiateMemberFunctionTemplateExplicit(
 						materialized_owner_name,
 						member_name,
 						std::span<const TemplateTypeArg>(
@@ -3241,7 +3241,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						}
 						if (canonical_owner.resolved_type_info != nullptr) {
 							// Only try member-template recovery when the owner resolved to an actual type.
-							instantiated_template = parser_.try_instantiate_member_function_template_explicit(
+							instantiated_template = parser_.templateEngine().tryInstantiateMemberFunctionTemplateExplicit(
 								owner_name,
 								member_name,
 								substituted_template_args);
@@ -3299,7 +3299,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			std::optional<ASTNode> var_template_node;
 			if (gTemplateRegistry.lookupVariableTemplate(func_name).has_value()) {
 				var_template_node =
-					parser_.try_instantiate_variable_template(
+					parser_.templateEngine().tryInstantiateVariableTemplate(
 						func_name,
 						substituted_template_args,
 						nullptr);
@@ -3312,7 +3312,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				call.has_qualified_name() &&
 				gTemplateRegistry.lookupVariableTemplate(call.qualified_name()).has_value()) {
 				var_template_node =
-					parser_.try_instantiate_variable_template(
+					parser_.templateEngine().tryInstantiateVariableTemplate(
 						call.qualified_name(),
 						substituted_template_args,
 						nullptr);
@@ -3342,12 +3342,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			}
 
 			Parser::AliasTemplateMaterializationResult materialized_type =
-				parser_.materializeTemplateInstantiationForLookup(
+				parser_.templateEngine().materializeTemplateInstantiationForLookup(
 					!qualified_name.empty() ? qualified_name : func_name,
 					substituted_template_args);
 			if (materialized_type.resolved_type_info == nullptr && !qualified_name.empty()) {
 				materialized_type =
-					parser_.materializeTemplateInstantiationForLookup(
+					parser_.templateEngine().materializeTemplateInstantiationForLookup(
 						func_name,
 						substituted_template_args);
 			}
@@ -3547,7 +3547,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							resolved_owner_name;
 						if (target_func == nullptr) {
 							std::optional<ASTNode> instantiated_member =
-								parser_.instantiateLazyMemberForCanonicalOwner(
+								parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
 									mutable_resolved_owner_name,
 									resolved_member_name,
 									std::span<const TemplateTypeArg>{});
@@ -3653,7 +3653,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 
 					if (target_func == nullptr) {
 						std::optional<ASTNode> instantiated_member =
-							parser_.instantiateLazyMemberForCanonicalOwner(
+							parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
 								materialized_owner_name,
 								member_name,
 								std::span<const TemplateTypeArg>{});
@@ -3663,7 +3663,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								&instantiated_member->as<FunctionDeclarationNode>();
 						}
 					}
-					parser_.instantiateLazyClassToPhase(
+					parser_.templateEngine().instantiateLazyClassToPhase(
 						StringTable::getOrInternStringHandle(materialized_owner_name),
 						ClassInstantiationPhase::Full);
 
@@ -3732,7 +3732,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							target_func = qualified_target;
 							materialized_owner_name = qualified_owner_name;
 						} else if (std::optional<ASTNode> qualified_instantiated_member =
-								parser_.instantiateLazyMemberForCanonicalOwner(
+								parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
 									mutable_qualified_owner_name,
 									member_name,
 									std::span<const TemplateTypeArg>{});
@@ -3831,7 +3831,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
 				// Try to trigger lazy member function instantiation for the target
-				parser_.instantiateLazyMemberForCanonicalOwner(
+				parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
 					instantiated_name,
 					member_name,
 					std::span<const TemplateTypeArg>{});
@@ -3892,7 +3892,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			substituteCallArgumentsPreservingPackExpansion(call.arguments());
 		std::string_view owner_name =
 			StringTable::getStringView(current_owner_type_name_);
-		parser_.instantiateLazyMemberForCanonicalOwner(
+		parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
 			owner_name,
 			func_name,
 			std::span<const TemplateTypeArg>{});
@@ -4036,7 +4036,7 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 					materialized_owner_name,
 					member_name,
 					[this](StringHandle owner_handle) {
-						parser_.instantiateLazyClassToPhase(
+						parser_.templateEngine().instantiateLazyClassToPhase(
 							owner_handle,
 							ClassInstantiationPhase::Full);
 					},
@@ -4063,7 +4063,7 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 					materialized_owner_name;
 				if (target_func == nullptr || !target_func->is_materialized()) {
 					if (std::optional<ASTNode> instantiated_member =
-							parser_.instantiateLazyMemberForCanonicalOwner(
+							parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
 								mutable_owner_name,
 								member_name,
 								std::span<const TemplateTypeArg>{});
@@ -4097,7 +4097,7 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 						std::string_view class_name =
 							StringTable::getStringView(
 								receiver_type_info->name());
-						if (parser_.instantiateLazyMemberForCanonicalOwner(
+						if (parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
 								class_name,
 								call.called_from().value(),
 								std::span<const TemplateTypeArg>{})
@@ -4563,7 +4563,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				// Now instantiate the concrete template with the parsed args
 				if (!instantiation_args.empty()) {
 					Parser::AliasTemplateMaterializationResult materialized_type =
-						parser_.materializeTemplateInstantiationForLookup(concrete_template_name, instantiation_args);
+						parser_.templateEngine().materializeTemplateInstantiationForLookup(concrete_template_name, instantiation_args);
 					if (!materialized_type.instantiated_name.empty()) {
 						StringHandle instantiated_name_handle =
 							StringTable::getOrInternStringHandle(materialized_type.instantiated_name);
@@ -4654,7 +4654,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			// This order ensures qualified-id expressions like A::value resolve through
 			// alias chains to the concrete struct/class owner type.
 			Parser::AliasTemplateMaterializationResult canonical_owner =
-				parser_.materializeCanonicalOwnerTypeForLookup(concrete_type);
+				parser_.templateEngine().materializeCanonicalOwnerTypeForLookup(concrete_type);
 			const TypeInfo* type_info = canonical_owner.resolved_type_info;
 			if (type_info != nullptr && (type_info->isStruct() || type_info->getStructInfo() != nullptr)) {
 				StringHandle type_name_handle =
@@ -4821,7 +4821,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		FLASH_LOG(Templates, Trace, "  Triggering instantiation of template '", base_template_name,
 				  "' with ", inst_args.size(), " arguments");
 		Parser::AliasTemplateMaterializationResult materialized_namespace =
-			parser_.materializeTemplateInstantiationForLookup(base_template_name, inst_args);
+			parser_.templateEngine().materializeTemplateInstantiationForLookup(base_template_name, inst_args);
 		std::string_view instantiated_name = canonicalizeLookupOwnerForMember(
 			materialized_namespace,
 			qual_id.name());
@@ -4863,7 +4863,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		if (can_instantiate_with_zero_args) {
 			FLASH_LOG(Templates, Trace, "  Empty pack expansion for '", base_template_name, "', instantiating with 0 args");
 			Parser::AliasTemplateMaterializationResult materialized_namespace =
-				parser_.materializeTemplateInstantiationForLookup(base_template_name, {});
+				parser_.templateEngine().materializeTemplateInstantiationForLookup(base_template_name, {});
 			std::string_view instantiated_name = canonicalizeLookupOwnerForMember(
 				materialized_namespace,
 				qual_id.name());
@@ -5157,14 +5157,14 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 						}
 					}
 					Parser::AliasTemplateMaterializationResult materialized_type =
-						parser_.materializeAliasTemplateInstantiation(
+						parser_.templateEngine().materializeAliasTemplateInstantiation(
 							base_template_name,
 							materialized_args.args);
 					const TypeInfo* resolved_type_info =
 						materialized_type.resolved_type_info;
 					if (resolved_type_info == nullptr) {
 						materialized_type =
-							parser_.materializeTemplateInstantiationForLookup(
+							parser_.templateEngine().materializeTemplateInstantiationForLookup(
 								base_template_name,
 								materialized_args.args);
 						resolved_type_info = materialized_type.resolved_type_info;
@@ -5172,13 +5172,13 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					if (resolved_type_info == nullptr &&
 						qualified_base_template_name != type_info->baseTemplateName()) {
 						materialized_type =
-							parser_.materializeAliasTemplateInstantiation(
+							parser_.templateEngine().materializeAliasTemplateInstantiation(
 								StringTable::getStringView(type_info->baseTemplateName()),
 								materialized_args.args);
 						resolved_type_info = materialized_type.resolved_type_info;
 						if (resolved_type_info == nullptr) {
 							materialized_type =
-								parser_.materializeTemplateInstantiationForLookup(
+								parser_.templateEngine().materializeTemplateInstantiationForLookup(
 									StringTable::getStringView(type_info->baseTemplateName()),
 									materialized_args.args);
 							resolved_type_info = materialized_type.resolved_type_info;
@@ -5279,7 +5279,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 						std::string_view concrete_template_name =
 							StringTable::getStringView(subst.template_name_handle);
 						Parser::AliasTemplateMaterializationResult materialized_type =
-							parser_.materializeTemplateInstantiationForLookup(
+							parser_.templateEngine().materializeTemplateInstantiationForLookup(
 								concrete_template_name,
 								substituted_args.args);
 						if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
@@ -5347,7 +5347,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteInType");
 					if (!current_inst_args.empty()) {
 						Parser::AliasTemplateMaterializationResult materialized_type =
-							parser_.materializeTemplateInstantiationForLookup(
+							parser_.templateEngine().materializeTemplateInstantiationForLookup(
 								StringTable::getStringView(owner_base_name),
 								current_inst_args);
 						if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
@@ -5370,7 +5370,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					materializeStoredTemplateArgs(*type_info, /*evaluate_dependent_member_values=*/false, kInitialDependentMemberTypeResolutionDepth);
 				if (substituted_args.had_substitution && !substituted_args.args.empty()) {
 					Parser::AliasTemplateMaterializationResult materialized_type =
-						parser_.materializeTemplateInstantiationForLookup(base_name, substituted_args.args);
+						parser_.templateEngine().materializeTemplateInstantiationForLookup(base_name, substituted_args.args);
 					if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
 						TypeIndex new_type_index = resolved_type_info->registeredTypeIndex();
 						FLASH_LOG(Templates, Trace, "  Successfully materialized template: ", base_name, " with type_index=", new_type_index);
