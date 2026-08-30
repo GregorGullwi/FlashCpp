@@ -70,6 +70,19 @@ public:
 		return FlashCpp::inlineVectorSpillCount();
 	}
 
+	void publishScopeState(ScopeId current_scope_id, std::size_t scope_count) {
+		current_scope_id_ = current_scope_id;
+		scope_count_ = scope_count;
+	}
+
+	ScopeId currentScopeId() const {
+		return current_scope_id_;
+	}
+
+	std::size_t scopeCount() const {
+		return scope_count_;
+	}
+
 	void refreshScratchDomainStats() {
 		const std::size_t scratch_index = static_cast<std::size_t>(AllocationDomain::Scratch);
 		domain_stats_[scratch_index].current_bytes = scratch_arena_.currentBytes();
@@ -125,6 +138,11 @@ public:
 		FLASH_LOG(General, Info,
 				  "  InlineVector spill events (selected families): ",
 				  FlashCpp::inlineVectorSpillCount());
+		FLASH_LOG(General, Info,
+				  "  persistent scopes (count/current ScopeId): ",
+				  scope_count_,
+				  "/",
+				  current_scope_id_.value);
 	}
 
 private:
@@ -147,9 +165,11 @@ private:
 	std::array<DomainByteStats, 4> domain_stats_{};
 	MonotonicScratchArena scratch_arena_;
 	ScratchProbeRegistry scratch_registry_;
+	ScopeId current_scope_id_;
+	std::size_t scope_count_ = 1;
 };
 
 inline FrontendContext* frontendContext() {
 	return FrontendContext::active();
 }
-
+

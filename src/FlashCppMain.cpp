@@ -174,6 +174,7 @@ static void printOutsideDiagnosticTelemetry() {
 			  diagnosticsEmittedOutsideEngineCount());
 	printMigrationTelemetry();
 	if (FrontendContext* active = FrontendContext::active()) {
+		active->publishScopeState(gSymbolTable.currentScopeId(), gSymbolTable.scopeCount());
 		active->printArenaTelemetry();
 	}
 }

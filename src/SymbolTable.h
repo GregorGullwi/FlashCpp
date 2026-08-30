@@ -16,6 +16,7 @@
 #include "StackString.h"
 #include "Log.h"
 #include "StringBuilder.h"
+#include "FrontendIds.h"
 #include "NamespaceRegistry.h"
 #include "TemplateRegistry.h"
 
@@ -32,9 +33,10 @@ struct ScopeHandle {
 
 struct Scope {
 	Scope() = default;
-	Scope(ScopeType scopeType, size_t scope_level) : scope_type(scopeType), scope_handle{.scope_level = scope_level} {}
-	Scope(ScopeType scopeType, size_t scope_level, StringHandle ns_name)
-		: scope_type(scopeType), scope_handle{.scope_level = scope_level}, namespace_name(ns_name) {}
+	Scope(ScopeType scopeType, uint32_t depth)
+		: scope_type(scopeType), depth(depth), scope_handle{.scope_level = depth} {}
+	Scope(ScopeType scopeType, uint32_t depth, StringHandle ns_name)
+		: scope_type(scopeType), depth(depth), scope_handle{.scope_level = depth}, namespace_name(ns_name) {}
 
 	Scope(Scope&&) noexcept = default;
 	Scope& operator=(Scope&&) noexcept = default;
@@ -42,6 +44,9 @@ struct Scope {
 	Scope& operator=(const Scope&) = default;
 
 	ScopeType scope_type = ScopeType::Block;
+	ScopeId scope_id;
+	ScopeId parent_scope_id;
+	uint32_t depth = 1;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
 	// Use string_view keys with a dedicated ChunkedStringAllocator in SymbolTable to avoid copies
 	// while ensuring strings remain valid for the lifetime of the symbol table.
@@ -148,6 +153,26 @@ public:
 		diagnostics_ = &diagnostics;
 	}
 
+	ScopeId currentScopeId() const {
+		return scopes_[current_scope_index_].scope_id;
+	}
+
+	ScopeId lastLookupScopeId() const {
+		return last_lookup_scope_id_;
+	}
+
+	ScopeId lastDeclaringScopeId() const {
+		return last_declaring_scope_id_;
+	}
+
+	std::size_t scopeCount() const {
+		return scopes_.size();
+	}
+
+	std::size_t activeScopeDepth() const {
+		return scopes_[current_scope_index_].depth;
+	}
+
 	bool insert([[maybe_unused]] const std::string& identifier, [[maybe_unused]] ASTNode node) {
 		assert(false && "Use StringBuilder to pass a string_view to SymbolTable::insert, don't use std::string");
 		return false;
@@ -166,7 +191,8 @@ public:
 	}
 
 	bool insert(std::string_view identifier, ASTNode node) {
-		auto& current_scope = symbol_table_stack_.back();
+		last_declaring_scope_id_ = scopes_[current_scope_index_].scope_id;
+		auto& current_scope = scopes_[current_scope_index_];
 		const bool ns_scope = current_scope.scope_type == ScopeType::Namespace;
 		const bool global_scope = current_scope.scope_type == ScopeType::Global;
 
@@ -357,7 +383,7 @@ public:
 	// initializer, so a stub is pre-inserted before parsing the initializer and then replaced
 	// with the fully-initialised VariableDeclarationNode once parsing completes.
 	bool replace_variable(std::string_view identifier, ASTNode new_node) {
-		auto& current_scope = symbol_table_stack_.back();
+		auto& current_scope = scopes_[current_scope_index_];
 		if (current_scope.scope_type == ScopeType::Namespace) {
 			NamespaceHandle ns_handle = get_current_namespace_handle();
 			StringHandle key = StringTable::getOrInternStringHandle(identifier);
@@ -389,11 +415,12 @@ public:
 	// Insert a symbol into the global scope (scope_level 0) regardless of current scope
 	// This is useful for variable template instantiations that happen during function parsing
 	bool insertGlobal(std::string_view identifier, ASTNode node) {
-		if (symbol_table_stack_.empty()) {
+		if (scopes_.empty()) {
 			return false;  // No global scope exists
 		}
 
-		auto& global_scope = symbol_table_stack_[0];	 // Global scope is always at index 0
+		auto& global_scope = scopes_[0];	 // Global scope is always at index 0
+		last_declaring_scope_id_ = global_scope.scope_id;
 		// First, try to find the identifier without interning
 		auto it = global_scope.symbols.find(identifier);
 
@@ -410,20 +437,25 @@ public:
 	}
 
 	ScopeType get_current_scope_type() const {
-		return symbol_table_stack_.back().scope_type;
+		return scopes_[current_scope_index_].scope_type;
 	}
 
 	std::optional<ScopeType> get_scope_type(ScopeHandle handle) const {
-		for (const Scope& scope : symbol_table_stack_) {
-			if (scope.scope_handle.scope_level == handle.scope_level) {
+		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
+			const Scope& scope = scopes_[scope_index];
+			if (scope.depth == handle.scope_level) {
 				return scope.scope_type;
 			}
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 		return std::nullopt;
 	}
 
 	ScopeHandle get_current_scope_handle() const {
-		return ScopeHandle{.scope_level = symbol_table_stack_.size()};
+		return ScopeHandle{.scope_level = scopes_[current_scope_index_].depth};
 	}
 
 	bool contains(std::string_view identifier) const {
@@ -468,11 +500,24 @@ public:
 	}
 
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
+		last_lookup_scope_id_ = scopes_[current_scope_index_].scope_id;
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		NamespaceHandle scope_namespace = namespace_handle;
 
-		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			const Scope& scope = *stackIt;
+		const uint32_t limit_depth = static_cast<uint32_t>(scope_limit_handle.scope_level);
+		std::size_t scope_index = current_scope_index_;
+		const uint32_t scopes_to_skip = scopes_[current_scope_index_].depth > limit_depth
+			? scopes_[current_scope_index_].depth - static_cast<uint32_t>(limit_depth)
+			: 0;
+		for (uint32_t skip = 0; skip < scopes_to_skip; ++skip) {
+			if (!scopes_[scope_index].parent_scope_id) {
+				return std::nullopt;
+			}
+			scope_index = scopes_[scope_index].parent_scope_id.value - 1;
+		}
+
+		while (scope_index < scopes_.size()) {
+			const Scope& scope = scopes_[scope_index];
 
 			// For namespace scopes, probe namespace_symbols_ before the local symbols map.
 			// Members and namespace-scope using-declarations live in namespace_symbols_;
@@ -512,6 +557,11 @@ public:
 			if (using_result.has_value()) {
 				return using_result;
 			}
+
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 
 		return std::nullopt;
@@ -543,11 +593,24 @@ public:
 	}
 
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
+		last_lookup_scope_id_ = scopes_[current_scope_index_].scope_id;
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		NamespaceHandle scope_namespace = namespace_handle;
 
-		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			const Scope& scope = *stackIt;
+		const uint32_t limit_depth = static_cast<uint32_t>(scope_limit_handle.scope_level);
+		std::size_t scope_index = current_scope_index_;
+		const uint32_t scopes_to_skip = scopes_[current_scope_index_].depth > limit_depth
+			? scopes_[current_scope_index_].depth - static_cast<uint32_t>(limit_depth)
+			: 0;
+		for (uint32_t skip = 0; skip < scopes_to_skip; ++skip) {
+			if (!scopes_[scope_index].parent_scope_id) {
+				return {};
+			}
+			scope_index = scopes_[scope_index].parent_scope_id.value - 1;
+		}
+
+		while (scope_index < scopes_.size()) {
+			const Scope& scope = scopes_[scope_index];
 
 			// For namespace scopes, probe namespace_symbols_ before the local symbols map.
 			// Members and namespace-scope using-declarations live in namespace_symbols_;
@@ -586,6 +649,11 @@ public:
 			if (!using_result.empty()) {
 				return using_result;
 			}
+
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 
 		return {};
@@ -725,8 +793,9 @@ public:
 		std::unordered_set<NamespaceHandle> result;
 		// 1. Global namespace is always eligible.
 		result.insert(NamespaceRegistry::GLOBAL_NAMESPACE);
-		// 2 & 3. Current scope chain: each namespace frame and its using directives.
-		for (const auto& scope : symbol_table_stack_) {
+		// 2 & 3. Active scope chain: each namespace frame and its using directives.
+		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
+			const Scope& scope = scopes_[scope_index];
 			if (scope.namespace_handle.isValid()) {
 				result.insert(scope.namespace_handle);
 			}
@@ -735,6 +804,10 @@ public:
 					result.insert(using_ns);
 				}
 			}
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 		// 4. Associated namespaces of argument types, expanded for inline namespace transparency.
 		// Per C++20 [basic.lookup.argdep]/2: if an associated namespace is an inline namespace
@@ -908,12 +981,16 @@ public:
 	// Searches scope.symbols (innermost first), then falls back to namespace_symbols_.
 	// Returns nullopt if not found anywhere.
 	std::optional<ScopeType> get_scope_type_of_symbol(std::string_view identifier) const {
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			const Scope& scope = *stackIt;
+		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
+			const Scope& scope = scopes_[scope_index];
 			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
 				return scope.scope_type;
 			}
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 		// Symbol may be in namespace_symbols_ (e.g. found via using-directive) but not
 		// materialised into any scope's symbols map. Treat that as namespace-scope.
@@ -927,11 +1004,25 @@ public:
 	}
 
 	void enter_scope(ScopeType scopeType) {
-		symbol_table_stack_.emplace_back(Scope(scopeType, symbol_table_stack_.size()));
+		const Scope& parent = scopes_[current_scope_index_];
+		const uint32_t new_depth = parent.depth + 1;
+		const ScopeId parent_id = parent.scope_id;
+		const ScopeId new_scope_id = ScopeId{static_cast<uint32_t>(scopes_.size() + 1)};
+		scopes_.emplace_back(Scope(scopeType, new_depth));
+		Scope& scope = scopes_.back();
+		scope.scope_id = new_scope_id;
+		scope.parent_scope_id = parent_id;
+		current_scope_index_ = scopes_.size() - 1;
 	}
 
 	void enter_namespace(NamespaceHandle ns_handle) {
-		Scope scope(ScopeType::Namespace, symbol_table_stack_.size());
+		const Scope& parent = scopes_[current_scope_index_];
+		const uint32_t new_depth = parent.depth + 1;
+		const ScopeId parent_id = parent.scope_id;
+		const ScopeId new_scope_id = ScopeId{static_cast<uint32_t>(scopes_.size() + 1)};
+		Scope scope(ScopeType::Namespace, new_depth);
+		scope.scope_id = new_scope_id;
+		scope.parent_scope_id = parent_id;
 		scope.namespace_handle = ns_handle;
 		if (ns_handle.isValid() && !ns_handle.isGlobal()) {
 			gNamespaceRegistry.markDeclared(ns_handle);
@@ -941,7 +1032,8 @@ public:
 			// map for Namespace scopes, and insert() uses it as the source of truth for
 			// redeclarations across reopened blocks. Do not preload into scope.symbols.
 		}
-		symbol_table_stack_.push_back(std::move(scope));
+		scopes_.push_back(std::move(scope));
+		current_scope_index_ = scopes_.size() - 1;
 	}
 
 	void enter_namespace(std::string_view namespace_name) {
@@ -950,22 +1042,38 @@ public:
 		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(parent_handle, name_handle);
 		if (!ns_handle.isValid()) {
 			FLASH_LOG(Symbols, Error, "Namespace handle creation failed for '", namespace_name, "'");
-			symbol_table_stack_.emplace_back(Scope(ScopeType::Namespace, symbol_table_stack_.size(), name_handle));
+			const Scope& parent = scopes_[current_scope_index_];
+			const uint32_t new_depth = parent.depth + 1;
+			const ScopeId parent_id = parent.scope_id;
+			const ScopeId new_scope_id = ScopeId{static_cast<uint32_t>(scopes_.size() + 1)};
+			scopes_.emplace_back(Scope(ScopeType::Namespace, new_depth, name_handle));
+			Scope& scope = scopes_.back();
+			scope.scope_id = new_scope_id;
+			scope.parent_scope_id = parent_id;
+			current_scope_index_ = scopes_.size() - 1;
 			return;
 		}
 		enter_namespace(ns_handle);
 	}
 
 	void exit_scope() {
-		symbol_table_stack_.pop_back();
+		if (current_scope_index_ == 0) {
+			return;
+		}
+		const Scope& current = scopes_[current_scope_index_];
+		if (!current.parent_scope_id) {
+			current_scope_index_ = 0;
+			return;
+		}
+		current_scope_index_ = current.parent_scope_id.value - 1;
 	}
 
 	// Add a using directive to the current scope
 	void add_using_directive(std::span<const StringType<>> namespace_path) {
-		if (symbol_table_stack_.empty())
+		if (scopes_.empty())
 			return;
 
-		Scope& current_scope = symbol_table_stack_.back();
+		Scope& current_scope = scopes_[current_scope_index_];
 		NamespaceHandle namespace_handle = resolve_namespace_handle_impl(namespace_path);
 		if (namespace_handle.isValid()) {
 			current_scope.using_directive_paths.push_back(namespace_handle);
@@ -973,21 +1081,21 @@ public:
 	}
 
 	void add_using_directive(NamespaceHandle namespace_handle) {
-		if (symbol_table_stack_.empty())
+		if (scopes_.empty())
 			return;
 		if (!namespace_handle.isValid())
 			return;
 
-		Scope& current_scope = symbol_table_stack_.back();
+		Scope& current_scope = scopes_[current_scope_index_];
 		current_scope.using_directive_paths.push_back(namespace_handle);
 	}
 
 	// Add a using declaration to the current scope
 	void add_using_declaration(std::string_view local_name, std::span<const StringType<>> namespace_path, std::string_view original_name) {
-		if (symbol_table_stack_.empty())
+		if (scopes_.empty())
 			return;
 
-		Scope& current_scope = symbol_table_stack_.back();
+		Scope& current_scope = scopes_[current_scope_index_];
 		std::string_view key = intern_string(local_name);
 		std::string_view orig_name = intern_string(original_name);
 		NamespaceHandle namespace_handle = resolve_namespace_handle_impl(namespace_path);
@@ -1006,12 +1114,12 @@ public:
 	}
 
 	void add_using_declaration(std::string_view local_name, NamespaceHandle namespace_handle, std::string_view original_name) {
-		if (symbol_table_stack_.empty())
+		if (scopes_.empty())
 			return;
 		if (!namespace_handle.isValid())
 			return;
 
-		Scope& current_scope = symbol_table_stack_.back();
+		Scope& current_scope = scopes_[current_scope_index_];
 		std::string_view key = intern_string(local_name);
 		std::string_view orig_name = intern_string(original_name);
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
@@ -1025,10 +1133,10 @@ public:
 
 	// Add a namespace alias to the current scope
 	void add_namespace_alias(std::string_view alias, std::span<const StringType<>> target_namespace) {
-		if (symbol_table_stack_.empty())
+		if (scopes_.empty())
 			return;
 
-		Scope& current_scope = symbol_table_stack_.back();
+		Scope& current_scope = scopes_[current_scope_index_];
 		std::string_view key = intern_string(alias);
 		NamespaceHandle target_handle = resolve_namespace_handle_impl(target_namespace);
 		if (!target_handle.isValid()) {
@@ -1050,12 +1158,12 @@ public:
 	}
 
 	void add_namespace_alias(std::string_view alias, NamespaceHandle target_namespace) {
-		if (symbol_table_stack_.empty())
+		if (scopes_.empty())
 			return;
 		if (!target_namespace.isValid())
 			return;
 
-		Scope& current_scope = symbol_table_stack_.back();
+		Scope& current_scope = scopes_[current_scope_index_];
 		std::string_view key = intern_string(alias);
 		update_or_insert(current_scope.namespace_aliases, key, target_namespace);
 	}
@@ -1096,22 +1204,32 @@ public:
 
 	// Get the current namespace name (empty if not in a namespace)
 	std::string_view get_current_namespace() const {
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			if (stackIt->scope_type == ScopeType::Namespace) {
-				if (!stackIt->namespace_name.isValid()) {
+		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
+			const Scope& scope = scopes_[scope_index];
+			if (scope.scope_type == ScopeType::Namespace) {
+				if (!scope.namespace_name.isValid()) {
 					return "";
 				}
-				return StringTable::getStringView(stackIt->namespace_name);
+				return StringTable::getStringView(scope.namespace_name);
 			}
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 		return "";
 	}
 
 	NamespaceHandle get_current_namespace_handle() const {
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			if (stackIt->scope_type == ScopeType::Namespace) {
-				return stackIt->namespace_handle;
+		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
+			const Scope& scope = scopes_[scope_index];
+			if (scope.scope_type == ScopeType::Namespace) {
+				return scope.namespace_handle;
 			}
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 		return NamespaceRegistry::GLOBAL_NAMESPACE;
 	}
@@ -1187,12 +1305,17 @@ public:
 	// Get all using directives from the current scope and all enclosing scopes as handles.
 	std::vector<NamespaceHandle> get_current_using_directive_handles() const {
 		std::vector<NamespaceHandle> result;
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			for (const auto& using_dir : stackIt->using_directive_paths) {
+		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
+			const Scope& scope = scopes_[scope_index];
+			for (const auto& using_dir : scope.using_directive_paths) {
 				if (using_dir.isValid()) {
 					result.push_back(using_dir);
 				}
 			}
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 		return result;
 	}
@@ -1202,8 +1325,17 @@ public:
 	// Returns a map of local_name -> (namespace_handle, original_name)
 	std::unordered_map<std::string_view, std::pair<NamespaceHandle, std::string_view>> get_current_using_declaration_handles() const {
 		std::unordered_map<std::string_view, std::pair<NamespaceHandle, std::string_view>> result;
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			for (const auto& [local_name, target_info] : stackIt->using_declarations_handles) {
+		std::vector<std::size_t> active_chain;
+		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
+			active_chain.push_back(scope_index);
+			if (!scopes_[scope_index].parent_scope_id) {
+				break;
+			}
+			scope_index = scopes_[scope_index].parent_scope_id.value - 1;
+		}
+		for (std::size_t chain_index = 0; chain_index < active_chain.size(); ++chain_index) {
+			const Scope& scope = scopes_[active_chain[chain_index]];
+			for (const auto& [local_name, target_info] : scope.using_declarations_handles) {
 				if (result.find(local_name) == result.end()) {
 					result[local_name] = target_info;
 				}
@@ -1235,8 +1367,14 @@ public:
 	}
 
 	void clear() {
-		symbol_table_stack_.clear();
-		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
+		scopes_.clear();
+		scopes_.emplace_back(Scope(ScopeType::Global, 1));
+		Scope& global_scope = scopes_.back();
+		global_scope.scope_id = ScopeId{1};
+		global_scope.parent_scope_id = ScopeId{};
+		current_scope_index_ = 0;
+		last_lookup_scope_id_ = ScopeId{};
+		last_declaring_scope_id_ = ScopeId{};
 		namespace_symbols_.clear();
 		adl_only_symbols_.clear();
 		adl_only_function_names_.clear();
@@ -1246,7 +1384,17 @@ public:
 	}
 
 private:
-	std::vector<Scope> symbol_table_stack_ = {Scope(ScopeType::Global, 0)};
+	static Scope makeInitialGlobalScope() {
+		Scope global_scope(ScopeType::Global, 1);
+		global_scope.scope_id = ScopeId{1};
+		global_scope.parent_scope_id = ScopeId{};
+		return global_scope;
+	}
+
+	std::vector<Scope> scopes_ = {makeInitialGlobalScope()};
+	std::size_t current_scope_index_ = 0;
+	mutable ScopeId last_lookup_scope_id_;
+	ScopeId last_declaring_scope_id_;
 	// Persistent map of namespace contents
 	// Uses NamespaceHandle as key to avoid string concatenation
 	// Maps: namespace_handle -> (symbol_name -> vector<ASTNode>) to support overloading
@@ -1581,11 +1729,16 @@ private:
 	}
 
 	std::optional<NamespaceHandle> resolve_namespace_alias_handle(std::string_view alias) const {
-		for (auto it = symbol_table_stack_.rbegin(); it != symbol_table_stack_.rend(); ++it) {
-			auto alias_handle_it = it->namespace_aliases.find(alias);
-			if (alias_handle_it != it->namespace_aliases.end()) {
+		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
+			const Scope& scope = scopes_[scope_index];
+			auto alias_handle_it = scope.namespace_aliases.find(alias);
+			if (alias_handle_it != scope.namespace_aliases.end()) {
 				return alias_handle_it->second;
 			}
+			if (!scope.parent_scope_id) {
+				break;
+			}
+			scope_index = scope.parent_scope_id.value - 1;
 		}
 		return std::nullopt;
 	}
