@@ -3305,7 +3305,9 @@ static EvalResult make_local_default_init(const TypeSpecifierNode& type_spec, Ev
 				return EvalResult::error(
 					"No matching default constructor for '" +
 					std::string(StringTable::getStringView(struct_info->getName())) +
-					"' in constexpr evaluation");
+					"' in constexpr evaluation",
+					EvalErrorType::NotConstantExpression,
+					DiagnosticId::ConstantExpressionNoMatchingConstructor);
 			}
 			return *ctor_result;
 		}
@@ -3559,7 +3561,9 @@ EvalResult Evaluator::evaluate_new_expression(
 					return EvalResult::error(
 						"new-expression: no matching default constructor for '" +
 						std::string(StringTable::getStringView(struct_info->getName())) +
-						"' (type has user-defined constructors and is not an aggregate)");
+						"' (type has user-defined constructors and is not an aggregate)",
+						EvalErrorType::NotConstantExpression,
+						DiagnosticId::ConstantExpressionNoMatchingConstructor);
 				}
 			} else {
 				// True aggregate or implicit-only constructors:

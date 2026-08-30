@@ -832,7 +832,9 @@ EvalResult makeConstructorDefaultInitFromType(const TypeSpecifierNode& type_spec
 			if (!ctor_result.has_value()) {
 				return EvalResult::error(
 					"No matching default constructor for '" +
-					std::string(StringTable::getStringView(struct_info->getName())) + "'");
+					std::string(StringTable::getStringView(struct_info->getName())) + "'",
+					EvalErrorType::NotConstantExpression,
+					DiagnosticId::ConstantExpressionNoMatchingConstructor);
 			}
 			return *ctor_result;
 		}

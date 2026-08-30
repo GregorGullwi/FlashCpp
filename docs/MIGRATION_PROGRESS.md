@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-5`
+Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-6`
 
 ## Position
 
@@ -41,6 +41,12 @@ Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-5`
   at existing parser and lambda-lowering rejection owners. It converts five
   more frozen tests without adding lookup, replay, recovery, or lowering
   queries.
+- Iteration 6 assigns `PreprocessingRejectedInput` (1103),
+  `ConstantExpressionMemberNotFound`/`ConstantExpressionSubscriptRequiresArray`
+  (1224-1225), `NoMatchingConstructor` (1508), and `UndeclaredIdentifier`
+  (1616) at existing preprocessing, evaluator, semantic, and parser owners.
+  It converts seven more frozen tests without adding lookup, replay, recovery,
+  or lowering queries.
 - Pull request boundary 2F now includes the explicit-initialization batch on
   branch `codex/boundary-2f-explicit-initialization` (commit `a136a23c`). It
   assigns `AssignmentToConstObject` (1318),
@@ -124,7 +130,7 @@ Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-5`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 45 names. The temporary internal-failure
+- The frozen legacy inventory is now 29 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -152,8 +158,8 @@ Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-5`
     explicit-initialization, declarator-constraint, semantic-validity, and
     ordinary-call and call-operator ambiguity, dllimport-constraint, template
     phase-1, partial-specialization, namespace, and structured-binding
-    diagnostics (1001, 1004-1014, 1201-1220, 1318-1322, 1503-1507,
-    1601-1608, 1614-1615, 1701-1703, 1801-1805),
+    diagnostics (1001, 1004-1014, 1103, 1201-1225, 1318-1322, 1503-1508,
+    1601-1608, 1614-1616, 1701-1703, 1801-1805),
     including the static-member constructor path, are
     mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding

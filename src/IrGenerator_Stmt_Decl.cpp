@@ -986,13 +986,20 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 				if (!ctor_evaluated) {
 					if (missing_ctor_for_nonaggregate) {
-						throw CompileError(std::string(StringBuilder()
+						const std::string message = std::string(StringBuilder()
 							.append("No matching constructor for '"sv)
 							.append(StringTable::getStringView(si->name))
 							.append("' with "sv)
-							.append(std::to_string(ctor_call.arguments().size()))
+						.append(std::to_string(ctor_call.arguments().size()))
 							.append(" argument(s)"sv)
-							.commit()));
+							.commit());
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::NoMatchingConstructor,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(decl.identifier_token()),
+							message,
+							{});
 					}
 						// Fallback: zero-initialize aggregate/default-construction cases that
 						// do not have a missing user-declared constructor diagnostic above.

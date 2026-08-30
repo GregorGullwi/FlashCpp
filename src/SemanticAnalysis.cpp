@@ -10953,8 +10953,16 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 			{});
 	}
 	if (!resolution.selected_overload) {
-		if (require_constructor_match)
-			throw CompileError(buildConstructorDiagnostic("No matching constructor", num_args));
+		if (require_constructor_match) {
+			const std::string message = buildConstructorDiagnostic("No matching constructor", num_args);
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::NoMatchingConstructor,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(call_node.called_from()),
+				message,
+				{});
+		}
 		return;
 	}
 	call_node.set_resolved_constructor(resolution.selected_overload);

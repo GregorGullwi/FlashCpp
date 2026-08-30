@@ -84,6 +84,7 @@ enum class DiagnosticId : uint32_t {
 	// Lexical numeric-literal family (1101..1199).
 	HexFloatRequiresBinaryExponent = 1101,
 	InvalidIntegerLiteralSuffix = 1102,
+	PreprocessingRejectedInput = 1103,
 
 	// Constant-expression evaluation family (1201..1299).
 	ConstantExpressionDivisionByZero = 1201,
@@ -108,6 +109,8 @@ enum class DiagnosticId : uint32_t {
 	ConstantExpressionNonAggregateInitialization = 1221,
 	ConstantExpressionNoMatchingConstructor = 1222,
 	ConstantExpressionEvaluationLimit = 1223,
+	ConstantExpressionMemberNotFound = 1224,
+	ConstantExpressionSubscriptRequiresArray = 1225,
 
 	// Operator family (1301..1399).
 	FloatingPointModuloOperator = 1301,
@@ -147,6 +150,7 @@ enum class DiagnosticId : uint32_t {
 	DllImportConstexprConflict = 1505,
 	DllImportDataDefinition = 1506,
 	NarrowingConversionInListInitialization = 1507,
+	NoMatchingConstructor = 1508,
 
 	// Semantic validity family (1601..1699).
 	RangeForBeginEndRequired = 1601,
@@ -164,6 +168,7 @@ enum class DiagnosticId : uint32_t {
 	StructuredBindingTupleLikeProtocolFailure = 1613,
 	LambdaCaptureNotFound = 1614,
 	UndeclaredQualifiedIdentifier = 1615,
+	UndeclaredIdentifier = 1616,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -227,6 +232,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "HexFloatRequiresBinaryExponent";
 	case DiagnosticId::InvalidIntegerLiteralSuffix:
 		return "InvalidIntegerLiteralSuffix";
+	case DiagnosticId::PreprocessingRejectedInput:
+		return "PreprocessingRejectedInput";
 	case DiagnosticId::ConstantExpressionDivisionByZero:
 		return "ConstantExpressionDivisionByZero";
 	case DiagnosticId::ConstantExpressionModuloByZero:
@@ -271,6 +278,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "ConstantExpressionNoMatchingConstructor";
 	case DiagnosticId::ConstantExpressionEvaluationLimit:
 		return "ConstantExpressionEvaluationLimit";
+	case DiagnosticId::ConstantExpressionMemberNotFound:
+		return "ConstantExpressionMemberNotFound";
+	case DiagnosticId::ConstantExpressionSubscriptRequiresArray:
+		return "ConstantExpressionSubscriptRequiresArray";
 	case DiagnosticId::FloatingPointModuloOperator:
 		return "FloatingPointModuloOperator";
 	case DiagnosticId::FloatingPointBitwiseCompoundAssignment:
@@ -337,6 +348,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DllImportDataDefinition";
 	case DiagnosticId::NarrowingConversionInListInitialization:
 		return "NarrowingConversionInListInitialization";
+	case DiagnosticId::NoMatchingConstructor:
+		return "NoMatchingConstructor";
 	case DiagnosticId::RangeForBeginEndRequired:
 		return "RangeForBeginEndRequired";
 	case DiagnosticId::AmbiguousDerivedToBasePointerConversion:
@@ -367,6 +380,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "LambdaCaptureNotFound";
 	case DiagnosticId::UndeclaredQualifiedIdentifier:
 		return "UndeclaredQualifiedIdentifier";
+	case DiagnosticId::UndeclaredIdentifier:
+		return "UndeclaredIdentifier";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
