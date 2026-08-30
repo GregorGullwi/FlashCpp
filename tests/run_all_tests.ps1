@@ -159,23 +159,6 @@ if (-not $negativeNameValidation.Valid) {
 	Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name "negative-names" -Status "invalid" -Detail $negativeNameValidation.Error
 	exit 1
 }
-$inventoryValidation = Test-FlashCppLegacyNegativeInventory -RepoRoot $RepoRoot -InventoryPath (Join-Path $ScriptDir "legacy_negative_tests.txt")
-if (-not $inventoryValidation.Valid) {
-	Write-Host "ERROR: $($inventoryValidation.Error)" -ForegroundColor Red
-	Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name "legacy-inventory" -Status "invalid" -Detail $inventoryValidation.Error
-	exit 1
-}
-$legacyInternalCompatibility = Test-FlashCppLegacyInternalCompatibility `
-	-RepoRoot $RepoRoot `
-	-CompatibilityPath (Join-Path $ScriptDir "legacy_internal_failure_tests.txt") `
-	-LegacyInventoryPath (Join-Path $ScriptDir "legacy_negative_tests.txt")
-if (-not $legacyInternalCompatibility.Valid) {
-	Write-Host "ERROR: $($legacyInternalCompatibility.Error)" -ForegroundColor Red
-	Write-FlashCppCiRecord -Path $CiOutput -Kind "discovery" -Name "legacy-internal-compatibility" -Status "invalid" -Detail $legacyInternalCompatibility.Error
-	exit 1
-}
-$legacyInternalCompatibilityNames = @($legacyInternalCompatibility.ActiveNames)
-$legacyInternalCompatibilityRemovalBoundary = $legacyInternalCompatibility.RemovalBoundary
 $expectedFailures = Read-FlashCppExpectedFailures -ManifestPath (Join-Path $ScriptDir "expected_failures.tsv") -TestsRoot $ScriptDir
 if (-not $expectedFailures.Valid) {
 	Write-Host "ERROR: $($expectedFailures.Error)" -ForegroundColor Red
@@ -585,7 +568,7 @@ function Invoke-TestOneFile {
 # Worker function for testing a single negative file
 # ──────────────────────────────────────────────────────
 function Invoke-TestOneFailFile {
-	param($filePath, $fileName, $baseName, $flashCppPath, $sourceRejectionExit, $internalFailureExit, $legacyInternalCompatibilityNames, $legacyInternalCompatibilityRemovalBoundary, $resultDir)
+	param($filePath, $fileName, $baseName, $flashCppPath, $sourceRejectionExit, $internalFailureExit, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
 
@@ -602,12 +585,9 @@ function Invoke-TestOneFailFile {
 		$failOutput = $compilerResult.Output
 		$negativeResult = Test-FlashCppNegativeCompileResult -FileName $fileName -Started $compilerResult.Started `
 			-TimedOut $compilerResult.TimedOut -ExitCode $compilerResult.ExitCode -ObjectExists (Test-Path $objFile) `
-			-CompilerOutput $failOutput -SourceRejectionExit $sourceRejectionExit -InternalFailureExit $internalFailureExit `
-			-LegacyInternalCompatibilityNames $legacyInternalCompatibilityNames `
-			-LegacyInternalCompatibilityRemovalBoundary $legacyInternalCompatibilityRemovalBoundary
+			-CompilerOutput $failOutput -SourceRejectionExit $sourceRejectionExit -InternalFailureExit $internalFailureExit
 		switch ($negativeResult.Status) {
 			"Ok" { $resultLine = "FAIL_OK|$fileName|" }
-			"LegacyInternalCompatibility" { $resultLine = "FAIL_INTERNAL_COMPAT|$fileName|$($negativeResult.Detail)" }
 			"DiagnosticMismatch" { $resultLine = "DIAG_MISMATCH|$fileName|$($negativeResult.Detail)" }
 			default { $resultLine = "FAIL_BAD|$fileName|$($negativeResult.Detail)" }
 		}
@@ -812,7 +792,7 @@ if ($useParallel -and $failFiles.Count -gt 0) {
 		${function:Compare-FlashCppDiagnosticIdMultisets} = $using:compareFlashCppDiagnosticIdMultisetsDefinition
 		${function:Test-FlashCppNegativeCompileResult} = $using:testFlashCppNegativeCompileResultDefinition
 		$file = $_
-		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:sourceRejectionExit $using:internalFailureExit $using:legacyInternalCompatibilityNames $using:legacyInternalCompatibilityRemovalBoundary $using:resultDir
+		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:sourceRejectionExit $using:internalFailureExit $using:resultDir
 	} -AsJob
 	Wait-ParallelResultJob -Job $failParallelJob -Label "Negative tests" -TotalCount $failFiles.Count -ResultDir $resultDir -InitialCompleted $initialFailCompleted
 } else {
@@ -820,7 +800,7 @@ if ($useParallel -and $failFiles.Count -gt 0) {
 	foreach ($file in $failFiles) {
 		$currentFile++
 		Write-Host "[$currentFile/$totalFailFiles] Testing $($file.Name)... " -NoNewline
-		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $flashCppPath $sourceRejectionExit $internalFailureExit $legacyInternalCompatibilityNames $legacyInternalCompatibilityRemovalBoundary $resultDir
+		Invoke-TestOneFailFile $file.FullName $file.Name $file.BaseName $flashCppPath $sourceRejectionExit $internalFailureExit $resultDir
 
 		$resultFile = Join-Path $resultDir "$($file.Name).result"
 		if (Test-Path $resultFile) {
@@ -828,7 +808,6 @@ if ($useParallel -and $failFiles.Count -gt 0) {
 			$parts = $line -split '\|', 3
 			switch ($parts[0]) {
 				"FAIL_OK"       { Write-Host "OK (failed as expected)" }
-				"FAIL_INTERNAL_COMPAT" { Write-Host "OK (temporary legacy internal-failure compatibility)" -ForegroundColor Yellow }
 				"FAIL_BAD"      { Write-Host "[NEGATIVE CONTRACT FAILURE] $($parts[2])" -ForegroundColor Red }
 				"DIAG_MISMATCH" {
 					Write-Host "[DIAGNOSTIC MISMATCH] $($parts[2])" -ForegroundColor Red
@@ -867,7 +846,6 @@ $runFailed = @()
 $runtimeCrashes = @()
 $returnMismatches = @()
 $failTestSuccess = @()
-$legacyInternalCompatibilityUsed = @()
 $failTestFailed = @()
 $expectedFailureMatches = @()
 $staleExpectations = @()
@@ -1005,10 +983,6 @@ foreach ($file in $failFiles) {
 
 	switch ($parts[0]) {
 		"FAIL_OK"  { $failTestSuccess += $file.Name }
-		"FAIL_INTERNAL_COMPAT" {
-			$failTestSuccess += $file.Name
-			$legacyInternalCompatibilityUsed += $file.Name
-		}
 		"FAIL_BAD" {
 			$failTestFailed += $file.Name
 			if ($useParallel) {
@@ -1054,7 +1028,7 @@ Write-Host ""
 Write-Host "Negative compile tests:"
 Write-Host "  Failed as expected: $($failTestSuccess.Count)" -ForegroundColor Green
 Write-Host "  Contract failures: $($failTestFailed.Count)" -ForegroundColor Red
-Write-Host "  Legacy internal compatibility: $($legacyInternalCompatibility.ActiveCount) active / $($legacyInternalCompatibility.Baseline) baseline, $($legacyInternalCompatibilityUsed.Count) used in this run; direction down, remove by boundary $($legacyInternalCompatibility.RemovalBoundary)" -ForegroundColor Yellow
+Write-Host "  Legacy _fail.cpp classification: removed at boundary 2F" -ForegroundColor Green
 Write-Host "  Expected positive failures matched: $($expectedFailureMatches.Count)" -ForegroundColor Green
 Write-Host ""
 
@@ -1199,8 +1173,7 @@ foreach ($name in $returnMismatches) { Write-FlashCppCiRecord -Path $CiOutput -K
 foreach ($name in $failTestFailed) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "negative-contract-failed" -Detail "" }
 foreach ($name in $staleExpectations) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "stale-expectation" -Detail $staleExpectationDetails[$name] }
 foreach ($name in $nonWaivableFailures) { Write-FlashCppCiRecord -Path $CiOutput -Kind "test" -Name $name -Status "non-waivable-failure" -Detail $nonWaivableFailureDetails[$name] }
-Write-FlashCppCiRecord -Path $CiOutput -Kind "compatibility" -Name "legacy-internal-failure" -Status "active" -Detail "count=$($legacyInternalCompatibility.ActiveCount) baseline=$($legacyInternalCompatibility.Baseline) selected=$($legacyInternalCompatibilityUsed.Count) direction=down removal-boundary=$($legacyInternalCompatibility.RemovalBoundary)"
-Write-FlashCppCiRecord -Path $CiOutput -Kind "summary" -Name "all" -Status $(if ($exitCode -eq 0) { "success" } else { "failed" }) -Detail "single=$totalFiles multi-tu=$($multiTuCases.Count) failures=$($failureReasons.Count) legacy-internal=$($legacyInternalCompatibility.ActiveCount)/$($legacyInternalCompatibility.Baseline)"
+Write-FlashCppCiRecord -Path $CiOutput -Kind "summary" -Name "all" -Status $(if ($exitCode -eq 0) { "success" } else { "failed" }) -Detail "single=$totalFiles multi-tu=$($multiTuCases.Count) failures=$($failureReasons.Count)"
 
 Write-Host ""
 Write-Host "=============================================="

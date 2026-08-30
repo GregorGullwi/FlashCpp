@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-7`
+Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-8`
 
 ## Position
 
@@ -54,6 +54,13 @@ Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-7`
   failures to existing `IncompleteSizeofOperand` (1605) and
   `NoViableFunctionCall` (1704) contracts. Eight frozen tests are converted;
   the lookup bridge changes no lookup result or recovery behavior.
+- Iteration 8 applies the Boundary 2F stop rule: it removes the 28 remaining
+  unsupported fixtures from executable discovery, archives their `.cpp.txt`
+  reproducers, removes both frozen inventories and the temporary
+  internal-failure compatibility, and removes root `_fail.cpp` classification.
+  The migration corpus remains measurable by replacing the deleted concept row
+  with the encoded inline-namespace diagnostic test; the legacy-entry count is
+  now zero.
 - Pull request boundary 2F now includes the explicit-initialization batch on
   branch `codex/boundary-2f-explicit-initialization` (commit `a136a23c`). It
   assigns `AssignmentToConstObject` (1318),
@@ -130,16 +137,15 @@ Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-7`
   Boundary 2D then assigned the floating-point operator family (1301-1304),
   followed by operator ambiguity, operator signatures, deleted assignment,
   and immediate-invocation diagnostics (1305-1315).
-- The full Windows-suite validation on 2026-08-29 covered 2,959 regular tests,
-  281 negative tests, and one multi-translation-unit case; all compile/link
-  phases passed, with no crashes, runtime mismatches, or negative-contract
-  failures. Five tracked positive expected failures matched. The latest Linux
-  full-suite run covered 2,929 single-file tests, 281 negative tests, one
-  multi-translation-unit case, and five tracked positive expected failures;
-  it had no crashes or mismatches.
-- The frozen legacy inventory is now 28 names. The temporary internal-failure
-  compatibility is down to 5 active entries against its baseline of 7,
-  direction down, removal boundary 2F.
+- The full Windows-suite validation on 2026-08-30 covered 2,959 regular tests,
+  253 encoded negative tests, and one multi-translation-unit case; all
+  compile/link phases passed, with no crashes, runtime mismatches, or
+  negative-contract failures. Five tracked positive expected failures matched.
+  The latest Linux full-suite run covered 2,929 single-file tests, 281
+  negative tests, one multi-translation-unit case, and five tracked positive
+  expected failures; it had no crashes or mismatches.
+- The filename-encoded negative inventory is now the only negative-test
+  contract; its current legacy-entry count is zero.
 
 ## Criteria completion
 
@@ -189,33 +195,24 @@ Replaces the previous remaining-work section entirely on every update.
 Next blocker:
 
 - There is no cross-platform validation blocker for the current 2F snapshot:
-  the full Windows suite is green and the frozen inventory is below 60; the
-  current coordination target is zero.
+  the full Windows suite is green and the frozen inventory has reached zero;
+  the current coordination target is complete.
 
 Then, in order:
 
-1. Pull request boundaries 2D through 2F: continue converting the frozen
-   legacy negative tests in bounded diagnostic-owner batches. Apply the
-   diagnostic-contract durability and legacy-investment stop rule: attaching a
-   stable ID at an existing bounded owner is allowed, but a batch cannot extend
-   replay, parser-owned semantic work, identity recovery, AST-to-IR lookup, or
-   lowering recovery merely to convert a test. Boundary 2F still deletes
-   `_fail.cpp` classification, both frozen inventories, and the five-entry
-   internal-failure compatibility unless a later approved roadmap amendment
-   moves a named blocked slice and all of its cleanup targets together.
-2. The remaining frozen entries are concentrated in unsupported template
-   instantiation/identity paths and declaration-parse fallback paths. Apply
-   the stop rule: delete those unsupported fixtures with a known-issues note
-   rather than adding parser recovery, identity recovery, or generic
-   diagnostics solely to empty the inventory.
-3. Pull request boundary 3: first architectural regression slices
+1. Pull request boundaries 2D through 2F: the bounded diagnostic-owner batches
+   and the Boundary 2F cleanup are complete. The diagnostic-contract durability
+   and legacy-investment stop rule remains in force for later migrations: a
+   batch cannot extend replay, parser-owned semantic work, identity recovery,
+   AST-to-IR lookup, or lowering recovery merely to convert a test.
+2. Pull request boundary 3: first architectural regression slices
    (promotion, namespace-template identity, ambiguous member lookup),
    mutation-validated. The `auto`, constexpr, and template-deduction promotion
    probes plus the two namespace-template probes are tracked positive expected
    failures; the `sizeof`, overload-ranking, and ambiguous-member probes
    currently pass. This advances architecture boundary 0 only
    and does not complete boundaries 4, 5, or 6.
-4. Pull request boundary 4: template facade plus the remaining choke-point
+3. Pull request boundary 4: template facade plus the remaining choke-point
    counters and the `'$'` inline-parsing static inventory.
 
 Named follow-ups carried forward:
@@ -247,9 +244,6 @@ Named follow-ups carried forward:
 
 Current findings only; delete entries when their resolution lands.
 
-- Five legacy negative tests use the immutable, status-2 compatibility
-  inventory. The active count is 5 against baseline 7 and may only fall.
-  Details live in `docs/KNOWN_ISSUES.md`; deletion target is boundary 2F.
 - The unity doctest target's MSBuild ClangCL configuration crashes the clang
   frontend against the VS18 STL headers (LLVM 20.1 vs STL 14.51 mismatch).
   Unit tests are validated through the direct LLVM clang-cl driver instead.

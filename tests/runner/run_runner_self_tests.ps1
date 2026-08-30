@@ -63,11 +63,10 @@ try {
 	$ciPath = Join-Path $tempRoot "runner.tsv"
 	Initialize-FlashCppCiOutput -Path $ciPath
 	Write-FlashCppCiRecord -Path $ciPath -Kind "test" -Name "fixture" -Status "failed" -Detail "line one`nline two"
-	Write-FlashCppCiRecord -Path $ciPath -Kind "compatibility" -Name "legacy-internal-failure" -Status "active" -Detail "count=7 baseline=7 selected=0 direction=down removal-boundary=2F"
 	$ciLines = @(Get-Content -LiteralPath $ciPath)
-	Assert-Runner ($ciLines.Count -eq 3 -and
-		$ciLines[1] -match '^flashcpp-runner-v1\ttest\tfixture\tfailed\tline one line two$' -and
-		$ciLines[2] -match '^flashcpp-runner-v1\tcompatibility\tlegacy-internal-failure\tactive\tcount=7 baseline=7 selected=0 direction=down removal-boundary=2F$') "CI records include the directional compatibility count in the stable tab-separated schema"
+	Assert-Runner ($ciLines.Count -eq 2 -and
+		$ciLines[0] -match '^flashcpp-runner-v1\tmeta\tschema\t1$' -and
+		$ciLines[1] -match '^flashcpp-runner-v1\ttest\tfixture\tfailed\tline one line two$') "CI records use the stable tab-separated schema"
 	$ciBytes = [System.IO.File]::ReadAllBytes($ciPath)
 	Assert-Runner (-not ($ciBytes.Count -ge 3 -and $ciBytes[0] -eq 0xEF -and $ciBytes[1] -eq 0xBB -and $ciBytes[2] -eq 0xBF)) "CI records use UTF-8 without a byte-order mark"
 
@@ -107,145 +106,22 @@ try {
 	$internalResult = Test-FlashCppNegativeCompileResult -FileName "test_invalid_e1001_e1001_e1051.cpp" `
 		-Started $true -TimedOut $false -ExitCode $script:FlashCppInternalFailureExit -ObjectExists $false `
 		-CompilerOutput $diagnosticOutput -SourceRejectionExit $script:FlashCppSourceRejectionExit `
-		-InternalFailureExit $script:FlashCppInternalFailureExit -LegacyInternalCompatibilityNames @() `
-		-LegacyInternalCompatibilityRemovalBoundary $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
+		-InternalFailureExit $script:FlashCppInternalFailureExit
 	Assert-Runner ($internalResult.Status -eq "Bad" -and $internalResult.Detail -match "internal failure") "internal compiler status cannot pass even when expected IDs were emitted"
-
-	$compatibilityName = "test_constexpr_aggregate_brace_narrowing_fail.cpp"
-	$legacyInternalResult = Test-FlashCppNegativeCompileResult -FileName $compatibilityName `
-		-Started $true -TimedOut $false -ExitCode $script:FlashCppInternalFailureExit -ObjectExists $false `
-		-CompilerOutput "" -SourceRejectionExit $script:FlashCppSourceRejectionExit `
-		-InternalFailureExit $script:FlashCppInternalFailureExit -LegacyInternalCompatibilityNames @($compatibilityName) `
-		-LegacyInternalCompatibilityRemovalBoundary $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
-	Assert-Runner ($legacyInternalResult.Status -eq "LegacyInternalCompatibility") "a listed legacy _fail test may use the temporary internal-failure compatibility"
-
-	$unlistedInternalResult = Test-FlashCppNegativeCompileResult -FileName "unlisted_legacy_fail.cpp" `
-		-Started $true -TimedOut $false -ExitCode $script:FlashCppInternalFailureExit -ObjectExists $false `
-		-CompilerOutput "" -SourceRejectionExit $script:FlashCppSourceRejectionExit `
-		-InternalFailureExit $script:FlashCppInternalFailureExit -LegacyInternalCompatibilityNames @($compatibilityName) `
-		-LegacyInternalCompatibilityRemovalBoundary $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
-	Assert-Runner ($unlistedInternalResult.Status -eq "Bad") "an unlisted legacy _fail test cannot use internal-failure compatibility"
-
-	$encodedInternalResult = Test-FlashCppNegativeCompileResult -FileName "test_constexpr_aggregate_brace_narrowing_e1001.cpp" `
-		-Started $true -TimedOut $false -ExitCode $script:FlashCppInternalFailureExit -ObjectExists $false `
-		-CompilerOutput $diagnosticOutput -SourceRejectionExit $script:FlashCppSourceRejectionExit `
-		-InternalFailureExit $script:FlashCppInternalFailureExit -LegacyInternalCompatibilityNames @($compatibilityName) `
-		-LegacyInternalCompatibilityRemovalBoundary $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
-	Assert-Runner ($encodedInternalResult.Status -eq "Bad") "an encoded _e test cannot use legacy internal-failure compatibility"
-
-	$compatibilityObjectResult = Test-FlashCppNegativeCompileResult -FileName $compatibilityName `
-		-Started $true -TimedOut $false -ExitCode $script:FlashCppInternalFailureExit -ObjectExists $true `
-		-CompilerOutput "" -SourceRejectionExit $script:FlashCppSourceRejectionExit `
-		-InternalFailureExit $script:FlashCppInternalFailureExit -LegacyInternalCompatibilityNames @($compatibilityName) `
-		-LegacyInternalCompatibilityRemovalBoundary $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
-	Assert-Runner ($compatibilityObjectResult.Status -eq "Bad") "legacy internal-failure compatibility still forbids object output"
-
-	$compatibilityTimeoutResult = Test-FlashCppNegativeCompileResult -FileName $compatibilityName `
-		-Started $true -TimedOut $true -ExitCode $null -ObjectExists $false `
-		-CompilerOutput "" -SourceRejectionExit $script:FlashCppSourceRejectionExit `
-		-InternalFailureExit $script:FlashCppInternalFailureExit -LegacyInternalCompatibilityNames @($compatibilityName) `
-		-LegacyInternalCompatibilityRemovalBoundary $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
-	Assert-Runner ($compatibilityTimeoutResult.Status -eq "Bad" -and $compatibilityTimeoutResult.Detail -match "timed out") "legacy internal-failure compatibility cannot hide a compiler timeout"
 
 	$cleanResult = Test-FlashCppNegativeCompileResult -FileName "test_invalid_e1001_e1001_e1051.cpp" `
 		-Started $true -TimedOut $false -ExitCode $script:FlashCppSourceRejectionExit -ObjectExists $false `
 		-CompilerOutput $diagnosticOutput -SourceRejectionExit $script:FlashCppSourceRejectionExit `
-		-InternalFailureExit $script:FlashCppInternalFailureExit -LegacyInternalCompatibilityNames @() `
-		-LegacyInternalCompatibilityRemovalBoundary $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
+		-InternalFailureExit $script:FlashCppInternalFailureExit
 	Assert-Runner ($cleanResult.Status -eq "Ok") "clean source rejection with the exact ID multiset passes"
 
 	$nameValidation = Test-FlashCppNegativeNames -RepoRoot $repoRoot
-	$inventoryValidation = Test-FlashCppLegacyNegativeInventory -RepoRoot $repoRoot -InventoryPath (Join-Path $repoRoot "tests\legacy_negative_tests.txt")
-	$internalCompatibilityValidation = Test-FlashCppLegacyInternalCompatibility `
-		-RepoRoot $repoRoot `
-		-CompatibilityPath (Join-Path $repoRoot "tests\legacy_internal_failure_tests.txt") `
-		-LegacyInventoryPath (Join-Path $repoRoot "tests\legacy_negative_tests.txt")
-	Assert-Runner ($nameValidation.Valid -and $inventoryValidation.Valid) "the frozen legacy inventory matches exactly one current representation per entry"
-	Assert-Runner ($internalCompatibilityValidation.Valid -and
-		$internalCompatibilityValidation.ActiveCount -eq $script:FlashCppLegacyInternalCompatibilityCount -and
-		$internalCompatibilityValidation.ActiveCount -lt $script:FlashCppLegacyInternalCompatibilityBaseline) "the legacy internal-failure compatibility inventory is below its directional baseline"
-
-	$savedInternalCompatibilityBaseline = $script:FlashCppLegacyInternalCompatibilityBaseline
-	$script:FlashCppLegacyInternalCompatibilityBaseline = 4
-	$internalCompatibilityRegression = Test-FlashCppLegacyInternalCompatibility `
-		-RepoRoot $repoRoot `
-		-CompatibilityPath (Join-Path $repoRoot "tests\legacy_internal_failure_tests.txt") `
-		-LegacyInventoryPath (Join-Path $repoRoot "tests\legacy_negative_tests.txt")
-	$script:FlashCppLegacyInternalCompatibilityBaseline = $savedInternalCompatibilityBaseline
-	Assert-Runner (-not $internalCompatibilityRegression.Valid -and
-		$internalCompatibilityRegression.Error -match "above baseline 4") "the compatibility count cannot rise above its directional baseline"
-
-	$inventoryRepo = Join-Path $tempRoot "inventory_repo"
-	$inventoryTests = Join-Path $inventoryRepo "tests"
-	New-Item -ItemType Directory -Path $inventoryTests -Force | Out-Null
-	$inventoryCopy = Join-Path $inventoryRepo "legacy_negative_tests.txt"
-	Copy-Item -LiteralPath (Join-Path $repoRoot "tests\legacy_negative_tests.txt") -Destination $inventoryCopy
-	Set-Content -LiteralPath (Join-Path $inventoryTests "new_negative_fail.cpp") -Value "invalid"
-	$unknownFail = Test-FlashCppLegacyNegativeInventory -RepoRoot $inventoryRepo -InventoryPath $inventoryCopy
-	Assert-Runner (-not $unknownFail.Valid -and $unknownFail.Error -match "unregistered legacy negative test") "an unknown _fail.cpp name is rejected even if the inventory count would stay fixed"
-
-	$mutatedInventory = Join-Path $tempRoot "mutated_inventory.txt"
-	Copy-Item -LiteralPath (Join-Path $repoRoot "tests\legacy_negative_tests.txt") -Destination $mutatedInventory
-	$mutatedInventoryBytes = [IO.File]::ReadAllBytes($mutatedInventory)
-	$mutatedInventoryBytes[0] = ($mutatedInventoryBytes[0] -bxor 1)
-	[IO.File]::WriteAllBytes($mutatedInventory, $mutatedInventoryBytes)
-	$inventoryMutation = Test-FlashCppLegacyNegativeInventory -RepoRoot $repoRoot -InventoryPath $mutatedInventory
-	Assert-Runner (-not $inventoryMutation.Valid -and $inventoryMutation.Error -match "SHA-256") "same-count inventory mutations fail the fixed SHA-256 guard"
-
-	$mutatedInternalCompatibility = Join-Path $tempRoot "mutated_internal_compatibility.txt"
-	Copy-Item -LiteralPath (Join-Path $repoRoot "tests\legacy_internal_failure_tests.txt") -Destination $mutatedInternalCompatibility
-	$mutatedInternalCompatibilityBytes = [IO.File]::ReadAllBytes($mutatedInternalCompatibility)
-	$mutatedInternalCompatibilityBytes[0] = ($mutatedInternalCompatibilityBytes[0] -bxor 1)
-	[IO.File]::WriteAllBytes($mutatedInternalCompatibility, $mutatedInternalCompatibilityBytes)
-	$internalCompatibilityMutation = Test-FlashCppLegacyInternalCompatibility `
-		-RepoRoot $repoRoot `
-		-CompatibilityPath $mutatedInternalCompatibility `
-		-LegacyInventoryPath (Join-Path $repoRoot "tests\legacy_negative_tests.txt")
-	Assert-Runner (-not $internalCompatibilityMutation.Valid -and $internalCompatibilityMutation.Error -match "SHA-256") "count-preserving compatibility inventory swaps fail the fixed SHA-256 guard"
-
-	$compatibilityRepo = Join-Path $tempRoot "compatibility_repo"
-	$compatibilityTests = Join-Path $compatibilityRepo "tests"
-	New-Item -ItemType Directory -Path $compatibilityTests -Force | Out-Null
-	$compatibilityLegacyInventory = Join-Path $compatibilityRepo "legacy_negative_tests.txt"
-	$compatibilityInventory = Join-Path $compatibilityRepo "legacy_internal_failure_tests.txt"
-	Copy-Item -LiteralPath (Join-Path $repoRoot "tests\legacy_negative_tests.txt") -Destination $compatibilityLegacyInventory
-	Copy-Item -LiteralPath (Join-Path $repoRoot "tests\legacy_internal_failure_tests.txt") -Destination $compatibilityInventory
-	$compatibilityEntries = @([IO.File]::ReadAllLines($compatibilityInventory, [Text.Encoding]::UTF8))
-	foreach ($entry in $compatibilityEntries) {
-		New-Item -ItemType File -Path (Join-Path $compatibilityTests $entry) -Force | Out-Null
-	}
-	$firstCompatibilityEntry = $compatibilityEntries[0]
-	$firstCompatibilityStem = $firstCompatibilityEntry.Substring(0, $firstCompatibilityEntry.Length - "_fail.cpp".Length)
-	Remove-Item -LiteralPath (Join-Path $compatibilityTests $firstCompatibilityEntry)
-	New-Item -ItemType File -Path (Join-Path $compatibilityTests "${firstCompatibilityStem}_e1001.cpp") -Force | Out-Null
-	$encodedSuccessorMapping = Test-FlashCppLegacyInternalCompatibility `
-		-RepoRoot $compatibilityRepo `
-		-CompatibilityPath $compatibilityInventory `
-		-LegacyInventoryPath $compatibilityLegacyInventory
-	Assert-Runner ($encodedSuccessorMapping.Valid -and
-		$encodedSuccessorMapping.ActiveCount -eq 4 -and
-		$encodedSuccessorMapping.ActiveNames -cnotcontains $firstCompatibilityEntry) "an encoded successor satisfies historical representation but loses the compatibility exception"
-
-	Remove-Item -LiteralPath (Join-Path $compatibilityTests "${firstCompatibilityStem}_e1001.cpp")
-	$missingCompatibilityRepresentation = Test-FlashCppLegacyInternalCompatibility `
-		-RepoRoot $compatibilityRepo `
-		-CompatibilityPath $compatibilityInventory `
-		-LegacyInventoryPath $compatibilityLegacyInventory
-	Assert-Runner (-not $missingCompatibilityRepresentation.Valid -and
-		$missingCompatibilityRepresentation.Error -match "0 current representations") "a compatibility entry with no legacy or encoded representation is rejected"
-
-	$missingLegacyMembership = Join-Path $compatibilityRepo "missing_legacy_membership.txt"
-	$legacyMembershipLines = @(
-		[IO.File]::ReadAllLines((Join-Path $repoRoot "tests\legacy_negative_tests.txt"), [Text.Encoding]::UTF8) |
-			Where-Object { $_ -cne $firstCompatibilityEntry }
-	)
-	[IO.File]::WriteAllLines($missingLegacyMembership, $legacyMembershipLines, [Text.UTF8Encoding]::new($false))
-	$compatibilityMembership = Test-FlashCppLegacyInternalCompatibility `
-		-RepoRoot $repoRoot `
-		-CompatibilityPath (Join-Path $repoRoot "tests\legacy_internal_failure_tests.txt") `
-		-LegacyInventoryPath $missingLegacyMembership
-	Assert-Runner (-not $compatibilityMembership.Valid -and
-		$compatibilityMembership.Error -match "not in the frozen legacy inventory") "compatibility entries outside the frozen legacy-name inventory are rejected"
+	Assert-Runner $nameValidation.Valid "diagnostic filenames contain no malformed or legacy _fail.cpp names"
+	$legacyNameRepo = Join-Path $tempRoot "legacy_name_repo"
+	New-Item -ItemType Directory -Path (Join-Path $legacyNameRepo "tests") -Force | Out-Null
+	Set-Content -LiteralPath (Join-Path $legacyNameRepo "tests\old_fail.cpp") -Value "int value;"
+	$legacyNameValidation = Test-FlashCppNegativeNames -RepoRoot $legacyNameRepo
+	Assert-Runner (-not $legacyNameValidation.Valid -and $legacyNameValidation.Error -match "classification was removed") "legacy _fail.cpp names are rejected after the inventory removal"
 
 	$manifestTests = Join-Path $tempRoot "manifest_tests"
 	New-Item -ItemType Directory -Path $manifestTests -Force | Out-Null

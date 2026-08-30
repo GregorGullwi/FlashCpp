@@ -9456,12 +9456,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Not an alias template, class template, variable template, inherited member template, or found anywhere
 					FLASH_LOG(Parser, Error, "Missing identifier: ", identifier_token.value());
 					const std::string message = "Missing identifier";
-					context_.diagnostics().report(
-						DiagnosticId::UndeclaredIdentifier,
-						DiagnosticSeverity::Error,
-						lexer_.getSourceLocation(identifier_token),
-						message,
-						{});
+					if (!parsing_parameter_declaration_type_id_ &&
+						!parsing_failed_function_fallback_) {
+						context_.diagnostics().report(
+							DiagnosticId::UndeclaredIdentifier,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(identifier_token),
+							message,
+							{});
+					}
 					return ParseResult::error(message, identifier_token);
 								}
 							}
@@ -9487,12 +9490,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					} else {
 						FLASH_LOG(Parser, Error, "Missing identifier: ", identifier_token.value());
 						const std::string message = "Missing identifier";
-						context_.diagnostics().report(
-							DiagnosticId::UndeclaredIdentifier,
-							DiagnosticSeverity::Error,
-							lexer_.getSourceLocation(identifier_token),
-							message,
-							{});
+						if (!parsing_failed_function_fallback_) {
+							context_.diagnostics().report(
+								DiagnosticId::UndeclaredIdentifier,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(identifier_token),
+								message,
+								{});
+						}
 						return ParseResult::error(message, identifier_token);
 					}
 				}
@@ -10852,8 +10857,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											buildCurrentStructMemberTemplateDeferredRecord();
 
 									// Skip template instantiation in extern "C" contexts - C has no templates
-									std::optional<ASTNode> instantiated_func;
-									bool resolved_as_struct_member = false;
+					std::optional<ASTNode> instantiated_func;
+					const size_t diagnostics_before_instantiation =
+						context_.diagnostics().diagnostics().size();
+					bool resolved_as_struct_member = false;
 									bool defer_struct_member_template_instantiation = false;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
 										auto should_defer_current_struct_member_template_instantiation =
@@ -11028,15 +11035,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												result->as<ExpressionNode>(),
 												*current_struct_member_template_deferred_record);
 										}
-									} else {
-										const std::string message = "No matching template for call to '" + std::string(identifier_token.value()) + "'";
-										context_.diagnostics().report(
-											DiagnosticId::NoViableFunctionCall,
-											DiagnosticSeverity::Error,
-											lexer_.getSourceLocation(identifier_token),
-											message,
-											{});
-										return ParseResult::error(message, identifier_token);
+					} else {
+						const std::string message = "No matching template for call to '" + std::string(identifier_token.value()) + "'";
+						if (context_.diagnostics().diagnostics().size() == diagnostics_before_instantiation) {
+							context_.diagnostics().report(
+								DiagnosticId::NoViableFunctionCall,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(identifier_token),
+								message,
+								{});
+						}
+						return ParseResult::error(message, identifier_token);
 									}
 								} else {
 									// No explicit template arguments - try overload resolution first

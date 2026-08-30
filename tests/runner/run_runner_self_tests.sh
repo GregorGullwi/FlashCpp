@@ -76,137 +76,25 @@ internal_status_ok=$?
 [ "$internal_status_ok" -eq 0 ] && internal_guard_ok=true || internal_guard_ok=false
 assert_runner "$internal_guard_ok" "internal compiler status cannot pass even when expected IDs were emitted"
 
-compatibility_name=test_constexpr_aggregate_brace_narrowing_fail.cpp
-RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES="$compatibility_name"
-runner_evaluate_negative_result "$compatibility_name" "$RUNNER_INTERNAL_FAILURE_EXIT" no ""
-[ "$RUNNER_NEGATIVE_RESULT" = "legacy-internal-compatibility" ] && legacy_internal_ok=true || legacy_internal_ok=false
-assert_runner "$legacy_internal_ok" "a listed legacy _fail test may use the temporary internal-failure compatibility"
-
-runner_evaluate_negative_result unlisted_legacy_fail.cpp "$RUNNER_INTERNAL_FAILURE_EXIT" no ""
-[ "$RUNNER_NEGATIVE_RESULT" = "bad" ] && unlisted_internal_ok=true || unlisted_internal_ok=false
-assert_runner "$unlisted_internal_ok" "an unlisted legacy _fail test cannot use internal-failure compatibility"
-
-runner_evaluate_negative_result test_constexpr_aggregate_brace_narrowing_e1001.cpp "$RUNNER_INTERNAL_FAILURE_EXIT" no ""
-[ "$RUNNER_NEGATIVE_RESULT" = "bad" ] && encoded_internal_ok=true || encoded_internal_ok=false
-assert_runner "$encoded_internal_ok" "an encoded _e test cannot use legacy internal-failure compatibility"
-
-runner_evaluate_negative_result "$compatibility_name" "$RUNNER_INTERNAL_FAILURE_EXIT" yes ""
-[ "$RUNNER_NEGATIVE_RESULT" = "bad" ] && compatibility_object_ok=true || compatibility_object_ok=false
-assert_runner "$compatibility_object_ok" "legacy internal-failure compatibility still forbids object output"
-
 runner_evaluate_negative_result sample_e1001_e1001_e1051.cpp "$RUNNER_SOURCE_REJECTION_EXIT" no "$(cat "$diag_file")"
 [ "$RUNNER_NEGATIVE_RESULT" = "ok" ] && clean_negative_ok=true || clean_negative_ok=false
 assert_runner "$clean_negative_ok" "clean source rejection with the exact ID multiset passes"
 
-if runner_validate_negative_names "$REPO_ROOT" &&
-	runner_validate_legacy_inventory "$REPO_ROOT" "$REPO_ROOT/tests/legacy_negative_tests.txt" &&
-	runner_validate_legacy_internal_compatibility \
-		"$REPO_ROOT" \
-		"$REPO_ROOT/tests/legacy_internal_failure_tests.txt" \
-		"$REPO_ROOT/tests/legacy_negative_tests.txt"; then
+if runner_validate_negative_names "$REPO_ROOT"; then
 	inventory_ok=true
 else
 	inventory_ok=false
 fi
-assert_runner "$inventory_ok" "the frozen legacy inventory matches exactly one current representation per entry"
-[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_COUNT" ] &&
-	[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -lt "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE" ] &&
-	internal_compatibility_inventory_ok=true || internal_compatibility_inventory_ok=false
-assert_runner "$internal_compatibility_inventory_ok" "the legacy internal-failure compatibility inventory is below its directional baseline"
+assert_runner "$inventory_ok" "diagnostic filenames contain no malformed or legacy _fail.cpp names"
 
-saved_internal_compatibility_baseline=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE
-RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE=4
-if runner_validate_legacy_internal_compatibility \
-	"$REPO_ROOT" \
-	"$REPO_ROOT/tests/legacy_internal_failure_tests.txt" \
-	"$REPO_ROOT/tests/legacy_negative_tests.txt"; then
-	internal_compatibility_direction_ok=false
+mkdir -p "$temp_root/legacy_name_repo/tests"
+touch "$temp_root/legacy_name_repo/tests/old_fail.cpp"
+if runner_validate_negative_names "$temp_root/legacy_name_repo"; then
+	legacy_name_ok=false
 else
-	printf '%s' "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR" | grep -qF 'above baseline 4' &&
-		internal_compatibility_direction_ok=true || internal_compatibility_direction_ok=false
+	printf '%s' "$RUNNER_NEGATIVE_NAME_ERROR" | grep -qF 'classification was removed' && legacy_name_ok=true || legacy_name_ok=false
 fi
-RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE=$saved_internal_compatibility_baseline
-assert_runner "$internal_compatibility_direction_ok" "the compatibility count cannot rise above its directional baseline"
-
-mkdir -p "$temp_root/inventory_repo/tests"
-cp "$REPO_ROOT/tests/legacy_negative_tests.txt" "$temp_root/inventory_repo/legacy_negative_tests.txt"
-touch "$temp_root/inventory_repo/tests/new_negative_fail.cpp"
-if runner_validate_legacy_inventory "$temp_root/inventory_repo" "$temp_root/inventory_repo/legacy_negative_tests.txt"; then
-	unknown_fail_ok=false
-else
-	printf '%s' "$RUNNER_INVENTORY_ERROR" | grep -qF 'unregistered legacy negative test' && unknown_fail_ok=true || unknown_fail_ok=false
-fi
-assert_runner "$unknown_fail_ok" "an unknown _fail.cpp name is rejected even if the inventory count would stay fixed"
-
-cp "$REPO_ROOT/tests/legacy_negative_tests.txt" "$temp_root/mutated_inventory.txt"
-printf 'X' | dd of="$temp_root/mutated_inventory.txt" bs=1 seek=0 conv=notrunc 2>/dev/null
-if runner_validate_legacy_inventory "$REPO_ROOT" "$temp_root/mutated_inventory.txt"; then
-	inventory_hash_ok=false
-else
-	printf '%s' "$RUNNER_INVENTORY_ERROR" | grep -qF 'SHA-256' && inventory_hash_ok=true || inventory_hash_ok=false
-fi
-assert_runner "$inventory_hash_ok" "same-count inventory mutations fail the fixed SHA-256 guard"
-
-cp "$REPO_ROOT/tests/legacy_internal_failure_tests.txt" "$temp_root/mutated_internal_compatibility.txt"
-printf 'X' | dd of="$temp_root/mutated_internal_compatibility.txt" bs=1 seek=0 conv=notrunc 2>/dev/null
-if runner_validate_legacy_internal_compatibility \
-	"$REPO_ROOT" \
-	"$temp_root/mutated_internal_compatibility.txt" \
-	"$REPO_ROOT/tests/legacy_negative_tests.txt"; then
-	internal_compatibility_hash_ok=false
-else
-	printf '%s' "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR" | grep -qF 'SHA-256' &&
-		internal_compatibility_hash_ok=true || internal_compatibility_hash_ok=false
-fi
-assert_runner "$internal_compatibility_hash_ok" "count-preserving compatibility inventory swaps fail the fixed SHA-256 guard"
-
-compatibility_repo="$temp_root/compatibility_repo"
-mkdir -p "$compatibility_repo/tests"
-cp "$REPO_ROOT/tests/legacy_negative_tests.txt" "$compatibility_repo/legacy_negative_tests.txt"
-cp "$REPO_ROOT/tests/legacy_internal_failure_tests.txt" "$compatibility_repo/legacy_internal_failure_tests.txt"
-while IFS= read -r compatibility_entry; do
-	touch "$compatibility_repo/tests/$compatibility_entry"
-done < "$compatibility_repo/legacy_internal_failure_tests.txt"
-first_compatibility_entry=$(sed -n '1p' "$compatibility_repo/legacy_internal_failure_tests.txt")
-first_compatibility_stem="${first_compatibility_entry%_fail.cpp}"
-rm "$compatibility_repo/tests/$first_compatibility_entry"
-touch "$compatibility_repo/tests/${first_compatibility_stem}_e1001.cpp"
-if runner_validate_legacy_internal_compatibility \
-	"$compatibility_repo" \
-	"$compatibility_repo/legacy_internal_failure_tests.txt" \
-	"$compatibility_repo/legacy_negative_tests.txt" &&
-	[ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -eq 4 ] &&
-	[[ " $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES " != *" $first_compatibility_entry "* ]]; then
-	encoded_successor_mapping_ok=true
-else
-	encoded_successor_mapping_ok=false
-fi
-assert_runner "$encoded_successor_mapping_ok" "an encoded successor satisfies historical representation but loses the compatibility exception"
-
-rm "$compatibility_repo/tests/${first_compatibility_stem}_e1001.cpp"
-if runner_validate_legacy_internal_compatibility \
-	"$compatibility_repo" \
-	"$compatibility_repo/legacy_internal_failure_tests.txt" \
-	"$compatibility_repo/legacy_negative_tests.txt"; then
-	missing_compatibility_representation_ok=false
-else
-	printf '%s' "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR" | grep -qF '0 current representations' &&
-		missing_compatibility_representation_ok=true || missing_compatibility_representation_ok=false
-fi
-assert_runner "$missing_compatibility_representation_ok" "a compatibility entry with no legacy or encoded representation is rejected"
-
-cp "$REPO_ROOT/tests/legacy_negative_tests.txt" "$compatibility_repo/missing_legacy_membership.txt"
-sed -i "\\|^$first_compatibility_entry$|d" "$compatibility_repo/missing_legacy_membership.txt"
-if runner_validate_legacy_internal_compatibility \
-	"$REPO_ROOT" \
-	"$REPO_ROOT/tests/legacy_internal_failure_tests.txt" \
-	"$compatibility_repo/missing_legacy_membership.txt"; then
-	compatibility_membership_ok=false
-else
-	printf '%s' "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR" | grep -qF 'not in the frozen legacy inventory' &&
-		compatibility_membership_ok=true || compatibility_membership_ok=false
-fi
-assert_runner "$compatibility_membership_ok" "compatibility entries outside the frozen legacy-name inventory are rejected"
+assert_runner "$legacy_name_ok" "legacy _fail.cpp names are rejected after the inventory removal"
 
 mkdir -p "$temp_root/manifest_tests"
 touch "$temp_root/manifest_tests/positive_ret0.cpp"
@@ -286,7 +174,6 @@ if command -v clang++ >/dev/null 2>&1 && timeout --version 2>/dev/null | grep -q
 	success_output="$temp_root/success.out"
 	bash "$REPO_ROOT/tests/run_all_tests.sh" --clang --multi-tu-root "$SCRIPT_DIR/fixtures/multi_tu_success" --ci-output "$success_ci" runner_self_multi_ret42 >"$success_output" 2>&1
 	[ $? -eq 0 ] &&
-		grep -q $'flashcpp-runner-v1\tcompatibility\tlegacy-internal-failure\tactive\tcount=5 baseline=7 selected=0 direction=down removal-boundary=2F' "$success_ci" &&
 		grep -q $'flashcpp-runner-v1\tsummary\tall\tsuccess' "$success_ci" &&
 		grep -q 'link mode: no-pie' "$success_output" &&
 		multi_success_ok=true || multi_success_ok=false

@@ -981,6 +981,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			return saved_position.success();
 		}
 	} else {
+		FlashCpp::ScopedState failed_function_fallback_guard(
+			parsing_failed_function_fallback_);
+		parsing_failed_function_fallback_ = true;
 		// Function parsing failed - restore position to try variable declaration
 		if (before_function_parse.has_value()) {
 			restore_token_position(*before_function_parse);
