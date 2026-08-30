@@ -1,11 +1,14 @@
 #pragma once
 
 #include <cstdint>
-#include "Log.h"
 
-// Always-available migration telemetry for front-end rearchitecture boundary 0/4.
-// Directional evidence for legacy-path burn-down; never compile-time gated.
-// Each counter has a fixed corpus baseline in tests/migration_counters/.
+#include "InlineVector.h"
+#include "Log.h"
+#include "MigrationTelemetryConfig.h"
+
+// Migration choke-point counters for front-end rearchitecture boundary 0/4.
+// Disabled when FLASHCPP_TRACK_MIGRATION_COUNTERS=0. Each counter has a fixed
+// corpus baseline in tests/migration_counters/.
 
 inline uint64_t gTokenReplayCount = 0;
 inline uint64_t gPostParseParserTypingQueryCount = 0;
@@ -15,27 +18,27 @@ inline uint64_t gTemplateEngineOldEngineRouteCount = 0;
 inline uint64_t gDollarIdentityRecoveryCount = 0;
 
 inline void recordTokenReplay() {
-	++gTokenReplayCount;
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gTokenReplayCount);
 }
 
 inline void recordPostParseParserTypingQuery() {
-	++gPostParseParserTypingQueryCount;
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gPostParseParserTypingQueryCount);
 }
 
 inline void recordAstToIrSemanticQuery() {
-	++gAstToIrSemanticQueryCount;
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gAstToIrSemanticQueryCount);
 }
 
 inline void recordCodegenToParserCallback() {
-	++gCodegenToParserCallbackCount;
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gCodegenToParserCallbackCount);
 }
 
 inline void recordTemplateEngineOldEngineRoute() {
-	++gTemplateEngineOldEngineRouteCount;
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gTemplateEngineOldEngineRouteCount);
 }
 
 inline void recordDollarIdentityRecovery() {
-	++gDollarIdentityRecoveryCount;
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gDollarIdentityRecoveryCount);
 }
 
 inline uint64_t tokenReplayCount() {
@@ -69,4 +72,5 @@ inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "Codegen-to-parser callbacks: ", gCodegenToParserCallbackCount);
 	FLASH_LOG(General, Info, "TemplateEngine old-engine routes: ", gTemplateEngineOldEngineRouteCount);
 	FLASH_LOG(General, Info, "Dollar identity recoveries: ", gDollarIdentityRecoveryCount);
+	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
 }

@@ -7,6 +7,8 @@
 #include <memory>
 #include <atomic>
 
+#include "MigrationTelemetryConfig.h"
+
 // Performance measurement switch
 // Set to 1 to use old std::string approach, 0 to use StackString
 #ifndef USE_OLD_STRING_APPROACH
@@ -79,15 +81,15 @@ public:
 			// Fits on stack
 			std::memcpy(buffer_, sv.data(), size_);
 			buffer_[size_] = '\0';
-			StackStringStats::stack_allocations++;
-			StackStringStats::total_bytes_on_stack += size_;
+			FLASHCPP_STACK_STRING_STAT_BODY(StackStringStats::stack_allocations++);
+			FLASHCPP_STACK_STRING_STAT_BODY(StackStringStats::total_bytes_on_stack += size_);
 		} else {
 			// Need heap allocation - allocate exactly what we need
 			heap_data_ = std::make_unique<char[]>(size_ + 1);
 			std::memcpy(heap_data_.get(), sv.data(), size_);
 			heap_data_[size_] = '\0';
-			StackStringStats::heap_allocations++;
-			StackStringStats::total_bytes_on_heap += size_;
+			FLASHCPP_STACK_STRING_STAT_BODY(StackStringStats::heap_allocations++);
+			FLASHCPP_STACK_STRING_STAT_BODY(StackStringStats::total_bytes_on_heap += size_);
 		}
 	}
 

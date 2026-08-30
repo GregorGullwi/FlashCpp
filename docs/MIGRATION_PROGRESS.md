@@ -5,47 +5,73 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 by branch `codex/boundary-4-template-facade-counters`
+Last updated: 2026-08-30 after pull request boundary 5
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities) after closing pull request boundary 4
-- Pull request boundaries 1 through 4 are complete. Boundary 4 introduced the
-  `TemplateEngine` facade shell, routed external template-instantiation entry
-  points through it, instrumented token replay, post-parse parser typing,
-  AST-to-IR semantic queries, codegen-to-parser callbacks, template old-engine
-  routes, and dollar-identity recovery counters, and added the static
-  `find('$')` inventory guard.
-- The fixed migration corpus now baselines all seven runtime counters plus the
-  dollar inventory (17 inline `find('$')` sites in `src/`).
+  and entities). Pull request boundaries 1 through 5 are complete; architecture
+  boundary 1 exit criteria remain open through pull request boundary 6 and
+  follow-on boundary-1 work.
+- Pull request boundary 5 delivered `FrontendContext` (active-context stack),
+  strong ID types (`ScopeId`, `DeclId`, `EntityId`, `ExprId`, `TypeId`,
+  `TemplateDeclId`), four allocation-domain placeholders, `MonotonicScratchArena`
+  with probe registry rollback/commit and discarded-byte accounting, `--perf-stats`
+  arena telemetry (scratch domain, string-table stats, InlineVector spill count),
+  `MigrationTelemetryConfig.h` compile-time gates (default on), and doctest
+  coverage for IDs, scratch transactions, and nested registry checkpoints.
+- Global forwarding into `FrontendContext` is telemetry-only so far (string-
+  table entry count and spelling bytes); syntax/semantic/IR domain bytes and
+  record counts remain unwired.
+
+## Pull request boundary status (1–5)
+
+All complete.
+
+| Boundary | Delivered |
+|----------|-----------|
+| 1 | Diagnostic engine, crash handler, initial conversions |
+| 2A–2F | Filename diagnostic contract, legacy `_fail` conversion |
+| 3 | Architectural regression probes (tracked expected failures) |
+| 4 | `TemplateEngine` facade, migration choke-point counters |
+| 5 | `FrontendContext`, strong IDs, scratch arena, arena telemetry |
+
+Pull request boundaries are not the same as architecture boundaries 0–11.
+Architecture boundary 0 tracking slices are substantially closed; architecture
+boundary 1 is started, not finished.
 
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 3/78 (4%)
+- Completed: 4/78 (5%)
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
   - Boundary 0 "structured diagnostics can be asserted by tests"
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus"
+  - Boundary 1 "IDs cannot be constructed from pointers"
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
-    regression or a tracked expected failure": converted diagnostic families
-    and the boundary-3 promotion, namespace-template-identity, and ambiguous-
-    member-lookup probes are mutation-validated; five boundary-3 cases remain
-    tracked runtime expected failures, and the remaining architectural corpus
-    is still outstanding
+    regression or a tracked expected failure"
   - Boundary 1 "every template instantiation entry point passes through the
-    facade": external subsystem callers now route through `TemplateEngine`;
-    parser-internal instantiation paths remain direct until boundary 6/8A
+    facade": external callers use `TemplateEngine`; parser-internal paths
+    remain direct until boundary 6/8A
+  - Boundary 1 "a scratch transaction can allocate declarations and types, fail,
+    and leave every committed registry unchanged": proven in doctest; not wired
+    to parser tentative parsing
+  - Boundary 1 "discarded scratch bytes are measured and bounded": measured;
+    no implementation limit yet
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
-    InlineVector spill counts are reported through FrontendContext": not started
-    (pull request boundary 5)
+    InlineVector spill counts are reported through FrontendContext": partial
+    (scratch, string-table, InlineVector spills under `--perf-stats`)
+  - Boundary 1 remaining exit criteria (persistent scopes, declaration merging,
+    `ChunkedAnyVector` compile-time guard, full template-facade coverage,
+    leaving scope does not destroy lookup information): pull request boundary 6
+    onward
 
 ## Effort estimate
 
-- Implementation effort completed overall: 7-9%, confidence medium
+- Implementation effort completed overall: 10-12%, confidence medium
 
 ## Remaining work
 
@@ -53,22 +79,22 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Pull request boundary 5: `FrontendContext`, strong ID types, scoped arena
-  domains, scratch rollback tests, and arena telemetry forwarding.
+- Scope lookup still depends on destructive parser scope exit in the legacy
+  `SymbolTable` stack (`ScopeHandle` levels). Persistent scopes with stable
+  `ScopeId`, parent links, and cursor-style exit in `FrontendContext` are
+  required before the first spelling-based namespace recovery path can be
+  deleted (pull request boundary 6).
 
 Then, in order:
 
-1. Pull request boundary 6: persistent scopes and first spelling-based recovery
-   deletion.
+1. Continue architecture boundary 1: wire syntax/semantic/IR domain byte
+   accounting, per-record counts, and broader global forwarding into
+   `FrontendContext`.
 
 Named follow-ups carried forward:
 
 - Before architecture boundary 10A, approve a parser-family routing table for
-  the single translation-unit parse entry point. Boundaries 10A through 10F
-  now separate indexed token input, parser transactions, syntax-only
-  declarations, syntax-only expressions and statements, bounded parser control
-  flow, and deletion of the parser service locator; no family may be routable
-  to both legacy and migrated parsers.
+  the single translation-unit parse entry point.
 - Wire `tests/run_migration_counters.ps1` into `ci-ubuntu.yml` after
   generating and verifying the baseline on a Linux build.
 - Pre-ICE raw `std::cerr` context dumps at `src/IrGenerator_MemberAccess.cpp`
@@ -79,6 +105,8 @@ Named follow-ups carried forward:
   fallback: any masked rejection site must route through the shared
   declaration dispatch or its test is deleted before a structured ID is
   assigned (see `docs/KNOWN_ISSUES.md`).
+- Telemetry compile-time gates in `MigrationTelemetryConfig.h` default on; set
+  individual flags to 0 for shipping builds when ready.
 - Blanket `noexcept` on member functions stays deferred until boundaries 5-8
   shrink the exception surface to invariant-only paths.
 

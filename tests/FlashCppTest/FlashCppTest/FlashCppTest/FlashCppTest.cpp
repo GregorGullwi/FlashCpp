@@ -4064,6 +4064,191 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	CHECK(free_param.type_index() == free_wrap_rhs_idx);
 }
 
+TEST_SUITE("FrontendContext") {
+	TEST_CASE("Strong semantic IDs reject pointer construction") {
+		static_assert(!std::is_constructible_v<ScopeId, const void*>);
+		static_assert(!std::is_constructible_v<DeclId, const void*>);
+		static_assert(!std::is_constructible_v<EntityId, const void*>);
+		static_assert(!std::is_constructible_v<ExprId, const void*>);
+		static_assert(!std::is_constructible_v<TypeId, const void*>);
+		static_assert(!std::is_constructible_v<TemplateDeclId, const void*>);
+		static_assert(sizeof(ScopeId) == 4);
+		static_assert(sizeof(TypeId) == 4);
+	}
+
+	TEST_CASE("Scratch probe rollback restores committed registry entries") {
+		MonotonicScratchArena arena;
+		ScratchProbeRegistry registry;
+		const uint32_t committed = registry.registerEntry();
+		registry.commitToCurrent();
+		CHECK(registry.committedCount() == 1);
+		CHECK(registry.liveCount() == 1);
+
+		{
+			ScratchTransaction probe(arena, registry);
+			CHECK(probe.registry().registerEntry() == committed + 1);
+			CHECK(registry.liveCount() == 2);
+			probe.rollback();
+		}
+
+		CHECK(registry.committedCount() == 1);
+		CHECK(registry.liveCount() == 1);
+		CHECK(registry.registerEntry() == committed + 1);
+	}
+
+	TEST_CASE("Nested scratch registry transactions restore outer checkpoint") {
+		MonotonicScratchArena arena;
+		ScratchProbeRegistry registry;
+
+		ScratchTransaction outer(arena, registry);
+		CHECK(outer.registry().registerEntry() == 1);
+
+		{
+			ScratchTransaction inner(arena, registry);
+			CHECK(inner.registry().registerEntry() == 2);
+			inner.commit();
+		}
+
+		CHECK(registry.liveCount() == 2);
+		CHECK(registry.committedCount() == 2);
+
+		outer.rollback();
+
+		CHECK(registry.liveCount() == 0);
+		CHECK(registry.committedCount() == 0);
+		CHECK(registry.registerEntry() == 1);
+	}
+
+	TEST_CASE("Scratch arena survives allocations larger than one block") {
+		MonotonicScratchArena arena;
+		const std::size_t first_size = 5000U;
+		const std::size_t second_size = 16U;
+		void* first = arena.allocate(first_size, alignof(std::max_align_t));
+		void* second = arena.allocate(second_size, alignof(std::max_align_t));
+		CHECK(first != nullptr);
+		CHECK(second != nullptr);
+		CHECK(arena.currentBytes() >= first_size + second_size);
+		CHECK(arena.reservedBytes() >= 4096U);
+		CHECK(arena.reservedBytes() >= arena.currentBytes());
+
+		const ScratchArenaState checkpoint = arena.mark();
+		arena.allocate(32U, alignof(std::max_align_t));
+		arena.rollbackTo(checkpoint);
+		CHECK(arena.currentBytes() >= first_size + second_size);
+	}
+
+	TEST_CASE("Scratch arena byte accounting includes alignment padding on rollback") {
+		MonotonicScratchArena arena;
+		CHECK(arena.allocate(1U, 1U) != nullptr);
+		const uint64_t bytes_after_first = arena.currentBytes();
+		CHECK(arena.allocate(1U, 8U) != nullptr);
+		const uint64_t bytes_after_second = arena.currentBytes();
+		CHECK(bytes_after_second > bytes_after_first);
+
+		const ScratchArenaState checkpoint = arena.mark();
+		arena.allocate(4U, 8U);
+		arena.rollbackTo(checkpoint);
+		CHECK(arena.currentBytes() == bytes_after_second);
+	}
+
+	TEST_CASE("Committed scratch objects are destroyed at arena teardown") {
+		struct ScratchDestructionProbe {
+			bool* destroyed_flag;
+			explicit ScratchDestructionProbe(bool* destroyed_flag_in)
+				: destroyed_flag(destroyed_flag_in) {
+			}
+			~ScratchDestructionProbe() {
+				if (destroyed_flag != nullptr) {
+					*destroyed_flag = true;
+				}
+			}
+		};
+
+		bool destroyed = false;
+		{
+			MonotonicScratchArena arena;
+			ScratchProbeRegistry registry;
+			ScratchTransaction probe(arena, registry);
+			probe.arena().allocateObject<ScratchDestructionProbe>(&destroyed);
+			probe.commit();
+			CHECK(!destroyed);
+		}
+		CHECK(destroyed);
+	}
+
+	TEST_CASE("Scratch probe commit publishes registry entries") {
+		MonotonicScratchArena arena;
+		ScratchProbeRegistry registry;
+
+		{
+			ScratchTransaction probe(arena, registry);
+			CHECK(probe.registry().registerEntry() == 1);
+			probe.commit();
+		}
+
+		CHECK(registry.committedCount() == 1);
+		CHECK(registry.liveCount() == 1);
+	}
+
+	TEST_CASE("Scratch probe rollback runs destructors and discards bytes") {
+		struct ScratchDestructionProbe {
+			bool* destroyed_flag;
+			explicit ScratchDestructionProbe(bool* destroyed_flag_in)
+				: destroyed_flag(destroyed_flag_in) {
+			}
+			~ScratchDestructionProbe() {
+				if (destroyed_flag != nullptr) {
+					*destroyed_flag = true;
+				}
+			}
+		};
+
+		MonotonicScratchArena arena;
+		ScratchProbeRegistry registry;
+		bool destroyed = false;
+		const uint64_t bytes_before = arena.currentBytes();
+
+		{
+			ScratchTransaction probe(arena, registry);
+			probe.arena().allocateObject<ScratchDestructionProbe>(&destroyed);
+			CHECK(arena.currentBytes() > bytes_before);
+			probe.rollback();
+		}
+
+		CHECK(destroyed);
+		CHECK(arena.currentBytes() == bytes_before);
+		CHECK(arena.discardedBytes() > 0);
+	}
+
+	TEST_CASE("FrontendContext exposes active context and scratch telemetry") {
+		FrontendContext outer;
+		CHECK(FrontendContext::active() == &outer);
+		{
+			FrontendContext inner;
+			CHECK(FrontendContext::active() == &inner);
+		}
+		CHECK(FrontendContext::active() == &outer);
+
+		FrontendContext context;
+		CHECK(&context.scratchArena() == &context.scratchArena());
+#if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
+		const uint64_t spills_before = FlashCpp::inlineVectorSpillCount();
+		FlashCpp::InlineVector<int, 2> values;
+		values.push_back(1);
+		values.push_back(2);
+		values.push_back(3);
+		CHECK(FlashCpp::inlineVectorSpillCount() == spills_before + 1);
+		CHECK(context.inlineVectorSpillCount() == spills_before + 1);
+#endif
+		context.refreshScratchDomainStats();
+		const DomainByteStats scratch_stats = context.domainStats(AllocationDomain::Scratch);
+		CHECK(scratch_stats.current_bytes == context.scratchArena().currentBytes());
+		CHECK(scratch_stats.peak_bytes == context.scratchArena().peakBytes());
+		CHECK(scratch_stats.reserved_bytes == context.scratchArena().reservedBytes());
+		CHECK(scratch_stats.peak_reserved_bytes == context.scratchArena().peakReservedBytes());
+	}
+}
+
 TEST_SUITE("Diagnostics") {
 	TEST_CASE("Stable diagnostic IDs keep fixed values independent of message text") {
 		// Mutation target: changing any value here breaks this test and every

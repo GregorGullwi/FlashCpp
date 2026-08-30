@@ -101,6 +101,15 @@ public:
 		return chunks_.size();
 	}
 
+	// Migration telemetry: total bytes handed out across all chunks.
+	size_t allocatedBytes() const {
+		size_t total = 0;
+		for (const auto& chunk : chunks_) {
+			total += chunk->next_free_;
+		}
+		return total;
+	}
+
 	// StringTable support - find which chunk contains a pointer
 	// Returns the chunk index, or SIZE_MAX if pointer not found
 	size_t findChunkIndex(const char* ptr) const {
