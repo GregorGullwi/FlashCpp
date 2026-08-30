@@ -4617,51 +4617,45 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.entityCount() == 0u);
 	}
 
-	TEST_CASE("DeclarationBuilder classifyPublishFunction matches publishFunction") {
+	TEST_CASE("PreparedFunctionPublication cannot be fabricated by callers") {
+		static_assert(!std::is_default_constructible_v<PreparedFunctionPublication>);
+		static_assert(!std::is_constructible_v<
+			PreparedFunctionPublication,
+			PublishStatus,
+			EntityId,
+			ScopeId,
+			OwnerId,
+			StringHandle,
+			TypeId,
+			TypeId,
+			uint8_t>);
+	}
+
+	TEST_CASE("DeclarationBuilder prepareFunctionPublication matches publishFunction") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
-		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_classify");
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_prepare");
 		const FunctionDeclRequest first{
 			global_scope, name, TypeId{71}, TypeId{81}, LanguageLinkage::CPlusPlus, false, false, false};
-		const PublishResult classified = builder.classifyPublishFunction(first, table);
-		const PublishResult committed = builder.publishFunction(first, table);
-		CHECK(classified.status == committed.status);
-		if (classified.status == PublishStatus::MergedRedeclaration ||
-			classified.status == PublishStatus::Rejected) {
-			CHECK(classified.entity_id == committed.entity_id);
+		const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
+		CHECK_FALSE(prepared.isRejected());
+		PublishResult committed{};
+		{
+			PublicationTransaction first_transaction(builder);
+			committed = builder.commitFunctionPublication(prepared, first_transaction);
+			first_transaction.commit();
 		}
 		CHECK(committed.status == PublishStatus::Created);
 
 		const FunctionDeclRequest redecl{
 			global_scope, name, TypeId{71}, TypeId{81}, LanguageLinkage::CPlusPlus, true, false, false};
-		const PublishResult classified_redecl = builder.classifyPublishFunction(redecl, table);
+		const PreparedFunctionPublication prepared_redecl =
+			builder.prepareFunctionPublication(redecl, table);
+		CHECK_FALSE(prepared_redecl.isRejected());
 		const PublishResult committed_redecl = builder.publishFunction(redecl, table);
-		CHECK(classified_redecl.status == committed_redecl.status);
-		CHECK(classified_redecl.entity_id == committed_redecl.entity_id);
 		CHECK(committed_redecl.status == PublishStatus::MergedRedeclaration);
-	}
-
-	TEST_CASE("PublicationTransaction rollback restores declaration and entity arenas") {
-		FrontendContext context;
-		DeclarationBuilder& builder = context.declarationBuilder();
-		SymbolTable table;
-		const ScopeId global_scope = table.currentScopeId();
-		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_txn");
-		const FunctionDeclRequest request{
-			global_scope, name, TypeId{91}, TypeId{101}, LanguageLinkage::CPlusPlus, false, false, false};
-
-		PublicationTransaction transaction(builder);
-		const PublishResult classified = builder.classifyPublishFunction(request, table);
-		REQUIRE(classified.status == PublishStatus::Created);
-		REQUIRE(builder.commitClassifiedPublishFunction(classified, request, table).status ==
-				PublishStatus::Created);
-		CHECK(builder.declarationCount() == 1u);
-		CHECK(builder.entityCount() == 1u);
-		transaction.rollback();
-		CHECK(builder.declarationCount() == 0u);
-		CHECK(builder.entityCount() == 0u);
 	}
 
 	TEST_CASE("PublicationTransaction rollback restores merged entity state") {
@@ -4679,10 +4673,9 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest definition{
 			global_scope, name, TypeId{92}, TypeId{102}, LanguageLinkage::CPlusPlus, true, false, false};
 		PublicationTransaction transaction(builder);
-		const PublishResult classified = builder.classifyPublishFunction(definition, table);
-		REQUIRE(classified.status == PublishStatus::MergedRedeclaration);
-		const PublishResult merged =
-			builder.commitClassifiedPublishFunction(classified, definition, table);
+		const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(definition, table);
+		REQUIRE_FALSE(prepared.isRejected());
+		const PublishResult merged = builder.commitFunctionPublication(prepared, transaction);
 		REQUIRE(merged.status == PublishStatus::MergedRedeclaration);
 		CHECK(builder.declarationCount() == 2u);
 		CHECK(builder.entity(created.entity_id).latest_decl_id == merged.decl_id);
@@ -4692,6 +4685,40 @@ TEST_SUITE("FrontendContext") {
 		const EntityRecord entity_after = builder.entity(created.entity_id);
 		CHECK(entity_after.latest_decl_id == entity_before.latest_decl_id);
 		CHECK(entity_after.flags == entity_before.flags);
+	}
+
+	TEST_CASE("PublicationTransaction rollback restores inserted parameter-list signatures") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const std::size_t parameter_lists_before = builder.telemetryParameterListInternCount();
+
+		PublicationTransaction transaction(builder);
+		const TypeId signature_id =
+			builder.internParameterListSignature(std::span<const ASTNode>{}, false, &transaction);
+		CHECK(signature_id.value >= 1u);
+		transaction.rollback();
+
+		CHECK(builder.telemetryParameterListInternCount() == parameter_lists_before);
+	}
+
+	TEST_CASE("PublicationTransaction rollback restores declaration and entity arenas") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_txn");
+		const FunctionDeclRequest request{
+			global_scope, name, TypeId{91}, TypeId{101}, LanguageLinkage::CPlusPlus, false, false, false};
+
+		PublicationTransaction transaction(builder);
+		const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+		REQUIRE_FALSE(prepared.isRejected());
+		REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
+		CHECK(builder.declarationCount() == 1u);
+		CHECK(builder.entityCount() == 1u);
+		transaction.rollback();
+		CHECK(builder.declarationCount() == 0u);
+		CHECK(builder.entityCount() == 0u);
 	}
 
 	TEST_CASE("PublicationTransaction rollback restores telemetry intern registries") {
@@ -4706,11 +4733,95 @@ TEST_SUITE("FrontendContext") {
 		const TypeId return_id = builder.internDeclaratorType(int_type);
 		const FunctionDeclRequest invalid{
 			ScopeId{}, name, TypeId{200}, return_id, LanguageLinkage::CPlusPlus, false, false, false};
-		CHECK(builder.classifyPublishFunction(invalid, table).status == PublishStatus::Rejected);
+		CHECK(builder.prepareFunctionPublication(invalid, table).isRejected());
 		transaction.rollback();
 
 		const TypeId second_return_id = builder.internDeclaratorType(int_type);
 		CHECK(second_return_id.value == 1u);
+	}
+
+	TEST_CASE("PublicationTransaction rejects nesting") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		PublicationTransaction outer(builder);
+		bool threw = false;
+		try {
+			PublicationTransaction nested(builder);
+		} catch (const InternalError&) {
+			threw = true;
+		}
+		CHECK(threw);
+		outer.commit();
+	}
+
+	TEST_CASE("PublicationTransaction rolls back on stack unwinding") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_txn_unwind");
+		const FunctionDeclRequest request{
+			global_scope, name, TypeId{93}, TypeId{103}, LanguageLinkage::CPlusPlus, false, false, false};
+
+		try {
+			PublicationTransaction transaction(builder);
+			const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+			REQUIRE_FALSE(prepared.isRejected());
+			REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
+			throw std::runtime_error("decl_builder_publication_unwind_probe");
+		} catch (const std::runtime_error&) {
+		}
+
+		CHECK(builder.declarationCount() == 0u);
+		CHECK(builder.entityCount() == 0u);
+	}
+
+	TEST_CASE("PublicationTransaction checkpoint stays bounded as builder grows") {
+		static_assert(sizeof(DeclarationBuilderCheckpoint) <= 32);
+
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+
+		for (uint32_t index = 0; index < 128u; ++index) {
+			const StringHandle name = StringTable::getOrInternStringHandle(
+				StringBuilder().append("decl_builder_scale_").append(static_cast<int64_t>(index)));
+			const FunctionDeclRequest request{
+				global_scope,
+				name,
+				TypeId{index + 1u},
+				TypeId{index + 1000u},
+				LanguageLinkage::CPlusPlus,
+				false,
+				false,
+				false};
+			REQUIRE(builder.publishFunction(request, table).status == PublishStatus::Created);
+		}
+
+		CHECK(builder.declarationCount() == 128u);
+		CHECK(builder.entityCount() == 128u);
+
+		const StringHandle rollback_name =
+			StringTable::getOrInternStringHandle("decl_builder_scale_rollback");
+		PublicationTransaction transaction(builder);
+		const FunctionDeclRequest rollback_request{
+			global_scope,
+			rollback_name,
+			TypeId{9999},
+			TypeId{10000},
+			LanguageLinkage::CPlusPlus,
+			false,
+			false,
+			false};
+		const PreparedFunctionPublication prepared =
+			builder.prepareFunctionPublication(rollback_request, table);
+		REQUIRE_FALSE(prepared.isRejected());
+		REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
+		transaction.rollback();
+
+		CHECK(builder.declarationCount() == 128u);
+		CHECK(builder.entityCount() == 128u);
 	}
 
 	TEST_CASE("commitParserFreeFunctionPublication rejects duplicate definitions without committing") {
@@ -4723,26 +4834,27 @@ TEST_SUITE("FrontendContext") {
 			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
 		{
 			PublicationTransaction first_transaction(builder);
-			const PublishResult classified = builder.classifyPublishFunction(first, table);
-			REQUIRE(classified.status == PublishStatus::Created);
-			REQUIRE(builder.commitClassifiedPublishFunction(classified, first, table).status ==
+			const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
+			REQUIRE_FALSE(prepared.isRejected());
+			REQUIRE(builder.commitFunctionPublication(prepared, first_transaction).status ==
 					PublishStatus::Created);
 			first_transaction.commit();
 		}
 		const std::size_t decls = builder.declarationCount();
 		const std::size_t entities = builder.entityCount();
-		const DeclarationBuilder::Checkpoint checkpoint = builder.mark();
+		const std::size_t declarator_interns = builder.telemetryDeclaratorInternCount();
+		const std::size_t parameter_lists = builder.telemetryParameterListInternCount();
 
 		const FunctionDeclRequest duplicate{
 			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
 		PublicationTransaction reject_transaction(builder);
-		CHECK(builder.classifyPublishFunction(duplicate, table).status == PublishStatus::Rejected);
+		CHECK(builder.prepareFunctionPublication(duplicate, table).isRejected());
 		reject_transaction.rollback();
 
 		CHECK(builder.declarationCount() == decls);
 		CHECK(builder.entityCount() == entities);
-		CHECK(builder.mark().declarator_types.size() == checkpoint.declarator_types.size());
-		CHECK(builder.mark().parameter_lists.size() == checkpoint.parameter_lists.size());
+		CHECK(builder.telemetryDeclaratorInternCount() == declarator_interns);
+		CHECK(builder.telemetryParameterListInternCount() == parameter_lists);
 	}
 
 	TEST_CASE("Parser shadow publication rejects duplicate definition without builder commit") {
