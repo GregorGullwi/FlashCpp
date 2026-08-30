@@ -29,8 +29,15 @@
 #define DEQUE_SIZE_T sizeof(std::deque<std::vector<T>>)
 #endif
 
-template <uint32_t ChunkSize = 64 * 1024 * 1024, uint32_t InternalBufferSize = static_cast<uint32_t>(DEQUE_SIZE_ANY + 4 * sizeof(void*))>
+template<typename T, bool EnforceLegacyAstAllowList>
+struct LegacyChunkedAnyStorageTraits {
+	static constexpr bool allowed = !EnforceLegacyAstAllowList;
+};
+
+template <uint32_t ChunkSize = 64 * 1024 * 1024, uint32_t InternalBufferSize = static_cast<uint32_t>(DEQUE_SIZE_ANY + 4 * sizeof(void*)), bool EnforceLegacyAstAllowList = false>
 class ChunkedAnyVector {
+public:
+	static constexpr bool kEnforceLegacyAstAllowList = EnforceLegacyAstAllowList;
 public:
 	ChunkedAnyVector()
 #ifdef HAS_MEMORY_RESOURCE
@@ -330,4 +337,5 @@ private:
 #endif
 };
 
-extern ChunkedAnyVector<> gChunkedAnyStorage;
+using LegacyAstChunkedAnyVector = ChunkedAnyVector<64 * 1024 * 1024, static_cast<uint32_t>(DEQUE_SIZE_ANY + 4 * sizeof(void*)), true>;
+extern LegacyAstChunkedAnyVector gChunkedAnyStorage;
