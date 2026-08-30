@@ -111,11 +111,17 @@ const EntityRecord& DeclarationBuilder::entity(EntityId entity_id) const {
 	return entities_[entity_id.value - 1];
 }
 
-DeclarationBuilderState DeclarationBuilder::mark() const {
-	return DeclarationBuilderState{
-		.declaration_count = declarations_.size(),
-		.entity_count = entities_.size(),
-	};
+DeclarationBuilder::Checkpoint DeclarationBuilder::mark() const {
+	Checkpoint checkpoint;
+	checkpoint.declaration_count = declarations_.size();
+	checkpoint.entity_count = entities_.size();
+	checkpoint.entities.reserve(checkpoint.entity_count);
+	for (std::size_t index = 0; index < entities_.size(); ++index) {
+		checkpoint.entities.push_back(entities_[index]);
+	}
+	checkpoint.declarator_types = declarator_type_canon_;
+	checkpoint.parameter_lists = parameter_list_ids_;
+	return checkpoint;
 }
 
 void DeclarationBuilder::rebuildEntityLookupFromEntities() {
@@ -129,13 +135,18 @@ void DeclarationBuilder::rebuildEntityLookupFromEntities() {
 	}
 }
 
-void DeclarationBuilder::rollbackTo(DeclarationBuilderState state) {
-	while (declarations_.size() > state.declaration_count) {
+void DeclarationBuilder::rollbackTo(const Checkpoint& checkpoint) {
+	while (declarations_.size() > checkpoint.declaration_count) {
 		declarations_.pop_back();
 	}
-	while (entities_.size() > state.entity_count) {
+	while (entities_.size() > checkpoint.entity_count) {
 		entities_.pop_back();
 	}
+	for (std::size_t index = 0; index < checkpoint.entity_count; ++index) {
+		entities_[index] = checkpoint.entities[index];
+	}
+	declarator_type_canon_ = checkpoint.declarator_types;
+	parameter_list_ids_ = checkpoint.parameter_lists;
 	rebuildEntityLookupFromEntities();
 }
 
@@ -192,6 +203,16 @@ PublishResult DeclarationBuilder::publishFunction(
 	const FunctionDeclRequest& request,
 	const SymbolTable& symbol_table) {
 	const PublishResult classification = classifyPublishFunction(request, symbol_table);
+	if (classification.status == PublishStatus::Rejected) {
+		return classification;
+	}
+	return commitClassifiedPublishFunction(classification, request, symbol_table);
+}
+
+PublishResult DeclarationBuilder::commitClassifiedPublishFunction(
+	const PublishResult& classification,
+	const FunctionDeclRequest& request,
+	const SymbolTable& symbol_table) {
 	if (classification.status == PublishStatus::Rejected) {
 		return classification;
 	}
@@ -357,7 +378,7 @@ PublishResult publishParserFreeFunction(
 
 PublicationTransaction::PublicationTransaction(DeclarationBuilder& builder)
 	: builder_(builder)
-	, state_(builder.mark()) {
+	, checkpoint_(builder.mark()) {
 }
 
 PublicationTransaction::~PublicationTransaction() {
@@ -371,33 +392,47 @@ void PublicationTransaction::commit() {
 }
 
 void PublicationTransaction::rollback() {
-	builder_.rollbackTo(state_);
+	builder_.rollbackTo(checkpoint_);
 	rolled_back_ = true;
 }
 
+namespace {
+
+PublishResult publicationTransactionFailure(EntityId entity_id) {
+	return PublishResult{PublishStatus::Rejected, DeclId{}, entity_id};
+}
+
+} // namespace
+
 PublishResult commitParserFreeFunctionPublication(
 	DeclarationBuilder& builder,
-	const FunctionDeclRequest& request,
+	const FunctionDeclarationNode& func_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition,
 	const SymbolTable& symbol_table) {
+	PublicationTransaction transaction(builder);
+	const FunctionDeclRequest request =
+		buildFreeFunctionDeclRequest(builder, func_decl, lexical_scope_id, is_definition);
 	const PublishResult classified = builder.classifyPublishFunction(request, symbol_table);
 	if (classified.status == PublishStatus::Rejected) {
+		transaction.rollback();
 		return classified;
 	}
 
-	PublicationTransaction transaction(builder);
-	const PublishResult committed = builder.publishFunction(request, symbol_table);
+	const PublishResult committed =
+		builder.commitClassifiedPublishFunction(classified, request, symbol_table);
 	if (committed.status == PublishStatus::Rejected) {
 		transaction.rollback();
 		return committed;
 	}
 	if (committed.status != classified.status) {
 		transaction.rollback();
-		return committed;
+		return publicationTransactionFailure(classified.entity_id);
 	}
 	if (classified.status == PublishStatus::MergedRedeclaration &&
 		committed.entity_id != classified.entity_id) {
 		transaction.rollback();
-		return committed;
+		return publicationTransactionFailure(classified.entity_id);
 	}
 
 	transaction.commit();

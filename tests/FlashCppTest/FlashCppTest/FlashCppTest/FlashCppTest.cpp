@@ -4653,12 +4653,64 @@ TEST_SUITE("FrontendContext") {
 			global_scope, name, TypeId{91}, TypeId{101}, LanguageLinkage::CPlusPlus, false, false, false};
 
 		PublicationTransaction transaction(builder);
-		REQUIRE(builder.publishFunction(request, table).status == PublishStatus::Created);
+		const PublishResult classified = builder.classifyPublishFunction(request, table);
+		REQUIRE(classified.status == PublishStatus::Created);
+		REQUIRE(builder.commitClassifiedPublishFunction(classified, request, table).status ==
+				PublishStatus::Created);
 		CHECK(builder.declarationCount() == 1u);
 		CHECK(builder.entityCount() == 1u);
 		transaction.rollback();
 		CHECK(builder.declarationCount() == 0u);
 		CHECK(builder.entityCount() == 0u);
+	}
+
+	TEST_CASE("PublicationTransaction rollback restores merged entity state") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_txn_merge");
+		const FunctionDeclRequest decl{
+			global_scope, name, TypeId{92}, TypeId{102}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult created = builder.publishFunction(decl, table);
+		REQUIRE(created.status == PublishStatus::Created);
+		const EntityRecord entity_before = builder.entity(created.entity_id);
+
+		const FunctionDeclRequest definition{
+			global_scope, name, TypeId{92}, TypeId{102}, LanguageLinkage::CPlusPlus, true, false, false};
+		PublicationTransaction transaction(builder);
+		const PublishResult classified = builder.classifyPublishFunction(definition, table);
+		REQUIRE(classified.status == PublishStatus::MergedRedeclaration);
+		const PublishResult merged =
+			builder.commitClassifiedPublishFunction(classified, definition, table);
+		REQUIRE(merged.status == PublishStatus::MergedRedeclaration);
+		CHECK(builder.declarationCount() == 2u);
+		CHECK(builder.entity(created.entity_id).latest_decl_id == merged.decl_id);
+		transaction.rollback();
+
+		CHECK(builder.declarationCount() == 1u);
+		const EntityRecord entity_after = builder.entity(created.entity_id);
+		CHECK(entity_after.latest_decl_id == entity_before.latest_decl_id);
+		CHECK(entity_after.flags == entity_before.flags);
+	}
+
+	TEST_CASE("PublicationTransaction rollback restores telemetry intern registries") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		TypeSpecifierNode int_type;
+		int_type.set_category(TypeCategory::Int);
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_intern_txn");
+
+		PublicationTransaction transaction(builder);
+		const TypeId return_id = builder.internDeclaratorType(int_type);
+		const FunctionDeclRequest invalid{
+			ScopeId{}, name, TypeId{200}, return_id, LanguageLinkage::CPlusPlus, false, false, false};
+		CHECK(builder.classifyPublishFunction(invalid, table).status == PublishStatus::Rejected);
+		transaction.rollback();
+
+		const TypeId second_return_id = builder.internDeclaratorType(int_type);
+		CHECK(second_return_id.value == 1u);
 	}
 
 	TEST_CASE("commitParserFreeFunctionPublication rejects duplicate definitions without committing") {
@@ -4669,16 +4721,53 @@ TEST_SUITE("FrontendContext") {
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_commit_dup");
 		const FunctionDeclRequest first{
 			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
-		REQUIRE(commitParserFreeFunctionPublication(builder, first, table).status == PublishStatus::Created);
+		{
+			PublicationTransaction first_transaction(builder);
+			const PublishResult classified = builder.classifyPublishFunction(first, table);
+			REQUIRE(classified.status == PublishStatus::Created);
+			REQUIRE(builder.commitClassifiedPublishFunction(classified, first, table).status ==
+					PublishStatus::Created);
+			first_transaction.commit();
+		}
 		const std::size_t decls = builder.declarationCount();
 		const std::size_t entities = builder.entityCount();
+		const DeclarationBuilder::Checkpoint checkpoint = builder.mark();
 
 		const FunctionDeclRequest duplicate{
 			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
-		const PublishResult rejected = commitParserFreeFunctionPublication(builder, duplicate, table);
-		CHECK(rejected.status == PublishStatus::Rejected);
+		PublicationTransaction reject_transaction(builder);
+		CHECK(builder.classifyPublishFunction(duplicate, table).status == PublishStatus::Rejected);
+		reject_transaction.rollback();
+
 		CHECK(builder.declarationCount() == decls);
 		CHECK(builder.entityCount() == entities);
+		CHECK(builder.mark().declarator_types.size() == checkpoint.declarator_types.size());
+		CHECK(builder.mark().parameter_lists.size() == checkpoint.parameter_lists.size());
+	}
+
+	TEST_CASE("Parser shadow publication rejects duplicate definition without builder commit") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = R"(
+void decl_builder_dup_shadow();
+void decl_builder_dup_shadow() {}
+void decl_builder_dup_shadow() {}
+)";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("decl_builder_dup_shadow_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+		CHECK(context.declarationCount() == 2u);
+		CHECK(context.entityCount() == 1u);
 	}
 
 	TEST_CASE("buildNamespaceHandleForStructName rejects unregistered qualified spelling") {
