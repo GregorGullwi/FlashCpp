@@ -930,11 +930,14 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				const ScopeType scope_type = gSymbolTable.get_current_scope_type();
 				if (shouldPublishParserFreeFunction(func_decl, scope_type)) {
 					const bool is_definition = peek() != ";"_tok;
-					const PublishResult publish_result = publishParserFreeFunction(
+					const FunctionDeclRequest request = buildFreeFunctionDeclRequest(
 						front_end->declarationBuilder(),
 						func_decl,
 						gSymbolTable.lastDeclaringScopeId(),
-						is_definition,
+						is_definition);
+					const PublishResult publish_result = commitParserFreeFunctionPublication(
+						front_end->declarationBuilder(),
+						request,
 						gSymbolTable);
 					if (publish_result.status == PublishStatus::Created ||
 						publish_result.status == PublishStatus::MergedRedeclaration) {
