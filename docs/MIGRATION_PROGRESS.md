@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-6`
+Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-7`
 
 ## Position
 
@@ -47,6 +47,13 @@ Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-6`
   (1616) at existing preprocessing, evaluator, semantic, and parser owners.
   It converts seven more frozen tests without adding lookup, replay, recovery,
   or lowering queries.
+- Iteration 7 assigns `AccessControlViolation` (1617) and
+  `AmbiguousQualifiedLookup` (1618) at existing member-access and inline-
+  namespace lookup owners. It extends `NoMatchingConstructor` (1508) through
+  the existing declaration-lowering helper, and converts three more bounded
+  failures to existing `IncompleteSizeofOperand` (1605) and
+  `NoViableFunctionCall` (1704) contracts. Eight frozen tests are converted;
+  the lookup bridge changes no lookup result or recovery behavior.
 - Pull request boundary 2F now includes the explicit-initialization batch on
   branch `codex/boundary-2f-explicit-initialization` (commit `a136a23c`). It
   assigns `AssignmentToConstObject` (1318),
@@ -130,7 +137,7 @@ Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-6`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 29 names. The temporary internal-failure
+- The frozen legacy inventory is now 28 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -159,7 +166,7 @@ Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-6`
     ordinary-call and call-operator ambiguity, dllimport-constraint, template
     phase-1, partial-specialization, namespace, and structured-binding
     diagnostics (1001, 1004-1014, 1103, 1201-1225, 1318-1322, 1503-1508,
-    1601-1608, 1614-1616, 1701-1703, 1801-1805),
+    1601-1608, 1614-1618, 1701-1704, 1801-1805),
     including the static-member constructor path, are
     mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
@@ -196,10 +203,11 @@ Then, in order:
    `_fail.cpp` classification, both frozen inventories, and the five-entry
    internal-failure compatibility unless a later approved roadmap amendment
    moves a named blocked slice and all of its cleanup targets together.
-2. Preprocessor-directive diagnostics stay unconverted in the frozen
-   inventory (`#include_next` file-not-found; recursive macro expansion
-   surfacing as a generic parser error) and need their own owner batch or
-   deletion review.
+2. The remaining frozen entries are concentrated in unsupported template
+   instantiation/identity paths and declaration-parse fallback paths. Apply
+   the stop rule: delete those unsupported fixtures with a known-issues note
+   rather than adding parser recovery, identity recovery, or generic
+   diagnostics solely to empty the inventory.
 3. Pull request boundary 3: first architectural regression slices
    (promotion, namespace-template identity, ambiguous member lookup),
    mutation-validated. The `auto`, constexpr, and template-deduction promotion

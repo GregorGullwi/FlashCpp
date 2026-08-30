@@ -169,6 +169,8 @@ enum class DiagnosticId : uint32_t {
 	LambdaCaptureNotFound = 1614,
 	UndeclaredQualifiedIdentifier = 1615,
 	UndeclaredIdentifier = 1616,
+	AccessControlViolation = 1617,
+	AmbiguousQualifiedLookup = 1618,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -382,6 +384,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "UndeclaredQualifiedIdentifier";
 	case DiagnosticId::UndeclaredIdentifier:
 		return "UndeclaredIdentifier";
+	case DiagnosticId::AccessControlViolation:
+		return "AccessControlViolation";
+	case DiagnosticId::AmbiguousQualifiedLookup:
+		return "AmbiguousQualifiedLookup";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:
