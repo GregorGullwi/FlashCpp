@@ -16,7 +16,6 @@ export -f runner_compare_diagnostic_id_multisets
 export -f runner_evaluate_negative_result
 export RUNNER_SOURCE_REJECTION_EXIT
 export RUNNER_INTERNAL_FAILURE_EXIT
-export RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY
 export RUNNER_COMPILE_TIMEOUT_SECONDS
 export RUNNER_RUNTIME_TIMEOUT_SECONDS
 export RUNNER_RUNTIME_TIMEOUT_RETRY_LIMIT
@@ -185,20 +184,6 @@ if ! runner_validate_negative_names "$REPO_ROOT"; then
 	runner_ci_record "$CI_OUTPUT" discovery negative-names invalid "$RUNNER_NEGATIVE_NAME_ERROR"
 	exit 1
 fi
-if ! runner_validate_legacy_inventory "$REPO_ROOT" "$REPO_ROOT/tests/legacy_negative_tests.txt"; then
-	echo -e "${RED}ERROR:${NC} $RUNNER_INVENTORY_ERROR"
-	runner_ci_record "$CI_OUTPUT" discovery legacy-inventory invalid "$RUNNER_INVENTORY_ERROR"
-	exit 1
-fi
-if ! runner_validate_legacy_internal_compatibility \
-	"$REPO_ROOT" \
-	"$REPO_ROOT/tests/legacy_internal_failure_tests.txt" \
-	"$REPO_ROOT/tests/legacy_negative_tests.txt"; then
-	echo -e "${RED}ERROR:${NC} $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR"
-	runner_ci_record "$CI_OUTPUT" discovery legacy-internal-compatibility invalid "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR"
-	exit 1
-fi
-export RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES
 if ! runner_validate_expected_failures "$REPO_ROOT/tests/expected_failures.tsv" "$REPO_ROOT/tests"; then
 	echo -e "${RED}ERROR:${NC} $RUNNER_EXPECTED_FAILURE_ERROR"
 	runner_ci_record "$CI_OUTPUT" discovery expected-failures invalid "$RUNNER_EXPECTED_FAILURE_ERROR"
@@ -280,8 +265,6 @@ for f in "${DISCOVERY_FILES[@]}"; do
 		kind="support-source"
 		elif [[ " $COMPILE_ONLY_OVERRIDES " == *" $base "* ]]; then
 		kind="compile-only"
-		elif [[ "$base" == *_fail.cpp ]]; then
-		kind="compile-failure"
 		elif [ "${FILES_WITH_MAIN[$base]+present}" = "present" ]; then
 		kind="runnable"
 		else
@@ -664,10 +647,9 @@ test_one_fail_file() {
     local object_exists=no
     [ -f "$obj" ] && object_exists=yes
     runner_evaluate_negative_result "$base" "$compile_exit" "$object_exists" "$compile_output"
-    case "$RUNNER_NEGATIVE_RESULT" in
-        ok) echo "FAIL_OK|$base|" > "$result_file" ;;
-        legacy-internal-compatibility) echo "FAIL_INTERNAL_COMPAT|$base|$RUNNER_NEGATIVE_DETAIL" > "$result_file" ;;
-        diag-mismatch) echo "DIAG_MISMATCH|$base|$RUNNER_NEGATIVE_DETAIL" > "$result_file" ;;
+	case "$RUNNER_NEGATIVE_RESULT" in
+		ok) echo "FAIL_OK|$base|" > "$result_file" ;;
+		diag-mismatch) echo "DIAG_MISMATCH|$base|$RUNNER_NEGATIVE_DETAIL" > "$result_file" ;;
         *) echo "FAIL_BAD|$base|$RUNNER_NEGATIVE_DETAIL" > "$result_file" ;;
     esac
     rm -f "$obj"
@@ -706,7 +688,6 @@ declare -a LINK_OK=()
 declare -a LINK_FAIL=()
 declare -a LINK_FAIL_DETAILS=()
 declare -a FAIL_OK=()
-declare -a FAIL_INTERNAL_COMPAT=()
 declare -a FAIL_BAD=()
 declare -a FAIL_BAD_DETAILS=()
 declare -a RUNTIME_CRASH=()
@@ -834,11 +815,6 @@ for base in "${FAIL_FILES[@]}"; do
             FAIL_OK+=("$base")
             [ "$VERBOSE" = "1" ] && echo "  $base ... OK (failed as expected)" >&2
             ;;
-        FAIL_INTERNAL_COMPAT)
-            FAIL_OK+=("$base")
-            FAIL_INTERNAL_COMPAT+=("$base")
-            [ "$VERBOSE" = "1" ] && echo "  $base ... OK (temporary legacy internal-failure compatibility)" >&2
-            ;;
         FAIL_BAD)
             FAIL_BAD+=("$base")
             FAIL_BAD_DETAILS+=("$detail")
@@ -864,11 +840,6 @@ printf "Compile: ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#COMPILE_OK[@]}
 printf "Link:    ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#LINK_OK[@]}" "${#LINK_FAIL[@]}"
 printf "Runtime: ${GREEN}%d pass${NC} / ${RED}%d crash${NC} / ${RED}%d mismatch${NC}\n" "$((${#LINK_OK[@]} - ${#RUNTIME_CRASH[@]} - ${#RETURN_MISMATCH[@]}))" "${#RUNTIME_CRASH[@]}" "${#RETURN_MISMATCH[@]}"
 [ ${#FAIL_FILES[@]} -gt 0 ] && printf "Negative: ${GREEN}%d correct${NC} / ${RED}%d wrong${NC}\n" "${#FAIL_OK[@]}" "${#FAIL_BAD[@]}"
-printf "Legacy internal compatibility: ${YELLOW}%d active${NC} / %d baseline, %d used in this run; direction down, remove by boundary %s\n" \
-	"$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" \
-	"$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE" \
-	"${#FAIL_INTERNAL_COMPAT[@]}" \
-	"$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY"
 [ ${#EXPECTED_FAILURES[@]} -gt 0 ] && printf "Expected positive failures: ${GREEN}%d matched${NC}\n" "${#EXPECTED_FAILURES[@]}"
 
 # Show failures with details
@@ -951,13 +922,11 @@ fi
 }
 
 echo ""
-runner_ci_record "$CI_OUTPUT" compatibility legacy-internal-failure active \
-	"count=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT baseline=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE selected=${#FAIL_INTERNAL_COMPAT[@]} direction=down removal-boundary=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY"
 if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ] &&
 	[ ${#RETURN_MISMATCH[@]} -eq 0 ] && [ ${#RUNTIME_CRASH[@]} -eq 0 ] &&
 	[ ${#STALE_EXPECTATIONS[@]} -eq 0 ] && [ ${#NONWAIVABLE_FAILURES[@]} -eq 0 ]; then
     echo -e "${GREEN}RESULT: SUCCESS${NC}"
-	runner_ci_record "$CI_OUTPUT" summary all success "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]} link=$LINK_MODE legacy-internal=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT/$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE"
+	runner_ci_record "$CI_OUTPUT" summary all success "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]} link=$LINK_MODE"
     exit 0
 else
 	for name in "${COMPILE_FAIL[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" compile-failed ""; done
@@ -967,7 +936,7 @@ else
 	for name in "${RUNTIME_CRASH[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" runtime-crash ""; done
 	for name in "${STALE_EXPECTATIONS[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" stale-expectation ""; done
 	for name in "${NONWAIVABLE_FAILURES[@]}"; do runner_ci_record "$CI_OUTPUT" test "$name" non-waivable-failure ""; done
-	runner_ci_record "$CI_OUTPUT" summary all failed "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]} link=$LINK_MODE legacy-internal=$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT/$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE"
+	runner_ci_record "$CI_OUTPUT" summary all failed "single=$TOTAL multi-tu=${#MULTI_TU_CASES[@]} link=$LINK_MODE"
     if [ "${FLASHCPP_RERUN_PHASE:-0}" != "1" ] && [ ${#FAILED_TEST_NAMES[@]} -gt 0 ]; then
         echo "Re-running failing tests sequentially for diagnostics..."
         echo ""

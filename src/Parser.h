@@ -1244,6 +1244,9 @@ private:
 	size_t parsing_depth_ = 0;
 	bool parsing_alias_type_id_ = false;
 	bool parsing_parameter_declaration_type_id_ = false;
+	// Suppress expression diagnostics while recovering from a failed function
+	// parse as a possible variable declaration.
+	bool parsing_failed_function_fallback_ = false;
 	// C++20 [temp.res.general]: omitted `typename` is valid in decl-specifier-seq
 	// and trailing-return-type contexts (P0634R3).
 	bool parsing_implicit_typename_context_ = false;

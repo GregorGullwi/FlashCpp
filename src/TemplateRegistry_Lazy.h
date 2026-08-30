@@ -2281,8 +2281,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				//
 				// We must NOT default to "satisfied" here: a comparison constraint that
 				// can't be evaluated is not provably true, and treating it as satisfied
-				// would allow ill-formed programs to compile (the bug that made
-				// test_requires_requires_fail.cpp incorrectly succeed).
+				// would allow an ill-formed program to compile.
 				//
 				// Returning failure is the conservatively correct choice: if the constraint
 				// is genuinely un-evaluable it means the template can't be instantiated

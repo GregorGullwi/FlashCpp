@@ -9,12 +9,6 @@ RUNNER_INTERNAL_FAILURE_EXIT=2
 RUNNER_COMPILE_TIMEOUT_SECONDS=120
 RUNNER_RUNTIME_TIMEOUT_SECONDS=30
 RUNNER_RUNTIME_TIMEOUT_RETRY_LIMIT=1
-RUNNER_LEGACY_INVENTORY_COUNT=28
-RUNNER_LEGACY_INVENTORY_SHA256=34132f605437d9647b4cdc7f79aa400d4cc412cb846a0a5ceb2be94f5910f951
-RUNNER_LEGACY_INTERNAL_COMPATIBILITY_COUNT=5
-RUNNER_LEGACY_INTERNAL_COMPATIBILITY_SHA256=0dc664dec6df08f10b0dcf301d3f3cd6590dac95301ac9057a11a27c3fe23f0b
-RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE=7
-RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY=2F
 
 runner_relevant_sources() {
 	local repo_root="$1"
@@ -87,7 +81,6 @@ runner_classify_test() {
 	[[ "$platform_exclusions" == *" $file_name "* ]] && { RUNNER_TEST_KIND='platform-excluded'; return; }
 	[[ "$support_sources" == *" $file_name "* ]] && { RUNNER_TEST_KIND='support-source'; return; }
 	[[ "$compile_only_overrides" == *" $file_name "* ]] && { RUNNER_TEST_KIND='compile-only'; return; }
-	[[ "$file_name" == *_fail.cpp ]] && { RUNNER_TEST_KIND='compile-failure'; return; }
 	if grep -qE '\b(int|void)[[:space:]]+main[[:space:]]*\(' "$source_path"; then
 		RUNNER_TEST_KIND='runnable'
 	else
@@ -191,18 +184,6 @@ runner_evaluate_negative_result() {
 		return
 	fi
 	if [ "$compile_exit" -eq "$RUNNER_INTERNAL_FAILURE_EXIT" ]; then
-		runner_classify_negative_name "$file_name"
-		if [[ "$file_name" == *_fail.cpp ]] &&
-			[ "$RUNNER_NEGATIVE_NAME_KIND" = 'other' ] &&
-			[[ " ${RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES:-} " == *" $file_name "* ]]; then
-			if [ "$object_exists" = 'yes' ]; then
-				RUNNER_NEGATIVE_DETAIL='legacy internal-failure compatibility produced an object file'
-				return
-			fi
-			RUNNER_NEGATIVE_RESULT='legacy-internal-compatibility'
-			RUNNER_NEGATIVE_DETAIL="temporary compatibility through boundary $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_REMOVAL_BOUNDARY"
-			return
-		fi
 		RUNNER_NEGATIVE_DETAIL='compiler reported internal failure'
 		return
 	fi
@@ -240,150 +221,6 @@ runner_sha256_file() {
 	fi
 }
 
-runner_validate_legacy_inventory() {
-	local repo_root="$1"
-	local inventory_path="$2"
-	local LC_ALL=C
-	local count hash previous='' name stem original candidate successor_count
-	RUNNER_INVENTORY_ERROR=''
-	[ -f "$inventory_path" ] || { RUNNER_INVENTORY_ERROR="legacy inventory is missing: $inventory_path"; return 1; }
-	count=$(wc -l < "$inventory_path")
-	[ "$count" -eq "$RUNNER_LEGACY_INVENTORY_COUNT" ] || {
-		RUNNER_INVENTORY_ERROR="legacy inventory count is $count, expected $RUNNER_LEGACY_INVENTORY_COUNT"
-		return 1
-	}
-	hash=$(runner_sha256_file "$inventory_path") || {
-		RUNNER_INVENTORY_ERROR='no SHA-256 implementation is available'
-		return 1
-	}
-	[ "$hash" = "$RUNNER_LEGACY_INVENTORY_SHA256" ] || {
-		RUNNER_INVENTORY_ERROR="legacy inventory SHA-256 is $hash, expected $RUNNER_LEGACY_INVENTORY_SHA256"
-		return 1
-	}
-
-	while IFS= read -r name; do
-		[[ "$name" == *_fail.cpp ]] || { RUNNER_INVENTORY_ERROR="invalid legacy inventory name: $name"; return 1; }
-		if [ -n "$previous" ] && [[ "$previous" > "$name" || "$previous" == "$name" ]]; then
-			RUNNER_INVENTORY_ERROR="legacy inventory is not strictly sorted at: $name"
-			return 1
-		fi
-		previous="$name"
-	done < "$inventory_path"
-
-	for original in "$repo_root"/tests/*_fail.cpp; do
-		[ -f "$original" ] || continue
-		name=$(basename "$original")
-		grep -qxF "$name" "$inventory_path" || {
-			RUNNER_INVENTORY_ERROR="unregistered legacy negative test: $name"
-			return 1
-		}
-	done
-
-	while IFS= read -r name; do
-		original="$repo_root/tests/$name"
-		stem="${name%_fail.cpp}"
-		successor_count=0
-		for candidate in "$repo_root/tests/$stem"_e*.cpp; do
-			[ -f "$candidate" ] || continue
-			runner_classify_negative_name "$(basename "$candidate")"
-			if [ "$RUNNER_NEGATIVE_NAME_KIND" = 'encoded' ] && [ "$RUNNER_NEGATIVE_NAME_STEM" = "$stem" ]; then
-				successor_count=$((successor_count + 1))
-			fi
-		done
-		if [ -f "$original" ]; then
-			[ "$successor_count" -eq 0 ] || {
-				RUNNER_INVENTORY_ERROR="legacy test and encoded successor both exist for: $name"
-				return 1
-			}
-		elif [ "$successor_count" -ne 1 ]; then
-			RUNNER_INVENTORY_ERROR="legacy inventory entry $name has $successor_count encoded successors"
-			return 1
-		fi
-	done < "$inventory_path"
-	return 0
-}
-
-runner_validate_legacy_internal_compatibility() {
-	local repo_root="$1"
-	local compatibility_path="$2"
-	local legacy_inventory_path="$3"
-	local LC_ALL=C
-	local count hash previous='' name stem original candidate successor_count
-	RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR=''
-	RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT=0
-	RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES=''
-	[ -f "$compatibility_path" ] || {
-		RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy internal-failure compatibility inventory is missing: $compatibility_path"
-		return 1
-	}
-	[ -f "$legacy_inventory_path" ] || {
-		RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy negative inventory is missing: $legacy_inventory_path"
-		return 1
-	}
-	count=$(wc -l < "$compatibility_path")
-	[ "$count" -eq "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_COUNT" ] || {
-		RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy internal-failure compatibility inventory count is $count, expected $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_COUNT"
-		return 1
-	}
-	hash=$(runner_sha256_file "$compatibility_path") || {
-		RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR='no SHA-256 implementation is available'
-		return 1
-	}
-	[ "$hash" = "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_SHA256" ] || {
-		RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy internal-failure compatibility inventory SHA-256 is $hash, expected $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_SHA256"
-		return 1
-	}
-
-	while IFS= read -r name; do
-		[[ "$name" == *_fail.cpp ]] || {
-			RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="invalid legacy internal-failure compatibility name: $name"
-			return 1
-		}
-		runner_classify_negative_name "$name"
-		[ "$RUNNER_NEGATIVE_NAME_KIND" = 'other' ] || {
-			RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="encoded or malformed name cannot enter legacy internal-failure compatibility: $name"
-			return 1
-		}
-		if [ -n "$previous" ] && [[ "$previous" > "$name" || "$previous" == "$name" ]]; then
-			RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy internal-failure compatibility inventory is not strictly sorted at: $name"
-			return 1
-		fi
-		previous="$name"
-		grep -qxF "$name" "$legacy_inventory_path" || {
-			RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy internal-failure compatibility entry is not in the frozen legacy inventory: $name"
-			return 1
-		}
-
-		original="$repo_root/tests/$name"
-		stem="${name%_fail.cpp}"
-		successor_count=0
-		for candidate in "$repo_root/tests/$stem"_e*.cpp; do
-			[ -f "$candidate" ] || continue
-			runner_classify_negative_name "$(basename "$candidate")"
-			if [ "$RUNNER_NEGATIVE_NAME_KIND" = 'encoded' ] && [ "$RUNNER_NEGATIVE_NAME_STEM" = "$stem" ]; then
-				successor_count=$((successor_count + 1))
-			fi
-		done
-		if [ -f "$original" ]; then
-			[ "$successor_count" -eq 0 ] || {
-				RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy internal-failure compatibility entry has both legacy and encoded representations: $name"
-				return 1
-			}
-			RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT=$((RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT + 1))
-			RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES="${RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES:+$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_NAMES }$name"
-		elif [ "$successor_count" -ne 1 ]; then
-			RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy internal-failure compatibility entry $name has $successor_count current representations"
-			return 1
-		fi
-	done < "$compatibility_path"
-
-	if [ "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT" -gt "$RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE" ]; then
-		RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ERROR="legacy internal-failure compatibility count is $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_ACTIVE_COUNT, above baseline $RUNNER_LEGACY_INTERNAL_COMPATIBILITY_BASELINE"
-		return 1
-	fi
-	return 0
-}
-
 runner_validate_negative_names() {
 	local repo_root="$1"
 	local path name
@@ -391,6 +228,10 @@ runner_validate_negative_names() {
 	for path in "$repo_root"/tests/*.cpp; do
 		[ -f "$path" ] || continue
 		name=$(basename "$path")
+		if [[ "$name" == *_fail.cpp ]]; then
+			RUNNER_NEGATIVE_NAME_ERROR="legacy _fail.cpp classification was removed: $name"
+			return 1
+		fi
 		runner_classify_negative_name "$name"
 		if [ "$RUNNER_NEGATIVE_NAME_KIND" = 'malformed' ]; then
 			RUNNER_NEGATIVE_NAME_ERROR="malformed diagnostic filename: $name"

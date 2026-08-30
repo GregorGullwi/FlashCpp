@@ -26,35 +26,50 @@ unreachable for 32-bit overflow; it fires only at the `long long` boundaries.
 Pin it with an encoded regression once the evaluator tracks promoted operand
 widths. Owner: constexpr evaluation fidelity.
 
-## Five legacy negative tests terminate through internal-failure paths
+## Boundary 2F removed unsupported legacy negative fixtures
 
-Boundary 2A gives clean source rejection exit status 1 and internal/compiler
-failure exit status 2. The frozen negative suite now exposes five tests that
-previously passed only because the runner treated any missing object as an
-acceptable rejection:
+On 2026-08-30 boundary 2F removed the frozen `_fail.cpp` inventories and their
+temporary internal-failure compatibility. The following fixtures were not
+converted into diagnostic contracts because their current failures are outside
+an existing bounded owner. Their source is preserved as non-discovered
+`.cpp.txt` reproducers under `tests/unsupported_boundary_2f/`:
 
-- `test_constexpr_aggregate_brace_narrowing_fail.cpp` records the intended
-  constexpr narrowing error, then hits `sema missed return conversion`;
-- `test_if_constexpr_active_branch_invalid_fail.cpp` reaches a no-runtime-size
-  direct-call return invariant;
-- `test_operator_subscript_const_ambiguity_fail.cpp` reaches the
-  struct-without-conversion-operator fallback invariant;
-- `test_template_lazy_static_member_implicit_this_fail.cpp` reaches code
-  generation with an invalid implicit `this` lookup;
-- `test_template_out_of_line_static_member_implicit_this_fail.cpp` reaches the
-  same invalid code-generation lookup.
+- Template deduction or constraint failures that collapse to the generic
+  template-instantiation rejection: `concept_error_test_fail.cpp`,
+  `template_call_wrong_placeholder_base_fail.cpp`,
+  `template_concrete_undeduced_fail.cpp`,
+  `test_const_rvalue_reference_before_pack_lvalue_fail.cpp`,
+  `test_constrained_auto_double_fail.cpp`,
+  `test_function_template_recursive_trailing_return_fail.cpp`,
+  `test_template_callable_operator_const_receiver_explicit_member_fail.cpp`,
+  and `test_template_member_call_const_receiver_fail.cpp`.
+- Declaration-parser failures masked by the top-level expression fallback:
+  `test_mismatch_args_fail.cpp`, `test_mismatch_const_fail.cpp`,
+  `test_mismatch_return_fail.cpp`, `test_pointer_const_mismatch_fail.cpp`,
+  `test_reference_const_mismatch_fail.cpp`, and
+  `test_template_member_func_template_const_ref_return_fail.cpp`.
+- Out-of-line and injected-identity fixtures that require identity recovery:
+  `test_injected_identity_ool_namespace_owner_fail.cpp`,
+  `test_injected_identity_other_specialization_default_fail.cpp`,
+  `test_injected_identity_terminal_member_template_fail.cpp`,
+  `test_template_nested_ool_ctor_template_alias_target_mismatch_fail.cpp`,
+  `test_template_ool_member_template_single_candidate_alias_target_mismatch_fail.cpp`,
+  `test_template_ool_plain_member_multi_param_late_mismatch_fail.cpp`,
+  `test_template_ool_plain_member_single_candidate_alias_target_mismatch_fail.cpp`,
+  `test_template_partial_spec_ool_ctor_template_alias_target_mismatch_fail.cpp`,
+  and `test_template_partial_spec_ool_plain_member_alias_target_mismatch_fail.cpp`.
+- Five tests that previously depended on status-2 compatibility:
+  `test_constexpr_aggregate_brace_narrowing_fail.cpp`,
+  `test_if_constexpr_active_branch_invalid_fail.cpp`,
+  `test_operator_subscript_const_ambiguity_fail.cpp`,
+  `test_template_lazy_static_member_implicit_this_fail.cpp`, and
+  `test_template_out_of_line_static_member_implicit_this_fail.cpp`.
 
-Boundary 2A tracks these names in the immutable
-`tests/legacy_internal_failure_tests.txt` inventory. A still-present original
-`_fail.cpp` in that list may temporarily satisfy its legacy negative contract
-with internal status 2 only when the compiler produces no object. The exception
-does not apply to encoded successors or any other legacy test. Crashes,
-timeouts, driver or worker failures, and missing results still fail.
-
-Both runners report the active count against baseline 7. The count may only
-fall. Their shared diagnostic owners belong to the bounded 2C through 2F
-conversion slices, and boundary 2F deletes this compatibility after the last
-owner migrates.
+These archived reproducers should return to executable discovery only after
+their owning parser, identity, constexpr, or lowering work can provide a stable
+diagnostic contract without adding recovery solely to empty the old inventory.
+The per-file recovery map is indexed in
+`tests/unsupported_boundary_2f/README.md`.
 
 ## Pointer-to-array declarator coverage gaps
 

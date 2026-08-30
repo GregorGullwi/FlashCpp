@@ -1,11 +1,5 @@
 $script:FlashCppSourceRejectionExit = 1
 $script:FlashCppInternalFailureExit = 2
-$script:FlashCppLegacyInventoryCount = 28
-$script:FlashCppLegacyInventorySha256 = "34132f605437d9647b4cdc7f79aa400d4cc412cb846a0a5ceb2be94f5910f951"
-$script:FlashCppLegacyInternalCompatibilityCount = 5
-$script:FlashCppLegacyInternalCompatibilitySha256 = "0dc664dec6df08f10b0dcf301d3f3cd6590dac95301ac9057a11a27c3fe23f0b"
-$script:FlashCppLegacyInternalCompatibilityBaseline = 7
-$script:FlashCppLegacyInternalCompatibilityRemovalBoundary = "2F"
 
 function Get-FlashCppRelevantSourceFiles {
 	param([string]$RepoRoot)
@@ -95,7 +89,6 @@ function Get-FlashCppTestKind {
 	if ($PlatformExclusions -contains $FileName) { return "PlatformExcluded" }
 	if ($SupportSources -contains $FileName) { return "SupportSource" }
 	if ($CompileOnlyOverrides -contains $FileName) { return "CompileOnly" }
-	if ($FileName -match '_fail\.cpp$') { return "CompileFailure" }
 	if ($SourceContent -match '\b(?:int|void)\s+main\s*\(') { return "Runnable" }
 	return "CompileOnly"
 }
@@ -239,9 +232,7 @@ function Test-FlashCppNegativeCompileResult {
 		[bool]$ObjectExists,
 		[string]$CompilerOutput,
 		[int]$SourceRejectionExit,
-		[int]$InternalFailureExit,
-		[string[]]$LegacyInternalCompatibilityNames,
-		[string]$LegacyInternalCompatibilityRemovalBoundary
+		[int]$InternalFailureExit
 	)
 
 	if (-not $Started) {
@@ -251,19 +242,6 @@ function Test-FlashCppNegativeCompileResult {
 		return [pscustomobject]@{ Status = "Bad"; Detail = "compiler timed out" }
 	}
 	if ($ExitCode -eq $InternalFailureExit) {
-		$negativeName = Get-FlashCppNegativeNameInfo -FileName $FileName
-		$isLegacyCompatibility = $FileName.EndsWith("_fail.cpp", [StringComparison]::Ordinal) -and
-			$negativeName.Kind -eq "Other" -and
-			$LegacyInternalCompatibilityNames -ccontains $FileName
-		if ($isLegacyCompatibility) {
-			if ($ObjectExists) {
-				return [pscustomobject]@{ Status = "Bad"; Detail = "legacy internal-failure compatibility produced an object file" }
-			}
-			return [pscustomobject]@{
-				Status = "LegacyInternalCompatibility"
-				Detail = "temporary compatibility through boundary $LegacyInternalCompatibilityRemovalBoundary"
-			}
-		}
 		return [pscustomobject]@{ Status = "Bad"; Detail = "compiler reported internal failure" }
 	}
 	if ($ExitCode -eq 0 -and $ObjectExists) {
@@ -287,190 +265,13 @@ function Test-FlashCppNegativeCompileResult {
 	return [pscustomobject]@{ Status = "Ok"; Detail = "" }
 }
 
-function Test-FlashCppLegacyNegativeInventory {
-	param(
-		[string]$RepoRoot,
-		[string]$InventoryPath
-	)
-
-	if (-not (Test-Path -LiteralPath $InventoryPath -PathType Leaf)) {
-		return [pscustomobject]@{ Valid = $false; Error = "legacy inventory is missing: $InventoryPath" }
-	}
-	$inventory = @([IO.File]::ReadAllLines($InventoryPath, [Text.Encoding]::UTF8))
-	if ($inventory.Count -ne $script:FlashCppLegacyInventoryCount) {
-		return [pscustomobject]@{
-			Valid = $false
-			Error = "legacy inventory count is $($inventory.Count), expected $script:FlashCppLegacyInventoryCount"
-		}
-	}
-	$hash = (Get-FileHash -LiteralPath $InventoryPath -Algorithm SHA256).Hash.ToLowerInvariant()
-	if ($hash -cne $script:FlashCppLegacyInventorySha256) {
-		return [pscustomobject]@{
-			Valid = $false
-			Error = "legacy inventory SHA-256 is $hash, expected $script:FlashCppLegacyInventorySha256"
-		}
-	}
-
-	$inventorySet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-	$previous = ""
-	foreach ($name in $inventory) {
-		if (-not $name.EndsWith("_fail.cpp", [StringComparison]::Ordinal)) {
-			return [pscustomobject]@{ Valid = $false; Error = "invalid legacy inventory name: $name" }
-		}
-		if ($previous.Length -gt 0 -and [StringComparer]::Ordinal.Compare($previous, $name) -ge 0) {
-			return [pscustomobject]@{ Valid = $false; Error = "legacy inventory is not strictly sorted at: $name" }
-		}
-		$null = $inventorySet.Add($name)
-		$previous = $name
-	}
-
-	$testsRoot = Join-Path $RepoRoot "tests"
-	foreach ($file in Get-ChildItem -LiteralPath $testsRoot -File -Filter "*_fail.cpp") {
-		if (-not $inventorySet.Contains($file.Name)) {
-			return [pscustomobject]@{ Valid = $false; Error = "unregistered legacy negative test: $($file.Name)" }
-		}
-	}
-
-	foreach ($name in $inventory) {
-		$original = Join-Path $testsRoot $name
-		$stem = $name.Substring(0, $name.Length - "_fail.cpp".Length)
-		$successors = @(
-			Get-ChildItem -LiteralPath $testsRoot -File -Filter "${stem}_e*.cpp" |
-				Where-Object {
-					$info = Get-FlashCppNegativeNameInfo -FileName $_.Name
-					$info.Kind -eq "Encoded" -and $info.Stem -ceq $stem
-				}
-		)
-		if (Test-Path -LiteralPath $original -PathType Leaf) {
-			if ($successors.Count -ne 0) {
-				return [pscustomobject]@{ Valid = $false; Error = "legacy test and encoded successor both exist for: $name" }
-			}
-		} elseif ($successors.Count -ne 1) {
-			return [pscustomobject]@{ Valid = $false; Error = "legacy inventory entry $name has $($successors.Count) encoded successors" }
-		}
-	}
-	return [pscustomobject]@{ Valid = $true; Error = "" }
-}
-
-function Test-FlashCppLegacyInternalCompatibility {
-	param(
-		[string]$RepoRoot,
-		[string]$CompatibilityPath,
-		[string]$LegacyInventoryPath
-	)
-
-	$emptyResult = @{
-		ActiveCount = 0
-		ActiveNames = @()
-		Baseline = $script:FlashCppLegacyInternalCompatibilityBaseline
-		RemovalBoundary = $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
-	}
-	if (-not (Test-Path -LiteralPath $CompatibilityPath -PathType Leaf)) {
-		return [pscustomobject]($emptyResult + @{
-			Valid = $false
-			Error = "legacy internal-failure compatibility inventory is missing: $CompatibilityPath"
-		})
-	}
-	if (-not (Test-Path -LiteralPath $LegacyInventoryPath -PathType Leaf)) {
-		return [pscustomobject]($emptyResult + @{
-			Valid = $false
-			Error = "legacy negative inventory is missing: $LegacyInventoryPath"
-		})
-	}
-	$compatibility = @([IO.File]::ReadAllLines($CompatibilityPath, [Text.Encoding]::UTF8))
-	if ($compatibility.Count -ne $script:FlashCppLegacyInternalCompatibilityCount) {
-		return [pscustomobject]($emptyResult + @{
-			Valid = $false
-			Error = "legacy internal-failure compatibility inventory count is $($compatibility.Count), expected $script:FlashCppLegacyInternalCompatibilityCount"
-		})
-	}
-	$hash = (Get-FileHash -LiteralPath $CompatibilityPath -Algorithm SHA256).Hash.ToLowerInvariant()
-	if ($hash -cne $script:FlashCppLegacyInternalCompatibilitySha256) {
-		return [pscustomobject]($emptyResult + @{
-			Valid = $false
-			Error = "legacy internal-failure compatibility inventory SHA-256 is $hash, expected $script:FlashCppLegacyInternalCompatibilitySha256"
-		})
-	}
-
-	$legacyInventory = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-	foreach ($name in [IO.File]::ReadAllLines($LegacyInventoryPath, [Text.Encoding]::UTF8)) {
-		$null = $legacyInventory.Add($name)
-	}
-	$activeNames = [System.Collections.Generic.List[string]]::new()
-	$previous = ""
-	$testsRoot = Join-Path $RepoRoot "tests"
-	foreach ($name in $compatibility) {
-		if (-not $name.EndsWith("_fail.cpp", [StringComparison]::Ordinal)) {
-			return [pscustomobject]($emptyResult + @{
-				Valid = $false
-				Error = "invalid legacy internal-failure compatibility name: $name"
-			})
-		}
-		$negativeName = Get-FlashCppNegativeNameInfo -FileName $name
-		if ($negativeName.Kind -ne "Other") {
-			return [pscustomobject]($emptyResult + @{
-				Valid = $false
-				Error = "encoded or malformed name cannot enter legacy internal-failure compatibility: $name"
-			})
-		}
-		if ($previous.Length -gt 0 -and [StringComparer]::Ordinal.Compare($previous, $name) -ge 0) {
-			return [pscustomobject]($emptyResult + @{
-				Valid = $false
-				Error = "legacy internal-failure compatibility inventory is not strictly sorted at: $name"
-			})
-		}
-		$previous = $name
-		if (-not $legacyInventory.Contains($name)) {
-			return [pscustomobject]($emptyResult + @{
-				Valid = $false
-				Error = "legacy internal-failure compatibility entry is not in the frozen legacy inventory: $name"
-			})
-		}
-
-		$original = Join-Path $testsRoot $name
-		$stem = $name.Substring(0, $name.Length - "_fail.cpp".Length)
-		$successors = @(
-			Get-ChildItem -LiteralPath $testsRoot -File -Filter "${stem}_e*.cpp" -ErrorAction SilentlyContinue |
-				Where-Object {
-					$info = Get-FlashCppNegativeNameInfo -FileName $_.Name
-					$info.Kind -eq "Encoded" -and $info.Stem -ceq $stem
-				}
-		)
-		if (Test-Path -LiteralPath $original -PathType Leaf) {
-			if ($successors.Count -ne 0) {
-				return [pscustomobject]($emptyResult + @{
-					Valid = $false
-					Error = "legacy internal-failure compatibility entry has both legacy and encoded representations: $name"
-				})
-			}
-			$activeNames.Add($name)
-		} elseif ($successors.Count -ne 1) {
-			return [pscustomobject]($emptyResult + @{
-				Valid = $false
-				Error = "legacy internal-failure compatibility entry $name has $($successors.Count) current representations"
-			})
-		}
-	}
-	if ($activeNames.Count -gt $script:FlashCppLegacyInternalCompatibilityBaseline) {
-		return [pscustomobject]($emptyResult + @{
-			Valid = $false
-			Error = "legacy internal-failure compatibility count is $($activeNames.Count), above baseline $script:FlashCppLegacyInternalCompatibilityBaseline"
-		})
-	}
-	return [pscustomobject]@{
-		Valid = $true
-		Error = ""
-		ActiveCount = $activeNames.Count
-		ActiveNames = @($activeNames)
-		Baseline = $script:FlashCppLegacyInternalCompatibilityBaseline
-		RemovalBoundary = $script:FlashCppLegacyInternalCompatibilityRemovalBoundary
-	}
-}
-
 function Test-FlashCppNegativeNames {
 	param([string]$RepoRoot)
 
 	foreach ($file in Get-ChildItem -LiteralPath (Join-Path $RepoRoot "tests") -File -Filter "*.cpp") {
+		if ($file.Name.EndsWith("_fail.cpp", [StringComparison]::Ordinal)) {
+			return [pscustomobject]@{ Valid = $false; Error = "legacy _fail.cpp classification was removed: $($file.Name)" }
+		}
 		$info = Get-FlashCppNegativeNameInfo -FileName $file.Name
 		if ($info.Kind -eq "Malformed") {
 			return [pscustomobject]@{ Valid = $false; Error = "malformed diagnostic filename: $($file.Name)" }
