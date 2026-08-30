@@ -3027,9 +3027,18 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					// This catches errors like f2::func() when only namespace f exists.
 					NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
 					if (!validateQualifiedNamespace(ns_handle, final_identifier, (parsing_template_depth_ > 0))) {
-						return ParseResult::error(
-							std::string(StringBuilder().append("Use of undeclared identifier '").append(buildQualifiedNameFromStrings(namespaces, final_identifier.value())).append("'").commit()),
-							final_identifier);
+						const std::string message = std::string(StringBuilder()
+							.append("Use of undeclared identifier '")
+							.append(buildQualifiedNameFromStrings(namespaces, final_identifier.value()))
+							.append("'")
+							.commit());
+						context_.diagnostics().report(
+							DiagnosticId::UndeclaredQualifiedIdentifier,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(final_identifier),
+							message,
+							{});
+						return ParseResult::error(message, final_identifier);
 					}
 					// Namespace exists — create forward declaration for external functions (e.g., std::print)
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, final_identifier, CVQualifier::None);

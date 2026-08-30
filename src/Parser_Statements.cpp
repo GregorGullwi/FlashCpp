@@ -1742,11 +1742,18 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 							rejection_message);
 						return ParseResult::error(rejection_message, decl_node.identifier_token());
 					}
-					throw CompileError(std::string(StringBuilder()
-													   .append("Could not deduce auto type from initializer for '")
-													   .append(decl_node.identifier_token().value())
-													   .append("'; use an explicit type when the initializer's type cannot be inferred")
-													   .commit()));
+					const std::string rejection_message = std::string(StringBuilder()
+															 .append("Could not deduce auto type from initializer for '")
+															 .append(decl_node.identifier_token().value())
+															 .append("'; use an explicit type when the initializer's type cannot be inferred")
+															 .commit());
+					throw makeStructuredCompileError(
+						context_.diagnostics(),
+						DiagnosticId::AutoTypeDeductionFailure,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(decl_node.identifier_token()),
+						rejection_message,
+						{});
 				}
 
 				TypeCategory deduced_type = deduction_result.type;

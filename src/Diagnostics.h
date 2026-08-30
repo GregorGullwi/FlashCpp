@@ -76,6 +76,7 @@ enum class DiagnosticId : uint32_t {
 	DesignatedInitializerAfterPositional = 1011,
 	DesignatedInitializerOutOfOrder = 1012,
 	AutoReturnTypeMismatch = 1013,
+	AutoTypeDeductionFailure = 1014,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -161,6 +162,8 @@ enum class DiagnosticId : uint32_t {
 	AddressOfNonLvalue = 1611,
 	InvalidArrayToScalarInitialization = 1612,
 	StructuredBindingTupleLikeProtocolFailure = 1613,
+	LambdaCaptureNotFound = 1614,
+	UndeclaredQualifiedIdentifier = 1615,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -216,6 +219,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DesignatedInitializerOutOfOrder";
 	case DiagnosticId::AutoReturnTypeMismatch:
 		return "AutoReturnTypeMismatch";
+	case DiagnosticId::AutoTypeDeductionFailure:
+		return "AutoTypeDeductionFailure";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:
@@ -358,6 +363,10 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "InvalidArrayToScalarInitialization";
 	case DiagnosticId::StructuredBindingTupleLikeProtocolFailure:
 		return "StructuredBindingTupleLikeProtocolFailure";
+	case DiagnosticId::LambdaCaptureNotFound:
+		return "LambdaCaptureNotFound";
+	case DiagnosticId::UndeclaredQualifiedIdentifier:
+		return "UndeclaredQualifiedIdentifier";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:

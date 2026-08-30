@@ -4563,9 +4563,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			if (!identifierType) {
 				// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
 				if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_depth_ > 0)) {
-					return ParseResult::error(
-						std::string(StringBuilder().append("Use of undeclared identifier '").append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name())).append("'").commit()),
-						qual_id.identifier_token());
+					const std::string message = std::string(StringBuilder()
+						.append("Use of undeclared identifier '")
+						.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
+						.append("'")
+						.commit());
+					context_.diagnostics().report(
+						DiagnosticId::UndeclaredQualifiedIdentifier,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(qual_id.identifier_token()),
+						message,
+						{});
+					return ParseResult::error(message, qual_id.identifier_token());
 				}
 				auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
@@ -5815,9 +5824,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (!identifierType) {
 					// Validate namespace exists before creating forward declaration (catches f2::func when f2 undeclared)
 					if (!validateQualifiedNamespace(qual_id.namespace_handle(), qual_id.identifier_token(), parsing_template_depth_ > 0)) {
-						return ParseResult::error(
-							std::string(StringBuilder().append("Use of undeclared identifier '").append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name())).append("'").commit()),
-							qual_id.identifier_token());
+						const std::string message = std::string(StringBuilder()
+							.append("Use of undeclared identifier '")
+							.append(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()))
+							.append("'")
+							.commit());
+						context_.diagnostics().report(
+							DiagnosticId::UndeclaredQualifiedIdentifier,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(qual_id.identifier_token()),
+							message,
+							{});
+						return ParseResult::error(message, qual_id.identifier_token());
 					}
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 					auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());

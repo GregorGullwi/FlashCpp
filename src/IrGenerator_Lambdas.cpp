@@ -106,20 +106,34 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 				capture_type_it != current_lambda_context_.capture_types.end()) {
 				ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(capture_type_it->second);
 				DeclarationNode& synthetic_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(type_node, capture.identifier_token());
-				info.captured_var_decls.push_back(ASTNode::emplace_node<DeclarationNode>(synthetic_decl));
-			} else {
-				throw CompileError(std::string(StringBuilder()
-												   .append("Lambda capture variable not found in scope: '")
-												   .append(var_name)
-												   .append("'")
-												   .commit()));
-			}
-		} else {
-			throw CompileError(std::string(StringBuilder()
-											   .append("Lambda capture variable not found in scope: '")
-											   .append(var_name)
-											   .append("'")
-											   .commit()));
+								info.captured_var_decls.push_back(ASTNode::emplace_node<DeclarationNode>(synthetic_decl));
+							} else {
+								const std::string message = std::string(StringBuilder()
+																.append("Lambda capture variable not found in scope: '")
+																.append(var_name)
+																.append("'")
+																.commit());
+								throw makeStructuredCompileError(
+									context_->diagnostics(),
+									DiagnosticId::LambdaCaptureNotFound,
+									DiagnosticSeverity::Error,
+									SourceLocation::fromToken(capture.identifier_token()),
+									message,
+									{});
+							}
+						} else {
+							const std::string message = std::string(StringBuilder()
+																.append("Lambda capture variable not found in scope: '")
+																.append(var_name)
+																.append("'")
+																.commit());
+							throw makeStructuredCompileError(
+								context_->diagnostics(),
+								DiagnosticId::LambdaCaptureNotFound,
+								DiagnosticSeverity::Error,
+								SourceLocation::fromToken(capture.identifier_token()),
+								message,
+								{});
 		}
 	}
 
