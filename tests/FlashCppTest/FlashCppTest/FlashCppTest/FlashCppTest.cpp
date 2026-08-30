@@ -4605,6 +4605,56 @@ TEST_SUITE("FrontendContext") {
 		NamespaceHandle handle = buildNamespaceHandleForStructName(qualified);
 		CHECK_FALSE(handle.isValid());
 	}
+
+	TEST_CASE("Parser publishes namespace free functions through DeclarationBuilder shadow path") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = R"(
+namespace decl_builder_wire_parser_ns {
+void wire_shadow_fn();
+void wire_shadow_fn() {}
+}
+)";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("decl_builder_wire_parser_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+		CHECK(context.declarationCount() == 2u);
+		CHECK(context.entityCount() == 1u);
+	}
+
+	TEST_CASE("Parser DeclarationBuilder shadow path does not override SymbolTable on duplicate definition") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = R"(
+void decl_builder_wire_dup_def_fn() {}
+void decl_builder_wire_dup_def_fn() {}
+)";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("decl_builder_wire_dup_def_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+		CHECK(context.declarationCount() == 1u);
+		CHECK(context.entityCount() == 1u);
+	}
 }
 
 TEST_SUITE("Diagnostics") {

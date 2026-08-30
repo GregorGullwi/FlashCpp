@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 after pull request boundary 8
+Last updated: 2026-08-30 after pull request boundary 8 review follow-up
 
 ## Position
 
@@ -16,10 +16,11 @@ Last updated: 2026-08-30 after pull request boundary 8
   `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
   registry identity), not lexical `ScopeId`. Publication targets are validated
   through `SymbolTable` scope metadata (`resolvePublicationTarget`); lexical
-  `ScopeId` is recorded on each `DeclarationRecord`. Initial free-function
-  redeclaration merging is proven in unit tests and wired for namespace/global
-  C++-linkage non-template free functions at
+  `ScopeId` is recorded on each `DeclarationRecord`. Namespace/global C++-linkage
+  non-template free functions are published through a **shadow path** at
   `Parser::parse_declaration_or_function_definition()` after `SymbolTable::insert`.
+  The opaque `TypeId` bridge is telemetry-only until boundary 3A canonical types;
+  `SymbolTable` remains lookup and merge authority for the wired family.
 - Persistent scopes still live in `SymbolTable` (cursor exit, `ScopeId` on
   insert and lookup). `FrontendContext` publishes that state for telemetry.
   `ScopeId` is not yet stored on declaration AST nodes.
@@ -39,7 +40,7 @@ Last updated: 2026-08-30 after pull request boundary 8
 | 5 | `FrontendContext`, strong IDs, scratch arena, arena telemetry |
 | 6 | Persistent scopes, `ScopeId` on lookup, first spelling recovery deletion |
 | 7 | `DeclarationBuilder` shell, `OwnerId` entity keys, scope-validated publication, initial function merge set |
-| 8 | Parser wire for namespace/global C++ free functions, opaque `TypeId` bridge, `declaration_builder_publish` counter |
+| 8 | Parser shadow wire for namespace/global C++ free functions, telemetry `TypeId` bridge, `declaration_builder_publish` counter |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -90,18 +91,19 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Delete or bypass `SymbolTable::insert` function redeclaration merge for the
-  wired free-function family so `DeclarationBuilder` is the sole merge
-  authority, or expand the parser wire to the next declaration family (member
-  functions, variables, templates) without introducing dual semantic authority.
+- Land canonical function/type identity (architecture boundary 3A) and
+  transactional publication (preflight or rollback) before deleting
+  `SymbolTable::insert` function redeclaration merge for the wired family.
+  Do not make `DeclarationBuilder` sole merge authority on the current
+  `matches_signature` interner.
 
 Then, in order:
 
-1. Continue architecture boundary 1: expand merge coverage (default arguments,
-   exception specifications, friends, templates) behind the same builder;
-   record `ScopeId` on declaration AST nodes; move scope storage into
-   `FrontendContext`; wire syntax/semantic/IR domain byte accounting and
-   per-record counts.
+1. Continue architecture boundary 1: expand shadow wire or merge coverage
+   (default arguments, exception specifications, friends, templates) only
+   after canonical `TypeId` and transactional publish exist; record `ScopeId`
+   on declaration AST nodes; move scope storage into `FrontendContext`; wire
+   syntax/semantic/IR domain byte accounting and per-record counts.
 2. Add the `ChunkedAnyVector` compile-time legacy-node allow-list guard.
 
 Named follow-ups carried forward:
@@ -139,5 +141,10 @@ Current findings only; delete entries when their resolution lands.
   fallback; details and the conversion rule for affected sites live in
   docs/KNOWN_ISSUES.md. Owner: parser declaration dispatch.
 - `DeclarationBuilder` rejection after successful `SymbolTable::insert` leaves
-  lookup state committed on error paths until merge authority moves to the
-  builder. Owner: boundary-1 declaration wire follow-up.
+  lookup state committed on error paths until transactional publication lands.
+  The shadow wire no longer fails parse on builder rejection; SymbolTable stays
+  authoritative. Owner: boundary-1 transactional publication follow-up.
+- The parser `TypeId` bridge interns via `matches_signature`, which ignores
+  nested `FunctionSignature` data (e.g. `void f(void (*)(int))` vs
+  `void f(void (*)(double))` can share a builder signature). Owner: boundary 3A
+  canonical types; do not delete `SymbolTable` merge on this interner.

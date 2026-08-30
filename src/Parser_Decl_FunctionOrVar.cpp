@@ -936,10 +936,10 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 						gSymbolTable.lastDeclaringScopeId(),
 						is_definition,
 						gSymbolTable);
-					if (publish_result.status == PublishStatus::Rejected) {
-						return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+					if (publish_result.status == PublishStatus::Created ||
+						publish_result.status == PublishStatus::MergedRedeclaration) {
+						recordDeclarationBuilderPublish();
 					}
-					recordDeclarationBuilderPublish();
 				}
 			}
 		}
