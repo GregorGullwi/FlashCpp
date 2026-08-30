@@ -4315,6 +4315,23 @@ TEST_SUITE("FrontendContext") {
 		CHECK(context.scopeCount() == 4u);
 	}
 
+	TEST_CASE("Legacy ChunkedAnyVector allow-list permits known syntax nodes") {
+		static_assert(isLegacyChunkedAnyStorageType<DeclarationNode>);
+		static_assert(isLegacyChunkedAnyStorageType<ExpressionNode>);
+		static_assert(isLegacyChunkedAnyStorageType<IdentifierNode>);
+		static_assert(isLegacyChunkedAnyStorageType<FunctionCallableTypes>);
+		static_assert(isLegacyChunkedAnyStorageType<std::vector<TemplateTypeArg>>);
+	}
+
+	TEST_CASE("Legacy ChunkedAnyVector allow-list rejects new semantic record types") {
+		struct ForbiddenNewSemanticRecord {
+			uint32_t id;
+		};
+		static_assert(!isLegacyChunkedAnyStorageType<ForbiddenNewSemanticRecord>);
+		static_assert(!isLegacyChunkedAnyStorageType<DeclarationRecord>);
+		static_assert(!isLegacyChunkedAnyStorageType<EntityRecord>);
+	}
+
 	TEST_CASE("DeclarationBuilder creates DeclId and EntityId for first function") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();

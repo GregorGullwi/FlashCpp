@@ -78,6 +78,10 @@ public:
 
 	template <typename T, typename... Args>
 	static ASTNode emplace_node(Args&&... args) {
+		static_assert(
+			LegacyChunkedAnyStorageTraits<std::decay_t<T>, LegacyAstChunkedAnyVector::kEnforceLegacyAstAllowList>::allowed,
+			"Type is not on the legacy ChunkedAnyVector allow-list. "
+			"Allocate new semantic objects in FrontendContext typed arenas instead.");
 		T& t = gChunkedAnyStorage.emplace_back<T>(std::forward<Args>(args)...);
 		return ASTNode(&t);
 	}

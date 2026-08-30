@@ -6,6 +6,7 @@
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
 #include "TemplateTypes.h"
+#include "LegacyChunkedAnyAllowList.h"
 
 // Global debug flag
 bool g_enable_debug_output = false;
@@ -14,7 +15,7 @@ bool g_enable_debug_output = false;
 bool g_enable_exceptions = true;
 
 NamespaceRegistry gNamespaceRegistry;
-ChunkedAnyVector<> gChunkedAnyStorage;
+LegacyAstChunkedAnyVector gChunkedAnyStorage;
 
 namespace FlashCpp {
 ChunkedVector<StructuralClassValue> gStructuralClassValues;
