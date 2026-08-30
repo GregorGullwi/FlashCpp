@@ -5,23 +5,26 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 after pull request boundary 6
+Last updated: 2026-08-30 after pull request boundary 7
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 6 are complete; architecture
+  and entities). Pull request boundaries 1 through 7 are complete; architecture
   boundary 1 exit criteria remain open through follow-on boundary-1 work.
-- Persistent scopes live in `SymbolTable` (cursor exit, `ScopeId` on insert and
-  lookup). `FrontendContext` only publishes that state for telemetry; it does
-  not own the arena. `ScopeId` is not yet stored on declaration AST nodes.
+- `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
+  `EntityId` into typed `ChunkedVector` arenas. Initial free-function
+  redeclaration merging is proven in unit tests; the live parser still inserts
+  only through `SymbolTable`.
+- Persistent scopes still live in `SymbolTable` (cursor exit, `ScopeId` on
+  insert and lookup). `FrontendContext` publishes that state for telemetry.
+  `ScopeId` is not yet stored on declaration AST nodes.
 - Global forwarding into `FrontendContext` is telemetry-only so far (string-
-  table entry count and spelling bytes, plus published scope state); syntax/
-  semantic/IR domain bytes and record counts remain unwired.
+  table entry count and spelling bytes, plus published scope and
+  declaration/entity counts); syntax/semantic/IR domain bytes and broader
+  per-record counts remain unwired.
 
-## Pull request boundary status (1–6)
-
-All complete.
+## Pull request boundary status (1–7)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -31,6 +34,7 @@ All complete.
 | 4 | `TemplateEngine` facade, migration choke-point counters |
 | 5 | `FrontendContext`, strong IDs, scratch arena, arena telemetry |
 | 6 | Persistent scopes, `ScopeId` on lookup, first spelling recovery deletion |
+| 7 | `DeclarationBuilder` shell, Decl/Entity arenas, initial function merge set |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -39,7 +43,7 @@ boundary 1 is started, not finished.
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 5/78 (6%)
+- Completed: 6/78 (8%)
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
   - Boundary 0 "structured diagnostics can be asserted by tests"
@@ -47,6 +51,7 @@ boundary 1 is started, not finished.
     visible in CI on a fixed corpus"
   - Boundary 1 "IDs cannot be constructed from pointers"
   - Boundary 1 "leaving parser scope does not destroy lookup information"
+  - Boundary 1 "declaration merging passes its initial regression set"
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure"
@@ -60,17 +65,19 @@ boundary 1 is started, not finished.
     no implementation limit yet
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
     InlineVector spill counts are reported through FrontendContext": partial
-    (scratch, string-table, InlineVector spills, scope count/current ScopeId
-    under `--perf-stats`)
-  - Boundary 1 remaining exit criteria (declaration merging,
-    `ChunkedAnyVector` compile-time guard, full template-facade coverage,
-    `ScopeId` on declarations beyond insert/lookup recording, scope storage
-    fully owned by `FrontendContext` rather than `SymbolTable`): follow-on
-    boundary-1 work
+    (scratch, string-table, InlineVector spills, scope count/current ScopeId,
+    declaration/entity counts under `--perf-stats`)
+  - Boundary 1 "no new semantic object is allocated in ChunkedAnyVector": Decl/
+    Entity use typed arenas; compile-time legacy choke-point guard still open
+  - Boundary 1 remaining exit criteria (full merge rules beyond the initial
+    free-function set, `ChunkedAnyVector` compile-time guard, full template-
+    facade coverage, `ScopeId` on declarations beyond insert/lookup recording,
+    scope storage fully owned by `FrontendContext` rather than `SymbolTable`):
+    follow-on boundary-1 work
 
 ## Effort estimate
 
-- Implementation effort completed overall: 12-15%, confidence medium
+- Implementation effort completed overall: 14-17%, confidence medium
 
 ## Remaining work
 
@@ -78,17 +85,19 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- `DeclarationBuilder` and declaration/entity merging are not started. Persistent
-  scopes exist, but redeclaration merge rules and `DeclId`/`EntityId` publication
-  through `FrontendContext` are required before additional spelling-based recovery
-  paths can be deleted.
+- Wire syntax-parser declaration sites through `DeclarationBuilder` for one
+  reduced declaration family, or move scope storage ownership from
+  `SymbolTable` into `FrontendContext`, without introducing a second semantic
+  authority.
 
 Then, in order:
 
-1. Continue architecture boundary 1: move scope storage ownership from
-   `SymbolTable` into `FrontendContext`, wire syntax/semantic/IR domain byte
-   accounting, per-record counts, and broader global forwarding.
-2. Record `ScopeId` on declaration AST nodes and additional lookup choke points.
+1. Continue architecture boundary 1: expand merge coverage (default arguments,
+   exception specifications, friends, templates) behind the same builder;
+   record `ScopeId` on declaration AST nodes; move scope storage into
+   `FrontendContext`; wire syntax/semantic/IR domain byte accounting and
+   per-record counts.
+2. Add the `ChunkedAnyVector` compile-time legacy-node allow-list guard.
 
 Named follow-ups carried forward:
 

@@ -254,6 +254,9 @@
     <ClCompile Include="src\ArenaDomains.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\DeclarationBuilder.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\Globals.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
@@ -452,6 +455,7 @@
     <ClInclude Include="src\MigrationTelemetryConfig.h" />
     <ClInclude Include="src\FrontendIds.h" />
     <ClInclude Include="src\ArenaDomains.h" />
+    <ClInclude Include="src\DeclarationBuilder.h" />
     <ClInclude Include="src\FrontendContext.h" />
     <ClInclude Include="src\TemplateEngine.h" />
     <ClInclude Include="src\CompileError.h" />

@@ -2,6 +2,7 @@
 
 #include "ArenaDomains.h"
 #include "ChunkedString.h"
+#include "DeclarationBuilder.h"
 #include "FrontendIds.h"
 #include "InlineVector.h"
 #include "Log.h"
@@ -83,6 +84,22 @@ public:
 		return scope_count_;
 	}
 
+	DeclarationBuilder& declarationBuilder() {
+		return declaration_builder_;
+	}
+
+	const DeclarationBuilder& declarationBuilder() const {
+		return declaration_builder_;
+	}
+
+	std::size_t declarationCount() const {
+		return declaration_builder_.declarationCount();
+	}
+
+	std::size_t entityCount() const {
+		return declaration_builder_.entityCount();
+	}
+
 	void refreshScratchDomainStats() {
 		const std::size_t scratch_index = static_cast<std::size_t>(AllocationDomain::Scratch);
 		domain_stats_[scratch_index].current_bytes = scratch_arena_.currentBytes();
@@ -143,6 +160,11 @@ public:
 				  scope_count_,
 				  "/",
 				  current_scope_id_.value);
+		FLASH_LOG(General, Info,
+				  "  declarations/entities: ",
+				  declaration_builder_.declarationCount(),
+				  "/",
+				  declaration_builder_.entityCount());
 	}
 
 private:
@@ -165,6 +187,7 @@ private:
 	std::array<DomainByteStats, 4> domain_stats_{};
 	MonotonicScratchArena scratch_arena_;
 	ScratchProbeRegistry scratch_registry_;
+	DeclarationBuilder declaration_builder_;
 	ScopeId current_scope_id_;
 	std::size_t scope_count_ = 1;
 };
