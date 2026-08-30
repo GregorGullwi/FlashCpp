@@ -6,7 +6,7 @@
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
 #include "TemplateTypes.h"
-#include "LegacyChunkedAnyAllowList.h"
+#include "LegacyChunkedAnyStoragePolicyComplete.h"
 
 // Global debug flag
 bool g_enable_debug_output = false;

@@ -457,7 +457,8 @@
     <ClInclude Include="src\ArenaDomains.h" />
     <ClInclude Include="src\DeclarationBuilder.h" />
     <ClInclude Include="src\FrontendContext.h" />
-    <ClInclude Include="src\LegacyChunkedAnyAllowList.h" />
+    <ClInclude Include="src\LegacyChunkedAnyStoragePolicy.h" />
+    <ClInclude Include="src\LegacyChunkedAnyStoragePolicyComplete.h" />
     <ClInclude Include="src\TemplateEngine.h" />
     <ClInclude Include="src\CompileError.h" />
     <ClInclude Include="src\CompilerIncludes.h" />

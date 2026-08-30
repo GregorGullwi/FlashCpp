@@ -45,5 +45,3 @@ inline std::string_view getIdentifierNameFromAstNode(const ASTNode& node) {
 inline const QualifiedIdentifierNode& asQualifiedIdentifier(const ASTNode& node) {
 	return std::get<QualifiedIdentifierNode>(node.as<ExpressionNode>());
 }
-
-#include "LegacyChunkedAnyAllowList.h"
