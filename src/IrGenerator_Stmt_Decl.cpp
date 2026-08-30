@@ -79,15 +79,27 @@ bool isExprResultLValue(const ExprResult& expr_result) {
 	return false;
 }
 
-[[noreturn]] void reportNoMatchingConstructor(StringHandle struct_name, std::string_view init_kind, const Token& token) {
-	throw CompileError(std::string(StringBuilder()
+
+[[noreturn]] void reportNoMatchingConstructor(
+	CompileContext& context,
+	StringHandle struct_name,
+	std::string_view init_kind,
+	const Token& token) {
+	const std::string message = std::string(StringBuilder()
 									   .append("No matching constructor for ")
 									   .append(init_kind)
 									   .append(" of '")
 									   .append(StringTable::getStringView(struct_name))
 									   .append("'")
 									   .append(formatTokenLocationSuffix(token))
-									   .commit()));
+									   .commit());
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::NoMatchingConstructor,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(token),
+		message,
+		{});
 }
 
 [[noreturn]] void reportMismatchedSemaResolvedConstructor(StringHandle struct_name, std::string_view init_kind) {
@@ -2791,7 +2803,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								implicit_default_constructor.requires_synthetic_ir &&
 								!implicit_default_constructor.is_deleted;
 							if (!matching_ctor && !allowImplicitDefault) {
-								reportNoMatchingConstructor(type_info->name(), "direct initialization", decl.identifier_token());
+								reportNoMatchingConstructor(*context_, type_info->name(), "direct initialization", decl.identifier_token());
 							}
 							queueConstructorDefinition(*type_info, matching_ctor);
 
@@ -3265,7 +3277,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							queueConstructorDefinition(*type_info, selected_ctor);
 						}
 						if (is_converting_ctor && !selected_ctor) {
-							reportNoMatchingConstructor(type_info->name(), "copy initialization", decl.identifier_token());
+							reportNoMatchingConstructor(*context_, type_info->name(), "copy initialization", decl.identifier_token());
 						}
 						finalizeConstructorCallOp(ctor_op, *type_info->getStructInfo(), decl.identifier_token());
 

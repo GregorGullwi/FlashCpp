@@ -144,6 +144,10 @@ inline bool functionAcceptsArgumentCount(
 
 class SymbolTable {
 public:
+	void setDiagnosticEngine(DiagnosticEngine& diagnostics) {
+		diagnostics_ = &diagnostics;
+	}
+
 	bool insert([[maybe_unused]] const std::string& identifier, [[maybe_unused]] ASTNode node) {
 		assert(false && "Use StringBuilder to pass a string_view to SymbolTable::insert, don't use std::string");
 		return false;
@@ -616,7 +620,7 @@ public:
 				// different namespaces of the inline namespace set and the
 				// declarations do not denote the same entity and are not both
 				// function/function-template sets, the result is ill-formed.
-				throw CompileError("ambiguous lookup: '" + std::string(StringTable::getStringView(identifier)) + "' found in multiple inline namespaces");
+				throwAmbiguousQualifiedLookup(identifier);
 			}
 			append_unique_function_overloads(result, symbol_it->second);
 		});
@@ -1259,6 +1263,23 @@ private:
 
 	// Set to track all interned strings for fast O(1) deduplication
 	std::unordered_set<std::string_view> interned_strings_;
+	DiagnosticEngine* diagnostics_ = nullptr;
+
+	[[noreturn]] void throwAmbiguousQualifiedLookup(StringHandle identifier) const {
+		const std::string message =
+			"ambiguous lookup: '" + std::string(StringTable::getStringView(identifier)) +
+			"' found in multiple inline namespaces";
+		if (diagnostics_ != nullptr) {
+			throw makeStructuredCompileError(
+				*diagnostics_,
+				DiagnosticId::AmbiguousQualifiedLookup,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				message,
+				{});
+		}
+		throw CompileError(message);
+	}
 
 	// Recursively collect associated namespaces from a struct/class type and all
 	// of its base classes (C++20 [basic.lookup.argdep]/2: "the associated classes
@@ -1322,7 +1343,7 @@ private:
 			}
 			if (!is_pure_function_set(*first_nodes) || !is_pure_function_set(symbol_it->second)) {
 				// C++20 [namespace.qual]: same ambiguity rule as lookup_qualified_all.
-				throw CompileError("ambiguous lookup: '" + std::string(StringTable::getStringView(identifier)) + "' found in multiple inline namespaces");
+				throwAmbiguousQualifiedLookup(identifier);
 			}
 			// Pure function sets across inline namespaces merge into one overload set;
 			// the first match's [0] is unchanged, so nothing further is needed here.

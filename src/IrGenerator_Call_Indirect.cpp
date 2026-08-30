@@ -1328,7 +1328,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
 			FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(),
 					  "' of '", struct_info->getName(), "'", context_str);
-			throw CompileError("Access control violation");
+			throw makeStructuredCompileError(
+				context_->diagnostics(),
+				DiagnosticId::AccessControlViolation,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(callExprNode.called_from()),
+				"Access control violation",
+				{});
 		}
 	}
 

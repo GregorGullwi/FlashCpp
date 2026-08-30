@@ -2010,7 +2010,13 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			std::cerr << " from '" << StringTable::getStringView(current_context->getName()) << "'";
 		}
 		std::cerr << "\n";
-		throw CompileError("Access control violation");
+		throw makeStructuredCompileError(
+			context_->diagnostics(),
+			DiagnosticId::AccessControlViolation,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(memberAccessNode.member_token()),
+			"Access control violation",
+			{});
 	}
 
 	// Check if base_object is a TempVar with lvalue metadata

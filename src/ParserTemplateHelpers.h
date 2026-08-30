@@ -4127,7 +4127,13 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 					.append(StringTable::getStringView(struct_info->getName()))
 					.append("'");
 			}
-			throw CompileError(std::string(diagnostic.commit()));
+			throw makeStructuredCompileError(
+				parser.diagnostics(),
+				DiagnosticId::IncompleteSizeofOperand,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				diagnostic.commit(),
+				{});
 		}
 	}
 

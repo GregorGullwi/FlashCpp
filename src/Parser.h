@@ -557,6 +557,7 @@ public:
 	ParseResult parse() {
 		resetTemplateInstantiationCounters();
 		gSymbolTable = SymbolTable();
+		gSymbolTable.setDiagnosticEngine(context_.diagnostics());
 		register_builtin_functions();
 		ParseResult parseResult;
 #if WITH_PARSER_RUNTIME_STATS
@@ -677,6 +678,12 @@ public:
 	}
 	const SemanticAnalysis& semanticAnalysis() const {
 		return semantic_analysis_;
+	}
+	DiagnosticEngine& diagnostics() {
+		return context_.diagnostics();
+	}
+	const DiagnosticEngine& diagnostics() const {
+		return context_.diagnostics();
 	}
 	void normalizePendingSemanticRoots();
 	ASTNode get_inner_node(ASTNode node) const {

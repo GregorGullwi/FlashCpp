@@ -11029,7 +11029,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												*current_struct_member_template_deferred_record);
 										}
 									} else {
-										return ParseResult::error("No matching template for call to '" + std::string(identifier_token.value()) + "'", identifier_token);
+										const std::string message = "No matching template for call to '" + std::string(identifier_token.value()) + "'";
+										context_.diagnostics().report(
+											DiagnosticId::NoViableFunctionCall,
+											DiagnosticSeverity::Error,
+											lexer_.getSourceLocation(identifier_token),
+											message,
+											{});
+										return ParseResult::error(message, identifier_token);
 									}
 								} else {
 									// No explicit template arguments - try overload resolution first
