@@ -13,7 +13,10 @@ Last updated: 2026-08-30 after pull request boundary 7
   and entities). Pull request boundaries 1 through 7 are complete; architecture
   boundary 1 exit criteria remain open through follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
-  `EntityId` into typed `ChunkedVector` arenas. Initial free-function
+  `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
+  registry identity), not lexical `ScopeId`. Publication targets are validated
+  through `SymbolTable` scope metadata (`resolvePublicationTarget`); lexical
+  `ScopeId` is recorded on each `DeclarationRecord`. Initial free-function
   redeclaration merging is proven in unit tests; the live parser still inserts
   only through `SymbolTable`.
 - Persistent scopes still live in `SymbolTable` (cursor exit, `ScopeId` on
@@ -34,7 +37,7 @@ Last updated: 2026-08-30 after pull request boundary 7
 | 4 | `TemplateEngine` facade, migration choke-point counters |
 | 5 | `FrontendContext`, strong IDs, scratch arena, arena telemetry |
 | 6 | Persistent scopes, `ScopeId` on lookup, first spelling recovery deletion |
-| 7 | `DeclarationBuilder` shell, Decl/Entity arenas, initial function merge set |
+| 7 | `DeclarationBuilder` shell, `OwnerId` entity keys, scope-validated publication, initial function merge set |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture

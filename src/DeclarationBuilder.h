@@ -2,12 +2,34 @@
 
 #include "ChunkedAnyVector.h"
 #include "FrontendIds.h"
+#include "NamespaceRegistry.h"
 #include "StringTable.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <type_traits>
 #include <unordered_map>
+
+class SymbolTable;
+
+enum class ScopeType;
+
+// Map NamespaceRegistry identity onto OwnerId. Index 0 (global) becomes OwnerId{1};
+// invalid handles remain OwnerId{}. Spelling is never part of this identity.
+inline OwnerId ownerIdFromNamespaceHandle(NamespaceHandle handle) {
+	if (!handle.isValid()) {
+		return OwnerId{};
+	}
+	return OwnerId{static_cast<uint32_t>(handle.index) + 1u};
+}
+
+inline NamespaceHandle namespaceHandleFromOwnerId(OwnerId owner_id) {
+	if (!owner_id) {
+		return NamespaceHandle{NamespaceHandle::INVALID_HANDLE};
+	}
+	return NamespaceHandle{static_cast<uint16_t>(owner_id.value - 1u)};
+}
 
 // Front-end declaration/entity publisher for architecture boundary 1.
 // Domain for this slice: namespace-targeted free functions with C++ language
@@ -15,6 +37,8 @@
 // compatibility keys until canonical types land in boundary 3A.
 // signature_id identifies the parameter-type-list for overload identity;
 // return_type_id must agree across redeclarations of the same entity.
+// lexical_scope_id records declaration location; canonical entity identity uses
+// OwnerId resolved from SymbolTable publication metadata.
 
 enum class DeclKind : uint8_t {
 	Function = 0,
@@ -31,7 +55,7 @@ enum class PublishStatus : uint8_t {
 };
 
 struct FunctionDeclRequest {
-	ScopeId target_scope_id;
+	ScopeId lexical_scope_id;
 	StringHandle name;
 	TypeId signature_id;
 	TypeId return_type_id;
@@ -51,7 +75,7 @@ struct DeclarationRecord {
 	DeclId id;
 	EntityId entity_id;
 	DeclId previous_decl_id;
-	ScopeId scope_id;
+	ScopeId lexical_scope_id;
 	StringHandle name;
 	TypeId signature_id;
 	TypeId return_type_id;
@@ -65,7 +89,7 @@ struct EntityRecord {
 	EntityId id;
 	DeclId first_decl_id;
 	DeclId latest_decl_id;
-	ScopeId scope_id;
+	OwnerId owner_id;
 	StringHandle name;
 	TypeId signature_id;
 	TypeId return_type_id;
@@ -102,7 +126,7 @@ public:
 	DeclarationBuilder(DeclarationBuilder&&) = delete;
 	DeclarationBuilder& operator=(DeclarationBuilder&&) = delete;
 
-	PublishResult publishFunction(const FunctionDeclRequest& request);
+	PublishResult publishFunction(const FunctionDeclRequest& request, const SymbolTable& symbol_table);
 
 	const DeclarationRecord& declaration(DeclId decl_id) const;
 	const EntityRecord& entity(EntityId entity_id) const;
@@ -117,7 +141,7 @@ public:
 
 private:
 	struct EntityLookupKey {
-		uint32_t scope = 0;
+		uint32_t owner = 0;
 		uint32_t name_handle = 0;
 		uint32_t signature = 0;
 
@@ -126,16 +150,25 @@ private:
 
 	struct EntityLookupKeyHash {
 		std::size_t operator()(const EntityLookupKey& key) const {
-			std::size_t hash = static_cast<std::size_t>(key.scope);
+			std::size_t hash = static_cast<std::size_t>(key.owner);
 			hash ^= static_cast<std::size_t>(key.name_handle) + 0x9e3779b9u + (hash << 6) + (hash >> 2);
 			hash ^= static_cast<std::size_t>(key.signature) + 0x9e3779b9u + (hash << 6) + (hash >> 2);
 			return hash;
 		}
 	};
 
+	struct PublicationTarget {
+		ScopeId lexical_scope_id;
+		OwnerId owner_id;
+	};
+
 	static PublishResult makeRejected(EntityId existing_entity);
 	static uint8_t requestFlags(const FunctionDeclRequest& request);
 	static bool hasFlag(uint8_t flags, uint8_t bit);
+	static bool isPublishableScopeType(ScopeType scope_type);
+	static std::optional<PublicationTarget> resolvePublicationTarget(
+		const SymbolTable& symbol_table,
+		ScopeId lexical_scope_id);
 	bool isValidRequest(const FunctionDeclRequest& request) const;
 	DeclId allocateDeclaration(DeclarationRecord record);
 	EntityId allocateEntity(EntityRecord record);
