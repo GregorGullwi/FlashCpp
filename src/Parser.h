@@ -519,12 +519,15 @@ inline std::string g_parser_instantiation_notes;
 
 struct DeferredBaseReplayContextScope;
 
+class TemplateEngine;
+
 class Parser {
 	// Friend classes that need access to private members
 	friend class ExpressionSubstitutor;
 	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
 	friend class SemanticAnalysis;
+	friend class TemplateEngine;
 	friend class FlashCpp::FunctionParsingScopeGuard;  // Access current_function_, setup_member_function_context, etc.
 	friend struct DeferredBaseReplayContextScope;
 	friend ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
@@ -679,6 +682,9 @@ public:
 	const SemanticAnalysis& semanticAnalysis() const {
 		return semantic_analysis_;
 	}
+	void attachTemplateEngine(TemplateEngine& engine);
+	TemplateEngine& templateEngine();
+	const TemplateEngine& templateEngine() const;
 	DiagnosticEngine& diagnostics() {
 		return context_.diagnostics();
 	}
@@ -741,6 +747,7 @@ private:
 	std::vector<ASTNode> pending_semantic_roots_;
 	std::unordered_set<const void*> pending_semantic_root_keys_;
 	SemanticAnalysis& semantic_analysis_;
+	TemplateEngine* templateEngine_ = nullptr;
 	std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
 	std::string last_error_;
 

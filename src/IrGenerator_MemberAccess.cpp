@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "MigrationStats.h"
 #include "SemanticAnalysis.h"
 #include "CallNodeHelpers.h"
 #include "TypeSizeQuery.h"
@@ -386,7 +387,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 											 ExpressionContext context) {
 	// If sema resolved this subscript to operator[], dispatch to member function call IR.
 	ResolvedFunctionQueryResult op_subscript_query =
-		sema_.parserSemanticServices().getResolvedOpSubscriptQuery(&arraySubscriptNode);
+		sema_.parserSemanticServices().getResolvedOpSubscriptQueryFromLowering(&arraySubscriptNode);
 	if (op_subscript_query.state == ResolvedFunctionQueryResult::State::Available) {
 		const FunctionDeclarationNode* op_subscript = op_subscript_query.function;
 		ChunkedVector<ASTNode> args;
@@ -3949,6 +3950,7 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 		}
 	}
 
+	recordCodegenToParserCallback();
 	if (auto expr_type = parser_.get_expression_type(expr_node); expr_type.has_value()) {
 		return isObjectConstQualified(*expr_type);
 	}

@@ -149,6 +149,29 @@ function Get-FlashCppOutsideEngineDiagnosticCount {
 	return [long]$match.Groups[1].Value
 }
 
+function Get-FlashCppMigrationCounterValues {
+	param([string]$CompilerOutput)
+
+	$patterns = [ordered]@{
+		outside_engine = 'Diagnostics emitted outside DiagnosticEngine:\s*(\d+)'
+		token_replay = 'Token replays:\s*(\d+)'
+		post_parse_typing = 'Post-parse parser typing queries:\s*(\d+)'
+		ast_to_ir_semantic = 'AST-to-IR semantic queries:\s*(\d+)'
+		codegen_to_parser = 'Codegen-to-parser callbacks:\s*(\d+)'
+		template_old_engine = 'TemplateEngine old-engine routes:\s*(\d+)'
+		dollar_identity = 'Dollar identity recoveries:\s*(\d+)'
+	}
+	$values = @{}
+	foreach ($entry in $patterns.GetEnumerator()) {
+		$match = [regex]::Match($CompilerOutput, $entry.Value)
+		if (-not $match.Success) {
+			return $null
+		}
+		$values[$entry.Key] = [long]$match.Groups[1].Value
+	}
+	return $values
+}
+
 function Test-FlashCppMigrationCounterBaseline {
 	param(
 		[long]$ActualCount,

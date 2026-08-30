@@ -245,7 +245,7 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateWithErr
 			  qualified_name, "' with ", template_args.size(), " arguments");
 
 	// Try qualified name first
-	auto instantiated_opt = parser.try_instantiate_template_explicit(qualified_name, template_args);
+	auto instantiated_opt = parser.templateEngine().tryInstantiateTemplateExplicit(qualified_name, template_args);
 	if (instantiated_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Instantiated with qualified name: ", qualified_name);
 		return instantiated_opt;
@@ -254,7 +254,7 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateWithErr
 	// Try simple name if different from qualified name
 	if (qualified_name != simple_name) {
 		FLASH_LOG(Templates, Trace, "TemplateInstantiationHelper: Trying simple name: ", simple_name);
-		instantiated_opt = parser.try_instantiate_template_explicit(simple_name, template_args);
+		instantiated_opt = parser.templateEngine().tryInstantiateTemplateExplicit(simple_name, template_args);
 		if (instantiated_opt.has_value()) {
 			FLASH_LOG(Templates, Trace, "TemplateInstantiationHelper: Instantiated with simple name: ", simple_name);
 			return instantiated_opt;

@@ -1,4 +1,6 @@
 #include "Parser.h"
+#include "TemplateEngine.h"
+#include "MigrationStats.h"
 #include "CallNodeHelpers.h"
 #include "OverloadResolution.h"
 #include "TemplateRegistry.h"
@@ -689,6 +691,25 @@ Parser::Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic
 	ast_nodes_.reserve(default_ast_tree_size_);
 }
 
+void Parser::attachTemplateEngine(TemplateEngine& engine) {
+	templateEngine_ = &engine;
+	engine.attach(*this);
+}
+
+TemplateEngine& Parser::templateEngine() {
+	if (templateEngine_ == nullptr) {
+		throw InternalError("TemplateEngine not attached to Parser");
+	}
+	return *templateEngine_;
+}
+
+const TemplateEngine& Parser::templateEngine() const {
+	if (templateEngine_ == nullptr) {
+		throw InternalError("TemplateEngine not attached to Parser");
+	}
+	return *templateEngine_;
+}
+
 void Parser::normalizePendingSemanticRoots() {
 	semantic_analysis_.parserSemanticServices().normalizePendingSemanticRoots();
 }
@@ -1097,6 +1118,7 @@ Parser::SaveHandle Parser::save_token_position() {
 }
 
 void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const std::source_location location) {
+	recordTokenReplay();
 #if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {
@@ -1191,6 +1213,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 }
 
 void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
+	recordTokenReplay();
 #if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {

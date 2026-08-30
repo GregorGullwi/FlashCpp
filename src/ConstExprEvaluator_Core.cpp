@@ -2690,7 +2690,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 			}
 			if (call_expr->has_qualified_name()) {
 				if (std::optional<ASTNode> instantiated =
-						context.parser->try_instantiate_template(
+						context.parser->templateEngine().tryInstantiateTemplate(
 							call_expr->qualified_name(),
 							arg_types);
 					instantiated.has_value()) {
@@ -2707,7 +2707,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 				return nullptr;
 			}
 			if (std::optional<ASTNode> instantiated =
-					context.parser->try_instantiate_template(
+					context.parser->templateEngine().tryInstantiateTemplate(
 						callee_name,
 						arg_types);
 				instantiated.has_value()) {
@@ -2853,7 +2853,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 			if (std::ranges::any_of(deduced, [](bool value) { return !value; })) {
 				return std::nullopt;
 			}
-			ASTNode substituted_noexcept = context.parser->substituteTemplateParameters(
+			ASTNode substituted_noexcept = context.parser->templateEngine().substituteTemplateParameters(
 				func_decl.noexcept_expression()->node(),
 				template_params,
 				std::span<const TemplateTypeArg>(deduced_args.data(), deduced_args.size()));
@@ -2896,7 +2896,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 				}
 				if (collected_arg_types) {
 					if (std::optional<ASTNode> resolved_target =
-							context.parser->resolveDefinitionBoundOrdinaryCall(
+							context.parser->templateEngine().resolveDefinitionBoundOrdinaryCall(
 								record,
 								arg_types);
 						resolved_target.has_value()) {
@@ -5148,7 +5148,7 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		if (candidate_name.empty() || var_node.has_value()) {
 			return;
 		}
-		var_node = parser.try_instantiate_variable_template(candidate_name, template_args, nullptr);
+		var_node = parser.templateEngine().tryInstantiateVariableTemplate(candidate_name, template_args, nullptr);
 		context.normalizePendingSemanticRoots();
 	};
 
@@ -5279,7 +5279,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		}
 		if (concept_opt.has_value() && concept_opt->is<ConceptDeclarationNode>()) {
 			std::optional<InlineVector<TemplateTypeArg, 4>> concrete_args =
-				context.parser->materializeConcreteCallTemplateArguments(call_expr.template_arguments());
+				context.parser->templateEngine().materializeConcreteCallTemplateArguments(call_expr.template_arguments());
 			if (concrete_args.has_value()) {
 				const ConstraintEvaluationResult constraint_result = evaluateConstraint(
 					concept_opt->as<ConceptDeclarationNode>(),
@@ -5555,7 +5555,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 						call_expr.arguments(),
 						arg_types)) {
 					if (std::optional<ASTNode> resolved_template_call =
-							parser.resolveDeferredQualifiedTemplateCall(
+							parser.templateEngine().resolveDeferredQualifiedTemplateCall(
 								call_expr.qualified_name(),
 								call_expr.template_arguments(),
 								call_expr.arguments(),
@@ -5682,10 +5682,10 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			}
 			if (all_concrete && !explicit_args.empty()) {
 				std::optional<ASTNode> explicit_opt =
-					parser.try_instantiate_template_explicit(
+					parser.templateEngine().tryInstantiateTemplateExplicit(
 						qualified_name, explicit_args, arguments.size());
 				if (!explicit_opt.has_value() && qualified_name != func_name) {
-					explicit_opt = parser.try_instantiate_template_explicit(
+					explicit_opt = parser.templateEngine().tryInstantiateTemplateExplicit(
 						func_name, explicit_args, arguments.size());
 				}
 				if (explicit_opt.has_value()) {

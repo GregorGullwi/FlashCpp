@@ -183,7 +183,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		}
 
 		std::optional<ASTNode> instantiated_var =
-			parser.try_instantiate_variable_template(
+			parser.templateEngine().tryInstantiateVariableTemplate(
 				variable_template_lookup_name,
 				template_args,
 				explicit_outer_binding.has_value()
@@ -193,7 +193,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		if (!instantiated_var.has_value() &&
 			variable_template_lookup_name != qualified_id.name()) {
 			instantiated_var =
-				parser.try_instantiate_variable_template(
+				parser.templateEngine().tryInstantiateVariableTemplate(
 					qualified_id.name(),
 					template_args,
 					explicit_outer_binding.has_value()
@@ -319,7 +319,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				}
 				if (context.parser != nullptr) {
 					Parser::AliasTemplateMaterializationResult canonical_owner =
-						context.parser->materializeCanonicalOwnerTypeForLookup(owner_arg);
+						context.parser->templateEngine().materializeCanonicalOwnerTypeForLookup(owner_arg);
 					if (canonical_owner.canonicalNameHandle().isValid()) {
 						return canonical_owner.canonicalNameHandle();
 					}
@@ -349,7 +349,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (dependent_record->owner_name.isValid()) {
 					if (context.parser != nullptr) {
 						Parser::ResolvedQualifiedOwner resolved_owner =
-							context.parser->resolveQualifiedOwnerForLookup(
+							context.parser->templateEngine().resolveQualifiedOwnerForLookup(
 								StringTable::getStringView(
 									dependent_record->owner_name));
 						if (resolved_owner.resolved_from_current_context &&
@@ -704,7 +704,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 
 						Parser::AliasTemplateMaterializationResult nested_materialized_type =
-							parser.materializeTemplateInstantiationForLookup(
+							parser.templateEngine().materializeTemplateInstantiationForLookup(
 								nested_template_name_for_materialization,
 								nested_concrete_args);
 						const TypeInfo* nested_resolved_info =
@@ -762,7 +762,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 
 						Parser::AliasTemplateMaterializationResult materialized_type =
-							parser.materializeTemplateInstantiationForLookup(
+							parser.templateEngine().materializeTemplateInstantiationForLookup(
 								template_name_for_materialization,
 								concrete_args);
 						if (materialized_type.resolved_type_info != nullptr) {
@@ -1023,7 +1023,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					bool any_materialized = false;
 					for (const auto& base_to_materialize : bases_to_materialize) {
 						FLASH_LOG(ConstExpr, Debug, "Force-materializing ShapeOnly base '", base_to_materialize.template_name, "' to find member '", StringTable::getStringView(member_handle), "'");
-						context.parser->materializeTemplateInstantiationForLookup(base_to_materialize.template_name, base_to_materialize.args);
+						context.parser->templateEngine().materializeTemplateInstantiationForLookup(base_to_materialize.template_name, base_to_materialize.args);
 						any_materialized = true;
 					}
 					if (any_materialized) {
@@ -1216,7 +1216,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 									concrete_nested_args.push_back(std::move(concrete_nested_arg));
 								}
 								Parser::AliasTemplateMaterializationResult concrete_materialized =
-									parser.materializeTemplateInstantiationForLookup(
+									parser.templateEngine().materializeTemplateInstantiationForLookup(
 										concrete_base_name,
 										concrete_nested_args);
 								const TypeInfo* concrete_resolved_info = concrete_materialized.resolved_type_info;
@@ -1250,7 +1250,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 								StringTable::getStringView(nested_target_info->baseTemplateName());
 							if (!nested_base_name.empty()) {
 								Parser::AliasTemplateMaterializationResult materialized_target =
-									parser.materializeTemplateInstantiationForLookup(
+									parser.templateEngine().materializeTemplateInstantiationForLookup(
 										nested_base_name,
 										nested_template_args);
 								if (materialized_target.resolved_type_info != nullptr) {

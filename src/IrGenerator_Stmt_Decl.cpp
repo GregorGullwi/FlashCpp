@@ -315,7 +315,7 @@ std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& ini
 		init_type_index = init_type.type_index();
 	} else if (init_node.is<ExpressionNode>()) {
 		TypeSpecifierQueryResult init_type_query =
-			sema_.parserSemanticServices().getExpressionTypeQuery(init_node);
+			sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(init_node);
 		if (init_type_query.state == TypeSpecifierQueryResult::State::Available &&
 			init_type_query.type.has_value()) {
 			TypeSpecifierNode init_type = *init_type_query.type;
@@ -1704,7 +1704,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										// having the same signature.
 											auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
 											bool template_ctor_ambiguous = false;
-											resolution.selected_overload = parser_.materializeMatchingConstructorTemplate(
+											resolution.selected_overload = parser_.templateEngine().materializeMatchingConstructorTemplate(
 												struct_info.getName(),
 												struct_info,
 												arg_types,
@@ -2316,7 +2316,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							isSameTypeXValueSource(init_node, init_operands, type_node);
 						if (!is_same_type_rvalue_init && init_node.is<ExpressionNode>()) {
 							TypeSpecifierQueryResult init_type_query =
-								sema_.parserSemanticServices().getExpressionTypeQuery(init_node);
+								sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(init_node);
 							if (init_type_query.state == TypeSpecifierQueryResult::State::Available &&
 								init_type_query.type.has_value()) {
 								const TypeSpecifierNode& init_type = *init_type_query.type;
@@ -2712,7 +2712,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											throwAmbiguousConstructorCallDiagnostic(*context_);
 										}
 										bool template_ctor_ambiguous = false;
-										matching_ctor = parser_.materializeMatchingConstructorTemplate(
+										matching_ctor = parser_.templateEngine().materializeMatchingConstructorTemplate(
 											type_info->name(),
 											*type_info->getStructInfo(),
 											arg_types,

@@ -19,7 +19,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	ResolvedFunctionQueryResult sema_resolved_direct_query;
 	if (sema_call_key != nullptr) {
 		sema_resolved_direct_query =
-			sema_services.getResolvedDirectCallQuery(sema_call_key);
+			sema_services.getResolvedDirectCallQueryFromLowering(sema_call_key);
 	}
 	const FunctionDeclarationNode* sema_resolved_member_func =
 		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available
@@ -312,7 +312,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					!candidate->is_function_pointer() &&
 					!candidate->has_function_signature());
 		};
-		TypeSpecifierQueryResult callee_type_query = sema_services.getExpressionTypeQuery(object_node);
+		TypeSpecifierQueryResult callee_type_query = sema_services.getExpressionTypeQueryFromLowering(object_node);
 		if (callee_type_query.state == TypeSpecifierQueryResult::State::Available) {
 			callee_type = callee_type_query.type;
 		}
@@ -459,7 +459,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	auto resolveStructTypeFromReceiverNode = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
 		if (receiver_node.is<ExpressionNode>()) {
 			TypeSpecifierQueryResult receiver_type_query =
-				sema_services.getExpressionTypeQuery(receiver_node);
+				sema_services.getExpressionTypeQueryFromLowering(receiver_node);
 			const bool sema_query_not_yet_analyzed =
 				receiver_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;
 			if (sema_normalized_current_function_ && sema_query_not_yet_analyzed) {
@@ -691,7 +691,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const DeclarationNode& decl = *call_info->declaration;
 		{
 			TypeSpecifierNode ret_type = decl.type_specifier_node();
-			TypeSpecifierQueryResult return_receiver_type_query = sema_services.getExpressionTypeQuery(object_node);
+			TypeSpecifierQueryResult return_receiver_type_query = sema_services.getExpressionTypeQueryFromLowering(object_node);
 			if (return_receiver_type_query.state == TypeSpecifierQueryResult::State::Available &&
 				return_receiver_type_query.type.has_value()) {
 				ret_type = *return_receiver_type_query.type;
@@ -1588,7 +1588,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 							return std::nullopt;
 						}
 						TypeSpecifierQueryResult sema_arg_type_query =
-							sema_.parserSemanticServices().getExpressionTypeQuery(argument);
+							sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(argument);
 						if (sema_arg_type_query.state == TypeSpecifierQueryResult::State::Available &&
 							!isPlaceholderAutoType(sema_arg_type_query.type->type())) {
 							return sema_arg_type_query.type;

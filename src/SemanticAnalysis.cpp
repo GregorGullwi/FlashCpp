@@ -1,4 +1,5 @@
 #include "SemanticAnalysis.h"
+#include "MigrationStats.h"
 #include "Parser.h"
 #include "CompileContext.h"
 #include "CompileError.h"
@@ -1902,6 +1903,39 @@ TypeSpecifierNode ParserSemanticServices::applyDecltypeAutoReturnValueCategory(
 
 TypeSpecifierQueryResult ParserSemanticServices::getExpressionTypeQuery(const ASTNode& node) const {
 	return owner_->getExpressionTypeQuery(node);
+}
+
+TypeSpecifierQueryResult ParserSemanticServices::getExpressionTypeQueryFromLowering(const ASTNode& node) const {
+	recordAstToIrSemanticQuery();
+	return owner_->getExpressionTypeQuery(node);
+}
+
+std::optional<TypeSpecifierNode> ParserSemanticServices::getExpressionTypeFromLowering(const ASTNode& node) const {
+	recordAstToIrSemanticQuery();
+	return owner_->getExpressionType(node);
+}
+
+TypeSpecifierQueryResult ParserSemanticServices::getOverloadResolutionArgTypeQueryFromLowering(const ASTNode& arg) const {
+	recordAstToIrSemanticQuery();
+	return owner_->getOverloadResolutionArgTypeQuery(arg);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedOpSubscriptQueryFromLowering(
+	const ArraySubscriptNode* key) const {
+	recordAstToIrSemanticQuery();
+	return owner_->getResolvedOpSubscriptQuery(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedDirectCallQueryFromLowering(
+	const CallExprNode* key) const {
+	recordAstToIrSemanticQuery();
+	return owner_->getResolvedDirectCallQuery(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedDirectCallQueryFromLowering(
+	const void* key) const {
+	recordAstToIrSemanticQuery();
+	return owner_->getResolvedDirectCallQuery(key);
 }
 
 TypeSpecifierQueryResult ParserSemanticServices::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
@@ -5894,7 +5928,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 						}
 
 						Parser::AliasTemplateMaterializationResult materialized_type =
-							parser().materializeTemplateInstantiationForLookup(base_template_name, exact_args);
+							parser().templateEngine().materializeTemplateInstantiationForLookup(base_template_name, exact_args);
 						if (materialized_type.resolved_type_info) {
 							resolved_type_info = materialized_type.resolved_type_info;
 						} else if (!materialized_type.instantiated_name.empty()) {
@@ -6005,7 +6039,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 					struct_info = tryGetStructTypeInfo(owner_type_info->registeredTypeIndex());
 				}
 				if (struct_info) {
-					parser().instantiateLazyStaticMember(struct_info->name, name_handle);
+					parser().templateEngine().instantiateLazyStaticMember(struct_info->name, name_handle);
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(name_handle);
 					if (static_member && owner_struct) {
 						ResolvedQualifiedIdentifierInfo resolved;
@@ -6335,7 +6369,7 @@ CanonicalTypeId SemanticAnalysis::inferStaticMemberTypeFromContext(const Identif
 	}
 
 	const StringHandle member_name = identifier.getOrInternNameHandle();
-	parser().instantiateLazyStaticMember(current_struct_info->name, member_name);
+	parser().templateEngine().instantiateLazyStaticMember(current_struct_info->name, member_name);
 	auto [static_member, owner_struct] = current_struct_info->findStaticMemberRecursive(member_name);
 	if (static_member && owner_struct) {
 		return type_context_.intern(canonicalTypeDescFromStaticMember(*static_member));
@@ -9672,7 +9706,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 
 		Parser::ResolvedQualifiedOwner resolved_owner =
-			parser().resolveQualifiedOwnerForLookup(owner_name);
+			parser().templateEngine().resolveQualifiedOwnerForLookup(owner_name);
 		if (resolved_owner.type_info != nullptr) {
 			if (const TypeInfo* resolved_struct_owner =
 					tryResolveStructOwnerTypeInfo(resolved_owner.type_info);
@@ -9711,7 +9745,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 					if (LazyNestedTypeRegistry::getInstance().needsInstantiation(
 							owner_handle,
 							nested_owner_handle)) {
-						parser().instantiateLazyNestedType(
+						parser().templateEngine().instantiateLazyNestedType(
 							owner_handle,
 							nested_owner_handle);
 					}
@@ -9983,7 +10017,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		InlineVector<TypeSpecifierNode, 6> arg_types;
 		if (tryCollectOverloadResolutionArgTypes(arguments, arg_types)) {
 			if (std::optional<ASTNode> resolved_target =
-					parser().resolveDefinitionBoundOrdinaryCall(
+					parser().templateEngine().resolveDefinitionBoundOrdinaryCall(
 						deferred_record,
 						arg_types);
 				resolved_target.has_value()) {
@@ -10101,7 +10135,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 						->value()
 						.definition_bound_template_declaration != nullptr) {
 					resolved_target =
-						parser().resolveDefinitionBoundQualifiedTemplateCall(
+						parser().templateEngine().resolveDefinitionBoundQualifiedTemplateCall(
 							call_info.definition_lookup_record->value(),
 							qualified_name_for_resolution,
 							call_info.template_arguments,
@@ -10109,7 +10143,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 							qualified_template_arg_types);
 				} else {
 					resolved_target =
-						parser().resolveDeferredQualifiedTemplateCall(
+						parser().templateEngine().resolveDeferredQualifiedTemplateCall(
 							qualified_name_for_resolution,
 							call_info.template_arguments,
 							arguments,
@@ -10928,7 +10962,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
 	bool template_ctor_ambiguous = false;
-	resolution.selected_overload = parser().materializeMatchingConstructorTemplate(
+	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
 		struct_info->getName(),
 		*struct_info,
 		arg_types,
@@ -11078,7 +11112,7 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	}
 
 	const LazyMemberKey member_key = LazyMemberKey::exact(struct_name, function_decl);
-	auto instantiated = parser().instantiateLazyMemberIfNeeded(
+	auto instantiated = parser().templateEngine().instantiateLazyMemberIfNeeded(
 		member_key);
 	if (instantiated.has_value()) {
 		parser().normalizePendingSemanticRoots();
@@ -11102,7 +11136,7 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 		return std::nullopt;
 	}
 
-	auto instantiated = parser().instantiateLazyMemberIfNeeded(
+	auto instantiated = parser().templateEngine().instantiateLazyMemberIfNeeded(
 		LazyMemberKey::exact(struct_name, ctor_decl));
 	if (!instantiated.has_value()) {
 		return std::nullopt;
@@ -11137,7 +11171,7 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	// when nothing is registered or the entry was already marked instantiated,
 	// so no separate needsInstantiation pre-check is needed.
 	LazyMemberKey query_key = LazyMemberKey::exact(struct_name, member_name, *is_const_member);
-	auto instantiated = parser().instantiateLazyMemberIfNeeded(query_key);
+	auto instantiated = parser().templateEngine().instantiateLazyMemberIfNeeded(query_key);
 	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
@@ -11152,7 +11186,7 @@ bool SemanticAnalysis::tryInstantiateLazyStaticMember(
 		throw InternalError(
 			"SemanticAnalysis::tryInstantiateLazyStaticMember requires valid struct_name and member_name");
 	}
-	return parser().instantiateLazyStaticMember(struct_name, member_name);
+	return parser().templateEngine().instantiateLazyStaticMember(struct_name, member_name);
 }
 
 size_t SemanticAnalysis::drainLazyMemberRegistry() {
@@ -11200,7 +11234,7 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 						entry.registry_key))) {
 				continue;
 			}
-			auto result = parser().instantiateLazyMemberIfNeeded(
+			auto result = parser().templateEngine().instantiateLazyMemberIfNeeded(
 				LazyMemberKey::exact(
 					entry.instantiated_owner_name,
 					entry.member_name,
@@ -11304,7 +11338,7 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
 	bool template_ctor_ambiguous = false;
-	resolution.selected_overload = parser().materializeMatchingConstructorTemplate(
+	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
 		struct_info.getName(),
 		struct_info,
 		arg_types,

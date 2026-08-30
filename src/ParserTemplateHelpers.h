@@ -7,6 +7,7 @@
 #include <functional>
 
 #include "Parser.h"
+#include "MigrationStats.h"
 #include "CallNodeHelpers.h"
 #include "RebindStaticMemberAst.h"
 #include "ConstExprEvaluator.h"
@@ -1459,6 +1460,7 @@ inline std::string_view extractClassInjectionName(std::string_view name) {
 		name = name.substr(0, angle_pos);
 	}
 	if (size_t hash_pos = name.find('$'); hash_pos != std::string_view::npos) {
+		recordDollarIdentityRecovery();
 		name = name.substr(0, hash_pos);
 	}
 	return name;

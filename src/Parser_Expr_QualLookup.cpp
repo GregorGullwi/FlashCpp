@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "MigrationStats.h"
 #include "AstTraversal.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
@@ -3016,6 +3017,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(ExpressionTypeResolution);
 #endif
+	if (semantic_analysis_.hasPostParseNormalizationStarted()) {
+		recordPostParseParserTypingQuery();
+	}
 	// Guard against infinite recursion by tracking the call stack
 	// Use the address of the expr_node as a unique identifier
 	const void* expr_ptr = &expr_node;

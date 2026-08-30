@@ -1,4 +1,5 @@
 #include "ConstExprEvalHelpers.h"
+#include "MigrationStats.h"
 
 namespace ConstExpr {
 
@@ -6,6 +7,7 @@ namespace ConstExpr {
 std::string_view normalizeConstexprLookupName(std::string_view name) {
 	if (const size_t materialized_suffix = name.find('$');
 		materialized_suffix != std::string_view::npos) {
+		recordDollarIdentityRecovery();
 		return name.substr(0, materialized_suffix);
 	}
 	return name;

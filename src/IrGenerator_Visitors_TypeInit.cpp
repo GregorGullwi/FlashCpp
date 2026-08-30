@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "MigrationStats.h"
 #include "CallNodeHelpers.h"
 #include "ReachableStructWalker.h"
 #include "RebindStaticMemberAst.h"
@@ -43,7 +44,7 @@ static std::string_view describeTypeSpecifierQueryState(TypeSpecifierQueryResult
 
 std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTNode& callNode) const {
 	auto sema_services = sema_.parserSemanticServices();
-	TypeSpecifierQueryResult sema_type_query = sema_services.getExpressionTypeQuery(callNode);
+	TypeSpecifierQueryResult sema_type_query = sema_services.getExpressionTypeQueryFromLowering(callNode);
 	if (sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
 		sema_type_query.type.has_value() &&
 		sema_type_query.type->type() != TypeCategory::Invalid &&
@@ -397,6 +398,7 @@ void AstToIr::generateDeferredMemberFunctions() {
 						.append("'")
 						.commit()));
 				}
+				recordCodegenToParserCallback();
 				parser_.enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitFunctionDeclarationNode(func);
@@ -423,16 +425,19 @@ void AstToIr::generateDeferredMemberFunctions() {
 				if (!ctor.is_materialized()) {
 					throw InternalError("Deferred constructor queue received an unmaterialized constructor");
 				}
+				recordCodegenToParserCallback();
 				parser_.enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
 			} else if (info.function_node.is<DestructorDeclarationNode>()) {
+				recordCodegenToParserCallback();
 				parser_.enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitDestructorDeclarationNode(info.function_node.as<DestructorDeclarationNode>());
 			} else if (info.function_node.is<TemplateFunctionDeclarationNode>()) {
 				const auto& tmpl = info.function_node.as<TemplateFunctionDeclarationNode>();
 				if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+					recordCodegenToParserCallback();
 					parser_.enqueuePendingSemanticRootIfNeeded(tmpl.function_declaration());
 					normalizePendingSemanticRoots();
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
@@ -611,6 +616,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							first_colon + 2 >= original_ns.size()) {
 							return member_chain;
 						}
+						recordCodegenToParserCallback();
 						member_chain = parser_.buildQualifiedTypeMemberChainForLookup(
 							original_ns.substr(first_colon + 2));
 						if (member_chain->empty()) {
@@ -744,6 +750,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							!root_struct_info->name.isValid()) {
 							return false;
 						}
+						recordCodegenToParserCallback();
 						const TypeInfo* resolved_owner_type =
 							parser_.resolveBaseClassMemberTypeChainForLookup(
 								StringTable::getStringView(root_struct_info->name),
@@ -3274,7 +3281,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 	// Parse the template body with concrete types
 	// Pass the struct name and type index so the parser can set up member function context
-	auto body_node_opt = parser_.parseTemplateBody(
+	auto body_node_opt = parser_.templateEngine().parseTemplateBody(
 		inst_info.body_position,
 		inst_info.template_param_names,
 		inst_info.template_args,

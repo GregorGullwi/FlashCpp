@@ -172,6 +172,7 @@ static void setManglingStyle(CompileContext& context, CompileContext::ManglingSt
 static void printOutsideDiagnosticTelemetry() {
 	FLASH_LOG(General, Info, "\nDiagnostics emitted outside DiagnosticEngine: ",
 			  diagnosticsEmittedOutsideEngineCount());
+	printMigrationTelemetry();
 }
 
 int main(int argc, char* argv[]) {
@@ -508,9 +509,10 @@ int main_impl(int argc, char* argv[]) {
 	// Lexer is allocated on heap so it can be constructed inside the timed block
 	// but outlive it (since Parser stores a reference to it)
 	std::unique_ptr<Lexer> lexer_ptr;
-	std::unique_ptr<SemanticAnalysis> sema;
-	std::unique_ptr<Parser> parser;
-	setTypeTableStatsEnabled(show_perf_stats);
+		std::unique_ptr<SemanticAnalysis> sema;
+		std::unique_ptr<Parser> parser;
+		TemplateEngine templateEngine;
+		setTypeTableStatsEnabled(show_perf_stats);
 	{
 		PhaseTimer timer("Lexer Setup", false, &lexer_setup_time, FlashCpp::AllocationPhase::LexerSetup);
 		lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
@@ -518,6 +520,7 @@ int main_impl(int argc, char* argv[]) {
 		sema = std::make_unique<SemanticAnalysis>(context, gSymbolTable);
 		// Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
 		parser = std::make_unique<Parser>(*lexer_ptr, context, *sema);
+		parser->attachTemplateEngine(templateEngine);
 		parser->setRuntimeStatsEnabled(show_perf_stats);
 		// tests/std/README_STANDARD_HEADERS.md measured ~81,739 saved-token slots
 		// for 4019 preprocessed <limits> lines (~20/line). Cap the heuristic so
