@@ -164,7 +164,6 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 		request.name.handle,
 		request.signature_id.value};
 
-	const uint8_t incoming_flags = requestFlags(request);
 	const auto existing = entity_by_key_.find(key);
 	if (existing == entity_by_key_.end()) {
 		return PreparedFunctionPublication(
@@ -175,7 +174,7 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 			request.name,
 			request.signature_id,
 			request.return_type_id,
-			incoming_flags);
+			requestFlags(request));
 	}
 
 	const EntityRecord& live_entity = entities_[existing->second.value - 1];
@@ -240,7 +239,7 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 		request.name,
 		request.signature_id,
 		request.return_type_id,
-		incoming_flags);
+		requestFlags(request));
 }
 
 PublishResult DeclarationBuilder::commitFunctionPublication(
