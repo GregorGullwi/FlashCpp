@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 after pull request boundary 9
+Last updated: 2026-08-30 after pull request boundary 10
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 9 are complete; architecture
+  and entities). Pull request boundaries 1 through 10 are complete; architecture
   boundary 1 exit criteria remain open through follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
   `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
@@ -19,8 +19,11 @@ Last updated: 2026-08-30 after pull request boundary 9
   `ScopeId` is recorded on each `DeclarationRecord`. Namespace/global C++-linkage
   non-template free functions are published through a **shadow path** at
   `Parser::parse_declaration_or_function_definition()` after `SymbolTable::insert`.
-  The opaque `TypeId` bridge is telemetry-only until boundary 3A canonical types;
-  `SymbolTable` remains lookup and merge authority for the wired family.
+  The path preflights with `classifyPublishFunction`, commits through
+  `PublicationTransaction` mark/rollback, and leaves `SymbolTable` lookup
+  authority when classify rejects after insert. The opaque `TypeId` bridge is
+  telemetry-only until boundary 3A canonical types; `SymbolTable` remains lookup
+  and merge authority for the wired family.
 - `gChunkedAnyStorage` is a guarded `LegacyAstChunkedAnyVector`. `emplace_back`
   and `ASTNode::emplace_node` reject types outside the compile-time legacy
   allow-list in `LegacyChunkedAnyAllowList.h`; new semantic records must use
@@ -33,7 +36,7 @@ Last updated: 2026-08-30 after pull request boundary 9
   declaration/entity counts); syntax/semantic/IR domain bytes and broader
   per-record counts remain unwired.
 
-## Pull request boundary status (1–9)
+## Pull request boundary status (1–10)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -46,6 +49,7 @@ Last updated: 2026-08-30 after pull request boundary 9
 | 7 | `DeclarationBuilder` shell, `OwnerId` entity keys, scope-validated publication, initial function merge set |
 | 8 | Parser shadow wire for namespace/global C++ free functions, telemetry `TypeId` bridge, `declaration_builder_publish` counter |
 | 9 | `ChunkedAnyVector` compile-time legacy-node allow-list guard on `gChunkedAnyStorage` and `ASTNode::emplace_node` |
+| 10 | `classifyPublishFunction` preflight, `PublicationTransaction` mark/rollback, parser shadow commit helper |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -75,8 +79,10 @@ boundary 1 is started, not finished.
     facade": external callers use `TemplateEngine`; parser-internal paths
     remain direct until boundary 6/8A
   - Boundary 1 "a scratch transaction can allocate declarations and types, fail,
-    and leave every committed registry unchanged": proven in doctest; not wired
-    to parser tentative parsing
+    and leave every committed registry unchanged": scratch proven in doctest;
+    `PublicationTransaction` now covers DeclarationBuilder entity/declaration
+    arenas on the parser shadow path; SymbolTable paired rollback and parser
+    tentative parsing remain open
   - Boundary 1 "discarded scratch bytes are measured and bounded": measured;
     no implementation limit yet
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
@@ -90,7 +96,7 @@ boundary 1 is started, not finished.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 16-19%, confidence medium
+- Implementation effort completed overall: 17-20%, confidence medium
 
 ## Remaining work
 
@@ -99,18 +105,19 @@ Replaces the previous remaining-work section entirely on every update.
 Next blocker:
 
 - Land canonical function/type identity (architecture boundary 3A) and
-  transactional publication (preflight or rollback) before deleting
-  `SymbolTable::insert` function redeclaration merge for the wired family.
-  Do not make `DeclarationBuilder` sole merge authority on the current
-  `matches_signature` interner.
+  `SymbolTable` insert checkpoint/rollback for the wired family before deleting
+  `SymbolTable::insert` function redeclaration merge or making
+  `DeclarationBuilder` sole merge authority on the current `matches_signature`
+  interner.
 
 Then, in order:
 
 1. Continue architecture boundary 1: expand shadow wire or merge coverage
    (default arguments, exception specifications, friends, templates) only
-   after canonical `TypeId` and transactional publish exist; record `ScopeId`
-   on declaration AST nodes; move scope storage into `FrontendContext`; wire
-   syntax/semantic/IR domain byte accounting and per-record counts.
+   after canonical `TypeId` and paired SymbolTable publication rollback exist;
+   record `ScopeId` on declaration AST nodes; move scope storage into
+   `FrontendContext`; wire syntax/semantic/IR domain byte accounting and
+   per-record counts.
 
 Named follow-ups carried forward:
 
@@ -146,11 +153,10 @@ Current findings only; delete entries when their resolution lands.
 - Declaration-parse errors can be masked by the top-level expression-statement
   fallback; details and the conversion rule for affected sites live in
   docs/KNOWN_ISSUES.md. Owner: parser declaration dispatch.
-- `DeclarationBuilder` rejection after successful `SymbolTable::insert` leaves
-  lookup state committed on error paths until transactional publication lands.
-  The shadow wire no longer fails parse on builder rejection; SymbolTable stays
-  authoritative. Owner: boundary-1 transactional publication follow-up.
 - The parser `TypeId` bridge interns via `matches_signature`, which ignores
   nested `FunctionSignature` data (e.g. `void f(void (*)(int))` vs
   `void f(void (*)(double))` can share a builder signature). Owner: boundary 3A
   canonical types; do not delete `SymbolTable` merge on this interner.
+- When classify rejects after `SymbolTable::insert`, lookup state remains
+  committed until paired SymbolTable rollback lands. Owner: boundary-1 follow-up
+  after boundary 3A canonical types.

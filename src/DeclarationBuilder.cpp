@@ -111,9 +111,37 @@ const EntityRecord& DeclarationBuilder::entity(EntityId entity_id) const {
 	return entities_[entity_id.value - 1];
 }
 
-PublishResult DeclarationBuilder::publishFunction(
+DeclarationBuilderState DeclarationBuilder::mark() const {
+	return DeclarationBuilderState{
+		.declaration_count = declarations_.size(),
+		.entity_count = entities_.size(),
+	};
+}
+
+void DeclarationBuilder::rebuildEntityLookupFromEntities() {
+	entity_by_key_.clear();
+	for (const EntityRecord& entity : entities_) {
+		const EntityLookupKey key{
+			entity.owner_id.value,
+			entity.name.handle,
+			entity.signature_id.value};
+		entity_by_key_.emplace(key, entity.id);
+	}
+}
+
+void DeclarationBuilder::rollbackTo(DeclarationBuilderState state) {
+	while (declarations_.size() > state.declaration_count) {
+		declarations_.pop_back();
+	}
+	while (entities_.size() > state.entity_count) {
+		entities_.pop_back();
+	}
+	rebuildEntityLookupFromEntities();
+}
+
+PublishResult DeclarationBuilder::classifyPublishFunction(
 	const FunctionDeclRequest& request,
-	const SymbolTable& symbol_table) {
+	const SymbolTable& symbol_table) const {
 	if (!isValidRequest(request)) {
 		return makeRejected(EntityId{});
 	}
@@ -132,6 +160,55 @@ PublishResult DeclarationBuilder::publishFunction(
 	const uint8_t incoming_flags = requestFlags(request);
 	const auto existing = entity_by_key_.find(key);
 	if (existing == entity_by_key_.end()) {
+		return PublishResult{PublishStatus::Created, DeclId{}, EntityId{}};
+	}
+
+	const EntityRecord& live_entity = entities_[existing->second.value - 1];
+	const EntityId entity_id = live_entity.id;
+
+	if (live_entity.return_type_id != request.return_type_id) {
+		return makeRejected(entity_id);
+	}
+
+	const bool prior_constexpr = hasFlag(live_entity.flags, DeclarationFlags::IsConstexpr);
+	if (prior_constexpr != request.is_constexpr) {
+		return makeRejected(entity_id);
+	}
+
+	const bool prior_definition = hasFlag(live_entity.flags, DeclarationFlags::IsDefinition);
+	if (request.is_definition && prior_definition) {
+		return makeRejected(entity_id);
+	}
+
+	const bool prior_inline = hasFlag(live_entity.flags, DeclarationFlags::IsInline);
+	if (request.is_inline && prior_definition && !prior_inline) {
+		return makeRejected(entity_id);
+	}
+
+	return PublishResult{PublishStatus::MergedRedeclaration, DeclId{}, entity_id};
+}
+
+PublishResult DeclarationBuilder::publishFunction(
+	const FunctionDeclRequest& request,
+	const SymbolTable& symbol_table) {
+	const PublishResult classification = classifyPublishFunction(request, symbol_table);
+	if (classification.status == PublishStatus::Rejected) {
+		return classification;
+	}
+
+	const std::optional<PublicationTarget> target =
+		resolvePublicationTarget(symbol_table, request.lexical_scope_id);
+	if (!target.has_value()) {
+		return makeRejected(EntityId{});
+	}
+
+	const EntityLookupKey key{
+		target->owner_id.value,
+		request.name.handle,
+		request.signature_id.value};
+
+	const uint8_t incoming_flags = requestFlags(request);
+	if (classification.status == PublishStatus::Created) {
 		EntityRecord entity_record{};
 		entity_record.owner_id = target->owner_id;
 		entity_record.name = request.name;
@@ -174,27 +251,8 @@ PublishResult DeclarationBuilder::publishFunction(
 		return PublishResult{PublishStatus::Created, decl_id, entity_id};
 	}
 
-	EntityRecord& live_entity = entities_[existing->second.value - 1];
+	EntityRecord& live_entity = entities_[classification.entity_id.value - 1];
 	const EntityId entity_id = live_entity.id;
-
-	if (live_entity.return_type_id != request.return_type_id) {
-		return makeRejected(entity_id);
-	}
-
-	const bool prior_constexpr = hasFlag(live_entity.flags, DeclarationFlags::IsConstexpr);
-	if (prior_constexpr != request.is_constexpr) {
-		return makeRejected(entity_id);
-	}
-
-	const bool prior_definition = hasFlag(live_entity.flags, DeclarationFlags::IsDefinition);
-	if (request.is_definition && prior_definition) {
-		return makeRejected(entity_id);
-	}
-
-	const bool prior_inline = hasFlag(live_entity.flags, DeclarationFlags::IsInline);
-	if (request.is_inline && prior_definition && !prior_inline) {
-		return makeRejected(entity_id);
-	}
 
 	DeclarationRecord decl_record{};
 	decl_record.entity_id = entity_id;
@@ -295,4 +353,53 @@ PublishResult publishParserFreeFunction(
 	const FunctionDeclRequest request =
 		buildFreeFunctionDeclRequest(builder, func_decl, lexical_scope_id, is_definition);
 	return builder.publishFunction(request, symbol_table);
+}
+
+PublicationTransaction::PublicationTransaction(DeclarationBuilder& builder)
+	: builder_(builder)
+	, state_(builder.mark()) {
+}
+
+PublicationTransaction::~PublicationTransaction() {
+	if (!committed_ && !rolled_back_) {
+		rollback();
+	}
+}
+
+void PublicationTransaction::commit() {
+	committed_ = true;
+}
+
+void PublicationTransaction::rollback() {
+	builder_.rollbackTo(state_);
+	rolled_back_ = true;
+}
+
+PublishResult commitParserFreeFunctionPublication(
+	DeclarationBuilder& builder,
+	const FunctionDeclRequest& request,
+	const SymbolTable& symbol_table) {
+	const PublishResult classified = builder.classifyPublishFunction(request, symbol_table);
+	if (classified.status == PublishStatus::Rejected) {
+		return classified;
+	}
+
+	PublicationTransaction transaction(builder);
+	const PublishResult committed = builder.publishFunction(request, symbol_table);
+	if (committed.status == PublishStatus::Rejected) {
+		transaction.rollback();
+		return committed;
+	}
+	if (committed.status != classified.status) {
+		transaction.rollback();
+		return committed;
+	}
+	if (classified.status == PublishStatus::MergedRedeclaration &&
+		committed.entity_id != classified.entity_id) {
+		transaction.rollback();
+		return committed;
+	}
+
+	transaction.commit();
+	return committed;
 }

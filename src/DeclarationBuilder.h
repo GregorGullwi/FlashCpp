@@ -112,6 +112,11 @@ static_assert(std::is_trivially_copyable_v<EntityRecord>);
 static_assert(std::is_standard_layout_v<DeclarationRecord>);
 static_assert(std::is_standard_layout_v<EntityRecord>);
 
+struct DeclarationBuilderState {
+	std::size_t declaration_count = 0;
+	std::size_t entity_count = 0;
+};
+
 namespace DeclarationFlags {
 inline constexpr uint8_t IsDefinition = 1u << 0;
 inline constexpr uint8_t IsInline = 1u << 1;
@@ -132,6 +137,15 @@ public:
 	DeclarationBuilder& operator=(DeclarationBuilder&&) = delete;
 
 	PublishResult publishFunction(const FunctionDeclRequest& request, const SymbolTable& symbol_table);
+
+	// Read-only merge decision for preflight publication. Does not mutate
+	// declaration or entity arenas.
+	PublishResult classifyPublishFunction(
+		const FunctionDeclRequest& request,
+		const SymbolTable& symbol_table) const;
+
+	DeclarationBuilderState mark() const;
+	void rollbackTo(DeclarationBuilderState state);
 
 	// Telemetry-only opaque keys until architecture boundary 3A canonical types.
 	// Uses TypeSpecifierNode::matches_signature(), which does not compare nested
@@ -206,6 +220,26 @@ private:
 	std::unordered_map<EntityLookupKey, EntityId, EntityLookupKeyHash> entity_by_key_;
 	std::vector<TypeSpecifierNode> declarator_type_canon_;
 	std::unordered_map<ParameterListKey, TypeId, ParameterListKeyHash> parameter_list_ids_;
+
+	void rebuildEntityLookupFromEntities();
+};
+
+class PublicationTransaction {
+public:
+	explicit PublicationTransaction(DeclarationBuilder& builder);
+	~PublicationTransaction();
+
+	PublicationTransaction(const PublicationTransaction&) = delete;
+	PublicationTransaction& operator=(const PublicationTransaction&) = delete;
+
+	void commit();
+	void rollback();
+
+private:
+	DeclarationBuilder& builder_;
+	DeclarationBuilderState state_;
+	bool committed_ = false;
+	bool rolled_back_ = false;
 };
 
 FunctionDeclRequest buildFreeFunctionDeclRequest(
@@ -222,4 +256,12 @@ PublishResult publishParserFreeFunction(
 	const FunctionDeclarationNode& func_decl,
 	ScopeId lexical_scope_id,
 	bool is_definition,
+	const SymbolTable& symbol_table);
+
+// Preflight classify, then commit through a publication transaction on success.
+// SymbolTable insert must already have succeeded. SymbolTable remains lookup
+// authority when classify rejects after insert.
+PublishResult commitParserFreeFunctionPublication(
+	DeclarationBuilder& builder,
+	const FunctionDeclRequest& request,
 	const SymbolTable& symbol_table);

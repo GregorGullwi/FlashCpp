@@ -4617,6 +4617,70 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.entityCount() == 0u);
 	}
 
+	TEST_CASE("DeclarationBuilder classifyPublishFunction matches publishFunction") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_classify");
+		const FunctionDeclRequest first{
+			global_scope, name, TypeId{71}, TypeId{81}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult classified = builder.classifyPublishFunction(first, table);
+		const PublishResult committed = builder.publishFunction(first, table);
+		CHECK(classified.status == committed.status);
+		if (classified.status == PublishStatus::MergedRedeclaration ||
+			classified.status == PublishStatus::Rejected) {
+			CHECK(classified.entity_id == committed.entity_id);
+		}
+		CHECK(committed.status == PublishStatus::Created);
+
+		const FunctionDeclRequest redecl{
+			global_scope, name, TypeId{71}, TypeId{81}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult classified_redecl = builder.classifyPublishFunction(redecl, table);
+		const PublishResult committed_redecl = builder.publishFunction(redecl, table);
+		CHECK(classified_redecl.status == committed_redecl.status);
+		CHECK(classified_redecl.entity_id == committed_redecl.entity_id);
+		CHECK(committed_redecl.status == PublishStatus::MergedRedeclaration);
+	}
+
+	TEST_CASE("PublicationTransaction rollback restores declaration and entity arenas") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_txn");
+		const FunctionDeclRequest request{
+			global_scope, name, TypeId{91}, TypeId{101}, LanguageLinkage::CPlusPlus, false, false, false};
+
+		PublicationTransaction transaction(builder);
+		REQUIRE(builder.publishFunction(request, table).status == PublishStatus::Created);
+		CHECK(builder.declarationCount() == 1u);
+		CHECK(builder.entityCount() == 1u);
+		transaction.rollback();
+		CHECK(builder.declarationCount() == 0u);
+		CHECK(builder.entityCount() == 0u);
+	}
+
+	TEST_CASE("commitParserFreeFunctionPublication rejects duplicate definitions without committing") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_commit_dup");
+		const FunctionDeclRequest first{
+			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
+		REQUIRE(commitParserFreeFunctionPublication(builder, first, table).status == PublishStatus::Created);
+		const std::size_t decls = builder.declarationCount();
+		const std::size_t entities = builder.entityCount();
+
+		const FunctionDeclRequest duplicate{
+			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult rejected = commitParserFreeFunctionPublication(builder, duplicate, table);
+		CHECK(rejected.status == PublishStatus::Rejected);
+		CHECK(builder.declarationCount() == decls);
+		CHECK(builder.entityCount() == entities);
+	}
+
 	TEST_CASE("buildNamespaceHandleForStructName rejects unregistered qualified spelling") {
 		StringHandle qualified = StringTable::getOrInternStringHandle("ns::Widget");
 		NamespaceHandle handle = buildNamespaceHandleForStructName(qualified);
