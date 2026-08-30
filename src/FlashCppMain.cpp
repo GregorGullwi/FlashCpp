@@ -438,7 +438,17 @@ int main_impl(int argc, char* argv[]) {
 		PhaseTimer timer("Preprocessing", false, &preprocessing_time, FlashCpp::AllocationPhase::Preprocessing);
 		if (!file_reader.readFile(context.getInputFile().value())) {
 			FLASH_LOG(General, Error, "Preprocessing rejected input file: ", context.getInputFile().value());
-			std::cerr << "Error: Preprocessing rejected input file: " << context.getInputFile().value() << std::endl;
+			const std::string message = "Preprocessing rejected input file: " + context.getInputFile().value();
+			context.diagnostics().report(
+				DiagnosticId::PreprocessingRejectedInput,
+				DiagnosticSeverity::Error,
+				SourceLocation(),
+				message,
+				{});
+			std::cerr << "Error: " << message << " ["
+					  << diagnosticIdName(DiagnosticId::PreprocessingRejectedInput)
+					  << '#' << diagnosticIdNumber(DiagnosticId::PreprocessingRejectedInput)
+					  << "]" << std::endl;
 			return exitCode(CompilerExitStatus::SourceRejected);
 		}
 	}

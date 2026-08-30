@@ -9452,10 +9452,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									}
 								}
 
-								if (!found_inherited_template) {
-									// Not an alias template, class template, variable template, inherited member template, or found anywhere
-									FLASH_LOG(Parser, Error, "Missing identifier: ", identifier_token.value());
-									return ParseResult::error("Missing identifier", identifier_token);
+				if (!found_inherited_template) {
+					// Not an alias template, class template, variable template, inherited member template, or found anywhere
+					FLASH_LOG(Parser, Error, "Missing identifier: ", identifier_token.value());
+					const std::string message = "Missing identifier";
+					context_.diagnostics().report(
+						DiagnosticId::UndeclaredIdentifier,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(identifier_token),
+						message,
+						{});
+					return ParseResult::error(message, identifier_token);
 								}
 							}
 						}
@@ -9479,7 +9486,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Don't return error - let it continue as a dependent expression
 					} else {
 						FLASH_LOG(Parser, Error, "Missing identifier: ", identifier_token.value());
-						return ParseResult::error("Missing identifier", identifier_token);
+						const std::string message = "Missing identifier";
+						context_.diagnostics().report(
+							DiagnosticId::UndeclaredIdentifier,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(identifier_token),
+							message,
+							{});
+						return ParseResult::error(message, identifier_token);
 					}
 				}
 			}

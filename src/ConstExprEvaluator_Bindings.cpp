@@ -839,7 +839,9 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 			// would let the non-heap path run and produce the confusing
 			// "could not resolve pointed-to object '@new_N'" error message.
 			return EvalResult::error("Member '" + std::string(member_access.member_name()) +
-									 "' not found on heap-allocated object in constant expression");
+									 "' not found on heap-allocated object in constant expression",
+									 EvalErrorType::NotConstantExpression,
+									 DiagnosticId::ConstantExpressionMemberNotFound);
 		}
 		return std::nullopt;
 	}
@@ -1043,7 +1045,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 		}
 	}
 	if (!array_result->is_array) {
-		return EvalResult::error("Subscript on non-array variable in constant expression");
+		return EvalResult::error(
+			"Subscript on non-array variable in constant expression",
+			EvalErrorType::NotConstantExpression,
+			DiagnosticId::ConstantExpressionSubscriptRequiresArray);
 	}
 	if (!array_result->array_elements.empty()) {
 		if (static_cast<size_t>(index) >= array_result->array_elements.size()) {

@@ -569,11 +569,18 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					}
 				} else {
 					if (return_requires_ctor_resolution && return_ctor_no_match) {
-						throw CompileError(std::string(StringBuilder()
+						const std::string message = std::string(StringBuilder()
 							.append("No matching constructor for '")
 							.append(return_ctor_target_name)
 							.append("'")
-							.commit()));
+							.commit());
+						throw makeStructuredCompileError(
+							context_->diagnostics(),
+							DiagnosticId::NoMatchingConstructor,
+							DiagnosticSeverity::Error,
+							SourceLocation::fromToken(node.return_token()),
+							message,
+							{});
 					}
 					auto isFloatingBuiltinReturnExpr = [&]() {
 						if (!expr_opt.has_value() || !expr_opt->is<CallExprNode>()) {
