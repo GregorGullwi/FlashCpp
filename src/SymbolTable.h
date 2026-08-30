@@ -17,6 +17,7 @@
 #include "Log.h"
 #include "StringBuilder.h"
 #include "FrontendIds.h"
+#include "CompileError.h"
 #include "NamespaceRegistry.h"
 #include "TemplateRegistry.h"
 
@@ -171,6 +172,34 @@ public:
 
 	std::size_t activeScopeDepth() const {
 		return scopes_[current_scope_index_].depth;
+	}
+
+	// Lookup by ScopeId for external/unvalidated inputs. Absence is a normal outcome
+	// (stale id, foreign context, never-created scope). Persistent scopes assign
+	// ScopeId as index + 1, so this is O(1).
+	const Scope* findScopeById(ScopeId scope_id) const {
+		if (!scope_id || scope_id.value > scopes_.size()) {
+			return nullptr;
+		}
+		const Scope& scope = scopes_[scope_id.value - 1];
+		if (scope.scope_id != scope_id) {
+			return nullptr;
+		}
+		return &scope;
+	}
+
+	// Lookup for ScopeIds produced by this SymbolTable (parent links, last-declaring
+	// site, current scope). A missing or mismatched record is an internal invariant
+	// failure, not a recoverable publication rejection.
+	const Scope& scopeById(ScopeId scope_id) const {
+		if (!scope_id || scope_id.value > scopes_.size()) {
+			throw InternalError("SymbolTable: ScopeId out of range");
+		}
+		const Scope& scope = scopes_[scope_id.value - 1];
+		if (scope.scope_id != scope_id) {
+			throw InternalError("SymbolTable: ScopeId does not match scope record");
+		}
+		return scope;
 	}
 
 	bool insert([[maybe_unused]] const std::string& identifier, [[maybe_unused]] ASTNode node) {

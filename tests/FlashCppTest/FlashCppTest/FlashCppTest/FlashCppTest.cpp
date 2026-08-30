@@ -4067,6 +4067,7 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 TEST_SUITE("FrontendContext") {
 	TEST_CASE("Strong semantic IDs reject pointer construction") {
 		static_assert(!std::is_constructible_v<ScopeId, const void*>);
+		static_assert(!std::is_constructible_v<OwnerId, const void*>);
 		static_assert(!std::is_constructible_v<DeclId, const void*>);
 		static_assert(!std::is_constructible_v<EntityId, const void*>);
 		static_assert(!std::is_constructible_v<ExprId, const void*>);
@@ -4317,9 +4318,11 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("DeclarationBuilder creates DeclId and EntityId for first function") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_first");
 		const FunctionDeclRequest request{
-			ScopeId{1},
+			global_scope,
 			name,
 			TypeId{10},
 			TypeId{20},
@@ -4327,7 +4330,7 @@ TEST_SUITE("FrontendContext") {
 			false,
 			false,
 			false};
-		const PublishResult result = builder.publishFunction(request);
+		const PublishResult result = builder.publishFunction(request, table);
 		CHECK(result.status == PublishStatus::Created);
 		CHECK(result.decl_id.value == 1u);
 		CHECK(result.entity_id.value == 1u);
@@ -4340,22 +4343,26 @@ TEST_SUITE("FrontendContext") {
 		const DeclarationRecord& decl = builder.declaration(result.decl_id);
 		CHECK(decl.entity_id == result.entity_id);
 		CHECK_FALSE(decl.previous_decl_id);
+		CHECK(decl.lexical_scope_id == global_scope);
 		CHECK(decl.signature_id == TypeId{10});
 		CHECK(decl.return_type_id == TypeId{20});
+		CHECK(builder.entity(result.entity_id).owner_id == ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE));
 	}
 
 	TEST_CASE("DeclarationBuilder merges compatible function redeclaration into one EntityId") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_redecl");
 		const FunctionDeclRequest first{
-			ScopeId{1}, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, false, false, false};
-		const PublishResult created = builder.publishFunction(first);
+			global_scope, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult created = builder.publishFunction(first, table);
 		REQUIRE(created.status == PublishStatus::Created);
 
 		const FunctionDeclRequest second{
-			ScopeId{1}, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, true, false, false};
-		const PublishResult merged = builder.publishFunction(second);
+			global_scope, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult merged = builder.publishFunction(second, table);
 		CHECK(merged.status == PublishStatus::MergedRedeclaration);
 		CHECK(merged.entity_id == created.entity_id);
 		CHECK(merged.decl_id.value == 2u);
@@ -4370,19 +4377,92 @@ TEST_SUITE("FrontendContext") {
 		CHECK((entity.flags & DeclarationFlags::IsDefinition) != 0);
 	}
 
+	TEST_CASE("DeclarationBuilder merges compatible declarations across reopened namespace blocks") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const StringHandle ns_name = StringTable::getOrInternStringHandle("DeclBuilderNsReopen");
+		const NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_name);
+		REQUIRE(ns_handle.isValid());
+
+		table.enter_namespace(ns_handle);
+		const ScopeId first_block = table.currentScopeId();
+		const StringHandle fn_name = StringTable::getOrInternStringHandle("reopened_ns_fn");
+		const FunctionDeclRequest declaration{
+			first_block, fn_name, TypeId{60}, TypeId{70}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult created = builder.publishFunction(declaration, table);
+		REQUIRE(created.status == PublishStatus::Created);
+
+		table.exit_scope();
+		table.enter_namespace(ns_handle);
+		const ScopeId second_block = table.currentScopeId();
+		REQUIRE(first_block != second_block);
+
+		const FunctionDeclRequest definition{
+			second_block, fn_name, TypeId{60}, TypeId{70}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult merged = builder.publishFunction(definition, table);
+		CHECK(merged.status == PublishStatus::MergedRedeclaration);
+		CHECK(merged.entity_id == created.entity_id);
+		CHECK(builder.entityCount() == 1u);
+		CHECK(builder.declaration(created.decl_id).lexical_scope_id == first_block);
+		CHECK(builder.declaration(merged.decl_id).lexical_scope_id == second_block);
+		CHECK(builder.declaration(created.decl_id).lexical_scope_id != builder.declaration(merged.decl_id).lexical_scope_id);
+	}
+
+	TEST_CASE("DeclarationBuilder keeps distinct entities across different namespace owners") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const StringHandle ns_a_name = StringTable::getOrInternStringHandle("DeclBuilderOwnerA");
+		const StringHandle ns_b_name = StringTable::getOrInternStringHandle("DeclBuilderOwnerB");
+		const NamespaceHandle ns_a = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_a_name);
+		const NamespaceHandle ns_b = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_b_name);
+		REQUIRE(ns_a.isValid());
+		REQUIRE(ns_b.isValid());
+		REQUIRE(ns_a != ns_b);
+
+		const StringHandle fn_name = StringTable::getOrInternStringHandle("same_owner_fn");
+		table.enter_namespace(ns_a);
+		const ScopeId scope_a = table.currentScopeId();
+		const PublishResult a = builder.publishFunction(
+			FunctionDeclRequest{
+				scope_a, fn_name, TypeId{61}, TypeId{71}, LanguageLinkage::CPlusPlus, false, false, false},
+			table);
+		table.exit_scope();
+
+		table.enter_namespace(ns_b);
+		const ScopeId scope_b = table.currentScopeId();
+		const PublishResult b = builder.publishFunction(
+			FunctionDeclRequest{
+				scope_b, fn_name, TypeId{61}, TypeId{71}, LanguageLinkage::CPlusPlus, false, false, false},
+			table);
+
+		CHECK(a.status == PublishStatus::Created);
+		CHECK(b.status == PublishStatus::Created);
+		CHECK(a.entity_id != b.entity_id);
+		CHECK(builder.entity(a.entity_id).owner_id == ownerIdFromNamespaceHandle(ns_a));
+		CHECK(builder.entity(b.entity_id).owner_id == ownerIdFromNamespaceHandle(ns_b));
+		CHECK(builder.entityCount() == 2u);
+	}
+
 	TEST_CASE("DeclarationBuilder rejects duplicate function definition without committing") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_dup_def");
 		const FunctionDeclRequest first{
-			ScopeId{1}, name, TypeId{12}, TypeId{22}, LanguageLinkage::CPlusPlus, true, false, false};
-		REQUIRE(builder.publishFunction(first).status == PublishStatus::Created);
+			global_scope, name, TypeId{12}, TypeId{22}, LanguageLinkage::CPlusPlus, true, false, false};
+		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
 		const std::size_t decls = builder.declarationCount();
 		const std::size_t entities = builder.entityCount();
 
 		const FunctionDeclRequest second{
-			ScopeId{1}, name, TypeId{12}, TypeId{22}, LanguageLinkage::CPlusPlus, true, false, false};
-		const PublishResult rejected = builder.publishFunction(second);
+			global_scope, name, TypeId{12}, TypeId{22}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult rejected = builder.publishFunction(second, table);
 		CHECK(rejected.status == PublishStatus::Rejected);
 		CHECK(rejected.entity_id.value == 1u);
 		CHECK_FALSE(rejected.decl_id);
@@ -4393,13 +4473,15 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("DeclarationBuilder creates separate entities for C++ overloads") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_overload");
 		const FunctionDeclRequest first{
-			ScopeId{1}, name, TypeId{31}, TypeId{41}, LanguageLinkage::CPlusPlus, false, false, false};
+			global_scope, name, TypeId{31}, TypeId{41}, LanguageLinkage::CPlusPlus, false, false, false};
 		const FunctionDeclRequest second{
-			ScopeId{1}, name, TypeId{32}, TypeId{41}, LanguageLinkage::CPlusPlus, false, false, false};
-		const PublishResult a = builder.publishFunction(first);
-		const PublishResult b = builder.publishFunction(second);
+			global_scope, name, TypeId{32}, TypeId{41}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult a = builder.publishFunction(first, table);
+		const PublishResult b = builder.publishFunction(second, table);
 		CHECK(a.status == PublishStatus::Created);
 		CHECK(b.status == PublishStatus::Created);
 		CHECK(a.entity_id != b.entity_id);
@@ -4409,15 +4491,17 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("DeclarationBuilder rejects return-type conflict on same signature") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_ret_conflict");
 		const FunctionDeclRequest first{
-			ScopeId{1}, name, TypeId{33}, TypeId{50}, LanguageLinkage::CPlusPlus, false, false, false};
-		REQUIRE(builder.publishFunction(first).status == PublishStatus::Created);
+			global_scope, name, TypeId{33}, TypeId{50}, LanguageLinkage::CPlusPlus, false, false, false};
+		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
 		const std::size_t decls = builder.declarationCount();
 
 		const FunctionDeclRequest conflict{
-			ScopeId{1}, name, TypeId{33}, TypeId{51}, LanguageLinkage::CPlusPlus, false, false, false};
-		const PublishResult rejected = builder.publishFunction(conflict);
+			global_scope, name, TypeId{33}, TypeId{51}, LanguageLinkage::CPlusPlus, false, false, false};
+		const PublishResult rejected = builder.publishFunction(conflict, table);
 		CHECK(rejected.status == PublishStatus::Rejected);
 		CHECK(builder.declarationCount() == decls);
 	}
@@ -4425,18 +4509,20 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("DeclarationBuilder requires matching constexpr on redeclaration") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_constexpr");
 		const FunctionDeclRequest first{
-			ScopeId{1}, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, false, false, true};
-		REQUIRE(builder.publishFunction(first).status == PublishStatus::Created);
+			global_scope, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, false, false, true};
+		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
 
 		const FunctionDeclRequest mismatch{
-			ScopeId{1}, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, false, false, false};
-		CHECK(builder.publishFunction(mismatch).status == PublishStatus::Rejected);
+			global_scope, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, false, false, false};
+		CHECK(builder.publishFunction(mismatch, table).status == PublishStatus::Rejected);
 
 		const FunctionDeclRequest match{
-			ScopeId{1}, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, true, false, true};
-		const PublishResult merged = builder.publishFunction(match);
+			global_scope, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, true, false, true};
+		const PublishResult merged = builder.publishFunction(match, table);
 		CHECK(merged.status == PublishStatus::MergedRedeclaration);
 		CHECK((builder.entity(merged.entity_id).flags & DeclarationFlags::IsInline) != 0);
 		CHECK((builder.entity(merged.entity_id).flags & DeclarationFlags::IsConstexpr) != 0);
@@ -4445,53 +4531,71 @@ TEST_SUITE("FrontendContext") {
 	TEST_CASE("DeclarationBuilder rejects inline after non-inline definition") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_inline_order");
 		const FunctionDeclRequest definition{
-			ScopeId{1}, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, true, false, false};
-		REQUIRE(builder.publishFunction(definition).status == PublishStatus::Created);
+			global_scope, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, true, false, false};
+		REQUIRE(builder.publishFunction(definition, table).status == PublishStatus::Created);
 		const std::size_t decls = builder.declarationCount();
 
 		const FunctionDeclRequest inline_after{
-			ScopeId{1}, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, false, true, false};
-		CHECK(builder.publishFunction(inline_after).status == PublishStatus::Rejected);
+			global_scope, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, false, true, false};
+		CHECK(builder.publishFunction(inline_after, table).status == PublishStatus::Rejected);
 		CHECK(builder.declarationCount() == decls);
 
 		FrontendContext context2;
 		DeclarationBuilder& builder2 = context2.declarationBuilder();
+		SymbolTable table2;
+		const ScopeId global_scope2 = table2.currentScopeId();
 		const FunctionDeclRequest inline_first{
-			ScopeId{1}, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, false, true, false};
-		REQUIRE(builder2.publishFunction(inline_first).status == PublishStatus::Created);
+			global_scope2, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, false, true, false};
+		REQUIRE(builder2.publishFunction(inline_first, table2).status == PublishStatus::Created);
 		const FunctionDeclRequest definition_after{
-			ScopeId{1}, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, true, false, false};
-		const PublishResult merged = builder2.publishFunction(definition_after);
+			global_scope2, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, true, false, false};
+		const PublishResult merged = builder2.publishFunction(definition_after, table2);
 		CHECK(merged.status == PublishStatus::MergedRedeclaration);
 		CHECK((builder2.entity(merged.entity_id).flags & DeclarationFlags::IsInline) != 0);
 		CHECK((builder2.entity(merged.entity_id).flags & DeclarationFlags::IsDefinition) != 0);
 	}
 
-	TEST_CASE("DeclarationBuilder keeps distinct entities across target scopes") {
+	TEST_CASE("DeclarationBuilder rejects nonexistent and invalid-kind publication scopes") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
-		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_scopes");
-		const FunctionDeclRequest global_fn{
-			ScopeId{1}, name, TypeId{36}, TypeId{54}, LanguageLinkage::CPlusPlus, false, false, false};
-		const FunctionDeclRequest nested_fn{
-			ScopeId{2}, name, TypeId{36}, TypeId{54}, LanguageLinkage::CPlusPlus, false, false, false};
-		const PublishResult a = builder.publishFunction(global_fn);
-		const PublishResult b = builder.publishFunction(nested_fn);
-		CHECK(a.status == PublishStatus::Created);
-		CHECK(b.status == PublishStatus::Created);
-		CHECK(a.entity_id != b.entity_id);
-		CHECK(builder.entityCount() == 2u);
+		SymbolTable table;
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_invalid_scope");
+		const FunctionDeclRequest base{
+			table.currentScopeId(), name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+
+		const FunctionDeclRequest missing_scope{
+			ScopeId{999}, name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		CHECK(builder.publishFunction(missing_scope, table).status == PublishStatus::Rejected);
+
+		table.enter_scope(ScopeType::Block);
+		const FunctionDeclRequest block_scope{
+			table.currentScopeId(), name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		CHECK(builder.publishFunction(block_scope, table).status == PublishStatus::Rejected);
+		table.exit_scope();
+
+		table.enter_scope(ScopeType::Function);
+		const FunctionDeclRequest function_scope{
+			table.currentScopeId(), name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		CHECK(builder.publishFunction(function_scope, table).status == PublishStatus::Rejected);
+		table.exit_scope();
+
+		CHECK(builder.publishFunction(base, table).status == PublishStatus::Created);
+		CHECK(builder.declarationCount() == 1u);
+		CHECK(builder.entityCount() == 1u);
 	}
 
 	TEST_CASE("DeclarationBuilder rejects invalid requests without committing") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_invalid");
 		const FunctionDeclRequest invalid_scope{
 			ScopeId{}, name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
-		CHECK(builder.publishFunction(invalid_scope).status == PublishStatus::Rejected);
+		CHECK(builder.publishFunction(invalid_scope, table).status == PublishStatus::Rejected);
 		CHECK(builder.declarationCount() == 0u);
 		CHECK(builder.entityCount() == 0u);
 	}

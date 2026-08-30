@@ -14,6 +14,17 @@ struct ScopeId {
 	friend constexpr bool operator==(ScopeId, ScopeId) = default;
 };
 
+// Stable semantic owner for declaration publication. For namespace-targeted
+// declarations this maps to NamespaceRegistry identity (not spelling).
+struct OwnerId {
+	uint32_t value = 0;
+	constexpr OwnerId() = default;
+	explicit constexpr OwnerId(uint32_t raw_value) : value(raw_value) {}
+	OwnerId(const void* pointer_identity) = delete;
+	explicit constexpr operator bool() const { return value != 0; }
+	friend constexpr bool operator==(OwnerId, OwnerId) = default;
+};
+
 struct DeclId {
 	uint32_t value = 0;
 	constexpr DeclId() = default;
@@ -60,6 +71,7 @@ struct TemplateDeclId {
 };
 
 static_assert(sizeof(ScopeId) == 4);
+static_assert(sizeof(OwnerId) == 4);
 static_assert(sizeof(DeclId) == 4);
 static_assert(sizeof(EntityId) == 4);
 static_assert(sizeof(ExprId) == 4);
