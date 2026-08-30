@@ -7,6 +7,7 @@
 namespace {
 
 [[noreturn]] void throwNarrowingBuiltinBraceInitCompileError(
+	CompileContext& context,
 	TypeCategory source,
 	TypeCategory target) {
 	std::string_view source_name = getTypeName(source);
@@ -17,14 +18,20 @@ namespace {
 	if (target_name.empty()) {
 		target_name = "target type";
 	}
-	throw CompileError(std::string(
-		StringBuilder()
+	const std::string message = std::string(StringBuilder()
 			.append("Narrowing conversion from '")
 			.append(source_name)
 			.append("' to '")
 			.append(target_name)
 			.append("' in direct-list-initialization")
-			.commit()));
+			.commit());
+	throw makeStructuredCompileError(
+		context.diagnostics(),
+		DiagnosticId::NarrowingConversionInListInitialization,
+		DiagnosticSeverity::Error,
+		SourceLocation(),
+		message,
+		{});
 }
 
 [[noreturn]] void reportMismatchedSemaResolvedConstructorInExpr(StringHandle struct_name, std::string_view init_kind) {
@@ -3627,7 +3634,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				TypeCategory source_category = BuiltinListInitNarrowing::effectiveScalarCategory(arg_result.category(), arg_result.type_index);
 				TypeCategory target_category = BuiltinListInitNarrowing::effectiveScalarCategory(constructor_type_category, normalized_type_spec.type_index());
 				if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, constant_value)) {
-					throwNarrowingBuiltinBraceInitCompileError(source_category, target_category);
+					throwNarrowingBuiltinBraceInitCompileError(*context_, source_category, target_category);
 				}
 			}
 			return generateTypeConversion(arg_result, arg_result.category(), constructor_type_category, constructorCallNode.called_from());

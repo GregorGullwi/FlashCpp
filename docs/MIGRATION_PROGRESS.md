@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-29 by branch `codex/boundary-2f-template-diagnostics`
+Last updated: 2026-08-30 by branch `codex/boundary-2f-zero-iteration-4`
 
 ## Position
 
@@ -29,6 +29,13 @@ Last updated: 2026-08-29 by branch `codex/boundary-2f-template-diagnostics`
   the const-receiver call ID (1710), and the structured-binding protocol ID
   (1613). It converts thirteen more bounded failures without adding replay or
   recovery behavior.
+- Iteration 4 assigns `PointerToReferenceType` (1001),
+  `DeletedFunctionCall`/`DeletedDefaultConstructorCall` (1321-1322), and
+  `NarrowingConversionInListInitialization` (1507) at existing parser and
+  lowering rejection owners. It converts nine frozen tests, including three
+  existing `NoViableFunctionCall` contracts and one existing
+  `InvalidArrayToScalarInitialization` contract. No lookup, replay, recovery,
+  or new lowering query was added.
 - Pull request boundary 2F now includes the explicit-initialization batch on
   branch `codex/boundary-2f-explicit-initialization` (commit `a136a23c`). It
   assigns `AssignmentToConstObject` (1318),
@@ -112,7 +119,7 @@ Last updated: 2026-08-29 by branch `codex/boundary-2f-template-diagnostics`
   full-suite run covered 2,929 single-file tests, 281 negative tests, one
   multi-translation-unit case, and five tracked positive expected failures;
   it had no crashes or mismatches.
-- The frozen legacy inventory is now 59 names. The temporary internal-failure
+- The frozen legacy inventory is now 50 names. The temporary internal-failure
   compatibility is down to 5 active entries against its baseline of 7,
   direction down, removal boundary 2F.
 
@@ -140,8 +147,8 @@ Last updated: 2026-08-29 by branch `codex/boundary-2f-template-diagnostics`
     explicit-initialization, declarator-constraint, semantic-validity, and
     ordinary-call and call-operator ambiguity, dllimport-constraint, template
     phase-1, partial-specialization, namespace, and structured-binding
-    diagnostics (1004-1012, 1201-1220, 1318-1320, 1503-1506, 1601-1608,
-    1701-1703, 1801-1805),
+    diagnostics (1001, 1004-1012, 1201-1220, 1318-1322, 1503-1507,
+    1601-1608, 1701-1703, 1801-1805),
     including the static-member constructor path, are
     mutation-validated on the same terms;
     the remaining architectural regression corpus is still outstanding
@@ -164,8 +171,8 @@ Replaces the previous remaining-work section entirely on every update.
 Next blocker:
 
 - There is no cross-platform validation blocker for the current 2F snapshot:
-  the full Windows suite is green and the frozen inventory is below 150; the
-  current coordination target is below 60.
+  the full Windows suite is green and the frozen inventory is below 60; the
+  current coordination target is zero.
 
 Then, in order:
 
@@ -210,10 +217,6 @@ Named follow-ups carried forward:
   emit error text outside both the engine and the counter before throwing
   `InternalError`; decide ownership when ICE reporting moves behind
   `DiagnosticEngine`.
-- Unify the ParseResult-channel pointer-to-reference twin at
-  `src/Parser_Decl_DeclaratorCore.cpp:477` onto
-  `DiagnosticId::PointerToReferenceType` once ParseResult carries structured
-  diagnostics.
 - Declaration-parse errors masked by the top-level expression-statement
   fallback: any masked rejection site must route through the shared
   declaration dispatch or its test is deleted before a structured ID is
