@@ -223,10 +223,6 @@ Named follow-ups carried forward:
   declarations, syntax-only expressions and statements, bounded parser control
   flow, and deletion of the parser service locator; no family may be routable
   to both legacy and migrated parsers.
-- Pin `ConstantExpressionSignedIntegerOverflow` (1205) with an encoded
-  regression once the evaluator tracks promoted operand widths; it currently
-  evaluates integer arithmetic in 64-bit so 32-bit overflow goes undetected
-  (see `docs/KNOWN_ISSUES.md`).
 - Wire `tests/run_migration_counters.ps1` into `ci-ubuntu.yml` after
   generating and verifying the baseline on a Linux build.
 - Pre-ICE raw `std::cerr` context dumps at `src/IrGenerator_MemberAccess.cpp`
