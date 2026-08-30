@@ -353,8 +353,7 @@ inline NamespaceHandle buildNamespaceHandleFromQualifiedIdentifier(std::string_v
 }
 
 // Prefer the owning type's recorded namespace metadata when the struct is known.
-// If the type hasn't been registered yet, fall back to parsing the struct spelling
-// as a qualified identifier so deferred-generation callers can still recover a namespace.
+// Callers must register the type before requesting its namespace handle.
 inline NamespaceHandle buildNamespaceHandleForStructName(StringHandle struct_name) {
 	if (!struct_name.isValid()) {
 		return NamespaceRegistry::GLOBAL_NAMESPACE;
@@ -365,7 +364,7 @@ inline NamespaceHandle buildNamespaceHandleForStructName(StringHandle struct_nam
 		return type_it->second->namespaceHandle();
 	}
 
-	return buildNamespaceHandleFromQualifiedIdentifier(StringTable::getStringView(struct_name));
+	return NamespaceHandle{};
 }
 
 // Convert a NamespaceHandle back into the legacy vector<string> namespace stack.

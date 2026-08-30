@@ -4247,6 +4247,78 @@ TEST_SUITE("FrontendContext") {
 		CHECK(scratch_stats.reserved_bytes == context.scratchArena().reservedBytes());
 		CHECK(scratch_stats.peak_reserved_bytes == context.scratchArena().peakReservedBytes());
 	}
+
+	TEST_CASE("SymbolTable scope exit moves cursor without destroying scope records") {
+		SymbolTable table;
+		const ScopeId global_id = table.currentScopeId();
+		REQUIRE(global_id.value == 1u);
+		REQUIRE(table.scopeCount() == 1u);
+		REQUIRE(table.activeScopeDepth() == 1u);
+
+		table.enter_scope(ScopeType::Block);
+		const ScopeId block_id = table.currentScopeId();
+		REQUIRE(block_id.value == 2u);
+		REQUIRE(table.scopeCount() == 2u);
+		REQUIRE(table.activeScopeDepth() == 2u);
+
+		table.exit_scope();
+		CHECK(table.currentScopeId() == global_id);
+		CHECK(table.scopeCount() == 2u);
+		CHECK(table.activeScopeDepth() == 1u);
+	}
+
+	TEST_CASE("SymbolTable records ScopeId on lookup sites") {
+		SymbolTable table;
+		table.enter_scope(ScopeType::Namespace);
+		const ScopeId namespace_scope_id = table.currentScopeId();
+		(void)table.lookup("missing_identifier");
+		CHECK(table.lastLookupScopeId() == namespace_scope_id);
+		table.exit_scope();
+		CHECK(table.lastLookupScopeId() == namespace_scope_id);
+	}
+
+	TEST_CASE("get_current_using_declaration_handles prefers inner using-declarations") {
+		SymbolTable table;
+		const StringHandle ns_a_name = StringTable::getOrInternStringHandle("ReviewUsingA");
+		const StringHandle ns_b_name = StringTable::getOrInternStringHandle("ReviewUsingB");
+		NamespaceHandle ns_a = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_a_name);
+		NamespaceHandle ns_b = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_b_name);
+
+		table.enter_scope(ScopeType::Function);
+		table.add_using_declaration("value", ns_a, "value");
+		table.enter_scope(ScopeType::Block);
+		table.add_using_declaration("value", ns_b, "value");
+
+		const auto handles = table.get_current_using_declaration_handles();
+		const auto it = handles.find("value");
+		REQUIRE(it != handles.end());
+		CHECK(it->second.first == ns_b);
+	}
+
+	TEST_CASE("insertGlobal records global ScopeId as declaring scope") {
+		SymbolTable table;
+		table.enter_scope(ScopeType::Block);
+		Token token(Token::Type::Literal, std::string_view("0"), 0, 0, 0);
+		ASTNode node = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(token, 0ULL, TypeCategory::Int, TypeQualifier::None, 32));
+		REQUIRE(table.insertGlobal("global_var", node));
+		CHECK(table.lastDeclaringScopeId().value == 1u);
+	}
+
+	TEST_CASE("FrontendContext publishes persistent scope telemetry") {
+		FrontendContext context;
+		context.publishScopeState(ScopeId{3}, 4);
+		CHECK(context.currentScopeId().value == 3u);
+		CHECK(context.scopeCount() == 4u);
+	}
+
+	TEST_CASE("buildNamespaceHandleForStructName rejects unregistered qualified spelling") {
+		StringHandle qualified = StringTable::getOrInternStringHandle("ns::Widget");
+		NamespaceHandle handle = buildNamespaceHandleForStructName(qualified);
+		CHECK_FALSE(handle.isValid());
+	}
 }
 
 TEST_SUITE("Diagnostics") {

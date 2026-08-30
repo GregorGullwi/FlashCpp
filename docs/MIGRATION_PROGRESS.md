@@ -5,26 +5,21 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-30 after pull request boundary 5
+Last updated: 2026-08-30 after pull request boundary 6
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 5 are complete; architecture
-  boundary 1 exit criteria remain open through pull request boundary 6 and
-  follow-on boundary-1 work.
-- Pull request boundary 5 delivered `FrontendContext` (active-context stack),
-  strong ID types (`ScopeId`, `DeclId`, `EntityId`, `ExprId`, `TypeId`,
-  `TemplateDeclId`), four allocation-domain placeholders, `MonotonicScratchArena`
-  with probe registry rollback/commit and discarded-byte accounting, `--perf-stats`
-  arena telemetry (scratch domain, string-table stats, InlineVector spill count),
-  `MigrationTelemetryConfig.h` compile-time gates (default on), and doctest
-  coverage for IDs, scratch transactions, and nested registry checkpoints.
+  and entities). Pull request boundaries 1 through 6 are complete; architecture
+  boundary 1 exit criteria remain open through follow-on boundary-1 work.
+- Persistent scopes live in `SymbolTable` (cursor exit, `ScopeId` on insert and
+  lookup). `FrontendContext` only publishes that state for telemetry; it does
+  not own the arena. `ScopeId` is not yet stored on declaration AST nodes.
 - Global forwarding into `FrontendContext` is telemetry-only so far (string-
-  table entry count and spelling bytes); syntax/semantic/IR domain bytes and
-  record counts remain unwired.
+  table entry count and spelling bytes, plus published scope state); syntax/
+  semantic/IR domain bytes and record counts remain unwired.
 
-## Pull request boundary status (1–5)
+## Pull request boundary status (1–6)
 
 All complete.
 
@@ -35,6 +30,7 @@ All complete.
 | 3 | Architectural regression probes (tracked expected failures) |
 | 4 | `TemplateEngine` facade, migration choke-point counters |
 | 5 | `FrontendContext`, strong IDs, scratch arena, arena telemetry |
+| 6 | Persistent scopes, `ScopeId` on lookup, first spelling recovery deletion |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -43,13 +39,14 @@ boundary 1 is started, not finished.
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 4/78 (5%)
+- Completed: 5/78 (6%)
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
   - Boundary 0 "structured diagnostics can be asserted by tests"
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus"
   - Boundary 1 "IDs cannot be constructed from pointers"
+  - Boundary 1 "leaving parser scope does not destroy lookup information"
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure"
@@ -63,15 +60,17 @@ boundary 1 is started, not finished.
     no implementation limit yet
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
     InlineVector spill counts are reported through FrontendContext": partial
-    (scratch, string-table, InlineVector spills under `--perf-stats`)
-  - Boundary 1 remaining exit criteria (persistent scopes, declaration merging,
+    (scratch, string-table, InlineVector spills, scope count/current ScopeId
+    under `--perf-stats`)
+  - Boundary 1 remaining exit criteria (declaration merging,
     `ChunkedAnyVector` compile-time guard, full template-facade coverage,
-    leaving scope does not destroy lookup information): pull request boundary 6
-    onward
+    `ScopeId` on declarations beyond insert/lookup recording, scope storage
+    fully owned by `FrontendContext` rather than `SymbolTable`): follow-on
+    boundary-1 work
 
 ## Effort estimate
 
-- Implementation effort completed overall: 10-12%, confidence medium
+- Implementation effort completed overall: 12-15%, confidence medium
 
 ## Remaining work
 
@@ -79,17 +78,17 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Scope lookup still depends on destructive parser scope exit in the legacy
-  `SymbolTable` stack (`ScopeHandle` levels). Persistent scopes with stable
-  `ScopeId`, parent links, and cursor-style exit in `FrontendContext` are
-  required before the first spelling-based namespace recovery path can be
-  deleted (pull request boundary 6).
+- `DeclarationBuilder` and declaration/entity merging are not started. Persistent
+  scopes exist, but redeclaration merge rules and `DeclId`/`EntityId` publication
+  through `FrontendContext` are required before additional spelling-based recovery
+  paths can be deleted.
 
 Then, in order:
 
-1. Continue architecture boundary 1: wire syntax/semantic/IR domain byte
-   accounting, per-record counts, and broader global forwarding into
-   `FrontendContext`.
+1. Continue architecture boundary 1: move scope storage ownership from
+   `SymbolTable` into `FrontendContext`, wire syntax/semantic/IR domain byte
+   accounting, per-record counts, and broader global forwarding.
+2. Record `ScopeId` on declaration AST nodes and additional lookup choke points.
 
 Named follow-ups carried forward:
 
