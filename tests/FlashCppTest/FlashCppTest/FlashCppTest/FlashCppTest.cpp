@@ -4315,12 +4315,12 @@ TEST_SUITE("FrontendContext") {
 		CHECK(context.scopeCount() == 4u);
 	}
 
-	TEST_CASE("Legacy ChunkedAnyVector allow-list permits known syntax nodes") {
-		static_assert(isLegacyChunkedAnyStorageType<DeclarationNode>);
-		static_assert(isLegacyChunkedAnyStorageType<ExpressionNode>);
-		static_assert(isLegacyChunkedAnyStorageType<IdentifierNode>);
-		static_assert(isLegacyChunkedAnyStorageType<FunctionCallableTypes>);
-		static_assert(isLegacyChunkedAnyStorageType<std::vector<TemplateTypeArg>>);
+	TEST_CASE("Legacy ChunkedAnyVector emplace_back enforces allow-list on storage") {
+		requireLegacyAstChunkedAnyEmplaceAllowed<TemplateEnvironmentSnapshotNode, true>();
+		LegacyAstChunkedAnyVector storage;
+		TemplateEnvironmentSnapshotNode& node = storage.emplace_back<TemplateEnvironmentSnapshotNode>();
+		(void)node;
+		CHECK(isLegacyChunkedAnyStorageType<TemplateEnvironmentSnapshotNode>);
 	}
 
 	TEST_CASE("Legacy ChunkedAnyVector allow-list rejects new semantic record types") {

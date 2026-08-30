@@ -38,7 +38,7 @@ template <uint32_t ChunkSize = 64 * 1024 * 1024, uint32_t InternalBufferSize = s
 class ChunkedAnyVector {
 public:
 	static constexpr bool kEnforceLegacyAstAllowList = EnforceLegacyAstAllowList;
-public:
+
 	ChunkedAnyVector()
 #ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
@@ -54,6 +54,11 @@ public:
 
 	template <typename T, typename... Args>
 	T& emplace_back(Args&&... args) {
+		static_assert(
+			!EnforceLegacyAstAllowList ||
+				LegacyChunkedAnyStorageTraits<std::decay_t<T>, true>::allowed,
+			"Type is not on the legacy ChunkedAnyVector allow-list. "
+			"Allocate new semantic objects in FrontendContext typed arenas instead.");
 		std::size_t size = sizeof(T);
 		std::size_t alignment = alignof(T);
 		if (data.empty() || data.back().size() + size > ChunkSize) {

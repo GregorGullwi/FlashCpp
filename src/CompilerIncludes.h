@@ -47,6 +47,7 @@
 #include "AllocationTracker.h"
 #include "ParserProfilingReport.h"
 #include "AstNodeTypes.h"
+#include "LegacyChunkedAnyStoragePolicyComplete.h"
 #include "NamespaceRegistry.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
