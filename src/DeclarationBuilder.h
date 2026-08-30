@@ -133,6 +133,9 @@ public:
 
 	PublishResult publishFunction(const FunctionDeclRequest& request, const SymbolTable& symbol_table);
 
+	// Telemetry-only opaque keys until architecture boundary 3A canonical types.
+	// Uses TypeSpecifierNode::matches_signature(), which does not compare nested
+	// FunctionSignature payloads; do not use for merge authority.
 	TypeId internDeclaratorType(const TypeSpecifierNode& type_spec);
 	TypeId internParameterListSignature(std::span<const ASTNode> parameter_nodes, bool is_variadic);
 
@@ -213,6 +216,7 @@ FunctionDeclRequest buildFreeFunctionDeclRequest(
 
 bool shouldPublishParserFreeFunction(const FunctionDeclarationNode& func_decl, ScopeType scope_type);
 
+// Shadow publication for migration telemetry. SymbolTable remains lookup authority.
 PublishResult publishParserFreeFunction(
 	DeclarationBuilder& builder,
 	const FunctionDeclarationNode& func_decl,
