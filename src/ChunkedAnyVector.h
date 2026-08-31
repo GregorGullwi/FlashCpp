@@ -170,12 +170,18 @@ public:
 #else
 		: data(std::move(other.data))
 #endif
+		, reserved_bytes_(other.reserved_bytes_)
+		, peak_used_bytes_(other.peak_used_bytes_)
 	{
+		other.reserved_bytes_ = 0;
+		other.peak_used_bytes_ = 0;
 	}
 
 	ChunkedVector& operator=(const ChunkedVector& other) {
 		if (this != &other) {
 			data.clear();
+			reserved_bytes_ = 0;
+			peak_used_bytes_ = 0;
 			// Note: std::deque doesn't have reserve(), but that's okay
 			// It will allocate blocks as needed
 			for (size_t i = 0, e = other.size(); i < e; ++i) {
@@ -188,6 +194,10 @@ public:
 	ChunkedVector& operator=(ChunkedVector&& other) noexcept {
 		if (this != &other) {
 			data = std::move(other.data);
+			reserved_bytes_ = other.reserved_bytes_;
+			peak_used_bytes_ = other.peak_used_bytes_;
+			other.reserved_bytes_ = 0;
+			other.peak_used_bytes_ = 0;
 		}
 		return *this;
 	}
@@ -212,9 +222,14 @@ public:
 	T& emplace_back(Args&&... args) {
 		if (data.empty() || data.back().size() == ChunkSize) {
 			data.emplace_back().reserve(ChunkSize);
+			reserved_bytes_ += static_cast<uint64_t>(data.back().capacity()) * sizeof(T);
 		}
 		auto& chunk = data.back();
 		chunk.emplace_back(std::forward<Args>(args)...);
+		const uint64_t used = usedBytes();
+		if (used > peak_used_bytes_) {
+			peak_used_bytes_ = used;
+		}
 		return chunk.back();
 	}
 
@@ -248,12 +263,12 @@ public:
 		return static_cast<uint64_t>(size()) * sizeof(T);
 	}
 
+	uint64_t peakUsedBytes() const {
+		return peak_used_bytes_;
+	}
+
 	uint64_t reservedBytes() const {
-		uint64_t total = 0;
-		for (const auto& chunk : data) {
-			total += static_cast<uint64_t>(chunk.capacity()) * sizeof(T);
-		}
-		return total;
+		return reserved_bytes_;
 	}
 
 	bool empty() const {
@@ -368,6 +383,8 @@ private:
 #else
 	std::deque<std::vector<T>> data;
 #endif
+	uint64_t reserved_bytes_ = 0;
+	uint64_t peak_used_bytes_ = 0;
 };
 
 using LegacyAstChunkedAnyVector = ChunkedAnyVector<64 * 1024 * 1024, static_cast<uint32_t>(DEQUE_SIZE_ANY + 4 * sizeof(void*)), true>;
