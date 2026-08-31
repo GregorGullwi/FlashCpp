@@ -114,7 +114,11 @@ public:
 		const uint64_t reserved =
 			declaration_builder_.declarationArenaReservedBytes() +
 			declaration_builder_.entityArenaReservedBytes();
-		applyDomainBytes(domain_stats_[static_cast<std::size_t>(AllocationDomain::Semantic)], used, reserved);
+		DomainByteStats& stats = domain_stats_[static_cast<std::size_t>(AllocationDomain::Semantic)];
+		stats.current_bytes = used;
+		stats.peak_bytes = declaration_builder_.peakSemanticArenaUsedBytes();
+		stats.reserved_bytes = reserved;
+		stats.peak_reserved_bytes = declaration_builder_.peakSemanticArenaReservedBytes();
 	}
 
 	void refreshSyntaxDomainStats() {

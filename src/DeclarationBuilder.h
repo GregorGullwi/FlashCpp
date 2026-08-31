@@ -225,6 +225,14 @@ public:
 		return entities_.reservedBytes();
 	}
 
+	uint64_t peakSemanticArenaUsedBytes() const {
+		return peak_used_bytes_;
+	}
+
+	uint64_t peakSemanticArenaReservedBytes() const {
+		return peak_reserved_bytes_;
+	}
+
 private:
 	struct EntityLookupKey {
 		uint32_t owner = 0;
@@ -275,6 +283,7 @@ private:
 	bool isValidRequest(const FunctionDeclRequest& request) const;
 	DeclId allocateDeclaration(DeclarationRecord record);
 	EntityId allocateEntity(EntityRecord record);
+	void noteSemanticArenaPeaks();
 
 	ChunkedVector<DeclarationRecord, kDeclarationArenaChunkSize> declarations_;
 	ChunkedVector<EntityRecord, kEntityArenaChunkSize> entities_;
@@ -282,6 +291,8 @@ private:
 	std::vector<TypeSpecifierNode> declarator_type_canon_;
 	std::unordered_map<ParameterListKey, TypeId, ParameterListKeyHash> parameter_list_ids_;
 	std::uint32_t active_publication_transactions_ = 0;
+	uint64_t peak_used_bytes_ = 0;
+	uint64_t peak_reserved_bytes_ = 0;
 };
 
 struct DeclarationBuilderCheckpoint {

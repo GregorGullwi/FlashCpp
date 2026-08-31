@@ -103,6 +103,7 @@ DeclId DeclarationBuilder::allocateDeclaration(DeclarationRecord record) {
 	const DeclId id{static_cast<uint32_t>(declarations_.size() + 1)};
 	record.id = id;
 	declarations_.push_back(record);
+	noteSemanticArenaPeaks();
 	return id;
 }
 
@@ -113,7 +114,19 @@ EntityId DeclarationBuilder::allocateEntity(EntityRecord record) {
 	const EntityId id{static_cast<uint32_t>(entities_.size() + 1)};
 	record.id = id;
 	entities_.push_back(record);
+	noteSemanticArenaPeaks();
 	return id;
+}
+
+void DeclarationBuilder::noteSemanticArenaPeaks() {
+	const uint64_t used = declarations_.usedBytes() + entities_.usedBytes();
+	const uint64_t reserved = declarations_.reservedBytes() + entities_.reservedBytes();
+	if (used > peak_used_bytes_) {
+		peak_used_bytes_ = used;
+	}
+	if (reserved > peak_reserved_bytes_) {
+		peak_reserved_bytes_ = reserved;
+	}
 }
 
 const DeclarationRecord& DeclarationBuilder::declaration(DeclId decl_id) const {

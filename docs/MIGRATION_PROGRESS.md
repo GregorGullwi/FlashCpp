@@ -20,11 +20,10 @@ Last updated: 2026-08-31 after pull request boundary 13
   non-template free functions are published through a **shadow path** at
   `Parser::parse_declaration_or_function_definition()` after `SymbolTable::insert`.
   The path preflights with `prepareFunctionPublication`, commits through
-  `PublicationTransaction` mark/rollback, rolls back `SymbolTable` inserts when
-  publication rejects, and leaves `SymbolTable` lookup authority when classify
-  rejects after insert. The opaque `TypeId` bridge is
-  telemetry-only until boundary 3A canonical types; `SymbolTable` remains lookup
-  and merge authority for the wired family.
+  `PublicationTransaction` mark/rollback, and leaves the `SymbolTable`
+  insertion in place when publication rejects. `SymbolTable` remains lookup
+  and merge authority; the opaque TypeId bridge is telemetry-only until
+  boundary 3A canonical types and must not diagnose or erase lookup state.
 - `gChunkedAnyStorage` is a guarded `LegacyAstChunkedAnyVector`. `emplace_back`
   and `ASTNode::emplace_node` reject types outside the compile-time legacy
   allow-list in `LegacyChunkedAnyAllowList.h`; new semantic records must use
@@ -38,7 +37,10 @@ Last updated: 2026-08-31 after pull request boundary 13
 - `printArenaTelemetry` fills scratch, syntax, and semantic `AllocationDomain`
   stats. Syntax used/reserved bytes are forwarded from `gChunkedAnyStorage`;
   semantic used/reserved bytes come from DeclarationBuilder declaration and
-  entity arenas (`sizeof` 32 each). IR domain bytes remain unwired. String-table
+  entity arenas (`sizeof` 32 each). Semantic peak used/reserved bytes are
+  recorded at arena allocation, not at telemetry refresh. `ChunkedVector`
+  reserved bytes count retained chunk capacity across rollback. IR domain
+  bytes remain unwired. String-table
   entries/spelling bytes, InlineVector spills, scope count/current `ScopeId`,
   declaration/entity counts, and per-arena used/reserved bytes are reported
   under `--perf-stats`.
@@ -94,9 +96,9 @@ boundary 1 is started, not finished.
   - Boundary 1 "a scratch transaction can allocate declarations and types, fail,
     and leave every committed registry unchanged": scratch proven in doctest;
     `PublicationTransaction` covers DeclarationBuilder entity/declaration
-    arenas on the parser shadow path; `SymbolTableInsertUndo` now rolls back
-    wired free-function inserts when publication rejects; parser tentative
-    parsing and non-wired insert families remain open
+    arenas on the parser shadow path; publication reject leaves the
+    `SymbolTable` insertion in place because lookup remains authoritative;
+    parser tentative parsing and non-wired insert families remain open
   - Boundary 1 "discarded scratch bytes are measured and bounded": measured;
     no implementation limit yet
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected

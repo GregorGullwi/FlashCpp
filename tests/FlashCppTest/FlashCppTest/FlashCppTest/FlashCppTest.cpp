@@ -4499,7 +4499,9 @@ TEST_SUITE("FrontendContext") {
 
 		arena.pop_back();
 		CHECK(arena.usedBytes() == 0);
-		CHECK(arena.reservedBytes() == 0);
+		CHECK(arena.reservedBytes() ==
+			  static_cast<uint64_t>(DeclarationBuilder::kDeclarationArenaChunkSize) * sizeof(DeclarationRecord));
+		CHECK(arena.peakUsedBytes() == sizeof(DeclarationRecord));
 	}
 
 	TEST_CASE("ChunkedAnyVector reports used and reserved arena bytes") {
@@ -4560,20 +4562,22 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request{
 			global_scope, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, false, false, false};
 
-		PublicationTransaction transaction(builder);
-		const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
-		REQUIRE_FALSE(prepared.isRejected());
-		REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
-		context.refreshSemanticDomainStats();
-		const uint64_t peak_used = context.domainStats(AllocationDomain::Semantic).peak_bytes;
-		CHECK(peak_used == sizeof(DeclarationRecord) + sizeof(EntityRecord));
+		{
+			PublicationTransaction transaction(builder);
+			const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+			REQUIRE_FALSE(prepared.isRejected());
+			REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
+			transaction.rollback();
+		}
 
-		transaction.rollback();
 		context.refreshSemanticDomainStats();
 		const DomainByteStats semantic = context.domainStats(AllocationDomain::Semantic);
 		CHECK(semantic.current_bytes == 0);
-		CHECK(semantic.peak_bytes == peak_used);
-		CHECK(semantic.reserved_bytes == 0);
+		CHECK(semantic.peak_bytes == sizeof(DeclarationRecord) + sizeof(EntityRecord));
+		CHECK(semantic.reserved_bytes ==
+			  static_cast<uint64_t>(DeclarationBuilder::kDeclarationArenaChunkSize) * sizeof(DeclarationRecord) +
+			  static_cast<uint64_t>(DeclarationBuilder::kEntityArenaChunkSize) * sizeof(EntityRecord));
+		CHECK(semantic.peak_reserved_bytes == semantic.reserved_bytes);
 	}
 
 	TEST_CASE("FrontendContext syntax domain bytes track the legacy AST bridge") {
@@ -5106,7 +5110,7 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.entityCount() == 128u);
 	}
 
-	TEST_CASE("SymbolTable insertWithUndo rollback removes appended overload on publication reject") {
+	TEST_CASE("Parser publication reject retains SymbolTable insertion") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();
 		gTypesByName.clear();
@@ -5132,7 +5136,7 @@ float symtab_undo_conflict_row(int value);
 		const StringHandle name = StringTable::getOrInternStringHandle("symtab_undo_conflict_row");
 		const std::vector<ASTNode> overloads =
 			gSymbolTable.lookup_all(StringTable::getStringView(name));
-		CHECK(overloads.size() == 1u);
+		CHECK(overloads.size() == 2u);
 	}
 
 	TEST_CASE("commitParserFreeFunctionPublication rejects duplicate definitions without committing") {

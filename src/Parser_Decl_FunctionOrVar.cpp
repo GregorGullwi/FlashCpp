@@ -925,8 +925,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				shouldPublishParserFreeFunction(
 					func_node->as<FunctionDeclarationNode>(),
 					gSymbolTable.get_current_scope_type());
-			SymbolTableInsertUndo insert_undo;
-			if (!gSymbolTable.insertWithUndo(func_name, *func_node, insert_undo)) {
+			if (!gSymbolTable.insert(func_name, *func_node)) {
 				// Note: With overloading support, insert() now allows multiple functions with same name
 				// It only returns false for non-function duplicate symbols
 				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
@@ -941,12 +940,12 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					gSymbolTable.lastDeclaringScopeId(),
 					is_definition,
 					gSymbolTable);
-				if (publish_result.status == PublishStatus::Rejected) {
-					if (insert_undo.hasChanges()) {
-						gSymbolTable.rollbackInsert(insert_undo);
-					}
-				} else if (publish_result.status == PublishStatus::Created ||
-						   publish_result.status == PublishStatus::MergedRedeclaration) {
+				// Publication reject does not erase the SymbolTable insertion.
+				// Lookup remains authoritative until boundary 3A canonical types;
+				// diagnosing from the telemetry TypeId interner would reject
+				// distinct overloads that currently intern to one signature.
+				if (publish_result.status == PublishStatus::Created ||
+					publish_result.status == PublishStatus::MergedRedeclaration) {
 					recordDeclarationBuilderPublish();
 				}
 			}
