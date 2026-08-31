@@ -145,10 +145,11 @@ inline bool is_function_or_template_function(const ASTNode& node) {
 /// FunctionDeclarationNode or TemplateFunctionDeclarationNode
 /// Returns nullptr if the node is neither type
 inline const FunctionDeclarationNode* get_function_decl_node(const ASTNode& node) {
-	if (node.is<FunctionDeclarationNode>()) {
-		return &node.as<FunctionDeclarationNode>();
-	} else if (node.is<TemplateFunctionDeclarationNode>()) {
-		return &node.as<TemplateFunctionDeclarationNode>().function_decl_node();
+	if (const FunctionDeclarationNode* direct = node.get_if<FunctionDeclarationNode>()) {
+		return direct;
+	}
+	if (const TemplateFunctionDeclarationNode* tmpl = node.get_if<TemplateFunctionDeclarationNode>()) {
+		return &tmpl->function_decl_node();
 	}
 	return nullptr;
 }
@@ -163,10 +164,11 @@ inline const FunctionDeclarationNode* get_function_decl_node(
 
 /// Non-const version of get_function_decl_node
 inline FunctionDeclarationNode* get_function_decl_node_mut(ASTNode& node) {
-	if (node.is<FunctionDeclarationNode>()) {
-		return &node.as<FunctionDeclarationNode>();
-	} else if (node.is<TemplateFunctionDeclarationNode>()) {
-		return &node.as<TemplateFunctionDeclarationNode>().function_decl_node();
+	if (FunctionDeclarationNode* direct = node.get_if<FunctionDeclarationNode>()) {
+		return direct;
+	}
+	if (TemplateFunctionDeclarationNode* tmpl = node.get_if<TemplateFunctionDeclarationNode>()) {
+		return &tmpl->function_decl_node();
 	}
 	return nullptr;
 }
@@ -459,6 +461,41 @@ private:
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 };
+
+inline bool is_variable_or_template_variable(const ASTNode& node) {
+	return node.is<VariableDeclarationNode>() || node.is<TemplateVariableDeclarationNode>();
+}
+
+/// Get the VariableDeclarationNode from an ASTNode that is either a
+/// VariableDeclarationNode or TemplateVariableDeclarationNode.
+/// Returns nullptr if the node is neither type.
+inline const VariableDeclarationNode* get_variable_decl_node(const ASTNode& node) {
+	if (const VariableDeclarationNode* direct = node.get_if<VariableDeclarationNode>()) {
+		return direct;
+	}
+	if (const TemplateVariableDeclarationNode* tmpl = node.get_if<TemplateVariableDeclarationNode>()) {
+		return &tmpl->variable_decl_node();
+	}
+	return nullptr;
+}
+
+inline const VariableDeclarationNode* get_variable_decl_node(const std::optional<ASTNode>& node) {
+	if (!node.has_value()) {
+		return nullptr;
+	}
+	return get_variable_decl_node(*node);
+}
+
+/// Non-const version of get_variable_decl_node
+inline VariableDeclarationNode* get_variable_decl_node_mut(ASTNode& node) {
+	if (VariableDeclarationNode* direct = node.get_if<VariableDeclarationNode>()) {
+		return direct;
+	}
+	if (TemplateVariableDeclarationNode* tmpl = node.get_if<TemplateVariableDeclarationNode>()) {
+		return &tmpl->variable_decl_node();
+	}
+	return nullptr;
+}
 
 // Structured binding declaration node (C++17 feature)
 // Represents: auto [a, b, c] = expr;

@@ -12,13 +12,18 @@
 // This template centralizes tolerant extraction from both forms.
 template <typename T>
 inline const T* tryGetNode(const ASTNode& node) {
-	if (node.is<ExpressionNode>()) {
-		return std::get_if<T>(&node.as<ExpressionNode>());
+	if (const ExpressionNode* wrapper = node.get_if<ExpressionNode>()) {
+		return std::get_if<T>(wrapper);
 	}
-	if (node.is<T>()) {
-		return &node.as<T>();
+	return node.get_if<T>();
+}
+
+template <typename T>
+inline T* tryGetNodeMut(ASTNode& node) {
+	if (ExpressionNode* wrapper = node.get_if<ExpressionNode>()) {
+		return std::get_if<T>(wrapper);
 	}
-	return nullptr;
+	return node.get_if<T>();
 }
 
 inline const IdentifierNode* tryGetIdentifier(const ASTNode& node) {

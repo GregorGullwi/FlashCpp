@@ -92,6 +92,24 @@ public:
 		return type_info_ == &typeid(T);
 	}
 
+	// Non-throwing alternative to as<T>(). Returns nullptr when the active type
+	// differs, like std::get_if on a variant alternative.
+	template <typename T>
+	T* get_if() {
+		if (!is<T>()) {
+			return nullptr;
+		}
+		return static_cast<T*>(raw_ptr_);
+	}
+
+	template <typename T>
+	const T* get_if() const {
+		if (!is<T>()) {
+			return nullptr;
+		}
+		return static_cast<const T*>(raw_ptr_);
+	}
+
 	template <typename T>
 	T& as() {
 		if (!is<T>()) {
