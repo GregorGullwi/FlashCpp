@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-31 after pull request boundary 13
+Last updated: 2026-08-31 after pull request boundary 14
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 13 are complete; architecture
+  and entities). Pull request boundaries 1 through 14 are complete; architecture
   boundary 1 exit criteria remain open through follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
   `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
@@ -28,8 +28,16 @@ Last updated: 2026-08-31 after pull request boundary 13
   and `ASTNode::emplace_node` reject types outside the compile-time legacy
   allow-list in `LegacyChunkedAnyAllowList.h`; new semantic records must use
   `FrontendContext` typed arenas.
-- Persistent scopes still live in `SymbolTable` (cursor exit, `ScopeId` on
-  insert and lookup). `FrontendContext` publishes that state for telemetry.
+- Persistent scope **metadata** (`ScopeId`, parent, `ScopeType`, depth,
+  namespace handle) is stored in a FrontendContext-owned
+  `ChunkedVector<ScopeRecord, 256>` (`sizeof(ScopeRecord) == 16`). `Parser::parse()`
+  reconstructs `gSymbolTable` then `bindPersistentScopePublication` opts that
+  table in. `AstToIr::symbol_table` does not opt in. Lookup, symbol maps,
+  using-directives, and aliases remain on `SymbolTable::scopes_`. Publication
+  without an active `FrontendContext` is `InternalError`. `publishScopeState` is
+  deleted; `scopeCount()` / `currentScopeId()` on `FrontendContext` are
+  arena-backed. Named later deletion: `Scope::{scope_id, parent_scope_id,
+  scope_type, depth, namespace_handle}` once lookup reads `ScopeRecord`.
   `SymbolTable::insertCore` stamps `DeclarationNode::lexical_scope_id` (and
   function, template-function, variable, template-variable, and bare declaration
   nodes) at the shared insert choke point; enum/struct and other symbol kinds
@@ -42,10 +50,11 @@ Last updated: 2026-08-31 after pull request boundary 13
   reserved bytes count retained chunk capacity across rollback. IR domain
   bytes remain unwired. String-table
   entries/spelling bytes, InlineVector spills, scope count/current `ScopeId`,
-  declaration/entity counts, and per-arena used/reserved bytes are reported
-  under `--perf-stats`.
+  scope-arena used/reserved bytes, declaration/entity counts, and per-arena
+  used/reserved bytes are reported under `--perf-stats`. Sampled compiler tests
+  peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
 
-## Pull request boundary status (1–13)
+## Pull request boundary status (1–14)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -62,6 +71,7 @@ Last updated: 2026-08-31 after pull request boundary 13
 | 11 | `SymbolTableInsertUndo` on wired free-function inserts, parser rollback when publication rejects |
 | 12 | `DeclarationNode::lexical_scope_id` stamped at `SymbolTable` insert/replace/insertGlobal choke point (function, template-function, variable, template-variable, and bare declaration nodes) |
 | 13 | Syntax and semantic allocation-domain used/reserved bytes reported through `FrontendContext` from `gChunkedAnyStorage` and DeclarationBuilder arenas |
+| 14 | FrontendContext-owned `ScopeRecord` arena; opt-in dual-write from `SymbolTable` enter/exit/clear; `publishScopeState` deleted |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -104,15 +114,18 @@ boundary 1 is started, not finished.
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
     InlineVector spill counts are reported through FrontendContext": syntax,
     semantic, and scratch domain used/reserved bytes now report; IR domain and
-    per-type AST family counts remain unwired
+    per-type AST family counts remain unwired; scope-arena used/reserved bytes
+    now report separately from allocation domains
+  - Boundary 1 "persistent scopes owned by FrontendContext rather than
+    SymbolTable": compact `ScopeRecord` metadata is context-owned; symbol maps
+    still live on `SymbolTable::scopes_`
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
-    free-function set, full template-facade coverage, scope storage fully owned by
-    `FrontendContext` rather than `SymbolTable`, enum/struct AST scope stamping):
-    follow-on boundary-1 work
+    free-function set, full template-facade coverage, enum/struct AST scope
+    stamping): follow-on boundary-1 work
 
 ## Effort estimate
 
-- Implementation effort completed overall: 19-22%, confidence medium
+- Implementation effort completed overall: 20-23%, confidence medium
 
 ## Remaining work
 
@@ -129,9 +142,10 @@ Then, in order:
 
 1. Continue architecture boundary 1: expand shadow wire or merge coverage
    (default arguments, exception specifications, friends, templates) only
-   after canonical `TypeId` exists; move scope storage into `FrontendContext`;
-   wire IR domain byte accounting and per-type AST family counts; stamp
-   `ScopeId` on remaining symbol-table node kinds (enum, struct, etc.).
+   after canonical `TypeId` exists; make lookup read `ScopeRecord` and delete
+   `Scope` metadata fields; wire IR domain byte accounting and per-type AST
+   family counts; stamp `ScopeId` on remaining symbol-table node kinds (enum,
+   struct, typedef).
 
 Named follow-ups carried forward:
 
@@ -164,6 +178,10 @@ Current findings only; delete entries when their resolution lands.
   `SemanticAnalysis:*QueryTracksAnalysisState` reproduces on clean `main`;
   details and suspected shared-static cause live in docs/KNOWN_ISSUES.md.
   Owner: sema query lifecycle.
+- Pre-existing unity-suite failure
+  `Templates:InheritedStaticStructMemberUsesInstantiatedOwner` throws
+  `TemplateEngine not attached to Parser`; the test constructs a `Parser`
+  without `attachTemplateEngine`. Owner: doctest template-engine fixture.
 - Declaration-parse errors can be masked by the top-level expression-statement
   fallback; details and the conversion rule for affected sites live in
   docs/KNOWN_ISSUES.md. Owner: parser declaration dispatch.

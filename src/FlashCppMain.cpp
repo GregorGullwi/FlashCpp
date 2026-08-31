@@ -174,7 +174,12 @@ static void printOutsideDiagnosticTelemetry() {
 			  diagnosticsEmittedOutsideEngineCount());
 	printMigrationTelemetry();
 	if (FrontendContext* active = FrontendContext::active()) {
-		active->publishScopeState(gSymbolTable.currentScopeId(), gSymbolTable.scopeCount());
+		if (gSymbolTable.persistentScopePublicationEnabled()) {
+			if (active->scopeRecordCount() != gSymbolTable.scopeCount() ||
+				active->currentScopeId() != gSymbolTable.currentScopeId()) {
+				throw InternalError("FrontendContext scope arena diverged from SymbolTable");
+			}
+		}
 		active->printArenaTelemetry();
 	}
 }

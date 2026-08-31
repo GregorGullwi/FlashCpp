@@ -2,14 +2,17 @@
 
 #include "ArenaDomains.h"
 #include "ChunkedString.h"
+#include "CompileError.h"
 #include "DeclarationBuilder.h"
 #include "FrontendIds.h"
 #include "InlineVector.h"
 #include "Log.h"
+#include "ScopeRecord.h"
 #include "StringTable.h"
 
 #include <array>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 // Per-translation-unit front-end shell. Active-context lookup uses a thread-local
@@ -18,6 +21,7 @@
 class FrontendContext {
 public:
 	FrontendContext() {
+		seedGlobalScopeRecord();
 		pushActive(this);
 		refreshScratchDomainStats();
 	}
@@ -28,6 +32,8 @@ public:
 
 	FrontendContext(const FrontendContext&) = delete;
 	FrontendContext& operator=(const FrontendContext&) = delete;
+	FrontendContext(FrontendContext&&) = delete;
+	FrontendContext& operator=(FrontendContext&&) = delete;
 
 	static FrontendContext* active() {
 		std::vector<FrontendContext*>& stack = activeContextStack();
@@ -71,17 +77,85 @@ public:
 		return FlashCpp::inlineVectorSpillCount();
 	}
 
-	void publishScopeState(ScopeId current_scope_id, std::size_t scope_count) {
-		current_scope_id_ = current_scope_id;
-		scope_count_ = scope_count;
-	}
-
 	ScopeId currentScopeId() const {
 		return current_scope_id_;
 	}
 
 	std::size_t scopeCount() const {
-		return scope_count_;
+		return scope_records_.size();
+	}
+
+	std::size_t scopeRecordCount() const {
+		return scope_records_.size();
+	}
+
+	uint64_t scopeArenaUsedBytes() const {
+		return scope_records_.usedBytes();
+	}
+
+	uint64_t scopeArenaReservedBytes() const {
+		return scope_records_.reservedBytes();
+	}
+
+	const ScopeRecord* findScopeRecord(ScopeId scope_id) const {
+		if (!scope_id || scope_id.value > scope_records_.size()) {
+			return nullptr;
+		}
+		const ScopeRecord& record = scope_records_[scope_id.value - 1];
+		if (record.id != scope_id) {
+			return nullptr;
+		}
+		return &record;
+	}
+
+	const ScopeRecord& scopeRecord(ScopeId scope_id) const {
+		const ScopeRecord* record = findScopeRecord(scope_id);
+		if (record == nullptr) {
+			throw InternalError("FrontendContext: ScopeId does not match a persistent scope record");
+		}
+		return *record;
+	}
+
+	void recordPersistentScopeEnter(
+		ScopeId id,
+		ScopeId parent_id,
+		ScopeType scope_type,
+		uint32_t depth,
+		NamespaceHandle namespace_handle) {
+		if (!id || id.value != static_cast<uint32_t>(scope_records_.size() + 1u)) {
+			throw InternalError("FrontendContext: persistent ScopeId diverged from the scope arena");
+		}
+		if (!parent_id || findScopeRecord(parent_id) == nullptr) {
+			throw InternalError("FrontendContext: published scope parent is not in the arena");
+		}
+		ScopeRecord record{};
+		record.id = id;
+		record.parent_id = parent_id;
+		record.depth = depth;
+		record.namespace_handle = namespace_handle;
+		record.scope_type = scope_type;
+		record.reserved = 0;
+		scope_records_.push_back(record);
+		current_scope_id_ = id;
+	}
+
+	void setPersistentScopeCursor(ScopeId current_scope_id) {
+		if (findScopeRecord(current_scope_id) == nullptr) {
+			throw InternalError("FrontendContext: persistent scope cursor is not in the arena");
+		}
+		current_scope_id_ = current_scope_id;
+	}
+
+	void resetPersistentScopes() {
+		while (scope_records_.size() > 1) {
+			scope_records_.pop_back();
+		}
+		if (scope_records_.empty()) {
+			seedGlobalScopeRecord();
+			return;
+		}
+		scope_records_[0] = makeGlobalScopeRecord();
+		current_scope_id_ = ScopeId{1};
 	}
 
 	DeclarationBuilder& declarationBuilder() {
@@ -179,9 +253,14 @@ public:
 				  FlashCpp::inlineVectorSpillCount());
 		FLASH_LOG(General, Info,
 				  "  persistent scopes (count/current ScopeId): ",
-				  scope_count_,
+				  scope_records_.size(),
 				  "/",
 				  current_scope_id_.value);
+		FLASH_LOG(General, Info,
+				  "  scope arena used/reserved bytes: ",
+				  scope_records_.usedBytes(),
+				  "/",
+				  scope_records_.reservedBytes());
 		FLASH_LOG(General, Info,
 				  "  declarations/entities: ",
 				  declaration_builder_.declarationCount(),
@@ -230,13 +309,24 @@ private:
 		}
 	}
 
+	void seedGlobalScopeRecord() {
+		if (!scope_records_.empty()) {
+			throw InternalError("FrontendContext: scope arena already contains records");
+		}
+		scope_records_.push_back(makeGlobalScopeRecord());
+		current_scope_id_ = ScopeId{1};
+	}
+
 	std::array<DomainByteStats, 4> domain_stats_{};
 	MonotonicScratchArena scratch_arena_;
 	ScratchProbeRegistry scratch_registry_;
 	DeclarationBuilder declaration_builder_;
-	ScopeId current_scope_id_;
-	std::size_t scope_count_ = 1;
+	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
+	ScopeId current_scope_id_{1};
 };
+
+static_assert(!std::is_copy_constructible_v<FrontendContext>);
+static_assert(!std::is_move_constructible_v<FrontendContext>);
 
 inline FrontendContext* frontendContext() {
 	return FrontendContext::active();

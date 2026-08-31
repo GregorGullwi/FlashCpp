@@ -3,6 +3,7 @@
 #include "ChunkedAnyVector.h"
 #include "FrontendIds.h"
 #include "NamespaceRegistry.h"
+#include "ScopeRecord.h"
 #include "StringTable.h"
 
 #include <cstddef>
@@ -18,8 +19,6 @@ class FunctionDeclarationNode;
 class PublicationTransaction;
 class SymbolTable;
 class TypeSpecifierNode;
-
-enum class ScopeType;
 
 // Map NamespaceRegistry identity onto OwnerId. Index 0 (global) becomes OwnerId{1};
 // invalid handles remain OwnerId{}. Spelling is never part of this identity.

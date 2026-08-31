@@ -28,6 +28,41 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
+namespace {
+void isolateGlobalSymbolTable() {
+	gSymbolTable = SymbolTable();
+}
+
+struct GlobalSymbolTableIsolator : doctest::IReporter {
+	explicit GlobalSymbolTableIsolator(const doctest::ContextOptions&) {}
+
+	void report_query(const doctest::QueryData&) override {}
+	void test_run_start() override {
+		isolateGlobalSymbolTable();
+	}
+	void test_run_end(const doctest::TestRunStats&) override {
+		isolateGlobalSymbolTable();
+	}
+	void test_case_start(const doctest::TestCaseData&) override {
+		isolateGlobalSymbolTable();
+	}
+	void test_case_reenter(const doctest::TestCaseData&) override {
+		isolateGlobalSymbolTable();
+	}
+	void test_case_end(const doctest::CurrentTestCaseStats&) override {
+		isolateGlobalSymbolTable();
+	}
+	void test_case_exception(const doctest::TestCaseException&) override {}
+	void subcase_start(const doctest::SubcaseSignature&) override {}
+	void subcase_end() override {}
+	void log_assert(const doctest::AssertData&) override {}
+	void log_message(const doctest::MessageData&) override {}
+	void test_case_skipped(const doctest::TestCaseData&) override {}
+};
+
+REGISTER_LISTENER("global_symbol_table_isolator", 1, GlobalSymbolTableIsolator);
+} // namespace
+
 static CompileContext compile_context;
 static FileTree file_tree;
 
@@ -4477,11 +4512,222 @@ TEST_SUITE("FrontendContext") {
 				  .value != 0u);
 	}
 
-	TEST_CASE("FrontendContext publishes persistent scope telemetry") {
+	static void requireScopeRecordMatches(
+		const FrontendContext& context,
+		const SymbolTable& table,
+		ScopeId id) {
+		const Scope* scope = table.findScopeById(id);
+		REQUIRE(scope != nullptr);
+		const ScopeRecord& record = context.scopeRecord(id);
+		CHECK(record.id == scope->scope_id);
+		CHECK(record.parent_id == scope->parent_scope_id);
+		CHECK(record.depth == scope->depth);
+		CHECK(record.scope_type == scope->scope_type);
+		CHECK(record.namespace_handle == scope->namespace_handle);
+		CHECK(record.reserved == 0);
+	}
+
+	TEST_CASE("FrontendContext owns a global ScopeRecord at construction") {
 		FrontendContext context;
-		context.publishScopeState(ScopeId{3}, 4);
-		CHECK(context.currentScopeId().value == 3u);
-		CHECK(context.scopeCount() == 4u);
+		REQUIRE(context.scopeRecordCount() == 1u);
+		REQUIRE(context.scopeCount() == 1u);
+		REQUIRE(context.currentScopeId().value == 1u);
+		const ScopeRecord& global = context.scopeRecord(ScopeId{1});
+		CHECK(global.id.value == 1u);
+		CHECK(!global.parent_id);
+		CHECK(global.depth == 1u);
+		CHECK(global.scope_type == ScopeType::Global);
+		CHECK(global.namespace_handle.index == NamespaceHandle::INVALID_HANDLE);
+		CHECK(global.reserved == 0);
+		CHECK(context.scopeArenaUsedBytes() == sizeof(ScopeRecord));
+		CHECK(context.scopeArenaReservedBytes() ==
+			  static_cast<uint64_t>(kScopeArenaChunkSize) * sizeof(ScopeRecord));
+		CHECK(context.findScopeRecord(ScopeId{2}) == nullptr);
+	}
+
+	TEST_CASE("SymbolTable enter/exit/clear publish matching ScopeRecords into the active FrontendContext") {
+		FrontendContext context;
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+		requireScopeRecordMatches(context, table, table.currentScopeId());
+
+		table.enter_scope(ScopeType::Block);
+		const ScopeId block_id = table.currentScopeId();
+		REQUIRE(block_id.value == 2u);
+		REQUIRE(context.scopeRecordCount() == table.scopeCount());
+		REQUIRE(context.currentScopeId() == block_id);
+		requireScopeRecordMatches(context, table, block_id);
+		CHECK(context.scopeRecord(block_id).parent_id.value == 1u);
+		CHECK(context.scopeRecord(block_id).scope_type == ScopeType::Block);
+
+		const StringHandle ns_name = StringTable::getOrInternStringHandle("ScopeRecordNs");
+		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_name);
+		table.enter_namespace(ns_handle);
+		const ScopeId namespace_id = table.currentScopeId();
+		REQUIRE(namespace_id.value == 3u);
+		REQUIRE(context.scopeRecordCount() == 3u);
+		REQUIRE(context.currentScopeId() == namespace_id);
+		requireScopeRecordMatches(context, table, namespace_id);
+		CHECK(context.scopeRecord(namespace_id).scope_type == ScopeType::Namespace);
+		CHECK(context.scopeRecord(namespace_id).namespace_handle == ns_handle);
+
+		table.exit_scope();
+		CHECK(table.currentScopeId() == block_id);
+		CHECK(context.currentScopeId() == block_id);
+		CHECK(context.scopeRecordCount() == 3u);
+		CHECK(table.scopeCount() == 3u);
+		requireScopeRecordMatches(context, table, namespace_id);
+
+		table.exit_scope();
+		CHECK(table.currentScopeId().value == 1u);
+		CHECK(context.currentScopeId().value == 1u);
+		CHECK(context.scopeRecordCount() == 3u);
+
+		table.enter_scope(ScopeType::Function);
+		const ScopeId function_id = table.currentScopeId();
+		REQUIRE(function_id.value == 4u);
+		REQUIRE(context.scopeRecordCount() == 4u);
+		requireScopeRecordMatches(context, table, function_id);
+		CHECK(context.scopeRecord(function_id).scope_type == ScopeType::Function);
+
+		table.clear();
+		CHECK(table.scopeCount() == 1u);
+		CHECK(context.scopeRecordCount() == 1u);
+		CHECK(context.currentScopeId().value == 1u);
+		requireScopeRecordMatches(context, table, ScopeId{1});
+		CHECK(context.findScopeRecord(block_id) == nullptr);
+	}
+
+	TEST_CASE("SymbolTable enter_scope without an active FrontendContext still succeeds") {
+		SymbolTable table;
+		table.enter_scope(ScopeType::Block);
+		CHECK(table.currentScopeId().value == 2u);
+		CHECK(table.scopeCount() == 2u);
+		table.exit_scope();
+		CHECK(table.currentScopeId().value == 1u);
+		CHECK(table.scopeCount() == 2u);
+	}
+
+	TEST_CASE("SymbolTable enablePersistentScopePublication requires an active FrontendContext") {
+		SymbolTable table;
+		bool threw = false;
+		try {
+			table.enablePersistentScopePublication();
+		} catch (const InternalError&) {
+			threw = true;
+		}
+		CHECK(threw);
+		table.enter_scope(ScopeType::Block);
+		CHECK(table.scopeCount() == 2u);
+	}
+
+	TEST_CASE("a second SymbolTable does not publish into the active FrontendContext") {
+		FrontendContext context;
+		SymbolTable publisher;
+		publisher.enablePersistentScopePublication();
+		publisher.enter_scope(ScopeType::Block);
+		const std::size_t published = context.scopeRecordCount();
+		REQUIRE(published == 2u);
+
+		SymbolTable other;
+		other.enter_scope(ScopeType::Function);
+		other.enter_scope(ScopeType::Block);
+		other.exit_scope();
+		CHECK(context.scopeRecordCount() == published);
+		CHECK(context.currentScopeId().value == 2u);
+		CHECK(other.scopeCount() == 3u);
+	}
+
+	TEST_CASE("nested FrontendContext seeds its own ScopeRecord arena") {
+		FrontendContext outer;
+		SymbolTable outer_table;
+		outer_table.enablePersistentScopePublication();
+		outer_table.enter_scope(ScopeType::Block);
+		REQUIRE(outer.scopeRecordCount() == 2u);
+		{
+			FrontendContext inner;
+			CHECK(FrontendContext::active() == &inner);
+			CHECK(inner.scopeRecordCount() == 1u);
+			CHECK(outer.scopeRecordCount() == 2u);
+			SymbolTable inner_table;
+			inner_table.enablePersistentScopePublication();
+			inner_table.enter_scope(ScopeType::Function);
+			CHECK(inner.scopeRecordCount() == 2u);
+			CHECK(inner.currentScopeId().value == 2u);
+			CHECK(outer.scopeRecordCount() == 2u);
+			CHECK(outer.currentScopeId().value == 2u);
+		}
+		CHECK(FrontendContext::active() == &outer);
+		CHECK(outer.scopeRecordCount() == 2u);
+		CHECK(outer.currentScopeId().value == 2u);
+	}
+
+	TEST_CASE("persistent ScopeId divergence from the arena is an InternalError") {
+		FrontendContext context;
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+		table.enter_scope(ScopeType::Block);
+		context.resetPersistentScopes();
+		REQUIRE(context.scopeRecordCount() == 1u);
+		REQUIRE(table.scopeCount() == 2u);
+		bool threw = false;
+		try {
+			table.enter_scope(ScopeType::Function);
+		} catch (const InternalError&) {
+			threw = true;
+		}
+		CHECK(threw);
+	}
+
+	TEST_CASE("SymbolTable enablePersistentScopePublication requires a global-only table and arena") {
+		FrontendContext context;
+		SymbolTable table;
+		table.enter_scope(ScopeType::Block);
+		bool threw_after_enter = false;
+		try {
+			table.enablePersistentScopePublication();
+		} catch (const InternalError&) {
+			threw_after_enter = true;
+		}
+		CHECK(threw_after_enter);
+
+		SymbolTable publisher;
+		publisher.enablePersistentScopePublication();
+		publisher.enter_scope(ScopeType::Function);
+		REQUIRE(context.scopeRecordCount() == 2u);
+		SymbolTable too_late;
+		bool threw_busy_context = false;
+		try {
+			too_late.enablePersistentScopePublication();
+		} catch (const InternalError&) {
+			threw_busy_context = true;
+		}
+		CHECK(threw_busy_context);
+	}
+
+	TEST_CASE("Parser parse publishes gSymbolTable scopes into the active FrontendContext") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		FrontendContext context;
+		const std::string code = "int main() { return 0; }";
+		CompileContext test_context;
+		test_context.setInputFile("scope_record_parse_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+		CHECK(gSymbolTable.persistentScopePublicationEnabled());
+		CHECK(context.scopeRecordCount() == gSymbolTable.scopeCount());
+		CHECK(context.scopeRecordCount() > 1u);
+		CHECK(context.currentScopeId() == gSymbolTable.currentScopeId());
+		requireScopeRecordMatches(context, gSymbolTable, gSymbolTable.currentScopeId());
 	}
 
 	TEST_CASE("ChunkedVector reports used and reserved arena bytes") {
