@@ -186,12 +186,12 @@ inline void stampLexicalScopeOnDeclaration(ASTNode& node, ScopeId scope_id) {
 	if (!scope_id) {
 		return;
 	}
-	if (node.is<DeclarationNode>()) {
-		node.as<DeclarationNode>().set_lexical_scope_id(scope_id);
+	if (FunctionDeclarationNode* func = get_function_decl_node_mut(node)) {
+		func->decl_node().set_lexical_scope_id(scope_id);
 		return;
 	}
-	if (node.is<FunctionDeclarationNode>()) {
-		node.as<FunctionDeclarationNode>().decl_node().set_lexical_scope_id(scope_id);
+	if (node.is<DeclarationNode>()) {
+		node.as<DeclarationNode>().set_lexical_scope_id(scope_id);
 	}
 }
 
