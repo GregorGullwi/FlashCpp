@@ -17,16 +17,11 @@
 #include "Log.h"
 #include "StringBuilder.h"
 #include "FrontendIds.h"
+#include "ScopeRecord.h"
 #include "CompileError.h"
 #include "NamespaceRegistry.h"
 #include "TemplateRegistry.h"
-
-enum class ScopeType {
-	Global,
-	Function,
-	Block,
-	Namespace,
-};
+#include "ScopePublication.h"
 
 struct ScopeHandle {
 	size_t scope_level = 0;
@@ -221,6 +216,12 @@ public:
 
 	std::size_t scopeCount() const {
 		return scopes_.size();
+	}
+
+	void enablePersistentScopePublication();
+
+	bool persistentScopePublicationEnabled() const {
+		return publish_persistent_scopes_;
 	}
 
 	std::size_t activeScopeDepth() const {
@@ -1332,6 +1333,7 @@ public:
 		scope.scope_id = new_scope_id;
 		scope.parent_scope_id = parent_id;
 		current_scope_index_ = scopes_.size() - 1;
+		publishPersistentScopeEnterIfEnabled();
 	}
 
 	void enter_namespace(NamespaceHandle ns_handle) {
@@ -1353,6 +1355,7 @@ public:
 		}
 		scopes_.push_back(std::move(scope));
 		current_scope_index_ = scopes_.size() - 1;
+		publishPersistentScopeEnterIfEnabled();
 	}
 
 	void enter_namespace(std::string_view namespace_name) {
@@ -1370,6 +1373,7 @@ public:
 			scope.scope_id = new_scope_id;
 			scope.parent_scope_id = parent_id;
 			current_scope_index_ = scopes_.size() - 1;
+			publishPersistentScopeEnterIfEnabled();
 			return;
 		}
 		enter_namespace(ns_handle);
@@ -1377,14 +1381,17 @@ public:
 
 	void exit_scope() {
 		if (current_scope_index_ == 0) {
+			publishPersistentScopeCursorIfEnabled();
 			return;
 		}
 		const Scope& current = scopes_[current_scope_index_];
 		if (!current.parent_scope_id) {
 			current_scope_index_ = 0;
+			publishPersistentScopeCursorIfEnabled();
 			return;
 		}
 		current_scope_index_ = current.parent_scope_id.value - 1;
+		publishPersistentScopeCursorIfEnabled();
 	}
 
 	// Add a using directive to the current scope
@@ -1700,9 +1707,37 @@ public:
 		interned_strings_.clear();
 		// Recreate the string allocator to fully release all memory
 		string_allocator_ = ChunkedStringAllocator(64 * 1024);
+		resetPersistentScopesIfEnabled();
 	}
 
 private:
+	void publishPersistentScopeEnterIfEnabled() {
+		if (!publish_persistent_scopes_) {
+			return;
+		}
+		const Scope& scope = scopes_.back();
+		publishPersistentScopeEnter(
+			scope.scope_id,
+			scope.parent_scope_id,
+			scope.scope_type,
+			scope.depth,
+			scope.namespace_handle);
+	}
+
+	void publishPersistentScopeCursorIfEnabled() {
+		if (!publish_persistent_scopes_) {
+			return;
+		}
+		publishPersistentScopeCursor(currentScopeId());
+	}
+
+	void resetPersistentScopesIfEnabled() {
+		if (!publish_persistent_scopes_) {
+			return;
+		}
+		resetPersistentScopes();
+	}
+
 	static Scope makeInitialGlobalScope() {
 		Scope global_scope(ScopeType::Global, 1);
 		global_scope.scope_id = ScopeId{1};
@@ -1714,6 +1749,7 @@ private:
 	std::size_t current_scope_index_ = 0;
 	mutable ScopeId last_lookup_scope_id_;
 	ScopeId last_declaring_scope_id_;
+	bool publish_persistent_scopes_ = false;
 	// Persistent map of namespace contents
 	// Uses NamespaceHandle as key to avoid string concatenation
 	// Maps: namespace_handle -> (symbol_name -> vector<ASTNode>) to support overloading

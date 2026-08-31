@@ -561,6 +561,7 @@ public:
 		resetTemplateInstantiationCounters();
 		gSymbolTable = SymbolTable();
 		gSymbolTable.setDiagnosticEngine(context_.diagnostics());
+		bindPersistentScopePublication(gSymbolTable);
 		register_builtin_functions();
 		ParseResult parseResult;
 #if WITH_PARSER_RUNTIME_STATS

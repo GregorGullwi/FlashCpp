@@ -96,6 +96,7 @@
 #include "ParserProfilingReport.cpp"
 #include "ArenaDomains.cpp"
 #include "DeclarationBuilder.cpp"
+#include "ScopePublication.cpp"
 #endif
 
 #if defined(UNITY_SHARD_PARSER_CORE)

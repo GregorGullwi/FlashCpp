@@ -257,6 +257,9 @@
     <ClCompile Include="src\DeclarationBuilder.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\ScopePublication.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\Globals.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
@@ -457,6 +460,8 @@
     <ClInclude Include="src\ArenaDomains.h" />
     <ClInclude Include="src\DeclarationBuilder.h" />
     <ClInclude Include="src\FrontendContext.h" />
+    <ClInclude Include="src\ScopeRecord.h" />
+    <ClInclude Include="src\ScopePublication.h" />
     <ClInclude Include="src\LegacyChunkedAnyStoragePolicy.h" />
     <ClInclude Include="src\LegacyChunkedAnyStoragePolicyComplete.h" />
     <ClInclude Include="src\TemplateEngine.h" />
