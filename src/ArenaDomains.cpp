@@ -1,17 +1,11 @@
-#include "ArenaDomains.h"
-
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
+#include <limits>
+#include <memory>
 #include <new>
 
-namespace {
-
-std::size_t alignUp(std::size_t value, std::size_t alignment) {
-	return (value + alignment - 1U) & ~(alignment - 1U);
-}
-
-} // namespace
+#include "ArenaDomains.h"
+#include "CompileError.h"
 
 uint64_t MonotonicScratchArena::reservedBytes() const {
 	uint64_t total = 0;
@@ -26,32 +20,61 @@ void* MonotonicScratchArena::allocate(std::size_t size, std::size_t alignment) {
 		return nullptr;
 	}
 	if (alignment == 0 || (alignment & (alignment - 1U)) != 0) {
-		assert(false && "MonotonicScratchArena alignment must be a power of two");
-		return nullptr;
+		throw InternalError("MonotonicScratchArena alignment must be a power of two");
 	}
 
-	if (blocks_.empty()) {
-		const std::size_t initial_capacity = std::max<std::size_t>(4096U, size + alignment);
-		blocks_.push_back(Block{std::vector<std::byte>(initial_capacity), 0});
+	const uint64_t remaining_work = byte_limit_ - current_bytes_ - discarded_bytes_;
+	if (size > remaining_work || alignment - 1U > std::numeric_limits<std::size_t>::max() - size) {
+		reportAllocationLimit();
 	}
 
-	for (;;) {
+	if (!blocks_.empty()) {
 		Block& block = blocks_.back();
-		const std::size_t aligned_used = alignUp(block.used, alignment);
-		if (aligned_used + size <= block.data.size()) {
-			const std::size_t allocated_bytes = (aligned_used + size) - block.used;
-			void* result = block.data.data() + aligned_used;
-			block.used = aligned_used + size;
+		void* result = block.data.data() + block.used;
+		std::size_t space = block.data.size() - block.used;
+		if (std::align(alignment, size, result, space) != nullptr) {
+			const std::size_t aligned_used = static_cast<std::byte*>(result) - block.data.data();
+			const std::size_t allocated_bytes = aligned_used - block.used + size;
+			if (allocated_bytes > remaining_work) {
+				reportAllocationLimit();
+			}
+			block.used += allocated_bytes;
 			current_bytes_ += allocated_bytes;
 			peak_bytes_ = std::max(peak_bytes_, current_bytes_);
-			peak_reserved_bytes_ = std::max(peak_reserved_bytes_, reservedBytes());
 			return result;
 		}
-
-		const std::size_t block_capacity = std::max<std::size_t>(4096U, size + alignment);
-		blocks_.push_back(Block{std::vector<std::byte>(block_capacity), 0});
-		peak_reserved_bytes_ = std::max(peak_reserved_bytes_, reservedBytes());
 	}
+
+	const uint64_t reserved = reservedBytes();
+	const uint64_t remaining_reservation = byte_limit_ - reserved;
+	const std::size_t required_capacity = size + alignment - 1U;
+	if (size > remaining_reservation) {
+		reportAllocationLimit();
+	}
+	const std::size_t block_capacity = static_cast<std::size_t>(std::min<uint64_t>(
+		std::max<std::size_t>(4096U, required_capacity), remaining_reservation));
+	Block next{std::vector<std::byte>(block_capacity), 0};
+	void* result = next.data.data();
+	std::size_t space = next.data.size();
+	if (std::align(alignment, size, result, space) == nullptr) {
+		reportAllocationLimit();
+	}
+	const std::size_t allocated_bytes = static_cast<std::byte*>(result) - next.data.data() + size;
+	if (allocated_bytes > remaining_work) {
+		reportAllocationLimit();
+	}
+	next.used = allocated_bytes;
+	blocks_.push_back(std::move(next));
+	current_bytes_ += allocated_bytes;
+	peak_bytes_ = std::max(peak_bytes_, current_bytes_);
+	peak_reserved_bytes_ = std::max(peak_reserved_bytes_, reserved + block_capacity);
+	return result;
+}
+
+[[noreturn]] void MonotonicScratchArena::reportAllocationLimit() {
+	throw makeStructuredCompileError(
+		diagnostics_, DiagnosticId::ScratchAllocationLimit, DiagnosticSeverity::Fatal,
+		SourceLocation{}, "Scratch allocation budget exhausted", {});
 }
 
 ScratchArenaState MonotonicScratchArena::mark() const {

@@ -4100,7 +4100,201 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 }
 
 TEST_SUITE("FrontendContext") {
+	TEST_CASE("Scratch budget permits exact-budget typed allocations") {
+		struct Value {
+			double real;
+			int count;
+			bool operator==(const Value&) const = default;
+		};
+		auto check_exact = []<typename T>(T value) {
+			DiagnosticEngine diagnostics;
+			MonotonicScratchArena arena(diagnostics, sizeof(T));
+			T* object = arena.allocateObject<T>(value);
+			CHECK(*object == value);
+			CHECK(reinterpret_cast<uintptr_t>(object) % alignof(T) == 0);
+			CHECK(arena.currentBytes() == sizeof(T));
+			CHECK(arena.reservedBytes() == sizeof(T));
+			CHECK_FALSE(diagnostics.hasErrors());
+		};
+		check_exact(uint64_t{42});
+		check_exact(short{7});
+		check_exact(Value{3.5, 19});
+	}
+
+	TEST_CASE("Scratch budget rejects before mutation and permits the exact limit") {
+		const uint64_t outside_before = diagnosticsEmittedOutsideEngineCount();
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, 16);
+		CHECK(arena.allocate(16, 1) != nullptr);
+		CHECK(arena.currentBytes() == 16);
+		CHECK(arena.reservedBytes() == 16);
+		const auto checkpoint = arena.mark();
+		const auto peak = arena.peakBytes();
+		const auto reserved_peak = arena.peakReservedBytes();
+		try {
+			arena.allocate(1, 1);
+			FAIL("exhausted scratch budget accepted an allocation");
+		} catch (const CompileError& error) {
+			REQUIRE(error.structuredDiagnostic() != nullptr);
+			CHECK(error.structuredDiagnostic()->id == DiagnosticId::ScratchAllocationLimit);
+			CHECK(error.structuredDiagnostic()->severity == DiagnosticSeverity::Fatal);
+			CHECK(error.structuredDiagnostic()->message_template == "Scratch allocation budget exhausted");
+		}
+		CHECK(diagnostics.count(DiagnosticSeverity::Fatal) == 1);
+		CHECK(arena.mark().block_index == checkpoint.block_index);
+		CHECK(arena.mark().block_used == checkpoint.block_used);
+		CHECK(arena.mark().destructor_count == checkpoint.destructor_count);
+		CHECK(arena.currentBytes() == 16);
+		CHECK(arena.reservedBytes() == 16);
+		CHECK(arena.discardedBytes() == 0);
+		CHECK(arena.peakBytes() == peak);
+		CHECK(arena.peakReservedBytes() == reserved_peak);
+		CHECK(arena.allocate(0, 1) == nullptr);
+		CHECK(diagnostics.count(DiagnosticSeverity::Fatal) == 1);
+		CHECK(diagnosticsEmittedOutsideEngineCount() == outside_before);
+	}
+
+	TEST_CASE("Scratch budget counts 4096 failed probes without replenishment") {
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, 4096);
+		ScratchProbeRegistry registry;
+		for (uint32_t index = 0; index < 4096; ++index) {
+			ScratchTransaction probe(arena, registry);
+			CHECK(probe.registry().registerEntry() == 1);
+			probe.arena().allocate(1, 1);
+		}
+		CHECK(arena.currentBytes() == 0);
+		CHECK(arena.discardedBytes() == 4096);
+		CHECK(arena.reservedBytes() == 4096);
+		CHECK(registry.liveCount() == 0);
+		CHECK_THROWS_AS(arena.allocate(1, 1), CompileError);
+		CHECK(arena.discardedBytes() == arena.byteLimit());
+	}
+
+	TEST_CASE("Scratch budget exhaustion unwinds nested probes exactly once") {
+		struct Tracked {
+			int* destroyed;
+			explicit Tracked(int* count) : destroyed(count) {}
+			~Tracked() { ++*destroyed; }
+		};
+		DiagnosticEngine diagnostics;
+		int destroyed = 0;
+		MonotonicScratchArena arena(diagnostics, 3 * sizeof(Tracked));
+		ScratchProbeRegistry registry;
+		registry.registerEntry();
+		registry.commitToCurrent();
+		arena.allocateObject<Tracked>(&destroyed);
+		try {
+			ScratchTransaction outer(arena, registry);
+			registry.registerEntry();
+			arena.allocateObject<Tracked>(&destroyed);
+			ScratchTransaction inner(arena, registry);
+			registry.registerEntry();
+			arena.allocateObject<Tracked>(&destroyed);
+			arena.allocateObject<Tracked>(&destroyed);
+			FAIL("nested probe exceeded its budget");
+		} catch (const CompileError&) {
+			CHECK(destroyed == 2);
+		}
+		CHECK(destroyed == 2);
+		CHECK(registry.committedCount() == 1);
+		CHECK(registry.liveCount() == 1);
+		CHECK(registry.registerEntry() == 2);
+		CHECK(arena.currentBytes() == sizeof(Tracked));
+		CHECK(arena.discardedBytes() == 2 * sizeof(Tracked));
+		CHECK(arena.mark().destructor_count == 1);
+	}
+
+	TEST_CASE("Scratch budget charges alignment padding and bounds retained blocks") {
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, 8192);
+		arena.allocate(1, 1);
+		arena.allocate(8, 8);
+		CHECK(arena.currentBytes() == 16);
+		const auto checkpoint = arena.mark();
+		arena.allocate(4096, 1);
+		CHECK(arena.reservedBytes() == 8192);
+		arena.rollbackTo(checkpoint);
+		CHECK(arena.reservedBytes() == 4096);
+		CHECK(arena.currentBytes() == 16);
+		CHECK(arena.discardedBytes() == 4096);
+		CHECK_THROWS_AS(arena.allocate(4096, 1), CompileError);
+		CHECK(arena.reservedBytes() == 4096);
+		CHECK(arena.peakReservedBytes() == 8192);
+		arena.allocate(4080, 1);
+		CHECK(arena.currentBytes() + arena.discardedBytes() == arena.byteLimit());
+	}
+
+	TEST_CASE("Scratch budget validates zero and oversized requests without allocation") {
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena empty(diagnostics, 0);
+		CHECK(empty.allocate(0, 1) == nullptr);
+		CHECK_THROWS_AS(empty.allocate(1, 1), CompileError);
+		CHECK(empty.reservedBytes() == 0);
+		MonotonicScratchArena arena(diagnostics, 64);
+		CHECK_THROWS_AS(arena.allocate(static_cast<std::size_t>(-1), 8), CompileError);
+		CHECK_THROWS_AS(arena.allocate(1, std::size_t{1} << (sizeof(std::size_t) * 8 - 1)), CompileError);
+		CHECK_THROWS_AS(arena.allocate(1, 0), InternalError);
+		CHECK_THROWS_AS(arena.allocate(1, 3), InternalError);
+		CHECK(arena.currentBytes() == 0);
+		CHECK(arena.reservedBytes() == 0);
+		CHECK(arena.peakBytes() == 0);
+		CHECK(arena.peakReservedBytes() == 0);
+		CHECK(arena.discardedBytes() == 0);
+		MonotonicScratchArena overflow(diagnostics, UINT64_MAX);
+		CHECK_THROWS_AS(overflow.allocate(static_cast<std::size_t>(-1), 8), CompileError);
+		CHECK(overflow.currentBytes() == 0);
+		CHECK(overflow.reservedBytes() == 0);
+		CHECK(overflow.peakReservedBytes() == 0);
+	}
+
+	TEST_CASE("Scratch budget rejects padding and reservation exhaustion independently") {
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena padded(diagnostics, 16);
+		padded.allocate(1, 1);
+		const auto padding_checkpoint = padded.mark();
+		padded.allocate(14, 1);
+		padded.rollbackTo(padding_checkpoint);
+		CHECK_THROWS_AS(padded.allocate(1, 8), CompileError);
+		CHECK(padded.currentBytes() == 1);
+		CHECK(padded.peakBytes() == 15);
+		CHECK(padded.reservedBytes() == 16);
+		CHECK(padded.discardedBytes() == 14);
+		CHECK(padded.mark().block_used == padding_checkpoint.block_used);
+		CHECK(padded.allocate(1, 1) != nullptr);
+
+		MonotonicScratchArena fragmented(diagnostics, 8192);
+		fragmented.allocate(3000, 1);
+		fragmented.allocate(3000, 1);
+		REQUIRE(fragmented.currentBytes() == 6000);
+		REQUIRE(fragmented.reservedBytes() == 8192);
+		const auto checkpoint = fragmented.mark();
+		CHECK_THROWS_AS(fragmented.allocate(2000, 1), CompileError);
+		CHECK(fragmented.currentBytes() == 6000);
+		CHECK(fragmented.peakBytes() == 6000);
+		CHECK(fragmented.reservedBytes() == 8192);
+		CHECK(fragmented.peakReservedBytes() == 8192);
+		CHECK(fragmented.discardedBytes() == 0);
+		CHECK(fragmented.mark().block_index == checkpoint.block_index);
+		CHECK(fragmented.mark().block_used == checkpoint.block_used);
+	}
+
+	TEST_CASE("Scratch budget aligns typed objects by address") {
+		struct alignas(256) Aligned { int value; };
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, 4096);
+		arena.allocate(1, 1);
+		const auto before = arena.currentBytes();
+		Aligned* object = arena.allocateObject<Aligned>();
+		CHECK(reinterpret_cast<uintptr_t>(object) % alignof(Aligned) == 0);
+		CHECK(arena.currentBytes() >= before + sizeof(Aligned));
+		CHECK(arena.currentBytes() < before + sizeof(Aligned) + alignof(Aligned));
+		object->value = 73;
+		CHECK(object->value == 73);
+	}
+
 	TEST_CASE("Strong semantic IDs reject pointer construction") {
+		static_assert(!std::is_default_constructible_v<MonotonicScratchArena>);
 		static_assert(!std::is_constructible_v<ScopeId, const void*>);
 		static_assert(!std::is_constructible_v<OwnerId, const void*>);
 		static_assert(!std::is_constructible_v<DeclId, const void*>);
@@ -4113,7 +4307,8 @@ TEST_SUITE("FrontendContext") {
 	}
 
 	TEST_CASE("Scratch probe rollback restores committed registry entries") {
-		MonotonicScratchArena arena;
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, FrontendContext::kScratchByteLimit);
 		ScratchProbeRegistry registry;
 		const uint32_t committed = registry.registerEntry();
 		registry.commitToCurrent();
@@ -4133,7 +4328,8 @@ TEST_SUITE("FrontendContext") {
 	}
 
 	TEST_CASE("Nested scratch registry transactions restore outer checkpoint") {
-		MonotonicScratchArena arena;
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, FrontendContext::kScratchByteLimit);
 		ScratchProbeRegistry registry;
 
 		ScratchTransaction outer(arena, registry);
@@ -4156,7 +4352,8 @@ TEST_SUITE("FrontendContext") {
 	}
 
 	TEST_CASE("Scratch arena survives allocations larger than one block") {
-		MonotonicScratchArena arena;
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, FrontendContext::kScratchByteLimit);
 		const std::size_t first_size = 5000U;
 		const std::size_t second_size = 16U;
 		void* first = arena.allocate(first_size, alignof(std::max_align_t));
@@ -4174,7 +4371,8 @@ TEST_SUITE("FrontendContext") {
 	}
 
 	TEST_CASE("Scratch arena byte accounting includes alignment padding on rollback") {
-		MonotonicScratchArena arena;
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, FrontendContext::kScratchByteLimit);
 		CHECK(arena.allocate(1U, 1U) != nullptr);
 		const uint64_t bytes_after_first = arena.currentBytes();
 		CHECK(arena.allocate(1U, 8U) != nullptr);
@@ -4202,7 +4400,8 @@ TEST_SUITE("FrontendContext") {
 
 		bool destroyed = false;
 		{
-			MonotonicScratchArena arena;
+			DiagnosticEngine diagnostics;
+			MonotonicScratchArena arena(diagnostics, FrontendContext::kScratchByteLimit);
 			ScratchProbeRegistry registry;
 			ScratchTransaction probe(arena, registry);
 			probe.arena().allocateObject<ScratchDestructionProbe>(&destroyed);
@@ -4213,7 +4412,8 @@ TEST_SUITE("FrontendContext") {
 	}
 
 	TEST_CASE("Scratch probe commit publishes registry entries") {
-		MonotonicScratchArena arena;
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, FrontendContext::kScratchByteLimit);
 		ScratchProbeRegistry registry;
 
 		{
@@ -4239,7 +4439,8 @@ TEST_SUITE("FrontendContext") {
 			}
 		};
 
-		MonotonicScratchArena arena;
+		DiagnosticEngine diagnostics;
+		MonotonicScratchArena arena(diagnostics, FrontendContext::kScratchByteLimit);
 		ScratchProbeRegistry registry;
 		bool destroyed = false;
 		const uint64_t bytes_before = arena.currentBytes();
@@ -4267,6 +4468,9 @@ TEST_SUITE("FrontendContext") {
 
 		FrontendContext context;
 		CHECK(&context.scratchArena() == &context.scratchArena());
+		CHECK(context.scratchArena().byteLimit() == 64ULL * 1024 * 1024);
+		CHECK_THROWS_AS(context.scratchArena().allocate(64ULL * 1024 * 1024 + 1, 1), CompileError);
+		CHECK(context.diagnostics().count(DiagnosticSeverity::Fatal) == 1);
 #if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
 		const uint64_t spills_before = FlashCpp::inlineVectorSpillCount();
 		FlashCpp::InlineVector<int, 2> values;

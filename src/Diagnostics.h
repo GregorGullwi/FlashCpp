@@ -37,7 +37,8 @@
 //   1501..1599  initialization family
 //   1601..1699  semantic validity family
 //   2000..2099  reserved for template instantiation family
-//   3000+    unallocated
+//   3001..3099  implementation resource limits
+//   3100+    unallocated
 
 enum class DiagnosticSeverity : uint8_t {
 	Note,
@@ -62,6 +63,7 @@ inline const char* diagnosticSeverityTag(DiagnosticSeverity severity) {
 
 enum class DiagnosticId : uint32_t {
 	None = 0,
+	ScratchAllocationLimit = 3001,
 
 	// Declarator / type-id family (1001..1099).
 	PointerToReferenceType = 1001,
@@ -201,6 +203,8 @@ enum class DiagnosticId : uint32_t {
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
 	switch (id) {
+	case DiagnosticId::ScratchAllocationLimit:
+		return "ScratchAllocationLimit";
 	case DiagnosticId::PointerToReferenceType:
 		return "PointerToReferenceType";
 	case DiagnosticId::MultipleAsmSuffixesOnDeclarator:
