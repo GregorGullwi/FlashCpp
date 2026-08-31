@@ -4824,6 +4824,35 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.entityCount() == 128u);
 	}
 
+	TEST_CASE("SymbolTable insertWithUndo rollback removes appended overload on publication reject") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = R"(
+int symtab_undo_conflict_row(int value);
+float symtab_undo_conflict_row(int value);
+)";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("symtab_insert_undo_conflict_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+		CHECK(context.declarationCount() == 1u);
+		CHECK(context.entityCount() == 1u);
+
+		const StringHandle name = StringTable::getOrInternStringHandle("symtab_undo_conflict_row");
+		const std::vector<ASTNode> overloads =
+			gSymbolTable.lookup_all(StringTable::getStringView(name));
+		CHECK(overloads.size() == 1u);
+	}
+
 	TEST_CASE("commitParserFreeFunctionPublication rejects duplicate definitions without committing") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();

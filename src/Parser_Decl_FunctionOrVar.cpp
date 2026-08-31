@@ -919,27 +919,35 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// Insert the FunctionDeclarationNode (which contains parameter info for overload resolution)
 		// instead of just the DeclarationNode
 		if (auto func_node = function_definition_result.node()) {
-			if (!gSymbolTable.insert(func_name, *func_node)) {
+			FrontendContext* front_end = frontendContext();
+			const bool wired_free_function =
+				front_end != nullptr &&
+				shouldPublishParserFreeFunction(
+					func_node->as<FunctionDeclarationNode>(),
+					gSymbolTable.get_current_scope_type());
+			SymbolTableInsertUndo insert_undo;
+			if (!gSymbolTable.insertWithUndo(func_name, *func_node, insert_undo)) {
 				// Note: With overloading support, insert() now allows multiple functions with same name
 				// It only returns false for non-function duplicate symbols
 				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
 			}
 
-			if (FrontendContext* front_end = frontendContext()) {
+			if (wired_free_function) {
 				FunctionDeclarationNode& func_decl = func_node->as<FunctionDeclarationNode>();
-				const ScopeType scope_type = gSymbolTable.get_current_scope_type();
-				if (shouldPublishParserFreeFunction(func_decl, scope_type)) {
-					const bool is_definition = peek() != ";"_tok;
-					const PublishResult publish_result = commitParserFreeFunctionPublication(
-						front_end->declarationBuilder(),
-						func_decl,
-						gSymbolTable.lastDeclaringScopeId(),
-						is_definition,
-						gSymbolTable);
-					if (publish_result.status == PublishStatus::Created ||
-						publish_result.status == PublishStatus::MergedRedeclaration) {
-						recordDeclarationBuilderPublish();
+				const bool is_definition = peek() != ";"_tok;
+				const PublishResult publish_result = commitParserFreeFunctionPublication(
+					front_end->declarationBuilder(),
+					func_decl,
+					gSymbolTable.lastDeclaringScopeId(),
+					is_definition,
+					gSymbolTable);
+				if (publish_result.status == PublishStatus::Rejected) {
+					if (insert_undo.hasChanges()) {
+						gSymbolTable.rollbackInsert(insert_undo);
 					}
+				} else if (publish_result.status == PublishStatus::Created ||
+						   publish_result.status == PublishStatus::MergedRedeclaration) {
+					recordDeclarationBuilderPublish();
 				}
 			}
 		}
