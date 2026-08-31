@@ -285,12 +285,6 @@
     <ClCompile Include="src\DeclarationBuilder.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="tests\FlashCppTest\compile_probes\declaration_builder_header.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="tests\FlashCppTest\compile_probes\declaration_builder_then_ast_storage.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\ScopePublication.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
