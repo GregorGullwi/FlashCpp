@@ -180,6 +180,23 @@ struct SymbolTableInsertUndo {
 	}
 };
 
+namespace SymbolTableDetail {
+
+inline void stampLexicalScopeOnDeclaration(ASTNode& node, ScopeId scope_id) {
+	if (!scope_id) {
+		return;
+	}
+	if (node.is<DeclarationNode>()) {
+		node.as<DeclarationNode>().set_lexical_scope_id(scope_id);
+		return;
+	}
+	if (node.is<FunctionDeclarationNode>()) {
+		node.as<FunctionDeclarationNode>().decl_node().set_lexical_scope_id(scope_id);
+	}
+}
+
+} // namespace SymbolTableDetail
+
 class SymbolTable {
 public:
 	void setDiagnosticEngine(DiagnosticEngine& diagnostics) {
@@ -267,6 +284,7 @@ public:
 	bool insertCore(std::string_view identifier, ASTNode node, SymbolTableInsertUndo* undo) {
 		last_declaring_scope_id_ = scopes_[current_scope_index_].scope_id;
 		const ScopeId insert_scope_id = last_declaring_scope_id_;
+		SymbolTableDetail::stampLexicalScopeOnDeclaration(node, insert_scope_id);
 		auto& current_scope = scopes_[current_scope_index_];
 		const bool ns_scope = current_scope.scope_type == ScopeType::Namespace;
 		const bool global_scope = current_scope.scope_type == ScopeType::Global;
@@ -677,6 +695,8 @@ public:
 	// initializer, so a stub is pre-inserted before parsing the initializer and then replaced
 	// with the fully-initialised VariableDeclarationNode once parsing completes.
 	bool replace_variable(std::string_view identifier, ASTNode new_node) {
+		SymbolTableDetail::stampLexicalScopeOnDeclaration(
+			new_node, scopes_[current_scope_index_].scope_id);
 		auto& current_scope = scopes_[current_scope_index_];
 		if (current_scope.scope_type == ScopeType::Namespace) {
 			NamespaceHandle ns_handle = get_current_namespace_handle();
@@ -715,6 +735,7 @@ public:
 
 		auto& global_scope = scopes_[0];	 // Global scope is always at index 0
 		last_declaring_scope_id_ = global_scope.scope_id;
+		SymbolTableDetail::stampLexicalScopeOnDeclaration(node, global_scope.scope_id);
 		// First, try to find the identifier without interning
 		auto it = global_scope.symbols.find(identifier);
 

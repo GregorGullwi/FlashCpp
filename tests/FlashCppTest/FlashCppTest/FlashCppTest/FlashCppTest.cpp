@@ -4308,6 +4308,76 @@ TEST_SUITE("FrontendContext") {
 		CHECK(table.lastDeclaringScopeId().value == 1u);
 	}
 
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on DeclarationNode") {
+		SymbolTable table;
+		table.enter_scope(ScopeType::Function);
+		const ScopeId function_scope = table.currentScopeId();
+		Token type_token(Token::Type::Identifier, std::string_view("int"), 1, 1, 0);
+		Token id_token(Token::Type::Identifier, std::string_view("scope_stamp_var"), 1, 1, 0);
+		TypeSpecifierNode int_type(
+			TypeCategory::Int, TypeQualifier::None, 32, type_token, CVQualifier::None);
+		ASTNode node = ASTNode::emplace_node<DeclarationNode>(int_type, id_token);
+		REQUIRE(table.insert(std::string_view("scope_stamp_var"), node));
+		const std::vector<ASTNode> symbols = table.lookup_all("scope_stamp_var");
+		REQUIRE(symbols.size() == 1u);
+		CHECK(symbols[0].as<DeclarationNode>().lexical_scope_id() == function_scope);
+	}
+
+	TEST_CASE("SymbolTable insert stamps distinct lexical ScopeIds across nested scopes") {
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+
+		Token type_token(Token::Type::Identifier, std::string_view("int"), 1, 1, 0);
+		Token global_id(Token::Type::Identifier, std::string_view("scope_stamp_global_var"), 1, 1, 0);
+		Token block_id(Token::Type::Identifier, std::string_view("scope_stamp_block_var"), 2, 1, 0);
+		TypeSpecifierNode int_type(
+			TypeCategory::Int, TypeQualifier::None, 32, type_token, CVQualifier::None);
+
+		ASTNode global_node = ASTNode::emplace_node<DeclarationNode>(int_type, global_id);
+		REQUIRE(table.insert(std::string_view("scope_stamp_global_var"), global_node));
+		CHECK(table.lookup_all(std::string_view("scope_stamp_global_var"))[0]
+				  .as<DeclarationNode>()
+				  .lexical_scope_id() == global_scope);
+
+		table.enter_scope(ScopeType::Block);
+		const ScopeId block_scope = table.currentScopeId();
+		REQUIRE(global_scope != block_scope);
+
+		ASTNode block_node = ASTNode::emplace_node<DeclarationNode>(int_type, block_id);
+		REQUIRE(table.insert(std::string_view("scope_stamp_block_var"), block_node));
+		CHECK(table.lookup_all(std::string_view("scope_stamp_block_var"))[0]
+				  .as<DeclarationNode>()
+				  .lexical_scope_id() == block_scope);
+	}
+
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed FunctionDeclarationNode") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = "void scope_stamp_parsed_fn();";
+		CompileContext test_context;
+		test_context.setInputFile("declaration_ast_scope_id_fn_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle fn_name = StringTable::getOrInternStringHandle("scope_stamp_parsed_fn");
+		const std::vector<ASTNode> overloads =
+			gSymbolTable.lookup_all(StringTable::getStringView(fn_name));
+		REQUIRE(overloads.size() == 1u);
+		CHECK(overloads[0]
+				  .as<FunctionDeclarationNode>()
+				  .decl_node()
+				  .lexical_scope_id()
+				  .value != 0u);
+	}
+
 	TEST_CASE("FrontendContext publishes persistent scope telemetry") {
 		FrontendContext context;
 		context.publishScopeState(ScopeId{3}, 4);
