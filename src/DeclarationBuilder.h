@@ -209,6 +209,22 @@ public:
 		return parameter_list_ids_.size();
 	}
 
+	uint64_t declarationArenaUsedBytes() const {
+		return declarations_.usedBytes();
+	}
+
+	uint64_t declarationArenaReservedBytes() const {
+		return declarations_.reservedBytes();
+	}
+
+	uint64_t entityArenaUsedBytes() const {
+		return entities_.usedBytes();
+	}
+
+	uint64_t entityArenaReservedBytes() const {
+		return entities_.reservedBytes();
+	}
+
 private:
 	struct EntityLookupKey {
 		uint32_t owner = 0;

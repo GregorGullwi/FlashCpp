@@ -108,6 +108,22 @@ public:
 		domain_stats_[scratch_index].peak_reserved_bytes = scratch_arena_.peakReservedBytes();
 	}
 
+	void refreshSemanticDomainStats() {
+		const uint64_t used =
+			declaration_builder_.declarationArenaUsedBytes() + declaration_builder_.entityArenaUsedBytes();
+		const uint64_t reserved =
+			declaration_builder_.declarationArenaReservedBytes() +
+			declaration_builder_.entityArenaReservedBytes();
+		applyDomainBytes(domain_stats_[static_cast<std::size_t>(AllocationDomain::Semantic)], used, reserved);
+	}
+
+	void refreshSyntaxDomainStats() {
+		applyDomainBytes(
+			domain_stats_[static_cast<std::size_t>(AllocationDomain::Syntax)],
+			gChunkedAnyStorage.usedBytes(),
+			gChunkedAnyStorage.reservedBytes());
+	}
+
 	static uint64_t stringTableEntryCount() {
 		return StringTable::getInternedCount();
 	}
@@ -118,6 +134,8 @@ public:
 
 	void printArenaTelemetry() {
 		refreshScratchDomainStats();
+		refreshSemanticDomainStats();
+		refreshSyntaxDomainStats();
 		const char* domain_names[] = {"syntax", "semantic", "scratch", "ir"};
 		FLASH_LOG(General, Info, "\nFrontendContext arena telemetry:");
 		for (std::size_t index = 0; index < domain_stats_.size(); ++index) {
@@ -165,9 +183,33 @@ public:
 				  declaration_builder_.declarationCount(),
 				  "/",
 				  declaration_builder_.entityCount());
+		FLASH_LOG(General, Info,
+				  "  declaration arena used/reserved bytes: ",
+				  declaration_builder_.declarationArenaUsedBytes(),
+				  "/",
+				  declaration_builder_.declarationArenaReservedBytes());
+		FLASH_LOG(General, Info,
+				  "  entity arena used/reserved bytes: ",
+				  declaration_builder_.entityArenaUsedBytes(),
+				  "/",
+				  declaration_builder_.entityArenaReservedBytes());
+		FLASH_LOG(General, Info,
+				  "  syntax objects: ",
+				  gChunkedAnyStorage.size());
 	}
 
 private:
+	static void applyDomainBytes(DomainByteStats& stats, uint64_t used, uint64_t reserved) {
+		stats.current_bytes = used;
+		if (used > stats.peak_bytes) {
+			stats.peak_bytes = used;
+		}
+		stats.reserved_bytes = reserved;
+		if (reserved > stats.peak_reserved_bytes) {
+			stats.peak_reserved_bytes = reserved;
+		}
+	}
+
 	static std::vector<FrontendContext*>& activeContextStack() {
 		thread_local std::vector<FrontendContext*> stack;
 		return stack;

@@ -4484,6 +4484,119 @@ TEST_SUITE("FrontendContext") {
 		CHECK(context.scopeCount() == 4u);
 	}
 
+	TEST_CASE("ChunkedVector reports used and reserved arena bytes") {
+		ChunkedVector<DeclarationRecord, DeclarationBuilder::kDeclarationArenaChunkSize> arena;
+		CHECK(arena.usedBytes() == 0);
+		CHECK(arena.reservedBytes() == 0);
+
+		DeclarationRecord record{};
+		record.id = DeclId{1};
+		arena.push_back(record);
+		CHECK(arena.usedBytes() == sizeof(DeclarationRecord));
+		CHECK(arena.reservedBytes() ==
+			  static_cast<uint64_t>(DeclarationBuilder::kDeclarationArenaChunkSize) * sizeof(DeclarationRecord));
+		CHECK(arena.reservedBytes() >= arena.usedBytes());
+
+		arena.pop_back();
+		CHECK(arena.usedBytes() == 0);
+		CHECK(arena.reservedBytes() == 0);
+	}
+
+	TEST_CASE("ChunkedAnyVector reports used and reserved arena bytes") {
+		constexpr uint32_t kTestChunkSize = 256;
+		ChunkedAnyVector<kTestChunkSize> storage;
+		CHECK(storage.usedBytes() == 0);
+		CHECK(storage.reservedBytes() == 0);
+
+		TemplateEnvironmentSnapshotNode& node = storage.emplace_back<TemplateEnvironmentSnapshotNode>();
+		(void)node;
+		CHECK(storage.usedBytes() >= sizeof(TemplateEnvironmentSnapshotNode));
+		CHECK(storage.reservedBytes() >= kTestChunkSize);
+		CHECK(storage.reservedBytes() >= storage.usedBytes());
+	}
+
+	TEST_CASE("FrontendContext semantic domain bytes track declaration arenas") {
+		FrontendContext context;
+		context.refreshSemanticDomainStats();
+		CHECK(context.domainStats(AllocationDomain::Semantic).current_bytes == 0);
+		CHECK(context.domainStats(AllocationDomain::Semantic).reserved_bytes == 0);
+		CHECK(context.domainStats(AllocationDomain::Ir).current_bytes == 0);
+
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("domain_bytes_first");
+		const FunctionDeclRequest request{
+			global_scope,
+			name,
+			TypeId{10},
+			TypeId{20},
+			LanguageLinkage::CPlusPlus,
+			false,
+			false,
+			false};
+		REQUIRE(builder.publishFunction(request, table).status == PublishStatus::Created);
+
+		context.refreshSemanticDomainStats();
+		const DomainByteStats semantic = context.domainStats(AllocationDomain::Semantic);
+		const uint64_t expected_used = sizeof(DeclarationRecord) + sizeof(EntityRecord);
+		const uint64_t expected_reserved =
+			static_cast<uint64_t>(DeclarationBuilder::kDeclarationArenaChunkSize) * sizeof(DeclarationRecord) +
+			static_cast<uint64_t>(DeclarationBuilder::kEntityArenaChunkSize) * sizeof(EntityRecord);
+		CHECK(semantic.current_bytes == expected_used);
+		CHECK(semantic.peak_bytes == expected_used);
+		CHECK(semantic.reserved_bytes == expected_reserved);
+		CHECK(semantic.peak_reserved_bytes == expected_reserved);
+		CHECK(builder.declarationArenaUsedBytes() == sizeof(DeclarationRecord));
+		CHECK(builder.entityArenaUsedBytes() == sizeof(EntityRecord));
+	}
+
+	TEST_CASE("FrontendContext semantic domain peak survives publication rollback") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("domain_bytes_rollback");
+		const FunctionDeclRequest request{
+			global_scope, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, false, false, false};
+
+		PublicationTransaction transaction(builder);
+		const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+		REQUIRE_FALSE(prepared.isRejected());
+		REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
+		context.refreshSemanticDomainStats();
+		const uint64_t peak_used = context.domainStats(AllocationDomain::Semantic).peak_bytes;
+		CHECK(peak_used == sizeof(DeclarationRecord) + sizeof(EntityRecord));
+
+		transaction.rollback();
+		context.refreshSemanticDomainStats();
+		const DomainByteStats semantic = context.domainStats(AllocationDomain::Semantic);
+		CHECK(semantic.current_bytes == 0);
+		CHECK(semantic.peak_bytes == peak_used);
+		CHECK(semantic.reserved_bytes == 0);
+	}
+
+	TEST_CASE("FrontendContext syntax domain bytes track the legacy AST bridge") {
+		FrontendContext context;
+		context.refreshSyntaxDomainStats();
+		const uint64_t used_before = context.domainStats(AllocationDomain::Syntax).current_bytes;
+		const uint64_t reserved_before = context.domainStats(AllocationDomain::Syntax).reserved_bytes;
+		const std::size_t objects_before = gChunkedAnyStorage.size();
+
+		TemplateEnvironmentSnapshotNode& node =
+			gChunkedAnyStorage.emplace_back<TemplateEnvironmentSnapshotNode>();
+		(void)node;
+
+		context.refreshSyntaxDomainStats();
+		const DomainByteStats syntax = context.domainStats(AllocationDomain::Syntax);
+		CHECK(gChunkedAnyStorage.size() == objects_before + 1);
+		CHECK(syntax.current_bytes > used_before);
+		CHECK(syntax.peak_bytes >= syntax.current_bytes);
+		CHECK(syntax.reserved_bytes >= reserved_before);
+		CHECK(syntax.reserved_bytes >= syntax.current_bytes);
+		CHECK(context.domainStats(AllocationDomain::Ir).current_bytes == 0);
+	}
+
 	TEST_CASE("Legacy ChunkedAnyVector emplace_back enforces allow-list on storage") {
 		requireLegacyAstChunkedAnyEmplaceAllowed<TemplateEnvironmentSnapshotNode, true>();
 		LegacyAstChunkedAnyVector storage;

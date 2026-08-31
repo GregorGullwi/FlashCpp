@@ -100,6 +100,22 @@ public:
 		return index_to_pointer.size();
 	}
 
+	uint64_t usedBytes() const {
+		uint64_t total = 0;
+		for (const auto& chunk : data) {
+			total += chunk.size();
+		}
+		return total;
+	}
+
+	uint64_t reservedBytes() const {
+		uint64_t total = 0;
+		for (const auto& chunk : data) {
+			total += chunk.capacity();
+		}
+		return total;
+	}
+
 private:
 	std::array<char, InternalBufferSize> internal_buffer;
 #ifdef HAS_MEMORY_RESOURCE
@@ -226,6 +242,18 @@ public:
 		if (data.size() == 0)
 			return 0;
 		return (data.size() - 1) * ChunkSize + data.back().size();
+	}
+
+	uint64_t usedBytes() const {
+		return static_cast<uint64_t>(size()) * sizeof(T);
+	}
+
+	uint64_t reservedBytes() const {
+		uint64_t total = 0;
+		for (const auto& chunk : data) {
+			total += static_cast<uint64_t>(chunk.capacity()) * sizeof(T);
+		}
+		return total;
 	}
 
 	bool empty() const {

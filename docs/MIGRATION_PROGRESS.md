@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-31 after pull request boundary 12
+Last updated: 2026-08-31 after pull request boundary 13
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 12 are complete; architecture
+  and entities). Pull request boundaries 1 through 13 are complete; architecture
   boundary 1 exit criteria remain open through follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
   `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
@@ -35,12 +35,15 @@ Last updated: 2026-08-31 after pull request boundary 12
   function, template-function, variable, template-variable, and bare declaration
   nodes) at the shared insert choke point; enum/struct and other symbol kinds
   remain unstamped.
-- Global forwarding into `FrontendContext` is telemetry-only so far (string-
-  table entry count and spelling bytes, plus published scope and
-  declaration/entity counts); syntax/semantic/IR domain bytes and broader
-  per-record counts remain unwired.
+- `printArenaTelemetry` fills scratch, syntax, and semantic `AllocationDomain`
+  stats. Syntax used/reserved bytes are forwarded from `gChunkedAnyStorage`;
+  semantic used/reserved bytes come from DeclarationBuilder declaration and
+  entity arenas (`sizeof` 32 each). IR domain bytes remain unwired. String-table
+  entries/spelling bytes, InlineVector spills, scope count/current `ScopeId`,
+  declaration/entity counts, and per-arena used/reserved bytes are reported
+  under `--perf-stats`.
 
-## Pull request boundary status (1–12)
+## Pull request boundary status (1–13)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -56,6 +59,7 @@ Last updated: 2026-08-31 after pull request boundary 12
 | 10 | `prepareFunctionPublication` preflight, `PublicationTransaction` mark/rollback, parser shadow commit helper |
 | 11 | `SymbolTableInsertUndo` on wired free-function inserts, parser rollback when publication rejects |
 | 12 | `DeclarationNode::lexical_scope_id` stamped at `SymbolTable` insert/replace/insertGlobal choke point (function, template-function, variable, template-variable, and bare declaration nodes) |
+| 13 | Syntax and semantic allocation-domain used/reserved bytes reported through `FrontendContext` from `gChunkedAnyStorage` and DeclarationBuilder arenas |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -96,9 +100,9 @@ boundary 1 is started, not finished.
   - Boundary 1 "discarded scratch bytes are measured and bounded": measured;
     no implementation limit yet
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
-    InlineVector spill counts are reported through FrontendContext": partial
-    (scratch, string-table, InlineVector spills, scope count/current ScopeId,
-    declaration/entity counts under `--perf-stats`)
+    InlineVector spill counts are reported through FrontendContext": syntax,
+    semantic, and scratch domain used/reserved bytes now report; IR domain and
+    per-type AST family counts remain unwired
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage, scope storage fully owned by
     `FrontendContext` rather than `SymbolTable`, enum/struct AST scope stamping):
@@ -124,7 +128,7 @@ Then, in order:
 1. Continue architecture boundary 1: expand shadow wire or merge coverage
    (default arguments, exception specifications, friends, templates) only
    after canonical `TypeId` exists; move scope storage into `FrontendContext`;
-   wire syntax/semantic/IR domain byte accounting and per-record counts; stamp
+   wire IR domain byte accounting and per-type AST family counts; stamp
    `ScopeId` on remaining symbol-table node kinds (enum, struct, etc.).
 
 Named follow-ups carried forward:
