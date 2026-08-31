@@ -4378,6 +4378,36 @@ TEST_SUITE("FrontendContext") {
 				  .value != 0u);
 	}
 
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed TemplateFunctionDeclarationNode") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = "template<class T> void scope_stamp_tmpl_fn(T);";
+		CompileContext test_context;
+		test_context.setInputFile("declaration_ast_scope_id_tmpl_fn_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle fn_name = StringTable::getOrInternStringHandle("scope_stamp_tmpl_fn");
+		const std::vector<ASTNode> overloads =
+			gSymbolTable.lookup_all(StringTable::getStringView(fn_name));
+		REQUIRE(overloads.size() == 1u);
+		REQUIRE(overloads[0].is<TemplateFunctionDeclarationNode>());
+		CHECK(overloads[0]
+				  .as<TemplateFunctionDeclarationNode>()
+				  .function_decl_node()
+				  .decl_node()
+				  .lexical_scope_id()
+				  .value != 0u);
+	}
+
 	TEST_CASE("FrontendContext publishes persistent scope telemetry") {
 		FrontendContext context;
 		context.publishScopeState(ScopeId{3}, 4);
