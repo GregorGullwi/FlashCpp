@@ -126,8 +126,19 @@ $(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 	$(CXX) $(CXXFLAGS) -Wno-unused-parameter $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $(MAIN_SOURCES)
 	@echo "Built: $@"
 
+COMPILE_PROBE_SRCDIR := $(TESTDIR)/FlashCppTest/compile_probes
+COMPILE_PROBE_OBJDIR := $(TEST_DIR)/compile_probes
+COMPILE_PROBE_SOURCES := $(wildcard $(COMPILE_PROBE_SRCDIR)/*.cpp)
+COMPILE_PROBE_OBJS := $(patsubst $(COMPILE_PROBE_SRCDIR)/%.cpp,$(COMPILE_PROBE_OBJDIR)/%.o,$(COMPILE_PROBE_SOURCES))
+
+$(COMPILE_PROBE_OBJDIR):
+	@$(MKDIR) $(COMPILE_PROBE_OBJDIR) 2>nul || $(MKDIR) $(COMPILE_PROBE_OBJDIR) || true
+
+$(COMPILE_PROBE_OBJDIR)/%.o: $(COMPILE_PROBE_SRCDIR)/%.cpp $(HEADER_SOURCES) | $(COMPILE_PROBE_OBJDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
 # Build test executable
-$(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(UNITY_SOURCES)
+$(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(UNITY_SOURCES) $(COMPILE_PROBE_OBJS)
 	@echo "Building test executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(TEST_DIR) 2>nul || $(MKDIR) $(TEST_DIR) || true
 	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -Wno-shadow -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-but-set-variable -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
@@ -139,7 +150,7 @@ $(MODULAR_DIR)/%.o: $(SRCDIR)/%.cpp $(HEADER_SOURCES) | $(MODULAR_DIR)
 $(MODULAR_DIR):
 	@$(MKDIR) $(MODULAR_DIR) 2>nul || $(MKDIR) $(MODULAR_DIR) || true
 
-$(MODULAR_TARGET): $(MODULAR_OBJS) | $(MODULAR_DIR)
+$(MODULAR_TARGET): $(MODULAR_OBJS) $(COMPILE_PROBE_OBJS) | $(MODULAR_DIR)
 	@echo "Building modular executable for $(PLATFORM) with $(CXX)..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MODULAR_OBJS)
 	@echo "Built: $@"

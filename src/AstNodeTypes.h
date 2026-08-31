@@ -6,6 +6,7 @@
 #include "AstNodeTypes_Template.h"
 #include "AstNodeTypes_Expr.h"
 #include "AstNodeTypes_Stmt.h"
+#include "LegacyChunkedAnyStoragePolicyComplete.h"
 
 // Parser-produced expression results now prefer expression leaf nodes wrapped in
 // ExpressionNode, but older/synthetic ASTs may still store them directly.

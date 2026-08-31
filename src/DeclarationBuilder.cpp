@@ -4,6 +4,14 @@
 #include "CompileError.h"
 #include "SymbolTable.h"
 
+DeclarationBuilder::DeclarationBuilder() = default;
+
+DeclarationBuilder::~DeclarationBuilder() = default;
+
+std::size_t DeclarationBuilder::telemetryDeclaratorInternCount() const {
+	return declarator_type_canon_.size();
+}
+
 PreparedFunctionPublication::PreparedFunctionPublication(
 	PublishStatus status,
 	EntityId entity_id,
@@ -20,7 +28,47 @@ PreparedFunctionPublication::PreparedFunctionPublication(
 	, name_(name)
 	, signature_id_(signature_id)
 	, return_type_id_(return_type_id)
-	, flags_(flags) {
+	, flags_(flags)
+	, consumed_(0) {
+}
+
+PreparedFunctionPublication::PreparedFunctionPublication(PreparedFunctionPublication&& other) noexcept
+	: status_(other.status_)
+	, entity_id_(other.entity_id_)
+	, lexical_scope_id_(other.lexical_scope_id_)
+	, owner_id_(other.owner_id_)
+	, name_(other.name_)
+	, signature_id_(other.signature_id_)
+	, return_type_id_(other.return_type_id_)
+	, flags_(other.flags_)
+	, consumed_(other.consumed_) {
+	other.consumed_ = 1;
+	other.status_ = PublishStatus::Rejected;
+}
+
+PreparedFunctionPublication& PreparedFunctionPublication::operator=(PreparedFunctionPublication&& other) noexcept {
+	if (this == &other) {
+		return *this;
+	}
+	status_ = other.status_;
+	entity_id_ = other.entity_id_;
+	lexical_scope_id_ = other.lexical_scope_id_;
+	owner_id_ = other.owner_id_;
+	name_ = other.name_;
+	signature_id_ = other.signature_id_;
+	return_type_id_ = other.return_type_id_;
+	flags_ = other.flags_;
+	consumed_ = other.consumed_;
+	other.consumed_ = 1;
+	other.status_ = PublishStatus::Rejected;
+	return *this;
+}
+
+void PreparedFunctionPublication::consume() {
+	if (consumed_ != 0) {
+		throw InternalError("DeclarationBuilder: PreparedFunctionPublication already committed");
+	}
+	consumed_ = 1;
 }
 
 PublishResult DeclarationBuilder::makeRejected(EntityId existing_entity) {
@@ -256,8 +304,9 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 }
 
 PublishResult DeclarationBuilder::commitFunctionPublication(
-	const PreparedFunctionPublication& prepared,
+	PreparedFunctionPublication& prepared,
 	PublicationTransaction& transaction) {
+	prepared.consume();
 	if (prepared.isRejected()) {
 		return prepared.rejection();
 	}
@@ -268,6 +317,10 @@ PublishResult DeclarationBuilder::commitFunctionPublication(
 		prepared.signature_id_.value};
 
 	if (prepared.status_ == PublishStatus::Created) {
+		if (entity_by_key_.find(key) != entity_by_key_.end()) {
+			throw InternalError("DeclarationBuilder: prepared Created publication key already exists");
+		}
+
 		EntityRecord entity_record{};
 		entity_record.owner_id = prepared.owner_id_;
 		entity_record.name = prepared.name_;
@@ -298,9 +351,13 @@ PublishResult DeclarationBuilder::commitFunctionPublication(
 			EntityRecord& live_entity = entities_[entity_id.value - 1];
 			live_entity.first_decl_id = decl_id;
 			live_entity.latest_decl_id = decl_id;
+			const auto insert_result = entity_by_key_.emplace(key, entity_id);
+			if (!insert_result.second) {
+				throw InternalError("DeclarationBuilder: entity lookup map rejected insertion");
+			}
 			transaction.noteEntityLookupInsert(key);
-			entity_by_key_.emplace(key, entity_id);
 		} catch (...) {
+			entity_by_key_.erase(key);
 			if (decl_id) {
 				declarations_.pop_back();
 			}
@@ -309,6 +366,14 @@ PublishResult DeclarationBuilder::commitFunctionPublication(
 		}
 
 		return PublishResult{PublishStatus::Created, decl_id, entity_id};
+	}
+
+	if (!prepared.entity_id_ || prepared.entity_id_.value > entities_.size()) {
+		throw InternalError("DeclarationBuilder: prepared merge publication has invalid EntityId");
+	}
+	const auto existing = entity_by_key_.find(key);
+	if (existing == entity_by_key_.end() || existing->second != prepared.entity_id_) {
+		throw InternalError("DeclarationBuilder: prepared merge publication key does not match live entity");
 	}
 
 	EntityRecord& live_entity = entities_[prepared.entity_id_.value - 1];
@@ -342,7 +407,7 @@ PublishResult DeclarationBuilder::commitFunctionPublication(
 PublishResult DeclarationBuilder::publishFunction(
 	const FunctionDeclRequest& request,
 	const SymbolTable& symbol_table) {
-	const PreparedFunctionPublication prepared = prepareFunctionPublication(request, symbol_table);
+	PreparedFunctionPublication prepared = prepareFunctionPublication(request, symbol_table);
 	if (prepared.isRejected()) {
 		return prepared.rejection();
 	}
@@ -496,17 +561,17 @@ void PublicationTransaction::rollback() noexcept {
 		builder_.declarations_.pop_back();
 	}
 
-	if (entity_undo_.has_value()) {
-		EntityRecord& live_entity = builder_.entities_[entity_undo_->id.value - 1];
-		live_entity = entity_undo_->previous;
+	for (auto undo = entity_undos_.rbegin(); undo != entity_undos_.rend(); ++undo) {
+		EntityRecord& live_entity = builder_.entities_[undo->id.value - 1];
+		live_entity = undo->previous;
 	}
 
 	while (builder_.entities_.size() > checkpoint_.entity_count) {
 		builder_.entities_.pop_back();
 	}
 
-	if (inserted_entity_lookup_.has_value()) {
-		builder_.entity_by_key_.erase(*inserted_entity_lookup_);
+	for (const DeclarationBuilder::EntityLookupKey& key : inserted_entity_lookups_) {
+		builder_.entity_by_key_.erase(key);
 	}
 
 	while (builder_.declarator_type_canon_.size() > checkpoint_.declarator_type_count) {
@@ -521,13 +586,11 @@ void PublicationTransaction::rollback() noexcept {
 }
 
 void PublicationTransaction::noteEntityMutation(EntityId entity_id, const EntityRecord& previous) {
-	if (!entity_undo_.has_value()) {
-		entity_undo_ = EntityUndo{entity_id, previous};
-	}
+	entity_undos_.push_back(EntityUndo{entity_id, previous});
 }
 
 void PublicationTransaction::noteEntityLookupInsert(const DeclarationBuilder::EntityLookupKey& key) {
-	inserted_entity_lookup_ = key;
+	inserted_entity_lookups_.push_back(key);
 }
 
 void PublicationTransaction::noteParameterListInsert(const DeclarationBuilder::ParameterListKey& key) {
@@ -547,7 +610,7 @@ PublishResult commitParserFreeFunctionPublication(
 		func_decl,
 		lexical_scope_id,
 		is_definition);
-	const PreparedFunctionPublication prepared =
+	PreparedFunctionPublication prepared =
 		builder.prepareFunctionPublication(request, symbol_table);
 	if (prepared.isRejected()) {
 		transaction.rollback();

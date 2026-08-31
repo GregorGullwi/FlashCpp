@@ -133,8 +133,10 @@ class PreparedFunctionPublication {
 
 public:
 	PreparedFunctionPublication() = delete;
-	PreparedFunctionPublication(const PreparedFunctionPublication&) = default;
-	PreparedFunctionPublication& operator=(const PreparedFunctionPublication&) = default;
+	PreparedFunctionPublication(const PreparedFunctionPublication&) = delete;
+	PreparedFunctionPublication& operator=(const PreparedFunctionPublication&) = delete;
+	PreparedFunctionPublication(PreparedFunctionPublication&& other) noexcept;
+	PreparedFunctionPublication& operator=(PreparedFunctionPublication&& other) noexcept;
 
 	bool isRejected() const {
 		return status_ == PublishStatus::Rejected;
@@ -145,6 +147,8 @@ public:
 	}
 
 private:
+	void consume();
+
 	PublishStatus status_ = PublishStatus::Rejected;
 	EntityId entity_id_;
 	ScopeId lexical_scope_id_;
@@ -153,6 +157,7 @@ private:
 	TypeId signature_id_;
 	TypeId return_type_id_;
 	uint8_t flags_ = 0;
+	uint8_t consumed_ = 0;
 };
 
 class DeclarationBuilder {
@@ -162,8 +167,8 @@ public:
 	static constexpr uint32_t kDeclarationArenaChunkSize = 64;
 	static constexpr uint32_t kEntityArenaChunkSize = 64;
 
-	DeclarationBuilder() = default;
-	~DeclarationBuilder() = default;
+	DeclarationBuilder();
+	~DeclarationBuilder();
 
 	DeclarationBuilder(const DeclarationBuilder&) = delete;
 	DeclarationBuilder& operator=(const DeclarationBuilder&) = delete;
@@ -177,7 +182,7 @@ public:
 		const SymbolTable& symbol_table) const;
 
 	PublishResult commitFunctionPublication(
-		const PreparedFunctionPublication& prepared,
+		PreparedFunctionPublication& prepared,
 		PublicationTransaction& transaction);
 
 	// Telemetry-only opaque keys until architecture boundary 3A canonical types.
@@ -200,9 +205,7 @@ public:
 		return entities_.size();
 	}
 
-	std::size_t telemetryDeclaratorInternCount() const {
-		return declarator_type_canon_.size();
-	}
+	std::size_t telemetryDeclaratorInternCount() const;
 
 	std::size_t telemetryParameterListInternCount() const {
 		return parameter_list_ids_.size();
@@ -325,8 +328,8 @@ private:
 
 	DeclarationBuilder& builder_;
 	DeclarationBuilderCheckpoint checkpoint_;
-	std::optional<EntityUndo> entity_undo_;
-	std::optional<DeclarationBuilder::EntityLookupKey> inserted_entity_lookup_;
+	std::vector<EntityUndo> entity_undos_;
+	std::vector<DeclarationBuilder::EntityLookupKey> inserted_entity_lookups_;
 	std::vector<DeclarationBuilder::ParameterListKey> inserted_parameter_lists_;
 	bool committed_ = false;
 	bool rolled_back_ = false;
