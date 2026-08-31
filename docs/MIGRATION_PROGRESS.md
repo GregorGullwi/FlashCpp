@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-31 after pull request boundary 11
+Last updated: 2026-08-31 after pull request boundary 12
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 11 are complete; architecture
+  and entities). Pull request boundaries 1 through 12 are complete; architecture
   boundary 1 exit criteria remain open through follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
   `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
@@ -31,13 +31,15 @@ Last updated: 2026-08-31 after pull request boundary 11
   `FrontendContext` typed arenas.
 - Persistent scopes still live in `SymbolTable` (cursor exit, `ScopeId` on
   insert and lookup). `FrontendContext` publishes that state for telemetry.
-  `ScopeId` is not yet stored on declaration AST nodes.
+  `SymbolTable::insertCore` stamps `DeclarationNode::lexical_scope_id` (and
+  function declarations via their embedded `DeclarationNode`) at the shared
+  insert choke point; enum/struct and other symbol kinds remain unstamped.
 - Global forwarding into `FrontendContext` is telemetry-only so far (string-
   table entry count and spelling bytes, plus published scope and
   declaration/entity counts); syntax/semantic/IR domain bytes and broader
   per-record counts remain unwired.
 
-## Pull request boundary status (1–11)
+## Pull request boundary status (1–12)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -52,6 +54,7 @@ Last updated: 2026-08-31 after pull request boundary 11
 | 9 | `ChunkedAnyVector` compile-time legacy-node allow-list guard on `gChunkedAnyStorage` and `ASTNode::emplace_node` |
 | 10 | `prepareFunctionPublication` preflight, `PublicationTransaction` mark/rollback, parser shadow commit helper |
 | 11 | `SymbolTableInsertUndo` on wired free-function inserts, parser rollback when publication rejects |
+| 12 | `DeclarationNode::lexical_scope_id` stamped at `SymbolTable` insert/replace/insertGlobal choke point |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -60,7 +63,7 @@ boundary 1 is started, not finished.
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 8/78 (10%)
+- Completed: 9/78 (12%)
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
   - Boundary 0 "structured diagnostics can be asserted by tests"
@@ -74,6 +77,9 @@ boundary 1 is started, not finished.
   - Boundary 1 "no new semantic object is allocated in ChunkedAnyVector" (Decl/
     Entity use typed arenas; compile-time guard now enforces for
     `gChunkedAnyStorage`)
+  - Boundary 1 "ScopeId recorded at declaration and expression lookup sites"
+    (`DeclarationNode` / function declarations stamped at `SymbolTable` insert;
+    lookup sites record `ScopeId` from PR 6)
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure"
@@ -93,13 +99,13 @@ boundary 1 is started, not finished.
     (scratch, string-table, InlineVector spills, scope count/current ScopeId,
     declaration/entity counts under `--perf-stats`)
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
-    free-function set, full template-facade coverage, `ScopeId` on declarations
-    beyond insert/lookup recording, scope storage fully owned by
-    `FrontendContext` rather than `SymbolTable`): follow-on boundary-1 work
+    free-function set, full template-facade coverage, scope storage fully owned by
+    `FrontendContext` rather than `SymbolTable`, enum/struct AST scope stamping):
+    follow-on boundary-1 work
 
 ## Effort estimate
 
-- Implementation effort completed overall: 18-21%, confidence medium
+- Implementation effort completed overall: 19-22%, confidence medium
 
 ## Remaining work
 
@@ -116,9 +122,9 @@ Then, in order:
 
 1. Continue architecture boundary 1: expand shadow wire or merge coverage
    (default arguments, exception specifications, friends, templates) only
-   after canonical `TypeId` exists; record `ScopeId` on declaration AST nodes;
-   move scope storage into `FrontendContext`; wire syntax/semantic/IR domain
-   byte accounting and per-record counts.
+   after canonical `TypeId` exists; move scope storage into `FrontendContext`;
+   wire syntax/semantic/IR domain byte accounting and per-record counts; stamp
+   `ScopeId` on remaining symbol-table node kinds (enum, struct, etc.).
 
 Named follow-ups carried forward:
 

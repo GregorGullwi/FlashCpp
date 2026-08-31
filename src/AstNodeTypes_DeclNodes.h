@@ -3,6 +3,7 @@
 #include <memory>
 #include <span>
 #include "AstNodeTypes_TypeSystem.h"
+#include "FrontendIds.h"
 #include "SizeTypes.h"
 #include "VariantUtils.h"
 
@@ -2698,6 +2699,7 @@ public:
 		array_dimensions_ = other.array_dimensions_;
 		default_value_ = other.default_value_;
 		qualified_declarator_owner_ = other.qualified_declarator_owner_;
+		lexical_scope_id_ = other.lexical_scope_id_;
 	}
 
 	// Pre-computed external symbol name support (e.g. GNU __asm__("symbol") labels)
@@ -2705,6 +2707,11 @@ public:
 	std::string_view mangled_name() const { return mangled_name_.view(); }
 	StringHandle mangled_name_handle() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
+
+	// Lexical scope at which this declaration was registered in SymbolTable.
+	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
+	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
+	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
 
 private:
 	TypeSpecifierNode type_node_;
@@ -2716,6 +2723,7 @@ private:
 	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
 	StringHandle qualified_declarator_owner_;
 	StringHandle mangled_name_;
+	ScopeId lexical_scope_id_;
 };
 
 enum class IdentifierBinding : uint8_t {
