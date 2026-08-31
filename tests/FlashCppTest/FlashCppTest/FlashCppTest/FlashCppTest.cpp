@@ -4810,7 +4810,7 @@ TEST_SUITE("FrontendContext") {
 
 		{
 			PublicationTransaction transaction(builder);
-			const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+			PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
 			REQUIRE_FALSE(prepared.isRejected());
 			REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
 			transaction.rollback();
@@ -5151,6 +5151,8 @@ TEST_SUITE("FrontendContext") {
 
 	TEST_CASE("PreparedFunctionPublication cannot be fabricated by callers") {
 		static_assert(!std::is_default_constructible_v<PreparedFunctionPublication>);
+		static_assert(!std::is_copy_constructible_v<PreparedFunctionPublication>);
+		static_assert(!std::is_copy_assignable_v<PreparedFunctionPublication>);
 		static_assert(!std::is_constructible_v<
 			PreparedFunctionPublication,
 			PublishStatus,
@@ -5171,19 +5173,20 @@ TEST_SUITE("FrontendContext") {
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_prepare");
 		const FunctionDeclRequest first{
 			global_scope, name, TypeId{71}, TypeId{81}, LanguageLinkage::CPlusPlus, false, false, false};
-		const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
+		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
 		CHECK_FALSE(prepared.isRejected());
 		PublishResult committed{};
 		{
 			PublicationTransaction first_transaction(builder);
-			committed = builder.commitFunctionPublication(prepared, first_transaction);
+			PreparedFunctionPublication to_commit = builder.prepareFunctionPublication(first, table);
+			committed = builder.commitFunctionPublication(to_commit, first_transaction);
 			first_transaction.commit();
 		}
 		CHECK(committed.status == PublishStatus::Created);
 
 		const FunctionDeclRequest redecl{
 			global_scope, name, TypeId{71}, TypeId{81}, LanguageLinkage::CPlusPlus, true, false, false};
-		const PreparedFunctionPublication prepared_redecl =
+		PreparedFunctionPublication prepared_redecl =
 			builder.prepareFunctionPublication(redecl, table);
 		CHECK_FALSE(prepared_redecl.isRejected());
 		const PublishResult committed_redecl = builder.publishFunction(redecl, table);
@@ -5205,7 +5208,7 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest definition{
 			global_scope, name, TypeId{92}, TypeId{102}, LanguageLinkage::CPlusPlus, true, false, false};
 		PublicationTransaction transaction(builder);
-		const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(definition, table);
+		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(definition, table);
 		REQUIRE_FALSE(prepared.isRejected());
 		const PublishResult merged = builder.commitFunctionPublication(prepared, transaction);
 		REQUIRE(merged.status == PublishStatus::MergedRedeclaration);
@@ -5243,7 +5246,7 @@ TEST_SUITE("FrontendContext") {
 			global_scope, name, TypeId{91}, TypeId{101}, LanguageLinkage::CPlusPlus, false, false, false};
 
 		PublicationTransaction transaction(builder);
-		const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
 		REQUIRE_FALSE(prepared.isRejected());
 		REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
 		CHECK(builder.declarationCount() == 1u);
@@ -5297,7 +5300,7 @@ TEST_SUITE("FrontendContext") {
 
 		try {
 			PublicationTransaction transaction(builder);
-			const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+			PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
 			REQUIRE_FALSE(prepared.isRejected());
 			REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
 			throw std::runtime_error("decl_builder_publication_unwind_probe");
@@ -5306,6 +5309,108 @@ TEST_SUITE("FrontendContext") {
 
 		CHECK(builder.declarationCount() == 0u);
 		CHECK(builder.entityCount() == 0u);
+	}
+
+	TEST_CASE("PublicationTransaction rollback restores two created and two merged publications") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle merge_a = StringTable::getOrInternStringHandle("txn_multi_merge_a");
+		const StringHandle merge_b = StringTable::getOrInternStringHandle("txn_multi_merge_b");
+		const StringHandle create_a = StringTable::getOrInternStringHandle("txn_multi_create_a");
+		const StringHandle create_b = StringTable::getOrInternStringHandle("txn_multi_create_b");
+
+		const PublishResult first_a = builder.publishFunction(
+			FunctionDeclRequest{
+				global_scope, merge_a, TypeId{201}, TypeId{301}, LanguageLinkage::CPlusPlus, false, false, false},
+			table);
+		const PublishResult first_b = builder.publishFunction(
+			FunctionDeclRequest{
+				global_scope, merge_b, TypeId{202}, TypeId{302}, LanguageLinkage::CPlusPlus, false, false, false},
+			table);
+		REQUIRE(first_a.status == PublishStatus::Created);
+		REQUIRE(first_b.status == PublishStatus::Created);
+		const EntityRecord entity_a_before = builder.entity(first_a.entity_id);
+		const EntityRecord entity_b_before = builder.entity(first_b.entity_id);
+		const std::size_t decls_before = builder.declarationCount();
+		const std::size_t entities_before = builder.entityCount();
+
+		{
+			PublicationTransaction transaction(builder);
+			PreparedFunctionPublication created_prep_a = builder.prepareFunctionPublication(
+				FunctionDeclRequest{
+					global_scope, create_a, TypeId{203}, TypeId{303}, LanguageLinkage::CPlusPlus, false, false, false},
+				table);
+			PreparedFunctionPublication created_prep_b = builder.prepareFunctionPublication(
+				FunctionDeclRequest{
+					global_scope, create_b, TypeId{204}, TypeId{304}, LanguageLinkage::CPlusPlus, false, false, false},
+				table);
+			PreparedFunctionPublication merged_prep_a = builder.prepareFunctionPublication(
+				FunctionDeclRequest{
+					global_scope, merge_a, TypeId{201}, TypeId{301}, LanguageLinkage::CPlusPlus, true, false, false},
+				table);
+			PreparedFunctionPublication merged_prep_b = builder.prepareFunctionPublication(
+				FunctionDeclRequest{
+					global_scope, merge_b, TypeId{202}, TypeId{302}, LanguageLinkage::CPlusPlus, true, false, false},
+				table);
+			REQUIRE_FALSE(created_prep_a.isRejected());
+			REQUIRE_FALSE(created_prep_b.isRejected());
+			REQUIRE_FALSE(merged_prep_a.isRejected());
+			REQUIRE_FALSE(merged_prep_b.isRejected());
+			REQUIRE(builder.commitFunctionPublication(created_prep_a, transaction).status == PublishStatus::Created);
+			REQUIRE(builder.commitFunctionPublication(created_prep_b, transaction).status == PublishStatus::Created);
+			REQUIRE(builder.commitFunctionPublication(merged_prep_a, transaction).status ==
+					PublishStatus::MergedRedeclaration);
+			REQUIRE(builder.commitFunctionPublication(merged_prep_b, transaction).status ==
+					PublishStatus::MergedRedeclaration);
+			CHECK(builder.declarationCount() == decls_before + 4u);
+			CHECK(builder.entityCount() == entities_before + 2u);
+			transaction.rollback();
+		}
+
+		CHECK(builder.declarationCount() == decls_before);
+		CHECK(builder.entityCount() == entities_before);
+		CHECK(builder.entity(first_a.entity_id).latest_decl_id == entity_a_before.latest_decl_id);
+		CHECK(builder.entity(first_a.entity_id).flags == entity_a_before.flags);
+		CHECK(builder.entity(first_b.entity_id).latest_decl_id == entity_b_before.latest_decl_id);
+		CHECK(builder.entity(first_b.entity_id).flags == entity_b_before.flags);
+
+		const PublishResult recreate_a = builder.publishFunction(
+			FunctionDeclRequest{
+				global_scope, create_a, TypeId{203}, TypeId{303}, LanguageLinkage::CPlusPlus, false, false, false},
+			table);
+		CHECK(recreate_a.status == PublishStatus::Created);
+		CHECK(recreate_a.entity_id != first_a.entity_id);
+		CHECK(recreate_a.entity_id != first_b.entity_id);
+	}
+
+	TEST_CASE("DeclarationBuilder rejects committing the same prepared publication twice") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_double_commit");
+		const FunctionDeclRequest request{
+			global_scope, name, TypeId{205}, TypeId{305}, LanguageLinkage::CPlusPlus, false, false, false};
+
+		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+		REQUIRE_FALSE(prepared.isRejected());
+		PublicationTransaction transaction(builder);
+		REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
+		const std::size_t decls = builder.declarationCount();
+		const std::size_t entities = builder.entityCount();
+
+		bool threw = false;
+		try {
+			builder.commitFunctionPublication(prepared, transaction);
+		} catch (const InternalError&) {
+			threw = true;
+		}
+		CHECK(threw);
+		CHECK(builder.declarationCount() == decls);
+		CHECK(builder.entityCount() == entities);
+		transaction.commit();
 	}
 
 	TEST_CASE("PublicationTransaction checkpoint stays bounded as builder grows") {
@@ -5346,7 +5451,7 @@ TEST_SUITE("FrontendContext") {
 			false,
 			false,
 			false};
-		const PreparedFunctionPublication prepared =
+		PreparedFunctionPublication prepared =
 			builder.prepareFunctionPublication(rollback_request, table);
 		REQUIRE_FALSE(prepared.isRejected());
 		REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
@@ -5395,7 +5500,7 @@ float symtab_undo_conflict_row(int value);
 			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
 		{
 			PublicationTransaction first_transaction(builder);
-			const PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
+			PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
 			REQUIRE_FALSE(prepared.isRejected());
 			REQUIRE(builder.commitFunctionPublication(prepared, first_transaction).status ==
 					PublishStatus::Created);

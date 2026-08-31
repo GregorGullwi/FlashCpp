@@ -4,7 +4,9 @@
 #include "LegacyChunkedAnyStoragePolicy.h"
 
 // Completes the guarded-storage policy after ExpressionNode is defined.
-// Include from CompilerIncludes.h after AstNodeTypes.h, not from AstNodeTypes.h.
+// Included from the AstNodeTypes.h umbrella so every translation unit that
+// instantiates guarded AST storage sees the specialization. Do not include
+// this from AstNodeTypes_Core.h (ExpressionNode is not defined there).
 
 template<typename T>
 inline constexpr bool isLegacyChunkedAnyStorageType =
