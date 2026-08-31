@@ -4408,6 +4408,35 @@ TEST_SUITE("FrontendContext") {
 				  .value != 0u);
 	}
 
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed VariableDeclarationNode") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = "int scope_stamp_var;";
+		CompileContext test_context;
+		test_context.setInputFile("declaration_ast_scope_id_var_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle var_name = StringTable::getOrInternStringHandle("scope_stamp_var");
+		const std::vector<ASTNode> symbols =
+			gSymbolTable.lookup_all(StringTable::getStringView(var_name));
+		REQUIRE(symbols.size() == 1u);
+		REQUIRE(symbols[0].is<VariableDeclarationNode>());
+		CHECK(symbols[0]
+				  .as<VariableDeclarationNode>()
+				  .declaration()
+				  .lexical_scope_id()
+				  .value != 0u);
+	}
+
 	TEST_CASE("FrontendContext publishes persistent scope telemetry") {
 		FrontendContext context;
 		context.publishScopeState(ScopeId{3}, 4);

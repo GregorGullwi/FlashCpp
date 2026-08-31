@@ -32,8 +32,9 @@ Last updated: 2026-08-31 after pull request boundary 12
 - Persistent scopes still live in `SymbolTable` (cursor exit, `ScopeId` on
   insert and lookup). `FrontendContext` publishes that state for telemetry.
   `SymbolTable::insertCore` stamps `DeclarationNode::lexical_scope_id` (and
-  function declarations via their embedded `DeclarationNode`) at the shared
-  insert choke point; enum/struct and other symbol kinds remain unstamped.
+  function, template-function, and variable declarations via their embedded
+  `DeclarationNode`) at the shared insert choke point; enum/struct and other
+  symbol kinds remain unstamped.
 - Global forwarding into `FrontendContext` is telemetry-only so far (string-
   table entry count and spelling bytes, plus published scope and
   declaration/entity counts); syntax/semantic/IR domain bytes and broader
@@ -54,7 +55,7 @@ Last updated: 2026-08-31 after pull request boundary 12
 | 9 | `ChunkedAnyVector` compile-time legacy-node allow-list guard on `gChunkedAnyStorage` and `ASTNode::emplace_node` |
 | 10 | `prepareFunctionPublication` preflight, `PublicationTransaction` mark/rollback, parser shadow commit helper |
 | 11 | `SymbolTableInsertUndo` on wired free-function inserts, parser rollback when publication rejects |
-| 12 | `DeclarationNode::lexical_scope_id` stamped at `SymbolTable` insert/replace/insertGlobal choke point |
+| 12 | `DeclarationNode::lexical_scope_id` stamped at `SymbolTable` insert/replace/insertGlobal choke point (function, template-function, variable, and bare declaration nodes) |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
