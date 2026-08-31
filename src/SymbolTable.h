@@ -21,7 +21,19 @@
 #include "CompileError.h"
 #include "NamespaceRegistry.h"
 #include "TemplateRegistry.h"
-#include "ScopePublication.h"
+
+class SymbolTable;
+
+// Out-of-line in Globals.cpp so SymbolTable.h does not include FrontendContext.h.
+void publishPersistentScopeEnter(
+	ScopeId id,
+	ScopeId parent_id,
+	ScopeType scope_type,
+	uint32_t depth,
+	NamespaceHandle namespace_handle);
+void publishPersistentScopeCursor(ScopeId current_scope_id);
+void resetPersistentScopes();
+void bindPersistentScopePublication(SymbolTable& table);
 
 struct ScopeHandle {
 	size_t scope_level = 0;
