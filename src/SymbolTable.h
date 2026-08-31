@@ -52,7 +52,6 @@ struct Scope {
 	Scope& operator=(const Scope&) = default;
 
 	ScopeType scope_type = ScopeType::Block;
-	ScopeId scope_id;
 	ScopeId parent_scope_id;
 	uint32_t depth = 1;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
@@ -215,7 +214,8 @@ public:
 	}
 
 	ScopeId currentScopeId() const {
-		return scopes_[current_scope_index_].scope_id;
+		// Scope slots are append-only until clear(); exit only moves the cursor.
+		return ScopeId{static_cast<uint32_t>(current_scope_index_ + 1)};
 	}
 
 	ScopeId lastLookupScopeId() const {
@@ -240,32 +240,24 @@ public:
 		return scopes_[current_scope_index_].depth;
 	}
 
-	// Lookup by ScopeId for external/unvalidated inputs. Absence is a normal outcome
-	// (stale id, foreign context, never-created scope). Persistent scopes assign
-	// ScopeId as index + 1, so this is O(1).
+	// Lookup by translation-unit-local ScopeId. Zero and out-of-range IDs are
+	// absent; in-range IDs do not carry context or generation provenance.
+	// Persistent scopes assign ScopeId as index + 1, so this is O(1).
 	const Scope* findScopeById(ScopeId scope_id) const {
 		if (!scope_id || scope_id.value > scopes_.size()) {
 			return nullptr;
 		}
-		const Scope& scope = scopes_[scope_id.value - 1];
-		if (scope.scope_id != scope_id) {
-			return nullptr;
-		}
-		return &scope;
+		return &scopes_[scope_id.value - 1];
 	}
 
 	// Lookup for ScopeIds produced by this SymbolTable (parent links, last-declaring
-	// site, current scope). A missing or mismatched record is an internal invariant
+	// site, current scope). An out-of-range ID is an internal invariant
 	// failure, not a recoverable publication rejection.
 	const Scope& scopeById(ScopeId scope_id) const {
 		if (!scope_id || scope_id.value > scopes_.size()) {
 			throw InternalError("SymbolTable: ScopeId out of range");
 		}
-		const Scope& scope = scopes_[scope_id.value - 1];
-		if (scope.scope_id != scope_id) {
-			throw InternalError("SymbolTable: ScopeId does not match scope record");
-		}
-		return scope;
+		return scopes_[scope_id.value - 1];
 	}
 
 	bool insert([[maybe_unused]] const std::string& identifier, [[maybe_unused]] ASTNode node) {
@@ -299,7 +291,7 @@ public:
 	}
 
 	bool insertCore(std::string_view identifier, ASTNode node, SymbolTableInsertUndo* undo) {
-		last_declaring_scope_id_ = scopes_[current_scope_index_].scope_id;
+		last_declaring_scope_id_ = currentScopeId();
 		const ScopeId insert_scope_id = last_declaring_scope_id_;
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(node, insert_scope_id);
 		auto& current_scope = scopes_[current_scope_index_];
@@ -713,7 +705,7 @@ public:
 	// with the fully-initialised VariableDeclarationNode once parsing completes.
 	bool replace_variable(std::string_view identifier, ASTNode new_node) {
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(
-			new_node, scopes_[current_scope_index_].scope_id);
+			new_node, currentScopeId());
 		auto& current_scope = scopes_[current_scope_index_];
 		if (current_scope.scope_type == ScopeType::Namespace) {
 			NamespaceHandle ns_handle = get_current_namespace_handle();
@@ -751,8 +743,8 @@ public:
 		}
 
 		auto& global_scope = scopes_[0];	 // Global scope is always at index 0
-		last_declaring_scope_id_ = global_scope.scope_id;
-		SymbolTableDetail::stampLexicalScopeOnDeclaration(node, global_scope.scope_id);
+		last_declaring_scope_id_ = ScopeId{1};
+		SymbolTableDetail::stampLexicalScopeOnDeclaration(node, ScopeId{1});
 		// First, try to find the identifier without interning
 		auto it = global_scope.symbols.find(identifier);
 
@@ -832,7 +824,7 @@ public:
 	}
 
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
-		last_lookup_scope_id_ = scopes_[current_scope_index_].scope_id;
+		last_lookup_scope_id_ = currentScopeId();
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		NamespaceHandle scope_namespace = namespace_handle;
 
@@ -925,7 +917,7 @@ public:
 	}
 
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
-		last_lookup_scope_id_ = scopes_[current_scope_index_].scope_id;
+		last_lookup_scope_id_ = currentScopeId();
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		NamespaceHandle scope_namespace = namespace_handle;
 
@@ -1338,11 +1330,9 @@ public:
 	void enter_scope(ScopeType scopeType) {
 		const Scope& parent = scopes_[current_scope_index_];
 		const uint32_t new_depth = parent.depth + 1;
-		const ScopeId parent_id = parent.scope_id;
-		const ScopeId new_scope_id = ScopeId{static_cast<uint32_t>(scopes_.size() + 1)};
+		const ScopeId parent_id = currentScopeId();
 		scopes_.emplace_back(Scope(scopeType, new_depth));
 		Scope& scope = scopes_.back();
-		scope.scope_id = new_scope_id;
 		scope.parent_scope_id = parent_id;
 		current_scope_index_ = scopes_.size() - 1;
 		publishPersistentScopeEnterIfEnabled();
@@ -1351,10 +1341,8 @@ public:
 	void enter_namespace(NamespaceHandle ns_handle) {
 		const Scope& parent = scopes_[current_scope_index_];
 		const uint32_t new_depth = parent.depth + 1;
-		const ScopeId parent_id = parent.scope_id;
-		const ScopeId new_scope_id = ScopeId{static_cast<uint32_t>(scopes_.size() + 1)};
+		const ScopeId parent_id = currentScopeId();
 		Scope scope(ScopeType::Namespace, new_depth);
-		scope.scope_id = new_scope_id;
 		scope.parent_scope_id = parent_id;
 		scope.namespace_handle = ns_handle;
 		if (ns_handle.isValid() && !ns_handle.isGlobal()) {
@@ -1378,11 +1366,9 @@ public:
 			FLASH_LOG(Symbols, Error, "Namespace handle creation failed for '", namespace_name, "'");
 			const Scope& parent = scopes_[current_scope_index_];
 			const uint32_t new_depth = parent.depth + 1;
-			const ScopeId parent_id = parent.scope_id;
-			const ScopeId new_scope_id = ScopeId{static_cast<uint32_t>(scopes_.size() + 1)};
+			const ScopeId parent_id = currentScopeId();
 			scopes_.emplace_back(Scope(ScopeType::Namespace, new_depth, name_handle));
 			Scope& scope = scopes_.back();
-			scope.scope_id = new_scope_id;
 			scope.parent_scope_id = parent_id;
 			current_scope_index_ = scopes_.size() - 1;
 			publishPersistentScopeEnterIfEnabled();
@@ -1708,7 +1694,6 @@ public:
 		scopes_.clear();
 		scopes_.emplace_back(Scope(ScopeType::Global, 1));
 		Scope& global_scope = scopes_.back();
-		global_scope.scope_id = ScopeId{1};
 		global_scope.parent_scope_id = ScopeId{};
 		current_scope_index_ = 0;
 		last_lookup_scope_id_ = ScopeId{};
@@ -1729,7 +1714,7 @@ private:
 		}
 		const Scope& scope = scopes_.back();
 		publishPersistentScopeEnter(
-			scope.scope_id,
+			currentScopeId(),
 			scope.parent_scope_id,
 			scope.scope_type,
 			scope.depth,
@@ -1752,7 +1737,6 @@ private:
 
 	static Scope makeInitialGlobalScope() {
 		Scope global_scope(ScopeType::Global, 1);
-		global_scope.scope_id = ScopeId{1};
 		global_scope.parent_scope_id = ScopeId{};
 		return global_scope;
 	}

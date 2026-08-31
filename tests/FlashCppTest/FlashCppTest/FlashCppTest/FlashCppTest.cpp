@@ -4284,6 +4284,42 @@ TEST_SUITE("FrontendContext") {
 		CHECK(scratch_stats.peak_reserved_bytes == context.scratchArena().peakReservedBytes());
 	}
 
+	template<typename T>
+	concept StoresDuplicateScopeId = requires(T scope) { scope.scope_id; };
+	static_assert(!StoresDuplicateScopeId<Scope>);
+
+	TEST_CASE("Scope slot identities survive deep exit and sibling publication") {
+		FrontendContext context;
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+		constexpr uint32_t depth = 4096;
+		for (uint32_t index = 0; index < depth; ++index) {
+			table.enter_scope(ScopeType::Block);
+			REQUIRE(table.currentScopeId().value == index + 2);
+			CHECK(context.currentScopeId() == table.currentScopeId());
+		}
+		for (uint32_t index = depth; index > 0; --index) {
+			table.exit_scope();
+			CHECK(table.currentScopeId().value == index);
+		}
+		table.enter_scope(ScopeType::Function);
+		const ScopeId sibling_id = table.currentScopeId();
+		CHECK(sibling_id.value == depth + 2);
+		CHECK(context.scopeRecord(sibling_id).parent_id == ScopeId{1});
+		CHECK(table.scopeById(ScopeId{2}).scope_type == ScopeType::Block);
+		CHECK(table.scopeById(sibling_id).scope_type == ScopeType::Function);
+		CHECK(table.findScopeById(ScopeId{}) == nullptr);
+		CHECK(table.findScopeById(ScopeId{depth + 3}) == nullptr);
+		CHECK_THROWS_AS(table.scopeById(ScopeId{}), InternalError);
+		CHECK_THROWS_AS(table.scopeById(ScopeId{depth + 3}), InternalError);
+		table.clear();
+		CHECK(table.currentScopeId() == ScopeId{1});
+		CHECK(context.currentScopeId() == ScopeId{1});
+		CHECK(table.findScopeById(sibling_id) == nullptr);
+		CHECK(table.scopeCount() == 1);
+		CHECK(context.scopeCount() == 1);
+	}
+
 	TEST_CASE("SymbolTable scope exit moves cursor without destroying scope records") {
 		SymbolTable table;
 		const ScopeId global_id = table.currentScopeId();
@@ -4519,7 +4555,7 @@ TEST_SUITE("FrontendContext") {
 		const Scope* scope = table.findScopeById(id);
 		REQUIRE(scope != nullptr);
 		const ScopeRecord& record = context.scopeRecord(id);
-		CHECK(record.id == scope->scope_id);
+		CHECK(record.id == id);
 		CHECK(record.parent_id == scope->parent_scope_id);
 		CHECK(record.depth == scope->depth);
 		CHECK(record.scope_type == scope->scope_type);
