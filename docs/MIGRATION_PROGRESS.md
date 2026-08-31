@@ -5,13 +5,14 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-31 after pull request boundary 14
+Last updated: 2026-08-31 after pull request boundary 15
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 14 are complete; architecture
-  boundary 1 exit criteria remain open through follow-on boundary-1 work.
+  and entities). Pull request boundaries 1 through 15 are landed.
+  Architecture boundary 1 exit criteria remain open through
+  follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
   `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
   registry identity), not lexical `ScopeId`. Publication targets are validated
@@ -36,8 +37,12 @@ Last updated: 2026-08-31 after pull request boundary 14
   using-directives, and aliases remain on `SymbolTable::scopes_`. Publication
   without an active `FrontendContext` is `InternalError`. `publishScopeState` is
   deleted; `scopeCount()` / `currentScopeId()` on `FrontendContext` are
-  arena-backed. Named later deletion: `Scope::{scope_id, parent_scope_id,
-  scope_type, depth, namespace_handle}` once lookup reads `ScopeRecord`.
+  arena-backed. The duplicate `Scope::scope_id` field is deleted.
+  `SymbolTable::currentScopeId()` derives identity from the append-only slot; bounds-checked ID access no longer
+  compares a second stored ID. `ScopeRecord::id` remains context-owned. Scope
+  IDs are translation-unit-local slot identities, not context/generation tags.
+  Named later deletion: `Scope::{parent_scope_id, scope_type, depth,
+  namespace_handle}` once lookup reads `ScopeRecord`.
   `SymbolTable::insertCore` stamps `DeclarationNode::lexical_scope_id` (and
   function, template-function, variable, template-variable, and bare declaration
   nodes) at the shared insert choke point; enum/struct and other symbol kinds
@@ -54,7 +59,7 @@ Last updated: 2026-08-31 after pull request boundary 14
   used/reserved bytes are reported under `--perf-stats`. Sampled compiler tests
   peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
 
-## Pull request boundary status (1–14)
+## Pull request boundary status (1–15)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -72,6 +77,7 @@ Last updated: 2026-08-31 after pull request boundary 14
 | 12 | `DeclarationNode::lexical_scope_id` stamped at `SymbolTable` insert/replace/insertGlobal choke point (function, template-function, variable, template-variable, and bare declaration nodes) |
 | 13 | Syntax and semantic allocation-domain used/reserved bytes reported through `FrontendContext` from `gChunkedAnyStorage` and DeclarationBuilder arenas |
 | 14 | FrontendContext-owned `ScopeRecord` arena; opt-in dual-write from `SymbolTable` enter/exit/clear; `publishScopeState` deleted |
+| 15 | Delete duplicate `Scope::scope_id` storage; route identity reads through slot-based `currentScopeId()`; compile-time field guard and mutation-validated 4096-level scope/sibling regression |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -80,7 +86,10 @@ boundary 1 is started, not finished.
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 9/78 (12%)
+- Completed: 8/78 (10.3%). Corrected the previous tally: declaration/lookup
+  `ScopeId` stamping is a persistent-scope deliverable, not an explicit exit
+  criterion. Boundary 15 deletes duplicate storage without completing another
+  exit criterion.
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
   - Boundary 0 "structured diagnostics can be asserted by tests"
@@ -94,9 +103,6 @@ boundary 1 is started, not finished.
   - Boundary 1 "no new semantic object is allocated in ChunkedAnyVector" (Decl/
     Entity use typed arenas; compile-time guard now enforces for
     `gChunkedAnyStorage`)
-  - Boundary 1 "ScopeId recorded at declaration and expression lookup sites"
-    (`DeclarationNode` / function declarations stamped at `SymbolTable` insert;
-    lookup sites record `ScopeId` from PR 6)
 - Advanced, not completed:
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure"
@@ -116,9 +122,13 @@ boundary 1 is started, not finished.
     semantic, and scratch domain used/reserved bytes now report; IR domain and
     per-type AST family counts remain unwired; scope-arena used/reserved bytes
     now report separately from allocation domains
-  - Boundary 1 "persistent scopes owned by FrontendContext rather than
-    SymbolTable": compact `ScopeRecord` metadata is context-owned; symbol maps
-    still live on `SymbolTable::scopes_`
+  - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
+    criterion): compact `ScopeRecord` metadata is context-owned; duplicate
+    `Scope::scope_id` is deleted, while other metadata and symbol maps still
+    live on `SymbolTable::scopes_`. The 4096-level enter/exit/sibling probe passes
+    with a 1 MiB stack. The largest touched clang-cl `/Od` frame remains
+    `insertCore` at 1704 bytes; lookup frames grow from 312 to 328 bytes. This
+    scope path is iterative; broader parser/template stack bounds remain open.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage, enum/struct AST scope
     stamping): follow-on boundary-1 work
@@ -143,8 +153,8 @@ Then, in order:
 1. Continue architecture boundary 1: expand shadow wire or merge coverage
    (default arguments, exception specifications, friends, templates) only
    after canonical `TypeId` exists; make lookup read `ScopeRecord` and delete
-   `Scope` metadata fields; wire IR domain byte accounting and per-type AST
-   family counts; stamp `ScopeId` on remaining symbol-table node kinds (enum,
+   remaining `Scope` metadata fields; wire IR domain byte accounting and
+   per-type AST family counts; stamp `ScopeId` on remaining symbol-table node kinds (enum,
    struct, typedef).
 
 Named follow-ups carried forward:
