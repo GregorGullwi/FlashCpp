@@ -20,6 +20,9 @@
 // its own arenas and domain stats.
 class FrontendContext {
 public:
+	// Policy headroom until production probes provide workload measurements.
+	static constexpr uint64_t kScratchByteLimit = 64ULL * 1024 * 1024;
+
 	FrontendContext() {
 		seedGlobalScopeRecord();
 		pushActive(this);
@@ -45,6 +48,10 @@ public:
 
 	ScratchTransaction beginScratchTransaction() {
 		return ScratchTransaction(scratch_arena_, scratch_registry_);
+	}
+
+	DiagnosticEngine& diagnostics() {
+		return diagnostics_;
 	}
 
 	MonotonicScratchArena& scratchArena() {
@@ -239,6 +246,9 @@ public:
 				  "  scratch discarded bytes: ",
 				  scratch_arena_.discardedBytes());
 		FLASH_LOG(General, Info,
+				  "  scratch allocation byte limit: ",
+				  scratch_arena_.byteLimit());
+		FLASH_LOG(General, Info,
 				  "  scratch registry committed/live: ",
 				  scratch_registry_.committedCount(),
 				  "/",
@@ -318,7 +328,9 @@ private:
 	}
 
 	std::array<DomainByteStats, 4> domain_stats_{};
-	MonotonicScratchArena scratch_arena_;
+	// Scratch limit diagnostics are owned here; legacy diagnostics stay in CompileContext.
+	DiagnosticEngine diagnostics_;
+	MonotonicScratchArena scratch_arena_{diagnostics_, kScratchByteLimit};
 	ScratchProbeRegistry scratch_registry_;
 	DeclarationBuilder declaration_builder_;
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
@@ -331,4 +343,3 @@ static_assert(!std::is_move_constructible_v<FrontendContext>);
 inline FrontendContext* frontendContext() {
 	return FrontendContext::active();
 }
-

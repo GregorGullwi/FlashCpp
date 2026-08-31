@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+class DiagnosticEngine;
+
 enum class AllocationDomain : uint8_t {
 	Syntax,
 	Semantic,
@@ -34,7 +36,9 @@ struct ScratchRegistryState {
 
 class MonotonicScratchArena {
 public:
-	MonotonicScratchArena() = default;
+	// The engine must outlive the arena and rendering of its limit diagnostics.
+	MonotonicScratchArena(DiagnosticEngine& diagnostics, uint64_t byte_limit)
+		: diagnostics_(diagnostics), byte_limit_(byte_limit) {}
 	~MonotonicScratchArena() {
 		runDestructorsFrom(0);
 	}
@@ -64,6 +68,7 @@ public:
 	uint64_t reservedBytes() const;
 	uint64_t peakReservedBytes() const { return peak_reserved_bytes_; }
 	uint64_t discardedBytes() const { return discarded_bytes_; }
+	uint64_t byteLimit() const { return byte_limit_; }
 
 private:
 	struct Block {
@@ -84,7 +89,11 @@ private:
 	}
 
 	void runDestructorsFrom(std::size_t first_index);
+	[[noreturn]] void reportAllocationLimit();
 
+	DiagnosticEngine& diagnostics_;
+	// Bounds payload/reservation and cumulative allocation work, not container metadata.
+	const uint64_t byte_limit_;
 	std::vector<Block> blocks_;
 	std::vector<DestructorEntry> destructors_;
 	uint64_t current_bytes_ = 0;

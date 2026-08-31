@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-31 after pull request boundary 15
+Last updated: 2026-08-31 after pull request boundary 16
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 15 are landed.
+  and entities). Pull request boundaries 1 through 16 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -47,6 +47,24 @@ Last updated: 2026-08-31 after pull request boundary 15
   function, template-function, variable, template-variable, and bare declaration
   nodes) at the shared insert choke point; enum/struct and other symbol kinds
   remain unstamped.
+- `MonotonicScratchArena` requires an explicit diagnostic engine and byte
+  budget. `FrontendContext` owns the engine for scratch-limit diagnostics and
+  supplies a 64 MiB budget; legacy diagnostics remain in `CompileContext`.
+  Allocation enforces `currentBytes() + discardedBytes() <= byteLimit()` and
+  `reservedBytes() <= byteLimit()` before publishing state. Rollback transfers
+  live bytes into discarded work without replenishing the budget or throwing
+  for exhaustion. Padding is charged using actual addresses through
+  `std::align`; new blocks are capped at the remaining reservation before
+  checking whether the actual alignment fits, so worst-case padding does not
+  reject exact-budget typed allocations. Block growth and size arithmetic are
+  checked. Exhaustion is
+  structured fatal diagnostic `ScratchAllocationLimit` (#3001).
+  The limit covers payload, block reservation, and cumulative allocation work,
+  not vector/destructor metadata. The 64 MiB value is policy headroom, not a
+  measured production workload: production parser probes do not yet use this
+  arena. Diagnostic rendering must occur while its owning engine is alive.
+  Measured x64 sizes: arena 80 -> 96 bytes; `DiagnosticEngine` 144 bytes;
+  `FrontendContext` 1296 -> 1456 bytes. No new semantic record or arena is added.
 - `printArenaTelemetry` fills scratch, syntax, and semantic `AllocationDomain`
   stats. Syntax used/reserved bytes are forwarded from `gChunkedAnyStorage`;
   semantic used/reserved bytes come from DeclarationBuilder declaration and
@@ -59,7 +77,7 @@ Last updated: 2026-08-31 after pull request boundary 15
   used/reserved bytes are reported under `--perf-stats`. Sampled compiler tests
   peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
 
-## Pull request boundary status (1–15)
+## Pull request boundary status (1–16)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -78,6 +96,7 @@ Last updated: 2026-08-31 after pull request boundary 15
 | 13 | Syntax and semantic allocation-domain used/reserved bytes reported through `FrontendContext` from `gChunkedAnyStorage` and DeclarationBuilder arenas |
 | 14 | FrontendContext-owned `ScopeRecord` arena; opt-in dual-write from `SymbolTable` enter/exit/clear; `publishScopeState` deleted |
 | 15 | Delete duplicate `Scope::scope_id` storage; route identity reads through slot-based `currentScopeId()`; compile-time field guard and mutation-validated 4096-level scope/sibling regression |
+| 16 | Explicit scratch allocation budget, context-owned scratch-limit diagnostics, checked address alignment and block publication; delete the unbounded allocation path |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -86,16 +105,20 @@ boundary 1 is started, not finished.
 ## Criteria completion
 
 - Explicit exit criteria total: 78 (boundaries 0 through 11)
-- Completed: 8/78 (10.3%). Corrected the previous tally: declaration/lookup
+- Completed: 9/78 (11.5%). Declaration/lookup
   `ScopeId` stamping is a persistent-scope deliverable, not an explicit exit
-  criterion. Boundary 15 deletes duplicate storage without completing another
-  exit criterion.
+  criterion.
   - Boundary 0 "diagnostics emitted outside the engine have a baseline and a
     named removal target in architecture boundary 11"
   - Boundary 0 "structured diagnostics can be asserted by tests"
   - Boundary 0 "choke-point counters and the remaining static inventories are
     visible in CI on a fixed corpus"
   - Boundary 1 "IDs cannot be constructed from pointers"
+  - Boundary 1 "discarded scratch bytes are measured and bounded": explicit
+    allocation-work and reservation limits, eight budget probes, five rejected
+    source-copy mutations (work, padding, reservation, exact-budget preflight,
+    alignment-exhaustion classification), and a
+    4096-failed-probe test passing with the normal 1 MiB Windows stack.
   - Boundary 1 "leaving parser scope does not destroy lookup information"
   - Boundary 1 "declaration merging passes its initial regression set"
   - Boundary 1 "the legacy allocation choke point rejects non-legacy semantic
@@ -115,8 +138,6 @@ boundary 1 is started, not finished.
     arenas on the parser shadow path; publication reject leaves the
     `SymbolTable` insertion in place because lookup remains authoritative;
     parser tentative parsing and non-wired insert families remain open
-  - Boundary 1 "discarded scratch bytes are measured and bounded": measured;
-    no implementation limit yet
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
     InlineVector spill counts are reported through FrontendContext": syntax,
     semantic, and scratch domain used/reserved bytes now report; IR domain and
@@ -133,6 +154,21 @@ boundary 1 is started, not finished.
     free-function set, full template-facade coverage, enum/struct AST scope
     stamping): follow-on boundary-1 work
 
+Boundary-16 validation: MSVC build has zero warnings/errors; all 2962 single-file
+tests and the multi-TU case pass, including 255 negative diagnostic contracts.
+FrontendContext/Diagnostics: 87 tests, 17166 assertions pass. Full unity:
+474/476 pass; the same two failures reproduce in an independently built clean
+`origin/main` snapshot (466/468). Excluding those two known cases gives 474/474.
+The first file-suite run had one empty-output link failure; its targeted retry
+and the complete rerun passed. Fixed-corpus totals are unchanged: token replay
+382, old template engine 59, AST-to-IR semantic 56, declaration publication 14;
+codegen-to-parser, post-parse typing, dollar identity, and outside-engine
+diagnostics remain zero. Existing counter guards and removal boundaries remain
+unchanged. Clang-cl `/Od` stack measurements: `allocate` 312 -> 296 bytes; new
+cold `reportAllocationLimit` 488 bytes (largest changed frame); rollback frames
+unchanged. Allocation/rollback introduce no source-controlled native recursion;
+broader parser/template stack bounds remain open.
+
 ## Effort estimate
 
 - Implementation effort completed overall: 20-23%, confidence medium
@@ -143,17 +179,18 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Land canonical function/type identity (architecture boundary 3A) before deleting
-  `SymbolTable::insert` function redeclaration merge or making
-  `DeclarationBuilder` sole merge authority on the current `matches_signature`
-  interner.
+- For the next persistent-scope slice, make lookup read the context-owned `ScopeRecord`
+  before deleting the remaining `Scope` metadata; explicitly preserve the
+  ownership contract of unbound backend/test symbol tables.
 
 Then, in order:
 
 1. Continue architecture boundary 1: expand shadow wire or merge coverage
    (default arguments, exception specifications, friends, templates) only
    after canonical `TypeId` exists; make lookup read `ScopeRecord` and delete
-   remaining `Scope` metadata fields; wire IR domain byte accounting and
+   remaining `Scope` metadata fields; keep `SymbolTable::insert` as function
+   merge authority until canonical function/type identity (boundary 3A)
+   replaces the `matches_signature` bridge; wire IR domain byte accounting and
    per-type AST family counts; stamp `ScopeId` on remaining symbol-table node kinds (enum,
    struct, typedef).
 
@@ -192,6 +229,11 @@ Current findings only; delete entries when their resolution lands.
   `Templates:InheritedStaticStructMemberUsesInstantiatedOwner` throws
   `TemplateEngine not attached to Parser`; the test constructs a `Parser`
   without `attachTemplateEngine`. Owner: doctest template-engine fixture.
+- Scratch `allocateObject` can finish construction before destructor-vector
+  registration throws `bad_alloc`, leaving that object's destructor unregistered.
+  Budget rejection now precedes construction, but allocator-failure exception
+  safety is still required before production nontrivial scratch probes adopt
+  this API. Owner: scratch object lifetime registration.
 - Declaration-parse errors can be masked by the top-level expression-statement
   fallback; details and the conversion rule for affected sites live in
   docs/KNOWN_ISSUES.md. Owner: parser declaration dispatch.
