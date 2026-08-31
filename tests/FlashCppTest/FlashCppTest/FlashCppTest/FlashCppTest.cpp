@@ -4308,6 +4308,16 @@ TEST_SUITE("FrontendContext") {
 		CHECK(table.lastDeclaringScopeId().value == 1u);
 	}
 
+	TEST_CASE("ASTNode get_if returns active node type or nullptr") {
+		Token type_token(Token::Type::Identifier, std::string_view("int"), 1, 1, 0);
+		Token id_token(Token::Type::Identifier, std::string_view("get_if_probe"), 1, 1, 0);
+		TypeSpecifierNode int_type(
+			TypeCategory::Int, TypeQualifier::None, 32, type_token, CVQualifier::None);
+		ASTNode decl = ASTNode::emplace_node<DeclarationNode>(int_type, id_token);
+		CHECK(decl.get_if<DeclarationNode>() != nullptr);
+		CHECK(decl.get_if<FunctionDeclarationNode>() == nullptr);
+	}
+
 	TEST_CASE("SymbolTable insert stamps lexical ScopeId on DeclarationNode") {
 		SymbolTable table;
 		table.enter_scope(ScopeType::Function);
@@ -4432,6 +4442,36 @@ TEST_SUITE("FrontendContext") {
 		REQUIRE(symbols[0].is<VariableDeclarationNode>());
 		CHECK(symbols[0]
 				  .as<VariableDeclarationNode>()
+				  .declaration()
+				  .lexical_scope_id()
+				  .value != 0u);
+	}
+
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed TemplateVariableDeclarationNode") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = "template<class T> constexpr T scope_stamp_tmpl_var = T{};";
+		CompileContext test_context;
+		test_context.setInputFile("declaration_ast_scope_id_tmpl_var_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle var_name = StringTable::getOrInternStringHandle("scope_stamp_tmpl_var");
+		const std::vector<ASTNode> symbols =
+			gSymbolTable.lookup_all(StringTable::getStringView(var_name));
+		REQUIRE(symbols.size() == 1u);
+		REQUIRE(symbols[0].is<TemplateVariableDeclarationNode>());
+		CHECK(symbols[0]
+				  .as<TemplateVariableDeclarationNode>()
+				  .variable_declaration()
 				  .declaration()
 				  .lexical_scope_id()
 				  .value != 0u);
