@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 30
+Last updated: 2026-09-01 after pull request boundary 31
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 30 are landed.
+  and entities). Pull request boundaries 1 through 31 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -115,7 +115,7 @@ Last updated: 2026-09-01 after pull request boundary 30
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–30)
+## Pull request boundary status (1–31)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -149,6 +149,7 @@ Last updated: 2026-09-01 after pull request boundary 30
 | 28 | Mutation-validate parser shadow merging and retained SymbolTable authority; delete the unused nontransactional parser-publication adapter and abandoned `SymbolTableInsertUndo` control path |
 | 29 | Route `ExpressionSubstitutor` dependent member-function template instantiation through `TemplateEngine::tryInstantiateMemberFunctionTemplateCall`; delete last external direct `Parser` member-template call bypass |
 | 30 | Tag all `InlineVector` containers in `OverloadResolution.h` with `InlineVectorSpillFamily::OverloadResolution`; overload-resolution spill telemetry no longer attributes to `unknown` |
+| 31 | Tag `lookupMemberFunctionTemplateCandidatesForInstantiation` spill vectors with `OverloadResolution`; attach `TemplateEngine` in `Templates:InheritedStaticStructMemberUsesInstantiatedOwner` doctest |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -198,8 +199,9 @@ boundary 1 is started, not finished.
     totals, semantic `DeclKind` breakdown, declarator/parameter-list intern
     registry sizes, and per-family InlineVector spill breakdown report for
     tagged overload-resolution (including core `OverloadResolution.h` tie-break
-    vectors) and template-argument vectors; full IR arena ownership and tagging
-    of remaining InlineVector families remain open
+    vectors and member-function template candidate lookup) and template-argument
+    vectors; full IR arena ownership and tagging of remaining InlineVector
+    families remain open
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
     `Scope::scope_id` and legacy metadata fields on `Scope` are deleted.
@@ -214,17 +216,16 @@ boundary 1 is started, not finished.
     lexical `ScopeId`s while sharing one `OwnerId` / `EntityId`, and preserves
     `inline` plus definition state through the redeclaration chain.
 
-Boundary-30 validation: `build_flashcpp.bat`; migration counter baselines
-unchanged; dollar inventory 17/17;
-`comparison_operators_ret1.cpp`,
-`test_inline_ns_overload_merge_ret0.cpp`,
-`test_using_decl_namespace_overload_merge_ret2.cpp`, and
-`member_func_template_call_ret3.cpp`; and `git diff --check` pass. Grep confirms
-no untagged `InlineVector<` remains in `OverloadResolution.h`.
+Boundary-31 validation: `build_flashcpp.bat`; migration counter baselines
+unchanged;
+`test_template_inherited_static_struct_member_ret13.cpp`,
+`member_func_template_call_ret3.cpp`, and `test_member_template_call_ret0.cpp`;
+and `git diff --check` pass. Doctest fixture attaches `TemplateEngine` before
+`Parser::parse()` in `Templates:InheritedStaticStructMemberUsesInstantiatedOwner`.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 30-33%, confidence medium
+- Implementation effort completed overall: 31-34%, confidence medium
 
 ## Remaining work
 
@@ -267,10 +268,6 @@ Current findings only; delete entries when their resolution lands.
   `SemanticAnalysis:*QueryTracksAnalysisState` reproduces on clean `main`;
   details and suspected shared-static cause live in docs/KNOWN_ISSUES.md.
   Owner: sema query lifecycle.
-- Pre-existing unity-suite failure
-  `Templates:InheritedStaticStructMemberUsesInstantiatedOwner` throws
-  `TemplateEngine not attached to Parser`; the test constructs a `Parser`
-  without `attachTemplateEngine`. Owner: doctest template-engine fixture.
 - Scratch `allocateObject` can finish construction before destructor-vector
   registration throws `bad_alloc`, leaving that object's destructor unregistered.
   Budget rejection now precedes construction, but allocator-failure exception

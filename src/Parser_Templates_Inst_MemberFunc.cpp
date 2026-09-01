@@ -378,10 +378,10 @@ TemplateNameLookupRequest Parser::buildMemberFunctionTemplateLookupRequest(
 	return request;
 }
 
-InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
+InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
 	std::string_view struct_name,
 	std::string_view member_name) {
-	InlineVector<TemplateNameLookupCandidate, 4> candidates;
+	InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> candidates;
 	std::unordered_set<const void*> seen_declarations;
 	const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 	const StringHandle requested_owner = StringTable::getOrInternStringHandle(struct_name);
@@ -653,7 +653,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
 
 	// Route member template lookup through the semantic two-phase lookup request.
-	InlineVector<TemplateNameLookupCandidate, 4> template_candidates =
+	InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {
@@ -1724,7 +1724,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 
 	// Route member template overload discovery through the semantic two-phase lookup request.
-	InlineVector<TemplateNameLookupCandidate, 4> template_candidates =
+	InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {

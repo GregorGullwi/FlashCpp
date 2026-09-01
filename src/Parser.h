@@ -1981,7 +1981,7 @@ private:
 		StringHandle owner_name,
 		StringHandle member_name,
 		bool is_dependent) const;
-	InlineVector<TemplateNameLookupCandidate, 4> lookupMemberFunctionTemplateCandidatesForInstantiation(
+	InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> lookupMemberFunctionTemplateCandidatesForInstantiation(
 		std::string_view struct_name,
 		std::string_view member_name);
 	std::vector<ASTNode> materializeFunctionTemplateCandidateDeclarations(

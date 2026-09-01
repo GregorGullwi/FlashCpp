@@ -14,6 +14,7 @@
 #include "InlineVector.h"
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
 #include "InstantiationQueue.h"
+#include "TemplateEngine.h"
 #include <string>
 #include <algorithm>
 #include <typeindex>
@@ -1613,6 +1614,8 @@ TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 	Lexer lexer(code, file_reader.get_line_map(), file_reader.get_file_paths());
 	SemanticAnalysis parser_sema(test_context, gSymbolTable);
 	Parser parser(lexer, test_context, parser_sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
 	auto parse_result = parser.parse();
 	REQUIRE(!parse_result.is_error());
 
