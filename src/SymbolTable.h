@@ -38,6 +38,7 @@ void publishPersistentScopeCursor(SymbolTable& table, ScopeId current_scope_id);
 void resetPersistentScopes(SymbolTable& table);
 void bindPersistentScopePublication(SymbolTable& table);
 ScopeMetadataView readScopeMetadata(const SymbolTable& table, ScopeId scope_id);
+FrontendContext& requirePersistentScopePublicationContext(const SymbolTable& table);
 
 struct ScopeHandle {
 	size_t scope_level = 0;

@@ -27,25 +27,30 @@ InstantiationQueue gInstantiationQueue;
 
 namespace {
 
-FrontendContext* requirePersistentScopePublicationContext(const SymbolTable& table) {
-	FrontendContext* context = table.persistentScopePublicationContext();
-	if (context == nullptr) {
-		throw InternalError("SymbolTable: persistent scope publication is missing its bound FrontendContext");
-	}
-	return context;
-}
-
-} // namespace
-
-// Persistent-scope dual-write lives here so SymbolTable.h does not include
-// FrontendContext.h (and so this is not its own modular translation unit).
-void SymbolTable::enablePersistentScopePublication() {
+FrontendContext& requireActiveFrontendContext() {
 	FrontendContext* context = FrontendContext::active();
 	if (context == nullptr) {
 		throw InternalError("SymbolTable: persistent scope publication requires an active FrontendContext");
 	}
+	return *context;
+}
+
+} // namespace
+
+FrontendContext& requirePersistentScopePublicationContext(const SymbolTable& table) {
+	FrontendContext* context = table.persistentScopePublicationContext();
+	if (context == nullptr) {
+		throw InternalError("SymbolTable: persistent scope publication is missing its bound FrontendContext");
+	}
+	return *context;
+}
+
+// Persistent-scope dual-write lives here so SymbolTable.h does not include
+// FrontendContext.h (and so this is not its own modular translation unit).
+void SymbolTable::enablePersistentScopePublication() {
+	FrontendContext& context = requireActiveFrontendContext();
 	if (publish_persistent_scopes_) {
-		if (persistent_scope_publication_context_ != context) {
+		if (persistent_scope_publication_context_ != &context) {
 			throw InternalError("SymbolTable: persistent scope publication is already bound to a different FrontendContext");
 		}
 		return;
@@ -53,10 +58,10 @@ void SymbolTable::enablePersistentScopePublication() {
 	if (scopeCount() != 1 || currentScopeId().value != 1) {
 		throw InternalError("SymbolTable: persistent scope publication can only be enabled at the global scope");
 	}
-	if (context->scopeRecordCount() != 1) {
+	if (context.scopeRecordCount() != 1) {
 		throw InternalError("SymbolTable: active FrontendContext is not at its initial global scope record");
 	}
-	persistent_scope_publication_context_ = context;
+	persistent_scope_publication_context_ = &context;
 	publish_persistent_scopes_ = true;
 }
 
@@ -80,37 +85,32 @@ void publishPersistentScopeEnter(
 	ScopeType scope_type,
 	uint32_t depth,
 	NamespaceHandle namespace_handle) {
-	FrontendContext* context = requirePersistentScopePublicationContext(table);
-	context->recordPersistentScopeEnter(id, parent_id, scope_type, depth, namespace_handle);
+	requirePersistentScopePublicationContext(table).recordPersistentScopeEnter(
+		id, parent_id, scope_type, depth, namespace_handle);
 }
 
 void publishPersistentScopeCursor(SymbolTable& table, ScopeId current_scope_id) {
-	FrontendContext* context = requirePersistentScopePublicationContext(table);
-	context->setPersistentScopeCursor(current_scope_id);
+	requirePersistentScopePublicationContext(table).setPersistentScopeCursor(current_scope_id);
 }
 
 void resetPersistentScopes(SymbolTable& table) {
-	FrontendContext* context = requirePersistentScopePublicationContext(table);
-	context->resetPersistentScopes();
+	requirePersistentScopePublicationContext(table).resetPersistentScopes();
 }
 
 ScopeMetadataView readScopeMetadata(const SymbolTable& table, ScopeId scope_id) {
 	if (table.persistentScopePublicationEnabled()) {
-		FrontendContext* context = requirePersistentScopePublicationContext(table);
-		const ScopeRecord& record = context->scopeRecord(scope_id);
+		const ScopeRecord& record =
+			requirePersistentScopePublicationContext(table).scopeRecord(scope_id);
 		return ScopeMetadataView{
 			record.parent_id,
 			record.depth,
 			record.scope_type,
 			record.namespace_handle};
 	}
-	const Scope* scope = table.findScopeById(scope_id);
-	if (scope == nullptr) {
-		throw InternalError("readScopeMetadata: ScopeId out of range");
-	}
+	const Scope& scope = table.scopeById(scope_id);
 	return ScopeMetadataView{
-		scope->parent_scope_id,
-		scope->depth,
-		scope->scope_type,
-		scope->namespace_handle};
+		scope.parent_scope_id,
+		scope.depth,
+		scope.scope_type,
+		scope.namespace_handle};
 }
