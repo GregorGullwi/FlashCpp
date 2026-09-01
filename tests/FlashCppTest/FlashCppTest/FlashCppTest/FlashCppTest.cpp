@@ -4955,15 +4955,13 @@ TEST_SUITE("FrontendContext") {
 			NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
 
 		const StringHandle name = StringTable::getOrInternStringHandle("publication_scope_record_probe");
-		const FunctionDeclRequest request{
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			namespace_scope_id,
 			name,
 			TypeId{71},
 			TypeId{81},
-			LanguageLinkage::CPlusPlus,
-			false,
-			false,
-			false};
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
 		REQUIRE_FALSE(prepared.isRejected());
 
@@ -4979,15 +4977,13 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const StringHandle name =
 			StringTable::getOrInternStringHandle("decl_builder_absent_scope");
-		const FunctionDeclRequest invalid{
+		const FunctionDeclRequest invalid = makeFunctionDeclRequest(
 			ScopeId{},
 			name,
 			TypeId{71},
 			TypeId{81},
-			LanguageLinkage::CPlusPlus,
-			false,
-			false,
-			false};
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.prepareFunctionPublication(invalid, table).isRejected());
 	}
 
@@ -5000,15 +4996,13 @@ TEST_SUITE("FrontendContext") {
 		const ScopeId block_scope_id = table.currentScopeId();
 		const StringHandle name =
 			StringTable::getOrInternStringHandle("decl_builder_block_scope_fn");
-		const FunctionDeclRequest request{
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			block_scope_id,
 			name,
 			TypeId{71},
 			TypeId{81},
-			LanguageLinkage::CPlusPlus,
-			false,
-			false,
-			false};
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.prepareFunctionPublication(request, table).isRejected());
 	}
 
@@ -5019,15 +5013,13 @@ TEST_SUITE("FrontendContext") {
 		table.enablePersistentScopePublication();
 		const StringHandle name =
 			StringTable::getOrInternStringHandle("decl_builder_stale_scope");
-		const FunctionDeclRequest invalid{
+		const FunctionDeclRequest invalid = makeFunctionDeclRequest(
 			ScopeId{999},
 			name,
 			TypeId{71},
 			TypeId{81},
-			LanguageLinkage::CPlusPlus,
-			false,
-			false,
-			false};
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK_THROWS_AS(builder.prepareFunctionPublication(invalid, table), InternalError);
 	}
 
@@ -5243,15 +5235,13 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("domain_bytes_first");
-		const FunctionDeclRequest request{
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			name,
 			TypeId{10},
 			TypeId{20},
-			LanguageLinkage::CPlusPlus,
-			false,
-			false,
-			false};
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(request, table).status == PublishStatus::Created);
 
 		context.refreshSemanticDomainStats();
@@ -5274,8 +5264,13 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("domain_bytes_rollback");
-		const FunctionDeclRequest request{
-			global_scope, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{11},
+			TypeId{21},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 
 		{
 			PublicationTransaction transaction(builder);
@@ -5339,15 +5334,13 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_first");
-		const FunctionDeclRequest request{
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			name,
 			TypeId{10},
 			TypeId{20},
-			LanguageLinkage::CPlusPlus,
-			false,
-			false,
-			false};
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult result = builder.publishFunction(request, table);
 		CHECK(result.status == PublishStatus::Created);
 		CHECK(result.decl_id.value == 1u);
@@ -5373,13 +5366,23 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_redecl");
-		const FunctionDeclRequest first{
-			global_scope, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest first = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{11},
+			TypeId{21},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult created = builder.publishFunction(first, table);
 		REQUIRE(created.status == PublishStatus::Created);
 
-		const FunctionDeclRequest second{
-			global_scope, name, TypeId{11}, TypeId{21}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest second = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{11},
+			TypeId{21},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult merged = builder.publishFunction(second, table);
 		CHECK(merged.status == PublishStatus::MergedRedeclaration);
 		CHECK(merged.entity_id == created.entity_id);
@@ -5407,8 +5410,13 @@ TEST_SUITE("FrontendContext") {
 		table.enter_namespace(ns_handle);
 		const ScopeId first_block = table.currentScopeId();
 		const StringHandle fn_name = StringTable::getOrInternStringHandle("reopened_ns_fn");
-		const FunctionDeclRequest declaration{
-			first_block, fn_name, TypeId{60}, TypeId{70}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest declaration = makeFunctionDeclRequest(
+			first_block,
+			fn_name,
+			TypeId{60},
+			TypeId{70},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult created = builder.publishFunction(declaration, table);
 		REQUIRE(created.status == PublishStatus::Created);
 
@@ -5417,8 +5425,13 @@ TEST_SUITE("FrontendContext") {
 		const ScopeId second_block = table.currentScopeId();
 		REQUIRE(first_block != second_block);
 
-		const FunctionDeclRequest definition{
-			second_block, fn_name, TypeId{60}, TypeId{70}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest definition = makeFunctionDeclRequest(
+			second_block,
+			fn_name,
+			TypeId{60},
+			TypeId{70},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult merged = builder.publishFunction(definition, table);
 		CHECK(merged.status == PublishStatus::MergedRedeclaration);
 		CHECK(merged.entity_id == created.entity_id);
@@ -5446,16 +5459,14 @@ TEST_SUITE("FrontendContext") {
 		table.enter_namespace(ns_a);
 		const ScopeId scope_a = table.currentScopeId();
 		const PublishResult a = builder.publishFunction(
-			FunctionDeclRequest{
-				scope_a, fn_name, TypeId{61}, TypeId{71}, LanguageLinkage::CPlusPlus, false, false, false},
+			makeFunctionDeclRequest(scope_a, fn_name, TypeId{61}, TypeId{71}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 		table.exit_scope();
 
 		table.enter_namespace(ns_b);
 		const ScopeId scope_b = table.currentScopeId();
 		const PublishResult b = builder.publishFunction(
-			FunctionDeclRequest{
-				scope_b, fn_name, TypeId{61}, TypeId{71}, LanguageLinkage::CPlusPlus, false, false, false},
+			makeFunctionDeclRequest(scope_b, fn_name, TypeId{61}, TypeId{71}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 
 		CHECK(a.status == PublishStatus::Created);
@@ -5472,14 +5483,24 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_dup_def");
-		const FunctionDeclRequest first{
-			global_scope, name, TypeId{12}, TypeId{22}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest first = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{12},
+			TypeId{22},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
 		const std::size_t decls = builder.declarationCount();
 		const std::size_t entities = builder.entityCount();
 
-		const FunctionDeclRequest second{
-			global_scope, name, TypeId{12}, TypeId{22}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest second = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{12},
+			TypeId{22},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult rejected = builder.publishFunction(second, table);
 		CHECK(rejected.status == PublishStatus::Rejected);
 		CHECK(rejected.entity_id.value == 1u);
@@ -5494,10 +5515,20 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_overload");
-		const FunctionDeclRequest first{
-			global_scope, name, TypeId{31}, TypeId{41}, LanguageLinkage::CPlusPlus, false, false, false};
-		const FunctionDeclRequest second{
-			global_scope, name, TypeId{32}, TypeId{41}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest first = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{31},
+			TypeId{41},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
+		const FunctionDeclRequest second = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{32},
+			TypeId{41},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult a = builder.publishFunction(first, table);
 		const PublishResult b = builder.publishFunction(second, table);
 		CHECK(a.status == PublishStatus::Created);
@@ -5512,13 +5543,23 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_ret_conflict");
-		const FunctionDeclRequest first{
-			global_scope, name, TypeId{33}, TypeId{50}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest first = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{33},
+			TypeId{50},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
 		const std::size_t decls = builder.declarationCount();
 
-		const FunctionDeclRequest conflict{
-			global_scope, name, TypeId{33}, TypeId{51}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest conflict = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{33},
+			TypeId{51},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult rejected = builder.publishFunction(conflict, table);
 		CHECK(rejected.status == PublishStatus::Rejected);
 		CHECK(builder.declarationCount() == decls);
@@ -5530,16 +5571,31 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_constexpr");
-		const FunctionDeclRequest first{
-			global_scope, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, false, false, true};
+		const FunctionDeclRequest first = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{34},
+			TypeId{52},
+			FunctionDeclForm::ConstexprDeclaration,
+			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
 
-		const FunctionDeclRequest mismatch{
-			global_scope, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest mismatch = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{34},
+			TypeId{52},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(mismatch, table).status == PublishStatus::Rejected);
 
-		const FunctionDeclRequest match{
-			global_scope, name, TypeId{34}, TypeId{52}, LanguageLinkage::CPlusPlus, true, false, true};
+		const FunctionDeclRequest match = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{34},
+			TypeId{52},
+			FunctionDeclForm::ConstexprDefinition,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult merged = builder.publishFunction(match, table);
 		CHECK(merged.status == PublishStatus::MergedRedeclaration);
 		CHECK((builder.entity(merged.entity_id).flags & DeclarationFlags::IsInline) != 0);
@@ -5552,13 +5608,23 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_inline_order");
-		const FunctionDeclRequest definition{
-			global_scope, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest definition = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{35},
+			TypeId{53},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(definition, table).status == PublishStatus::Created);
 		const std::size_t decls = builder.declarationCount();
 
-		const FunctionDeclRequest inline_after{
-			global_scope, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, false, true, false};
+		const FunctionDeclRequest inline_after = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{35},
+			TypeId{53},
+			FunctionDeclForm::InlineDeclaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(inline_after, table).status == PublishStatus::Rejected);
 		CHECK(builder.declarationCount() == decls);
 
@@ -5566,11 +5632,21 @@ TEST_SUITE("FrontendContext") {
 		DeclarationBuilder& builder2 = context2.declarationBuilder();
 		SymbolTable table2;
 		const ScopeId global_scope2 = table2.currentScopeId();
-		const FunctionDeclRequest inline_first{
-			global_scope2, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, false, true, false};
+		const FunctionDeclRequest inline_first = makeFunctionDeclRequest(
+			global_scope2,
+			name,
+			TypeId{35},
+			TypeId{53},
+			FunctionDeclForm::InlineDeclaration,
+			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder2.publishFunction(inline_first, table2).status == PublishStatus::Created);
-		const FunctionDeclRequest definition_after{
-			global_scope2, name, TypeId{35}, TypeId{53}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest definition_after = makeFunctionDeclRequest(
+			global_scope2,
+			name,
+			TypeId{35},
+			TypeId{53},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult merged = builder2.publishFunction(definition_after, table2);
 		CHECK(merged.status == PublishStatus::MergedRedeclaration);
 		CHECK((builder2.entity(merged.entity_id).flags & DeclarationFlags::IsInline) != 0);
@@ -5582,22 +5658,42 @@ TEST_SUITE("FrontendContext") {
 		DeclarationBuilder& builder = context.declarationBuilder();
 		SymbolTable table;
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_invalid_scope");
-		const FunctionDeclRequest base{
-			table.currentScopeId(), name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest base = makeFunctionDeclRequest(
+			table.currentScopeId(),
+			name,
+			TypeId{37},
+			TypeId{55},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 
-		const FunctionDeclRequest missing_scope{
-			ScopeId{999}, name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest missing_scope = makeFunctionDeclRequest(
+			ScopeId{999},
+			name,
+			TypeId{37},
+			TypeId{55},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(missing_scope, table).status == PublishStatus::Rejected);
 
 		table.enter_scope(ScopeType::Block);
-		const FunctionDeclRequest block_scope{
-			table.currentScopeId(), name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest block_scope = makeFunctionDeclRequest(
+			table.currentScopeId(),
+			name,
+			TypeId{37},
+			TypeId{55},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(block_scope, table).status == PublishStatus::Rejected);
 		table.exit_scope();
 
 		table.enter_scope(ScopeType::Function);
-		const FunctionDeclRequest function_scope{
-			table.currentScopeId(), name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest function_scope = makeFunctionDeclRequest(
+			table.currentScopeId(),
+			name,
+			TypeId{37},
+			TypeId{55},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(function_scope, table).status == PublishStatus::Rejected);
 		table.exit_scope();
 
@@ -5611,8 +5707,13 @@ TEST_SUITE("FrontendContext") {
 		DeclarationBuilder& builder = context.declarationBuilder();
 		SymbolTable table;
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_invalid");
-		const FunctionDeclRequest invalid_scope{
-			ScopeId{}, name, TypeId{37}, TypeId{55}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest invalid_scope = makeFunctionDeclRequest(
+			ScopeId{},
+			name,
+			TypeId{37},
+			TypeId{55},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(invalid_scope, table).status == PublishStatus::Rejected);
 		CHECK(builder.declarationCount() == 0u);
 		CHECK(builder.entityCount() == 0u);
@@ -5640,8 +5741,13 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_prepare");
-		const FunctionDeclRequest first{
-			global_scope, name, TypeId{71}, TypeId{81}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest first = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{71},
+			TypeId{81},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
 		CHECK_FALSE(prepared.isRejected());
 		PublishResult committed{};
@@ -5653,8 +5759,13 @@ TEST_SUITE("FrontendContext") {
 		}
 		CHECK(committed.status == PublishStatus::Created);
 
-		const FunctionDeclRequest redecl{
-			global_scope, name, TypeId{71}, TypeId{81}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest redecl = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{71},
+			TypeId{81},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		PreparedFunctionPublication prepared_redecl =
 			builder.prepareFunctionPublication(redecl, table);
 		CHECK_FALSE(prepared_redecl.isRejected());
@@ -5668,14 +5779,24 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_txn_merge");
-		const FunctionDeclRequest decl{
-			global_scope, name, TypeId{92}, TypeId{102}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest decl = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{92},
+			TypeId{102},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		const PublishResult created = builder.publishFunction(decl, table);
 		REQUIRE(created.status == PublishStatus::Created);
 		const EntityRecord entity_before = builder.entity(created.entity_id);
 
-		const FunctionDeclRequest definition{
-			global_scope, name, TypeId{92}, TypeId{102}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest definition = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{92},
+			TypeId{102},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		PublicationTransaction transaction(builder);
 		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(definition, table);
 		REQUIRE_FALSE(prepared.isRejected());
@@ -5711,8 +5832,13 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_txn");
-		const FunctionDeclRequest request{
-			global_scope, name, TypeId{91}, TypeId{101}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{91},
+			TypeId{101},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 
 		PublicationTransaction transaction(builder);
 		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
@@ -5735,8 +5861,13 @@ TEST_SUITE("FrontendContext") {
 
 		PublicationTransaction transaction(builder);
 		const TypeId return_id = builder.internDeclaratorType(int_type);
-		const FunctionDeclRequest invalid{
-			ScopeId{}, name, TypeId{200}, return_id, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest invalid = makeFunctionDeclRequest(
+			ScopeId{},
+			name,
+			TypeId{200},
+			return_id,
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		CHECK(builder.prepareFunctionPublication(invalid, table).isRejected());
 		transaction.rollback();
 
@@ -5764,8 +5895,13 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_txn_unwind");
-		const FunctionDeclRequest request{
-			global_scope, name, TypeId{93}, TypeId{103}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{93},
+			TypeId{103},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 
 		try {
 			PublicationTransaction transaction(builder);
@@ -5791,12 +5927,10 @@ TEST_SUITE("FrontendContext") {
 		const StringHandle create_b = StringTable::getOrInternStringHandle("txn_multi_create_b");
 
 		const PublishResult first_a = builder.publishFunction(
-			FunctionDeclRequest{
-				global_scope, merge_a, TypeId{201}, TypeId{301}, LanguageLinkage::CPlusPlus, false, false, false},
+			makeFunctionDeclRequest(global_scope, merge_a, TypeId{201}, TypeId{301}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 		const PublishResult first_b = builder.publishFunction(
-			FunctionDeclRequest{
-				global_scope, merge_b, TypeId{202}, TypeId{302}, LanguageLinkage::CPlusPlus, false, false, false},
+			makeFunctionDeclRequest(global_scope, merge_b, TypeId{202}, TypeId{302}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 		REQUIRE(first_a.status == PublishStatus::Created);
 		REQUIRE(first_b.status == PublishStatus::Created);
@@ -5808,20 +5942,16 @@ TEST_SUITE("FrontendContext") {
 		{
 			PublicationTransaction transaction(builder);
 			PreparedFunctionPublication created_prep_a = builder.prepareFunctionPublication(
-				FunctionDeclRequest{
-					global_scope, create_a, TypeId{203}, TypeId{303}, LanguageLinkage::CPlusPlus, false, false, false},
+				makeFunctionDeclRequest(global_scope, create_a, TypeId{203}, TypeId{303}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 				table);
 			PreparedFunctionPublication created_prep_b = builder.prepareFunctionPublication(
-				FunctionDeclRequest{
-					global_scope, create_b, TypeId{204}, TypeId{304}, LanguageLinkage::CPlusPlus, false, false, false},
+				makeFunctionDeclRequest(global_scope, create_b, TypeId{204}, TypeId{304}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 				table);
 			PreparedFunctionPublication merged_prep_a = builder.prepareFunctionPublication(
-				FunctionDeclRequest{
-					global_scope, merge_a, TypeId{201}, TypeId{301}, LanguageLinkage::CPlusPlus, true, false, false},
+				makeFunctionDeclRequest(global_scope, merge_a, TypeId{201}, TypeId{301}, FunctionDeclForm::Definition, LanguageLinkage::CPlusPlus),
 				table);
 			PreparedFunctionPublication merged_prep_b = builder.prepareFunctionPublication(
-				FunctionDeclRequest{
-					global_scope, merge_b, TypeId{202}, TypeId{302}, LanguageLinkage::CPlusPlus, true, false, false},
+				makeFunctionDeclRequest(global_scope, merge_b, TypeId{202}, TypeId{302}, FunctionDeclForm::Definition, LanguageLinkage::CPlusPlus),
 				table);
 			REQUIRE_FALSE(created_prep_a.isRejected());
 			REQUIRE_FALSE(created_prep_b.isRejected());
@@ -5846,8 +5976,7 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.entity(first_b.entity_id).flags == entity_b_before.flags);
 
 		const PublishResult recreate_a = builder.publishFunction(
-			FunctionDeclRequest{
-				global_scope, create_a, TypeId{203}, TypeId{303}, LanguageLinkage::CPlusPlus, false, false, false},
+			makeFunctionDeclRequest(global_scope, create_a, TypeId{203}, TypeId{303}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 		CHECK(recreate_a.status == PublishStatus::Created);
 		CHECK(recreate_a.entity_id != first_a.entity_id);
@@ -5860,8 +5989,13 @@ TEST_SUITE("FrontendContext") {
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_double_commit");
-		const FunctionDeclRequest request{
-			global_scope, name, TypeId{205}, TypeId{305}, LanguageLinkage::CPlusPlus, false, false, false};
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{205},
+			TypeId{305},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 
 		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
 		REQUIRE_FALSE(prepared.isRejected());
@@ -5893,15 +6027,13 @@ TEST_SUITE("FrontendContext") {
 		for (uint32_t index = 0; index < 128u; ++index) {
 			const StringHandle name = StringTable::getOrInternStringHandle(
 				StringBuilder().append("decl_builder_scale_").append(static_cast<int64_t>(index)));
-			const FunctionDeclRequest request{
+			const FunctionDeclRequest request = makeFunctionDeclRequest(
 				global_scope,
 				name,
 				TypeId{index + 1u},
 				TypeId{index + 1000u},
-				LanguageLinkage::CPlusPlus,
-				false,
-				false,
-				false};
+				FunctionDeclForm::Declaration,
+				LanguageLinkage::CPlusPlus);
 			REQUIRE(builder.publishFunction(request, table).status == PublishStatus::Created);
 		}
 
@@ -5911,15 +6043,13 @@ TEST_SUITE("FrontendContext") {
 		const StringHandle rollback_name =
 			StringTable::getOrInternStringHandle("decl_builder_scale_rollback");
 		PublicationTransaction transaction(builder);
-		const FunctionDeclRequest rollback_request{
+		const FunctionDeclRequest rollback_request = makeFunctionDeclRequest(
 			global_scope,
 			rollback_name,
 			TypeId{9999},
 			TypeId{10000},
-			LanguageLinkage::CPlusPlus,
-			false,
-			false,
-			false};
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
 		PreparedFunctionPublication prepared =
 			builder.prepareFunctionPublication(rollback_request, table);
 		REQUIRE_FALSE(prepared.isRejected());
@@ -5965,8 +6095,13 @@ float symtab_undo_conflict_row(int value);
 		SymbolTable table;
 		const ScopeId global_scope = table.currentScopeId();
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_commit_dup");
-		const FunctionDeclRequest first{
-			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest first = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{111},
+			TypeId{121},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		{
 			PublicationTransaction first_transaction(builder);
 			PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
@@ -5980,8 +6115,13 @@ float symtab_undo_conflict_row(int value);
 		const std::size_t declarator_interns = builder.telemetryDeclaratorInternCount();
 		const std::size_t parameter_lists = builder.telemetryParameterListInternCount();
 
-		const FunctionDeclRequest duplicate{
-			global_scope, name, TypeId{111}, TypeId{121}, LanguageLinkage::CPlusPlus, true, false, false};
+		const FunctionDeclRequest duplicate = makeFunctionDeclRequest(
+			global_scope,
+			name,
+			TypeId{111},
+			TypeId{121},
+			FunctionDeclForm::Definition,
+			LanguageLinkage::CPlusPlus);
 		PublicationTransaction reject_transaction(builder);
 		CHECK(builder.prepareFunctionPublication(duplicate, table).isRejected());
 		reject_transaction.rollback();

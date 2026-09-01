@@ -70,6 +70,47 @@ struct FunctionDeclRequest {
 	bool is_constexpr;
 };
 
+enum class FunctionDeclForm : uint8_t {
+	Declaration = 0,
+	Definition = 1,
+	InlineDeclaration = 2,
+	ConstexprDeclaration = 3,
+	ConstexprDefinition = 4,
+};
+
+inline FunctionDeclRequest makeFunctionDeclRequest(
+	ScopeId lexical_scope_id,
+	StringHandle name,
+	TypeId signature_id,
+	TypeId return_type_id,
+	FunctionDeclForm form,
+	LanguageLinkage language_linkage) {
+	FunctionDeclRequest request{};
+	request.lexical_scope_id = lexical_scope_id;
+	request.name = name;
+	request.signature_id = signature_id;
+	request.return_type_id = return_type_id;
+	request.language_linkage = language_linkage;
+	switch (form) {
+	case FunctionDeclForm::Declaration:
+		break;
+	case FunctionDeclForm::Definition:
+		request.is_definition = true;
+		break;
+	case FunctionDeclForm::InlineDeclaration:
+		request.is_inline = true;
+		break;
+	case FunctionDeclForm::ConstexprDeclaration:
+		request.is_constexpr = true;
+		break;
+	case FunctionDeclForm::ConstexprDefinition:
+		request.is_definition = true;
+		request.is_constexpr = true;
+		break;
+	}
+	return request;
+}
+
 struct PublishResult {
 	PublishStatus status;
 	DeclId decl_id;
