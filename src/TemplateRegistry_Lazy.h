@@ -44,7 +44,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 		typed_args.push_back(template_arg);
 	}
 
-	InlineVector<StringHandle, 4> param_names;
+	TemplateParamNameVector param_names;
 	param_names.reserve(template_params.size());
 	size_t arg_index = 0;
 	for (size_t param_index = 0; param_index < template_params.size(); ++param_index) {
@@ -69,7 +69,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 		param_names.push_back(typed_param->nameHandle());
 		++arg_index;
 	}
-	InlineVector<TypeInfo::TemplateArgInfo, 4> arg_infos = toTemplateArgInfoList(
+	TemplateArgInfoVector arg_infos = toTemplateArgInfoList(
 		std::span<const TemplateTypeArg>(typed_args.data(), typed_args.size()));
 	return buildTemplateEnvironmentSnapshot(
 		std::span<const StringHandle>(param_names.data(), param_names.size()),
@@ -79,7 +79,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 
 struct LazyMemberFunctionInfo {
 	DeferredMemberIdentity identity;
-	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
+	TemplateParameterVector template_params; // Template parameters from class template
 	TemplateArgumentVector template_args; // Concrete template arguments used for instantiation
 	TemplateEnvironmentSnapshot outer_template_environment_snapshot;
 	TemplateDefinitionLookupContext definition_lookup_context;
@@ -552,8 +552,8 @@ public:
 		bool is_const_method;
 		StringHandle registry_key;
 	};
-	InlineVector<OdrUsedLazyEntry, 8> snapshotOdrUsedLazyEntries() const {
-		InlineVector<OdrUsedLazyEntry, 8> out;
+	InlineVector<OdrUsedLazyEntry, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> snapshotOdrUsedLazyEntries() const {
+		InlineVector<OdrUsedLazyEntry, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> out;
 		out.reserve(lazy_members_.size());
 		for (const auto& [key_handle, info] : lazy_members_) {
 			if (odr_used_.find(key_handle) != odr_used_.end()) {
@@ -672,7 +672,7 @@ private:
 		auto bucket_it = lazy_member_lookup_.find(lookup_key);
 		if (bucket_it != lazy_member_lookup_.end()) {
 			auto& bucket = bucket_it->second;
-			InlineVector<StringHandle, 2> filtered_bucket;
+			InlineVector<StringHandle, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> filtered_bucket;
 			filtered_bucket.reserve(bucket.size());
 			for (StringHandle bucket_key : bucket) {
 				if (bucket_key != exact_key) {
@@ -692,7 +692,7 @@ private:
 	std::unordered_map<StringHandle, LazyMemberFunctionInfo, TransparentStringHash, std::equal_to<>> lazy_members_;
 
 	// Secondary index from owner/name/const bucket to exact lazy-member keys.
-	std::unordered_map<StringHandle, InlineVector<StringHandle, 2>, TransparentStringHash, std::equal_to<>> lazy_member_lookup_;
+	std::unordered_map<StringHandle, InlineVector<StringHandle, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument>, TransparentStringHash, std::equal_to<>> lazy_member_lookup_;
 
 	// Keys (same format as `lazy_members_`) that sema has proven to be
 	// ODR-used. Persists across `markInstantiated` — see the block comment
@@ -727,7 +727,7 @@ struct LazyStaticMemberInfo {
 	std::vector<size_t> array_dimensions;
 	int pointer_depth = 0;					   // Pointer depth (e.g., 1 for int*, 2 for int**)
 	bool is_constexpr = false;
-	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
+	TemplateParameterVector template_params; // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
 	TemplateEnvironmentSnapshot outer_template_environment_snapshot;
 	bool needs_substitution;					 // True if initializer contains template parameters
@@ -826,7 +826,7 @@ struct LazyClassInstantiationInfo {
 	StringHandle template_name;					// Original template name (e.g., "vector")
 	StringHandle instantiated_name;				// Instantiated class name (e.g., "vector_int")
 	std::vector<TemplateTypeArg> template_args;	// Concrete template arguments
-	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
+	TemplateParameterVector template_params; // Template parameters from class template
 	ASTNode template_declaration;				  // Reference to primary template declaration
 	ClassInstantiationPhase current_phase = ClassInstantiationPhase::None;
 	// Flags for tracking what needs to be instantiated in Full phase
@@ -945,7 +945,7 @@ struct LazyTypeAliasInfo {
 	StringHandle instantiated_class_name;		  // Instantiated class name (e.g., "remove_const_int")
 	StringHandle member_name;					  // Member alias name (e.g., "type")
 	ASTNode unevaluated_target;					// Unevaluated target type expression
-	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
+	TemplateParameterVector template_params; // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args;	// Concrete template arguments
 	bool needs_substitution = true;				// True if target contains template parameters
 	bool is_evaluated = false;					   // True once evaluation has been performed
@@ -1078,7 +1078,7 @@ struct LazyNestedTypeInfo {
 	StringHandle nested_type_name;				   // Nested type name (e.g., "inner")
 	StringHandle qualified_name;					 // Fully qualified name (e.g., "outer_int::inner")
 	ASTNode nested_type_declaration;				 // The nested struct/class declaration AST node
-	InlineVector<TemplateParameterNode, 4> parent_template_params; // Template parameters from parent class
+	TemplateParameterVector parent_template_params; // Template parameters from parent class
 	std::vector<TemplateTypeArg> parent_template_args; // Concrete template arguments for parent
 };
 
@@ -1132,8 +1132,8 @@ public:
 	}
 
 	// Get all nested types for a parent class that need instantiation
-	InlineVector<const LazyNestedTypeInfo*, 4> getNestedTypesForParent(StringHandle parent_class_name) const {
-		InlineVector<const LazyNestedTypeInfo*, 4> result;
+	InlineVector<const LazyNestedTypeInfo*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> getNestedTypesForParent(StringHandle parent_class_name) const {
+		InlineVector<const LazyNestedTypeInfo*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> result;
 		for (const auto& [key, info] : lazy_nested_types_) {
 			if (info.parent_class_name == parent_class_name) {
 				result.push_back(&info);
@@ -1211,8 +1211,8 @@ public:
 	}
 
 	// Get all concept names (for debugging)
-	InlineVector<std::string_view, 8> getAllConceptNames() const {
-		InlineVector<std::string_view, 8> names;
+	InlineVector<std::string_view, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> getAllConceptNames() const {
+		InlineVector<std::string_view, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> names;
 		names.reserve(concepts_.size());
 		for (const auto& pair : concepts_) {
 			names.push_back(pair.first);
@@ -1372,7 +1372,7 @@ struct ConstraintEvaluationResult {
 ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 	const RequiresExpressionNode& requires_expr,
 	const TemplateArgumentVector& template_args,
-	const InlineVector<std::string_view, 4>& template_param_names,
+	const TemplateParamNameViewVector& template_param_names,
 	Parser* parser,
 	std::span<const TemplateParameterNode> template_params);
 
@@ -2017,7 +2017,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ASTNode& constraint_expr,
 	const TemplateArgumentVector& template_args,
-	const InlineVector<std::string_view, 4>& template_param_names = {},
+	const TemplateParamNameViewVector& template_param_names = {},
 	Parser* parser = nullptr,
 	std::span<const TemplateParameterNode> template_params = {}) {
 
@@ -2469,7 +2469,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	Parser* parser) {
 	TemplateArgumentVector filled_args = template_args;
 	appendDefaultConceptTemplateArguments(concept_node.template_params(), filled_args);
-	InlineVector<std::string_view, 4> derived_param_names;
+	TemplateParamNameViewVector derived_param_names;
 	derived_param_names.reserve(concept_node.template_params().size());
 	for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
 		derived_param_names.push_back(concept_param.name());

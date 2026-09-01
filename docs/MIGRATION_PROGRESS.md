@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 31
+Last updated: 2026-09-01 after pull request boundary 32
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 31 are landed.
+  and entities). Pull request boundaries 1 through 32 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -97,9 +97,10 @@ Last updated: 2026-09-01 after pull request boundary 31
   template, other) via `SyntaxAstTelemetry.h`. Semantic declaration and entity
   records are grouped by `DeclKind` through `DeclarationBuilder`; declarator and
   parameter-list intern registry sizes report under `--perf-stats`. InlineVector
-  spills attribute to named families (`overload-resolution`, `template-argument`,
-  plus `unknown` for untagged containers) through a third `InlineVector` template
-  parameter; global spill totals remain for compatibility. `ChunkedVector`
+  spills attribute to named families (`overload-resolution`, `template-argument`);
+  every explicit `InlineVector<T, N>` in `src/` and doctest fixtures names a
+  family (no `unknown` spill attribution from untagged containers). Global spill
+  totals remain for compatibility. `ChunkedVector`
   reserved bytes count retained chunk capacity across rollback. String-table
   entries/spelling bytes, InlineVector spills, scope count/current `ScopeId`,
   scope-arena used/reserved bytes, declaration/entity counts, and per-arena
@@ -115,7 +116,7 @@ Last updated: 2026-09-01 after pull request boundary 31
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–31)
+## Pull request boundary status (1–32)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -150,6 +151,7 @@ Last updated: 2026-09-01 after pull request boundary 31
 | 29 | Route `ExpressionSubstitutor` dependent member-function template instantiation through `TemplateEngine::tryInstantiateMemberFunctionTemplateCall`; delete last external direct `Parser` member-template call bypass |
 | 30 | Tag all `InlineVector` containers in `OverloadResolution.h` with `InlineVectorSpillFamily::OverloadResolution`; overload-resolution spill telemetry no longer attributes to `unknown` |
 | 31 | Tag `lookupMemberFunctionTemplateCandidatesForInstantiation` spill vectors with `OverloadResolution`; attach `TemplateEngine` in `Templates:InheritedStaticStructMemberUsesInstantiatedOwner` doctest |
+| 32 | Tag every explicit `InlineVector` in `src/` and doctest fixtures with `overload-resolution` or `template-argument` spill families |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -197,11 +199,9 @@ boundary 1 is started, not finished.
     allocation domains now report used/reserved bytes (IR covers lowering
     buffers only); coarse syntax AST family counts, declaration/entity record
     totals, semantic `DeclKind` breakdown, declarator/parameter-list intern
-    registry sizes, and per-family InlineVector spill breakdown report for
-    tagged overload-resolution (including core `OverloadResolution.h` tie-break
-    vectors and member-function template candidate lookup) and template-argument
-    vectors; full IR arena ownership and tagging of remaining InlineVector
-    families remain open
+    registry sizes, and per-family InlineVector spill breakdown report for all
+    tagged compiler `InlineVector` containers (`overload-resolution` and
+    `template-argument`); full IR arena ownership remains open
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
     `Scope::scope_id` and legacy metadata fields on `Scope` are deleted.
@@ -216,16 +216,15 @@ boundary 1 is started, not finished.
     lexical `ScopeId`s while sharing one `OwnerId` / `EntityId`, and preserves
     `inline` plus definition state through the redeclaration chain.
 
-Boundary-31 validation: `build_flashcpp.bat`; migration counter baselines
-unchanged;
-`test_template_inherited_static_struct_member_ret13.cpp`,
-`member_func_template_call_ret3.cpp`, and `test_member_template_call_ret0.cpp`;
-and `git diff --check` pass. Doctest fixture attaches `TemplateEngine` before
-`Parser::parse()` in `Templates:InheritedStaticStructMemberUsesInstantiatedOwner`.
+Boundary-32 validation: `build_flashcpp.bat`; migration counter baselines
+unchanged; `comparison_operators_ret1.cpp`,
+`concept_comprehensive_ret15.cpp`, and
+`test_template_recursive_static_constexpr_member_ret0.cpp`; zero untagged
+`InlineVector<` instantiations under `src/`; and `git diff --check` pass.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 31-34%, confidence medium
+- Implementation effort completed overall: 32-35%, confidence medium
 
 ## Remaining work
 

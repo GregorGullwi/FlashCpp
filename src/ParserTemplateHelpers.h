@@ -22,9 +22,9 @@
 
 inline void buildTemplateParameterReplayState(
 	std::span<const TemplateParameterNode> template_params,
-	InlineVector<StringHandle, 4>& template_param_names,
-	InlineVector<TemplateParameterKind, 4>& template_param_kinds,
-	InlineVector<TypeCategory, 4>& non_type_categories) {
+	TemplateParamNameVector& template_param_names,
+	TemplateParameterKindVector& template_param_kinds,
+	TemplateTypeCategoryVector& non_type_categories) {
 	template_param_names.clear();
 	template_param_kinds.clear();
 	non_type_categories.clear();
@@ -450,7 +450,7 @@ inline OutOfLineMemberStubResolution findPlainOutOfLineMemberStubByIdentity(
 	const std::string_view out_of_line_name =
 		out_of_line_decl.decl_node().identifier_token().value();
 	OutOfLineMemberStubResolution resolution;
-	InlineVector<FunctionDeclarationNode*, 4> resolved_matches;
+	InlineVector<FunctionDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> resolved_matches;
 	const ASTNode* matched_source_member = nullptr;
 
 	for (size_t source_member_index = 0;
@@ -527,7 +527,7 @@ inline OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 	std::span<const TemplateTypeArg> outer_template_args,
 	TypeIndex owner_type_index) {
 	OutOfLineConstructorStubResolution resolution;
-	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
+	InlineVector<ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> resolved_matches;
 	const ASTNode* matched_source_member = nullptr;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
@@ -590,7 +590,7 @@ inline OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	const StructDeclarationNode* out_of_line_lookup_owner,
 	const StructDeclarationNode* out_of_line_pattern_owner) {
 	OutOfLineConstructorStubResolution resolution;
-	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
+	InlineVector<ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> resolved_matches;
 	const ASTNode* matched_source_member = nullptr;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
@@ -1016,9 +1016,9 @@ private:
 			return;
 		}
 
-		InlineVector<StringHandle, 4> replay_param_names;
-		InlineVector<TemplateParameterKind, 4> replay_param_kinds;
-		InlineVector<TypeCategory, 4> replay_non_type_categories;
+		TemplateParamNameVector replay_param_names;
+		TemplateParameterKindVector replay_param_kinds;
+		TemplateTypeCategoryVector replay_non_type_categories;
 		buildTemplateParameterReplayState(
 			template_params,
 			replay_param_names,
@@ -1034,7 +1034,7 @@ private:
 	TemplateDefinitionLookupContext replay_definition_lookup_context_;
 	Parser::ScopedDefinitionLookupContext lookup_scope_;
 	FlashCpp::ScopedState<Parser::ActiveTemplateParameterState> template_params_guard_;
-	FlashCpp::ScopedState<InlineVector<Parser::TemplateParamSubstitution, 4>> substitutions_guard_;
+	FlashCpp::ScopedState<InlineVector<Parser::TemplateParamSubstitution, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>> substitutions_guard_;
 };
 
 inline void registerAliasTemplateWithOuterBinding(
@@ -1393,7 +1393,7 @@ inline void clampPartialPatternTemplateParamIndirectionForOwner(
 
 inline const TemplateTypeArg* findResolvedTypeTemplateArg(
 	const TypeSpecifierNode& type_spec,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const TemplateParameterVector& template_params,
 	std::span<const TemplateTypeArg> template_args) {
 	if (!type_spec.type_index().is_valid()) {
 		return nullptr;
@@ -1516,7 +1516,7 @@ struct SignatureValidationIndirection {
 	size_t pointer_depth = 0;
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
 	CVQualifier cv_qualifier = CVQualifier::None;
-	InlineVector<CVQualifier, 4> pointer_level_cv_qualifiers;
+	InlineVector<CVQualifier, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> pointer_level_cv_qualifiers;
 };
 
 inline void mergeAliasIndirectionForSignatureValidation(
@@ -1808,7 +1808,7 @@ inline const TypeInfo* resolveDependentMemberPlaceholderAgainstOwnerArtifact(
 		return nullptr;
 	}
 
-	InlineVector<StringHandle, 4> member_chain_names;
+	TemplateParamNameVector member_chain_names;
 	member_chain_names.reserve(kMemberChainReserve);
 
 	bool use_dependent_member_chain =
@@ -3459,7 +3459,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 		new_func_decl_ref,
 		parent_struct_name);
 	if (original_func.has_outer_template_bindings()) {
-		InlineVector<TemplateParameterNode, 4> combined_params;
+		TemplateParameterVector combined_params;
 		TemplateArgumentVector combined_args;
 		combined_params.reserve(
 			original_func.outer_template_param_names().size() + template_params.size());
@@ -3743,10 +3743,10 @@ inline int getTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 // TemplateParameterNode AST nodes.  Only collects names for the first
 // `max_count` parameters to stay in sync with the argument vector.
 template <typename ParamContainer>
-inline InlineVector<StringHandle, 4> collectParamNameHandles(
+inline TemplateParamNameVector collectParamNameHandles(
 	const ParamContainer& template_params,
 	size_t max_count) {
-	InlineVector<StringHandle, 4> names;
+	TemplateParamNameVector names;
 	for (size_t i = 0; i < template_params.size() && i < max_count; ++i) {
 		if (const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
 			param != nullptr) {
@@ -3757,10 +3757,10 @@ inline InlineVector<StringHandle, 4> collectParamNameHandles(
 }
 
 template <typename ParamContainer>
-inline InlineVector<TypeIndex, 4> collectParamTypeIndices(
+inline InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> collectParamTypeIndices(
 	const ParamContainer& template_params,
 	size_t max_count) {
-	InlineVector<TypeIndex, 4> type_indices;
+	InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> type_indices;
 	for (size_t i = 0; i < template_params.size() && i < max_count; ++i) {
 		if (const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
 			param != nullptr) {
@@ -3771,10 +3771,10 @@ inline InlineVector<TypeIndex, 4> collectParamTypeIndices(
 }
 
 template <typename ParamContainer>
-inline InlineVector<TypeInfo::TemplateArgInfo, 4> collectEnrichedTemplateArgInfos(
+inline TemplateArgInfoVector collectEnrichedTemplateArgInfos(
 	const ParamContainer& template_params,
 	std::span<const TemplateTypeArg> template_args) {
-	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
+	TemplateArgInfoVector result;
 	result.reserve(template_args.size());
 	size_t param_index = 0;
 	const TemplateParameterNode* active_param = nullptr;

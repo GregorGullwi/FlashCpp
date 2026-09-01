@@ -627,7 +627,7 @@ class ConceptDeclarationNode {
 public:
 	explicit ConceptDeclarationNode(
 		Token name,
-		InlineVector<TemplateParameterNode, 4> template_params,
+		TemplateParameterVector template_params,
 		ASTNode constraint_expr,
 		Token concept_token = Token())
 		: name_(name),
@@ -637,13 +637,13 @@ public:
 
 	std::string_view name() const { return name_.value(); }
 	const Token& name_token() const { return name_; }
-	const InlineVector<TemplateParameterNode, 4>& template_params() const { return template_params_; }
+	const TemplateParameterVector& template_params() const { return template_params_; }
 	const ASTNode& constraint_expr() const { return constraint_expr_; }
 	const Token& concept_token() const { return concept_token_; }
 
 private:
 	Token name_;									 // Concept name
-	InlineVector<TemplateParameterNode, 4> template_params_;	 // Template parameters for the concept
+	TemplateParameterVector template_params_;	 // Template parameters for the concept
 	ASTNode constraint_expr_;						  // The constraint expression
 	Token concept_token_;							// For error reporting
 };

@@ -13,7 +13,7 @@
 namespace {
 struct PostfixDependentMemberSegmentInfo {
 	StringHandle name;
-	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> template_args;
+	std::optional<TemplateArgInfoVector> template_args;
 };
 
 std::string_view buildQualifiedMemberCallName(
@@ -94,7 +94,7 @@ TypeInfo::DependentQualifiedNameRecord makePostfixDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
 	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
-	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	TemplateArgInfoVector owner_template_arguments,
 	std::span<const PostfixDependentMemberSegmentInfo> member_segments) {
 	TypeInfo::DependentQualifiedNameRecord record;
 	record.owner_kind = owner_kind;
@@ -121,9 +121,9 @@ makeSingleSegmentPostfixDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
 	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
-	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	TemplateArgInfoVector owner_template_arguments,
 	StringHandle member_name,
-	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>>
+	std::optional<TemplateArgInfoVector>
 		member_template_arguments) {
 	PostfixDependentMemberSegmentInfo member_segment;
 	member_segment.name = member_name;
@@ -1306,7 +1306,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			TypeIndex owner_type =
 				lookupPostfixRecordedDependentOwnerType(
 					qualified_owner_handle);
-			InlineVector<TypeInfo::TemplateArgInfo, 4>
+			TemplateArgInfoVector
 				owner_template_arguments;
 			if (materialized_owner.resolved_type_info != nullptr) {
 				owner_type =
@@ -2258,7 +2258,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							  DependentInstantiation
 						: TypeInfo::DependentQualifiedNameRecord::OwnerKind::
 							  CurrentInstantiation;
-				InlineVector<TypeInfo::TemplateArgInfo, 4>
+				TemplateArgInfoVector
 					owner_template_arguments;
 				if (resolved_root_owner.resolved_from_current_context &&
 					resolved_root_owner.type_info != nullptr) {

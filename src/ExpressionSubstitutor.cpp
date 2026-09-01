@@ -701,8 +701,8 @@ ASTNode ExpressionSubstitutor::substituteFoldExpression(const FoldExpressionNode
 				}
 
 				if (!template_params_.empty()) {
-					InlineVector<TemplateParameterNode, 8> element_params;
-					InlineVector<TemplateTypeArg, 8> element_args;
+					InlineVector<TemplateParameterNode, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> element_params;
+					InlineVector<TemplateTypeArg, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> element_args;
 					size_t arg_index = 0;
 					for (size_t param_index = 0; param_index < template_params_.size(); ++param_index) {
 						const TemplateParameterNode& param = template_params_[param_index];
@@ -911,7 +911,7 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 	if (arg.is<ExpressionNode>()) {
 		const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
 		if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-			InlineVector<TemplateParameterNode, 4> template_params;
+			TemplateParameterVector template_params;
 			TemplateArgumentVector template_args;
 			template_params.reserve(environment_.bindings.size());
 			for (const TemplateBinding& binding : environment_.bindings) {
@@ -984,7 +984,7 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 				return;
 			}
 
-			InlineVector<StringHandle, 4> matched_pack_names;
+			TemplateParamNameVector matched_pack_names;
 			AstTraversal::visitAST(pack_expansion_expr->pattern(), [&](const ASTNode& node) {
 				StringHandle candidate_name;
 				if (node.is<TemplateParameterReferenceNode>()) {
@@ -1028,7 +1028,7 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 					return;
 				}
 
-				InlineVector<std::string_view, 8> ordered_param_names;
+				InlineVector<std::string_view, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> ordered_param_names;
 				if (!template_param_order_.empty()) {
 					for (std::string_view param_name : template_param_order_) {
 						ordered_param_names.push_back(param_name);
@@ -5313,7 +5313,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 		if (current_owner_type_name_.isValid()) {
 			QualifiedTypeMemberAccess member_access;
 			member_access.member_name = StringTable::getOrInternStringHandle(token_type_name);
-			InlineVector<QualifiedTypeMemberAccess, 4> member_chain;
+			InlineVector<QualifiedTypeMemberAccess, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> member_chain;
 			member_chain.push_back(std::move(member_access));
 			std::string_view owner_name = StringTable::getStringView(current_owner_type_name_);
 			const TypeInfo* resolved_member =

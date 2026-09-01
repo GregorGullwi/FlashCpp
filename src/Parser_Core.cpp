@@ -188,7 +188,7 @@ TemplateArgumentVector toInlineTemplateArgs(std::span<const TemplateTypeArg> tem
 
 // Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
 // This enables storing template instantiation metadata in TypeInfo for O(1) lookup
-InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(std::span<const TemplateTypeArg> template_args) {
+TemplateArgInfoVector convertToTemplateArgInfo(std::span<const TemplateTypeArg> template_args) {
 	return toTemplateArgInfoList(template_args);
 }
 
@@ -238,8 +238,8 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 // Returns true only when a full template-id was captured successfully.
 bool Parser::parseDeferredAliasTargetTemplateId(
 	StringHandle& out_target_template_name,
-	InlineVector<ASTNode, 4>& out_target_template_arg_nodes,
-	InlineVector<DeferredAliasMemberTemplateSegment, 4>& out_target_member_template_segments,
+	TemplateAstNodeVector& out_target_template_arg_nodes,
+	InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& out_target_member_template_segments,
 	bool consume_dependent_member_suffix) {
 	out_target_template_name = StringHandle{};
 	out_target_template_arg_nodes.clear();
@@ -318,7 +318,7 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 			advance();
 			segment.name = member_name;
 			if (peek() == "<"_tok) {
-				InlineVector<ASTNode, 4> member_arg_nodes;
+				TemplateAstNodeVector member_arg_nodes;
 				auto member_args = parse_explicit_template_arguments(&member_arg_nodes);
 				if (!member_args.has_value()) {
 					return restore_on_failure();

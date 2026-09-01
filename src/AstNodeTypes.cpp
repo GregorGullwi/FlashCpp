@@ -248,7 +248,7 @@ std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 
 // Explicit chunk size: default ChunkSize=sizeof(T)*4 would reserve ~25k *huge* elements.
 ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedNameRecords;
-ChunkedVector<InlineVector<TypeInfo::TemplateArgInfo, 4>, 8> gTypeInfoTemplateArgLists;
+ChunkedVector<TemplateArgInfoVector, 8> gTypeInfoTemplateArgLists;
 ChunkedVector<TypeInfo::InstantiationContext, 8> gInstantiationContexts;
 ChunkedVector<TypeInfo::TemplateArgInfoColdPayload, 16> gTemplateArgInfoColdPayloads;
 
@@ -315,7 +315,7 @@ void TypeInfo::setDependentQualifiedName(DependentQualifiedNameRecord record) {
 	dependent_qualified_name_index_ = storeDependentQualifiedNameRecord(std::move(record));
 }
 
-uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> args) {
+uint32_t storeTypeInfoTemplateArgs(TemplateArgInfoVector args) {
 	if (args.empty()) {
 		return TypeInfo::kNoTemplateArgs;
 	}
@@ -335,7 +335,7 @@ uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> ar
 				continue;
 			}
 			++gTypeInfoTemplateArgListInternStats.equality_checks;
-			const InlineVector<TypeInfo::TemplateArgInfo, 4>& existing_args =
+			const TemplateArgInfoVector& existing_args =
 				gTypeInfoTemplateArgLists[candidate.list_index];
 			if (FlashCpp::equalTemplateArgInfoListIdentity(
 					args_span,
@@ -349,7 +349,7 @@ uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> ar
 	const uint32_t index = static_cast<uint32_t>(gTypeInfoTemplateArgLists.size());
 	gTypeInfoTemplateArgLists.push_back(std::move(args));
 	if (identity_hash == 0) {
-		const InlineVector<TypeInfo::TemplateArgInfo, 4>& stored_args = gTypeInfoTemplateArgLists[index];
+		const TemplateArgInfoVector& stored_args = gTypeInfoTemplateArgLists[index];
 		identity_hash = FlashCpp::hashTemplateArgInfoListIdentity(
 			std::span<const TypeInfo::TemplateArgInfo>(stored_args.data(), stored_args.size()));
 	}
@@ -357,8 +357,8 @@ uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> ar
 	return index;
 }
 
-const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32_t index) {
-	static const InlineVector<TypeInfo::TemplateArgInfo, 4> empty_args;
+const TemplateArgInfoVector& getTypeInfoTemplateArgs(uint32_t index) {
+	static const TemplateArgInfoVector empty_args;
 	if (index == TypeInfo::kNoTemplateArgs) {
 		return empty_args;
 	}
@@ -595,11 +595,11 @@ const TypeInfo::InstantiationContext* TypeInfo::instantiationContext() const {
 	return getInstantiationContext(instantiation_context_index_);
 }
 
-const InlineVector<TypeInfo::TemplateArgInfo, 4>& TypeInfo::InstantiationContext::param_args() const {
+const TemplateArgInfoVector& TypeInfo::InstantiationContext::param_args() const {
 	return getTypeInfoTemplateArgs(param_args_index);
 }
 
-const InlineVector<TypeInfo::TemplateArgInfo, 4>& TypeInfo::templateArgs() const {
+const TemplateArgInfoVector& TypeInfo::templateArgs() const {
 	return getTypeInfoTemplateArgs(template_args_index_);
 }
 
@@ -608,7 +608,7 @@ void TypeInfo::clearTemplateArgs() {
 }
 
 void TypeInfo::setTemplateInstantiationInfo(QualifiedIdentifier base_template,
-											InlineVector<TemplateArgInfo, 4> args) {
+											TemplateArgInfoVector args) {
 	base_template_ = base_template;
 	template_args_index_ = storeTypeInfoTemplateArgs(std::move(args));
 }
@@ -1007,7 +1007,7 @@ void printTypeTableStats() {
 			  type_info_bytes / 1024, " KiB)");
 	FLASH_LOG(General, Info, "  TypeInfo layout breakdown (bytes): ",
 			  "TemplateArgInfo=", sizeof(TypeInfo::TemplateArgInfo),
-			  ", InlineVector<TemplateArgInfo,4>=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  ", TemplateArgInfoVector=", sizeof(TemplateArgInfoVector),
 			  ", template_args_index_=", sizeof(uint32_t),
 			  ", DependentQualifiedNameRecord=", sizeof(TypeInfo::DependentQualifiedNameRecord),
 			  ", dependent_qualified_name_index_=", sizeof(uint32_t),
@@ -1053,9 +1053,9 @@ void printTypeTableStats() {
 			  " bytes");
 	FLASH_LOG(General, Info, "  gTypeInfoTemplateArgLists: entries=",
 			  getTypeInfoTemplateArgsCount(),
-			  ", list_bytes=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  ", list_bytes=", sizeof(TemplateArgInfoVector),
 			  ", estimated cold storage=",
-			  getTypeInfoTemplateArgsCount() * sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  getTypeInfoTemplateArgsCount() * sizeof(TemplateArgInfoVector),
 			  " bytes");
 	FLASH_LOG(General, Info, "  gTypeInfoTemplateArgLists interning: store_calls=",
 			  gTypeInfoTemplateArgListInternStats.store_calls,
@@ -1711,10 +1711,10 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
 	return nullptr;
 }
 
-InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByParameterCount(
+MemberOverloadCandidateVector4 StructTypeInfo::getConstructorsByParameterCount(
 	size_t parameter_count,
 	bool skip_implicit) const {
-	InlineVector<const StructMemberFunction*, 4> matches;
+	MemberOverloadCandidateVector4 matches;
 	bool hasNonImplicitMatch = false;
 	for (const auto& func : member_functions) {
 		if (!func.is_constructor) {
@@ -1739,7 +1739,7 @@ InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByPa
 	if (!skip_implicit && hasNonImplicitMatch) {
 		// Prefer user-declared constructors over implicit ones when both
 		// match the same parameter count.
-		InlineVector<const StructMemberFunction*, 4> filtered_matches;
+		MemberOverloadCandidateVector4 filtered_matches;
 		for (const StructMemberFunction* match : matches) {
 			const auto& ctor_node = match->function_decl.as<ConstructorDeclarationNode>();
 			if (!ctor_node.is_implicit() || ctor_node.is_explicitly_defaulted()) {
@@ -1907,8 +1907,8 @@ void TypeInfo::setEnumInfo(EnumTypeInfo info) {
 	enum_info_ = &gEnumTypeInfos.push_back(std::move(info));
 }
 
-void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,
-									   InlineVector<TemplateArgInfo, 4> param_args,
+void TypeInfo::setInstantiationContext(TemplateParamNameVector param_names,
+									   TemplateArgInfoVector param_args,
 									   const InstantiationContext* parent) {
 	setInstantiationContext(
 		std::move(param_names),
@@ -1917,9 +1917,9 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		parent);
 }
 
-void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,
-									   InlineVector<TypeIndex, 4> parameter_type_indices,
-									   InlineVector<TemplateArgInfo, 4> param_args,
+void TypeInfo::setInstantiationContext(TemplateParamNameVector param_names,
+									   InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> parameter_type_indices,
+									   TemplateArgInfoVector param_args,
 									   const InstantiationContext* parent) {
 	InstantiationContext ctx;
 	ctx.parent = parent;
@@ -1946,7 +1946,7 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 	size_t arg_index = 0;
 	size_t name_index = 0;
 	while (name_index < param_names.size()) {
-		InlineVector<TemplateArgInfo, 1> binding_args;
+		TemplateArgInfoSingleVector binding_args;
 		const size_t binding_parameter_index = name_index;
 		const StringHandle binding_name = param_names[name_index];
 		if (arg_index < stored_param_args.size()) {

@@ -9,7 +9,7 @@ namespace {
 
 struct DependentMemberSegmentInfo {
 	bool has_template_keyword = false;
-	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> template_args;
+	std::optional<TemplateArgInfoVector> template_args;
 };
 
 bool dependentQualifiedOwnerNeedsTypename(
@@ -33,9 +33,9 @@ std::string_view dependentQualifiedOwnerKindName(
 	return "dependent owner";
 }
 
-InlineVector<std::string_view, 4> splitDependentMemberPathComponents(
+TemplateParamNameViewVector splitDependentMemberPathComponents(
 	std::string_view member_path) {
-	InlineVector<std::string_view, 4> components;
+	TemplateParamNameViewVector components;
 	size_t start = 0;
 	while (start < member_path.size()) {
 		size_t sep = member_path.find("::", start);
@@ -78,7 +78,7 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
 	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
-	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	TemplateArgInfoVector owner_template_arguments,
 	std::string_view member_path,
 	std::span<const DependentMemberSegmentInfo> segment_infos) {
 	TypeInfo::DependentQualifiedNameRecord record;
@@ -1473,7 +1473,7 @@ ParseResult Parser::parse_type_specifier() {
 							const TypeInfo::InstantiationContext* target_context = alias_target_info->instantiationContext();
 							placeholder_type.setInstantiationContext(
 								target_context->param_names,
-								InlineVector<TypeInfo::TemplateArgInfo, 4>(target_context->param_args()),
+								TemplateArgInfoVector(target_context->param_args()),
 								target_context->parent);
 						}
 						getTypesByNameMap()[target_member_handle] = &placeholder_type;
@@ -1516,7 +1516,7 @@ ParseResult Parser::parse_type_specifier() {
 				const TypeInfo* owner_type_info = nullptr;
 				TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
 					TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
-				InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments;
+				TemplateArgInfoVector owner_template_arguments;
 				StringHandle owner_name_handle =
 					StringTable::getOrInternStringHandle(base_part);
 				TypeIndex owner_type_index{};
@@ -1586,7 +1586,7 @@ ParseResult Parser::parse_type_specifier() {
 							owner_type_info->instantiationContext();
 						placeholder_type.setInstantiationContext(
 							owner_context->param_names,
-							InlineVector<TypeInfo::TemplateArgInfo, 4>(owner_context->param_args()),
+							TemplateArgInfoVector(owner_context->param_args()),
 							owner_context->parent);
 					}
 					getTypesByNameMap()[type_handle] = &placeholder_type;
@@ -1606,7 +1606,7 @@ ParseResult Parser::parse_type_specifier() {
 							owner_type_info->instantiationContext();
 						type_it->second->setInstantiationContext(
 							owner_context->param_names,
-							InlineVector<TypeInfo::TemplateArgInfo, 4>(owner_context->param_args()),
+							TemplateArgInfoVector(owner_context->param_args()),
 							owner_context->parent);
 					}
 					type_idx = type_it->second->type_index_;
@@ -1772,7 +1772,7 @@ ParseResult Parser::parse_type_specifier() {
 								if (!owner_name.isValid()) {
 									owner_name = base_type_info.name();
 								}
-								InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments =
+								TemplateArgInfoVector owner_template_arguments =
 									base_type_info.templateArgs();
 								DependentMemberSegmentInfo terminal_segment_info;
 								member_type_info.setDependentQualifiedName(
@@ -1789,8 +1789,8 @@ ParseResult Parser::parse_type_specifier() {
 							const TypeInfo::InstantiationContext* base_context =
 								base_type_info.instantiationContext();
 							if (template_args.has_value()) {
-								InlineVector<StringHandle, 4> alias_param_names;
-								InlineVector<TypeInfo::TemplateArgInfo, 4> alias_context_args;
+								TemplateParamNameVector alias_param_names;
+								TemplateArgInfoVector alias_context_args;
 								const auto& alias_params = alias_node.template_parameters();
 								const size_t binding_count = std::min(
 									alias_params.size(),
@@ -1809,7 +1809,7 @@ ParseResult Parser::parse_type_specifier() {
 							} else if (base_context != nullptr) {
 								member_type_info.setInstantiationContext(
 									base_context->param_names,
-									InlineVector<TypeInfo::TemplateArgInfo, 4>(base_context->param_args()),
+									TemplateArgInfoVector(base_context->param_args()),
 									base_context->parent);
 							}
 						};
@@ -2441,7 +2441,7 @@ ParseResult Parser::parse_type_specifier() {
 						getTypesByNameMap()[type_handle] = &type_info;
 
 						auto template_args_info = convertToTemplateArgInfo(*template_args);
-						InlineVector<StringHandle, 4> placeholder_param_names;
+						TemplateParamNameVector placeholder_param_names;
 						if (auto placeholder_template_opt = gTemplateRegistry.lookupTemplate(type_name);
 							placeholder_template_opt.has_value() && placeholder_template_opt->is<TemplateClassDeclarationNode>()) {
 							const auto& placeholder_params = placeholder_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
@@ -2757,7 +2757,7 @@ ParseResult Parser::parse_type_specifier() {
 													  .commit();
 							discard_saved_token(nested_pos);
 
-							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> nested_seg_args;
+							std::optional<TemplateArgInfoVector> nested_seg_args;
 							if (peek() == "<"_tok) {
 								auto nested_tmpl_args = parse_explicit_template_arguments();
 								if (nested_tmpl_args.has_value()) {
@@ -2776,7 +2776,7 @@ ParseResult Parser::parse_type_specifier() {
 					};
 					auto create_dependent_qualified_type_placeholder =
 						[&](std::optional<StringHandle> dependent_member_template_base,
-							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> dependent_member_template_args) -> ParseResult {
+							std::optional<TemplateArgInfoVector> dependent_member_template_args) -> ParseResult {
 						FLASH_LOG_FORMAT(Templates, Trace, "Creating dependent type placeholder for {}", qualified_type_name);
 						auto type_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
 						TypeInfo& type_info = add_empty_type_entry();
@@ -2913,9 +2913,9 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						std::string_view dependent_member_path =
 							member_path_builder.commit();
-						InlineVector<std::string_view, 4> dependent_member_components =
+						TemplateParamNameViewVector dependent_member_components =
 							splitDependentMemberPathComponents(dependent_member_path);
-						InlineVector<DependentMemberSegmentInfo, 4> all_segment_infos;
+						InlineVector<DependentMemberSegmentInfo, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> all_segment_infos;
 						// The member path may contain prefix components (e.g. "Node" in
 						// "Node::Apply<1 args>") that appear before the terminal member
 						// whose template args we just parsed.  Without padding, those
@@ -2991,7 +2991,7 @@ ParseResult Parser::parse_type_specifier() {
 								const auto* base_ctx = base_type_it->second->instantiationContext();
 								type_info.setInstantiationContext(
 									base_ctx->param_names,
-									InlineVector<TypeInfo::TemplateArgInfo, 4>(base_ctx->param_args()),
+									TemplateArgInfoVector(base_ctx->param_args()),
 									base_ctx->parent);
 							}
 						}
@@ -3030,7 +3030,7 @@ ParseResult Parser::parse_type_specifier() {
 							// create the placeholder below; that placeholder must remember the member
 							// template base (`Holder::Box`) rather than only the outer owner.
 							std::optional<StringHandle> dependent_member_template_base;
-							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> dependent_member_template_args;
+							std::optional<TemplateArgInfoVector> dependent_member_template_args;
 
 							// Type not found
 							// If there are template arguments, we need to parse them and include in the type name
@@ -3438,8 +3438,8 @@ ParseResult Parser::parse_type_specifier() {
 									instantiated_type_info != nullptr &&
 									instantiated_type_info->isDependentMemberType() &&
 									instantiated_type_info->hasDependentQualifiedName()) {
-									InlineVector<StringHandle, 4> merged_param_names;
-									InlineVector<TypeInfo::TemplateArgInfo, 4> merged_param_args;
+									TemplateParamNameVector merged_param_names;
+									TemplateArgInfoVector merged_param_args;
 									if (instantiated_type_info->hasInstantiationContext()) {
 										const TypeInfo::InstantiationContext* existing_context =
 											instantiated_type_info->instantiationContext();
@@ -3579,7 +3579,7 @@ ParseResult Parser::parse_type_specifier() {
 					// Set template instantiation metadata so isTemplateInstantiation() returns true
 					// This is needed for deferred alias template detection
 					auto template_args_info = convertToTemplateArgInfo(template_args.value());
-					InlineVector<StringHandle, 4> placeholder_param_names;
+					TemplateParamNameVector placeholder_param_names;
 					if (auto placeholder_template_opt = gTemplateRegistry.lookupTemplate(type_name);
 						placeholder_template_opt.has_value() && placeholder_template_opt->is<TemplateClassDeclarationNode>()) {
 						const auto& placeholder_params = placeholder_template_opt->as<TemplateClassDeclarationNode>().template_parameters();

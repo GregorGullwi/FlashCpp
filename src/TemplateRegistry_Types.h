@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "ChunkedString.h"
+#include "TemplateInlineVectorAliases.h"
 #include "Lexer.h"  // For TokenPosition
 #include "TemplateTypes.h"  // For TypeIndex-based template keys
 #include "TemplateProfilingStats.h"	// For StringHandleHash
@@ -161,11 +162,11 @@ struct TemplateTypeArg {
 	TypeIndex type_index;  // Carries both the gTypeInfo slot and the TypeCategory
 	ReferenceQualifier ref_qualifier;
 	uint8_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
-	InlineVector<CVQualifier, 4> pointer_cv_qualifiers;	// CV for each pointer level
+	InlineVector<CVQualifier, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> pointer_cv_qualifiers;	// CV for each pointer level
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
 	bool is_array;
 	std::vector<size_t> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
-	InlineVector<StringHandle, 4> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
+	TemplateParamNameVector array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
 	MemberPointerKind member_pointer_kind;
 	StringHandle member_class_name;
 	const StructDeclarationNode* injected_class_declaration;
@@ -703,6 +704,9 @@ struct TemplateNameLookupCandidate {
 	size_t inherited_depth = 0;
 };
 
+using TemplateNameLookupCandidateVector =
+	InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+
 struct TemplateNameLookupRequest {
 	StringHandle name{};
 	StringHandle owner_name{};
@@ -718,7 +722,7 @@ struct TemplateNameLookupRequest {
 struct TemplateNameLookupResult {
 	TemplateNameLookupRequest request;
 	StringHandle resolved_name{};
-	InlineVector<TemplateNameLookupCandidate, 4> candidates;
+	TemplateNameLookupCandidateVector candidates;
 	bool used_definition_context = false;
 	bool used_point_of_instantiation_context = false;
 
@@ -794,7 +798,7 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 	if (pattern_arg.pointer_depth > 0 && deduced.pointer_depth >= pattern_arg.pointer_depth) {
 		deduced.pointer_depth -= pattern_arg.pointer_depth;
 		// Strip the first pattern_arg.pointer_depth CV qualifiers by rebuilding the vector
-		InlineVector<CVQualifier, 4> remaining;
+		InlineVector<CVQualifier, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> remaining;
 		for (size_t pd = pattern_arg.pointer_depth; pd < deduced.pointer_cv_qualifiers.size(); ++pd) {
 			remaining.push_back(deduced.pointer_cv_qualifiers[pd]);
 		}
@@ -1516,7 +1520,7 @@ inline TemplateTypeArg materializeTemplateArg(
 					concrete_arg.dependent_expr = std::nullopt;
 				}
 			} else {
-				InlineVector<ASTNode, 4> ast_template_params;
+				TemplateAstNodeVector ast_template_params;
 				ast_template_params.reserve(template_params.size());
 				for (const auto& template_param_node : template_params) {
 					if (const TemplateParameterNode* template_param =

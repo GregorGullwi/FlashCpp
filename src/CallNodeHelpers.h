@@ -394,7 +394,7 @@ inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&
 
 inline void setCallTemplateArguments(
 	ExpressionNode& expr,
-	InlineVector<ASTNode, 4>&& template_args) {
+	TemplateAstNodeVector&& template_args) {
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_template_arguments(std::move(template_args).toVector());
 	}
@@ -444,7 +444,7 @@ inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNod
 
 inline void setCallTemplateArguments(
 	CallExprNode& call_expr,
-	InlineVector<ASTNode, 4>&& template_args) {
+	TemplateAstNodeVector&& template_args) {
 	call_expr.set_template_arguments(std::move(template_args).toVector());
 }
 

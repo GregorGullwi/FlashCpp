@@ -516,7 +516,7 @@ struct DiagnosticNote {
 	DiagnosticId id = DiagnosticId::None;
 	SourceLocation location{};
 	std::string_view message_template{};
-	InlineVector<DiagnosticArgument, 2> arguments;
+	InlineVector<DiagnosticArgument, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> arguments;
 };
 
 // One level of active template-instantiation nesting captured with each
@@ -533,9 +533,9 @@ struct Diagnostic {
 	SourceLocation location{};
 	SourceRange range{};
 	std::string_view message_template{};
-	InlineVector<DiagnosticArgument, 3> arguments;
-	InlineVector<uint32_t, 2> note_indices;
-	InlineVector<TemplateInstantiationFrame, 4> instantiation_context;
+	InlineVector<DiagnosticArgument, 3, FlashCpp::InlineVectorSpillFamily::TemplateArgument> arguments;
+	InlineVector<uint32_t, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> note_indices;
+	InlineVector<TemplateInstantiationFrame, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> instantiation_context;
 
 	bool has_range() const {
 		return range.is_valid();
@@ -707,7 +707,7 @@ private:
 	}
 
 	template <size_t kInlineCapacity>
-	void copyArguments(InlineVector<DiagnosticArgument, kInlineCapacity>& target,
+	void copyArguments(InlineVector<DiagnosticArgument, kInlineCapacity, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& target,
 					   std::span<const DiagnosticArgument> source) {
 		for (const DiagnosticArgument& argument : source) {
 			DiagnosticArgument stored_argument = argument;

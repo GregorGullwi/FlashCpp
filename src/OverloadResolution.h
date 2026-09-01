@@ -92,6 +92,15 @@ struct ArgumentConversionInfo {
 	}
 };
 
+using ArgumentConversionInfoVector =
+	InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+using OverloadResolutionTypeSpecifierVector =
+	InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+using OverloadResolutionSizeIndexVector =
+	InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+using OverloadResolutionAstNodePtrVector =
+	InlineVector<const ASTNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+
 inline bool isSameTypeIgnoringTopLevelCvAndRef(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs) {
@@ -1491,7 +1500,7 @@ inline int compareConstructorTemplatePreference(
 inline bool tryBuildConstructorConversionInfos(
 	const ConstructorDeclarationNode& ctor_decl,
 	std::span<const TypeSpecifierNode> argument_types,
-	InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>& conversion_infos) {
+	ArgumentConversionInfoVector& conversion_infos) {
 	const auto& parameters = ctor_decl.parameter_nodes();
 	size_t min_required = countMinRequiredArgs(ctor_decl);
 	if (argument_types.size() < min_required || argument_types.size() > parameters.size()) {
@@ -1541,9 +1550,9 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 
 	const ConstructorDeclarationNode* best_match = nullptr;
 	size_t best_index = SIZE_MAX;
-	InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> best_infos;
+	ArgumentConversionInfoVector best_infos;
 	int num_best_matches = 0;
-	InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> tied_candidate_indices;
+	OverloadResolutionSizeIndexVector tied_candidate_indices;
 	is_ambiguous = false;
 
 	for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
@@ -1552,7 +1561,7 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 			continue;
 		}
 
-		InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> conversion_infos;
+		ArgumentConversionInfoVector conversion_infos;
 		if (!tryBuildConstructorConversionInfos(*candidate, argument_types, conversion_infos)) {
 			continue;
 		}
@@ -1586,7 +1595,7 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 		}
 
 		if (this_is_better && !this_is_worse) {
-			InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> old_tied = std::move(tied_candidate_indices);
+			OverloadResolutionSizeIndexVector old_tied = std::move(tied_candidate_indices);
 			best_match = candidate;
 			best_index = candidate_index;
 			best_infos = conversion_infos;
@@ -1598,7 +1607,7 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 				if (previous_index == candidate_index) {
 					continue;
 				}
-				InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> previous_infos;
+				ArgumentConversionInfoVector previous_infos;
 				if (!tryBuildConstructorConversionInfos(*previous, argument_types, previous_infos)) {
 					continue;
 				}
@@ -1805,9 +1814,9 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 
 	// Track the best match found so far
 	const ASTNode* best_match = nullptr;
-	InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> best_infos;
+	ArgumentConversionInfoVector best_infos;
 	int num_best_matches = 0;
-	InlineVector<const ASTNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> tied_candidates; // All candidates with best rank
+	OverloadResolutionAstNodePtrVector tied_candidates; // All candidates with best rank
 
 	// Evaluate each overload
 	for (const auto& overload : overloads) {
@@ -1840,7 +1849,7 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 		// Check if all provided arguments can be converted to parameters
 		// For variadic functions, only check the named parameters
 		// The variadic arguments (...) accept any type
-		InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> conversion_infos;
+		ArgumentConversionInfoVector conversion_infos;
 		bool all_convertible = true;
 
 		size_t params_to_check = std::min(parameters.size(), argument_types.size());
@@ -1892,7 +1901,7 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 				// Re-evaluate all previously accumulated tied/incomparable
 				// candidates against the new best ranks — any that are not
 				// strictly worse must be kept so that ambiguity is detected.
-				InlineVector<const ASTNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> old_tied = std::move(tied_candidates);
+				OverloadResolutionAstNodePtrVector old_tied = std::move(tied_candidates);
 				best_match = &overload;
 				best_infos = conversion_infos;
 				num_best_matches = 1;
@@ -1905,7 +1914,7 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 					const FunctionDeclarationNode* prev_func = &prev->as<FunctionDeclarationNode>();
 					const auto& prev_params = prev_func->parameter_nodes();
 					size_t prev_params_to_check = std::min(prev_params.size(), argument_types.size());
-					InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> prev_infos;
+					ArgumentConversionInfoVector prev_infos;
 					bool prev_valid = true;
 					for (size_t k = 0; k < prev_params_to_check; ++k) {
 						const auto& pt = prev_params[k].as<DeclarationNode>().type_specifier_node();
@@ -1973,10 +1982,10 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 	const ArgumentNodeContainer& argument_nodes) {
 	struct ViableMemberCandidate {
 		const ASTNode* overload = nullptr;
-		InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> conversion_infos;
+		ArgumentConversionInfoVector conversion_infos;
 	};
 
-	InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> comparison_argument_types;
+	OverloadResolutionTypeSpecifierVector comparison_argument_types;
 	comparison_argument_types.push_back(object_type);
 	for (const TypeSpecifierNode& argument_type : argument_types) {
 		comparison_argument_types.push_back(argument_type);

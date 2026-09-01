@@ -143,8 +143,8 @@ inline std::optional<TypeSpecifierNode> tryGetReturnTypeFromFunctionType(
 
 inline std::optional<TypeSpecifierNode> tryMaterializeTypeFromOuterTemplateBindings(
 	const TypeSpecifierNode& dependent_type,
-	const InlineVector<StringHandle, 4>& outer_template_param_names,
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args,
+	const TemplateParamNameVector& outer_template_param_names,
+	const TemplateArgInfoVector& outer_template_args,
 	const Token& source_token) {
 	const size_t binding_count =
 		std::min(outer_template_param_names.size(), outer_template_args.size());
@@ -154,7 +154,7 @@ inline std::optional<TypeSpecifierNode> tryMaterializeTypeFromOuterTemplateBindi
 
 	TypeInfo::TemplateArgInfo dependent_type_arg =
 		toTemplateArgInfo(TemplateTypeArg(dependent_type));
-	InlineVector<TemplateParameterNode, 4> synthetic_params;
+	TemplateParameterVector synthetic_params;
 	synthetic_params.reserve(binding_count);
 	TemplateArgumentVector concrete_args;
 	concrete_args.reserve(binding_count);

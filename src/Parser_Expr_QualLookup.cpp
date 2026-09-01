@@ -21,7 +21,7 @@
 namespace {
 bool identifierRefersToActiveTemplateParam(
 	StringHandle identifier,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return std::find(
 		current_template_param_names.begin(),
 		current_template_param_names.end(),
@@ -2103,7 +2103,7 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 		return materializeTemplateArgs(placeholder_info, template_params, template_args,
 			[this, placeholder_owner_handle](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-				InlineVector<TemplateParameterNode, 4> typed_params;
+				TemplateParameterVector typed_params;
 				typed_params.reserve(params.size());
 				for (const ASTNode& param_node : params) {
 					if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
@@ -2173,7 +2173,7 @@ TypeIndex Parser::substitute_template_parameter(
 				const ASTNode& expr,
 				std::span<const ASTNode> params,
 				std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-				InlineVector<TemplateParameterNode, 4> typed_params;
+				TemplateParameterVector typed_params;
 				typed_params.reserve(params.size());
 				for (const ASTNode& param_node : params) {
 					if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);

@@ -318,8 +318,8 @@ public:
 			callback(ns);
 			return;
 		}
-		InlineVector<NamespaceHandle, 8> visited;
-		InlineVector<NamespaceHandle, 8> worklist;
+		InlineVector<NamespaceHandle, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> visited;
+		InlineVector<NamespaceHandle, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> worklist;
 		worklist.push_back(ns);
 		while (!worklist.empty()) {
 			NamespaceHandle cur = worklist.back();
@@ -348,7 +348,7 @@ public:
 		const auto& direct_inline_children = getInlineChildren(ns);
 		if (direct_inline_children.empty())
 			return;
-		InlineVector<NamespaceHandle, 8> worklist;
+		InlineVector<NamespaceHandle, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> worklist;
 		for (NamespaceHandle child : direct_inline_children)
 			worklist.push_back(child);
 		while (!worklist.empty()) {

@@ -5,10 +5,10 @@
 #include "TypeTraitEvaluator.h"
 
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
-	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const InlineVector<StringHandle, 4>& template_param_names,
-	const InlineVector<TemplateParameterNode, 4>& inner_template_params,
-	const InlineVector<StringHandle, 4>& inner_template_param_names) {
+	const TemplateParameterVector& template_params,
+	const TemplateParamNameVector& template_param_names,
+	const TemplateParameterVector& inner_template_params,
+	const TemplateParamNameVector& inner_template_param_names) {
 	auto makeQualifiedClassIdentifier = [&](std::string_view class_name) {
 		return QualifiedIdentifier::fromQualifiedName(
 			class_name,
@@ -574,7 +574,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		StringTable::getOrInternStringHandle(qualified_class_name_storage));
 	auto build_out_of_line_static_replay_params =
 		[&template_params, &inner_template_params]() {
-		InlineVector<TemplateParameterNode, 4> replay_template_params;
+		TemplateParameterVector replay_template_params;
 		replay_template_params.reserve(
 			template_params.size() + inner_template_params.size());
 		replay_template_params.insert(

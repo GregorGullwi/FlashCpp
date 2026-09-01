@@ -392,7 +392,7 @@ struct BlockScopeTracker {
 	// Names declared in this block scope (in declaration order).
 	// Most scopes declare 0–3 variables; InlineVector avoids heap allocation
 	// for the common case.
-	InlineVector<std::string_view, 4> declared_names;
+	TemplateParamNameViewVector declared_names;
 	// For each name that shadowed an existing binding, the saved outer value.
 	std::unordered_map<std::string_view, EvalResult> saved_shadows;
 
@@ -403,7 +403,7 @@ struct BlockScopeTracker {
 		std::string_view name;  // Variable name (view into interned string storage)
 		TypeIndex type_index;   // Type of the struct
 	};
-	InlineVector<DestructorEntry, 4> destructor_entries;
+	InlineVector<DestructorEntry, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> destructor_entries;
 
 	// Called by the VariableDeclarationNode handler before writing the
 	// new binding into the flat map.  Pass the current bindings so that
@@ -534,7 +534,7 @@ struct EvaluationContext {
 
 	// Template parameter names and arguments for evaluating template-dependent expressions
 	// (e.g., sizeof(T) inside a template member function)
-	InlineVector<std::string_view, 4> template_param_names;
+	TemplateParamNameViewVector template_param_names;
 	TemplateArgumentVector template_args;
 	TemplateEnvironment template_environment;
 
@@ -619,7 +619,7 @@ struct ScopedTemplateBindingsFromType {
 
 private:
 	EvaluationContext& context_;
-	InlineVector<std::string_view, 4> saved_param_names_;
+	TemplateParamNameViewVector saved_param_names_;
 	TemplateArgumentVector saved_args_;
 	TemplateEnvironment saved_environment_;
 };

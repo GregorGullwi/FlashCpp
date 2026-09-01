@@ -191,8 +191,8 @@ private:
 		std::string_view error_context);
 
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
-	InlineVector<StructCodegenFrame, 8> struct_codegen_frame_stack_;
-	InlineVector<ActiveSwitchContext, 4> active_switch_context_stack_;
+	InlineVector<StructCodegenFrame, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> struct_codegen_frame_stack_;
+	InlineVector<ActiveSwitchContext, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> active_switch_context_stack_;
 
 	void enterScope() {
 		scope_stack_.push_back({});
@@ -261,7 +261,7 @@ private:
 	// Phase 2 capture state: vars captured by exitFunctionScope() awaiting LP emission
 	std::vector<std::pair<StringHandle, StringHandle>> pending_function_cleanup_vars_;
 	std::vector<FullExpressionTempDestructorInfo> pending_full_expression_temp_dtors_;
-	InlineVector<CatchScopeContext, 4> catch_scope_stack_;
+	InlineVector<CatchScopeContext, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> catch_scope_stack_;
 	size_t active_try_statement_depth_ = 0;
 	// Set by visitTryStatementNode() when any typed (non-catch-all) handlers are present.
 	// Used by emitPendingFunctionCleanupLP() to ensure FunctionCleanupLP is always emitted

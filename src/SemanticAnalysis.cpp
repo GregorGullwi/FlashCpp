@@ -2157,8 +2157,8 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaExpressi
 		return;
 	}
 
-	InlineVector<StringHandle, 4> param_names;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
+	TemplateParamNameVector param_names;
+	TemplateArgInfoVector param_args;
 	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{lambda.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
@@ -2177,8 +2177,8 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaExpressi
 }
 
 void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info) {
-	InlineVector<StringHandle, 4> param_names;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
+	TemplateParamNameVector param_names;
+	TemplateArgInfoVector param_args;
 	if (hasTemplateEnvironmentSnapshotBindings(lambda_info.outer_template_environment_snapshot)) {
 		populateTemplateEnvironmentLegacyViews(
 			lambda_info.outer_template_environment_snapshot,
@@ -2237,8 +2237,8 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const StructDeclarat
 		return;
 	}
 
-	InlineVector<StringHandle, 4> param_names;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
+	TemplateParamNameVector param_names;
+	TemplateArgInfoVector param_args;
 	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{decl.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
@@ -2261,8 +2261,8 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const VariableDeclar
 		return;
 	}
 
-	InlineVector<StringHandle, 4> param_names;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
+	TemplateParamNameVector param_names;
+	TemplateArgInfoVector param_args;
 	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{var.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
@@ -2285,8 +2285,8 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const ConstructorDec
 		return;
 	}
 
-	InlineVector<StringHandle, 4> param_names;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
+	TemplateParamNameVector param_names;
+	TemplateArgInfoVector param_args;
 	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{ctor.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
@@ -2309,8 +2309,8 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const DestructorDecl
 		return;
 	}
 
-	InlineVector<StringHandle, 4> param_names;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
+	TemplateParamNameVector param_names;
+	TemplateArgInfoVector param_args;
 	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{dtor.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
@@ -5966,7 +5966,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 				if (const MemberContext* member_context = getCurrentMemberContext()) {
 					if (const StructTypeInfo* struct_info =
 						tryGetStructTypeInfo(member_context->type_index)) {
-						InlineVector<const TypeInfo*, 2> nested_enum_matches;
+						InlineVector<const TypeInfo*, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> nested_enum_matches;
 						visitStructHierarchyDepthFirst(struct_info, [&](const StructTypeInfo& visited_struct) {
 							for (TypeIndex nested_enum_index : visited_struct.getNestedEnumIndices()) {
 								const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
@@ -6777,7 +6777,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return type_context_.intern(result_desc);
 					}
 					if (!result_desc.array_dimensions.empty()) {
-						InlineVector<size_t, 4> remaining_dimensions;
+						InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> remaining_dimensions;
 						for (size_t i = 1; i < result_desc.array_dimensions.size(); ++i) {
 							remaining_dimensions.push_back(result_desc.array_dimensions[i]);
 						}

@@ -379,7 +379,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 					} // !pack_name.empty()
 
 					if (!expanded && !pack_param_info_.empty()) {
-						InlineVector<ASTNode, 4> expanded_args = expandPackExpressionArgument(*arg);
+						TemplateAstNodeVector expanded_args = expandPackExpressionArgument(*arg);
 						if (!expanded_args.empty()) {
 							for (const ASTNode& expanded_arg : expanded_args) {
 								args.push_back(expanded_arg);

@@ -5174,7 +5174,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	advance(); // consume '<'
 
 	// Parse template parameters so type names like T are visible when parsing the function declaration.
-	InlineVector<TemplateParameterNode, 4> template_params;
+	TemplateParameterVector template_params;
 	auto param_list_result = parse_template_parameter_list(template_params);
 	// On error: fall back to raw skip of this declaration
 	if (param_list_result.is_error()) {

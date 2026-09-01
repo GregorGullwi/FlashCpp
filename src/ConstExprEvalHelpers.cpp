@@ -217,8 +217,8 @@ TemplateParameterKind inferTemplateBindingKindForLookup(const TemplateTypeArg& a
 // trySubstituteDependentTemplateArgForLookup can find the bindings without
 // falling back to the now-removed legacy bridge.
 TemplateEnvironment buildOuterFunctionTemplateEnvironment(
-	const InlineVector<StringHandle, 4>& param_names,
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& args) {
+	const TemplateParamNameVector& param_names,
+	const TemplateArgInfoVector& args) {
 	if (param_names.size() != args.size()) {
 		throw InternalError("buildOuterFunctionTemplateEnvironment: param_names.size() != args.size()");
 	}
@@ -362,7 +362,7 @@ const StructMemberFunction* findFinalOverrider(
 	return nullptr;
 }
 
-InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
+TemplateParameterVector getTemplateParametersForTypeInfo(
 	const TypeInfo& owner_type_info,
 	Parser& parser_context) {
 	const StringHandle qualified_template_name =
@@ -391,20 +391,20 @@ InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
 	auto tryGetParams = [&](const TemplateNameLookupResult& lookup_result,
 							TemplateDeclarationKind kind,
 							auto paramExtractor)
-		-> std::optional<InlineVector<TemplateParameterNode, 4>> {
+		-> std::optional<TemplateParameterVector> {
 		std::optional<ASTNode> decl = lookup_result.firstDeclarationOfKind(kind);
 		if (decl.has_value()) {
 			return paramExtractor(*decl);
 		}
 		return std::nullopt;
 	};
-	auto aliasAccessor = [](const ASTNode& n) -> std::optional<InlineVector<TemplateParameterNode, 4>> {
+	auto aliasAccessor = [](const ASTNode& n) -> std::optional<TemplateParameterVector> {
 		if (n.is<TemplateAliasNode>()) {
 			return n.as<TemplateAliasNode>().template_parameters();
 		}
 		return std::nullopt;
 	};
-	auto classAccessor = [](const ASTNode& n) -> std::optional<InlineVector<TemplateParameterNode, 4>> {
+	auto classAccessor = [](const ASTNode& n) -> std::optional<TemplateParameterVector> {
 		if (n.is<TemplateClassDeclarationNode>()) {
 			return n.as<TemplateClassDeclarationNode>().template_parameters();
 		}
@@ -597,7 +597,7 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 			owner_type_info->isTemplateInstantiation() &&
 			context.parser != nullptr) {
 			Parser& parser = *context.parser;
-			InlineVector<TemplateParameterNode, 4> owner_template_params =
+			TemplateParameterVector owner_template_params =
 				getTemplateParametersForTypeInfo(*owner_type_info, parser);
 			const size_t owner_pair_count = std::min(
 				owner_template_params.size(),

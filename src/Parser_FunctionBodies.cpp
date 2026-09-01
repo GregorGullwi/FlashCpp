@@ -31,7 +31,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 	}
 
 	// Also add inherited member functions from base classes
-	InlineVector<TypeIndex, 8> base_classes_to_search;
+	InlineVector<TypeIndex, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> base_classes_to_search;
 	for (const auto& base : struct_info->base_classes) {
 		base_classes_to_search.push_back(base.type_index);
 	}

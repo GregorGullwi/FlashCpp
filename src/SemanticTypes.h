@@ -114,8 +114,8 @@ struct CanonicalTypeDesc {
 	TypeIndex type_index{};
 	CVQualifier base_cv = CVQualifier::None;
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
-	InlineVector<PointerLevel, 4> pointer_levels;
-	InlineVector<size_t, 4> array_dimensions;
+	InlineVector<PointerLevel, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> pointer_levels;
+	InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> array_dimensions;
 	// C++20 [dcl.ptr]/1: true when the array dimensions bind inside the
 	// declarator's pointer levels (T (*p)[N] is "pointer to array of N T"),
 	// as opposed to an array of pointers (T* p[N]).
