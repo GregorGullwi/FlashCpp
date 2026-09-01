@@ -934,7 +934,7 @@ private:
 			}
 			bool template_ctor_ambiguous = false;
 			const ConstructorDeclarationNode* materialized_ctor =
-				parser_.materializeMatchingConstructorTemplate(
+				parser_.templateEngine().materializeMatchingConstructorTemplate(
 					target_struct_info.name,
 					target_struct_info,
 					std::span<const TypeSpecifierNode>(arg_types.data(), arg_types.size()),
