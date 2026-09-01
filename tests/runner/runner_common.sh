@@ -368,3 +368,96 @@ runner_ci_record() {
 		printf '%s\n' "$record" >> "$path"
 	fi
 }
+
+runner_resolve_flashcpp_compiler_path() {
+	local repo_root="$1"
+	local name path mtime newest_mtime=0 newest_path=''
+	RUNNER_FLASHCPP_COMPILER_PATH=''
+	[ -d "$repo_root/x64" ] || return 1
+	for name in FlashCpp.exe FlashCppMSVC.exe FlashCpp FlashCppMSVC; do
+		while IFS= read -r -d '' path; do
+			[ -f "$path" ] || continue
+			mtime=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path")
+			if [ "$mtime" -gt "$newest_mtime" ]; then
+				newest_mtime=$mtime
+				newest_path=$path
+			fi
+		done < <(find "$repo_root/x64" -type f -name "$name" -print0 2>/dev/null)
+	done
+	[ -n "$newest_path" ] || return 1
+	RUNNER_FLASHCPP_COMPILER_PATH="$newest_path"
+	return 0
+}
+
+runner_migration_counter_value() {
+	local output="$1"
+	local counter="$2"
+	local line=''
+	case "$counter" in
+		outside_engine)
+			line=$(printf '%s\n' "$output" | grep -E 'Diagnostics emitted outside DiagnosticEngine:' | head -1 || true)
+			;;
+		token_replay)
+			line=$(printf '%s\n' "$output" | grep -E '^Token replays:' | head -1 || true)
+			;;
+		post_parse_typing)
+			line=$(printf '%s\n' "$output" | grep -E '^Post-parse parser typing queries:' | head -1 || true)
+			;;
+		ast_to_ir_semantic)
+			line=$(printf '%s\n' "$output" | grep -E '^AST-to-IR semantic queries:' | head -1 || true)
+			;;
+		codegen_to_parser)
+			line=$(printf '%s\n' "$output" | grep -E '^Codegen-to-parser callbacks:' | head -1 || true)
+			;;
+		template_old_engine)
+			line=$(printf '%s\n' "$output" | grep -E '^TemplateEngine old-engine routes:' | head -1 || true)
+			;;
+		dollar_identity)
+			line=$(printf '%s\n' "$output" | grep -E '^Dollar identity recoveries:' | head -1 || true)
+			;;
+		declaration_builder_publish)
+			line=$(printf '%s\n' "$output" | grep -E '^DeclarationBuilder publishes:' | head -1 || true)
+			;;
+		*)
+			return 1
+			;;
+	esac
+	[ -n "$line" ] || return 1
+	[[ "$line" =~ ([0-9]+)$ ]] || return 1
+	printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+runner_parse_migration_counter_values() {
+	local output="$1"
+	local counter value
+	RUNNER_MIGRATION_COUNTER_VALUES=()
+	for counter in outside_engine token_replay post_parse_typing ast_to_ir_semantic \
+		codegen_to_parser template_old_engine dollar_identity declaration_builder_publish; do
+		value=$(runner_migration_counter_value "$output" "$counter") || return 1
+		RUNNER_MIGRATION_COUNTER_VALUES["$counter"]=$value
+	done
+	return 0
+}
+
+runner_migration_counter_baseline_status() {
+	local actual="$1"
+	local baseline="$2"
+	if [ -z "$baseline" ]; then
+		printf '%s\n' 'MissingBaseline'
+		return 0
+	fi
+	if [ "$actual" -gt "$baseline" ]; then
+		printf '%s\n' 'Regressed'
+		return 0
+	fi
+	if [ "$actual" -lt "$baseline" ]; then
+		printf '%s\n' 'Improved'
+		return 0
+	fi
+	printf '%s\n' 'Ok'
+}
+
+runner_dollar_find_inventory_count() {
+	local repo_root="$1"
+	grep -R --include='*.cpp' --include='*.h' -F "find('$')" "$repo_root/src" 2>/dev/null | wc -l | tr -d ' '
+}

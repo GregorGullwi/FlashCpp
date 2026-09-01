@@ -95,9 +95,11 @@ Last updated: 2026-09-01 after pull request boundary 22
   peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
 - Migration choke-point counters and the inline `find('$')` inventory are
   enforced on the fixed corpus through `tests/run_migration_counters.ps1` and
-  `tests/run_migration_dollar_inventory.ps1` on both Windows and Ubuntu CI.
-  `Resolve-FlashCppCompilerPath` discovers `FlashCpp.exe`, `FlashCppMSVC.exe`,
-  and extensionless Linux `FlashCpp` / `FlashCppMSVC` binaries under `x64/`.
+  `tests/run_migration_dollar_inventory.ps1` on Windows CI and through the
+  bash equivalents `tests/run_migration_counters.sh` and
+  `tests/run_migration_dollar_inventory.sh` on Ubuntu CI. Shared parsing and
+  compiler discovery live in `tests/runner/RunnerCommon.ps1` and
+  `tests/runner/runner_common.sh`.
 
 ## Pull request boundary status (1–22)
 
@@ -124,7 +126,7 @@ Last updated: 2026-09-01 after pull request boundary 22
 | 19 | Delete `Scope::{parent_scope_id, scope_type, depth, namespace_handle}`; unbound tables use `scope_metadata_` sidecar; align stale `ScopeId` publication contract in tests; harden publication binding lifetime and rebind sync |
 | 20 | Stamp `lexical_scope_id` on struct, enum, typedef, and class-template wrapper nodes at `SymbolTable` insert/replace/insertGlobal |
 | 21 | Wire IR allocation-domain bytes from codegen lowering buffers; report coarse syntax AST family counts through `FrontendContext` |
-| 22 | Enforce migration counter and dollar-inventory baselines on Ubuntu CI; resolve extensionless Linux compiler binaries in runner scripts |
+| 22 | Enforce migration counter and dollar-inventory baselines on Ubuntu CI via native bash runners; keep PowerShell runners on Windows CI |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -183,10 +185,10 @@ boundary 1 is started, not finished.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage): follow-on boundary-1 work
 
-Boundary-22 validation: runner self-test covers
-`Resolve-FlashCppCompilerPath`; Linux spot-check of corpus telemetry matches
-the checked-in baseline; Ubuntu CI workflow installs PowerShell and runs
-migration counter and dollar-inventory scripts after `make sharded`.
+Boundary-22 validation: bash runner self-tests cover migration telemetry
+parsing and compiler discovery; `run_migration_counters.sh` and
+`run_migration_dollar_inventory.sh` pass against the checked-in baselines on
+Linux; Ubuntu CI invokes the bash scripts without installing PowerShell.
 
 ## Effort estimate
 

@@ -211,5 +211,44 @@ else
 	printf 'SKIP: functional multi-TU and PIE checks require clang++ and timeout\n'
 fi
 
+migration_output=$'Diagnostics emitted outside DiagnosticEngine: 1\nToken replays: 2\nPost-parse parser typing queries: 3\nAST-to-IR semantic queries: 4\nCodegen-to-parser callbacks: 5\nTemplateEngine old-engine routes: 6\nDollar identity recoveries: 7\nDeclarationBuilder publishes: 8\n'
+declare -A RUNNER_MIGRATION_COUNTER_VALUES=()
+if runner_parse_migration_counter_values "$migration_output" &&
+	[ "${RUNNER_MIGRATION_COUNTER_VALUES[outside_engine]}" = 1 ] &&
+	[ "${RUNNER_MIGRATION_COUNTER_VALUES[template_old_engine]}" = 6 ]; then
+	migration_parse_ok=true
+else
+	migration_parse_ok=false
+fi
+assert_runner "$migration_parse_ok" "migration telemetry parses fixed counter lines"
+
+if runner_parse_migration_counter_values 'compiler crashed without telemetry'; then
+	missing_migration_ok=false
+else
+	missing_migration_ok=true
+fi
+assert_runner "$missing_migration_ok" "output missing migration telemetry yields no values"
+
+[ "$(runner_migration_counter_baseline_status 3 3)" = Ok ] && counter_ok_status=true || counter_ok_status=false
+[ "$(runner_migration_counter_baseline_status 2 3)" = Improved ] && counter_improved_status=true || counter_improved_status=false
+[ "$(runner_migration_counter_baseline_status 4 3)" = Regressed ] && counter_regressed_status=true || counter_regressed_status=false
+assert_runner "$counter_ok_status" "counts equal to the baseline pass"
+assert_runner "$counter_improved_status" "counts below the baseline ratchet down without failing"
+assert_runner "$counter_regressed_status" "counts above the baseline are regressions"
+
+resolve_root="$temp_root/resolve_repo"
+mkdir -p "$resolve_root/x64/Sharded" "$resolve_root/x64/Debug"
+printf 'linux\n' > "$resolve_root/x64/Sharded/FlashCpp"
+printf 'windows\n' > "$resolve_root/x64/Debug/FlashCpp.exe"
+touch -t 202608240200 "$resolve_root/x64/Sharded/FlashCpp"
+touch -t 202608240100 "$resolve_root/x64/Debug/FlashCpp.exe"
+if runner_resolve_flashcpp_compiler_path "$resolve_root" &&
+	[ "$RUNNER_FLASHCPP_COMPILER_PATH" = "$resolve_root/x64/Sharded/FlashCpp" ]; then
+	resolve_compiler_ok=true
+else
+	resolve_compiler_ok=false
+fi
+assert_runner "$resolve_compiler_ok" "runner_resolve_flashcpp_compiler_path selects the newest FlashCpp binary under x64"
+
 [ "$failures" -eq 0 ] || exit 1
 printf 'Runner self-tests passed\n'
