@@ -9,6 +9,7 @@
 #include "Log.h"
 #include "ScopeRecord.h"
 #include "StringTable.h"
+#include "SyntaxAstTelemetry.h"
 
 #include <array>
 #include <cstdint>
@@ -81,8 +82,19 @@ public:
 		domain_stats_[index].peak_bytes = peak_bytes;
 	}
 
+	void recordIrDomainStats(uint64_t used_bytes, uint64_t reserved_bytes) {
+		applyDomainBytes(
+			domain_stats_[static_cast<std::size_t>(AllocationDomain::Ir)],
+			used_bytes,
+			reserved_bytes);
+	}
+
 	DomainByteStats domainStats(AllocationDomain domain) const {
 		return domain_stats_[static_cast<std::size_t>(domain)];
+	}
+
+	const std::array<uint64_t, static_cast<std::size_t>(SyntaxAstFamily::Count)>& syntaxAstFamilyCounts() const {
+		return syntax_family_counts_;
 	}
 
 	std::size_t inlineVectorSpillCount() const {
@@ -214,6 +226,10 @@ public:
 			gChunkedAnyStorage.reservedBytes());
 	}
 
+	void refreshSyntaxAstFamilyCounts() {
+		syntax_family_counts_ = countSyntaxAstFamilies(gChunkedAnyStorage);
+	}
+
 	static uint64_t stringTableEntryCount() {
 		return StringTable::getInternedCount();
 	}
@@ -226,6 +242,7 @@ public:
 		refreshScratchDomainStats();
 		refreshSemanticDomainStats();
 		refreshSyntaxDomainStats();
+		refreshSyntaxAstFamilyCounts();
 		const char* domain_names[] = {"syntax", "semantic", "scratch", "ir"};
 		FLASH_LOG(General, Info, "\nFrontendContext arena telemetry:");
 		for (std::size_t index = 0; index < domain_stats_.size(); ++index) {
@@ -294,6 +311,17 @@ public:
 		FLASH_LOG(General, Info,
 				  "  syntax objects: ",
 				  gChunkedAnyStorage.size());
+		for (std::size_t index = 0; index < syntax_family_counts_.size(); ++index) {
+			const uint64_t count = syntax_family_counts_[index];
+			if (count == 0) {
+				continue;
+			}
+			FLASH_LOG(General, Info,
+					  "  syntax family ",
+					  syntaxAstFamilyLabel(static_cast<SyntaxAstFamily>(index)),
+					  " objects: ",
+					  count);
+		}
 	}
 
 private:
@@ -336,6 +364,7 @@ private:
 	void releasePersistentScopePublicationTables();
 
 	std::array<DomainByteStats, 4> domain_stats_{};
+	std::array<uint64_t, static_cast<std::size_t>(SyntaxAstFamily::Count)> syntax_family_counts_{};
 	// Scratch limit diagnostics are owned here; legacy diagnostics stay in CompileContext.
 	DiagnosticEngine diagnostics_;
 	MonotonicScratchArena scratch_arena_{diagnostics_, kScratchByteLimit};

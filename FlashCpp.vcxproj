@@ -479,6 +479,7 @@
     <ClInclude Include="src\ArenaDomains.h" />
     <ClInclude Include="src\DeclarationBuilder.h" />
     <ClInclude Include="src\FrontendContext.h" />
+    <ClInclude Include="src\SyntaxAstTelemetry.h" />
     <ClInclude Include="src\ScopeRecord.h" />
     <ClInclude Include="src\LegacyChunkedAnyStoragePolicy.h" />
     <ClInclude Include="src\LegacyChunkedAnyStoragePolicyComplete.h" />
