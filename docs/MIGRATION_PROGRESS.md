@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 25
+Last updated: 2026-09-01 after pull request boundary 26
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 25 are landed.
+  and entities). Pull request boundaries 1 through 26 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -108,7 +108,7 @@ Last updated: 2026-09-01 after pull request boundary 25
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–25)
+## Pull request boundary status (1–26)
 
 | Boundary | Delivered |
 |----------|-----------|
