@@ -4935,6 +4935,44 @@ TEST_SUITE("FrontendContext") {
 		CHECK(table.activeScopeDepth() == context.scopeRecord(function_scope_id).depth);
 	}
 
+	TEST_CASE("DeclarationBuilder publication reads ScopeRecord metadata when persistent publication is enabled") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+
+		const StringHandle ns_name = StringTable::getOrInternStringHandle("PublicationScopeRecordNs");
+		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_name);
+		table.enter_namespace(ns_handle);
+		const ScopeId namespace_scope_id = table.currentScopeId();
+
+		table.mutateLegacyScopeMetadataForTest(
+			namespace_scope_id,
+			ScopeType::Block,
+			ScopeId{99},
+			99u,
+			NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
+
+		const StringHandle name = StringTable::getOrInternStringHandle("publication_scope_record_probe");
+		const FunctionDeclRequest request{
+			namespace_scope_id,
+			name,
+			TypeId{71},
+			TypeId{81},
+			LanguageLinkage::CPlusPlus,
+			false,
+			false,
+			false};
+		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+		REQUIRE_FALSE(prepared.isRejected());
+
+		const PublishResult published = builder.publishFunction(request, table);
+		CHECK(published.status == PublishStatus::Created);
+		REQUIRE(published.entity_id);
+		CHECK(builder.entity(published.entity_id).owner_id == ownerIdFromNamespaceHandle(ns_handle));
+	}
+
 	TEST_CASE("SymbolTable enter_scope without an active FrontendContext still succeeds") {
 		SymbolTable table;
 		table.enter_scope(ScopeType::Block);

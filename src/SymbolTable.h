@@ -1351,7 +1351,11 @@ public:
 		Scope& scope = scopes_.back();
 		scope.parent_scope_id = parent_id;
 		current_scope_index_ = scopes_.size() - 1;
-		publishPersistentScopeEnterIfEnabled();
+		publishPersistentScopeEnterIfEnabled(
+			parent_id,
+			scopeType,
+			new_depth,
+			NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
 	}
 
 	void enter_namespace(NamespaceHandle ns_handle) {
@@ -1371,7 +1375,11 @@ public:
 		}
 		scopes_.push_back(std::move(scope));
 		current_scope_index_ = scopes_.size() - 1;
-		publishPersistentScopeEnterIfEnabled();
+		publishPersistentScopeEnterIfEnabled(
+			parent_id,
+			ScopeType::Namespace,
+			new_depth,
+			ns_handle);
 	}
 
 	void enter_namespace(std::string_view namespace_name) {
@@ -1387,7 +1395,11 @@ public:
 			Scope& scope = scopes_.back();
 			scope.parent_scope_id = parent_id;
 			current_scope_index_ = scopes_.size() - 1;
-			publishPersistentScopeEnterIfEnabled();
+			publishPersistentScopeEnterIfEnabled(
+				parent_id,
+				ScopeType::Namespace,
+				new_depth,
+				NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
 			return;
 		}
 		enter_namespace(ns_handle);
@@ -1747,18 +1759,21 @@ private:
 	ScopeMetadataView scopeMetadataAtIndex(std::size_t scope_index) const {
 		return readScopeMetadata(*this, ScopeId{static_cast<uint32_t>(scope_index + 1)});
 	}
-	void publishPersistentScopeEnterIfEnabled() {
+	void publishPersistentScopeEnterIfEnabled(
+		ScopeId parent_id,
+		ScopeType scope_type,
+		uint32_t depth,
+		NamespaceHandle namespace_handle) {
 		if (!publish_persistent_scopes_) {
 			return;
 		}
-		const Scope& scope = scopes_.back();
 		publishPersistentScopeEnter(
 			*this,
 			currentScopeId(),
-			scope.parent_scope_id,
-			scope.scope_type,
-			scope.depth,
-			scope.namespace_handle);
+			parent_id,
+			scope_type,
+			depth,
+			namespace_handle);
 	}
 
 	void publishPersistentScopeCursorIfEnabled() {
