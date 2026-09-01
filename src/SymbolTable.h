@@ -22,17 +22,20 @@
 #include "NamespaceRegistry.h"
 #include "TemplateRegistry.h"
 
+class FrontendContext;
+
 class SymbolTable;
 
 // Out-of-line in Globals.cpp so SymbolTable.h does not include FrontendContext.h.
 void publishPersistentScopeEnter(
+	SymbolTable& table,
 	ScopeId id,
 	ScopeId parent_id,
 	ScopeType scope_type,
 	uint32_t depth,
 	NamespaceHandle namespace_handle);
-void publishPersistentScopeCursor(ScopeId current_scope_id);
-void resetPersistentScopes();
+void publishPersistentScopeCursor(SymbolTable& table, ScopeId current_scope_id);
+void resetPersistentScopes(SymbolTable& table);
 void bindPersistentScopePublication(SymbolTable& table);
 ScopeMetadataView readScopeMetadata(const SymbolTable& table, ScopeId scope_id);
 
@@ -236,6 +239,8 @@ public:
 	bool persistentScopePublicationEnabled() const {
 		return publish_persistent_scopes_;
 	}
+
+	FrontendContext* persistentScopePublicationContext() const;
 
 	std::size_t activeScopeDepth() const {
 		return scopeMetadataAtIndex(current_scope_index_).depth;
@@ -1746,6 +1751,7 @@ private:
 		}
 		const Scope& scope = scopes_.back();
 		publishPersistentScopeEnter(
+			*this,
 			currentScopeId(),
 			scope.parent_scope_id,
 			scope.scope_type,
@@ -1757,14 +1763,14 @@ private:
 		if (!publish_persistent_scopes_) {
 			return;
 		}
-		publishPersistentScopeCursor(currentScopeId());
+		publishPersistentScopeCursor(*this, currentScopeId());
 	}
 
 	void resetPersistentScopesIfEnabled() {
 		if (!publish_persistent_scopes_) {
 			return;
 		}
-		resetPersistentScopes();
+		resetPersistentScopes(*this);
 	}
 
 	static Scope makeInitialGlobalScope() {
@@ -1778,6 +1784,7 @@ private:
 	mutable ScopeId last_lookup_scope_id_;
 	ScopeId last_declaring_scope_id_;
 	bool publish_persistent_scopes_ = false;
+	FrontendContext* persistent_scope_publication_context_ = nullptr;
 	// Persistent map of namespace contents
 	// Uses NamespaceHandle as key to avoid string concatenation
 	// Maps: namespace_handle -> (symbol_name -> vector<ASTNode>) to support overloading

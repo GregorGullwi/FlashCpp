@@ -4944,6 +4944,43 @@ TEST_SUITE("FrontendContext") {
 		CHECK(outer.currentScopeId().value == 2u);
 	}
 
+	TEST_CASE("outer SymbolTable lookup uses its bound ScopeRecord arena under nested FrontendContext") {
+		FrontendContext outer;
+		SymbolTable outer_table;
+		outer_table.enablePersistentScopePublication();
+
+		const StringHandle ns_name = StringTable::getOrInternStringHandle("NestedLookupOuterNs");
+		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_name);
+		outer_table.enter_namespace(ns_handle);
+
+		Token type_token(Token::Type::Identifier, std::string_view("int"), 1, 1, 0);
+		Token id_token(Token::Type::Identifier, std::string_view("nested_outer_lookup_probe"), 1, 1, 0);
+		TypeSpecifierNode int_type(
+			TypeCategory::Int, TypeQualifier::None, 32, type_token, CVQualifier::None);
+		ASTNode node = ASTNode::emplace_node<DeclarationNode>(int_type, id_token);
+		REQUIRE(outer_table.insert(std::string_view("nested_outer_lookup_probe"), node));
+		REQUIRE(outer_table.lookup("nested_outer_lookup_probe").has_value());
+
+		{
+			FrontendContext inner;
+			SymbolTable inner_table;
+			inner_table.enablePersistentScopePublication();
+			inner_table.enter_scope(ScopeType::Block);
+			REQUIRE(FrontendContext::active() == &inner);
+			REQUIRE(inner.scopeRecordCount() == 2u);
+			REQUIRE(outer.scopeRecordCount() == 2u);
+
+			const std::optional<ASTNode> found = outer_table.lookup("nested_outer_lookup_probe");
+			REQUIRE(found.has_value());
+			CHECK(found->is<DeclarationNode>());
+
+			const std::vector<ASTNode> overloads = outer_table.lookup_all("nested_outer_lookup_probe");
+			REQUIRE(overloads.size() == 1u);
+			CHECK(overloads[0].is<DeclarationNode>());
+		}
+	}
+
 	TEST_CASE("persistent ScopeId divergence from the arena is an InternalError") {
 		FrontendContext context;
 		SymbolTable table;
