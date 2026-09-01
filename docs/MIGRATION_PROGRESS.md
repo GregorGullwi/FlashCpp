@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 27
+Last updated: 2026-09-01 after pull request boundary 28
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 27 are landed.
+  and entities). Pull request boundaries 1 through 28 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -25,6 +25,9 @@ Last updated: 2026-09-01 after pull request boundary 27
   insertion in place when publication rejects. `SymbolTable` remains lookup
   and merge authority; the opaque TypeId bridge is telemetry-only until
   boundary 3A canonical types and must not diagnose or erase lookup state.
+  Parser shadow publication has one transactional adapter:
+  `commitParserFreeFunctionPublication`; the unused nontransactional request
+  builder and direct `publishParserFreeFunction` adapter are deleted.
 - `gChunkedAnyStorage` is a guarded `LegacyAstChunkedAnyVector`. `emplace_back`
   and `ASTNode::emplace_node` reject types outside the compile-time legacy
   allow-list in `LegacyChunkedAnyAllowList.h`; new semantic records must use
@@ -108,7 +111,7 @@ Last updated: 2026-09-01 after pull request boundary 27
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–27)
+## Pull request boundary status (1–28)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -139,6 +142,7 @@ Last updated: 2026-09-01 after pull request boundary 27
 | 25 | Route sema binary operator-template instantiation through `TemplateEngine::tryInstantiateOperatorTemplateForBinary`; delete direct external `Parser` call |
 | 26 | Attribute InlineVector spills to named families; tag overload-resolution and template-argument hot vectors; report per-family counts in arena and migration telemetry |
 | 27 | Route AstToIr constructor-template materialization through `TemplateEngine::materializeMatchingConstructorTemplate`; delete last external direct `Parser` constructor-template call |
+| 28 | Mutation-validate parser shadow merging of inline declarations across reopened namespace blocks; delete the unused nontransactional parser-publication request builder and direct publication adapter |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -199,11 +203,16 @@ boundary 1 is started, not finished.
     probe passes with a 1 MiB stack. This scope path is iterative; broader parser/template stack
     bounds remain open.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
-    free-function set, full template-facade coverage): follow-on boundary-1 work
+    free-function set, full template-facade coverage): follow-on boundary-1 work.
+    Parser-wired coverage now proves reopened namespace blocks retain distinct
+    lexical `ScopeId`s while sharing one `OwnerId` / `EntityId`, and preserves
+    `inline` plus definition state through the redeclaration chain.
 
-Boundary-27 validation: `build_flashcpp.bat`, migration counter baselines
-unchanged, and `test_constructor_template_partial_order_delegating_ret0.cpp`
-pass on Windows.
+Boundary-28 validation: `build_flashcpp.bat`; direct clang-cl doctest build and
+four parser-shadow doctests; `test_decl_builder_wire_free_fn_ret42.cpp` and
+`test_decl_builder_publication_transaction_ret42.cpp`; migration counter
+baselines unchanged; dollar inventory 17/17; and `git diff --check` pass on
+Windows. Namespace-owner and inline-flag mutations each fail the new doctest.
 
 ## Effort estimate
 

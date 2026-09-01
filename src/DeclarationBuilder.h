@@ -396,26 +396,12 @@ private:
 
 FunctionDeclRequest buildFreeFunctionDeclRequest(
 	DeclarationBuilder& builder,
-	const FunctionDeclarationNode& func_decl,
-	ScopeId lexical_scope_id,
-	bool is_definition);
-
-FunctionDeclRequest buildFreeFunctionDeclRequest(
-	DeclarationBuilder& builder,
 	PublicationTransaction& transaction,
 	const FunctionDeclarationNode& func_decl,
 	ScopeId lexical_scope_id,
 	bool is_definition);
 
 bool shouldPublishParserFreeFunction(const FunctionDeclarationNode& func_decl, ScopeType scope_type);
-
-// Shadow publication for migration telemetry. SymbolTable remains lookup authority.
-PublishResult publishParserFreeFunction(
-	DeclarationBuilder& builder,
-	const FunctionDeclarationNode& func_decl,
-	ScopeId lexical_scope_id,
-	bool is_definition,
-	const SymbolTable& symbol_table);
 
 // Build request, prepare once, and commit through a publication transaction.
 // SymbolTable insert must already have succeeded. SymbolTable remains lookup
