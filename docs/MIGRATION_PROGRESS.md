@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 29
+Last updated: 2026-09-01 after pull request boundary 30
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 29 are landed.
+  and entities). Pull request boundaries 1 through 30 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -115,7 +115,7 @@ Last updated: 2026-09-01 after pull request boundary 29
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–29)
+## Pull request boundary status (1–30)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -148,6 +148,7 @@ Last updated: 2026-09-01 after pull request boundary 29
 | 27 | Route AstToIr constructor-template materialization through `TemplateEngine::materializeMatchingConstructorTemplate`; delete last external direct `Parser` constructor-template call |
 | 28 | Mutation-validate parser shadow merging and retained SymbolTable authority; delete the unused nontransactional parser-publication adapter and abandoned `SymbolTableInsertUndo` control path |
 | 29 | Route `ExpressionSubstitutor` dependent member-function template instantiation through `TemplateEngine::tryInstantiateMemberFunctionTemplateCall`; delete last external direct `Parser` member-template call bypass |
+| 30 | Tag all `InlineVector` containers in `OverloadResolution.h` with `InlineVectorSpillFamily::OverloadResolution`; overload-resolution spill telemetry no longer attributes to `unknown` |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -196,8 +197,9 @@ boundary 1 is started, not finished.
     buffers only); coarse syntax AST family counts, declaration/entity record
     totals, semantic `DeclKind` breakdown, declarator/parameter-list intern
     registry sizes, and per-family InlineVector spill breakdown report for
-    tagged overload-resolution and template-argument vectors; full IR arena
-    ownership and tagging of remaining InlineVector families remain open
+    tagged overload-resolution (including core `OverloadResolution.h` tie-break
+    vectors) and template-argument vectors; full IR arena ownership and tagging
+    of remaining InlineVector families remain open
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
     `Scope::scope_id` and legacy metadata fields on `Scope` are deleted.
@@ -212,21 +214,17 @@ boundary 1 is started, not finished.
     lexical `ScopeId`s while sharing one `OwnerId` / `EntityId`, and preserves
     `inline` plus definition state through the redeclaration chain.
 
-Boundary-29 validation: `build_flashcpp.bat`; migration counter baselines
+Boundary-30 validation: `build_flashcpp.bat`; migration counter baselines
 unchanged; dollar inventory 17/17;
-`test_member_template_call_ret0.cpp`,
-`test_template_substitute_depname_swap_ret42.cpp`,
-`dependent_member_template_record_ret42.cpp`,
-`test_explicit_member_template_pointer_overload_cache_ret0.cpp`,
-`test_template_recursive_static_constexpr_member_ret0.cpp`, and
-`test_var_template_replay_dependent_member_template_call_ret0.cpp`; and
-`git diff --check` pass. Grep confirms no external
-`.tryInstantiateMemberFunctionTemplateCall(` on `Parser` outside
-`TemplateEngine.h`.
+`comparison_operators_ret1.cpp`,
+`test_inline_ns_overload_merge_ret0.cpp`,
+`test_using_decl_namespace_overload_merge_ret2.cpp`, and
+`member_func_template_call_ret3.cpp`; and `git diff --check` pass. Grep confirms
+no untagged `InlineVector<` remains in `OverloadResolution.h`.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 29-32%, confidence medium
+- Implementation effort completed overall: 30-33%, confidence medium
 
 ## Remaining work
 
