@@ -4880,6 +4880,61 @@ TEST_SUITE("FrontendContext") {
 		CHECK(overloads[0].is<DeclarationNode>());
 	}
 
+	TEST_CASE("insert enter and exit read ScopeRecord metadata when persistent publication is enabled") {
+		FrontendContext context;
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+
+		const StringHandle ns_name = StringTable::getOrInternStringHandle("InsertScopeRecordNs");
+		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_name);
+		table.enter_namespace(ns_handle);
+		const ScopeId namespace_scope_id = table.currentScopeId();
+
+		Token type_token(Token::Type::Identifier, std::string_view("int"), 1, 1, 0);
+		Token id_token(Token::Type::Identifier, std::string_view("insert_scope_record_probe"), 1, 1, 0);
+		TypeSpecifierNode int_type(
+			TypeCategory::Int, TypeQualifier::None, 32, type_token, CVQualifier::None);
+		ASTNode node = ASTNode::emplace_node<DeclarationNode>(int_type, id_token);
+		REQUIRE(table.insert(std::string_view("insert_scope_record_probe"), node));
+
+		table.mutateLegacyScopeMetadataForTest(
+			namespace_scope_id,
+			ScopeType::Block,
+			ScopeId{99},
+			99u,
+			NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
+
+		Token id_token2(Token::Type::Identifier, std::string_view("insert_scope_record_probe2"), 1, 2, 0);
+		ASTNode node2 = ASTNode::emplace_node<DeclarationNode>(int_type, id_token2);
+		REQUIRE(table.insert(std::string_view("insert_scope_record_probe2"), node2));
+		REQUIRE(table.lookup("insert_scope_record_probe2").has_value());
+
+		table.enter_scope(ScopeType::Block);
+		const ScopeId block_scope_id = table.currentScopeId();
+		table.mutateLegacyScopeMetadataForTest(
+			block_scope_id,
+			ScopeType::Function,
+			ScopeId{99},
+			99u,
+			NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
+		table.exit_scope();
+		CHECK(table.currentScopeId() == namespace_scope_id);
+		CHECK(table.get_current_scope_type() == ScopeType::Namespace);
+
+		table.mutateLegacyScopeMetadataForTest(
+			namespace_scope_id,
+			ScopeType::Namespace,
+			ScopeId{1},
+			999u,
+			ns_handle);
+		table.enter_scope(ScopeType::Function);
+		const ScopeId function_scope_id = table.currentScopeId();
+		CHECK(context.scopeRecord(function_scope_id).depth ==
+			  context.scopeRecord(namespace_scope_id).depth + 1u);
+		CHECK(table.activeScopeDepth() == context.scopeRecord(function_scope_id).depth);
+	}
+
 	TEST_CASE("SymbolTable enter_scope without an active FrontendContext still succeeds") {
 		SymbolTable table;
 		table.enter_scope(ScopeType::Block);

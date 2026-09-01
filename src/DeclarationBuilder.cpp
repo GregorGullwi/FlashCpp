@@ -104,19 +104,16 @@ std::optional<DeclarationBuilder::PublicationTarget> DeclarationBuilder::resolve
 		return std::nullopt;
 	}
 
-	const Scope* scope = symbol_table.findScopeById(lexical_scope_id);
-	if (scope == nullptr) {
-		return std::nullopt;
-	}
-	if (!isPublishableScopeType(scope->scope_type)) {
+	const ScopeMetadataView metadata = readScopeMetadata(symbol_table, lexical_scope_id);
+	if (!isPublishableScopeType(metadata.scope_type)) {
 		return std::nullopt;
 	}
 
 	OwnerId owner_id{};
-	if (scope->scope_type == ScopeType::Global) {
+	if (metadata.scope_type == ScopeType::Global) {
 		owner_id = ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE);
 	} else {
-		owner_id = ownerIdFromNamespaceHandle(scope->namespace_handle);
+		owner_id = ownerIdFromNamespaceHandle(metadata.namespace_handle);
 	}
 	if (!owner_id) {
 		return std::nullopt;
