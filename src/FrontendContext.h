@@ -381,3 +381,11 @@ static_assert(!std::is_move_constructible_v<FrontendContext>);
 inline FrontendContext* frontendContext() {
 	return FrontendContext::active();
 }
+
+inline FrontendContext& requireFrontendContext() {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		throw InternalError("operation requires an active FrontendContext");
+	}
+	return *context;
+}

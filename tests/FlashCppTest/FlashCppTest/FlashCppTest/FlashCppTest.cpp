@@ -64,6 +64,7 @@ REGISTER_LISTENER("global_symbol_table_isolator", 1, GlobalSymbolTableIsolator);
 } // namespace
 
 static CompileContext compile_context;
+static FrontendContext frontend_context;
 static FileTree file_tree;
 
 SemanticAnalysis& runSemanticAnalysisForTest(Parser& parser, CompileContext& context) {
@@ -158,6 +159,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 	std::cout << "run_test_from_file: " << test_name.c_str() << std::endl;
 
 	CompileContext test_context;
+	FrontendContext test_frontend_context;
 	test_context.setInputFile(filename);
 
 	FileTree file_tree;
