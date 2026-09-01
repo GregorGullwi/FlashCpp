@@ -26,20 +26,16 @@ Write-Host "FlashCpp Migration Counter Check"
 Write-Host "=============================================="
 Write-Host ""
 
-$flashCppPath = ""
-$allExes = Get-ChildItem -Path "x64" -Recurse -Include "FlashCpp.exe","FlashCppMSVC.exe" -ErrorAction SilentlyContinue
-if ($allExes) {
-	$newestExe = $allExes | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-	$flashCppPath = $newestExe.FullName
-} else {
-	Write-Host "ERROR: FlashCpp compiler not found under x64/. Run .\build_flashcpp.bat first." -ForegroundColor Red
+$flashCppPath = Resolve-FlashCppCompilerPath -RepoRoot $repoRoot
+if (-not $flashCppPath) {
+	Write-Host "ERROR: FlashCpp compiler not found under x64/. Run .\build_flashcpp.bat or make sharded first." -ForegroundColor Red
 	exit 1
 }
-$flashCppPath = (Get-Item $flashCppPath).FullName
+$flashCppPath = (Get-Item -LiteralPath $flashCppPath).FullName
 
 $freshness = Test-FlashCppBinaryFreshness -BinaryPath $flashCppPath -SourceFiles @(Get-FlashCppRelevantSourceFiles -RepoRoot $repoRoot)
 if (-not $freshness.IsFresh) {
-	$message = "Compiler binary is older than $($freshness.NewestSource). Run .\build_flashcpp.bat and retry."
+	$message = "Compiler binary is older than $($freshness.NewestSource). Rebuild the compiler and retry."
 	Write-Host "ERROR: $message" -ForegroundColor Red
 	exit 1
 }

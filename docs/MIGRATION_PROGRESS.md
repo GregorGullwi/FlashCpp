@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 21
+Last updated: 2026-09-01 after pull request boundary 22
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 21 are landed.
+  and entities). Pull request boundaries 1 through 22 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -91,10 +91,15 @@ Last updated: 2026-09-01 after pull request boundary 21
   count retained chunk capacity across rollback. String-table entries/spelling
   bytes, InlineVector spills, scope count/current `ScopeId`, scope-arena
   used/reserved bytes, declaration/entity counts, and per-arena used/reserved
-  bytes are reported under `--perf-stats`. Sampled compiler tests peaked at 114
-  persistent scopes; chunk size 256 is explicit headroom.
+  bytes are reported under `--perf-stats`. Sampled compiler tests
+  peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
+- Migration choke-point counters and the inline `find('$')` inventory are
+  enforced on the fixed corpus through `tests/run_migration_counters.ps1` and
+  `tests/run_migration_dollar_inventory.ps1` on both Windows and Ubuntu CI.
+  `Resolve-FlashCppCompilerPath` discovers `FlashCpp.exe`, `FlashCppMSVC.exe`,
+  and extensionless Linux `FlashCpp` / `FlashCppMSVC` binaries under `x64/`.
 
-## Pull request boundary status (1–21)
+## Pull request boundary status (1–22)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -119,6 +124,7 @@ Last updated: 2026-09-01 after pull request boundary 21
 | 19 | Delete `Scope::{parent_scope_id, scope_type, depth, namespace_handle}`; unbound tables use `scope_metadata_` sidecar; align stale `ScopeId` publication contract in tests; harden publication binding lifetime and rebind sync |
 | 20 | Stamp `lexical_scope_id` on struct, enum, typedef, and class-template wrapper nodes at `SymbolTable` insert/replace/insertGlobal |
 | 21 | Wire IR allocation-domain bytes from codegen lowering buffers; report coarse syntax AST family counts through `FrontendContext` |
+| 22 | Enforce migration counter and dollar-inventory baselines on Ubuntu CI; resolve extensionless Linux compiler binaries in runner scripts |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -177,13 +183,14 @@ boundary 1 is started, not finished.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage): follow-on boundary-1 work
 
-Boundary-21 validation: Linux clang++ unity and sharded compiler builds are
-warning-clean; doctest probes classify template and block syntax nodes into
-coarse AST families and record IR domain peaks from `recordIrDomainStats`.
+Boundary-22 validation: runner self-test covers
+`Resolve-FlashCppCompilerPath`; Linux spot-check of corpus telemetry matches
+the checked-in baseline; Ubuntu CI workflow installs PowerShell and runs
+migration counter and dollar-inventory scripts after `make sharded`.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 23-26%, confidence medium
+- Implementation effort completed overall: 24-27%, confidence medium
 
 ## Remaining work
 
@@ -197,17 +204,10 @@ Next blocker:
   merge authority until canonical function/type identity (boundary 3A) replaces
   the `matches_signature` bridge.
 
-Then, in order:
-
-1. Wire `tests/run_migration_counters.ps1` into `ci-ubuntu.yml` after
-  generating and verifying the baseline on a Linux build.
-
 Named follow-ups carried forward:
 
 - Before architecture boundary 10A, approve a parser-family routing table for
   the single translation-unit parse entry point.
-- Wire `tests/run_migration_counters.ps1` into `ci-ubuntu.yml` after
-  generating and verifying the baseline on a Linux build.
 - Pre-ICE raw `std::cerr` context dumps at `src/IrGenerator_MemberAccess.cpp`
   emit error text outside both the engine and the counter before throwing
   `InternalError`; decide ownership when ICE reporting moves behind

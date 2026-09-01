@@ -31,6 +31,28 @@ function Test-FlashCppBinaryFreshness {
 	return [pscustomobject]@{ IsFresh = $false; NewestSource = $newestSource.FullName }
 }
 
+function Resolve-FlashCppCompilerPath {
+	param([string]$RepoRoot)
+
+	$x64Root = Join-Path $RepoRoot "x64"
+	if (-not (Test-Path -LiteralPath $x64Root -PathType Container)) {
+		return $null
+	}
+
+	$allowedNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+	foreach ($name in @("FlashCpp.exe", "FlashCppMSVC.exe", "FlashCpp", "FlashCppMSVC")) {
+		[void]$allowedNames.Add($name)
+	}
+
+	$candidates = @(Get-ChildItem -Path $x64Root -Recurse -File -ErrorAction SilentlyContinue |
+		Where-Object { $allowedNames.Contains($_.Name) })
+	if ($candidates.Count -eq 0) {
+		return $null
+	}
+
+	return ($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+}
+
 function Get-FlashCppNegativeNameInfo {
 	param([string]$FileName)
 
