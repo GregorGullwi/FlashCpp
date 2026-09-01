@@ -97,6 +97,14 @@ public:
 		return syntax_family_counts_;
 	}
 
+	const std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)>& declarationKindCounts() const {
+		return declaration_kind_counts_;
+	}
+
+	const std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)>& entityKindCounts() const {
+		return entity_kind_counts_;
+	}
+
 	std::size_t inlineVectorSpillCount() const {
 		return FlashCpp::inlineVectorSpillCount();
 	}
@@ -230,6 +238,11 @@ public:
 		syntax_family_counts_ = countSyntaxAstFamilies(gChunkedAnyStorage);
 	}
 
+	void refreshSemanticDeclKindCounts() {
+		declaration_kind_counts_ = declaration_builder_.declarationKindCounts();
+		entity_kind_counts_ = declaration_builder_.entityKindCounts();
+	}
+
 	static uint64_t stringTableEntryCount() {
 		return StringTable::getInternedCount();
 	}
@@ -243,6 +256,7 @@ public:
 		refreshSemanticDomainStats();
 		refreshSyntaxDomainStats();
 		refreshSyntaxAstFamilyCounts();
+		refreshSemanticDeclKindCounts();
 		const char* domain_names[] = {"syntax", "semantic", "scratch", "ir"};
 		FLASH_LOG(General, Info, "\nFrontendContext arena telemetry:");
 		for (std::size_t index = 0; index < domain_stats_.size(); ++index) {
@@ -298,6 +312,34 @@ public:
 				  declaration_builder_.declarationCount(),
 				  "/",
 				  declaration_builder_.entityCount());
+		FLASH_LOG(General, Info,
+				  "  declarator intern entries: ",
+				  declaration_builder_.telemetryDeclaratorInternCount());
+		FLASH_LOG(General, Info,
+				  "  parameter-list intern entries: ",
+				  declaration_builder_.telemetryParameterListInternCount());
+		for (std::size_t index = 0; index < declaration_kind_counts_.size(); ++index) {
+			const uint64_t count = declaration_kind_counts_[index];
+			if (count == 0) {
+				continue;
+			}
+			FLASH_LOG(General, Info,
+					  "  semantic declaration kind ",
+					  declKindLabel(static_cast<DeclKind>(index)),
+					  " records: ",
+					  count);
+		}
+		for (std::size_t index = 0; index < entity_kind_counts_.size(); ++index) {
+			const uint64_t count = entity_kind_counts_[index];
+			if (count == 0) {
+				continue;
+			}
+			FLASH_LOG(General, Info,
+					  "  semantic entity kind ",
+					  declKindLabel(static_cast<DeclKind>(index)),
+					  " records: ",
+					  count);
+		}
 		FLASH_LOG(General, Info,
 				  "  declaration arena used/reserved bytes: ",
 				  declaration_builder_.declarationArenaUsedBytes(),
@@ -365,6 +407,8 @@ private:
 
 	std::array<DomainByteStats, 4> domain_stats_{};
 	std::array<uint64_t, static_cast<std::size_t>(SyntaxAstFamily::Count)> syntax_family_counts_{};
+	std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> declaration_kind_counts_{};
+	std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> entity_kind_counts_{};
 	// Scratch limit diagnostics are owned here; legacy diagnostics stay in CompileContext.
 	DiagnosticEngine diagnostics_;
 	MonotonicScratchArena scratch_arena_{diagnostics_, kScratchByteLimit};
