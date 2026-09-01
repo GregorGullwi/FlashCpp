@@ -6459,6 +6459,48 @@ void wire_shadow_fn() {}
 		CHECK(context.entityCount() == 1u);
 	}
 
+	TEST_CASE("Parser shadow publication merges inline declarations across reopened namespace blocks") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = R"(
+namespace decl_builder_reopened_inline_ns {
+inline int reopened_inline_fn();
+}
+namespace decl_builder_reopened_inline_ns {
+int reopened_inline_fn() { return 7; }
+}
+)";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("decl_builder_reopened_inline_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+		REQUIRE(context.declarationCount() == 2u);
+		REQUIRE(context.entityCount() == 1u);
+
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const DeclarationRecord& declaration = builder.declaration(DeclId{1});
+		const DeclarationRecord& definition = builder.declaration(DeclId{2});
+		const EntityRecord& entity = builder.entity(EntityId{1});
+		CHECK(declaration.entity_id == EntityId{1});
+		CHECK(definition.entity_id == EntityId{1});
+		CHECK(definition.previous_decl_id == declaration.id);
+		CHECK(declaration.lexical_scope_id != definition.lexical_scope_id);
+		CHECK(entity.owner_id);
+		CHECK(entity.first_decl_id == declaration.id);
+		CHECK(entity.latest_decl_id == definition.id);
+		CHECK((entity.flags & DeclarationFlags::IsInline) != 0);
+		CHECK((entity.flags & DeclarationFlags::IsDefinition) != 0);
+	}
+
 	TEST_CASE("Parser DeclarationBuilder shadow path keeps valid overloads parsing") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();

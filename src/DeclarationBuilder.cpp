@@ -473,27 +473,6 @@ TypeId DeclarationBuilder::internParameterListSignature(
 
 FunctionDeclRequest buildFreeFunctionDeclRequest(
 	DeclarationBuilder& builder,
-	const FunctionDeclarationNode& func_decl,
-	ScopeId lexical_scope_id,
-	bool is_definition) {
-	FunctionDeclRequest request{};
-	request.lexical_scope_id = lexical_scope_id;
-	request.name = func_decl.decl_node().identifier_token().handle();
-	request.signature_id = builder.internParameterListSignature(
-		func_decl.parameter_nodes(),
-		func_decl.is_variadic(),
-		nullptr);
-	request.return_type_id =
-		builder.internDeclaratorType(func_decl.decl_node().type_specifier_node());
-	request.language_linkage = LanguageLinkage::CPlusPlus;
-	request.is_definition = is_definition;
-	request.is_inline = func_decl.is_inline();
-	request.is_constexpr = func_decl.is_constexpr();
-	return request;
-}
-
-FunctionDeclRequest buildFreeFunctionDeclRequest(
-	DeclarationBuilder& builder,
 	PublicationTransaction& transaction,
 	const FunctionDeclarationNode& func_decl,
 	ScopeId lexical_scope_id,
@@ -528,17 +507,6 @@ bool shouldPublishParserFreeFunction(const FunctionDeclarationNode& func_decl, S
 		return false;
 	}
 	return true;
-}
-
-PublishResult publishParserFreeFunction(
-	DeclarationBuilder& builder,
-	const FunctionDeclarationNode& func_decl,
-	ScopeId lexical_scope_id,
-	bool is_definition,
-	const SymbolTable& symbol_table) {
-	const FunctionDeclRequest request =
-		buildFreeFunctionDeclRequest(builder, func_decl, lexical_scope_id, is_definition);
-	return builder.publishFunction(request, symbol_table);
 }
 
 PublicationTransaction::PublicationTransaction(DeclarationBuilder& builder)
