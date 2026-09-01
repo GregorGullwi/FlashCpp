@@ -5167,6 +5167,38 @@ TEST_SUITE("FrontendContext") {
 		CHECK(threw_busy_context);
 	}
 
+	TEST_CASE("SymbolTable publication binding is cleared when bound FrontendContext is destroyed") {
+		SymbolTable table;
+		{
+			FrontendContext context;
+			table.enablePersistentScopePublication();
+			table.enter_scope(ScopeType::Block);
+			REQUIRE(table.persistentScopePublicationEnabled());
+			REQUIRE(context.scopeRecordCount() == 2u);
+		}
+		CHECK_FALSE(table.persistentScopePublicationEnabled());
+		CHECK(table.scopeCount() == 2u);
+		CHECK(readScopeMetadata(table, ScopeId{2}).scope_type == ScopeType::Block);
+	}
+
+	TEST_CASE("bindPersistentScopePublication resyncs an already-published table") {
+		FrontendContext context;
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+		table.enter_scope(ScopeType::Block);
+		table.enter_scope(ScopeType::Function);
+		REQUIRE(context.scopeRecordCount() == 3u);
+		REQUIRE(table.scopeCount() == 3u);
+
+		bindPersistentScopePublication(table);
+
+		CHECK(table.persistentScopePublicationEnabled());
+		CHECK(table.currentScopeId().value == 1u);
+		CHECK(table.scopeCount() == 1u);
+		CHECK(context.scopeRecordCount() == 1u);
+		CHECK(context.currentScopeId().value == 1u);
+	}
+
 	TEST_CASE("Parser parse publishes gSymbolTable scopes into the active FrontendContext") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();

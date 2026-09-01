@@ -10,6 +10,8 @@
 #include "FrontendContext.h"
 #include "SymbolTable.h"
 
+#include <algorithm>
+
 // Global debug flag
 bool g_enable_debug_output = false;
 
@@ -25,6 +27,8 @@ LazyMemberResolver gLazyMemberResolver;
 InstantiationQueue gInstantiationQueue;
 } // namespace FlashCpp
 
+// Persistent scope publication lives here so SymbolTable.h does not include
+// FrontendContext.h (and so this is not its own modular translation unit).
 namespace {
 
 FrontendContext& requireActiveFrontendContext() {
@@ -45,8 +49,29 @@ FrontendContext& requirePersistentScopePublicationContext(const SymbolTable& tab
 	return *context;
 }
 
-// Persistent-scope dual-write lives here so SymbolTable.h does not include
-// FrontendContext.h (and so this is not its own modular translation unit).
+void FrontendContext::registerPersistentScopePublicationTable(SymbolTable& table) {
+	const auto already_registered = std::find(
+		persistent_scope_publication_tables_.begin(),
+		persistent_scope_publication_tables_.end(),
+		&table);
+	if (already_registered != persistent_scope_publication_tables_.end()) {
+		return;
+	}
+	persistent_scope_publication_tables_.push_back(&table);
+}
+
+void FrontendContext::releasePersistentScopePublicationTables() {
+	for (SymbolTable* table : persistent_scope_publication_tables_) {
+		table->clearPersistentScopePublicationBinding();
+	}
+	persistent_scope_publication_tables_.clear();
+}
+
+void SymbolTable::clearPersistentScopePublicationBinding() {
+	publish_persistent_scopes_ = false;
+	persistent_scope_publication_context_ = nullptr;
+}
+
 void SymbolTable::enablePersistentScopePublication() {
 	FrontendContext& context = requireActiveFrontendContext();
 	if (publish_persistent_scopes_) {
@@ -63,6 +88,7 @@ void SymbolTable::enablePersistentScopePublication() {
 	}
 	persistent_scope_publication_context_ = &context;
 	publish_persistent_scopes_ = true;
+	context.registerPersistentScopePublicationTable(*this);
 }
 
 FrontendContext* SymbolTable::persistentScopePublicationContext() const {
@@ -74,7 +100,17 @@ void bindPersistentScopePublication(SymbolTable& table) {
 	if (context == nullptr) {
 		return;
 	}
+	if (table.persistentScopePublicationEnabled()) {
+		if (table.persistentScopePublicationContext() != context) {
+			throw InternalError("SymbolTable: persistent scope publication is already bound to a different FrontendContext");
+		}
+		table.clear();
+		return;
+	}
 	context->resetPersistentScopes();
+	if (table.scopeCount() != 1 || table.currentScopeId().value != 1) {
+		table.clear();
+	}
 	table.enablePersistentScopePublication();
 }
 

@@ -15,10 +15,14 @@
 #include <type_traits>
 #include <vector>
 
+class SymbolTable;
+
 // Per-translation-unit front-end shell. Active-context lookup uses a thread-local
 // stack so concurrent compilations do not share state; each FrontendContext owns
 // its own arenas and domain stats.
 class FrontendContext {
+	friend class SymbolTable;
+
 public:
 	// Policy headroom until production probes provide workload measurements.
 	static constexpr uint64_t kScratchByteLimit = 64ULL * 1024 * 1024;
@@ -30,6 +34,7 @@ public:
 	}
 
 	~FrontendContext() {
+		releasePersistentScopePublicationTables();
 		popActive(this);
 	}
 
@@ -327,6 +332,9 @@ private:
 		current_scope_id_ = ScopeId{1};
 	}
 
+	void registerPersistentScopePublicationTable(SymbolTable& table);
+	void releasePersistentScopePublicationTables();
+
 	std::array<DomainByteStats, 4> domain_stats_{};
 	// Scratch limit diagnostics are owned here; legacy diagnostics stay in CompileContext.
 	DiagnosticEngine diagnostics_;
@@ -335,6 +343,7 @@ private:
 	DeclarationBuilder declaration_builder_;
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
 	ScopeId current_scope_id_{1};
+	std::vector<SymbolTable*> persistent_scope_publication_tables_;
 };
 
 static_assert(!std::is_copy_constructible_v<FrontendContext>);
