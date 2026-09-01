@@ -647,6 +647,9 @@ struct TemplateTypeArg {
 	}
 };
 
+using TemplateArgumentVector =
+	InlineVector<TemplateTypeArg, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+
 // Hash function for TemplateTypeArg
 struct TemplateTypeArgHash {
 	size_t operator()(const TemplateTypeArg& arg) const {

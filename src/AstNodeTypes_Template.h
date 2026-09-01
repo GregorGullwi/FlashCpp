@@ -1140,7 +1140,7 @@ public:
 		return class_declaration_;
 	}
 	void set_class_template_arguments(
-		InlineVector<TemplateTypeArg, 4> template_arguments) {
+		TemplateArgumentVector template_arguments) {
 		class_template_arguments_ = std::move(template_arguments);
 	}
 	std::span<const TemplateTypeArg> class_template_arguments() const {
@@ -1162,7 +1162,7 @@ private:
 	StringHandle name_;			// Function or class name
 	StringHandle class_name_;	  // For member functions: the class name
 	const StructDeclarationNode* class_declaration_ = nullptr;
-	InlineVector<TemplateTypeArg, 4> class_template_arguments_;
+	TemplateArgumentVector class_template_arguments_;
 	StringHandle class_template_name_{};
 	std::optional<ASTNode> function_decl_;  // For friend functions
 };

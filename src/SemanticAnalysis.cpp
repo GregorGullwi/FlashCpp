@@ -7368,7 +7368,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 
 bool SemanticAnalysis::tryCollectOverloadResolutionArgTypes(
 	const ChunkedVector<ASTNode>& arguments,
-	InlineVector<TypeSpecifierNode, 6>& arg_types_out) {
+	OverloadResolutionArgTypeVector& arg_types_out) {
 	arg_types_out.clear();
 	arg_types_out.reserve(arguments.size());
 	for (const ASTNode& argument : arguments) {
@@ -8914,7 +8914,7 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
 	const size_t arg_count = arguments.size();
-	InlineVector<ASTNode, 8> candidates;
+	OverloadResolutionCandidateVector candidates;
 	std::unordered_set<const StructTypeInfo*> visited;
 	collectOperatorCandidatesRecursive(struct_info, OverloadableOperator::Call, candidates, visited);
 	if (candidates.empty())
@@ -8923,8 +8923,8 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	const bool receiver_is_const =
 		(static_cast<uint8_t>(callee_desc.base_cv) &
 		 static_cast<uint8_t>(CVQualifier::Const)) != 0;
-	InlineVector<ASTNode, 8> preferred_candidates;
-	InlineVector<ASTNode, 8> compatible_candidates;
+	OverloadResolutionCandidateVector preferred_candidates;
+	OverloadResolutionCandidateVector compatible_candidates;
 	partitionMemberOverloadsByReceiverConstness(
 		candidates,
 		receiver_is_const,
@@ -8934,7 +8934,7 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	const FunctionDeclarationNode* best_match = nullptr;
 	bool explicitly_ambiguous = false;
 
-	InlineVector<TypeSpecifierNode, 6> arg_types;
+	OverloadResolutionArgTypeVector arg_types;
 	const bool arg_types_collected =
 		tryCollectOverloadResolutionArgTypes(arguments, arg_types);
 	if (arg_types_collected) {
@@ -8963,7 +8963,7 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	}
 
 	if (!best_match && !explicitly_ambiguous) {
-		InlineVector<ASTNode, 8> ordered_candidates = preferred_candidates;
+		OverloadResolutionCandidateVector ordered_candidates = preferred_candidates;
 		appendUniqueOverloads(ordered_candidates, compatible_candidates);
 		const FunctionDeclarationNode* default_argument_match = nullptr;
 		bool default_argument_match_ambiguous = false;
@@ -9131,7 +9131,7 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 
 	// Collect all operator[] candidates from this struct and its base classes.
 	// Use a visited set to avoid collecting duplicate candidates in diamond inheritance.
-	InlineVector<ASTNode, 8> candidates;
+	OverloadResolutionCandidateVector candidates;
 	std::unordered_set<const StructTypeInfo*> visited;
 	collectOperatorCandidatesRecursive(struct_info, OverloadableOperator::Subscript, candidates, visited);
 
@@ -9142,8 +9142,8 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 		getOverloadResolutionArgType(subscript_node.array_expr());
 	const bool receiver_is_const =
 		receiver_arg_type.has_value() && receiver_arg_type->is_const();
-	InlineVector<ASTNode, 8> preferred_candidates;
-	InlineVector<ASTNode, 8> compatible_candidates;
+	OverloadResolutionCandidateVector preferred_candidates;
+	OverloadResolutionCandidateVector compatible_candidates;
 	partitionMemberOverloadsByReceiverConstness(
 		candidates,
 		receiver_is_const,
@@ -9183,7 +9183,7 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 	if (!best_match && !explicitly_ambiguous) {
 		// Preserve the legacy arity recovery only after receiver-const filtering
 		// so `const` objects cannot silently bind non-const member subscripts.
-		InlineVector<ASTNode, 8> ordered_candidates = preferred_candidates;
+		OverloadResolutionCandidateVector ordered_candidates = preferred_candidates;
 		appendUniqueOverloads(ordered_candidates, compatible_candidates);
 		for (const auto& candidate_node : ordered_candidates) {
 			const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
@@ -9929,15 +9929,15 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 						return true;
 					});
 			if (!member_candidates.compatible.empty()) {
-				InlineVector<ASTNode, 8> preferred_member_overloads;
-				InlineVector<ASTNode, 8> compatible_member_overloads;
+				OverloadResolutionCandidateVector preferred_member_overloads;
+				OverloadResolutionCandidateVector compatible_member_overloads;
 				appendUniqueMemberFunctionOverloadNodes(
 					preferred_member_overloads,
 					member_candidates.preferred);
 				appendUniqueMemberFunctionOverloadNodes(
 					compatible_member_overloads,
 					member_candidates.compatible);
-				InlineVector<TypeSpecifierNode, 6> member_arg_types;
+				OverloadResolutionArgTypeVector member_arg_types;
 				const bool has_member_arg_types =
 					tryCollectOverloadResolutionArgTypes(arguments, member_arg_types);
 				if (has_member_arg_types) {
@@ -9956,7 +9956,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				if (normalized_call) {
 					return nullptr;
 				}
-				InlineVector<ASTNode, 8> ordered_member_overloads =
+				OverloadResolutionCandidateVector ordered_member_overloads =
 					preferred_member_overloads;
 				appendUniqueOverloads(ordered_member_overloads, compatible_member_overloads);
 				if (call_info.function_declaration) {
@@ -10000,7 +10000,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 	const bool normalized_call_has_concrete_argument_types = normalized_call && [&]() {
-		InlineVector<TypeSpecifierNode, 6> normalized_arg_types;
+		OverloadResolutionArgTypeVector normalized_arg_types;
 		return tryCollectOverloadResolutionArgTypes(arguments, normalized_arg_types);
 	}();
 	if (can_use_ordinary_definition_lookup &&
@@ -10014,7 +10014,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		call_info.definition_lookup_record->has_value()) {
 		const FunctionCallDefinitionLookupRecord& deferred_record =
 			call_info.definition_lookup_record->value();
-		InlineVector<TypeSpecifierNode, 6> arg_types;
+		OverloadResolutionArgTypeVector arg_types;
 		if (tryCollectOverloadResolutionArgTypes(arguments, arg_types)) {
 			if (std::optional<ASTNode> resolved_target =
 					parser().templateEngine().resolveDefinitionBoundOrdinaryCall(
@@ -10065,7 +10065,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			dependent_record_target != nullptr) {
 			return dependent_record_target;
 		}
-		InlineVector<TypeSpecifierNode, 6> arg_types;
+		OverloadResolutionArgTypeVector arg_types;
 		if (tryCollectOverloadResolutionArgTypes(arguments, arg_types)) {
 			if (std::optional<ASTNode> resolved_target =
 					parser().resolveDependentUnqualifiedCallAtPointOfInstantiation(
@@ -10113,7 +10113,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 							.commit();
 				}
 			}
-			InlineVector<TypeSpecifierNode, 6> qualified_template_arg_types;
+			OverloadResolutionArgTypeVector qualified_template_arg_types;
 			if (tryCollectOverloadResolutionArgTypes(arguments, qualified_template_arg_types)) {
 				std::optional<ASTNode> resolved_target;
 				if (call_info.dependent_qualified_lookup_record != nullptr) {
@@ -10257,7 +10257,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				overloads);
 		}
 	}
-	InlineVector<TypeSpecifierNode, 6> arg_types;
+	OverloadResolutionArgTypeVector arg_types;
 	const bool arg_types_collected = tryCollectOverloadResolutionArgTypes(arguments, arg_types);
 	if (arg_types_collected &&
 		!arg_types.empty() &&
@@ -10564,7 +10564,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 			if (tryResolveLocalCallableStructInfo(callee_name) == nullptr) {
 				return false;
 			}
-			InlineVector<TypeSpecifierNode, 6> arg_types;
+			OverloadResolutionArgTypeVector arg_types;
 			return tryCollectOverloadResolutionArgTypes(*call_info.arguments, arg_types);
 		};
 		auto diagnosableConstReceiverMemberName = [&]() -> std::optional<std::string> {
@@ -10635,12 +10635,12 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 			if (member_candidates.compatible.empty()) {
 				return false;
 			}
-			InlineVector<TypeSpecifierNode, 6> member_arg_types;
+			OverloadResolutionArgTypeVector member_arg_types;
 			if (!tryCollectOverloadResolutionArgTypes(*call_info.arguments, member_arg_types)) {
 				return false;
 			}
-			InlineVector<ASTNode, 8> preferred_member_overloads;
-			InlineVector<ASTNode, 8> compatible_member_overloads;
+			OverloadResolutionCandidateVector preferred_member_overloads;
+			OverloadResolutionCandidateVector compatible_member_overloads;
 			appendUniqueMemberFunctionOverloadNodes(
 				preferred_member_overloads,
 				member_candidates.preferred);

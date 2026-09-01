@@ -489,13 +489,13 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	std::string_view instantiated_class_name,
 	std::string_view member_name,
 	const Token& member_token,
-	std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args,
+	std::optional<TemplateArgumentVector> pre_parsed_member_template_args,
 	std::vector<ASTNode> pre_parsed_member_template_arg_nodes) {
 
 	FLASH_LOG(Templates, Debug, "try_parse_member_template_function_call called for: ", instantiated_class_name, "::", member_name);
 
 	// Check for member template arguments: Template<T>::member<U>
-	std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args =
+	std::optional<TemplateArgumentVector> member_template_args =
 		std::move(pre_parsed_member_template_args);
 	std::vector<ASTNode> member_template_arg_nodes =
 		std::move(pre_parsed_member_template_arg_nodes);

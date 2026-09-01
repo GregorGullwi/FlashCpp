@@ -38,7 +38,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 	const ParamContainer& template_params,
 	const ArgContainer& template_args,
 	const TemplateEnvironmentSnapshot* parent) {
-	InlineVector<TemplateTypeArg, 4> typed_args;
+	TemplateArgumentVector typed_args;
 	typed_args.reserve(template_args.size());
 	for (const auto& template_arg : template_args) {
 		typed_args.push_back(template_arg);
@@ -80,7 +80,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 struct LazyMemberFunctionInfo {
 	DeferredMemberIdentity identity;
 	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
-	InlineVector<TemplateTypeArg, 4> template_args; // Concrete template arguments used for instantiation
+	TemplateArgumentVector template_args; // Concrete template arguments used for instantiation
 	TemplateEnvironmentSnapshot outer_template_environment_snapshot;
 	TemplateDefinitionLookupContext definition_lookup_context;
 	StringHandle registry_key;
@@ -1371,7 +1371,7 @@ struct ConstraintEvaluationResult {
 
 ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 	const RequiresExpressionNode& requires_expr,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	const TemplateArgumentVector& template_args,
 	const InlineVector<std::string_view, 4>& template_param_names,
 	Parser* parser,
 	std::span<const TemplateParameterNode> template_params);
@@ -1500,7 +1500,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 				};
 
 				auto materializeConstraintPlaceholderArgs = [&](const TypeInfo& placeholder_info) {
-					InlineVector<TemplateTypeArg, 4> concrete_args;
+					TemplateArgumentVector concrete_args;
 					concrete_args.reserve(placeholder_info.templateArgs().size());
 					for (const auto& arg_info : placeholder_info.templateArgs()) {
 						TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
@@ -1697,7 +1697,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 									if (member_sep != std::string_view::npos) {
 										std::string_view dependent_member_name =
 											qualified_alias_name.substr(member_sep + 2);
-										InlineVector<TemplateTypeArg, 4> nested_args;
+										TemplateArgumentVector nested_args;
 										if (alias_type_info->isTemplateInstantiation()) {
 											nested_args = materializeTemplateArgs(
 												*alias_type_info,
@@ -1848,10 +1848,10 @@ inline std::optional<long long> evaluateConstraintExpression(
 							member_base_info->isTemplateInstantiation()
 								? StringTable::getStringView(member_base_info->baseTemplateName())
 								: std::string_view{};
-						InlineVector<TemplateTypeArg, 4> concrete_member_args =
+						TemplateArgumentVector concrete_member_args =
 							member_base_info->isTemplateInstantiation()
 								? materializeConstraintPlaceholderArgs(*member_base_info)
-								: InlineVector<TemplateTypeArg, 4>{};
+								: TemplateArgumentVector{};
 						if (concrete_member_args.empty() && !template_args.empty()) {
 							concrete_member_args.reserve(template_args.size());
 							for (const TemplateTypeArg& template_arg : template_args) {
@@ -2011,12 +2011,12 @@ inline std::optional<long long> evaluateConstraintExpression(
 // Evaluates constraints and provides detailed error messages when they fail
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ConceptDeclarationNode& concept_node,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	const TemplateArgumentVector& template_args,
 	Parser* parser = nullptr);
 
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ASTNode& constraint_expr,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	const TemplateArgumentVector& template_args,
 	const InlineVector<std::string_view, 4>& template_param_names = {},
 	Parser* parser = nullptr,
 	std::span<const TemplateParameterNode> template_params = {}) {
@@ -2153,7 +2153,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 		// Build the template arguments for the concept from the function call's template arguments
 		// Map the concept's template parameters to the actual template arguments
-		InlineVector<TemplateTypeArg, 4> concept_args;
+		TemplateArgumentVector concept_args;
 
 		// Get the explicit template arguments from the function call
 		const auto& explicit_args = func_call.template_arguments();
@@ -2447,7 +2447,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 inline void appendDefaultConceptTemplateArguments(
 	std::span<const TemplateParameterNode> concept_params,
-	InlineVector<TemplateTypeArg, 4>& args) {
+	TemplateArgumentVector& args) {
 	for (size_t i = args.size(); i < concept_params.size(); ++i) {
 		const TemplateParameterNode& param = concept_params[i];
 		if (param.is_variadic() || !param.has_default()) {
@@ -2465,9 +2465,9 @@ inline void appendDefaultConceptTemplateArguments(
 
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ConceptDeclarationNode& concept_node,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	const TemplateArgumentVector& template_args,
 	Parser* parser) {
-	InlineVector<TemplateTypeArg, 4> filled_args = template_args;
+	TemplateArgumentVector filled_args = template_args;
 	appendDefaultConceptTemplateArguments(concept_node.template_params(), filled_args);
 	InlineVector<std::string_view, 4> derived_param_names;
 	derived_param_names.reserve(concept_node.template_params().size());

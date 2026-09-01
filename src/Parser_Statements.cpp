@@ -2984,7 +2984,7 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 		// Shape-only context: deduction guides participate in overload/candidate
 		// formation and must not materialize the class until the caller commits to
 		// the selected guide.
-		InlineVector<TemplateTypeArg, 4> context_args;
+		TemplateArgumentVector context_args;
 		context_args.reserve(out_template_args.size());
 		for (const TemplateTypeArg& arg : out_template_args) {
 			context_args.push_back(arg);

@@ -568,7 +568,7 @@ inline const TypeInfo* materializeDependentQualifiedRecordOwner(
 	InstantiateFn&& instantiate_class_template) {
 	if (dependent_record.owner_name.isValid() &&
 		!dependent_record.owner_template_arguments.empty()) {
-		InlineVector<TemplateTypeArg, 4> concrete_owner_args;
+		TemplateArgumentVector concrete_owner_args;
 		concrete_owner_args.reserve(
 			dependent_record.owner_template_arguments.size());
 		bool owner_arguments_are_concrete = true;
@@ -1049,7 +1049,7 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 		}
 
 		if (member.has_template_arguments) {
-			InlineVector<TemplateTypeArg, 4> concrete_template_args;
+			TemplateArgumentVector concrete_template_args;
 			concrete_template_args.reserve(member.template_arguments.size());
 			for (const auto& arg_info : member.template_arguments) {
 				TemplateTypeArg concrete_arg =
@@ -1214,7 +1214,7 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 		if (!member_template_name.empty()) {
 			auto try_resolve_for_owner = [&](const TypeInfo* owner_type_info) -> TypeIndex {
 				if (owner_type_info != nullptr && is_struct_type(owner_type_info->typeEnum())) {
-					InlineVector<TemplateTypeArg, 4> concrete_template_args;
+					TemplateArgumentVector concrete_template_args;
 					std::span<const TypeInfo::TemplateArgInfo> owner_template_args =
 						(dependent_record != nullptr &&
 						 !dependent_record->owner_template_arguments.empty())
@@ -1353,7 +1353,7 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 		}
 
 		if (member.has_template_arguments) {
-			InlineVector<TemplateTypeArg, 4> concrete_template_args;
+			TemplateArgumentVector concrete_template_args;
 			concrete_template_args.reserve(member.template_arguments.size());
 			for (const auto& arg_info : member.template_arguments) {
 				TemplateTypeArg concrete_arg =
@@ -1573,7 +1573,7 @@ inline void appendLazyTemplateSequence(
 
 inline void mergeMissingLazyOuterBindings(
 	InlineVector<TemplateParameterNode, 4>& template_params,
-	InlineVector<TemplateTypeArg, 4>& template_args,
+	TemplateArgumentVector& template_args,
 	const TemplateEnvironmentSnapshot& outer_snapshot) {
 	if (!hasTemplateEnvironmentSnapshotBindings(outer_snapshot)) {
 		return;
@@ -1587,7 +1587,7 @@ inline void mergeMissingLazyOuterBindings(
 		outer_arg_infos);
 
 	InlineVector<TemplateParameterNode, 4> merged_params;
-	InlineVector<TemplateTypeArg, 4> merged_args;
+	TemplateArgumentVector merged_args;
 	merged_params.reserve(outer_param_names.size() + template_params.size());
 	merged_args.reserve(outer_arg_infos.size() + template_args.size());
 

@@ -1776,7 +1776,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					if (filled_args_for_pattern_match.size() == size_before) {
-						InlineVector<TemplateTypeArg, 4> retry_args =
+						TemplateArgumentVector retry_args =
 							toInlineTemplateArgs(filled_args_for_pattern_match);
 						NamespaceHandle declaration_namespace = NamespaceHandle{};
 						if (template_name.find("::") != std::string_view::npos) {
@@ -4010,7 +4010,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// already carries outer template bindings from an enclosing scope.
 					auto buildMergedOuterAndClassParams = [&](
 						InlineVector<TemplateParameterNode, 4>& out_params,
-						InlineVector<TemplateTypeArg, 4>& out_args) {
+						TemplateArgumentVector& out_args) {
 						if (!func_decl.has_outer_template_bindings()) {
 							return;
 						}
@@ -4034,7 +4034,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					};
 					auto buildMergedOuterTemplateBinding = [&](OuterTemplateBinding& out_binding) {
 						InlineVector<TemplateParameterNode, 4> combined_params;
-						InlineVector<TemplateTypeArg, 4> combined_args;
+						TemplateArgumentVector combined_args;
 						buildMergedOuterAndClassParams(combined_params, combined_args);
 						if (!combined_params.empty()) {
 							collectOuterTemplateBinding(combined_params, combined_args, out_binding);
@@ -4044,7 +4044,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					};
 					auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
 						InlineVector<TemplateParameterNode, 4> combined_params;
-						InlineVector<TemplateTypeArg, 4> combined_args;
+						TemplateArgumentVector combined_args;
 						buildMergedOuterAndClassParams(combined_params, combined_args);
 						if (!combined_params.empty()) {
 							setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
@@ -5441,7 +5441,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto buildDefaultEvalSubstitutionInputs =
 		[&](std::span<const TemplateTypeArg> current_args) {
 		InlineVector<TemplateParameterNode, 4> substitution_params;
-		InlineVector<TemplateTypeArg, 4> substitution_args;
+		TemplateArgumentVector substitution_args;
 		substitution_params.reserve(template_params.size() + 4);
 		substitution_args.reserve(current_args.size() + 4);
 
@@ -5512,7 +5512,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substitution_args.push_back(current_arg);
 		}
 
-		return std::pair<InlineVector<TemplateParameterNode, 4>, InlineVector<TemplateTypeArg, 4>>(
+		return std::pair<InlineVector<TemplateParameterNode, 4>, TemplateArgumentVector>(
 			std::move(substitution_params),
 			std::move(substitution_args));
 	};
@@ -5861,7 +5861,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (filled_template_args.size() == size_before &&
 			(param->kind() == TemplateParameterKind::Type ||
 			 param->kind() == TemplateParameterKind::NonType)) {
-			InlineVector<TemplateTypeArg, 4> retry_args = toInlineTemplateArgs(filled_template_args);
+			TemplateArgumentVector retry_args = toInlineTemplateArgs(filled_template_args);
 			const bool appended_default =
 				outer_binding != nullptr
 					? tryAppendMemberDefaultTemplateArg(
@@ -5920,7 +5920,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Use the filled template args for the rest of the function
 	std::span<const TemplateTypeArg> template_args_to_use = filled_template_args;
 	InlineVector<TemplateParameterNode, 4> effective_template_params;
-	InlineVector<TemplateTypeArg, 4> effective_template_args;
+	TemplateArgumentVector effective_template_args;
 	bool template_params_already_include_outer_prefix = false;
 	size_t outer_prefix_count = 0;
 	if (outer_binding != nullptr) {
@@ -11059,7 +11059,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto buildMergedOuterTemplateBinding = [&](OuterTemplateBinding& out_binding) {
 					if (func_decl.has_outer_template_bindings()) {
 						InlineVector<TemplateParameterNode, 4> combined_params;
-						InlineVector<TemplateTypeArg, 4> combined_args;
+						TemplateArgumentVector combined_args;
 						combined_params.reserve(
 							func_decl.outer_template_param_names().size() + template_params.size());
 						combined_args.reserve(
@@ -11082,7 +11082,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					if (outer_binding != nullptr) {
 						InlineVector<TemplateParameterNode, 4> combined_params;
-						InlineVector<TemplateTypeArg, 4> combined_args;
+						TemplateArgumentVector combined_args;
 						combined_params.reserve(
 							outer_binding->param_names.size() + template_params.size());
 						combined_args.reserve(
@@ -11126,7 +11126,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
 					if (func_decl.has_outer_template_bindings()) {
 						InlineVector<TemplateParameterNode, 4> combined_params;
-						InlineVector<TemplateTypeArg, 4> combined_args;
+						TemplateArgumentVector combined_args;
 						combined_params.reserve(
 							func_decl.outer_template_param_names().size() + template_params.size());
 						combined_args.reserve(
@@ -11150,7 +11150,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					OuterTemplateBinding merged_outer_binding;
 					if (func_decl.has_outer_template_bindings()) {
 						InlineVector<TemplateParameterNode, 4> merged_params;
-						InlineVector<TemplateTypeArg, 4> merged_args;
+						TemplateArgumentVector merged_args;
 						merged_params.reserve(
 							func_decl.outer_template_param_names().size() + template_params.size());
 						merged_args.reserve(
@@ -11171,7 +11171,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
 					} else if (outer_binding != nullptr) {
 						InlineVector<TemplateParameterNode, 4> merged_params;
-						InlineVector<TemplateTypeArg, 4> merged_args;
+						TemplateArgumentVector merged_args;
 						if (!outer_binding->params.empty()) {
 							for (const ASTNode& outer_param_node : outer_binding->params) {
 								if (const TemplateParameterNode* outer_param =
@@ -11211,7 +11211,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							merged_outer_binding);
 					}
 					InlineVector<TemplateParameterNode, 4> combined_params;
-					InlineVector<TemplateTypeArg, 4> combined_args;
+					TemplateArgumentVector combined_args;
 					if (!merged_outer_binding.params.empty()) {
 						for (const ASTNode& param_node : merged_outer_binding.params) {
 							if (const TemplateParameterNode* typed_param =
@@ -11339,7 +11339,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
 					if (func_decl.has_outer_template_bindings()) {
 						InlineVector<TemplateParameterNode, 4> combined_params;
-						InlineVector<TemplateTypeArg, 4> combined_args;
+						TemplateArgumentVector combined_args;
 						combined_params.reserve(
 							func_decl.outer_template_param_names().size() + template_params.size());
 						combined_args.reserve(
@@ -11363,7 +11363,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					OuterTemplateBinding merged_outer_binding;
 					if (func_decl.has_outer_template_bindings()) {
 						InlineVector<TemplateParameterNode, 4> merged_params;
-						InlineVector<TemplateTypeArg, 4> merged_args;
+						TemplateArgumentVector merged_args;
 						merged_params.reserve(
 							func_decl.outer_template_param_names().size() + template_params.size());
 						merged_args.reserve(
@@ -11384,7 +11384,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
 					} else if (outer_binding != nullptr) {
 						InlineVector<TemplateParameterNode, 4> merged_params;
-						InlineVector<TemplateTypeArg, 4> merged_args;
+						TemplateArgumentVector merged_args;
 						if (!outer_binding->params.empty()) {
 							for (const ASTNode& outer_param_node : outer_binding->params) {
 								if (const TemplateParameterNode* outer_param =
@@ -11424,7 +11424,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							merged_outer_binding);
 					}
 					InlineVector<TemplateParameterNode, 4> combined_params;
-					InlineVector<TemplateTypeArg, 4> combined_args;
+					TemplateArgumentVector combined_args;
 					if (!merged_outer_binding.params.empty()) {
 						for (const ASTNode& param_node : merged_outer_binding.params) {
 							if (const TemplateParameterNode* typed_param =
@@ -11513,7 +11513,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					OuterTemplateBinding merged_outer_binding;
 					if (func_decl.has_outer_template_bindings()) {
 						InlineVector<TemplateParameterNode, 4> merged_params;
-						InlineVector<TemplateTypeArg, 4> merged_args;
+						TemplateArgumentVector merged_args;
 						merged_params.reserve(
 							func_decl.outer_template_param_names().size() + template_params.size());
 						merged_args.reserve(
@@ -11534,7 +11534,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
 					} else if (outer_binding != nullptr) {
 						InlineVector<TemplateParameterNode, 4> merged_params;
-						InlineVector<TemplateTypeArg, 4> merged_args;
+						TemplateArgumentVector merged_args;
 						if (!outer_binding->params.empty()) {
 							for (const ASTNode& outer_param_node : outer_binding->params) {
 								if (const TemplateParameterNode* outer_param =

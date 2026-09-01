@@ -83,4 +83,17 @@ inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "Dollar identity recoveries: ", gDollarIdentityRecoveryCount);
 	FLASH_LOG(General, Info, "DeclarationBuilder publishes: ", gDeclarationBuilderPublishCount);
 	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
+	for (std::size_t index = 0; index < static_cast<std::size_t>(FlashCpp::InlineVectorSpillFamily::Count); ++index) {
+		const uint64_t count =
+			FlashCpp::inlineVectorSpillCount(static_cast<FlashCpp::InlineVectorSpillFamily>(index));
+		if (count == 0) {
+			continue;
+		}
+		FLASH_LOG(General, Info,
+				  "InlineVector spill family ",
+				  FlashCpp::inlineVectorSpillFamilyLabel(
+					  static_cast<FlashCpp::InlineVectorSpillFamily>(index)),
+				  " events: ",
+				  count);
+	}
 }

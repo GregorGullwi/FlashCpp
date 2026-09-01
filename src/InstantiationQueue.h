@@ -38,7 +38,7 @@ struct SourceLocation {
 // Key for identifying unique instantiations
 struct InstantiationKey {
 	StringHandle template_name;
-	InlineVector<TemplateTypeArg, 4> arguments;
+	TemplateArgumentVector arguments;
 
 	size_t hash() const {
 		size_t h = std::hash<StringHandle>{}(template_name);

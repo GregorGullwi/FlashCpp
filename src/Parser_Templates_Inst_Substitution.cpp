@@ -1204,14 +1204,14 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		target_template_param);
 }
 
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAliasTemplateArgs(
+std::optional<TemplateArgumentVector> Parser::materializeDeferredAliasTemplateArgs(
 	const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> template_args,
 	const OuterTemplateBinding* outer_binding) {
-	InlineVector<TemplateTypeArg, 4> substituted_args;
+	TemplateArgumentVector substituted_args;
 	InlineVector<TemplateParameterNode, 4> effective_template_parameters;
 	InlineVector<StringHandle, 4> effective_param_names;
-	InlineVector<TemplateTypeArg, 4> effective_template_args;
+	TemplateArgumentVector effective_template_args;
 	if (outer_binding != nullptr) {
 		const size_t pair_count = std::min(
 			outer_binding->params.size(),
@@ -1450,7 +1450,7 @@ std::optional<QualifiedTypeMemberAccess> Parser::materializeDeferredAliasMemberT
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle owner_qualified_handle) {
 	const auto member_template_params = getTargetTemplateParameters(owner_qualified_handle);
-	InlineVector<TemplateTypeArg, 4> member_args;
+	TemplateArgumentVector member_args;
 	std::span<const ASTNode> member_template_args(segment.template_args.data(), segment.template_args.size());
 	member_args.reserve(member_template_args.size());
 
@@ -1711,7 +1711,7 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 
 void Parser::normalizeDependentNonTypeTemplateArgs(
 	std::span<const TemplateParameterNode> template_parameters,
-	InlineVector<TemplateTypeArg, 4>& template_args) {
+	TemplateArgumentVector& template_args) {
 	size_t arg_index = 0;
 	for (size_t param_index = 0;
 		 param_index < template_parameters.size() && arg_index < template_args.size();
@@ -1754,7 +1754,7 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 
 void Parser::normalizeDependentNonTypeTemplateArgs(
 	const InlineVector<ASTNode, 4>& template_parameters,
-	InlineVector<TemplateTypeArg, 4>& template_args) {
+	TemplateArgumentVector& template_args) {
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters =
 		collectTemplateParameterNodes(
 			std::span<const ASTNode>(template_parameters.data(), template_parameters.size()));
@@ -3745,8 +3745,8 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		inherited_environment_ptr);
 	auto materialize_template_args_with_environment =
 		[&](
-			std::span<const TypeInfo::TemplateArgInfo> stored_args) -> InlineVector<TemplateTypeArg, 4> {
-			InlineVector<TemplateTypeArg, 4> concrete_args;
+			std::span<const TypeInfo::TemplateArgInfo> stored_args) -> TemplateArgumentVector {
+			TemplateArgumentVector concrete_args;
 		concrete_args.reserve(stored_args.size());
 		for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
 			TemplateTypeArg concrete_arg = toTemplateTypeArg(stored_arg);
@@ -3893,7 +3893,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 			dependent_name->owner_name.isValid()) {
 			base_template_name_handle = dependent_name->owner_name;
 		}
-		InlineVector<TemplateTypeArg, 4> concrete_base_args =
+		TemplateArgumentVector concrete_base_args =
 			!dependent_name->owner_template_arguments.empty()
 				? materialize_template_args_with_environment(
 					  dependent_name->owner_template_arguments)
@@ -3943,7 +3943,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 			QualifiedTypeMemberAccess member_access;
 			member_access.member_name = member_record.name;
 			if (member_record.has_template_arguments) {
-				InlineVector<TemplateTypeArg, 4> concrete_member_args =
+				TemplateArgumentVector concrete_member_args =
 					materialize_template_args_with_environment(
 						member_record.template_arguments);
 				if (template_args_still_dependent(concrete_member_args)) {
@@ -3954,7 +3954,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 						defer_to_alias_materialization = true;
 						break;
 					}
-					InlineVector<TemplateTypeArg, 4> fallback_member_args =
+					TemplateArgumentVector fallback_member_args =
 						materialize_template_args_with_environment(
 							original_alias_target_info->templateArgs());
 					if (template_args_still_dependent(fallback_member_args) ||
@@ -4073,7 +4073,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		gTemplateRegistry.lookup_alias_template(
 			StringTable::getStringView(materialized_member_alias_handle));
 	if (member_alias_entry.has_value()) {
-		InlineVector<TemplateTypeArg, 4> concrete_member_template_args;
+		TemplateArgumentVector concrete_member_template_args;
 		size_t member_alias_param_count = 0;
 		if (member_alias_entry->is<TemplateAliasNode>()) {
 			member_alias_param_count =
@@ -4246,7 +4246,7 @@ bool Parser::resolveAliasTemplateInstantiation(TypeSpecifierNode& type_spec) {
 		return false;
 	}
 
-	InlineVector<TemplateTypeArg, 4> concrete_args;
+	TemplateArgumentVector concrete_args;
 	concrete_args.reserve(aliased_info->templateArgs().size());
 	for (const auto& arg_info : aliased_info->templateArgs()) {
 		concrete_args.push_back(toTemplateTypeArg(arg_info));
@@ -4412,7 +4412,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 			if (!substituted_args_opt.has_value()) {
 				return std::string_view();
 			}
-			InlineVector<TemplateTypeArg, 4> substituted_args = std::move(*substituted_args_opt);
+			TemplateArgumentVector substituted_args = std::move(*substituted_args_opt);
 
 			// Now recursively instantiate the target template
 			// The target might itself be a template alias (chain of aliases)
@@ -4505,7 +4505,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 
 				const ASTNode& default_node = param->default_value();
 				if (param->kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
-					InlineVector<TemplateTypeArg, 4> filled_args_inline =
+					TemplateArgumentVector filled_args_inline =
 						toInlineTemplateArgs(filled_args);
 					ASTNode substituted_default_node = substituteTemplateParameters(
 						default_node,
@@ -5134,7 +5134,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 			}
 
 			const ASTNode& default_node = param.default_value();
-			InlineVector<TemplateTypeArg, 4> bound_args_inline = toInlineTemplateArgs(bound_args);
+			TemplateArgumentVector bound_args_inline = toInlineTemplateArgs(bound_args);
 			ASTNode substituted_default = substituteTemplateParameters(default_node, template_params, bound_args_inline);
 
 			if (param.kind() == TemplateParameterKind::Type) {
@@ -5299,7 +5299,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		const DeclarationNode& spec_decl = spec_var_decl.declaration();
 		ASTNode spec_type = spec_decl.type_node();
 		const auto& spec_params = spec_template.template_parameters();
-		InlineVector<TemplateTypeArg, 4> converted_args;
+		TemplateArgumentVector converted_args;
 		if (!spec_params.empty()) {
 			// Build deduced args from the structural match substitutions.
 			// TemplatePattern::matches() already deduced T→int by stripping
@@ -5353,7 +5353,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 	// Get the original variable declaration
 	const VariableDeclarationNode& orig_var_decl = var_template.variable_decl_node();
 	const DeclarationNode& orig_decl = orig_var_decl.declaration();
-	InlineVector<TemplateTypeArg, 4> filled_args_inline = toInlineTemplateArgs(filled_args);
+	TemplateArgumentVector filled_args_inline = toInlineTemplateArgs(filled_args);
 	TemplateInstantiationContext variable_template_context =
 		buildTemplateInstantiationContext(
 			effective_template_params,

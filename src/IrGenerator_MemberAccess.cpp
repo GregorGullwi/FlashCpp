@@ -3628,8 +3628,8 @@ bool AstToIr::isSameClassOrInstantiation(const StructTypeInfo* a, const StructTy
 	if (info_a != nullptr && info_b != nullptr &&
 		info_a->isTemplateInstantiation() && info_b->isTemplateInstantiation() &&
 		!info_a->templateArgs().empty() && !info_b->templateArgs().empty()) {
-		InlineVector<TemplateTypeArg, 4> args_a;
-		InlineVector<TemplateTypeArg, 4> args_b;
+		TemplateArgumentVector args_a;
+		TemplateArgumentVector args_b;
 		for (const auto& stored_arg : info_a->templateArgs()) {
 			args_a.push_back(toTemplateTypeArg(stored_arg));
 		}

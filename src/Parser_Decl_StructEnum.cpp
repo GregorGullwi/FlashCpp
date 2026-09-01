@@ -7,11 +7,11 @@
 #include "TypeTraitEvaluator.h"
 
 namespace {
-InlineVector<TemplateTypeArg, 4> materializeClassFriendTemplateArguments(
+TemplateArgumentVector materializeClassFriendTemplateArguments(
 	std::span<const TemplateTypeArg> pattern_arguments,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args) {
-	InlineVector<TemplateTypeArg, 4> materialized_arguments;
+	TemplateArgumentVector materialized_arguments;
 	materialized_arguments.reserve(pattern_arguments.size());
 	for (const TemplateTypeArg& pattern_argument : pattern_arguments) {
 		materialized_arguments.push_back(
@@ -736,7 +736,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// Check if there are template arguments
 					if (qualified_result->has_template_arguments) {
 						// We have template arguments - instantiate the template
-						InlineVector<TemplateTypeArg, 4> template_args = *qualified_result->template_args;
+						TemplateArgumentVector template_args = *qualified_result->template_args;
 
 						// Consume optional ::member type access and ... pack expansion
 						auto post_info_opt = consume_base_class_qualifiers_after_template_args();
@@ -869,7 +869,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					return ParseResult::error("Failed to parse template arguments for base class", peek_info());
 				}
 
-				InlineVector<TemplateTypeArg, 4> template_args = *template_args_opt;
+				TemplateArgumentVector template_args = *template_args_opt;
 
 				// Consume optional ::member type access and ... pack expansion
 				auto post_info_opt = consume_base_class_qualifiers_after_template_args();
@@ -4794,12 +4794,12 @@ ParseResult Parser::parse_friend_declaration() {
 					selected_friend_type->getStructInfo()->declaration_node;
 			}
 		}
-		InlineVector<TemplateTypeArg, 4> friend_template_arguments;
+		TemplateArgumentVector friend_template_arguments;
 
 		// Preserve specialization arguments so instantiation can grant friendship
 		// to exactly the named specialization.
 		if (peek() == "<"_tok) {
-			if (std::optional<InlineVector<TemplateTypeArg, 4>> parsed_arguments =
+			if (std::optional<TemplateArgumentVector> parsed_arguments =
 					parse_explicit_template_arguments();
 				parsed_arguments.has_value()) {
 				friend_template_arguments = std::move(*parsed_arguments);
@@ -5504,7 +5504,7 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 		const FriendDeclarationNode& pattern_friend = friend_decl_node.as<FriendDeclarationNode>();
 		if (pattern_friend.kind() == FriendKind::Class &&
 			!pattern_friend.class_template_arguments().empty()) {
-			InlineVector<TemplateTypeArg, 4> materialized_arguments =
+			TemplateArgumentVector materialized_arguments =
 				materializeClassFriendTemplateArguments(
 					pattern_friend.class_template_arguments(),
 					template_params,
@@ -5569,7 +5569,7 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 			op_kind = stringToOverloadableOperator(friend_name_view.substr(8));
 		}
 
-		InlineVector<TemplateTypeArg, 4> template_args_inline;
+		TemplateArgumentVector template_args_inline;
 		template_args_inline.reserve(template_args.size());
 		for (const TemplateTypeArg& arg : template_args) {
 			template_args_inline.push_back(arg);

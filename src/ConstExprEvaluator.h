@@ -10,6 +10,7 @@
 #include "StringBuilder.h"  // For StringBuilder (heap key construction)
 #include "Log.h"	 // For FLASH_LOG
 #include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
+#include "MemberFunctionLookupShared.h"
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -534,7 +535,7 @@ struct EvaluationContext {
 	// Template parameter names and arguments for evaluating template-dependent expressions
 	// (e.g., sizeof(T) inside a template member function)
 	InlineVector<std::string_view, 4> template_param_names;
-	InlineVector<TemplateTypeArg, 4> template_args;
+	TemplateArgumentVector template_args;
 	TemplateEnvironment template_environment;
 
 	// Parser pointer for template instantiation (optional)
@@ -619,7 +620,7 @@ struct ScopedTemplateBindingsFromType {
 private:
 	EvaluationContext& context_;
 	InlineVector<std::string_view, 4> saved_param_names_;
-	InlineVector<TemplateTypeArg, 4> saved_args_;
+	TemplateArgumentVector saved_args_;
 	TemplateEnvironment saved_environment_;
 };
 
@@ -1103,7 +1104,7 @@ private:
 	static bool tryCollectConstexprOverloadResolutionArgTypes(
 		const ChunkedVector<ASTNode>& arguments,
 		EvaluationContext& context,
-		InlineVector<TypeSpecifierNode, 6>& arg_types_out);
+		OverloadResolutionArgTypeVector& arg_types_out);
 	static ResolvedMemberFunctionCandidate resolveConstexprMemberCallCandidateFromCollectedSets(
 		const ConstAwareMemberCandidateSet& candidate_sets,
 		const ChunkedVector<ASTNode>& arguments,

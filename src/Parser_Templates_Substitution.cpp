@@ -1264,7 +1264,7 @@ bool Parser::expandPackExpansionArgs(
 	for (size_t pi = 0; pi < *num_pack_elements; ++pi) {
 		// Build substitution params for this single pack element
 		InlineVector<TemplateParameterNode, 4> subst_params;
-		InlineVector<TemplateTypeArg, 4> subst_args;
+		TemplateArgumentVector subst_args;
 		for (size_t p = 0; p < template_params.size(); ++p) {
 			const auto& tparam = template_params[p];
 			if (tparam.is_variadic()) {

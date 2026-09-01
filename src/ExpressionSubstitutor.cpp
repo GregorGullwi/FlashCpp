@@ -912,7 +912,7 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 		const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
 		if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
 			InlineVector<TemplateParameterNode, 4> template_params;
-			InlineVector<TemplateTypeArg, 4> template_args;
+			TemplateArgumentVector template_args;
 			template_params.reserve(environment_.bindings.size());
 			for (const TemplateBinding& binding : environment_.bindings) {
 				if (!binding.name.isValid()) {
@@ -1444,10 +1444,10 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	return result;
 }
 
-InlineVector<TemplateTypeArg, 4> ExpressionSubstitutor::materializeDependentRecordTemplateArgs(
+TemplateArgumentVector ExpressionSubstitutor::materializeDependentRecordTemplateArgs(
 	std::span<const TypeInfo::TemplateArgInfo> stored_args,
 	int depth) {
-	InlineVector<TemplateTypeArg, 4> materialized_args;
+	TemplateArgumentVector materialized_args;
 	materialized_args.reserve(stored_args.size());
 	for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
 		TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
@@ -1742,7 +1742,7 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 			break;
 		}
 		if (!dependent_name.owner_template_arguments.empty()) {
-			InlineVector<TemplateTypeArg, 4> owner_args =
+			TemplateArgumentVector owner_args =
 				materializeDependentRecordTemplateArgs(
 					dependent_name.owner_template_arguments,
 					depth);
@@ -1789,7 +1789,7 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 		[[fallthrough]];
 	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
 	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
-		InlineVector<TemplateTypeArg, 4> owner_args =
+		TemplateArgumentVector owner_args =
 			materializeDependentRecordTemplateArgs(
 				dependent_name.owner_template_arguments,
 				depth);
@@ -1879,7 +1879,7 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 		}
 
 		if (member_record.has_template_arguments) {
-			InlineVector<TemplateTypeArg, 4> member_args =
+			TemplateArgumentVector member_args =
 				materializeDependentRecordTemplateArgs(
 					member_record.template_arguments,
 					depth);
@@ -2096,7 +2096,7 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 				QualifiedTypeMemberAccess member_access;
 				member_access.member_name = member_record.name;
 				if (member_record.has_template_arguments) {
-					InlineVector<TemplateTypeArg, 4> member_args =
+					TemplateArgumentVector member_args =
 						materializeDependentRecordTemplateArgs(member_record.template_arguments, depth);
 					if (templateArgsStillDependent(member_args)) {
 						return lookup;
@@ -2456,7 +2456,7 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 		return std::nullopt;
 	};
 
-	std::optional<InlineVector<TemplateTypeArg, 4>> concrete_args =
+	std::optional<TemplateArgumentVector> concrete_args =
 		parser_.templateEngine().materializeConcreteCallTemplateArguments(call.template_arguments());
 	if (!concrete_args.has_value()) {
 		std::vector<ASTNode> rebound_template_args;
@@ -3105,7 +3105,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				const TypeInfo::DependentQualifiedNameRecord::Member&
 					final_member_record =
 						dependent_record.member_chain.back();
-				InlineVector<TemplateTypeArg, 4> member_template_args;
+				TemplateArgumentVector member_template_args;
 				if (final_member_record.has_template_arguments) {
 					member_template_args =
 						materializeDependentRecordTemplateArgs(
@@ -3997,7 +3997,7 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 						dependent_record.member_chain.back().name);
 				if (dependent_record.member_chain.back()
 						.has_template_arguments) {
-					InlineVector<TemplateTypeArg, 4>
+					TemplateArgumentVector
 						explicit_member_template_args =
 							materializeDependentRecordTemplateArgs(
 								dependent_record.member_chain.back()
@@ -4462,7 +4462,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					final_token);
 			bool preserved_dependent_member_template_record = false;
 			if (final_member.has_template_arguments) {
-				InlineVector<TemplateTypeArg, 4> final_member_args =
+				TemplateArgumentVector final_member_args =
 					materializeDependentRecordTemplateArgs(
 						final_member.template_arguments,
 						kInitialDependentMemberTypeResolutionDepth);

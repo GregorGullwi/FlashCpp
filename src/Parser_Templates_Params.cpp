@@ -952,13 +952,13 @@ ParseResult Parser::parse_template_template_parameter_form() {
 // This eliminates duplication between parse_template_declaration() and parse_member_function_template()
 // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
 // Template parameters must already be registered in getTypesByNameMap() via TemplateParameterScope
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments() {
+std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments() {
 	// Keep the no-output overload explicit so callers do not rely on default parameters.
 	InlineVector<ASTNode, 4>* out_type_nodes = nullptr;
 	return parse_explicit_template_arguments(out_type_nodes);
 }
 
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(InlineVector<ASTNode, 4>* out_type_nodes) {
+std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(InlineVector<ASTNode, 4>* out_type_nodes) {
 	// Recursion depth guard to prevent stack overflow on deeply nested template arguments
 	// Stack size increased to 8MB in FlashCppMSVC.vcxproj to handle deep recursion
 	static int template_arg_recursion_depth = 0;
@@ -1003,7 +1003,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 	advance(); // consume '<'
 	last_failed_template_arg_parse_handle_ = SIZE_MAX;  // Clear failure marker - we're making progress
 
-	InlineVector<TemplateTypeArg, 4> template_args;
+	TemplateArgumentVector template_args;
 
 	// Check for empty template argument list (e.g., Container<>)
 	// Also handle >> for nested templates: Container<__void_t<>>
@@ -3456,7 +3456,7 @@ try_type_template_argument_parse:
 	return template_args;
 }
 
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
+std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 	std::vector<ASTNode>* out_type_nodes) {
 	if (out_type_nodes == nullptr) {
 		return parse_explicit_template_arguments();
@@ -3474,7 +3474,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 	std::span<const TemplateParameterNode> target_template_params,
-	InlineVector<TemplateTypeArg, 4>& template_args,
+	TemplateArgumentVector& template_args,
 	std::span<const ASTNode> argument_syntax_nodes) {
 	if (target_template_params.empty() || template_args.empty()) {
 		return;
@@ -4043,7 +4043,7 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 	return result;
 }
 
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
+std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 	std::span<const TemplateParameterNode> target_template_params,
 	std::vector<ASTNode>* out_type_nodes) {
 	ScopedExplicitTemplateArgumentTargetParams target_param_guard(*this, target_template_params);
@@ -4059,7 +4059,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 	return parsed_args;
 }
 
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
+std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 	std::span<const TemplateParameterNode> target_template_params,
 	InlineVector<ASTNode, 4>* out_type_nodes) {
 	ScopedExplicitTemplateArgumentTargetParams target_param_guard(*this, target_template_params);
@@ -4084,7 +4084,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 	return parsed_args;
 }
 
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
+std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 	const TemplateNameLookupResult& template_lookup,
 	InlineVector<ASTNode, 4>* out_type_nodes) {
 	for (const TemplateNameLookupCandidate& candidate : template_lookup.candidates) {

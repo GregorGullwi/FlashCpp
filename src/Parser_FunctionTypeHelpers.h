@@ -156,7 +156,7 @@ inline std::optional<TypeSpecifierNode> tryMaterializeTypeFromOuterTemplateBindi
 		toTemplateArgInfo(TemplateTypeArg(dependent_type));
 	InlineVector<TemplateParameterNode, 4> synthetic_params;
 	synthetic_params.reserve(binding_count);
-	InlineVector<TemplateTypeArg, 4> concrete_args;
+	TemplateArgumentVector concrete_args;
 	concrete_args.reserve(binding_count);
 	for (size_t i = 0; i < binding_count; ++i) {
 		const StringHandle param_name = outer_template_param_names[i];

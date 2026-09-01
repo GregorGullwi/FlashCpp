@@ -3404,7 +3404,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	StringHandle partial_pattern_owner_name,
 	bool apply_bound_metadata_to_full_substitution,
 	bool apply_resolved_index_to_full_substitution) {
-	InlineVector<TemplateTypeArg, 4> template_args_inline;
+	TemplateArgumentVector template_args_inline;
 	template_args_inline.reserve(template_args.size());
 	for (const TemplateTypeArg& arg : template_args) {
 		template_args_inline.push_back(arg);
@@ -3460,7 +3460,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 		parent_struct_name);
 	if (original_func.has_outer_template_bindings()) {
 		InlineVector<TemplateParameterNode, 4> combined_params;
-		InlineVector<TemplateTypeArg, 4> combined_args;
+		TemplateArgumentVector combined_args;
 		combined_params.reserve(
 			original_func.outer_template_param_names().size() + template_params.size());
 		combined_args.reserve(
@@ -3509,7 +3509,7 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 	if (self_type_from_index.is_valid() != self_type_to_index.is_valid()) {
 		throw InternalError("substituteAndCopyMemberFunctionParameters requires both self rewrite indices or neither.");
 	}
-	InlineVector<TemplateTypeArg, 4> template_args_inline;
+	TemplateArgumentVector template_args_inline;
 	template_args_inline.reserve(template_args.size());
 	for (const TemplateTypeArg& arg : template_args) {
 		template_args_inline.push_back(arg);

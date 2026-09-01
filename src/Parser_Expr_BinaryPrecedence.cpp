@@ -745,7 +745,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								current_token_);
 						}
 
-						const InlineVector<TemplateTypeArg, 4>& explicit_args =
+						const TemplateArgumentVector& explicit_args =
 							template_args.read_template_type_args();
 						std::optional<ASTNode> instantiated_func =
 							try_instantiate_template_explicit(

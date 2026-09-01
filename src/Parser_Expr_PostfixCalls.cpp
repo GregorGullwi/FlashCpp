@@ -36,7 +36,7 @@ std::string_view buildQualifiedMemberCallName(
 }
 
 bool postfixExplicitTemplateArgsRequireDeferredInstantiation(
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	const TemplateArgumentVector& template_args) {
 	return std::any_of(template_args.begin(), template_args.end(), [](const TemplateTypeArg& arg) {
 		return arg.is_pack || templateArgIsStructurallyDependent(arg);
 	});
@@ -287,7 +287,7 @@ bool Parser::concreteOwnerHasMemberFunctionTemplate(
 // Returns the instantiated function node if successful, nullopt otherwise.
 std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	const std::optional<ASTNode>& object_expr, std::string_view member_name,
-	const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
+	const std::optional<TemplateArgumentVector>& explicit_template_args,
 	std::span<const TypeSpecifierNode> arg_types) {
 	if (!object_expr.has_value())
 		return std::nullopt;
@@ -361,7 +361,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 				return !func_decl.failed_substitution();
 			});
 
-	auto unique_candidate = [](const InlineVector<const StructMemberFunction*, 8>& list)
+	auto unique_candidate = [](const MemberOverloadCandidateVector& list)
 		-> const FunctionDeclarationNode* {
 		if (list.size() != 1 || list[0] == nullptr ||
 			!list[0]->function_decl.is<FunctionDeclarationNode>()) {
@@ -801,7 +801,7 @@ ParseResult Parser::finalizePostfixCallExpression(
 std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 	std::string_view struct_name,
 	std::string_view member_name,
-	const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
+	const std::optional<TemplateArgumentVector>& explicit_template_args,
 	std::span<const TypeSpecifierNode> call_arg_types,
 	bool has_call_args,
 	bool has_dependent_call_args) {
@@ -1106,7 +1106,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 	TemplateTypeArgParsingResult explicit_template_args = parse_explicit_template_arguments_as_result(TokenDestroyPattern::Restore);
 	if (explicit_template_args && peek() == "::"_tok) {
 		explicit_template_args.destroy_pattern_ = TokenDestroyPattern::Discard;
-		std::optional<InlineVector<TemplateTypeArg, 4>> owner_template_args =
+		std::optional<TemplateArgumentVector> owner_template_args =
 			explicit_template_args.read_template_type_args();
 		if (!owner_template_args.has_value()) {
 			return ParseResult::error(
@@ -1142,7 +1142,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			return ParseResult::error("Expected identifier after '::'", current_token_);
 		}
 
-		std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
+		std::optional<TemplateArgumentVector> member_template_args;
 		std::vector<ASTNode> member_template_arg_nodes;
 		if (peek() == "<"_tok || saw_template_keyword) {
 			last_failed_template_arg_parse_handle_ = SIZE_MAX;
@@ -1446,7 +1446,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		std::optional<ASTNode> instantiated_func;
 		if (object_struct_name.has_value()) {
-			std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
+			std::optional<TemplateArgumentVector> member_template_args;
 			if (explicit_template_args) {
 				member_template_args = explicit_template_args.read_template_type_args();
 			}
@@ -2077,7 +2077,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 		[&](const ASTNode& object_expr,
 			std::span<const StringHandle> owner_segments,
 			std::string_view member_name,
-			const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
+			const std::optional<TemplateArgumentVector>& explicit_template_args,
 			std::span<const TypeSpecifierNode> arg_types,
 			bool has_call_args,
 			bool has_dependent_call_args) -> std::optional<ASTNode> {
@@ -2105,7 +2105,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 		[&](const ASTNode& object_expr,
 			std::span<const StringHandle> owner_segments,
 			const Token& member_token,
-			const InlineVector<TemplateTypeArg, 4>& member_template_args,
+			const TemplateArgumentVector& member_template_args,
 			std::vector<ASTNode>&& member_template_arg_nodes,
 			ChunkedVector<ASTNode>&& args) -> ASTNode {
 			std::string_view qualified_member_call_name =
@@ -2425,7 +2425,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							if (!consume(")"_tok)) {
 								return ParseResult::error("Expected ')' after qualified member function call", current_token_);
 							}
-							std::optional<InlineVector<TemplateTypeArg, 4>>
+							std::optional<TemplateArgumentVector>
 								member_template_args;
 							std::vector<ASTNode> member_template_arg_nodes;
 							if (explicit_template_args) {
@@ -2548,7 +2548,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 								discard_saved_token(saved_pos);
 								return ParseResult::error("Expected ')' after qualified operator member call", current_token_);
 							}
-							std::optional<InlineVector<TemplateTypeArg, 4>>
+							std::optional<TemplateArgumentVector>
 								member_template_args;
 							std::vector<ASTNode> member_template_arg_nodes;
 							if (explicit_template_args) {
@@ -2716,7 +2716,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			auto qualified_symbol = gSymbolTable.lookup_qualified(namespaces, final_identifier.value());
 
 			// Check if this is followed by template arguments: ns::func<Args>
-			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
+			std::optional<TemplateArgumentVector> template_args;
 			if (peek() == "<"_tok) {
 				template_args = parse_explicit_template_arguments();
 				// If parsing failed, it might be a less-than operator, continue normally
