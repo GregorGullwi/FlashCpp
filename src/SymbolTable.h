@@ -229,6 +229,8 @@ public:
 
 	void enablePersistentScopePublication();
 
+	void clearPersistentScopePublicationBinding();
+
 	bool persistentScopePublicationEnabled() const {
 		return publish_persistent_scopes_;
 	}
