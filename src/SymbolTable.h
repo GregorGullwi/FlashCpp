@@ -151,38 +151,6 @@ inline bool functionAcceptsArgumentCount(
 		argument_count <= countMaxAcceptedArgs(func);
 }
 
-// Records SymbolTable mutations from insert() for rollback on the parser
-// DeclarationBuilder shadow path when publication rejects after insert.
-struct SymbolTableInsertUndo {
-	enum class Op : uint8_t {
-		RemoveNamespaceEntry,
-		PopNamespaceOverload,
-		RestoreNamespaceNode,
-		RemoveGlobalScopeEntry,
-		PopGlobalScopeOverload,
-		RestoreGlobalScopeNode,
-		RemoveGlobalNamespaceMirrorEntry,
-		PopGlobalNamespaceMirrorOverload,
-		RestoreGlobalNamespaceMirrorNode,
-	};
-
-	struct Entry {
-		Op op = Op::RemoveNamespaceEntry;
-		ScopeId scope_id;
-		NamespaceHandle namespace_handle{};
-		StringHandle name_key{};
-		std::string_view scope_key{};
-		std::size_t index = 0;
-		ASTNode previous_node{};
-	};
-
-	std::vector<Entry> entries;
-
-	bool hasChanges() const {
-		return !entries.empty();
-	}
-};
-
 namespace SymbolTableDetail {
 
 inline void stampLexicalScopeOnDeclaration(ASTNode& node, ScopeId scope_id) {
@@ -293,10 +261,6 @@ public:
 		return insert(StringTable::getStringView(identifierHandle), node); // This should probably be the other way around
 	}
 
-	bool insertWithUndo(StringHandle identifierHandle, ASTNode node, SymbolTableInsertUndo& undo) {
-		return insertWithUndo(StringTable::getStringView(identifierHandle), node, undo);
-	}
-
 	// Insert using QualifiedIdentifier.
 	// Inserts under the unqualified name in the current scope.
 	// Note: namespace_symbols_ insertion is handled by the existing insert(string_view)
@@ -306,18 +270,8 @@ public:
 	}
 
 	bool insert(std::string_view identifier, ASTNode node) {
-		return insertCore(identifier, node, nullptr);
-	}
-
-	bool insertWithUndo(std::string_view identifier, ASTNode node, SymbolTableInsertUndo& undo) {
-		undo.entries.clear();
-		return insertCore(identifier, node, &undo);
-	}
-
-	bool insertCore(std::string_view identifier, ASTNode node, SymbolTableInsertUndo* undo) {
 		last_declaring_scope_id_ = currentScopeId();
-		const ScopeId insert_scope_id = last_declaring_scope_id_;
-		SymbolTableDetail::stampLexicalScopeOnDeclaration(node, insert_scope_id);
+		SymbolTableDetail::stampLexicalScopeOnDeclaration(node, last_declaring_scope_id_);
 		auto& current_scope = scopes_[current_scope_index_];
 		const ScopeMetadataView current_metadata = scopeMetadataAtIndex(current_scope_index_);
 		const bool ns_scope = current_metadata.scope_type == ScopeType::Namespace;
@@ -329,7 +283,6 @@ public:
 		std::vector<ASTNode>* existing_ptr = nullptr;
 		NamespaceHandle ns_handle{};
 		StringHandle ns_key{};
-		std::string_view scope_map_key = identifier;
 		if (ns_scope) {
 			ns_handle = get_current_namespace_handle();
 			auto& ns_symbols = namespace_symbols_[ns_handle];
@@ -342,7 +295,6 @@ public:
 			auto it = current_scope.symbols.find(identifier);
 			if (it != current_scope.symbols.end()) {
 				existing_ptr = &it->second;
-				scope_map_key = it->first;
 			}
 		}
 
@@ -353,28 +305,10 @@ public:
 				// mirror into scope.symbols (namespace-scope using-declarations also
 				// merge into namespace_symbols_; see materialize_using_declaration_symbols).
 				namespace_symbols_[ns_handle][ns_key] = std::vector<ASTNode>{node};
-				pushInsertUndo(
-					undo,
-					SymbolTableInsertUndo::Op::RemoveNamespaceEntry,
-					insert_scope_id,
-					ns_handle,
-					ns_key,
-					std::string_view{},
-					0,
-					ASTNode{});
 				return true;
 			}
 			std::string_view key = intern_string(identifier);
 			current_scope.symbols[key] = std::vector<ASTNode>{node};
-			pushInsertUndo(
-				undo,
-				SymbolTableInsertUndo::Op::RemoveGlobalScopeEntry,
-				insert_scope_id,
-				NamespaceHandle{NamespaceHandle::INVALID_HANDLE},
-				StringHandle{},
-				key,
-				0,
-				ASTNode{});
 			if (global_scope) {
 				ns_handle = get_current_namespace_handle();
 				ns_key = StringTable::getOrInternStringHandle(identifier);
@@ -385,26 +319,8 @@ public:
 				auto ns_it = ns_symbols.find(ns_key);
 				if (ns_it == ns_symbols.end()) {
 					ns_symbols[ns_key] = std::vector<ASTNode>{node};
-					pushInsertUndo(
-						undo,
-						SymbolTableInsertUndo::Op::RemoveGlobalNamespaceMirrorEntry,
-						insert_scope_id,
-						ns_handle,
-						ns_key,
-						std::string_view{},
-						0,
-						ASTNode{});
 				} else {
 					ns_it->second.push_back(node);
-					pushInsertUndo(
-						undo,
-						SymbolTableInsertUndo::Op::PopGlobalNamespaceMirrorOverload,
-						insert_scope_id,
-						ns_handle,
-						ns_key,
-						std::string_view{},
-						0,
-						ASTNode{});
 				}
 			}
 			return true;
@@ -473,30 +389,7 @@ public:
 							// Same signature found - replace forward declaration with definition if needed
 							// If the new one has a definition and the existing one doesn't, replace it
 							if (new_func->is_materialized() && !existing_func->is_materialized()) {
-								const ASTNode previous_node = existing_nodes[i];
 								existing_nodes[i] = node;
-
-								if (ns_scope) {
-									pushInsertUndo(
-										undo,
-										SymbolTableInsertUndo::Op::RestoreNamespaceNode,
-										insert_scope_id,
-										ns_handle,
-										ns_key,
-										std::string_view{},
-										i,
-										previous_node);
-								} else {
-									pushInsertUndo(
-										undo,
-										SymbolTableInsertUndo::Op::RestoreGlobalScopeNode,
-										insert_scope_id,
-										NamespaceHandle{NamespaceHandle::INVALID_HANDLE},
-										StringHandle{},
-										scope_map_key,
-										i,
-										previous_node);
-								}
 
 								if (global_scope) {
 									// Global still uses scope.symbols as primary; mirror into namespace_symbols_
@@ -523,17 +416,7 @@ public:
 														}
 													}
 													if (params_match) {
-														const ASTNode mirror_previous = ns_it->second[k];
 														ns_it->second[k] = node;
-														pushInsertUndo(
-															undo,
-															SymbolTableInsertUndo::Op::RestoreGlobalNamespaceMirrorNode,
-															insert_scope_id,
-															mirror_ns,
-															key,
-															std::string_view{},
-															k,
-															mirror_previous);
 														break;
 													}
 												}
@@ -555,28 +438,9 @@ public:
 		existing_nodes.push_back(node);
 
 		if (ns_scope) {
-			pushInsertUndo(
-				undo,
-				SymbolTableInsertUndo::Op::PopNamespaceOverload,
-				insert_scope_id,
-				ns_handle,
-				ns_key,
-				std::string_view{},
-				0,
-				ASTNode{});
 			// existing_nodes already aliases namespace_symbols_; nothing else to update.
 			return true;
 		}
-
-		pushInsertUndo(
-			undo,
-			SymbolTableInsertUndo::Op::PopGlobalScopeOverload,
-			insert_scope_id,
-			NamespaceHandle{NamespaceHandle::INVALID_HANDLE},
-			StringHandle{},
-			scope_map_key,
-			0,
-			ASTNode{});
 
 		// Global scope: also add to the persistent namespace map
 		if (global_scope) {
@@ -587,141 +451,12 @@ public:
 			auto ns_it = ns_symbols.find(key);
 			if (ns_it == ns_symbols.end()) {
 				ns_symbols[key] = std::vector<ASTNode>{node};
-				pushInsertUndo(
-					undo,
-					SymbolTableInsertUndo::Op::RemoveGlobalNamespaceMirrorEntry,
-					insert_scope_id,
-					mirror_ns,
-					key,
-					std::string_view{},
-					0,
-					ASTNode{});
 			} else {
 				ns_it->second.push_back(node);
-				pushInsertUndo(
-					undo,
-					SymbolTableInsertUndo::Op::PopGlobalNamespaceMirrorOverload,
-					insert_scope_id,
-					mirror_ns,
-					key,
-					std::string_view{},
-					0,
-					ASTNode{});
 			}
 		}
 
 		return true;
-	}
-
-	void rollbackInsert(const SymbolTableInsertUndo& undo) {
-		for (std::size_t reverse_index = undo.entries.size(); reverse_index > 0; --reverse_index) {
-			const SymbolTableInsertUndo::Entry& entry = undo.entries[reverse_index - 1];
-			switch (entry.op) {
-			case SymbolTableInsertUndo::Op::RemoveNamespaceEntry: {
-				auto ns_it = namespace_symbols_.find(entry.namespace_handle);
-				if (ns_it != namespace_symbols_.end()) {
-					ns_it->second.erase(entry.name_key);
-					if (ns_it->second.empty()) {
-						namespace_symbols_.erase(ns_it);
-					}
-				}
-				break;
-			}
-			case SymbolTableInsertUndo::Op::PopNamespaceOverload: {
-				auto ns_it = namespace_symbols_.find(entry.namespace_handle);
-				if (ns_it != namespace_symbols_.end()) {
-					auto sym_it = ns_it->second.find(entry.name_key);
-					if (sym_it != ns_it->second.end() && !sym_it->second.empty()) {
-						sym_it->second.pop_back();
-						if (sym_it->second.empty()) {
-							ns_it->second.erase(sym_it);
-						}
-					}
-				}
-				break;
-			}
-			case SymbolTableInsertUndo::Op::RestoreNamespaceNode: {
-				auto ns_it = namespace_symbols_.find(entry.namespace_handle);
-				if (ns_it != namespace_symbols_.end()) {
-					auto sym_it = ns_it->second.find(entry.name_key);
-					if (sym_it != ns_it->second.end() && entry.index < sym_it->second.size()) {
-						sym_it->second[entry.index] = entry.previous_node;
-					}
-				}
-				break;
-			}
-			case SymbolTableInsertUndo::Op::RemoveGlobalScopeEntry: {
-				if (!entry.scope_id || entry.scope_id.value > scopes_.size()) {
-					break;
-				}
-				scopes_[entry.scope_id.value - 1].symbols.erase(entry.scope_key);
-				break;
-			}
-			case SymbolTableInsertUndo::Op::PopGlobalScopeOverload: {
-				if (!entry.scope_id || entry.scope_id.value > scopes_.size()) {
-					break;
-				}
-				auto& scope_symbols = scopes_[entry.scope_id.value - 1].symbols;
-				auto sym_it = scope_symbols.find(entry.scope_key);
-				if (sym_it != scope_symbols.end() && !sym_it->second.empty()) {
-					sym_it->second.pop_back();
-					if (sym_it->second.empty()) {
-						scope_symbols.erase(sym_it);
-					}
-				}
-				break;
-			}
-			case SymbolTableInsertUndo::Op::RestoreGlobalScopeNode: {
-				if (!entry.scope_id || entry.scope_id.value > scopes_.size()) {
-					break;
-				}
-				auto& scope_symbols = scopes_[entry.scope_id.value - 1].symbols;
-				auto sym_it = scope_symbols.find(entry.scope_key);
-				if (sym_it != scope_symbols.end() && entry.index < sym_it->second.size()) {
-					sym_it->second[entry.index] = entry.previous_node;
-				}
-				break;
-			}
-			case SymbolTableInsertUndo::Op::RemoveGlobalNamespaceMirrorEntry: {
-				auto ns_it = namespace_symbols_.find(entry.namespace_handle);
-				if (ns_it != namespace_symbols_.end()) {
-					ns_it->second.erase(entry.name_key);
-					if (ns_it->second.empty()) {
-						namespace_symbols_.erase(ns_it);
-					}
-				}
-				break;
-			}
-			case SymbolTableInsertUndo::Op::PopGlobalNamespaceMirrorOverload: {
-				auto ns_it = namespace_symbols_.find(entry.namespace_handle);
-				if (ns_it != namespace_symbols_.end()) {
-					auto sym_it = ns_it->second.find(entry.name_key);
-					if (sym_it != ns_it->second.end() && !sym_it->second.empty()) {
-						sym_it->second.pop_back();
-						if (sym_it->second.empty()) {
-							ns_it->second.erase(sym_it);
-						}
-					}
-				}
-				break;
-			}
-			case SymbolTableInsertUndo::Op::RestoreGlobalNamespaceMirrorNode: {
-				auto ns_it = namespace_symbols_.find(entry.namespace_handle);
-				if (ns_it != namespace_symbols_.end()) {
-					auto sym_it = ns_it->second.find(entry.name_key);
-					if (sym_it != ns_it->second.end() && entry.index < sym_it->second.size()) {
-						sym_it->second[entry.index] = entry.previous_node;
-					}
-				}
-				break;
-			}
-			}
-		}
-	}
-
-	void rollbackInsert(SymbolTableInsertUndo& undo) {
-		rollbackInsert(static_cast<const SymbolTableInsertUndo&>(undo));
-		undo.entries.clear();
 	}
 
 	// Replace a non-function symbol in the current scope with a new node.
@@ -1850,29 +1585,6 @@ private:
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table
 	ChunkedStringAllocator string_allocator_{64 * 1024};	 // 64 KB chunks for symbol names
-
-	void pushInsertUndo(
-		SymbolTableInsertUndo* undo,
-		SymbolTableInsertUndo::Op op,
-		ScopeId scope_id,
-		NamespaceHandle namespace_handle,
-		StringHandle name_key,
-		std::string_view scope_key,
-		std::size_t index,
-		ASTNode previous_node) const {
-		if (undo == nullptr) {
-			return;
-		}
-		SymbolTableInsertUndo::Entry entry{};
-		entry.op = op;
-		entry.scope_id = scope_id;
-		entry.namespace_handle = namespace_handle;
-		entry.name_key = name_key;
-		entry.scope_key = scope_key;
-		entry.index = index;
-		entry.previous_node = previous_node;
-		undo->entries.push_back(entry);
-	}
 
 	// Set to track all interned strings for fast O(1) deduplication
 	std::unordered_set<std::string_view> interned_strings_;
