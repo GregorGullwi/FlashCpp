@@ -175,12 +175,9 @@ static void printOutsideDiagnosticTelemetry() {
 	printMigrationTelemetry();
 	if (FrontendContext* active = FrontendContext::active()) {
 		if (gSymbolTable.persistentScopePublicationEnabled()) {
-			FrontendContext* publisher = gSymbolTable.persistentScopePublicationContext();
-			if (publisher == nullptr) {
-				throw InternalError("gSymbolTable persistent scope publication is missing its bound FrontendContext");
-			}
-			if (publisher->scopeRecordCount() != gSymbolTable.scopeCount() ||
-				publisher->currentScopeId() != gSymbolTable.currentScopeId()) {
+			const FrontendContext& publisher = requirePersistentScopePublicationContext(gSymbolTable);
+			if (publisher.scopeRecordCount() != gSymbolTable.scopeCount() ||
+				publisher.currentScopeId() != gSymbolTable.currentScopeId()) {
 				throw InternalError("FrontendContext scope arena diverged from SymbolTable");
 			}
 		}
