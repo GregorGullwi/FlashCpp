@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 28
+Last updated: 2026-09-01 after pull request boundary 29
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 28 are landed.
+  and entities). Pull request boundaries 1 through 29 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -115,7 +115,7 @@ Last updated: 2026-09-01 after pull request boundary 28
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–28)
+## Pull request boundary status (1–29)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -147,6 +147,7 @@ Last updated: 2026-09-01 after pull request boundary 28
 | 26 | Attribute InlineVector spills to named families; tag overload-resolution and template-argument hot vectors; report per-family counts in arena and migration telemetry |
 | 27 | Route AstToIr constructor-template materialization through `TemplateEngine::materializeMatchingConstructorTemplate`; delete last external direct `Parser` constructor-template call |
 | 28 | Mutation-validate parser shadow merging and retained SymbolTable authority; delete the unused nontransactional parser-publication adapter and abandoned `SymbolTableInsertUndo` control path |
+| 29 | Route `ExpressionSubstitutor` dependent member-function template instantiation through `TemplateEngine::tryInstantiateMemberFunctionTemplateCall`; delete last external direct `Parser` member-template call bypass |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -180,10 +181,9 @@ boundary 1 is started, not finished.
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure"
   - Boundary 1 "every template instantiation entry point passes through the
-    facade": external callers use `TemplateEngine`; constexpr, substitution,
-    sema binary operator-template, and AstToIr constructor-template paths now
-    route through the facade; parser-internal paths remain direct until
-    boundary 6/8A
+    facade": all non-parser modules (`ConstExpr`, `ExpressionSubstitutor`,
+    `SemanticAnalysis`, `AstToIr`) route template instantiation through
+    `TemplateEngine`; parser-internal paths remain direct until boundary 6/8A
   - Boundary 1 "a scratch transaction can allocate declarations and types, fail,
     and leave every committed registry unchanged": scratch proven in doctest;
     `PublicationTransaction` covers DeclarationBuilder entity/declaration
@@ -212,20 +212,21 @@ boundary 1 is started, not finished.
     lexical `ScopeId`s while sharing one `OwnerId` / `EntityId`, and preserves
     `inline` plus definition state through the redeclaration chain.
 
-Boundary-28 validation: `build_flashcpp.bat`; direct clang-cl doctest build,
-four parser-shadow doctests, and the retained-SymbolTable-insertion doctest;
-`test_decl_builder_wire_free_fn_ret42.cpp`,
-`test_decl_builder_publication_transaction_ret42.cpp`,
-`test_inline_ns_overload_merge_ret0.cpp`, and
-`test_using_decl_namespace_overload_merge_ret2.cpp`; migration counter
-baselines unchanged; dollar inventory 17/17; full Windows runner (2,962
-single-file tests, 255 negative tests, and one multi-TU case); and
-`git diff --check` pass. Namespace-owner, inline-flag, and overload-retention
-mutations each fail the intended doctest.
+Boundary-29 validation: `build_flashcpp.bat`; migration counter baselines
+unchanged; dollar inventory 17/17;
+`test_member_template_call_ret0.cpp`,
+`test_template_substitute_depname_swap_ret42.cpp`,
+`dependent_member_template_record_ret42.cpp`,
+`test_explicit_member_template_pointer_overload_cache_ret0.cpp`,
+`test_template_recursive_static_constexpr_member_ret0.cpp`, and
+`test_var_template_replay_dependent_member_template_call_ret0.cpp`; and
+`git diff --check` pass. Grep confirms no external
+`.tryInstantiateMemberFunctionTemplateCall(` on `Parser` outside
+`TemplateEngine.h`.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 28-31%, confidence medium
+- Implementation effort completed overall: 29-32%, confidence medium
 
 ## Remaining work
 
