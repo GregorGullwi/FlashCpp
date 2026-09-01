@@ -41,7 +41,7 @@ size_t getResolvedTypeSizeBytes(const TypeSpecifierNode& type_spec, TypeIndex re
 MemberSizeAndAlignment calculateResolvedMemberSizeAndAlignment(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index);
 int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg);
 TemplateArgumentVector toInlineTemplateArgs(std::span<const TemplateTypeArg> template_args);
-InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(std::span<const TemplateTypeArg> template_args);
+TemplateArgInfoVector convertToTemplateArgInfo(std::span<const TemplateTypeArg> template_args);
 std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_view type_name);
 std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified_namespace);
 void collectLambdaCaptureCandidates(
@@ -51,7 +51,7 @@ void collectLambdaCaptureCandidates(
 void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names);
 
 void registerTypeParamsInScope(
-	const InlineVector<StringHandle, 4>& param_names,
+	const TemplateParamNameVector& param_names,
 	const TemplateArgumentVector& type_args,
 	FlashCpp::TemplateParameterScope& scope);
 
@@ -60,17 +60,17 @@ TypeInfo& registerTemplateTypeBinding(
 	const TemplateTypeArg& arg);
 
 void registerTypeParamsInScope(
-	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
+	const TemplateParameterVector& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope);
 
 void registerTypeParamsInScope(
-	const InlineVector<ASTNode, 4>& template_param_nodes,
+	const TemplateAstNodeVector& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope);
 
 void registerTypeParamsInScope(
-	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
+	const TemplateParameterVector& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
@@ -96,7 +96,7 @@ void registerTypeParamsInScope(
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);
 
 void registerTypeParamsInScope(
-	const InlineVector<ASTNode, 4>& template_param_nodes,
+	const TemplateAstNodeVector& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map);

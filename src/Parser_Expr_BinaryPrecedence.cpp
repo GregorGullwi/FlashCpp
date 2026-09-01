@@ -1813,7 +1813,7 @@ bool Parser::parse_static_member_function(
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
-	const InlineVector<StringHandle, 4>& current_template_param_names,
+	const TemplateParamNameVector& current_template_param_names,
 	bool add_to_struct_info,
 	bool add_to_ast_nodes) {
 	// Check if this is a function (has '(')
@@ -2000,7 +2000,7 @@ ParseResult Parser::parse_static_member_block(
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
 	AccessSpecifier current_access,
-	const InlineVector<StringHandle, 4>& current_template_param_names,
+	const TemplateParamNameVector& current_template_param_names,
 	bool use_struct_type_info,
 	bool add_functions_to_ast_nodes) {
 	// consume "static" already done by caller

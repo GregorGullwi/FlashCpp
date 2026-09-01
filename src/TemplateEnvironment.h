@@ -27,19 +27,19 @@ struct TemplateBinding {
 	StringHandle name;
 	TemplateParameterKind kind{};
 	bool is_pack = false;
-	InlineVector<TemplateTypeArg, 1> args;
+	InlineVector<TemplateTypeArg, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> args;
 };
 
 struct TemplateBindingSnapshot {
 	StringHandle name;
 	TemplateParameterKind kind{};
 	bool is_pack = false;
-	InlineVector<TypeInfo::TemplateArgInfo, 1> args;
+	InlineVector<TypeInfo::TemplateArgInfo, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> args;
 };
 
 struct TemplateEnvironmentSnapshotNode {
 	const TemplateEnvironmentSnapshotNode* parent = nullptr;
-	InlineVector<TemplateBindingSnapshot, 4> bindings;
+	InlineVector<TemplateBindingSnapshot, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> bindings;
 };
 
 struct TemplateEnvironmentSnapshot {
@@ -47,7 +47,7 @@ struct TemplateEnvironmentSnapshot {
 };
 
 struct TemplateEnvironment {
-	InlineVector<TemplateBinding, 4> bindings;
+	InlineVector<TemplateBinding, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> bindings;
 	const TemplateEnvironment* parent = nullptr;
 
 	const TemplateTypeArg* findOne(StringHandle name) const;
@@ -87,7 +87,7 @@ struct TemplateInstantiationContext {
 	std::span<const TemplateParameterNode> template_parameters;
 	std::span<const TemplateTypeArg> template_arguments;
 	TemplateEnvironment environment;
-	InlineVector<TemplatePackExpansionState, 2> pack_state;
+	InlineVector<TemplatePackExpansionState, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> pack_state;
 	TypeIndex current_instantiation_type{};
 	TemplateLookupContext lookup_context;
 	const TemplateDefinitionLookupContext* definition_lookup_context = nullptr;
@@ -105,7 +105,7 @@ struct TemplateInstantiationContext {
 
 TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg);
 TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg);
-InlineVector<TypeInfo::TemplateArgInfo, 4> toTemplateArgInfoList(std::span<const TemplateTypeArg> args);
+TemplateArgInfoVector toTemplateArgInfoList(std::span<const TemplateTypeArg> args);
 TemplateArgumentVector toTemplateTypeArgList(std::span<const TypeInfo::TemplateArgInfo> args);
 TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 	std::span<const StringHandle> param_names,
@@ -117,8 +117,8 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 bool hasTemplateEnvironmentSnapshotBindings(const TemplateEnvironmentSnapshot& snapshot);
 void populateTemplateEnvironmentLegacyViews(
 	const TemplateEnvironmentSnapshot& snapshot,
-	InlineVector<StringHandle, 4>& out_param_names,
-	InlineVector<TypeInfo::TemplateArgInfo, 4>& out_args);
+	TemplateParamNameVector& out_param_names,
+	TemplateArgInfoVector& out_args);
 
 TemplateEnvironment buildTemplateEnvironment(
 	std::span<const TemplateParameterNode> params,

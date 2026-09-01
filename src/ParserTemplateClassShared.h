@@ -59,11 +59,11 @@ namespace ParserExpressionDependency {
 
 bool argsHaveDeferredTemplateDependency(
 	const ChunkedVector<ASTNode>& args,
-	const InlineVector<StringHandle, 4>& current_template_param_names);
+	const TemplateParamNameVector& current_template_param_names);
 
 bool argTypesAreDeferredTemplateDependent(
 	std::span<const TypeSpecifierNode> arg_types,
-	const InlineVector<StringHandle, 4>& current_template_param_names);
+	const TemplateParamNameVector& current_template_param_names);
 
 } // namespace ParserExpressionDependency
 
@@ -98,7 +98,7 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	}
 	if (!resolved_alias.array_dimensions.empty()) {
 		const std::span<const size_t> type_dimensions = type_spec.array_dimensions();
-		InlineVector<size_t, 4> array_dimensions;
+		InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> array_dimensions;
 		array_dimensions.reserve(type_dimensions.size() + resolved_alias.array_dimensions.size());
 		for (size_t dimension : type_dimensions) {
 			array_dimensions.push_back(dimension);
@@ -263,8 +263,8 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 		signature.updateReturnType(substitute_function_type);
 	}
 	if (!signature.parameter_types().empty()) {
-		signature.updateParameterTypes([&](InlineVector<FunctionType, 4>& parameter_types) {
-			InlineVector<FunctionType, 4> substituted_parameter_types;
+		signature.updateParameterTypes([&](InlineVector<FunctionType, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>& parameter_types) {
+			InlineVector<FunctionType, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> substituted_parameter_types;
 			substituted_parameter_types.reserve(parameter_types.size());
 			for (FunctionType& parameter_type : parameter_types) {
 				bool expanded_pack = false;
@@ -413,7 +413,7 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 		throw InternalError(
 			"Concrete function pointer type is missing canonical FunctionSignature metadata");
 	}
-	InlineVector<TemplateParameterNode, 4> semantic_template_params;
+	TemplateParameterVector semantic_template_params;
 	semantic_template_params.reserve(template_params.size());
 	for (const auto& template_param_node : template_params) {
 		const TemplateParameterNode* template_param =
@@ -1564,29 +1564,29 @@ void appendLazyTemplateSequence(TDest& destination, const TSource& source) {
 }
 
 inline void appendLazyTemplateSequence(
-	InlineVector<ASTNode, 4>& destination,
-	const InlineVector<TemplateParameterNode, 4>& source) {
+	TemplateAstNodeVector& destination,
+	const TemplateParameterVector& source) {
 	for (const auto& value : source) {
 		destination.push_back(ASTNode::emplace_node<TemplateParameterNode>(value));
 	}
 }
 
 inline void mergeMissingLazyOuterBindings(
-	InlineVector<TemplateParameterNode, 4>& template_params,
+	TemplateParameterVector& template_params,
 	TemplateArgumentVector& template_args,
 	const TemplateEnvironmentSnapshot& outer_snapshot) {
 	if (!hasTemplateEnvironmentSnapshotBindings(outer_snapshot)) {
 		return;
 	}
 
-	InlineVector<StringHandle, 4> outer_param_names;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos;
+	TemplateParamNameVector outer_param_names;
+	TemplateArgInfoVector outer_arg_infos;
 	populateTemplateEnvironmentLegacyViews(
 		outer_snapshot,
 		outer_param_names,
 		outer_arg_infos);
 
-	InlineVector<TemplateParameterNode, 4> merged_params;
+	TemplateParameterVector merged_params;
 	TemplateArgumentVector merged_args;
 	merged_params.reserve(outer_param_names.size() + template_params.size());
 	merged_args.reserve(outer_arg_infos.size() + template_args.size());

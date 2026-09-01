@@ -10,6 +10,8 @@ enum class TypeCategory : uint8_t;
 enum class TemplateParameterKind : int;
 class StructDeclarationNode;
 
+#include "TemplateInlineVectorAliases.h"
+
 enum class TypeQualifier {
 	None,
 	Signed,
@@ -44,9 +46,9 @@ struct TemplateDefinitionLookupContext {
 };
 
 struct TemplateReplayParameterState {
-	InlineVector<StringHandle, 4> names;
-	InlineVector<TemplateParameterKind, 4> kinds;
-	InlineVector<TypeCategory, 4> non_type_categories;
+	TemplateParamNameVector names;
+	TemplateParameterKindVector kinds;
+	TemplateTypeCategoryVector non_type_categories;
 
 	bool hasParameters() const {
 		return !names.empty();
@@ -856,7 +858,7 @@ struct DeferredTemplateMemberBody {
 	SaveHandle initializer_list_start;		   // Handle to saved position at ':' for ctor initializer list
 	size_t struct_type_index;				  // Type index (0 during template definition)
 	bool has_initializer_list;				   // True if constructor has an initializer list
-	InlineVector<StringHandle, 4> template_param_names; // Template parameter names
+	TemplateParamNameVector template_param_names; // Template parameter names
 };
 
 /// Helper function to get the C++ name string for a type category.
@@ -1109,7 +1111,7 @@ struct FunctionType {
 // with no refcount.
 struct FunctionCallableTypes {
 	FunctionType return_type{};
-	InlineVector<FunctionType, 4> parameter_types;
+	InlineVector<FunctionType, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> parameter_types;
 };
 
 // Function signature for function pointers
@@ -1119,7 +1121,7 @@ struct FunctionSignature {
 	TypeIndex return_type_index{};
 	int return_pointer_depth = 0;
 	ReferenceQualifier return_reference_qualifier = ReferenceQualifier::None;
-	InlineVector<TypeIndex, 4> parameter_type_indices;
+	InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> parameter_type_indices;
 	Linkage linkage = Linkage::None;			 // C vs C++ linkage
 	StringHandle class_name;	   // For member function pointers
 	CallingConvention calling_convention = CallingConvention::Default;
@@ -1165,7 +1167,7 @@ struct FunctionSignature {
 		callable_types = &storage;
 	}
 
-	void setParameterTypes(InlineVector<FunctionType, 4> types) {
+	void setParameterTypes(InlineVector<FunctionType, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> types) {
 		parameter_type_indices.clear();
 		parameter_type_indices.reserve(types.size());
 		for (const FunctionType& type : types) {
@@ -1190,7 +1192,7 @@ struct FunctionSignature {
 
 	template <typename Mutator>
 	void updateParameterTypes(Mutator&& mutator) {
-		InlineVector<FunctionType, 4> types;
+		InlineVector<FunctionType, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> types;
 		types = parameter_types();
 		mutator(types);
 		setParameterTypes(std::move(types));

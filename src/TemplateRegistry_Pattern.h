@@ -14,16 +14,16 @@ inline bool patternPointerDepthMatches(
 
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
-	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters (e.g., <typename T>)
+	TemplateParameterVector template_params; // Template parameters (e.g., <typename T>)
 	ASTNode function_node; // FunctionDeclarationNode
 	SaveHandle body_start; // Handle to saved position of function body for re-parsing
 	SaveHandle initializer_list_start{}; // Handle to saved position at ':' for ctor initializer re-parse
-	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
+	TemplateParamNameVector template_param_names; // Names of template parameters
 	// For nested templates (member function templates of class templates):
 	// template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
 	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
-	InlineVector<TemplateParameterNode, 4> inner_template_params;
-	InlineVector<StringHandle, 4> inner_template_param_names;
+	TemplateParameterVector inner_template_params;
+	TemplateParamNameVector inner_template_param_names;
 	TemplateDefinitionLookupContext definition_lookup_context; // Definition-context lookup boundary for two-phase lookup
 	const StructDeclarationNode* pattern_owner_struct_node = nullptr;
 	// Function specifiers from out-of-line definition (= default, = delete)
@@ -36,23 +36,23 @@ struct OutOfLineMemberFunction {
 // Stored when a TemplateFunctionDeclarationNode is copied during class template instantiation.
 // Used during inner template instantiation to resolve outer template params (e.g., T→int).
 struct OuterTemplateBinding {
-	InlineVector<StringHandle, 4> param_names; // Outer param names (e.g., ["T"])
+	TemplateParamNameVector param_names; // Outer param names (e.g., ["T"])
 	TemplateArgumentVector param_args; // Concrete types (e.g., [int])
-	InlineVector<ASTNode, 4> params; // Original outer template params, preserving variadic/kind metadata
+	TemplateAstNodeVector params; // Original outer template params, preserving variadic/kind metadata
 	TemplateArgumentVector all_args; // Full flattened outer arg list, including pack expansions
 };
 
 // Out-of-line template static member variable definition
 struct OutOfLineMemberVariable {
-	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters (e.g., <typename T>)
-	InlineVector<TemplateParameterNode, 4> replay_template_params; // Full replay-visible params (outer + nested member-template params)
+	TemplateParameterVector template_params; // Template parameters (e.g., <typename T>)
+	TemplateParameterVector replay_template_params; // Full replay-visible params (outer + nested member-template params)
 	StringHandle member_name; // Name of the static member variable
 	ASTNode type_node; // Type of the variable (TypeSpecifierNode)
 	std::optional<ASTNode> declaration; // Declaration node for replay-based initializer parsing
 	std::optional<ASTNode> initializer; // Initializer expression
 	std::optional<SaveHandle> initializer_position; // Saved lexer position at '=' for instantiation-time reparse
 	TemplateDefinitionLookupContext definition_lookup_context; // Definition-context lookup boundary for two-phase lookup
-	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
+	TemplateParamNameVector template_param_names; // Names of template parameters
 };
 
 // Out-of-line template nested class definition
@@ -60,10 +60,10 @@ struct OutOfLineMemberVariable {
 //   template<typename T> struct Outer<T>::Inner { ... };     (partial — applies to all instantiations)
 //   template<> struct Wrapper<int>::Nested { int x; };       (full — applies only when args match)
 struct OutOfLineNestedClass {
-	InlineVector<TemplateParameterNode, 4> template_params; // Outer template parameters (e.g., <typename T>)
+	TemplateParameterVector template_params; // Outer template parameters (e.g., <typename T>)
 	StringHandle nested_class_name; // Name of the nested class (e.g., "Inner")
 	SaveHandle body_start; // Saved position at the struct/class keyword for re-parsing via parse_struct_declaration()
-	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
+	TemplateParamNameVector template_param_names; // Names of template parameters
 	bool is_class = false; // true if 'class', false if 'struct'
 	size_t pack_alignment = 0; // Active #pragma pack value at the definition site
 	TemplateArgumentVector specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
@@ -73,23 +73,23 @@ struct OutOfLineNestedClass {
 // Stores information about dependent member type checks like "typename T::traits::value_type"
 struct SfinaeCondition {
 	size_t template_param_index; // Which template parameter (e.g., 0 for T in has_type<T>)
-	InlineVector<StringHandle, 4> member_chain; // The member type chain to check (e.g., traits::value_type)
+	TemplateParamNameVector member_chain; // The member type chain to check (e.g., traits::value_type)
 
 	SfinaeCondition() : template_param_index(0) {}
-	SfinaeCondition(size_t idx, InlineVector<StringHandle, 4> chain)
+	SfinaeCondition(size_t idx, TemplateParamNameVector chain)
 		: template_param_index(idx), member_chain(std::move(chain)) {}
 };
 
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
 struct TemplatePattern {
-	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters (e.g., typename T)
+	TemplateParameterVector template_params; // Template parameters (e.g., typename T)
 	TemplateArgumentVector pattern_args; // Pattern like T&, T*, etc.
 	ASTNode specialized_node; // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition; // Optional SFINAE check for void_t patterns
 
 	// Constructor to avoid aggregate initialization issues with mutable cache fields
 	TemplatePattern() = default;
-	TemplatePattern(InlineVector<TemplateParameterNode, 4> tp, TemplateArgumentVector pa,
+	TemplatePattern(TemplateParameterVector tp, TemplateArgumentVector pa,
 					ASTNode sn, std::optional<SfinaeCondition> sc)
 		: template_params(std::move(tp)), pattern_args(std::move(pa)),
 		  specialized_node(std::move(sn)), sfinae_condition(std::move(sc)) {}
@@ -222,8 +222,8 @@ struct TemplatePattern {
 	}
 
 	static bool matchInnerArgs(
-		const InlineVector<TypeInfo::TemplateArgInfo, 4>& pattern_inner_args,
-		const InlineVector<TypeInfo::TemplateArgInfo, 4>& concrete_inner_args,
+		const TemplateArgInfoVector& pattern_inner_args,
+		const TemplateArgInfoVector& concrete_inner_args,
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
 		int nested_arg_depth) {

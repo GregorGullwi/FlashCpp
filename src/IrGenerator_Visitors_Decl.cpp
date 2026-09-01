@@ -2045,7 +2045,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		auto addDispatchStore = [&](int64_t offset,
 			StringHandle vtable_symbol,
 			StringHandle virtual_base_table_symbol,
-			InlineVector<int32_t, 1> virtual_base_table_offsets) {
+			InlineVector<int32_t, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> virtual_base_table_offsets) {
 			if (offset < 0 || offset > std::numeric_limits<int>::max()) {
 				throw InternalError("Runtime dispatch pointer offset exceeds IR range");
 			}
@@ -2078,7 +2078,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				throw InternalError("Virtual-base table initialization is missing the source type index");
 			}
 
-			InlineVector<int32_t, 1> offsets;
+			InlineVector<int32_t, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> offsets;
 			offsets.reserve(source_struct_info->virtual_bases.size());
 			for (const auto& virtual_base : source_struct_info->virtual_bases) {
 				const std::optional<size_t> absolute_offset =

@@ -47,7 +47,7 @@ ParseResult Parser::parse_concept_declaration() {
 
 	// Create the ConceptDeclarationNode
 	// For simplified concepts (without template<>), we use an empty template parameter list
-	InlineVector<TemplateParameterNode, 4> template_params;
+	TemplateParameterVector template_params;
 
 	auto concept_node = emplace_node<ConceptDeclarationNode>(
 		concept_name_token,
@@ -328,7 +328,7 @@ ParseResult Parser::parse_requires_expression() {
 ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 	const RequiresExpressionNode& requires_expr,
 	const TemplateArgumentVector& template_args,
-	const InlineVector<std::string_view, 4>& template_param_names,
+	const TemplateParamNameViewVector& template_param_names,
 	Parser* parser,
 	std::span<const TemplateParameterNode> template_params) {
 	std::optional<Parser::ScopedParserInstantiationContext> requires_probe;

@@ -66,8 +66,8 @@ std::optional<EvalResult> tryEvaluateEnumConstant(
 	StringHandle enumerator_name);
 TemplateParameterKind inferTemplateBindingKindForLookup(const TemplateTypeArg& arg);
 TemplateEnvironment buildOuterFunctionTemplateEnvironment(
-	const InlineVector<StringHandle, 4>& param_names,
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& args);
+	const TemplateParamNameVector& param_names,
+	const TemplateArgInfoVector& args);
 const StructMemberFunction* findMemberFunctionMetadataRecursive(
 	const StructTypeInfo* struct_info,
 	const FunctionDeclarationNode& target_function);
@@ -75,7 +75,7 @@ const StructMemberFunction* findFinalOverrider(
 	const StructTypeInfo* dynamic_struct_info,
 	const StructMemberFunction& base_virtual,
 	size_t param_count);
-InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
+TemplateParameterVector getTemplateParametersForTypeInfo(
 	const TypeInfo& owner_type_info,
 	Parser& parser_context);
 std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(

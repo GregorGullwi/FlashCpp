@@ -657,7 +657,7 @@ public:
 	// Overload that accepts template parameters (eliminates global callback)
 	std::optional<ASTNode> lookup(StringHandle identifier,
 								  ScopeHandle scope_limit_handle,
-								  const InlineVector<StringHandle, 4>* template_params) const {
+								  const TemplateParamNameVector* template_params) const {
 		// Check if this is a template parameter
 		if (template_params) {
 			auto it = std::find(template_params->begin(), template_params->end(), identifier);
@@ -1833,7 +1833,7 @@ public:
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
 
-		InlineVector<std::string_view, 4> namespace_components;
+		TemplateParamNameViewVector namespace_components;
 		size_t start = 0;
 		while (true) {
 			size_t pos = qualified_namespace.find("::", start);

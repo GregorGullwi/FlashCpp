@@ -94,14 +94,14 @@ bool isNestedOwnerExtension(
 struct ExpressionDependentMemberSegmentInfo {
 	StringHandle name;
 	bool has_template_keyword = false;
-	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> template_args;
+	std::optional<TemplateArgInfoVector> template_args;
 };
 
 TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
 	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
-	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	TemplateArgInfoVector owner_template_arguments,
 	std::span<const StringHandle> member_names) {
 	TypeInfo::DependentQualifiedNameRecord record;
 	record.owner_kind = owner_kind;
@@ -122,7 +122,7 @@ TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecor
 	StringHandle owner_name,
 	TypeIndex owner_type,
 	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
-	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	TemplateArgInfoVector owner_template_arguments,
 	std::span<const ExpressionDependentMemberSegmentInfo> member_segments) {
 	TypeInfo::DependentQualifiedNameRecord record;
 	record.owner_kind = owner_kind;
@@ -1092,8 +1092,8 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 bool Parser::templateArgumentsMatchCurrentInstantiation(
 	std::span<const TemplateTypeArg> parsed_args,
 	const TypeInfo* current_type_info) const {
-	const InlineVector<StringHandle, 4>* current_param_names = nullptr;
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>* current_concrete_args = nullptr;
+	const TemplateParamNameVector* current_param_names = nullptr;
+	const TemplateArgInfoVector* current_concrete_args = nullptr;
 	if (current_function_ != nullptr && current_function_->has_outer_template_bindings()) {
 		current_param_names = &current_function_->outer_template_param_names();
 		current_concrete_args = &current_function_->outer_template_args();
@@ -1179,7 +1179,7 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 		return std::nullopt;
 	}
 
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>* current_concrete_args = nullptr;
+	const TemplateArgInfoVector* current_concrete_args = nullptr;
 	if (current_function_ != nullptr && current_function_->has_outer_template_bindings()) {
 		current_concrete_args = &current_function_->outer_template_args();
 	} else if (current_type_info != nullptr &&
@@ -1688,24 +1688,24 @@ ExpressionNode Parser::makeDeferredDependentQualifiedCallExpr(
 namespace {
 bool astNodeHasDeferredTemplateDependency(
 	const ASTNode& node,
-	const InlineVector<StringHandle, 4>& current_template_param_names);
+	const TemplateParamNameVector& current_template_param_names);
 
 bool identifierRefersToCurrentTemplateParam(
 	StringHandle identifier,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return identifier.isValid() &&
 		   std::find(current_template_param_names.begin(), current_template_param_names.end(), identifier) != current_template_param_names.end();
 }
 
 bool identifierRefersToCurrentTemplateParam(
 	const Token& identifier,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return identifierRefersToCurrentTemplateParam(identifier.handle(), current_template_param_names);
 }
 
 bool typeRefersToCurrentTemplateParam(
 	const TypeSpecifierNode& type_spec,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	if (type_spec.category() == TypeCategory::Template) {
 		return true;
 	}
@@ -1746,7 +1746,7 @@ bool typeRefersToCurrentTemplateParam(
 
 bool identifierExpressionHasDeferredTemplateDependency(
 	const IdentifierNode& identifier,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	if (identifierRefersToCurrentTemplateParam(identifier.nameHandle(), current_template_param_names)) {
 		return true;
 	}
@@ -1775,7 +1775,7 @@ bool identifierExpressionHasDeferredTemplateDependency(
 
 bool argTypesAreDeferredTemplateDependent(
 	std::span<const TypeSpecifierNode> arg_types,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return std::any_of(
 		arg_types.begin(),
 		arg_types.end(),
@@ -1786,7 +1786,7 @@ bool argTypesAreDeferredTemplateDependent(
 
 bool callTemplateArgumentsAreDependent(
 	std::span<const ASTNode> template_args,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	for (const ASTNode& template_arg : template_args) {
 		if (astNodeHasDeferredTemplateDependency(template_arg, current_template_param_names)) {
 			return true;
@@ -1797,13 +1797,13 @@ bool callTemplateArgumentsAreDependent(
 
 bool optionalAstNodeHasDeferredTemplateDependency(
 	const std::optional<ASTNode>& node,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return node.has_value() && astNodeHasDeferredTemplateDependency(*node, current_template_param_names);
 }
 
 bool astNodesHaveDeferredTemplateDependency(
 	std::span<const ASTNode> nodes,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return std::any_of(
 		nodes.begin(),
 		nodes.end(),
@@ -1815,7 +1815,7 @@ bool astNodesHaveDeferredTemplateDependency(
 template <uint32_t ChunkSize, uint32_t InternalBufferSize>
 bool astNodesHaveDeferredTemplateDependency(
 	const ChunkedVector<ASTNode, ChunkSize, InternalBufferSize>& nodes,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	bool has_dependent_node = false;
 	nodes.visit([&](ASTNode node) {
 		if (!has_dependent_node && astNodeHasDeferredTemplateDependency(node, current_template_param_names)) {
@@ -1827,8 +1827,8 @@ bool astNodesHaveDeferredTemplateDependency(
 
 template <size_t N>
 bool astNodesHaveDeferredTemplateDependency(
-	const InlineVector<ASTNode, N>& nodes,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const InlineVector<ASTNode, N, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& nodes,
+	const TemplateParamNameVector& current_template_param_names) {
 	return std::any_of(
 		nodes.begin(),
 		nodes.end(),
@@ -1839,7 +1839,7 @@ bool astNodesHaveDeferredTemplateDependency(
 
 bool expressionHasDeferredTemplateDependency(
 	const ExpressionNode& expr,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return std::visit(
 		[&](const auto& inner) -> bool {
 			using T = std::decay_t<decltype(inner)>;
@@ -1977,7 +1977,7 @@ bool expressionHasDeferredTemplateDependency(
 
 bool astNodeHasDeferredTemplateDependency(
 	const ASTNode& node,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	if (!node.has_value()) {
 		return false;
 	}
@@ -1993,7 +1993,7 @@ bool astNodeHasDeferredTemplateDependency(
 template <uint32_t ChunkSize, uint32_t InternalBufferSize>
 bool argsHaveDeferredTemplateDependency(
 	const ChunkedVector<ASTNode, ChunkSize, InternalBufferSize>& args,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return astNodesHaveDeferredTemplateDependency(args, current_template_param_names);
 }
 
@@ -2076,7 +2076,7 @@ void attachQualifiedIdentifierTemplateArguments(
 		syncTemplateArgumentNodeMetadata(template_arg_nodes, *template_args);
 	}
 	if (!template_arg_nodes.empty()) {
-		if constexpr (std::is_same_v<TemplateArgumentNodes, InlineVector<ASTNode, 4>>) {
+		if constexpr (std::is_same_v<TemplateArgumentNodes, TemplateAstNodeVector>) {
 			qual_id.set_template_arguments(std::move(template_arg_nodes).toVector());
 		} else {
 			qual_id.set_template_arguments(std::move(template_arg_nodes));
@@ -2214,19 +2214,19 @@ std::optional<std::pair<TypeIndex, SizeInBits>> tryResolveConstructibleClassAlia
 
 bool ParserExpressionDependency::argsHaveDeferredTemplateDependency(
 	const ChunkedVector<ASTNode>& args,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return ::argsHaveDeferredTemplateDependency(args, current_template_param_names);
 }
 
 bool ParserExpressionDependency::argTypesAreDeferredTemplateDependent(
 	std::span<const TypeSpecifierNode> arg_types,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return ::argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names);
 }
 
 bool ParserExpressionDependency::nodeHasDeferredTemplateDependency(
 	const ASTNode& node,
-	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	const TemplateParamNameVector& current_template_param_names) {
 	return ::astNodeHasDeferredTemplateDependency(
 		node, current_template_param_names);
 }
@@ -3089,9 +3089,9 @@ Parser::ensureIncompleteClassTemplateSpecializationPlaceholder(
 	if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
 		TypeInfo& existing_type = *existing_it->second;
 		if (!existing_type.isTemplateInstantiation()) {
-			InlineVector<TypeInfo::TemplateArgInfo, 4> template_args_info =
+			TemplateArgInfoVector template_args_info =
 				toTemplateArgInfoList(template_args);
-			InlineVector<StringHandle, 4> placeholder_param_names;
+			TemplateParamNameVector placeholder_param_names;
 			if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 				template_opt.has_value() &&
 				template_opt->is<TemplateClassDeclarationNode>()) {
@@ -3137,9 +3137,9 @@ Parser::ensureIncompleteClassTemplateSpecializationPlaceholder(
 	type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 	getTypesByNameMap()[instantiated_handle] = &type_info;
 
-	InlineVector<TypeInfo::TemplateArgInfo, 4> template_args_info =
+	TemplateArgInfoVector template_args_info =
 		toTemplateArgInfoList(template_args);
-	InlineVector<StringHandle, 4> placeholder_param_names;
+	TemplateParamNameVector placeholder_param_names;
 	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		template_opt.has_value() &&
 		template_opt->is<TemplateClassDeclarationNode>()) {
@@ -3289,7 +3289,7 @@ ParseResult Parser::parseExplicitTemplateTypeConstruction(
 	}
 
 	if (has_dependent_args) {
-		InlineVector<TypeInfo::TemplateArgInfo, 4> dependent_template_args =
+		TemplateArgInfoVector dependent_template_args =
 			toTemplateArgInfoList(explicit_template_args);
 		StringBuilder dependent_type_builder;
 		dependent_type_builder.append(identifier_token.value());
@@ -4986,7 +4986,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// after qualified identifiers, BUT check if the member is actually a template first
 			// to avoid misinterpreting comparisons like _R1::num < _R2::num
 			std::optional<TemplateArgumentVector> template_args;
-			InlineVector<ASTNode, 4> template_arg_nodes;	 // Store the actual expression nodes
+			TemplateAstNodeVector template_arg_nodes;	 // Store the actual expression nodes
 			if (current_token_.value() == "<") {
 				// Build the qualified name from namespace handle
 				StringHandle qualified_name = StringTable::getOrInternStringHandle(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()));
@@ -6471,7 +6471,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			// Check if final identifier is followed by template arguments: ns::Template<Args>
 			std::optional<TemplateArgumentVector> template_args;
-			InlineVector<ASTNode, 4> template_arg_nodes;	 // Store the actual expression nodes
+			TemplateAstNodeVector template_arg_nodes;	 // Store the actual expression nodes
 			if (peek() == "<"_tok) {
 				// Before parsing < as template arguments, check if the identifier is actually a template
 				// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
@@ -6536,7 +6536,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
 					TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
 				TypeIndex owner_type_index{};
-				InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arg_infos;
+				TemplateArgInfoVector owner_template_arg_infos;
 				bool owner_is_dependent = false;
 				std::string_view current_owner_name;
 				if (!member_function_context_stack_.empty()) {
@@ -6983,7 +6983,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 							}
 							if (!added) {
-								InlineVector<ASTNode, 4> expanded_args =
+								TemplateAstNodeVector expanded_args =
 									expandPackExpressionArgument(*node);
 								if (!expanded_args.empty()) {
 									for (ASTNode expanded_arg : expanded_args) {

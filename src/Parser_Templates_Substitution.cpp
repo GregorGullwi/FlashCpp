@@ -1196,7 +1196,7 @@ bool Parser::expandPackExpansionArgs(
 	std::span<const PackParamInfo> function_pack_infos,
 	ChunkedVector<ASTNode>& out_args) {
 	const ASTNode& pattern = pack_expansion.pattern();
-	InlineVector<std::pair<size_t, size_t>, 4> template_param_arg_ranges;
+	InlineVector<std::pair<size_t, size_t>, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> template_param_arg_ranges;
 	template_param_arg_ranges.reserve(template_params.size());
 
 	// Keep the argument boundary recorded by deduction. In particular, a
@@ -1241,7 +1241,7 @@ bool Parser::expandPackExpansionArgs(
 	// Also check pack_param_info_ for function parameter packs. Match the pack
 	// name against the pattern so empty packs are still recognized and consumed
 	// instead of leaking a PackExpansionExprNode across the parser/sema boundary.
-	InlineVector<std::string_view, 4> matched_function_pack_names;
+	TemplateParamNameViewVector matched_function_pack_names;
 	for (const auto& pack_info : function_pack_infos) {
 		if (exprContainsIdentifier(pattern, pack_info.original_name)) {
 			matched_function_pack_names.push_back(pack_info.original_name);
@@ -1263,7 +1263,7 @@ bool Parser::expandPackExpansionArgs(
 	FLASH_LOG(Templates, Trace, "Expanding PackExpansionExprNode in function call args: ", *num_pack_elements, " elements");
 	for (size_t pi = 0; pi < *num_pack_elements; ++pi) {
 		// Build substitution params for this single pack element
-		InlineVector<TemplateParameterNode, 4> subst_params;
+		TemplateParameterVector subst_params;
 		TemplateArgumentVector subst_args;
 		for (size_t p = 0; p < template_params.size(); ++p) {
 			const auto& tparam = template_params[p];
@@ -1366,8 +1366,8 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 	return rewriter.rewrite(expr, rewrite_one_to_one, rewrite_zero_to_many);
 }
 
-InlineVector<ASTNode, 4> Parser::expandPackExpressionArgument(const ASTNode& pattern) {
-	InlineVector<const PackParamInfo*, 4> packs_in_expr;
+TemplateAstNodeVector Parser::expandPackExpressionArgument(const ASTNode& pattern) {
+	InlineVector<const PackParamInfo*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> packs_in_expr;
 	for (const auto& pack_info : pack_param_info_) {
 		if (pack_info.pack_size > 0 && exprContainsIdentifier(pattern, pack_info.original_name)) {
 			packs_in_expr.push_back(&pack_info);
@@ -1386,7 +1386,7 @@ InlineVector<ASTNode, 4> Parser::expandPackExpressionArgument(const ASTNode& pat
 		}
 	}
 
-	InlineVector<ASTNode, 4> expanded_args;
+	TemplateAstNodeVector expanded_args;
 	expanded_args.reserve(pack_size);
 	for (size_t i = 0; i < pack_size; ++i) {
 		ASTNode expanded_pattern = pattern;

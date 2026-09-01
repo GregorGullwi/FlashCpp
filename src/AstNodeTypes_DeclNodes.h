@@ -60,9 +60,9 @@ struct ImplicitDefaultConstructorSemanticRecord {
 	bool is_deleted = false;
 	bool requires_synthetic_ir = false;
 	bool has_unresolved_base_initialization = false;
-	InlineVector<ImplicitDefaultBaseInitialization, 1> complete_object_virtual_base_initializers;
-	InlineVector<ImplicitDefaultBaseInitialization, 1> base_object_direct_base_initializers;
-	InlineVector<ImplicitDefaultMemberInitialization, 2> member_initializers;
+	InlineVector<ImplicitDefaultBaseInitialization, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> complete_object_virtual_base_initializers;
+	InlineVector<ImplicitDefaultBaseInitialization, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> base_object_direct_base_initializers;
+	InlineVector<ImplicitDefaultMemberInitialization, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> member_initializers;
 };
 
 // Struct type information
@@ -117,7 +117,7 @@ struct StructTypeInfo {
 	};
 	// Full deferred-template-base metadata captured at parse time.
 	// Name and rich spec stay in one record to avoid parallel-container drift.
-	InlineVector<DeferredTemplateBaseEntry, 4> deferred_template_bases;
+	InlineVector<DeferredTemplateBaseEntry, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> deferred_template_bases;
 	bool vtable_defined_in_tu = false;	// True when the backend has compiled a member function body for this class in the current TU
 	std::vector<const StructMemberFunction*> vtable;	 // Virtual function table (pointers to member functions)
 	std::string_view vtable_symbol;	// MSVC mangled vtable symbol name (e.g., "??_7Base@@6B@"), empty if no vtable
@@ -855,9 +855,8 @@ struct StructTypeInfo {
 		bool include_implicit = true) const;
 
 	// Collect constructor candidates matching argument count.
-	InlineVector<const StructMemberFunction*, 4> getConstructorsByParameterCount(
-		size_t parameter_count,
-		bool skip_implicit) const;
+	InlineVector<const StructMemberFunction*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>
+	getConstructorsByParameterCount(size_t parameter_count, bool skip_implicit) const;
 
 	// Find destructor
 	const StructMemberFunction* findDestructor() const {
@@ -1168,7 +1167,7 @@ struct TypeInfo {
 		static constexpr uint32_t kNoColdPayload = UINT32_MAX;
 
 		TypeIndex type_index;		// Carries both gTypeInfo slot and TypeCategory
-		InlineVector<CVQualifier, 4> pointer_cv_qualifiers;
+		InlineVector<CVQualifier, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> pointer_cv_qualifiers;
 		size_t pointer_depth;		  // Pointer indirection level
 		CVQualifier cv_qualifier;  // cv-qualifiers on the argument
 		ReferenceQualifier ref_qualifier;
@@ -1176,8 +1175,8 @@ struct TypeInfo {
 		bool is_value;		   // true if this is a non-type argument
 		bool is_pack;
 		bool is_array;
-		InlineVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
-		InlineVector<StringHandle, 2> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
+		InlineVector<size_t, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
+		InlineVector<StringHandle, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		bool is_template_template_arg;  // true if this is a template template argument
 		StringHandle template_name;  // Name of the template for template-template arguments
@@ -1228,6 +1227,11 @@ struct TypeInfo {
 		StringHandle stringValue() const { return FlashCpp::get_if<StringHandle>(value); }
 	};
 
+	using TemplateArgInfoVector =
+		InlineVector<TemplateArgInfo, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+	using TemplateArgInfoSingleVector =
+		InlineVector<TemplateArgInfo, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+
 	struct DependentQualifiedNameRecord {
 		enum class OwnerKind : uint8_t {
 			TemplateParameter,
@@ -1238,7 +1242,7 @@ struct TypeInfo {
 
 		struct Member {
 			StringHandle name;
-			InlineVector<TemplateArgInfo, 4> template_arguments;
+			TemplateArgInfoVector template_arguments;
 			bool has_template_arguments;
 			bool has_template_keyword;
 
@@ -1256,8 +1260,8 @@ struct TypeInfo {
 		StringHandle owner_name;
 		TypeIndex owner_type;
 		const StructDeclarationNode* current_instantiation_declaration = nullptr;
-		InlineVector<TemplateArgInfo, 4> owner_template_arguments;
-		InlineVector<Member, 4> member_chain;
+		TemplateArgInfoVector owner_template_arguments;
+		InlineVector<Member, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> member_chain;
 		bool names_current_instantiation;
 
 		DependentQualifiedNameRecord()
@@ -1281,26 +1285,26 @@ struct TypeInfo {
 		struct Binding {
 			StringHandle name;
 			TypeIndex parameter_type_index;
-			InlineVector<TemplateArgInfo, 1> args;
+			TemplateArgInfoSingleVector args;
 			uint8_t kind = 0; // TemplateParameterKind as uint8
 			bool is_pack = false;
 		};
 
-		InlineVector<Binding, 4> bindings;
+		InlineVector<Binding, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> bindings;
 		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
 
 		// Legacy fields for compatibility (populated in parallel during transition)
-		InlineVector<StringHandle, 4> param_names; // Template parameter names (e.g., "T", "U")
+		TemplateParamNameVector param_names; // Template parameter names (e.g., "T", "U")
 		uint32_t param_args_index = kNoTemplateArgs;
 
-		const InlineVector<TemplateArgInfo, 4>& param_args() const;
+		const TemplateArgInfoVector& param_args() const;
 
 		// Phase 5 accessors
 		bool hasInstantiationContextBindings() const { return !bindings.empty(); }
 		size_t getInstantiationContextBindingsCount() const { return bindings.size(); }
 	};
 
-	// Keeps InlineVector<TemplateArgInfo,4> (~1.2KB) out of every TypeInfo row.
+	// Keeps TemplateArgInfoVector (~1.2KB) out of every TypeInfo row.
 	uint32_t template_args_index_ = kNoTemplateArgs;
 
 	// Index into gDependentQualifiedNameRecords. UINT32_MAX = none.
@@ -1354,7 +1358,7 @@ struct TypeInfo {
 	}
 	StringHandle baseTemplateName() const { return base_template_.identifier_handle; }
 	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
-	const InlineVector<TemplateArgInfo, 4>& templateArgs() const;
+	const TemplateArgInfoVector& templateArgs() const;
 	void clearTemplateArgs();
 	bool hasDependentQualifiedName() const;
 	const DependentQualifiedNameRecord* dependentQualifiedName() const;
@@ -1386,7 +1390,7 @@ struct TypeInfo {
 		return deferred_decltype_expression_.has_value() ? &*deferred_decltype_expression_ : nullptr;
 	}
 
-	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args);
+	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, TemplateArgInfoVector args);
 
 	void clearAliasTypeSpecifier();
 	void setAliasTypeSpecifier(const TypeSpecifierNode& type_spec);
@@ -1394,12 +1398,12 @@ struct TypeInfo {
 	void setDeferredDecltypeExpression(const ASTNode& expr);
 
 	// Set the type-owned instantiation context for template instantiations.
-	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
-								 InlineVector<TemplateArgInfo, 4> param_args,
+	void setInstantiationContext(TemplateParamNameVector param_names,
+								 TemplateArgInfoVector param_args,
 								 const InstantiationContext* parent);
-	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
-								 InlineVector<TypeIndex, 4> parameter_type_indices,
-								 InlineVector<TemplateArgInfo, 4> param_args,
+	void setInstantiationContext(TemplateParamNameVector param_names,
+								 InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> parameter_type_indices,
+								 TemplateArgInfoVector param_args,
 								 const InstantiationContext* parent);
 
 	// Returns the TypeCategory embedded in type_index_.
@@ -1486,15 +1490,18 @@ struct TypeInfo {
 	bool isDependentPlaceholder() const { return placeholder_kind_ != DependentPlaceholderKind::None; }
 };
 
+using TemplateArgInfoVector = TypeInfo::TemplateArgInfoVector;
+using TemplateArgInfoSingleVector = TypeInfo::TemplateArgInfoSingleVector;
+
 // Cold arena for DependentQualifiedNameRecord. Indices are stable; chunks stay packed
 // for linear/scattered reads without a unique_ptr malloc per record.
 uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record);
 const TypeInfo::DependentQualifiedNameRecord* getDependentQualifiedNameRecord(uint32_t index);
 size_t getDependentQualifiedNameRecordCount();
 
-// Cold arena for TypeInfo template-argument lists (InlineVector<TemplateArgInfo,4>).
-uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> args);
-const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32_t index);
+// Cold arena for TypeInfo template-argument lists (TemplateArgInfoVector).
+uint32_t storeTypeInfoTemplateArgs(TemplateArgInfoVector args);
+const TemplateArgInfoVector& getTypeInfoTemplateArgs(uint32_t index);
 size_t getTypeInfoTemplateArgsCount();
 
 // Cold arena for rare TemplateArgInfo payloads (function signature / dependent expr).
@@ -3362,8 +3369,8 @@ public:
 	}
 
 	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
-	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
+	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
 	void set_lazy_member_registry_key(StringHandle key) { lazy_member_registry_key_ = key; }
 	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
 	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
@@ -3413,8 +3420,8 @@ private:
 	std::optional<ExpressionHandle> noexcept_expression_; // Optional noexcept(expr) expression
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	std::vector<int64_t> non_type_template_args_;  // Non-type template arguments (e.g., 0 for get<0>)
-	InlineVector<StringHandle, 4> outer_template_param_names_;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	TemplateParamNameVector outer_template_param_names_;
+	TemplateArgInfoVector outer_template_args_;
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
 	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution

@@ -132,7 +132,7 @@ public:
 	}
 
 	// Register template parameter names for a template
-	void registerTemplateParameters(StringHandle key, const InlineVector<StringHandle, 4>& param_names) {
+	void registerTemplateParameters(StringHandle key, const TemplateParamNameVector& param_names) {
 		template_parameters_[key] = param_names;
 	}
 
@@ -189,7 +189,7 @@ public:
 												std::span<const TemplateTypeArg> pattern_args,
 												ASTNode specialized_node) {
 		StringHandle key = StringTable::getOrInternStringHandle(base_name);
-		InlineVector<TemplateParameterNode, 4> typed_template_params;
+		TemplateParameterVector typed_template_params;
 		typed_template_params.reserve(template_params.size());
 		for (const TemplateParameterNode& template_param : template_params) {
 			typed_template_params.push_back(template_param);
@@ -286,7 +286,7 @@ public:
 	}
 
 	// Get template parameter names for a template
-	InlineVector<StringHandle, 4> getTemplateParameters(StringHandle name) const {
+	TemplateParamNameVector getTemplateParameters(StringHandle name) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = template_parameters_.find(name);
 		if (it != template_parameters_.end()) {
@@ -1028,7 +1028,7 @@ private:
 				continue;
 			}
 
-			InlineVector<StringHandle, 4> member_chain;
+			TemplateParamNameVector member_chain;
 			std::string_view remaining = dependent_name.substr(first_scope + 2);
 			while (!remaining.empty()) {
 				const size_t next_scope = remaining.find("::");
@@ -1056,7 +1056,7 @@ private:
 
 	// Register a template specialization pattern under an already-normalized registry key.
 	void registerSpecializationPatternByName(StringHandle template_name,
-											 const InlineVector<TemplateParameterNode, 4>& template_params,
+											 const TemplateParameterVector& template_params,
 											 std::span<const TemplateTypeArg> pattern_args,
 											 ASTNode specialized_node,
 											 std::optional<SfinaeCondition> sfinae_cond) {
@@ -1114,7 +1114,7 @@ private:
 											 std::span<const TemplateTypeArg> pattern_args,
 											 ASTNode specialized_node,
 											 std::optional<SfinaeCondition> sfinae_cond) {
-		InlineVector<TemplateParameterNode, 4> typed_template_params;
+		TemplateParameterVector typed_template_params;
 		typed_template_params.reserve(template_params.size());
 		for (const TemplateParameterNode& template_param : template_params) {
 			typed_template_params.push_back(template_param);
@@ -1192,7 +1192,7 @@ private:
 	std::unordered_map<StringHandle, std::vector<ASTNode>, StringHandleHash, std::equal_to<>> templates_;
 
 	// Map from template name to template parameter names (StringHandle key for fast lookup)
-	std::unordered_map<StringHandle, InlineVector<StringHandle, 4>, StringHandleHash, std::equal_to<>> template_parameters_;
+	std::unordered_map<StringHandle, TemplateParamNameVector, StringHandleHash, std::equal_to<>> template_parameters_;
 
 	// Map from alias template name to TemplateAliasNode (StringHandle key for fast lookup)
 	std::unordered_map<StringHandle, ASTNode, StringHandleHash, std::equal_to<>> alias_templates_;

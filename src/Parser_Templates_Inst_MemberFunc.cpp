@@ -196,7 +196,7 @@ ASTNode rebuildResolvedSubstitutedTypeSpec(
 
 void appendMemberTemplateResolutionOuterBindings(
 	const OuterTemplateBinding* outer_binding,
-	InlineVector<TemplateParameterNode, 4>& resolution_params,
+	TemplateParameterVector& resolution_params,
 	TemplateArgumentVector& resolution_args) {
 	if (outer_binding == nullptr) {
 		return;
@@ -258,7 +258,7 @@ Parser::ScopedInjectedClassOwnerContext::~ScopedInjectedClassOwnerContext() {
 
 bool Parser::tryAppendMemberDefaultTemplateArg(
 	const TemplateParameterNode& param,
-	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const TemplateParameterVector& template_params,
 	const OuterTemplateBinding* outer_binding,
 	TemplateArgumentVector& current_template_args,
 	TypeIndex injected_class_owner_type) {
@@ -276,7 +276,7 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 		return false;
 	}
 
-	InlineVector<ASTNode, 4> combined_template_params;
+	TemplateAstNodeVector combined_template_params;
 	TemplateArgumentVector combined_template_args;
 	combined_template_params.reserve((outer_binding->params.empty() ? outer_binding->param_names.size() : outer_binding->params.size()) + template_params.size());
 	combined_template_args.reserve((outer_binding->all_args.empty() ? outer_binding->param_args.size() : outer_binding->all_args.size()) + current_template_args.size());
@@ -299,7 +299,7 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 		outer_binding != nullptr ? &outer_environment : nullptr);
 	const TemplateSubstitutionFailurePolicy failure_policy = currentTemplateSubstitutionFailurePolicy();
 
-	InlineVector<TemplateParameterNode, 4> typed_combined_params;
+	TemplateParameterVector typed_combined_params;
 	typed_combined_params.reserve(combined_template_params.size());
 	for (const ASTNode& param_node : combined_template_params) {
 		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
@@ -378,10 +378,10 @@ TemplateNameLookupRequest Parser::buildMemberFunctionTemplateLookupRequest(
 	return request;
 }
 
-InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
+TemplateNameLookupCandidateVector Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
 	std::string_view struct_name,
 	std::string_view member_name) {
-	InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> candidates;
+	TemplateNameLookupCandidateVector candidates;
 	std::unordered_set<const void*> seen_declarations;
 	const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 	const StringHandle requested_owner = StringTable::getOrInternStringHandle(struct_name);
@@ -653,7 +653,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
 
 	// Route member template lookup through the semantic two-phase lookup request.
-	InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> template_candidates =
+	TemplateNameLookupCandidateVector template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {
@@ -871,7 +871,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// (preserves the pre-partial-ordering behavior and avoids spurious ambiguity errors).
 	size_t best_idx = std::numeric_limits<size_t>::max();
 	int best_specificity = -1;
-	InlineVector<CandidateResult, 4> viable;
+	InlineVector<CandidateResult, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> viable;
 	viable.reserve(template_candidates.size());
 	for (size_t i = 0; i < template_candidates.size(); ++i) {
 		auto candidate = tryDeduceCandidate(template_candidates[i]);
@@ -899,7 +899,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			if (!template_node_for_candidate.is<TemplateFunctionDeclarationNode>()) {
 				return;
 			}
-			InlineVector<TemplateParameterNode, 4> resolution_params;
+			TemplateParameterVector resolution_params;
 			TemplateArgumentVector resolution_args;
 			appendMemberTemplateResolutionOuterBindings(
 				gTemplateRegistry.getOuterTemplateBinding(lookup_name.view()),
@@ -962,8 +962,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		};
 
 	if (viable.size() > 1) {
-		InlineVector<ASTNode, 4> shape_overloads;
-		InlineVector<size_t, 4> shape_candidate_indices;
+		TemplateAstNodeVector shape_overloads;
+		InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> shape_candidate_indices;
 		shape_overloads.reserve(viable.size());
 		shape_candidate_indices.reserve(viable.size());
 		for (size_t i = 0; i < viable.size(); ++i) {
@@ -1257,8 +1257,8 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		? replay_source_ctor->lazy_member_registry_key()
 		: LazyMemberInstantiationRegistry::makeExactKey(lazy_info.identity);
 
-	InlineVector<StringHandle, 4> outer_param_names;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
+	TemplateParamNameVector outer_param_names;
+	TemplateArgInfoVector outer_args;
 	populateTemplateEnvironmentLegacyViews(
 		TemplateEnvironmentSnapshot{materialization_source_ctor->outer_template_environment_snapshot()},
 		outer_param_names,
@@ -1273,8 +1273,8 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));
 	}
 	for (const auto& outer_arg : outer_args) {
-		const InlineVector<ASTNode, 1> no_params;
-		const InlineVector<TemplateTypeArg, 1> no_args;
+		const InlineVector<ASTNode, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> no_params;
+		const InlineVector<TemplateTypeArg, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> no_args;
 		lazy_info.template_args.push_back(materializeTemplateArg(
 			outer_arg,
 			no_params,
@@ -1318,7 +1318,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 		if (fixed_parameter_count(parameter_template) > fixed_parameter_count(argument_template)) {
 			return false;
 		}
-		InlineVector<TypeSpecifierNode, 4> transformed_argument_types;
+		OverloadResolutionTypeSpecifierVector transformed_argument_types;
 		transformed_argument_types.reserve(argument_template.parameter_nodes().size());
 		for (const ASTNode& parameter_node : argument_template.parameter_nodes()) {
 			if (!parameter_node.is<DeclarationNode>()) {
@@ -1435,13 +1435,13 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	auto materialize_template_ctor_candidates =
 		[&](const ConstructorDeclarationNode* preferred_template_ctor)
 			-> const ConstructorDeclarationNode* {
-		InlineVector<ASTNode, 4> instantiated_matches;
+		TemplateAstNodeVector instantiated_matches;
 		instantiated_matches.reserve(struct_info.member_functions.size());
-		InlineVector<const ConstructorDeclarationNode*, 4> concrete_matches;
+		InlineVector<const ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> concrete_matches;
 		concrete_matches.reserve(struct_info.member_functions.size());
-		InlineVector<const ConstructorDeclarationNode*, 4> source_template_matches;
+		InlineVector<const ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> source_template_matches;
 		source_template_matches.reserve(struct_info.member_functions.size());
-		InlineVector<const ConstructorDeclarationNode*, 4> template_ctor_candidates;
+		InlineVector<const ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> template_ctor_candidates;
 		template_ctor_candidates.reserve(struct_info.member_functions.size());
 		for (const auto& member_func : struct_info.member_functions) {
 			if (!member_func.is_constructor) {
@@ -1724,7 +1724,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 
 	// Route member template overload discovery through the semantic two-phase lookup request.
-	InlineVector<TemplateNameLookupCandidate, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> template_candidates =
+	TemplateNameLookupCandidateVector template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {
@@ -1796,7 +1796,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		// Determine call arg types for this explicit call path.  Do this before
 		// the cache lookup so we can skip stale cached overloads whose pointer
 		// depth doesn't match the current call's arguments.
-		const InlineVector<TypeSpecifierNode, 1> empty_call_arg_types_storage;
+		const InlineVector<TypeSpecifierNode, 1, FlashCpp::InlineVectorSpillFamily::OverloadResolution> empty_call_arg_types_storage;
 		std::span<const TypeSpecifierNode> call_arg_types =
 			current_explicit_call_arg_types_ != nullptr
 				? *current_explicit_call_arg_types_
@@ -1974,7 +1974,7 @@ static TemplateParameterNode cloneNonVariadicTemplateParam(const TemplateParamet
 
 void Parser::appendOuterBindingSubstitutionInputs(
 	const OuterTemplateBinding& outer_binding,
-	InlineVector<ASTNode, 4>& out_params,
+	TemplateAstNodeVector& out_params,
 	TemplateArgumentVector& out_args) {
 	if (!outer_binding.params.empty()) {
 		for (const auto& outer_param : outer_binding.params) {
@@ -2024,7 +2024,7 @@ bool Parser::buildSubstitutionForPackElement(
 	std::span<const size_t> template_param_arg_starts,
 	std::span<const size_t> template_param_arg_counts,
 	std::span<const TemplateTypeArg> template_args,
-	InlineVector<ASTNode, 4>& subst_params,
+	TemplateAstNodeVector& subst_params,
 	TemplateArgumentVector& subst_args) {
 	std::optional<std::pair<size_t, size_t>> pack_binding;
 	for (size_t i = 0; i < template_params.size(); ++i) {
@@ -2066,9 +2066,9 @@ bool Parser::buildSubstitutionForPackElement(
 
 ASTNode Parser::buildMaterializedParamType(
 	const TypeSpecifierNode& original_param_type,
-	const InlineVector<ASTNode, 4>& materialized_template_params,
+	const TemplateAstNodeVector& materialized_template_params,
 	const TemplateArgumentVector& materialized_template_args) {
-	InlineVector<TemplateParameterNode, 4> typed_params;
+	TemplateParameterVector typed_params;
 	typed_params.reserve(materialized_template_params.size());
 	for (const ASTNode& param_node : materialized_template_params) {
 		if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
@@ -2310,9 +2310,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 						}
 					}
 					if (func_decl.has_outer_template_bindings()) {
-						const InlineVector<StringHandle, 4>& outer_param_names =
+						const TemplateParamNameVector& outer_param_names =
 							func_decl.outer_template_param_names();
-						const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_arg_infos =
+						const TemplateArgInfoVector& outer_arg_infos =
 							func_decl.outer_template_args();
 						if (StringHandle tn_handle = StringTable::getOrInternStringHandle(tn);
 							tn_handle.isValid()) {
@@ -2405,7 +2405,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 		if (alias_type_spec.is_array()) {
 			const std::span<const size_t> target_dimensions = target.array_dimensions();
-			InlineVector<size_t, 4> merged_dimensions;
+			InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> merged_dimensions;
 			merged_dimensions.reserve(
 				target_dimensions.size() + alias_type_spec.array_dimensions().size());
 			for (size_t dimension : target_dimensions) {
@@ -2432,7 +2432,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			return std::nullopt;
 		}
 
-		InlineVector<TemplateParameterNode, 4> ctx_params;
+		TemplateParameterVector ctx_params;
 		TemplateArgumentVector ctx_args;
 		auto append_instantiation_context =
 			[&](const auto& self, const TypeInfo::InstantiationContext* current_ctx) -> void {
@@ -2499,7 +2499,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Create the new function declaration
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, struct_name);
-	InlineVector<ASTNode, 4> instantiated_template_params;
+	TemplateAstNodeVector instantiated_template_params;
 	TemplateArgumentVector instantiated_template_args;
 	if (outer_binding != nullptr) {
 		appendOuterBindingSubstitutionInputs(
@@ -2579,8 +2579,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		const auto& template_param = template_param_node;
 		tparam_nodes_by_name.emplace(template_param.nameHandle(), &template_param);
 	}
-	InlineVector<size_t, 8> template_param_arg_starts;
-	InlineVector<size_t, 8> template_param_arg_counts;
+	InlineVector<size_t, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> template_param_arg_starts;
+	InlineVector<size_t, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> template_param_arg_counts;
 	template_param_arg_starts.reserve(template_params.size());
 	template_param_arg_counts.reserve(template_params.size());
 	for (size_t i = 0; i < template_params.size(); ++i) {
@@ -2717,7 +2717,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				if (pack_binding.has_value()) {
 					std::string_view orig_name = param_decl.identifier_token().value();
 					for (size_t pi = 0; pi < pack_binding->second; ++pi) {
-						InlineVector<ASTNode, 4> subst_params;
+						TemplateAstNodeVector subst_params;
 						TemplateArgumentVector subst_args;
 						if (!buildSubstitutionForPackElement(
 								primary_pack_name,
@@ -2772,7 +2772,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					param_type_index = *resolved_outer;
 				}
 			}
-			InlineVector<TemplateParameterNode, 4> member_template_resolution_params;
+			TemplateParameterVector member_template_resolution_params;
 			TemplateArgumentVector member_template_resolution_args;
 			if (func_decl.has_outer_template_bindings()) {
 				for (size_t outer_index = 0;
@@ -3030,11 +3030,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			current_owner_type_index,
 			!func_decl.is_static());
 		if (func_decl.has_outer_template_bindings()) {
-			InlineVector<StringHandle, 4> outer_param_names;
-			InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos;
+			TemplateParamNameVector outer_param_names;
+			TemplateArgInfoVector outer_arg_infos;
 			outer_param_names = func_decl.outer_template_param_names();
 			outer_arg_infos = func_decl.outer_template_args();
-			InlineVector<TemplateParameterNode, 4> typed_outer_params;
+			TemplateParameterVector typed_outer_params;
 			typed_outer_params.reserve(outer_param_names.size());
 			TemplateArgumentVector outer_args;
 			outer_args.reserve(outer_arg_infos.size());
@@ -3052,7 +3052,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				!func_decl.is_static());
 		}
 		if (outer_binding != nullptr) {
-			InlineVector<TemplateParameterNode, 4> typed_outer_params;
+			TemplateParameterVector typed_outer_params;
 			typed_outer_params.reserve(outer_binding->param_names.size());
 			TemplateArgumentVector outer_args;
 			outer_args.reserve(outer_binding->param_args.size());
@@ -3110,11 +3110,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				current_owner_type_index,
 				!func_decl.is_static());
 			if (func_decl.has_outer_template_bindings()) {
-				InlineVector<StringHandle, 4> outer_param_names;
-				InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos;
+				TemplateParamNameVector outer_param_names;
+				TemplateArgInfoVector outer_arg_infos;
 				outer_param_names = func_decl.outer_template_param_names();
 				outer_arg_infos = func_decl.outer_template_args();
-				InlineVector<TemplateParameterNode, 4> typed_outer_params;
+				TemplateParameterVector typed_outer_params;
 				typed_outer_params.reserve(outer_param_names.size());
 				TemplateArgumentVector outer_args;
 				outer_args.reserve(outer_arg_infos.size());
@@ -3132,7 +3132,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					!func_decl.is_static());
 			}
 			if (outer_binding != nullptr) {
-				InlineVector<TemplateParameterNode, 4> typed_outer_params;
+				TemplateParameterVector typed_outer_params;
 				typed_outer_params.reserve(outer_binding->param_names.size());
 				TemplateArgumentVector outer_args;
 				outer_args.reserve(outer_binding->param_args.size());
@@ -3169,7 +3169,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Temporarily add the concrete types to the type system with template parameter names
 	FlashCpp::TemplateParameterScope template_scope;
-	InlineVector<StringHandle, 4> param_names;
+	TemplateParamNameVector param_names;
 	for (const auto& tparam_node : template_params) {
 		param_names.push_back(tparam_node.nameHandle());
 	}
@@ -3180,8 +3180,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
 	if (func_decl.has_outer_template_bindings()) {
-		InlineVector<StringHandle, 4> outer_param_names = func_decl.outer_template_param_names();
-		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos = func_decl.outer_template_args();
+		TemplateParamNameVector outer_param_names = func_decl.outer_template_param_names();
+		TemplateArgInfoVector outer_arg_infos = func_decl.outer_template_args();
 		TemplateArgumentVector outer_args;
 		outer_args.reserve(outer_arg_infos.size());
 		for (const auto& outer_arg : outer_arg_infos) {

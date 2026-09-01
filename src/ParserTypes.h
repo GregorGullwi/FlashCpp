@@ -207,7 +207,7 @@ struct ParsedFunctionHeader {
 	MemberQualifiers member_quals;
 	FunctionSpecifiers specifiers;
 	StorageSpecifiers storage;
-	InlineVector<TemplateParameterNode, 4> template_params;		  // If function template
+	TemplateParameterVector template_params;		  // If function template
 	std::optional<ASTNode> requires_clause;		// C++20 requires
 	std::optional<ASTNode> trailing_return_type;
 };

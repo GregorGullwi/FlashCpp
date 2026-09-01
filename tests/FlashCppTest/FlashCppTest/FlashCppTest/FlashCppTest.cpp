@@ -192,7 +192,7 @@ TEST_CASE("ChunkedVector") {
 }
 
 TEST_CASE("InlineVector provides contiguous span storage after spilling past inline capacity") {
-	InlineVector<int, 2> values;
+	InlineVector<int, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> values;
 	values.push_back(10);
 	values.push_back(20);
 	values.push_back(30);
@@ -213,7 +213,7 @@ TEST_CASE("InlineVector provides contiguous span storage after spilling past inl
 
 TEST_CASE("InlineVector clears inline-held references immediately") {
 	auto value = std::make_shared<int>(42);
-	InlineVector<std::shared_ptr<int>, 2> values;
+	InlineVector<std::shared_ptr<int>, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> values;
 	values.push_back(value);
 	values.push_back(value);
 
@@ -227,7 +227,7 @@ TEST_CASE("InlineVector clears inline-held references immediately") {
 }
 
 TEST_CASE("InlineVector preserves self-referential values when spilling to heap") {
-	InlineVector<std::string_view, 2> appended_values;
+	InlineVector<std::string_view, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> appended_values;
 	appended_values.push_back("alpha");
 	appended_values.push_back("beta");
 	appended_values.push_back(appended_values[0]);
@@ -237,7 +237,7 @@ TEST_CASE("InlineVector preserves self-referential values when spilling to heap"
 	CHECK(appended_values[1] == "beta");
 	CHECK(appended_values[2] == "alpha");
 
-	InlineVector<std::string_view, 2> inserted_values;
+	InlineVector<std::string_view, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> inserted_values;
 	inserted_values.push_back("left");
 	inserted_values.push_back("right");
 	inserted_values.insert(inserted_values.begin() + 1, inserted_values[0]);
@@ -249,7 +249,7 @@ TEST_CASE("InlineVector preserves self-referential values when spilling to heap"
 
 	// Regression: insert_at inline path must copy value before shifting
 	// when value references an element at or after the insertion index.
-	InlineVector<std::string_view, 4> inline_insert;
+	TemplateParamNameViewVector inline_insert;
 	inline_insert.push_back("A");
 	inline_insert.push_back("B");
 	inline_insert.push_back("C");
@@ -263,7 +263,7 @@ TEST_CASE("InlineVector preserves self-referential values when spilling to heap"
 }
 
 TEST_CASE("InlineVector supports vector-like insert and erase overloads") {
-	InlineVector<int, 3> values{1, 3};
+	InlineVector<int, 3, FlashCpp::InlineVectorSpillFamily::TemplateArgument> values{1, 3};
 	values.insert(values.begin() + 1, 2);
 	values.insert(values.begin() + 2, 2, 7);
 
@@ -304,7 +304,7 @@ TEST_CASE("InlineVector supports vector-like insert and erase overloads") {
 }
 
 TEST_CASE("InlineVector supports vector-like assign, resize, and capacity helpers") {
-	InlineVector<int, 2> values;
+	InlineVector<int, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> values;
 	CHECK(values.capacity() == 2);
 
 	values.assign(3, 4);
@@ -4558,7 +4558,7 @@ TEST_SUITE("Diagnostics") {
 		CHECK(engine.templateContextDepth() == 0);
 
 		REQUIRE(engine.diagnostics().size() == 1);
-		const InlineVector<TemplateInstantiationFrame, 4>& frames = engine.diagnostic(0).instantiation_context;
+		const InlineVector<TemplateInstantiationFrame, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& frames = engine.diagnostic(0).instantiation_context;
 		REQUIRE(frames.size() == 2);
 		CHECK(frames[0].template_name == outer);
 		CHECK(frames[1].template_name == inner);

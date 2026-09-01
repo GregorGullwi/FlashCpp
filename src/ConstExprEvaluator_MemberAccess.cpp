@@ -1411,7 +1411,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 									typeInfoForStaticMemberOwner(alternate_owner, resolved_owner));
 								return tryReadStaticMemberConstant(*alternate_member, context);
 							};
-							InlineVector<StringHandle, 6> owner_candidates;
+							InlineVector<StringHandle, 6, FlashCpp::InlineVectorSpillFamily::TemplateArgument> owner_candidates;
 							if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
 								owner_candidates.push_back(context.struct_info->name);
 								for (const auto& base_class : context.struct_info->base_classes) {

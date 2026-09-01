@@ -1446,7 +1446,7 @@ ParseResult Parser::parse_direct_initialization() {
 					}
 				}
 				if (!added) {
-					InlineVector<ASTNode, 4> expanded_args =
+					TemplateAstNodeVector expanded_args =
 						expandPackExpressionArgument(*arg_node);
 					if (!expanded_args.empty()) {
 						for (ASTNode expanded : expanded_args) {

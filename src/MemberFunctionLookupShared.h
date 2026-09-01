@@ -12,6 +12,8 @@ using OverloadResolutionArgTypeVector =
 	InlineVector<TypeSpecifierNode, 6, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
 using MemberOverloadCandidateVector =
 	InlineVector<const StructMemberFunction*, 8, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+using MemberOverloadCandidateVector4 =
+	InlineVector<const StructMemberFunction*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
 
 struct ConstAwareMemberCandidateSet {
 	MemberOverloadCandidateVector preferred;
@@ -61,7 +63,7 @@ template <typename VisitFn>
 void visitStructHierarchyDepthFirst(
 	const StructTypeInfo* root_struct_info,
 	VisitFn&& visit) {
-	InlineVector<const StructTypeInfo*, 8> visited;
+	InlineVector<const StructTypeInfo*, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> visited;
 	auto recurse = [&](const StructTypeInfo* current_struct_info,
 		const auto& self) -> void {
 		if (current_struct_info == nullptr ||

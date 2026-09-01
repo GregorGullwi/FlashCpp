@@ -622,7 +622,7 @@ public:
 	explicit NewExpressionNode(ASTNode type_node, bool is_array,
 							   std::optional<ASTNode> size_expr,
 							   ChunkedVector<ASTNode, 128, 256> constructor_args,
-							   InlineVector<ASTNode, 2> placement_args,
+							   InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> placement_args,
 							   bool has_value_init,
 							   bool is_brace_init)
 		: type_node_(type_node), is_array_(is_array),
@@ -642,14 +642,14 @@ public:
 			return std::nullopt;
 		return placement_args_[0];
 	}
-	const InlineVector<ASTNode, 2>& placement_args() const { return placement_args_; }
+	const InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& placement_args() const { return placement_args_; }
 
 private:
 	ASTNode type_node_;	// TypeSpecifierNode
 	bool is_array_;		// true for new[], false for new
 	std::optional<ASTNode> size_expr_;  // For new Type[size], the size expression
 	ChunkedVector<ASTNode, 128, 256> constructor_args_;	// For new Type(args)
-	InlineVector<ASTNode, 2> placement_args_;  // For new (addr [,extra...]) Type, all placement arguments
+	InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> placement_args_;  // For new (addr [,extra...]) Type, all placement arguments
 	bool has_value_init_;
 	bool is_brace_init_;
 };
@@ -862,8 +862,8 @@ public:
 
 	bool has_outer_template_bindings() const { return outer_template_environment_snapshot_node_ != nullptr; }
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot() const { return outer_template_environment_snapshot_node_; }
-	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
+	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
 
 	// Generate a unique name for the lambda's generated function
 	StringHandle generate_lambda_name() const {
@@ -883,8 +883,8 @@ private:
 	bool is_constexpr_;	// Whether the lambda is constexpr
 	bool is_consteval_;	// Whether the lambda is consteval
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
-	InlineVector<StringHandle, 4> outer_template_param_names_;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	TemplateParamNameVector outer_template_param_names_;
+	TemplateArgInfoVector outer_template_args_;
 
 	static inline size_t next_lambda_id_ = 0;  // Counter for generating unique IDs
 };

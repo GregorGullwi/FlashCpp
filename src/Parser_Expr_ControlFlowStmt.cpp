@@ -1140,8 +1140,8 @@ ParseResult Parser::parse_lambda_expression() {
 		lambda_is_consteval);
 	auto& lambda_ref = lambda_node.as<LambdaExpressionNode>();
 	if (hasActiveTemplateParameters() && !template_param_substitutions_.empty()) {
-		InlineVector<StringHandle, 4> outer_template_param_names;
-		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args;
+		TemplateParamNameVector outer_template_param_names;
+		TemplateArgInfoVector outer_template_args;
 		outer_template_param_names.reserve(currentTemplateParamCount());
 		outer_template_args.reserve(currentTemplateParamCount());
 		for (StringHandle param_name : currentTemplateParamNames()) {

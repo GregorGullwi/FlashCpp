@@ -103,17 +103,22 @@ private:
 	TypeIndex registered_type_index_;
 };
 
+using TemplateParameterVector =
+	InlineVector<TemplateParameterNode, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+using TemplateAstNodeVector =
+	InlineVector<ASTNode, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+
 // Template function declaration node - represents a function template
 class TemplateFunctionDeclarationNode {
 public:
 	TemplateFunctionDeclarationNode() = delete;
-	TemplateFunctionDeclarationNode(InlineVector<TemplateParameterNode, 4> template_params, ASTNode function_decl,
+	TemplateFunctionDeclarationNode(TemplateParameterVector template_params, ASTNode function_decl,
 									std::optional<ASTNode> requires_clause)
 		: template_parameters_(std::move(template_params)),
 		  function_declaration_(function_decl),
 		  requires_clause_(requires_clause) {}
-	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
-	InlineVector<TemplateParameterNode, 4>& template_parameters() { return template_parameters_; }
+	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
+	TemplateParameterVector& template_parameters() { return template_parameters_; }
 	const ASTNode& function_declaration() const { return function_declaration_; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
@@ -127,7 +132,7 @@ public:
 	}
 
 private:
-	InlineVector<TemplateParameterNode, 4> template_parameters_;
+	TemplateParameterVector template_parameters_;
 	ASTNode function_declaration_;  // FunctionDeclarationNode
 	std::optional<ASTNode> requires_clause_;	 // Optional RequiresClauseNode
 };
@@ -176,14 +181,14 @@ inline FunctionDeclarationNode* get_function_decl_node_mut(ASTNode& node) {
 // Template alias declaration: template<typename T> using Ptr = T*;
 struct DeferredAliasMemberTemplateSegment {
 	StringHandle name;
-	InlineVector<ASTNode, 4> template_args;
+	TemplateAstNodeVector template_args;
 	bool has_template_arguments = false;
 };
 
-inline InlineVector<DeferredAliasMemberTemplateSegment, 4> makeDeferredAliasMemberTemplateSegments(
+inline InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> makeDeferredAliasMemberTemplateSegments(
 	StringHandle target_member_template_name,
-	InlineVector<ASTNode, 4> target_member_template_args) {
-	InlineVector<DeferredAliasMemberTemplateSegment, 4> segments;
+	TemplateAstNodeVector target_member_template_args) {
+	InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> segments;
 	if (target_member_template_name.isValid()) {
 		DeferredAliasMemberTemplateSegment segment;
 		segment.name = target_member_template_name;
@@ -197,33 +202,33 @@ inline InlineVector<DeferredAliasMemberTemplateSegment, 4> makeDeferredAliasMemb
 class TemplateAliasNode {
 public:
 	TemplateAliasNode() = delete;
-	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
-					  InlineVector<StringHandle, 4> param_names,
+	TemplateAliasNode(TemplateParameterVector template_params,
+					  TemplateParamNameVector param_names,
 					  StringHandle alias_name,
 					  const TypeSpecifierNode& target_type)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(false) {}
-	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
-					  InlineVector<StringHandle, 4> param_names,
+	TemplateAliasNode(TemplateParameterVector template_params,
+					  TemplateParamNameVector param_names,
 					  StringHandle alias_name,
 					  ASTNode target_type)
 		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>()) {}
 
 	// Constructor for deferred template instantiation (Option 1)
-	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
-					  InlineVector<StringHandle, 4> param_names,
+	TemplateAliasNode(TemplateParameterVector template_params,
+					  TemplateParamNameVector param_names,
 					  StringHandle alias_name,
 					  const TypeSpecifierNode& target_type,
 					  StringHandle target_template_name,
-					  InlineVector<ASTNode, 4> target_template_args)
+					  TemplateAstNodeVector target_template_args)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(true), target_template_name_(target_template_name), target_template_args_(std::move(target_template_args)) {}
-	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
-					  InlineVector<StringHandle, 4> param_names,
+	TemplateAliasNode(TemplateParameterVector template_params,
+					  TemplateParamNameVector param_names,
 					  StringHandle alias_name,
 					  const TypeSpecifierNode& target_type,
 					  StringHandle target_template_name,
-					  InlineVector<ASTNode, 4> target_template_args,
+					  TemplateAstNodeVector target_template_args,
 					  StringHandle target_member_template_name,
-					  InlineVector<ASTNode, 4> target_member_template_args)
+					  TemplateAstNodeVector target_member_template_args)
 		: TemplateAliasNode(
 			std::move(template_params),
 			std::move(param_names),
@@ -234,13 +239,13 @@ public:
 			makeDeferredAliasMemberTemplateSegments(
 				target_member_template_name,
 				std::move(target_member_template_args))) {}
-	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
-					  InlineVector<StringHandle, 4> param_names,
+	TemplateAliasNode(TemplateParameterVector template_params,
+					  TemplateParamNameVector param_names,
 					  StringHandle alias_name,
 					  const TypeSpecifierNode& target_type,
 					  StringHandle target_template_name,
-					  InlineVector<ASTNode, 4> target_template_args,
-					  InlineVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments)
+					  TemplateAstNodeVector target_template_args,
+					  InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> target_member_template_segments)
 		: template_parameters_(std::move(template_params)),
 		  template_param_names_(std::move(param_names)),
 		  alias_name_(alias_name),
@@ -249,21 +254,21 @@ public:
 		  target_template_name_(target_template_name),
 		  target_template_args_(std::move(target_template_args)),
 		  target_member_template_segments_(std::move(target_member_template_segments)) {}
-	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
-					  InlineVector<StringHandle, 4> param_names,
+	TemplateAliasNode(TemplateParameterVector template_params,
+					  TemplateParamNameVector param_names,
 					  StringHandle alias_name,
 					  ASTNode target_type,
 					  StringHandle target_template_name,
-					  InlineVector<ASTNode, 4> target_template_args)
+					  TemplateAstNodeVector target_template_args)
 		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>(), target_template_name, std::move(target_template_args)) {}
-	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
-					  InlineVector<StringHandle, 4> param_names,
+	TemplateAliasNode(TemplateParameterVector template_params,
+					  TemplateParamNameVector param_names,
 					  StringHandle alias_name,
 					  ASTNode target_type,
 					  StringHandle target_template_name,
-					  InlineVector<ASTNode, 4> target_template_args,
+					  TemplateAstNodeVector target_template_args,
 					  StringHandle target_member_template_name,
-					  InlineVector<ASTNode, 4> target_member_template_args)
+					  TemplateAstNodeVector target_member_template_args)
 		: TemplateAliasNode(
 			std::move(template_params),
 			std::move(param_names),
@@ -274,17 +279,17 @@ public:
 			makeDeferredAliasMemberTemplateSegments(
 				target_member_template_name,
 				std::move(target_member_template_args))) {}
-	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
-					  InlineVector<StringHandle, 4> param_names,
+	TemplateAliasNode(TemplateParameterVector template_params,
+					  TemplateParamNameVector param_names,
 					  StringHandle alias_name,
 					  ASTNode target_type,
 					  StringHandle target_template_name,
-					  InlineVector<ASTNode, 4> target_template_args,
-					  InlineVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments)
+					  TemplateAstNodeVector target_template_args,
+					  InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> target_member_template_segments)
 		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>(), target_template_name, std::move(target_template_args), std::move(target_member_template_segments)) {}
 
-	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
-	const InlineVector<StringHandle, 4>& template_param_names() const { return template_param_names_; }
+	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
+	const TemplateParamNameVector& template_param_names() const { return template_param_names_; }
 	std::string_view alias_name() const { return alias_name_.view(); }
 	const TypeSpecifierNode& target_type() const { return target_type_; }
 
@@ -300,7 +305,7 @@ public:
 		if (!hasDeferredMemberTarget()) {
 			return {};
 		}
-		const InlineVector<ASTNode, 4>& args = target_member_template_segments_[0].template_args;
+		const TemplateAstNodeVector& args = target_member_template_segments_[0].template_args;
 		return std::span<const ASTNode>(args.data(), args.size());
 	}
 
@@ -309,16 +314,16 @@ public:
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
 
 private:
-	InlineVector<TemplateParameterNode, 4> template_parameters_;
-	InlineVector<StringHandle, 4> template_param_names_;	 // Parameter names for lookup
+	TemplateParameterVector template_parameters_;
+	TemplateParamNameVector template_param_names_;	 // Parameter names for lookup
 	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
 	TypeSpecifierNode target_type_;  // The target type (e.g., T*)
 
 	// Deferred instantiation (Option 1: cleaner than string parsing)
 	bool is_deferred_;  // True if target is a template with unresolved parameters
 	StringHandle target_template_name_;	// Template name (e.g., "integral_constant")
-	InlineVector<ASTNode, 4> target_template_args_;	// Unevaluated argument AST nodes
-	InlineVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments_;	// Dependent member chain (e.g., "type::rebind")
+	TemplateAstNodeVector target_template_args_;	// Unevaluated argument AST nodes
+	InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> target_member_template_segments_;	// Dependent member chain (e.g., "type::rebind")
 };
 
 // Deduction guide declaration: template<typename T> ClassName(T) -> ClassName<T>;
@@ -326,21 +331,23 @@ private:
 class DeductionGuideNode {
 public:
 	DeductionGuideNode() = delete;
-	DeductionGuideNode(InlineVector<TemplateParameterNode, 4> template_params,
+	DeductionGuideNode(TemplateParameterVector template_params,
 					   std::string_view class_name,
-					   InlineVector<TypeSpecifierNode, 4> guide_params,
+					   InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> guide_params,
 					   std::vector<ASTNode> deduced_template_args)
 		: template_parameters_(std::move(template_params)), class_name_(class_name), guide_parameters_(std::move(guide_params)), deduced_template_args_(std::move(deduced_template_args)) {}
 
-	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
+	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
 	std::string_view class_name() const { return class_name_; }
-	const InlineVector<TypeSpecifierNode, 4>& guide_parameters() const { return guide_parameters_; }
+	const InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>& guide_parameters() const {
+		return guide_parameters_;
+	}
 	std::span<const ASTNode> deduced_template_args() const { return deduced_template_args_; }
 
 private:
-	InlineVector<TemplateParameterNode, 4> template_parameters_;
+	TemplateParameterVector template_parameters_;
 	std::string_view class_name_;  // Name of the class template
-	InlineVector<TypeSpecifierNode, 4> guide_parameters_;
+	InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> guide_parameters_;
 	std::vector<ASTNode> deduced_template_args_;
 };
 
@@ -352,10 +359,10 @@ class VariableDeclarationNode;
 class TemplateVariableDeclarationNode {
 public:
 	TemplateVariableDeclarationNode() = delete;
-	TemplateVariableDeclarationNode(InlineVector<TemplateParameterNode, 4> template_params, ASTNode variable_decl)
+	TemplateVariableDeclarationNode(TemplateParameterVector template_params, ASTNode variable_decl)
 		: template_parameters_(std::move(template_params)), variable_declaration_(variable_decl) {}
 
-	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
+	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
 	VariableDeclarationNode& variable_declaration() { return variable_declaration_.as<VariableDeclarationNode>(); }
 	const VariableDeclarationNode& variable_declaration() const { return variable_declaration_.as<VariableDeclarationNode>(); }
 	bool has_initializer_replay_position() const { return initializer_replay_position_.has_value(); }
@@ -373,7 +380,7 @@ public:
 	const VariableDeclarationNode& variable_decl_node() const { return variable_declaration_.as<VariableDeclarationNode>(); }
 
 private:
-	InlineVector<TemplateParameterNode, 4> template_parameters_;
+	TemplateParameterVector template_parameters_;
 	ASTNode variable_declaration_;  // VariableDeclarationNode
 	std::optional<SaveHandle> initializer_replay_position_;
 	TemplateDefinitionLookupContext initializer_definition_lookup_context_;
@@ -445,8 +452,8 @@ public:
 
 	bool has_outer_template_bindings() const { return outer_template_environment_snapshot_node_ != nullptr; }
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot() const { return outer_template_environment_snapshot_node_; }
-	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
+	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
 
 private:
 	ASTNode declaration_node_;
@@ -458,8 +465,8 @@ private:
 	bool is_constinit_;
 	bool is_selectany_ = false;
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
-	InlineVector<StringHandle, 4> outer_template_param_names_;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	TemplateParamNameVector outer_template_param_names_;
+	TemplateArgInfoVector outer_template_args_;
 };
 
 inline bool is_variable_or_template_variable(const ASTNode& node) {
@@ -702,7 +709,7 @@ public:
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
-	void set_template_parameters(const InlineVector<TemplateParameterNode, 4>& template_parameters) {
+	void set_template_parameters(const TemplateParameterVector& template_parameters) {
 		template_parameters_ = template_parameters;
 		if (ownership_phase_ != AstOwnershipPhase::SemaNormalized) {
 			ownership_phase_ = AstOwnershipPhase::ParserPattern;
@@ -714,7 +721,7 @@ public:
 			ownership_phase_ = AstOwnershipPhase::ParserPattern;
 		}
 	}
-	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
+	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
 	bool has_template_parameters() const { return !template_parameters_.empty(); }
 
 	// Template body position: for member function template constructors whose bodies
@@ -796,8 +803,8 @@ public:
 
 	bool has_outer_template_bindings() const { return outer_template_environment_snapshot_node_ != nullptr; }
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot() const { return outer_template_environment_snapshot_node_; }
-	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
+	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
 	void set_lazy_member_registry_key(StringHandle key) { lazy_member_registry_key_ = key; }
 	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
 	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
@@ -835,14 +842,14 @@ private:
 	bool is_constexpr_ = false;	// constexpr specifier
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	std::optional<ASTNode> requires_clause_;	 // C++20 trailing requires clause
-	InlineVector<TemplateParameterNode, 4> template_parameters_;
+	TemplateParameterVector template_parameters_;
 	bool has_template_body_ = false;
 	bool has_template_initializer_list_ = false;
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body
 	SaveHandle template_initializer_list_position_handle_{};  // Handle to saved position for constructor initializer list
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
-	InlineVector<StringHandle, 4> outer_template_param_names_;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	TemplateParamNameVector outer_template_param_names_;
+	TemplateArgInfoVector outer_template_args_;
 	TypeIndex owning_type_index_{};
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
 	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
@@ -989,8 +996,8 @@ public:
 
 	bool has_outer_template_bindings() const { return outer_template_environment_snapshot_node_ != nullptr; }
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot() const { return outer_template_environment_snapshot_node_; }
-	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
+	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
 	void set_lazy_member_registry_key(StringHandle key) { lazy_member_registry_key_ = key; }
 	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
 	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
@@ -1005,8 +1012,8 @@ private:
 	bool is_constexpr_ = false;  // True iff the destructor was declared with 'constexpr'
 	std::optional<ExpressionHandle> noexcept_expression_; // For explicit noexcept(expr)
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
-	InlineVector<StringHandle, 4> outer_template_param_names_;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	TemplateParamNameVector outer_template_param_names_;
+	TemplateArgInfoVector outer_template_args_;
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
 	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
@@ -1615,8 +1622,8 @@ public:
 
 	bool has_outer_template_bindings() const { return outer_template_environment_snapshot_node_ != nullptr; }
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot() const { return outer_template_environment_snapshot_node_; }
-	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
-	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+	const TemplateParamNameVector& outer_template_param_names() const { return outer_template_param_names_; }
+	const TemplateArgInfoVector& outer_template_args() const { return outer_template_args_; }
 
 	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
 	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
@@ -1632,7 +1639,7 @@ private:
 	std::vector<DeferredBaseClassSpecifier> deferred_base_classes_;	// Decltype base classes (for templates)
 	std::vector<DeferredTemplateBaseClassSpecifier> deferred_template_base_classes_;	 // Template-dependent base classes
 	std::vector<ASTNode> friend_declarations_;  // Friend declarations
-	InlineVector<ASTNode, 2> nested_classes_;  // Nested classes
+	InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> nested_classes_;  // Nested classes
 	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
 	std::vector<StaticMemberDecl> static_members_;  // Static members (for templates)
 	std::vector<AnonymousUnionInfo> anonymous_unions_;  // Anonymous union tracking info
@@ -1647,8 +1654,8 @@ private:
 	bool has_deleted_move_constructor_ = false;		// Track deleted move constructor
 	std::vector<DeferredStaticAssert> deferred_static_asserts_;	// Static_asserts deferred during template definition
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
-	InlineVector<StringHandle, 4> outer_template_param_names_;
-	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	TemplateParamNameVector outer_template_param_names_;
+	TemplateArgInfoVector outer_template_args_;
 	StructBodyStateTag struct_body_state_tag_ = StructBodyStateTag::NotMaterialized;
 	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle struct_substitution_failure_reason_;  // Populated iff struct_body_state_tag_ == FailedSubstitution
@@ -1659,13 +1666,13 @@ private:
 class TemplateClassDeclarationNode {
 public:
 	TemplateClassDeclarationNode() = delete;
-	TemplateClassDeclarationNode(InlineVector<TemplateParameterNode, 4> template_params,
-								 InlineVector<std::string_view, 4> param_names,
+	TemplateClassDeclarationNode(TemplateParameterVector template_params,
+								 TemplateParamNameViewVector param_names,
 								 ASTNode class_decl)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), class_declaration_(class_decl) {}
-	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
-	InlineVector<TemplateParameterNode, 4>& template_parameters() { return template_parameters_; }
-	const InlineVector<std::string_view, 4>& template_param_names() const { return template_param_names_; }
+	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
+	TemplateParameterVector& template_parameters() { return template_parameters_; }
+	const TemplateParamNameViewVector& template_param_names() const { return template_param_names_; }
 	const ASTNode& class_declaration() const { return class_declaration_; }
 
 	// Get the underlying StructDeclarationNode
@@ -1685,8 +1692,8 @@ public:
 	}
 
 private:
-	InlineVector<TemplateParameterNode, 4> template_parameters_;
-	InlineVector<std::string_view, 4> template_param_names_;	 // Parameter names for lookup
+	TemplateParameterVector template_parameters_;
+	TemplateParamNameViewVector template_param_names_;	 // Parameter names for lookup
 	ASTNode class_declaration_;	// StructDeclarationNode
 	std::vector<DeferredTemplateMemberBody> deferred_bodies_;  // Member function bodies to parse at instantiation
 };

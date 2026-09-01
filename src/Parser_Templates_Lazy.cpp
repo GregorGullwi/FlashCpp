@@ -450,7 +450,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		if (ctor_decl.is_materialized()) {
 			body_to_substitute = ctor_decl.get_definition();
 		} else if (ctor_decl.has_template_body_position()) {
-			InlineVector<StringHandle, 4> param_names;
+			TemplateParamNameVector param_names;
 			param_names.reserve(lazy_info.template_params.size());
 			for (const auto& tparam_node : lazy_info.template_params) {
 				param_names.push_back(tparam_node.nameHandle());
@@ -788,8 +788,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 	FunctionDeclarationNode& new_func_ref = *shell.function;
 	new_func_ref.set_lazy_member_registry_key(lazy_info.registry_key);
 	if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
-		InlineVector<StringHandle, 4> outer_param_names;
-		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
+		TemplateParamNameVector outer_param_names;
+		TemplateArgInfoVector outer_args;
 		populateTemplateEnvironmentLegacyViews(
 			lazy_info.outer_template_environment_snapshot,
 			outer_param_names,
@@ -860,14 +860,14 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		// This is needed for member struct templates where body parsing is deferred
 
 		// Set up template parameter types in the type system for body parsing
-		InlineVector<StringHandle, 4> param_names;
+		TemplateParamNameVector param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
 			param_names.push_back(tparam_node.nameHandle());
 		}
 		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
-			InlineVector<StringHandle, 4> outer_param_names;
-			InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
+			TemplateParamNameVector outer_param_names;
+			TemplateArgInfoVector outer_args;
 			populateTemplateEnvironmentLegacyViews(
 				lazy_info.outer_template_environment_snapshot,
 				outer_param_names,
@@ -973,7 +973,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		// contains both the enclosing class template bindings and the member template's own
 		// parameters. Using only the snapshot would drop the inner bindings and leave
 		// dependent uses like sizeof(U) unresolved.
-		InlineVector<TemplateParameterNode, 4> substitution_params;
+		TemplateParameterVector substitution_params;
 		std::vector<TemplateTypeArg> converted_template_args;
 		substitution_params.reserve(lazy_info.template_params.size());
 		converted_template_args.reserve(lazy_info.template_args.size());
@@ -987,8 +987,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		// enclosing-class params (e.g. OuterV, MiddleV) inside the re-parsed body
 		// are substituted with their concrete values.
 		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
-			InlineVector<StringHandle, 4> outer_pnames;
-			InlineVector<TypeInfo::TemplateArgInfo, 4> outer_pargs;
+			TemplateParamNameVector outer_pnames;
+			TemplateArgInfoVector outer_pargs;
 			populateTemplateEnvironmentLegacyViews(
 				lazy_info.outer_template_environment_snapshot, outer_pnames, outer_pargs);
 			const size_t outer_count = std::min(outer_pnames.size(), outer_pargs.size());
@@ -1195,7 +1195,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		return false;
 	}
 	const LazyStaticMemberInfo& lazy_info = *lazy_info_ptr;
-	const InlineVector<TemplateParameterNode, 4>& lazy_template_params_inline =
+	const TemplateParameterVector& lazy_template_params_inline =
 		lazy_info.template_params;
 
 	// Find the struct_info to add the member to
@@ -1225,7 +1225,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			return false;
 		}
 
-		InlineVector<StringHandle, 4> param_names;
+		TemplateParamNameVector param_names;
 		param_names.reserve(lazy_info.template_params.size());
 		for (const auto& tparam_node : lazy_info.template_params) {
 			param_names.push_back(tparam_node.nameHandle());
@@ -1722,7 +1722,7 @@ std::optional<TypeIndex> Parser::evaluateLazyTypeAlias(
 	const TypeSpecifierNode& target_type = lazy_info->unevaluated_target.as<TypeSpecifierNode>();
 
 	// Perform template parameter substitution
-	const InlineVector<TemplateParameterNode, 4>& lazy_template_params_inline =
+	const TemplateParameterVector& lazy_template_params_inline =
 		lazy_info->template_params;
 	TypeIndex substituted_type_index = substitute_template_parameter(
 		target_type, lazy_template_params_inline, lazy_info->template_args);
@@ -1796,7 +1796,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	StructTypeInfo* nested_struct_info = &nested_type_info.emplaceStructInfo(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
 
 	// Process members with template parameter substitution
-	const InlineVector<TemplateParameterNode, 4>& parent_template_params_inline =
+	const TemplateParameterVector& parent_template_params_inline =
 		lazy_info->parent_template_params;
 	for (const auto& member_decl : nested_struct.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();

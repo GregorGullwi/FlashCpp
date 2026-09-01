@@ -60,7 +60,7 @@ bool hasDependentStructuralExpressionChild(
 }
 }
 
-ParseResult Parser::parse_template_parameter_list(InlineVector<TemplateParameterNode, 4>& out_params) {
+ParseResult Parser::parse_template_parameter_list(TemplateParameterVector& out_params) {
 	// Save and restore the current template parameter state that existed before
 	// parsing this list so names added here do not persist after the parse.
 	// ScopedStateCopy keeps the field populated so that outer template parameter
@@ -129,7 +129,7 @@ TypeInfo& Parser::ensureTemplateParameterTypeRegistration(TemplateParameterNode&
 }
 
 Parser::TemplateParameterMetadata Parser::registerTemplateParametersInScope(
-	InlineVector<TemplateParameterNode, 4>& template_params,
+	TemplateParameterVector& template_params,
 	FlashCpp::TemplateParameterScope& template_scope) {
 	TemplateParameterMetadata metadata;
 	for (TemplateParameterNode& tparam : template_params) {
@@ -167,7 +167,7 @@ ParseResult Parser::parse_template_parameter() {
 		advance(); // consume '<'
 
 		// Parse nested template parameter forms (just type specifiers, no names)
-		InlineVector<TemplateParameterNode, 4> nested_params;
+		TemplateParameterVector nested_params;
 		auto param_list_result = parse_template_template_parameter_forms(nested_params);
 		if (param_list_result.is_error()) {
 			FLASH_LOG(Parser, Error, "parse_template_template_parameter_forms failed");
@@ -812,7 +812,7 @@ ParseResult Parser::parse_template_parameter() {
 
 // Parse template template parameter forms (just type specifiers without names)
 // Used for template<template<typename> class Container> syntax
-ParseResult Parser::parse_template_template_parameter_forms(InlineVector<TemplateParameterNode, 4>& out_params) {
+ParseResult Parser::parse_template_template_parameter_forms(TemplateParameterVector& out_params) {
 	// Parse first parameter form
 	auto param_result = parse_template_template_parameter_form();
 	if (param_result.is_error()) {
@@ -954,11 +954,11 @@ ParseResult Parser::parse_template_template_parameter_form() {
 // Template parameters must already be registered in getTypesByNameMap() via TemplateParameterScope
 std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments() {
 	// Keep the no-output overload explicit so callers do not rely on default parameters.
-	InlineVector<ASTNode, 4>* out_type_nodes = nullptr;
+	TemplateAstNodeVector* out_type_nodes = nullptr;
 	return parse_explicit_template_arguments(out_type_nodes);
 }
 
-std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(InlineVector<ASTNode, 4>* out_type_nodes) {
+std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(TemplateAstNodeVector* out_type_nodes) {
 	// Recursion depth guard to prevent stack overflow on deeply nested template arguments
 	// Stack size increased to 8MB in FlashCppMSVC.vcxproj to handle deep recursion
 	static int template_arg_recursion_depth = 0;
@@ -2998,7 +2998,7 @@ try_type_template_argument_parse:
 		// Check for array declarators (e.g., T[], T[N])
 		bool is_array_type = false;
 		std::optional<size_t> parsed_array_size;
-		InlineVector<StringHandle, 4> parsed_array_dimension_parameter_names;
+		TemplateParamNameVector parsed_array_dimension_parameter_names;
 		while (peek() == "["_tok) {
 			is_array_type = true;
 			advance(); // consume '['
@@ -3462,7 +3462,7 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 		return parse_explicit_template_arguments();
 	}
 
-	InlineVector<ASTNode, 4> inline_type_nodes;
+	TemplateAstNodeVector inline_type_nodes;
 	auto parsed_args = parse_explicit_template_arguments(&inline_type_nodes);
 	if (!parsed_args.has_value()) {
 		return std::nullopt;
@@ -4015,7 +4015,7 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 						return param_name == owner_handle;
 					});
 				if (owner_is_template_param) {
-					InlineVector<StringHandle, 4> components;
+					TemplateParamNameVector components;
 					components.push_back(owner_handle);
 					// chain_lookahead 2 → first '::' after owner (relative to current 'typename')
 					size_t chain_lookahead = 2;
@@ -4061,7 +4061,7 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 
 std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 	std::span<const TemplateParameterNode> target_template_params,
-	InlineVector<ASTNode, 4>* out_type_nodes) {
+	TemplateAstNodeVector* out_type_nodes) {
 	ScopedExplicitTemplateArgumentTargetParams target_param_guard(*this, target_template_params);
 	if (out_type_nodes == nullptr) {
 		auto parsed_args = parse_explicit_template_arguments();
@@ -4086,7 +4086,7 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 
 std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 	const TemplateNameLookupResult& template_lookup,
-	InlineVector<ASTNode, 4>* out_type_nodes) {
+	TemplateAstNodeVector* out_type_nodes) {
 	for (const TemplateNameLookupCandidate& candidate : template_lookup.candidates) {
 		if (auto template_parameters =
 				templateParametersForCandidate(candidate);

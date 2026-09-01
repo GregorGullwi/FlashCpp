@@ -2737,7 +2737,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 			std::optional<ASTNode> template_node = lookup_template();
 			const TemplateFunctionDeclarationNode* template_func = nullptr;
 			const FunctionDeclarationNode* func_decl_ptr = nullptr;
-			InlineVector<TemplateParameterNode, 4> inferred_template_params;
+			TemplateParameterVector inferred_template_params;
 			if (template_node.has_value() &&
 				template_node->is<TemplateFunctionDeclarationNode>()) {
 				template_func = &template_node->as<TemplateFunctionDeclarationNode>();
