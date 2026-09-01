@@ -4752,6 +4752,136 @@ TEST_SUITE("FrontendContext") {
 				  .value != 0u);
 	}
 
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on EnumDeclarationNode") {
+		SymbolTable table;
+		table.enter_scope(ScopeType::Block);
+		const ScopeId block_scope = table.currentScopeId();
+		const StringHandle enum_name = StringTable::getOrInternStringHandle("scope_stamp_enum");
+		ASTNode node = ASTNode::emplace_node<EnumDeclarationNode>(enum_name, true);
+		REQUIRE(table.insert(StringTable::getStringView(enum_name), node));
+		const std::vector<ASTNode> symbols = table.lookup_all(StringTable::getStringView(enum_name));
+		REQUIRE(symbols.size() == 1u);
+		CHECK(symbols[0].as<EnumDeclarationNode>().lexical_scope_id() == block_scope);
+	}
+
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on StructDeclarationNode") {
+		SymbolTable table;
+		table.enter_scope(ScopeType::Block);
+		const ScopeId block_scope = table.currentScopeId();
+		const StringHandle struct_name = StringTable::getOrInternStringHandle("scope_stamp_struct");
+		ASTNode node = ASTNode::emplace_node<StructDeclarationNode>(struct_name, false);
+		REQUIRE(table.insert(StringTable::getStringView(struct_name), node));
+		const std::vector<ASTNode> symbols = table.lookup_all(StringTable::getStringView(struct_name));
+		REQUIRE(symbols.size() == 1u);
+		CHECK(symbols[0].as<StructDeclarationNode>().lexical_scope_id() == block_scope);
+	}
+
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on TypedefDeclarationNode") {
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		Token type_token(Token::Type::Identifier, std::string_view("int"), 1, 1, 0);
+		Token alias_token(Token::Type::Identifier, std::string_view("scope_stamp_typedef"), 1, 1, 0);
+		TypeSpecifierNode int_type(
+			TypeCategory::Int, TypeQualifier::None, 32, type_token, CVQualifier::None);
+		ASTNode node = ASTNode::emplace_node<TypedefDeclarationNode>(int_type, alias_token);
+		REQUIRE(table.insert(std::string_view("scope_stamp_typedef"), node));
+		const std::vector<ASTNode> symbols = table.lookup_all("scope_stamp_typedef");
+		REQUIRE(symbols.size() == 1u);
+		CHECK(symbols[0].as<TypedefDeclarationNode>().lexical_scope_id() == global_scope);
+	}
+
+	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed EnumDeclarationNode") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = "enum class scope_stamp_parsed_enum { A };";
+		CompileContext test_context;
+		test_context.setInputFile("declaration_ast_scope_id_enum_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle enum_name = StringTable::getOrInternStringHandle("scope_stamp_parsed_enum");
+		const std::vector<ASTNode> symbols =
+			gSymbolTable.lookup_all(StringTable::getStringView(enum_name));
+		REQUIRE(symbols.size() == 1u);
+		CHECK(symbols[0].as<EnumDeclarationNode>().lexical_scope_id().value != 0u);
+	}
+
+	TEST_CASE("Parser stamps lexical ScopeId on parsed StructDeclarationNode") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = "struct scope_stamp_parsed_struct { int x; };";
+		CompileContext test_context;
+		test_context.setInputFile("declaration_ast_scope_id_struct_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle struct_name =
+			StringTable::getOrInternStringHandle("scope_stamp_parsed_struct");
+		const StructDeclarationNode* parsed_struct = nullptr;
+		for (const ASTNode& node : parser.get_nodes()) {
+			if (!node.is<StructDeclarationNode>()) {
+				continue;
+			}
+			const StructDeclarationNode& struct_decl = node.as<StructDeclarationNode>();
+			if (struct_decl.name() == struct_name) {
+				parsed_struct = &struct_decl;
+				break;
+			}
+		}
+		REQUIRE(parsed_struct != nullptr);
+		CHECK(parsed_struct->lexical_scope_id().value != 0u);
+	}
+
+	TEST_CASE("Parser stamps lexical ScopeId on parsed TypedefDeclarationNode") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = "typedef int scope_stamp_parsed_typedef;";
+		CompileContext test_context;
+		test_context.setInputFile("declaration_ast_scope_id_typedef_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle typedef_name =
+			StringTable::getOrInternStringHandle("scope_stamp_parsed_typedef");
+		const TypedefDeclarationNode* parsed_typedef = nullptr;
+		for (const ASTNode& node : parser.get_nodes()) {
+			if (!node.is<TypedefDeclarationNode>()) {
+				continue;
+			}
+			const TypedefDeclarationNode& typedef_decl = node.as<TypedefDeclarationNode>();
+			if (typedef_decl.alias_token().handle() == typedef_name) {
+				parsed_typedef = &typedef_decl;
+				break;
+			}
+		}
+		REQUIRE(parsed_typedef != nullptr);
+		CHECK(parsed_typedef->lexical_scope_id().value != 0u);
+	}
+
 	static void requireScopeRecordMatches(
 		const FrontendContext& context,
 		const SymbolTable& table,

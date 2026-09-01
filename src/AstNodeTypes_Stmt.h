@@ -378,9 +378,14 @@ public:
 	std::string_view alias_name() const { return alias_name_.value(); }
 	const Token& alias_token() const { return alias_name_; }
 
+	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
+	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
+	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
+
 private:
 	TypeSpecifierNode type_node_;	// The underlying type (TypeSpecifierNode)
 	Token alias_name_;   // The new type alias name
+	ScopeId lexical_scope_id_;
 };
 
 // ============================================================================

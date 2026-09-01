@@ -197,6 +197,22 @@ inline void stampLexicalScopeOnDeclaration(ASTNode& node, ScopeId scope_id) {
 		var->declaration().set_lexical_scope_id(scope_id);
 		return;
 	}
+	if (StructDeclarationNode* struct_decl = node.get_if<StructDeclarationNode>()) {
+		struct_decl->set_lexical_scope_id(scope_id);
+		return;
+	}
+	if (EnumDeclarationNode* enum_decl = node.get_if<EnumDeclarationNode>()) {
+		enum_decl->set_lexical_scope_id(scope_id);
+		return;
+	}
+	if (TypedefDeclarationNode* typedef_decl = node.get_if<TypedefDeclarationNode>()) {
+		typedef_decl->set_lexical_scope_id(scope_id);
+		return;
+	}
+	if (TemplateClassDeclarationNode* class_template = node.get_if<TemplateClassDeclarationNode>()) {
+		class_template->class_decl_node().set_lexical_scope_id(scope_id);
+		return;
+	}
 	if (DeclarationNode* decl = node.get_if<DeclarationNode>()) {
 		decl->set_lexical_scope_id(scope_id);
 	}

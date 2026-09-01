@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 19
+Last updated: 2026-09-01 after pull request boundary 20
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 19 are landed.
+  and entities). Pull request boundaries 1 through 20 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -57,9 +57,9 @@ Last updated: 2026-09-01 after pull request boundary 19
   publication, cursor updates, and reset read that bound arena rather than
   `FrontendContext::active()`.
   `SymbolTable::insertCore` stamps `DeclarationNode::lexical_scope_id` (and
-  function, template-function, variable, template-variable, and bare declaration
-  nodes) at the shared insert choke point; enum/struct and other symbol kinds
-  remain unstamped.
+  function, template-function, variable, template-variable, bare declaration,
+  struct, enum, typedef, and class-template wrapper nodes) at the shared insert
+  choke point.
 - `MonotonicScratchArena` requires an explicit diagnostic engine and byte
   budget. `FrontendContext` owns the engine for scratch-limit diagnostics and
   supplies a 64 MiB budget; legacy diagnostics remain in `CompileContext`.
@@ -90,7 +90,7 @@ Last updated: 2026-09-01 after pull request boundary 19
   used/reserved bytes are reported under `--perf-stats`. Sampled compiler tests
   peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
 
-## Pull request boundary status (1–19)
+## Pull request boundary status (1–20)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -112,7 +112,8 @@ Last updated: 2026-09-01 after pull request boundary 19
 | 16 | Explicit scratch allocation budget, context-owned scratch-limit diagnostics, checked address alignment and block publication; delete the unbounded allocation path |
 | 17 | Route SymbolTable lookup scope-chain metadata through `ScopeMetadataView` / `ScopeRecord` when persistent publication is enabled; preserve legacy sidecar reads for unbound tables; mutation-validated poison test |
 | 18 | Route insert, enter/exit, replace, using-decl materialization, and publication target resolution through `ScopeMetadataView` when persistent publication is enabled |
-| 19 | Delete `Scope::{parent_scope_id, scope_type, depth, namespace_handle}`; unbound tables use `scope_metadata_` sidecar; align stale `ScopeId` publication contract in tests |
+| 19 | Delete `Scope::{parent_scope_id, scope_type, depth, namespace_handle}`; unbound tables use `scope_metadata_` sidecar; align stale `ScopeId` publication contract in tests; harden publication binding lifetime and rebind sync |
+| 20 | Stamp `lexical_scope_id` on struct, enum, typedef, and class-template wrapper nodes at `SymbolTable` insert/replace/insertGlobal |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -168,11 +169,12 @@ boundary 1 is started, not finished.
     probe passes with a 1 MiB stack. This scope path is iterative; broader parser/template stack
     bounds remain open.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
-    free-function set, full template-facade coverage, enum/struct AST scope
-    stamping): follow-on boundary-1 work
+    free-function set, full template-facade coverage): follow-on boundary-1 work
 
-Boundary-19 validation: Linux clang++ unity build is warning-clean; FrontendContext
-suite (80 cases) and scope poison/4096-level probes pass.
+Boundary-20 validation: Linux clang++ unity build is warning-clean; insert stamping
+tests for enum, struct, and typedef pass, including parsed enum-class, struct,
+and typedef probes. Struct and top-level typedef nodes are also stamped at parse
+time because they are not inserted into `gSymbolTable` at global scope.
 
 ## Effort estimate
 
@@ -189,8 +191,7 @@ Next blocker:
   after canonical `TypeId` exists; keep `SymbolTable::insert` as function
   merge authority until canonical function/type identity (boundary 3A) replaces
   the `matches_signature` bridge; wire IR domain byte accounting and per-type
-  AST family counts; stamp `ScopeId` on remaining symbol-table node kinds
-  (enum, struct, typedef).
+  AST family counts.
 
 Then, in order:
 

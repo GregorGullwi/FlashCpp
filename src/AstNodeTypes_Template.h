@@ -1618,6 +1618,10 @@ public:
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
 
+	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
+	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
+	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
+
 private:
 	StringHandle name_;	// Points directly into source text from lexer token
 	StringHandle semantic_name_; // Canonical identity for replayed local classes
@@ -1648,6 +1652,7 @@ private:
 	StructBodyStateTag struct_body_state_tag_ = StructBodyStateTag::NotMaterialized;
 	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle struct_substitution_failure_reason_;  // Populated iff struct_body_state_tag_ == FailedSubstitution
+	ScopeId lexical_scope_id_;
 };
 
 // Template class declaration node - represents a class template

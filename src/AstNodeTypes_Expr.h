@@ -133,6 +133,10 @@ public:
 		type_index_ = idx;
 	}
 
+	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
+	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
+	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
+
 private:
 	std::string_view name_;					// Points directly into source text from lexer token
 	bool is_scoped_;						// true for enum class, false for enum
@@ -140,6 +144,7 @@ private:
 	std::optional<TypeSpecifierNode> underlying_type_; // Optional underlying type (TypeSpecifierNode)
 	std::vector<ASTNode> enumerators_;	   // List of EnumeratorNode
 	TypeIndex type_index_;				   // Index into gTypeInfo — set at parse time, used by codegen
+	ScopeId lexical_scope_id_;
 };
 
 class MemberAccessNode {
