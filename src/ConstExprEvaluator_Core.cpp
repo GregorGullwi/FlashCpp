@@ -5700,7 +5700,8 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			}
 		}
 
-		std::optional<ASTNode> instantiated_opt = parser.tryInstantiateTemplateFromCallArguments(
+		std::optional<ASTNode> instantiated_opt =
+			parser.templateEngine().tryInstantiateTemplateFromCallArguments(
 			qualified_name,
 			func_name,
 			arguments);

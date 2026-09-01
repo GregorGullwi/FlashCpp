@@ -91,6 +91,11 @@ public:
 		const ChunkedVector<ASTNode>& arguments,
 		std::span<const TypeSpecifierNode> arg_types);
 
+	std::optional<ASTNode> tryInstantiateTemplateFromCallArguments(
+		std::string_view qualified_name,
+		std::string_view simple_name,
+		const ChunkedVector<ASTNode>& arguments);
+
 	std::optional<ASTNode> instantiateLazyMemberForCanonicalOwner(
 		std::string_view& owner_name,
 		std::string_view member_name,
@@ -306,6 +311,17 @@ inline std::optional<ASTNode> TemplateEngine::resolveDeferredQualifiedTemplateCa
 		template_argument_nodes,
 		arguments,
 		arg_types);
+}
+
+inline std::optional<ASTNode> TemplateEngine::tryInstantiateTemplateFromCallArguments(
+	std::string_view qualified_name,
+	std::string_view simple_name,
+	const ChunkedVector<ASTNode>& arguments) {
+	recordTemplateEngineOldEngineRoute();
+	return parser().tryInstantiateTemplateFromCallArguments(
+		qualified_name,
+		simple_name,
+		arguments);
 }
 
 inline std::optional<ASTNode> TemplateEngine::instantiateLazyMemberForCanonicalOwner(

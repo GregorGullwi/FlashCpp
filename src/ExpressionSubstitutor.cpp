@@ -3450,7 +3450,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		ChunkedVector<ASTNode> substituted_args =
 			substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
-		std::optional<ASTNode> instantiated_opt = parser_.tryInstantiateTemplateFromCallArguments(
+		std::optional<ASTNode> instantiated_opt =
+			parser_.templateEngine().tryInstantiateTemplateFromCallArguments(
 			call.has_qualified_name() ? call.qualified_name() : std::string_view(),
 			template_func_name,
 			substituted_args);

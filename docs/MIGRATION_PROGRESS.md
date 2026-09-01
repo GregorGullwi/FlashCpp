@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 23
+Last updated: 2026-09-01 after pull request boundary 24
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 23 are landed.
+  and entities). Pull request boundaries 1 through 24 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -105,7 +105,7 @@ Last updated: 2026-09-01 after pull request boundary 23
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–23)
+## Pull request boundary status (1–24)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -132,6 +132,7 @@ Last updated: 2026-09-01 after pull request boundary 23
 | 21 | Wire IR allocation-domain bytes from codegen lowering buffers; report coarse syntax AST family counts through `FrontendContext` |
 | 22 | Enforce migration counter and dollar-inventory baselines on Ubuntu CI via native bash runners; keep PowerShell runners on Windows CI |
 | 23 | Report semantic `DeclKind` breakdown and DeclarationBuilder intern registry sizes through `FrontendContext` arena telemetry |
+| 24 | Route constexpr and substitution call-argument template instantiation through `TemplateEngine::tryInstantiateTemplateFromCallArguments`; delete direct external `Parser` calls |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -165,8 +166,10 @@ boundary 1 is started, not finished.
   - Boundary 0 "every known architectural defect has a mutation-validated
     regression or a tracked expected failure"
   - Boundary 1 "every template instantiation entry point passes through the
-    facade": external callers use `TemplateEngine`; parser-internal paths
-    remain direct until boundary 6/8A
+    facade": external callers use `TemplateEngine`; constexpr and substitution
+    call-argument deduction now route through
+    `tryInstantiateTemplateFromCallArguments`; parser-internal paths remain
+    direct until boundary 6/8A
   - Boundary 1 "a scratch transaction can allocate declarations and types, fail,
     and leave every committed registry unchanged": scratch proven in doctest;
     `PublicationTransaction` covers DeclarationBuilder entity/declaration
@@ -191,13 +194,13 @@ boundary 1 is started, not finished.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage): follow-on boundary-1 work
 
-Boundary-23 validation: `make sharded` and targeted unity doctest
-`FrontendContext semantic declaration kind counts track DeclarationBuilder records`
-pass on Linux; migration counter and dollar-inventory baselines unchanged.
+Boundary-24 validation: `make sharded` passes on Linux; migration counter and
+dollar-inventory baselines unchanged; no non-parser translation unit calls
+`Parser::tryInstantiateTemplateFromCallArguments` directly.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 25-28%, confidence medium
+- Implementation effort completed overall: 26-29%, confidence medium
 
 ## Remaining work
 
