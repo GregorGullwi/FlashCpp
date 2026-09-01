@@ -110,10 +110,10 @@ ScopeMetadataView readScopeMetadata(const SymbolTable& table, ScopeId scope_id) 
 			record.scope_type,
 			record.namespace_handle};
 	}
-	const Scope& scope = table.scopeById(scope_id);
+	const ScopeMetadataView metadata = table.legacyScopeMetadata(scope_id);
 	return ScopeMetadataView{
-		scope.parent_scope_id,
-		scope.depth,
-		scope.scope_type,
-		scope.namespace_handle};
+		metadata.parent_id,
+		metadata.depth,
+		metadata.scope_type,
+		metadata.namespace_handle};
 }

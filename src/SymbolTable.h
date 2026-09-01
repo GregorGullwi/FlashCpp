@@ -46,27 +46,19 @@ struct ScopeHandle {
 
 struct Scope {
 	Scope() = default;
-	Scope(ScopeType scopeType, uint32_t depth)
-		: scope_type(scopeType), depth(depth), scope_handle{.scope_level = depth} {}
-	Scope(ScopeType scopeType, uint32_t depth, StringHandle ns_name)
-		: scope_type(scopeType), depth(depth), scope_handle{.scope_level = depth}, namespace_name(ns_name) {}
+	explicit Scope(StringHandle ns_name) : namespace_name(ns_name) {}
 
 	Scope(Scope&&) noexcept = default;
 	Scope& operator=(Scope&&) noexcept = default;
 	Scope(const Scope&) = default;
 	Scope& operator=(const Scope&) = default;
 
-	ScopeType scope_type = ScopeType::Block;
-	ScopeId parent_scope_id;
-	uint32_t depth = 1;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
 	// Use string_view keys with a dedicated ChunkedStringAllocator in SymbolTable to avoid copies
 	// while ensuring strings remain valid for the lifetime of the symbol table.
 	// String views are interned using the symbol table's allocator before being used as keys.
 	std::unordered_map<std::string_view, std::vector<ASTNode>> symbols;
-	ScopeHandle scope_handle;
 	StringHandle namespace_name;	 // Only used for Namespace scopes
-	NamespaceHandle namespace_handle = NamespaceHandle{NamespaceHandle::INVALID_HANDLE};	 // Only used for Namespace scopes
 
 	// Using directives: namespaces to search when looking up unqualified names (stored as handles)
 	std::vector<NamespaceHandle> using_directive_paths;
@@ -265,6 +257,13 @@ public:
 			throw InternalError("SymbolTable: ScopeId out of range");
 		}
 		return scopes_[scope_id.value - 1];
+	}
+
+	ScopeMetadataView legacyScopeMetadata(ScopeId scope_id) const {
+		if (!scope_id || scope_id.value > scope_metadata_.size()) {
+			throw InternalError("SymbolTable: ScopeId out of range");
+		}
+		return scope_metadata_[scope_id.value - 1];
 	}
 
 	bool insert([[maybe_unused]] const std::string& identifier, [[maybe_unused]] ASTNode node) {
@@ -1347,9 +1346,13 @@ public:
 		const ScopeMetadataView parent_metadata = scopeMetadataAtIndex(current_scope_index_);
 		const uint32_t new_depth = parent_metadata.depth + 1;
 		const ScopeId parent_id = currentScopeId();
-		scopes_.emplace_back(Scope(scopeType, new_depth));
-		Scope& scope = scopes_.back();
-		scope.parent_scope_id = parent_id;
+		scopes_.emplace_back();
+		appendScopeMetadata(
+			ScopeMetadataView{
+				parent_id,
+				new_depth,
+				scopeType,
+				NamespaceHandle{NamespaceHandle::INVALID_HANDLE}});
 		current_scope_index_ = scopes_.size() - 1;
 		publishPersistentScopeEnterIfEnabled(
 			parent_id,
@@ -1362,9 +1365,7 @@ public:
 		const ScopeMetadataView parent_metadata = scopeMetadataAtIndex(current_scope_index_);
 		const uint32_t new_depth = parent_metadata.depth + 1;
 		const ScopeId parent_id = currentScopeId();
-		Scope scope(ScopeType::Namespace, new_depth);
-		scope.parent_scope_id = parent_id;
-		scope.namespace_handle = ns_handle;
+		Scope scope;
 		if (ns_handle.isValid() && !ns_handle.isGlobal()) {
 			gNamespaceRegistry.markDeclared(ns_handle);
 			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(ns_handle);
@@ -1374,6 +1375,8 @@ public:
 			// redeclarations across reopened blocks. Do not preload into scope.symbols.
 		}
 		scopes_.push_back(std::move(scope));
+		appendScopeMetadata(
+			ScopeMetadataView{parent_id, new_depth, ScopeType::Namespace, ns_handle});
 		current_scope_index_ = scopes_.size() - 1;
 		publishPersistentScopeEnterIfEnabled(
 			parent_id,
@@ -1391,9 +1394,13 @@ public:
 			const ScopeMetadataView parent_metadata = scopeMetadataAtIndex(current_scope_index_);
 			const uint32_t new_depth = parent_metadata.depth + 1;
 			const ScopeId parent_id = currentScopeId();
-			scopes_.emplace_back(Scope(ScopeType::Namespace, new_depth, name_handle));
-			Scope& scope = scopes_.back();
-			scope.parent_scope_id = parent_id;
+			scopes_.emplace_back(Scope(name_handle));
+			appendScopeMetadata(
+				ScopeMetadataView{
+					parent_id,
+					new_depth,
+					ScopeType::Namespace,
+					NamespaceHandle{NamespaceHandle::INVALID_HANDLE}});
 			current_scope_index_ = scopes_.size() - 1;
 			publishPersistentScopeEnterIfEnabled(
 				parent_id,
@@ -1723,9 +1730,9 @@ public:
 
 	void clear() {
 		scopes_.clear();
-		scopes_.emplace_back(Scope(ScopeType::Global, 1));
-		Scope& global_scope = scopes_.back();
-		global_scope.parent_scope_id = ScopeId{};
+		scope_metadata_.clear();
+		scopes_.emplace_back();
+		appendScopeMetadata(makeInitialGlobalScopeMetadata());
 		current_scope_index_ = 0;
 		last_lookup_scope_id_ = ScopeId{};
 		last_declaring_scope_id_ = ScopeId{};
@@ -1738,7 +1745,7 @@ public:
 		resetPersistentScopesIfEnabled();
 	}
 
-	// Mutation validation only: corrupt legacy Scope metadata without touching ScopeRecord.
+	// Mutation validation only: corrupt legacy scope metadata without touching ScopeRecord.
 	void mutateLegacyScopeMetadataForTest(
 		ScopeId scope_id,
 		ScopeType scope_type,
@@ -1748,11 +1755,11 @@ public:
 		if (!scope_id || scope_id.value > scopes_.size()) {
 			throw InternalError("SymbolTable: test scope metadata mutation out of range");
 		}
-		Scope& scope = scopes_[scope_id.value - 1];
-		scope.scope_type = scope_type;
-		scope.parent_scope_id = parent_id;
-		scope.depth = depth;
-		scope.namespace_handle = namespace_handle;
+		ScopeMetadataView& metadata = scope_metadata_[scope_id.value - 1];
+		metadata.scope_type = scope_type;
+		metadata.parent_id = parent_id;
+		metadata.depth = depth;
+		metadata.namespace_handle = namespace_handle;
 	}
 
 private:
@@ -1790,13 +1797,23 @@ private:
 		resetPersistentScopes(*this);
 	}
 
-	static Scope makeInitialGlobalScope() {
-		Scope global_scope(ScopeType::Global, 1);
-		global_scope.parent_scope_id = ScopeId{};
-		return global_scope;
+	static ScopeMetadataView makeInitialGlobalScopeMetadata() {
+		return ScopeMetadataView{
+			ScopeId{},
+			1u,
+			ScopeType::Global,
+			NamespaceHandle{NamespaceHandle::INVALID_HANDLE}};
 	}
 
-	std::vector<Scope> scopes_ = {makeInitialGlobalScope()};
+	void appendScopeMetadata(ScopeMetadataView metadata) {
+		if (scope_metadata_.size() + 1 != scopes_.size()) {
+			throw InternalError("SymbolTable: scope metadata out of sync with scopes");
+		}
+		scope_metadata_.push_back(metadata);
+	}
+
+	std::vector<Scope> scopes_ = {Scope{}};
+	std::vector<ScopeMetadataView> scope_metadata_ = {makeInitialGlobalScopeMetadata()};
 	std::size_t current_scope_index_ = 0;
 	mutable ScopeId last_lookup_scope_id_;
 	ScopeId last_declaring_scope_id_;
