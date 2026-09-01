@@ -98,6 +98,9 @@ void resetPersistentScopes(SymbolTable& table) {
 }
 
 ScopeMetadataView readScopeMetadata(const SymbolTable& table, ScopeId scope_id) {
+	if (!scope_id) {
+		throw InternalError("readScopeMetadata: ScopeId out of range");
+	}
 	if (table.persistentScopePublicationEnabled()) {
 		const ScopeRecord& record =
 			requirePersistentScopePublicationContext(table).scopeRecord(scope_id);
