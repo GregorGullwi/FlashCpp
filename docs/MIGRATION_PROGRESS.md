@@ -27,7 +27,11 @@ Last updated: 2026-09-01 after pull request boundary 28
   boundary 3A canonical types and must not diagnose or erase lookup state.
   Parser shadow publication has one transactional adapter:
   `commitParserFreeFunctionPublication`; the unused nontransactional request
-  builder and direct `publishParserFreeFunction` adapter are deleted.
+  builder and direct `publishParserFreeFunction` adapter are deleted. The
+  abandoned `SymbolTableInsertUndo` journal, `insertWithUndo`, and
+  `rollbackInsert` APIs are also deleted; reachable parser publication uses
+  plain `SymbolTable::insert`, whose successful insertion remains authoritative
+  when shadow publication rejects.
 - `gChunkedAnyStorage` is a guarded `LegacyAstChunkedAnyVector`. `emplace_back`
   and `ASTNode::emplace_node` reject types outside the compile-time legacy
   allow-list in `LegacyChunkedAnyAllowList.h`; new semantic records must use
@@ -59,7 +63,7 @@ Last updated: 2026-09-01 after pull request boundary 28
   the `FrontendContext` active at `enablePersistentScopePublication()`; lookup,
   publication, cursor updates, and reset read that bound arena rather than
   `FrontendContext::active()`.
-  `SymbolTable::insertCore` stamps `DeclarationNode::lexical_scope_id` (and
+  `SymbolTable::insert` stamps `DeclarationNode::lexical_scope_id` (and
   function, template-function, variable, template-variable, bare declaration,
   struct, enum, typedef, and class-template wrapper nodes) at the shared insert
   choke point.
@@ -125,7 +129,7 @@ Last updated: 2026-09-01 after pull request boundary 28
 | 8 | Parser shadow wire for namespace/global C++ free functions, telemetry `TypeId` bridge, `declaration_builder_publish` counter |
 | 9 | `ChunkedAnyVector` compile-time legacy-node allow-list guard on `gChunkedAnyStorage` and `ASTNode::emplace_node` |
 | 10 | `prepareFunctionPublication` preflight, `PublicationTransaction` mark/rollback, parser shadow commit helper |
-| 11 | `SymbolTableInsertUndo` on wired free-function inserts, parser rollback when publication rejects |
+| 11 | Initial `SymbolTableInsertUndo` slice for wired free-function inserts (superseded and deleted at boundary 28) |
 | 12 | `DeclarationNode::lexical_scope_id` stamped at `SymbolTable` insert/replace/insertGlobal choke point (function, template-function, variable, template-variable, and bare declaration nodes) |
 | 13 | Syntax and semantic allocation-domain used/reserved bytes reported through `FrontendContext` from `gChunkedAnyStorage` and DeclarationBuilder arenas |
 | 14 | FrontendContext-owned `ScopeRecord` arena; opt-in dual-write from `SymbolTable` enter/exit/clear; `publishScopeState` deleted |
@@ -142,7 +146,7 @@ Last updated: 2026-09-01 after pull request boundary 28
 | 25 | Route sema binary operator-template instantiation through `TemplateEngine::tryInstantiateOperatorTemplateForBinary`; delete direct external `Parser` call |
 | 26 | Attribute InlineVector spills to named families; tag overload-resolution and template-argument hot vectors; report per-family counts in arena and migration telemetry |
 | 27 | Route AstToIr constructor-template materialization through `TemplateEngine::materializeMatchingConstructorTemplate`; delete last external direct `Parser` constructor-template call |
-| 28 | Mutation-validate parser shadow merging of inline declarations across reopened namespace blocks; delete the unused nontransactional parser-publication request builder and direct publication adapter |
+| 28 | Mutation-validate parser shadow merging and retained SymbolTable authority; delete the unused nontransactional parser-publication adapter and abandoned `SymbolTableInsertUndo` control path |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -208,11 +212,16 @@ boundary 1 is started, not finished.
     lexical `ScopeId`s while sharing one `OwnerId` / `EntityId`, and preserves
     `inline` plus definition state through the redeclaration chain.
 
-Boundary-28 validation: `build_flashcpp.bat`; direct clang-cl doctest build and
-four parser-shadow doctests; `test_decl_builder_wire_free_fn_ret42.cpp` and
-`test_decl_builder_publication_transaction_ret42.cpp`; migration counter
-baselines unchanged; dollar inventory 17/17; and `git diff --check` pass on
-Windows. Namespace-owner and inline-flag mutations each fail the new doctest.
+Boundary-28 validation: `build_flashcpp.bat`; direct clang-cl doctest build,
+four parser-shadow doctests, and the retained-SymbolTable-insertion doctest;
+`test_decl_builder_wire_free_fn_ret42.cpp`,
+`test_decl_builder_publication_transaction_ret42.cpp`,
+`test_inline_ns_overload_merge_ret0.cpp`, and
+`test_using_decl_namespace_overload_merge_ret2.cpp`; migration counter
+baselines unchanged; dollar inventory 17/17; full Windows runner (2,962
+single-file tests, 255 negative tests, and one multi-TU case); and
+`git diff --check` pass. Namespace-owner, inline-flag, and overload-retention
+mutations each fail the intended doctest.
 
 ## Effort estimate
 
