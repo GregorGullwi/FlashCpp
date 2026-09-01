@@ -109,6 +109,11 @@ public:
 		return FlashCpp::inlineVectorSpillCount();
 	}
 
+	const std::array<uint64_t, static_cast<std::size_t>(FlashCpp::InlineVectorSpillFamily::Count)>&
+	inlineVectorSpillFamilyCounts() const {
+		return FlashCpp::inlineVectorSpillFamilyCounts();
+	}
+
 	ScopeId currentScopeId() const {
 		return current_scope_id_;
 	}
@@ -297,6 +302,18 @@ public:
 		FLASH_LOG(General, Info,
 				  "  InlineVector spill events (selected families): ",
 				  FlashCpp::inlineVectorSpillCount());
+		for (std::size_t index = 0; index < inlineVectorSpillFamilyCounts().size(); ++index) {
+			const uint64_t count = inlineVectorSpillFamilyCounts()[index];
+			if (count == 0) {
+				continue;
+			}
+			FLASH_LOG(General, Info,
+					  "  InlineVector spill family ",
+					  FlashCpp::inlineVectorSpillFamilyLabel(
+						  static_cast<FlashCpp::InlineVectorSpillFamily>(index)),
+					  " events: ",
+					  count);
+		}
 		FLASH_LOG(General, Info,
 				  "  persistent scopes (count/current ScopeId): ",
 				  scope_records_.size(),

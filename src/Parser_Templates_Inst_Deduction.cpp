@@ -774,7 +774,7 @@ static int computeTemplateFunctionSpecificity(const TemplateFunctionDeclarationN
 bool Parser::tryAppendDefaultTemplateArg(
 	const TemplateParameterNode& param,
 	std::span<const TemplateParameterNode> template_params,
-	InlineVector<TemplateTypeArg, 4>& template_args,
+	TemplateArgumentVector& template_args,
 	NamespaceHandle source_namespace) {
 	FLASH_LOG_FORMAT(Templates, Trace,
 					 "tryAppendDefaultTemplateArg: param='{}', has_default={}, has_default_pos={}, source_ns={}",
@@ -1067,7 +1067,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 // Reference metadata for template bindings lives on alias_type_spec_ via registerTemplateTypeBinding.
 void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
-	const InlineVector<TemplateTypeArg, 4>& type_args,
+	const TemplateArgumentVector& type_args,
 	FlashCpp::TemplateParameterScope& scope) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
@@ -2341,7 +2341,7 @@ bool Parser::materializeTemplateFunctionParameters(
 		auto buildSubstitutionForPackElement =
 			[&](std::string_view pack_param_name, size_t pack_element_offset,
 				InlineVector<ASTNode, 4>& subst_params,
-				InlineVector<TemplateTypeArg, 4>& subst_args) -> bool {
+				TemplateArgumentVector& subst_args) -> bool {
 				auto pack_binding = getTemplateParamPackBinding(pack_param_name);
 				if (!pack_binding.has_value() || pack_element_offset >= pack_binding->count) {
 					return false;
@@ -2379,7 +2379,7 @@ bool Parser::materializeTemplateFunctionParameters(
 		auto buildMaterializedParamType =
 			[&](const DeclarationNode& original_param_decl,
 				const InlineVector<ASTNode, 4>& materialized_template_params,
-				const InlineVector<TemplateTypeArg, 4>& materialized_template_args) {
+				const TemplateArgumentVector& materialized_template_args) {
 				const TypeSpecifierNode& original_param_type = original_param_decl.type_specifier_node();
 				InlineVector<TemplateParameterNode, 4> typed_params;
 				typed_params.reserve(materialized_template_params.size());
@@ -2428,7 +2428,7 @@ bool Parser::materializeTemplateFunctionParameters(
 				if (pack_binding.has_value()) {
 					for (size_t pack_element_offset = 0; pack_element_offset < pack_binding->count; ++pack_element_offset) {
 						InlineVector<ASTNode, 4> subst_params;
-						InlineVector<TemplateTypeArg, 4> subst_args;
+						TemplateArgumentVector subst_args;
 						if (!buildSubstitutionForPackElement(pack_param_name, pack_element_offset, subst_params, subst_args)) {
 							continue;
 						}
@@ -2450,7 +2450,7 @@ bool Parser::materializeTemplateFunctionParameters(
 			}
 
 			InlineVector<ASTNode, 4> flat_subst_params;
-			InlineVector<TemplateTypeArg, 4> flat_subst_args;
+			TemplateArgumentVector flat_subst_args;
 			{
 				size_t flat_arg_idx = 0;
 				for (size_t j = 0; j < template_params.size(); ++j) {
@@ -3565,7 +3565,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	struct ExplicitOverloadCandidate {
 		size_t overload_idx = 0;
 		const TemplateFunctionDeclarationNode* template_func = nullptr;
-		InlineVector<TemplateTypeArg, 4> template_args;
+		TemplateArgumentVector template_args;
 		std::vector<size_t> template_param_arg_starts;
 		std::vector<size_t> template_param_arg_counts;
 		std::optional<CallArgDeductionInfo> deduction_info;
@@ -3626,7 +3626,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 
 		// Build template argument list
-		InlineVector<TemplateTypeArg, 4> template_args;
+		TemplateArgumentVector template_args;
 		std::vector<size_t> template_param_arg_starts(template_params.size(), SIZE_MAX);
 		std::vector<size_t> template_param_arg_counts(template_params.size(), 0);
 		size_t explicit_idx = 0;	 // Track position in explicit_types
@@ -3711,7 +3711,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					template_args.push_back(explicit_types[explicit_idx + j]);
 				}
 				explicit_idx += pack_size;
-				const InlineVector<TemplateTypeArg, 4>* deduced_pack = nullptr;
+				const TemplateArgumentVector* deduced_pack = nullptr;
 				if (deduction_info.has_value()) {
 					auto deduced_pack_it =
 						deduction_info->param_name_to_pack_args.find(param.nameHandle());
@@ -3832,7 +3832,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 
 			// Create a copy of explicit_types with template template arg flags properly set
-			InlineVector<TemplateTypeArg, 4> constraint_eval_args = template_args;
+			TemplateArgumentVector constraint_eval_args = template_args;
 
 			FLASH_LOG(Templates, Trace, "  Evaluating constraint with ", constraint_eval_args.size(), " template args and ", eval_param_names.size(), " param names");
 
@@ -3883,7 +3883,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
 					TemplateTypeArg concept_arg = bound_arg;
 					concept_arg.ref_qualifier = ReferenceQualifier::None;
-					InlineVector<TemplateTypeArg, 4> concept_args;
+					TemplateArgumentVector concept_args;
 					concept_args.push_back(concept_arg);
 					auto constraint_result = evaluateConstraint(
 						concept_node,
@@ -3987,7 +3987,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			// decltype(u->foo(), true) see `u` as `HasFoo*` (or concrete equivalent),
 			// not as an unresolved template-parameter placeholder.
 			FlashCpp::SymbolTableScope sfinae_param_scope(ScopeType::Function);
-			InlineVector<ASTNode, 8> sfinae_params;
+			OverloadResolutionCandidateVector sfinae_params;
 			sfinae_params.reserve(func_decl.parameter_nodes().size());
 			for (const ASTNode& param_node : func_decl.parameter_nodes()) {
 				if (!param_node.is<DeclarationNode>()) {
@@ -4300,7 +4300,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	if (!outer_sfinae_context && all_templates.size() > 1) {
 		struct ShapeCandidate {
 			size_t overload_idx;
-			InlineVector<TemplateTypeArg, 4> template_args;
+			TemplateArgumentVector template_args;
 			FlashCpp::TemplateInstantiationKey key;
 			uintptr_t overload_id;
 			std::optional<CallArgDeductionInfo> deduction_info;
@@ -4330,7 +4330,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				continue;
 			}
 
-			InlineVector<TemplateTypeArg, 4> template_args = deduction_candidate->template_args;
+			TemplateArgumentVector template_args = deduction_candidate->template_args;
 			if (anyTemplateArgIsStructurallyDependent(template_args)) {
 				continue;
 			}
@@ -4457,7 +4457,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 									const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
 									TemplateTypeArg concept_arg = bound_arg;
 									concept_arg.ref_qualifier = ReferenceQualifier::None;
-									InlineVector<TemplateTypeArg, 4> concept_args;
+									TemplateArgumentVector concept_args;
 									concept_args.push_back(concept_arg);
 									auto cr = evaluateConstraint(concept_node, concept_args, this);
 									if (!cr.satisfied) {
@@ -4657,7 +4657,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	return std::nullopt;
 }
 
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCall(
+std::optional<TemplateArgumentVector> Parser::deduceTemplateArgsFromCall(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	std::span<const TypeSpecifierNode> arg_types,
 	const CallArgDeductionInfo& deduction_info,
@@ -4665,7 +4665,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 	int recursion_depth,
 	NamespaceHandle source_namespace) {
 
-	InlineVector<TemplateTypeArg, 4> template_args;
+	TemplateArgumentVector template_args;
 	std::vector<TypeCategory> deduced_type_args;
 	size_t next_deduced_type_arg = 0;
 	std::vector<TemplateTypeArg> deduced_value_args;
@@ -4997,7 +4997,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	if (!deduction_candidate.has_value()) {
 		return std::nullopt;
 	}
-	InlineVector<TemplateTypeArg, 4> template_args = std::move(deduction_candidate->template_args);
+	TemplateArgumentVector template_args = std::move(deduction_candidate->template_args);
 	std::optional<CallArgDeductionInfo> deduction_info = std::move(deduction_candidate->deduction_info);
 	// template_args is already std::vector<TemplateTypeArg> — no conversion needed.
 	if (anyTemplateArgIsStructurallyDependent(template_args)) {
@@ -5134,7 +5134,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
 				TemplateTypeArg concept_arg = bound_arg;
 				concept_arg.ref_qualifier = ReferenceQualifier::None;
-				InlineVector<TemplateTypeArg, 4> concept_args;
+				TemplateArgumentVector concept_args;
 				concept_args.push_back(concept_arg);
 				auto constraint_result = evaluateConstraint(
 					concept_node,

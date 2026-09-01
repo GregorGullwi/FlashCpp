@@ -223,7 +223,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 
 			// Parse template arguments: Name<Args>
-			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
+			std::optional<TemplateArgumentVector> template_args;
 			if (peek() == "<"_tok) {
 				template_args = parse_explicit_template_arguments();
 				if (!template_args.has_value()) {
@@ -1307,7 +1307,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			advance();
 
 			// Parse template arguments: <int>, <float>, etc.
-			std::optional<InlineVector<TemplateTypeArg, 4>> template_args_opt;
+			std::optional<TemplateArgumentVector> template_args_opt;
 			std::vector<ASTNode> template_arg_syntax_nodes;
 			const StructDeclarationNode* primary_class_declaration = nullptr;
 			if (auto class_template_opt = gTemplateRegistry.lookupTemplate(template_name);
@@ -1324,7 +1324,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				return ParseResult::error("Expected template arguments in specialization", current_token_);
 			}
 
-			InlineVector<TemplateTypeArg, 4> template_args = *template_args_opt;
+			TemplateArgumentVector template_args = *template_args_opt;
 
 			// Check for out-of-line member class definition: template<> class Foo<Args>::Bar { ... }
 			// E.g., template<> class basic_ostream<char, char_traits<char>>::sentry { ... };
@@ -1501,7 +1501,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 					std::string_view base_class_name = base_class_name_builder.commit();
 					std::vector<ASTNode> template_arg_nodes;
-					std::optional<InlineVector<TemplateTypeArg, 4>> base_template_args_opt;
+					std::optional<TemplateArgumentVector> base_template_args_opt;
 					std::vector<QualifiedTypeMemberAccess> member_type_chain;
 					std::optional<Token> member_name_token;
 
@@ -1522,7 +1522,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						member_type_chain = post_info.member_type_chain;
 						member_name_token = post_info.member_name_token;
 
-						InlineVector<TemplateTypeArg, 4> base_template_args = *base_template_args_opt;
+						TemplateArgumentVector base_template_args = *base_template_args_opt;
 
 						// Check if any template arguments are dependent
 						bool has_dependent_args = post_info.is_pack_expansion;
@@ -2801,7 +2801,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);
 			}
 
-			InlineVector<TemplateTypeArg, 4> pattern_args = *pattern_args_opt;
+			TemplateArgumentVector pattern_args = *pattern_args_opt;
 
 			// Check for out-of-line member class definition: template<...> class Foo<...>::Bar { ... }
 			// E.g., template<typename _CharT, typename _Traits>
@@ -2994,7 +2994,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							return ParseResult::error("Failed to parse template arguments for base class", peek_info());
 						}
 
-						InlineVector<TemplateTypeArg, 4> template_args = *template_args_opt;
+						TemplateArgumentVector template_args = *template_args_opt;
 
 						// Consume optional ::member type access and ... pack expansion
 						auto post_info_opt = consume_base_class_qualifiers_after_template_args();
@@ -4525,7 +4525,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			std::string_view func_base_name = decl_node.identifier_token().value();
 
 			// Parse explicit template arguments (e.g., <int>, <int, int>)
-			InlineVector<TemplateTypeArg, 4> spec_template_args;
+			TemplateArgumentVector spec_template_args;
 			if (peek() == "<"_tok) {
 				auto template_args_opt = parse_explicit_template_arguments();
 				if (!template_args_opt.has_value()) {
@@ -5114,7 +5114,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);
 		}
 
-		InlineVector<TemplateTypeArg, 4> pattern_args = *pattern_args_opt;
+		TemplateArgumentVector pattern_args = *pattern_args_opt;
 		const auto& primary_template_params =
 			class_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
 		auto is_bare_echo_of_partial_parameters =

@@ -40,7 +40,7 @@ const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index);
 size_t getResolvedTypeSizeBytes(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index);
 MemberSizeAndAlignment calculateResolvedMemberSizeAndAlignment(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index);
 int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg);
-InlineVector<TemplateTypeArg, 4> toInlineTemplateArgs(std::span<const TemplateTypeArg> template_args);
+TemplateArgumentVector toInlineTemplateArgs(std::span<const TemplateTypeArg> template_args);
 InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(std::span<const TemplateTypeArg> template_args);
 std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_view type_name);
 std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified_namespace);
@@ -52,7 +52,7 @@ void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<Strin
 
 void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
-	const InlineVector<TemplateTypeArg, 4>& type_args,
+	const TemplateArgumentVector& type_args,
 	FlashCpp::TemplateParameterScope& scope);
 
 TypeInfo& registerTemplateTypeBinding(

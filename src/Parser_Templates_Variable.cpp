@@ -131,7 +131,7 @@ StringHandle Parser::parseRawAliasTargetTemplateId(
 	std::string_view full_name = name_builder.commit();
 
 	if (peek() == "<"_tok) {
-		std::optional<InlineVector<TemplateTypeArg, 4>> parsed_args;
+		std::optional<TemplateArgumentVector> parsed_args;
 		if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(full_name);
 			alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
 			parsed_args = parse_explicit_template_arguments(

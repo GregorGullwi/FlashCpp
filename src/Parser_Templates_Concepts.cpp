@@ -327,7 +327,7 @@ ParseResult Parser::parse_requires_expression() {
 
 ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 	const RequiresExpressionNode& requires_expr,
-	const InlineVector<TemplateTypeArg, 4>& template_args,
+	const TemplateArgumentVector& template_args,
 	const InlineVector<std::string_view, 4>& template_param_names,
 	Parser* parser,
 	std::span<const TemplateParameterNode> template_params) {

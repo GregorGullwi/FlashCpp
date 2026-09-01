@@ -26,10 +26,37 @@
 
 #include "MigrationTelemetryConfig.h"
 
+#include <array>
+#include <cstdint>
+#include <string_view>
+
 namespace FlashCpp {
+
+enum class InlineVectorSpillFamily : uint8_t {
+	Unknown = 0,
+	OverloadResolution = 1,
+	TemplateArgument = 2,
+	Count,
+};
+
+inline std::string_view inlineVectorSpillFamilyLabel(InlineVectorSpillFamily family) {
+	switch (family) {
+	case InlineVectorSpillFamily::Unknown:
+		return "unknown";
+	case InlineVectorSpillFamily::OverloadResolution:
+		return "overload-resolution";
+	case InlineVectorSpillFamily::TemplateArgument:
+		return "template-argument";
+	case InlineVectorSpillFamily::Count:
+		break;
+	}
+	return "invalid";
+}
 
 #if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
 inline thread_local uint64_t gInlineVectorSpillCount = 0;
+inline thread_local std::array<uint64_t, static_cast<std::size_t>(InlineVectorSpillFamily::Count)>
+	gInlineVectorSpillFamilyCounts{};
 #endif
 
 /**
@@ -41,8 +68,9 @@ inline thread_local uint64_t gInlineVectorSpillCount = 0;
  *
  * @tparam T The element type
  * @tparam N The inline capacity (default: 4)
+ * @tparam SpillFamily Migration telemetry family attributed when inline storage spills
  */
-template <typename T, size_t N = 4>
+template <typename T, size_t N = 4, InlineVectorSpillFamily SpillFamily = InlineVectorSpillFamily::Unknown>
 class InlineVector {
 public:
 	InlineVector() = default;
@@ -534,6 +562,7 @@ private:
 
 #if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
 		++gInlineVectorSpillCount;
+		++gInlineVectorSpillFamilyCounts[static_cast<std::size_t>(SpillFamily)];
 #endif
 		heap_data_.reserve(capacity);
 		heap_data_.insert(
@@ -604,6 +633,28 @@ inline uint64_t inlineVectorSpillCount() {
 	return gInlineVectorSpillCount;
 #else
 	return 0;
+#endif
+}
+
+inline uint64_t inlineVectorSpillCount(InlineVectorSpillFamily family) {
+#if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
+	if (static_cast<std::size_t>(family) >= gInlineVectorSpillFamilyCounts.size()) {
+		return 0;
+	}
+	return gInlineVectorSpillFamilyCounts[static_cast<std::size_t>(family)];
+#else
+	(void)family;
+	return 0;
+#endif
+}
+
+inline const std::array<uint64_t, static_cast<std::size_t>(InlineVectorSpillFamily::Count)>&
+inlineVectorSpillFamilyCounts() {
+#if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
+	return gInlineVectorSpillFamilyCounts;
+#else
+	static const std::array<uint64_t, static_cast<std::size_t>(InlineVectorSpillFamily::Count)> empty{};
+	return empty;
 #endif
 }
 

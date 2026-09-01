@@ -161,8 +161,8 @@ InlineVector<TypeInfo::TemplateArgInfo, 4> toTemplateArgInfoList(std::span<const
 	return result;
 }
 
-InlineVector<TemplateTypeArg, 4> toTemplateTypeArgList(std::span<const TypeInfo::TemplateArgInfo> args) {
-	InlineVector<TemplateTypeArg, 4> result;
+TemplateArgumentVector toTemplateTypeArgList(std::span<const TypeInfo::TemplateArgInfo> args) {
+	TemplateArgumentVector result;
 	result.reserve(args.size());
 	for (const TypeInfo::TemplateArgInfo& arg : args) {
 		result.push_back(toTemplateTypeArg(arg));

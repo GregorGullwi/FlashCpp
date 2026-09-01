@@ -89,7 +89,10 @@ Last updated: 2026-09-01 after pull request boundary 25
   into coarse AST families (declaration, statement, expression, type-specifier,
   template, other) via `SyntaxAstTelemetry.h`. Semantic declaration and entity
   records are grouped by `DeclKind` through `DeclarationBuilder`; declarator and
-  parameter-list intern registry sizes report under `--perf-stats`. `ChunkedVector`
+  parameter-list intern registry sizes report under `--perf-stats`. InlineVector
+  spills attribute to named families (`overload-resolution`, `template-argument`,
+  plus `unknown` for untagged containers) through a third `InlineVector` template
+  parameter; global spill totals remain for compatibility. `ChunkedVector`
   reserved bytes count retained chunk capacity across rollback. String-table
   entries/spelling bytes, InlineVector spills, scope count/current `ScopeId`,
   scope-arena used/reserved bytes, declaration/entity counts, and per-arena
@@ -134,6 +137,7 @@ Last updated: 2026-09-01 after pull request boundary 25
 | 23 | Report semantic `DeclKind` breakdown and DeclarationBuilder intern registry sizes through `FrontendContext` arena telemetry |
 | 24 | Route constexpr and substitution call-argument template instantiation through `TemplateEngine::tryInstantiateTemplateFromCallArguments`; delete direct external `Parser` calls |
 | 25 | Route sema binary operator-template instantiation through `TemplateEngine::tryInstantiateOperatorTemplateForBinary`; delete direct external `Parser` call |
+| 26 | Attribute InlineVector spills to named families; tag overload-resolution and template-argument hot vectors; report per-family counts in arena and migration telemetry |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -180,9 +184,10 @@ boundary 1 is started, not finished.
     InlineVector spill counts are reported through FrontendContext": all four
     allocation domains now report used/reserved bytes (IR covers lowering
     buffers only); coarse syntax AST family counts, declaration/entity record
-    totals, semantic `DeclKind` breakdown, and declarator/parameter-list intern
-    registry sizes report; per-family InlineVector spill attribution and full IR
-    arena ownership remain open
+    totals, semantic `DeclKind` breakdown, declarator/parameter-list intern
+    registry sizes, and per-family InlineVector spill breakdown report for
+    tagged overload-resolution and template-argument vectors; full IR arena
+    ownership and tagging of remaining InlineVector families remain open
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
     `Scope::scope_id` and legacy metadata fields on `Scope` are deleted.
@@ -194,13 +199,13 @@ boundary 1 is started, not finished.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage): follow-on boundary-1 work
 
-Boundary-25 validation: `make sharded` passes on Linux; migration counter and
-dollar-inventory baselines unchanged; no non-parser translation unit calls
-`Parser::tryInstantiateOperatorTemplateForBinary` directly.
+Boundary-26 validation: `make sharded` and unity doctest
+`FrontendContext exposes active context and scratch telemetry` pass on Linux;
+migration counter and dollar-inventory baselines unchanged.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 27-30%, confidence medium
+- Implementation effort completed overall: 28-31%, confidence medium
 
 ## Remaining work
 

@@ -1,6 +1,7 @@
 #pragma once
 #include "SemanticTypes.h"
 #include "AstNodeTypes_Core.h"
+#include "MemberFunctionLookupShared.h"
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -492,7 +493,7 @@ private:
 		CanonicalTypeId* inferred_type_id = nullptr);
 	bool tryCollectOverloadResolutionArgTypes(
 		const ChunkedVector<ASTNode>& arguments,
-		InlineVector<TypeSpecifierNode, 6>& arg_types_out);
+		OverloadResolutionArgTypeVector& arg_types_out);
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);

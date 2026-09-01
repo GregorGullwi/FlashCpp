@@ -2676,7 +2676,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 				}
 				return std::nullopt;
 			};
-			InlineVector<TypeSpecifierNode, 6> arg_types;
+			OverloadResolutionArgTypeVector arg_types;
 			for (const ASTNode& argument : call_expr->arguments()) {
 				std::optional<TypeSpecifierNode> arg_type =
 					context.sema->getOverloadResolutionArgType(argument);
@@ -2790,7 +2790,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 				func_decl.parameter_nodes().size() != call_expr->arguments().size()) {
 				return std::nullopt;
 			}
-			InlineVector<TemplateTypeArg, 4> deduced_args;
+			TemplateArgumentVector deduced_args;
 			deduced_args.resize(template_params.size());
 			std::vector<bool> deduced(template_params.size(), false);
 			for (size_t arg_index = 0; arg_index < call_expr->arguments().size(); ++arg_index) {
@@ -2883,7 +2883,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 				return is_function_decl_noexcept(*record.resolved_function, context);
 			}
 			if (context.sema != nullptr && context.parser != nullptr) {
-				InlineVector<TypeSpecifierNode, 6> arg_types;
+				OverloadResolutionArgTypeVector arg_types;
 				bool collected_arg_types = true;
 				for (const ASTNode& argument : call_expr->arguments()) {
 					std::optional<TypeSpecifierNode> arg_type =
@@ -5278,7 +5278,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 				getUnqualifiedFunctionName(qualified_name.empty() ? func_name : qualified_name));
 		}
 		if (concept_opt.has_value() && concept_opt->is<ConceptDeclarationNode>()) {
-			std::optional<InlineVector<TemplateTypeArg, 4>> concrete_args =
+			std::optional<TemplateArgumentVector> concrete_args =
 				context.parser->templateEngine().materializeConcreteCallTemplateArguments(call_expr.template_arguments());
 			if (concrete_args.has_value()) {
 				const ConstraintEvaluationResult constraint_result = evaluateConstraint(

@@ -6,20 +6,27 @@
 #include <ranges>
 #include <span>
 
+using OverloadResolutionCandidateVector =
+	InlineVector<ASTNode, 8, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+using OverloadResolutionArgTypeVector =
+	InlineVector<TypeSpecifierNode, 6, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+using MemberOverloadCandidateVector =
+	InlineVector<const StructMemberFunction*, 8, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+
 struct ConstAwareMemberCandidateSet {
-	InlineVector<const StructMemberFunction*, 8> preferred;
-	InlineVector<const StructMemberFunction*, 8> compatible;
+	MemberOverloadCandidateVector preferred;
+	MemberOverloadCandidateVector compatible;
 };
 
 struct DefinitionPreferredMemberOverloadSet {
-	InlineVector<ASTNode, 8> all;
-	InlineVector<ASTNode, 8> definition_preferred;
+	OverloadResolutionCandidateVector all;
+	OverloadResolutionCandidateVector definition_preferred;
 	const FunctionDeclarationNode* first = nullptr;
 	const FunctionDeclarationNode* first_definition = nullptr;
 };
 
 inline void appendUniqueMemberFunctionCandidate(
-	InlineVector<const StructMemberFunction*, 8>& target,
+	MemberOverloadCandidateVector& target,
 	const StructMemberFunction* candidate) {
 	if (candidate == nullptr) {
 		return;
@@ -32,7 +39,7 @@ inline void appendUniqueMemberFunctionCandidate(
 }
 
 inline void appendUniqueOverloadNode(
-	InlineVector<ASTNode, 8>& target,
+	OverloadResolutionCandidateVector& target,
 	const ASTNode& candidate) {
 	if (!candidate.raw_pointer()) {
 		return;
@@ -73,7 +80,7 @@ void visitStructHierarchyDepthFirst(
 }
 
 inline void appendUniqueMemberFunctionOverloadNodes(
-	InlineVector<ASTNode, 8>& target,
+	OverloadResolutionCandidateVector& target,
 	std::span<const StructMemberFunction* const> members) {
 	for (const StructMemberFunction* member : members) {
 		if (member == nullptr) {

@@ -71,7 +71,7 @@ public:
 	Parser::ResolvedQualifiedOwner resolveQualifiedOwnerForLookup(
 		std::string_view owner_name);
 
-	std::optional<InlineVector<TemplateTypeArg, 4>> materializeConcreteCallTemplateArguments(
+	std::optional<TemplateArgumentVector> materializeConcreteCallTemplateArguments(
 		std::span<const ASTNode> template_argument_nodes);
 
 	std::optional<ASTNode> resolveDefinitionBoundOrdinaryCall(
@@ -277,7 +277,7 @@ inline Parser::ResolvedQualifiedOwner TemplateEngine::resolveQualifiedOwnerForLo
 	return parser().resolveQualifiedOwnerForLookup(owner_name);
 }
 
-inline std::optional<InlineVector<TemplateTypeArg, 4>> TemplateEngine::materializeConcreteCallTemplateArguments(
+inline std::optional<TemplateArgumentVector> TemplateEngine::materializeConcreteCallTemplateArguments(
 	std::span<const ASTNode> template_argument_nodes) {
 	recordTemplateEngineOldEngineRoute();
 	return parser().materializeConcreteCallTemplateArguments(template_argument_nodes);

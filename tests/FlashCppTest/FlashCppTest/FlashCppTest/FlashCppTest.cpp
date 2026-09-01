@@ -4475,12 +4475,25 @@ TEST_SUITE("FrontendContext") {
 		CHECK(context.diagnostics().count(DiagnosticSeverity::Fatal) == 1);
 #if FLASHCPP_TRACK_INLINE_VECTOR_SPILLS
 		const uint64_t spills_before = FlashCpp::inlineVectorSpillCount();
-		FlashCpp::InlineVector<int, 2> values;
-		values.push_back(1);
-		values.push_back(2);
-		values.push_back(3);
-		CHECK(FlashCpp::inlineVectorSpillCount() == spills_before + 1);
-		CHECK(context.inlineVectorSpillCount() == spills_before + 1);
+		const uint64_t overload_spills_before =
+			FlashCpp::inlineVectorSpillCount(FlashCpp::InlineVectorSpillFamily::OverloadResolution);
+		const uint64_t template_spills_before =
+			FlashCpp::inlineVectorSpillCount(FlashCpp::InlineVectorSpillFamily::TemplateArgument);
+		FlashCpp::InlineVector<int, 2, FlashCpp::InlineVectorSpillFamily::OverloadResolution> overload_values;
+		overload_values.push_back(1);
+		overload_values.push_back(2);
+		overload_values.push_back(3);
+		FlashCpp::InlineVector<TemplateTypeArg, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument>
+			template_values;
+		template_values.push_back(TemplateTypeArg{});
+		template_values.push_back(TemplateTypeArg{});
+		template_values.push_back(TemplateTypeArg{});
+		CHECK(FlashCpp::inlineVectorSpillCount() == spills_before + 2);
+		CHECK(context.inlineVectorSpillCount() == spills_before + 2);
+		CHECK(FlashCpp::inlineVectorSpillCount(FlashCpp::InlineVectorSpillFamily::OverloadResolution) ==
+			  overload_spills_before + 1);
+		CHECK(FlashCpp::inlineVectorSpillCount(FlashCpp::InlineVectorSpillFamily::TemplateArgument) ==
+			  template_spills_before + 1);
 #endif
 		context.refreshScratchDomainStats();
 		const DomainByteStats scratch_stats = context.domainStats(AllocationDomain::Scratch);

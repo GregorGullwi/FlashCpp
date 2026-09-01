@@ -37,9 +37,9 @@ struct OutOfLineMemberFunction {
 // Used during inner template instantiation to resolve outer template params (e.g., T→int).
 struct OuterTemplateBinding {
 	InlineVector<StringHandle, 4> param_names; // Outer param names (e.g., ["T"])
-	InlineVector<TemplateTypeArg, 4> param_args; // Concrete types (e.g., [int])
+	TemplateArgumentVector param_args; // Concrete types (e.g., [int])
 	InlineVector<ASTNode, 4> params; // Original outer template params, preserving variadic/kind metadata
-	InlineVector<TemplateTypeArg, 4> all_args; // Full flattened outer arg list, including pack expansions
+	TemplateArgumentVector all_args; // Full flattened outer arg list, including pack expansions
 };
 
 // Out-of-line template static member variable definition
@@ -66,7 +66,7 @@ struct OutOfLineNestedClass {
 	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
 	bool is_class = false; // true if 'class', false if 'struct'
 	size_t pack_alignment = 0; // Active #pragma pack value at the definition site
-	InlineVector<TemplateTypeArg, 4> specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
+	TemplateArgumentVector specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
 };
 
 // SFINAE condition for dependent member type probes.
@@ -83,13 +83,13 @@ struct SfinaeCondition {
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
 struct TemplatePattern {
 	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters (e.g., typename T)
-	InlineVector<TemplateTypeArg, 4> pattern_args; // Pattern like T&, T*, etc.
+	TemplateArgumentVector pattern_args; // Pattern like T&, T*, etc.
 	ASTNode specialized_node; // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition; // Optional SFINAE check for void_t patterns
 
 	// Constructor to avoid aggregate initialization issues with mutable cache fields
 	TemplatePattern() = default;
-	TemplatePattern(InlineVector<TemplateParameterNode, 4> tp, InlineVector<TemplateTypeArg, 4> pa,
+	TemplatePattern(InlineVector<TemplateParameterNode, 4> tp, TemplateArgumentVector pa,
 					ASTNode sn, std::optional<SfinaeCondition> sc)
 		: template_params(std::move(tp)), pattern_args(std::move(pa)),
 		  specialized_node(std::move(sn)), sfinae_condition(std::move(sc)) {}
@@ -974,7 +974,7 @@ struct TemplatePattern {
 // Key for template specializations
 struct SpecializationKey {
 	StringHandle template_name;
-	InlineVector<TemplateTypeArg, 4> template_args;
+	TemplateArgumentVector template_args;
 
 	bool operator==(const SpecializationKey& other) const {
 		return template_name == other.template_name && template_args == other.template_args;

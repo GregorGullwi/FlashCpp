@@ -795,7 +795,7 @@ public:
 		// template has an exact specialization for the same unqualified type, use
 		// that specialization as the canonical match.  Keep references, pointers,
 		// arrays, and value arguments structural; only top-level type cv is removed.
-		InlineVector<TemplateTypeArg, 4> unqualified_args = key.template_args;
+		TemplateArgumentVector unqualified_args = key.template_args;
 		bool removed_top_level_cv = false;
 		for (TemplateTypeArg& arg : unqualified_args) {
 			if (!arg.is_value &&
@@ -1141,9 +1141,9 @@ private:
 	// underlying concrete type. Exact specializations are keyed structurally, not by
 	// the incidental alias TypeIndex/category that happened to reach registration or
 	// lookup.
-	static InlineVector<TemplateTypeArg, 4> canonicalizeTemplateArgsForExactSpecialization(
+	static TemplateArgumentVector canonicalizeTemplateArgsForExactSpecialization(
 		std::span<const TemplateTypeArg> template_args) {
-		InlineVector<TemplateTypeArg, 4> canonical_args;
+		TemplateArgumentVector canonical_args;
 		canonical_args.reserve(template_args.size());
 		for (const TemplateTypeArg& arg : template_args) {
 			TemplateTypeArg canonical_arg = arg;

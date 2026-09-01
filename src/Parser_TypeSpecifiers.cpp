@@ -1017,7 +1017,7 @@ ParseResult Parser::parse_type_specifier() {
 		// instead of discarding their template arguments and leaving an unsized
 		// placeholder named after the alias template itself.
 		if (peek() == "<"_tok) {
-			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
+			std::optional<TemplateArgumentVector> template_args;
 			if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(type_name);
 				alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
 				std::vector<ASTNode> template_arg_syntax_nodes;
@@ -1387,7 +1387,7 @@ ParseResult Parser::parse_type_specifier() {
 										patternDeclaration(current_owner_declaration)) {
 									return false;
 								}
-								InlineVector<TemplateTypeArg, 4> alias_target_args =
+								TemplateArgumentVector alias_target_args =
 									toTemplateTypeArgList(alias_target_info->templateArgs());
 								if (!templateArgumentsMatchCurrentInstantiation(
 										std::span<const TemplateTypeArg>(
@@ -1621,7 +1621,7 @@ ParseResult Parser::parse_type_specifier() {
 		}
 
 		// Check for template arguments: Container<int>
-		std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
+		std::optional<TemplateArgumentVector> template_args;
 		if (peek() == "<"_tok) {
 			// Before parsing < as template arguments, check if the type name is actually a template
 			// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
@@ -2515,7 +2515,7 @@ ParseResult Parser::parse_type_specifier() {
 
 				// Fill in default template arguments to get the actual instantiated name
 				// (try_instantiate_class_template fills them internally, we need to do the same here)
-				InlineVector<TemplateTypeArg, 4> filled_template_args = *template_args;
+				TemplateArgumentVector filled_template_args = *template_args;
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
@@ -2534,7 +2534,7 @@ ParseResult Parser::parse_type_specifier() {
 							continue;
 						}
 						const ASTNode& default_node = param->default_value();
-						InlineVector<TemplateTypeArg, 4> inline_filled_args = filled_template_args;
+						TemplateArgumentVector inline_filled_args = filled_template_args;
 						if (param->kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 							ASTNode substituted_default_node = default_node;
 							if (!inline_filled_args.empty()) {
@@ -3647,7 +3647,7 @@ ParseResult Parser::parse_type_specifier() {
 						continue;
 					}
 					const ASTNode& default_node = param->default_value();
-					InlineVector<TemplateTypeArg, 4> inline_filled_args = toInlineTemplateArgs(filled_template_args);
+					TemplateArgumentVector inline_filled_args = toInlineTemplateArgs(filled_template_args);
 					if (param->kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 						ASTNode substituted_default_node = default_node;
 						if (!inline_filled_args.empty()) {

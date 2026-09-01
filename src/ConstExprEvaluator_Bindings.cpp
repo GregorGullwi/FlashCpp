@@ -17,7 +17,7 @@ namespace ConstExpr {
 bool Evaluator::tryCollectConstexprOverloadResolutionArgTypes(
 	const ChunkedVector<ASTNode>& arguments,
 	EvaluationContext& context,
-	InlineVector<TypeSpecifierNode, 6>& arg_types_out) {
+	OverloadResolutionArgTypeVector& arg_types_out) {
 	arg_types_out.clear();
 	arg_types_out.reserve(arguments.size());
 
@@ -46,12 +46,12 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::resolveConstexprMemberCall
 		return result;
 	}
 
-	InlineVector<ASTNode, 8> preferred_overloads;
-	InlineVector<ASTNode, 8> compatible_overloads;
+	OverloadResolutionCandidateVector preferred_overloads;
+	OverloadResolutionCandidateVector compatible_overloads;
 	appendUniqueMemberFunctionOverloadNodes(preferred_overloads, candidate_sets.preferred);
 	appendUniqueMemberFunctionOverloadNodes(compatible_overloads, candidate_sets.compatible);
 
-	InlineVector<TypeSpecifierNode, 6> arg_types;
+	OverloadResolutionArgTypeVector arg_types;
 	const bool has_arg_types =
 		tryCollectConstexprOverloadResolutionArgTypes(arguments, context, arg_types);
 	auto tryResolveCollectedSet =
