@@ -34,6 +34,7 @@ void publishPersistentScopeEnter(
 void publishPersistentScopeCursor(ScopeId current_scope_id);
 void resetPersistentScopes();
 void bindPersistentScopePublication(SymbolTable& table);
+ScopeMetadataView readScopeMetadata(const SymbolTable& table, ScopeId scope_id);
 
 struct ScopeHandle {
 	size_t scope_level = 0;
@@ -237,7 +238,7 @@ public:
 	}
 
 	std::size_t activeScopeDepth() const {
-		return scopes_[current_scope_index_].depth;
+		return scopeMetadataAtIndex(current_scope_index_).depth;
 	}
 
 	// Lookup by translation-unit-local ScopeId. Zero and out-of-range IDs are
@@ -761,25 +762,25 @@ public:
 	}
 
 	ScopeType get_current_scope_type() const {
-		return scopes_[current_scope_index_].scope_type;
+		return scopeMetadataAtIndex(current_scope_index_).scope_type;
 	}
 
 	std::optional<ScopeType> get_scope_type(ScopeHandle handle) const {
 		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
-			const Scope& scope = scopes_[scope_index];
-			if (scope.depth == handle.scope_level) {
-				return scope.scope_type;
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (metadata.depth == handle.scope_level) {
+				return metadata.scope_type;
 			}
-			if (!scope.parent_scope_id) {
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 		return std::nullopt;
 	}
 
 	ScopeHandle get_current_scope_handle() const {
-		return ScopeHandle{.scope_level = scopes_[current_scope_index_].depth};
+		return ScopeHandle{.scope_level = scopeMetadataAtIndex(current_scope_index_).depth};
 	}
 
 	bool contains(std::string_view identifier) const {
@@ -830,24 +831,27 @@ public:
 
 		const uint32_t limit_depth = static_cast<uint32_t>(scope_limit_handle.scope_level);
 		std::size_t scope_index = current_scope_index_;
-		const uint32_t scopes_to_skip = scopes_[current_scope_index_].depth > limit_depth
-			? scopes_[current_scope_index_].depth - static_cast<uint32_t>(limit_depth)
+		const ScopeMetadataView current_metadata = scopeMetadataAtIndex(current_scope_index_);
+		const uint32_t scopes_to_skip = current_metadata.depth > limit_depth
+			? current_metadata.depth - static_cast<uint32_t>(limit_depth)
 			: 0;
 		for (uint32_t skip = 0; skip < scopes_to_skip; ++skip) {
-			if (!scopes_[scope_index].parent_scope_id) {
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (!metadata.parent_id) {
 				return std::nullopt;
 			}
-			scope_index = scopes_[scope_index].parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 
 		while (scope_index < scopes_.size()) {
 			const Scope& scope = scopes_[scope_index];
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
 
 			// For namespace scopes, probe namespace_symbols_ before the local symbols map.
 			// Members and namespace-scope using-declarations live in namespace_symbols_;
 			// scope.symbols holds block/function-scope using-declarations only.
 			// Advance scope_namespace exactly once per Namespace scope regardless of hit/miss.
-			if (scope.scope_type == ScopeType::Namespace) {
+			if (metadata.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
 					StringHandle key = StringTable::getOrInternStringHandle(identifier);
 					auto result = lookup_qualified_first(scope_namespace, key);
@@ -882,10 +886,10 @@ public:
 				return using_result;
 			}
 
-			if (!scope.parent_scope_id) {
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 
 		return std::nullopt;
@@ -923,24 +927,27 @@ public:
 
 		const uint32_t limit_depth = static_cast<uint32_t>(scope_limit_handle.scope_level);
 		std::size_t scope_index = current_scope_index_;
-		const uint32_t scopes_to_skip = scopes_[current_scope_index_].depth > limit_depth
-			? scopes_[current_scope_index_].depth - static_cast<uint32_t>(limit_depth)
+		const ScopeMetadataView current_metadata = scopeMetadataAtIndex(current_scope_index_);
+		const uint32_t scopes_to_skip = current_metadata.depth > limit_depth
+			? current_metadata.depth - static_cast<uint32_t>(limit_depth)
 			: 0;
 		for (uint32_t skip = 0; skip < scopes_to_skip; ++skip) {
-			if (!scopes_[scope_index].parent_scope_id) {
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (!metadata.parent_id) {
 				return {};
 			}
-			scope_index = scopes_[scope_index].parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 
 		while (scope_index < scopes_.size()) {
 			const Scope& scope = scopes_[scope_index];
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
 
 			// For namespace scopes, probe namespace_symbols_ before the local symbols map.
 			// Members and namespace-scope using-declarations live in namespace_symbols_;
 			// scope.symbols holds block/function-scope using-declarations only.
 			// Advance scope_namespace exactly once per Namespace scope regardless of hit/miss.
-			if (scope.scope_type == ScopeType::Namespace) {
+			if (metadata.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
 					StringHandle key = StringTable::getOrInternStringHandle(identifier);
 					auto namespace_results = lookup_qualified_all(scope_namespace, key);
@@ -974,10 +981,10 @@ public:
 				return using_result;
 			}
 
-			if (!scope.parent_scope_id) {
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 
 		return {};
@@ -1120,18 +1127,19 @@ public:
 		// 2 & 3. Active scope chain: each namespace frame and its using directives.
 		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
 			const Scope& scope = scopes_[scope_index];
-			if (scope.namespace_handle.isValid()) {
-				result.insert(scope.namespace_handle);
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (metadata.namespace_handle.isValid()) {
+				result.insert(metadata.namespace_handle);
 			}
 			for (const auto& using_ns : scope.using_directive_paths) {
 				if (using_ns.isValid()) {
 					result.insert(using_ns);
 				}
 			}
-			if (!scope.parent_scope_id) {
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 		// 4. Associated namespaces of argument types, expanded for inline namespace transparency.
 		// Per C++20 [basic.lookup.argdep]/2: if an associated namespace is an inline namespace
@@ -1309,12 +1317,13 @@ public:
 			const Scope& scope = scopes_[scope_index];
 			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
-				return scope.scope_type;
+				return scopeMetadataAtIndex(scope_index).scope_type;
 			}
-			if (!scope.parent_scope_id) {
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 		// Symbol may be in namespace_symbols_ (e.g. found via using-directive) but not
 		// materialised into any scope's symbols map. Treat that as namespace-scope.
@@ -1529,31 +1538,32 @@ public:
 	// Get the current namespace name (empty if not in a namespace)
 	std::string_view get_current_namespace() const {
 		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
-			const Scope& scope = scopes_[scope_index];
-			if (scope.scope_type == ScopeType::Namespace) {
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (metadata.scope_type == ScopeType::Namespace) {
+				const Scope& scope = scopes_[scope_index];
 				if (!scope.namespace_name.isValid()) {
 					return "";
 				}
 				return StringTable::getStringView(scope.namespace_name);
 			}
-			if (!scope.parent_scope_id) {
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 		return "";
 	}
 
 	NamespaceHandle get_current_namespace_handle() const {
 		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
-			const Scope& scope = scopes_[scope_index];
-			if (scope.scope_type == ScopeType::Namespace) {
-				return scope.namespace_handle;
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (metadata.scope_type == ScopeType::Namespace) {
+				return metadata.namespace_handle;
 			}
-			if (!scope.parent_scope_id) {
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 		return NamespaceRegistry::GLOBAL_NAMESPACE;
 	}
@@ -1636,10 +1646,11 @@ public:
 					result.push_back(using_dir);
 				}
 			}
-			if (!scope.parent_scope_id) {
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 		return result;
 	}
@@ -1652,10 +1663,11 @@ public:
 		std::vector<std::size_t> active_chain;
 		for (std::size_t scope_index = current_scope_index_; scope_index < scopes_.size();) {
 			active_chain.push_back(scope_index);
-			if (!scopes_[scope_index].parent_scope_id) {
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scopes_[scope_index].parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 		for (std::size_t chain_index = 0; chain_index < active_chain.size(); ++chain_index) {
 			const Scope& scope = scopes_[active_chain[chain_index]];
@@ -1707,7 +1719,27 @@ public:
 		resetPersistentScopesIfEnabled();
 	}
 
+	// Mutation validation only: corrupt legacy Scope metadata without touching ScopeRecord.
+	void mutateLegacyScopeMetadataForTest(
+		ScopeId scope_id,
+		ScopeType scope_type,
+		ScopeId parent_id,
+		uint32_t depth,
+		NamespaceHandle namespace_handle) {
+		if (!scope_id || scope_id.value > scopes_.size()) {
+			throw InternalError("SymbolTable: test scope metadata mutation out of range");
+		}
+		Scope& scope = scopes_[scope_id.value - 1];
+		scope.scope_type = scope_type;
+		scope.parent_scope_id = parent_id;
+		scope.depth = depth;
+		scope.namespace_handle = namespace_handle;
+	}
+
 private:
+	ScopeMetadataView scopeMetadataAtIndex(std::size_t scope_index) const {
+		return readScopeMetadata(*this, ScopeId{static_cast<uint32_t>(scope_index + 1)});
+	}
 	void publishPersistentScopeEnterIfEnabled() {
 		if (!publish_persistent_scopes_) {
 			return;
@@ -2109,10 +2141,11 @@ private:
 			if (alias_handle_it != scope.namespace_aliases.end()) {
 				return alias_handle_it->second;
 			}
-			if (!scope.parent_scope_id) {
+			const ScopeMetadataView metadata = scopeMetadataAtIndex(scope_index);
+			if (!metadata.parent_id) {
 				break;
 			}
-			scope_index = scope.parent_scope_id.value - 1;
+			scope_index = metadata.parent_id.value - 1;
 		}
 		return std::nullopt;
 	}

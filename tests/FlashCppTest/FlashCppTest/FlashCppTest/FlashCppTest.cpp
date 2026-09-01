@@ -4839,6 +4839,47 @@ TEST_SUITE("FrontendContext") {
 		CHECK(context.findScopeRecord(block_id) == nullptr);
 	}
 
+	TEST_CASE("lookup reads ScopeRecord metadata when persistent publication is enabled") {
+		FrontendContext context;
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+
+		const StringHandle ns_name = StringTable::getOrInternStringHandle("LookupScopeRecordNs");
+		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, ns_name);
+		table.enter_namespace(ns_handle);
+		const ScopeId namespace_scope_id = table.currentScopeId();
+
+		Token type_token(Token::Type::Identifier, std::string_view("int"), 1, 1, 0);
+		Token id_token(Token::Type::Identifier, std::string_view("scope_record_lookup_probe"), 1, 1, 0);
+		TypeSpecifierNode int_type(
+			TypeCategory::Int, TypeQualifier::None, 32, type_token, CVQualifier::None);
+		ASTNode node = ASTNode::emplace_node<DeclarationNode>(int_type, id_token);
+		REQUIRE(table.insert(std::string_view("scope_record_lookup_probe"), node));
+
+		const std::optional<ASTNode> found = table.lookup("scope_record_lookup_probe");
+		REQUIRE(found.has_value());
+		CHECK(found->is<DeclarationNode>());
+		CHECK(table.get_current_namespace_handle() == ns_handle);
+
+		table.mutateLegacyScopeMetadataForTest(
+			namespace_scope_id,
+			ScopeType::Block,
+			ScopeId{99},
+			99u,
+			NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
+		CHECK(table.scopeById(namespace_scope_id).scope_type == ScopeType::Block);
+
+		const std::optional<ASTNode> found_after_poison = table.lookup("scope_record_lookup_probe");
+		REQUIRE(found_after_poison.has_value());
+		CHECK(found_after_poison->is<DeclarationNode>());
+		CHECK(table.get_current_namespace_handle() == ns_handle);
+
+		const std::vector<ASTNode> overloads = table.lookup_all("scope_record_lookup_probe");
+		REQUIRE(overloads.size() == 1u);
+		CHECK(overloads[0].is<DeclarationNode>());
+	}
+
 	TEST_CASE("SymbolTable enter_scope without an active FrontendContext still succeeds") {
 		SymbolTable table;
 		table.enter_scope(ScopeType::Block);
