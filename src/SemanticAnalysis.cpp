@@ -7497,7 +7497,7 @@ bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
 			gSymbolTable);
 	if (op_kind != OverloadableOperator::Assign && parser_ != nullptr) {
 		if (const FunctionDeclarationNode* instantiated_overload =
-				parser_->tryInstantiateOperatorTemplateForBinary(
+				parser_->templateEngine().tryInstantiateOperatorTemplateForBinary(
 					bin_op.op(),
 					lhs_type_spec,
 					rhs_type_spec);

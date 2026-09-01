@@ -96,6 +96,11 @@ public:
 		std::string_view simple_name,
 		const ChunkedVector<ASTNode>& arguments);
 
+	const FunctionDeclarationNode* tryInstantiateOperatorTemplateForBinary(
+		std::string_view op_symbol,
+		const TypeSpecifierNode& left_type_spec,
+		const TypeSpecifierNode& right_type_spec);
+
 	std::optional<ASTNode> instantiateLazyMemberForCanonicalOwner(
 		std::string_view& owner_name,
 		std::string_view member_name,
@@ -322,6 +327,17 @@ inline std::optional<ASTNode> TemplateEngine::tryInstantiateTemplateFromCallArgu
 		qualified_name,
 		simple_name,
 		arguments);
+}
+
+inline const FunctionDeclarationNode* TemplateEngine::tryInstantiateOperatorTemplateForBinary(
+	std::string_view op_symbol,
+	const TypeSpecifierNode& left_type_spec,
+	const TypeSpecifierNode& right_type_spec) {
+	recordTemplateEngineOldEngineRoute();
+	return parser().tryInstantiateOperatorTemplateForBinary(
+		op_symbol,
+		left_type_spec,
+		right_type_spec);
 }
 
 inline std::optional<ASTNode> TemplateEngine::instantiateLazyMemberForCanonicalOwner(
