@@ -24,6 +24,15 @@ struct ScopeRecord {
 	uint8_t reserved = 0;
 };
 
+// Lookup-facing scope metadata. When persistent publication is enabled,
+// SymbolTable lookup reads this view from FrontendContext ScopeRecords.
+struct ScopeMetadataView {
+	ScopeId parent_id{};
+	uint32_t depth = 0;
+	ScopeType scope_type = ScopeType::Global;
+	NamespaceHandle namespace_handle{};
+};
+
 inline ScopeRecord makeGlobalScopeRecord() {
 	ScopeRecord record{};
 	record.id = ScopeId{1};

@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-08-31 after pull request boundary 16
+Last updated: 2026-09-01 after pull request boundary 17
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 16 are landed.
+  and entities). Pull request boundaries 1 through 17 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -42,7 +42,13 @@ Last updated: 2026-08-31 after pull request boundary 16
   compares a second stored ID. `ScopeRecord::id` remains context-owned. Scope
   IDs are translation-unit-local slot identities, not context/generation tags.
   Named later deletion: `Scope::{parent_scope_id, scope_type, depth,
-  namespace_handle}` once lookup reads `ScopeRecord`.
+  namespace_handle}` once non-lookup consumers also read `ScopeRecord`.
+  Lookup, ADL namespace-chain walks, using-directive/declaration collection,
+  namespace-alias resolution, and scope-limit depth now read `ScopeMetadataView`
+  from `FrontendContext` `ScopeRecord` arenas when persistent publication is
+  enabled; unbound `SymbolTable` instances continue to read legacy `Scope`
+  slots. `SymbolTable::insert` and scope enter/exit still dual-write legacy
+  metadata until a later deletion slice.
   `SymbolTable::insertCore` stamps `DeclarationNode::lexical_scope_id` (and
   function, template-function, variable, template-variable, and bare declaration
   nodes) at the shared insert choke point; enum/struct and other symbol kinds
@@ -77,7 +83,7 @@ Last updated: 2026-08-31 after pull request boundary 16
   used/reserved bytes are reported under `--perf-stats`. Sampled compiler tests
   peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
 
-## Pull request boundary status (1–16)
+## Pull request boundary status (1–17)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -97,6 +103,7 @@ Last updated: 2026-08-31 after pull request boundary 16
 | 14 | FrontendContext-owned `ScopeRecord` arena; opt-in dual-write from `SymbolTable` enter/exit/clear; `publishScopeState` deleted |
 | 15 | Delete duplicate `Scope::scope_id` storage; route identity reads through slot-based `currentScopeId()`; compile-time field guard and mutation-validated 4096-level scope/sibling regression |
 | 16 | Explicit scratch allocation budget, context-owned scratch-limit diagnostics, checked address alignment and block publication; delete the unbounded allocation path |
+| 17 | Route SymbolTable lookup scope-chain metadata through `ScopeMetadataView` / `ScopeRecord` when persistent publication is enabled; preserve legacy `Scope` reads for unbound tables; mutation-validated poison test |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -145,33 +152,25 @@ boundary 1 is started, not finished.
     now report separately from allocation domains
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
-    `Scope::scope_id` is deleted, while other metadata and symbol maps still
-    live on `SymbolTable::scopes_`. The 4096-level enter/exit/sibling probe passes
-    with a 1 MiB stack. The largest touched clang-cl `/Od` frame remains
-    `insertCore` at 1704 bytes; lookup frames grow from 312 to 328 bytes. This
-    scope path is iterative; broader parser/template stack bounds remain open.
+    `Scope::scope_id` is deleted. Lookup scope-chain metadata now reads
+    `ScopeRecord` when publication is enabled, while other metadata and symbol
+    maps still live on `SymbolTable::scopes_`. The 4096-level enter/exit/sibling
+    probe passes with a 1 MiB stack. The largest touched clang-cl `/Od` frame
+    remains `insertCore` at 1704 bytes; lookup frames grow from 312 to 328 bytes.
+    This scope path is iterative; broader parser/template stack bounds remain open.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage, enum/struct AST scope
     stamping): follow-on boundary-1 work
 
-Boundary-16 validation: MSVC build has zero warnings/errors; all 2962 single-file
-tests and the multi-TU case pass, including 255 negative diagnostic contracts.
-FrontendContext/Diagnostics: 87 tests, 17166 assertions pass. Full unity:
-474/476 pass; the same two failures reproduce in an independently built clean
-`origin/main` snapshot (466/468). Excluding those two known cases gives 474/474.
-The first file-suite run had one empty-output link failure; its targeted retry
-and the complete rerun passed. Fixed-corpus totals are unchanged: token replay
-382, old template engine 59, AST-to-IR semantic 56, declaration publication 14;
-codegen-to-parser, post-parse typing, dollar identity, and outside-engine
-diagnostics remain zero. Existing counter guards and removal boundaries remain
-unchanged. Clang-cl `/Od` stack measurements: `allocate` 312 -> 296 bytes; new
-cold `reportAllocationLimit` 488 bytes (largest changed frame); rollback frames
-unchanged. Allocation/rollback introduce no source-controlled native recursion;
-broader parser/template stack bounds remain open.
+Boundary-17 validation: Linux clang++ unity build is warning-clean; new mutation
+test and all SymbolTable scope tests pass. Full unity suite: 475/477 pass; the
+same two pre-existing failures (`SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState`,
+`Templates:InheritedStaticStructMemberUsesInstantiatedOwner`) reproduce on clean
+`main`. Fixed-corpus migration counters unchanged.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 20-23%, confidence medium
+- Implementation effort completed overall: 21-24%, confidence medium
 
 ## Remaining work
 
@@ -179,16 +178,17 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- For the next persistent-scope slice, make lookup read the context-owned `ScopeRecord`
-  before deleting the remaining `Scope` metadata; explicitly preserve the
-  ownership contract of unbound backend/test symbol tables.
+- Delete `Scope::{parent_scope_id, scope_type, depth, namespace_handle}` after
+  routing `SymbolTable::insert`, enter/exit, and any remaining non-lookup
+  metadata consumers through `ScopeRecord`; keep unbound backend/test tables on
+  the legacy read path until they opt into publication.
 
 Then, in order:
 
 1. Continue architecture boundary 1: expand shadow wire or merge coverage
    (default arguments, exception specifications, friends, templates) only
-   after canonical `TypeId` exists; make lookup read `ScopeRecord` and delete
-   remaining `Scope` metadata fields; keep `SymbolTable::insert` as function
+   after canonical `TypeId` exists; delete remaining `Scope` metadata fields once
+   all consumers read `ScopeRecord`; keep `SymbolTable::insert` as function
    merge authority until canonical function/type identity (boundary 3A)
    replaces the `matches_signature` bridge; wire IR domain byte accounting and
    per-type AST family counts; stamp `ScopeId` on remaining symbol-table node kinds (enum,

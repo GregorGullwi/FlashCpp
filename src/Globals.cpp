@@ -78,3 +78,27 @@ void resetPersistentScopes() {
 	}
 	context->resetPersistentScopes();
 }
+
+ScopeMetadataView readScopeMetadata(const SymbolTable& table, ScopeId scope_id) {
+	if (table.persistentScopePublicationEnabled()) {
+		FrontendContext* context = FrontendContext::active();
+		if (context == nullptr) {
+			throw InternalError("readScopeMetadata: persistent publication without an active FrontendContext");
+		}
+		const ScopeRecord& record = context->scopeRecord(scope_id);
+		return ScopeMetadataView{
+			record.parent_id,
+			record.depth,
+			record.scope_type,
+			record.namespace_handle};
+	}
+	const Scope* scope = table.findScopeById(scope_id);
+	if (scope == nullptr) {
+		throw InternalError("readScopeMetadata: ScopeId out of range");
+	}
+	return ScopeMetadataView{
+		scope->parent_scope_id,
+		scope->depth,
+		scope->scope_type,
+		scope->namespace_handle};
+}
