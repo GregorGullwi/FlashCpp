@@ -93,13 +93,15 @@ Last updated: 2026-09-01 after pull request boundary 22
   used/reserved bytes, declaration/entity counts, and per-arena used/reserved
   bytes are reported under `--perf-stats`. Sampled compiler tests
   peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
-- Migration choke-point counters and the inline `find('$')` inventory are
-  enforced on the fixed corpus through `tests/run_migration_counters.ps1` and
-  `tests/run_migration_dollar_inventory.ps1` on Windows CI and through the
-  bash equivalents `tests/run_migration_counters.sh` and
-  `tests/run_migration_dollar_inventory.sh` on Ubuntu CI. Shared parsing and
-  compiler discovery live in `tests/runner/RunnerCommon.ps1` and
-  `tests/runner/runner_common.sh`.
+- Migration choke-point counters and the inline `find('$')` inventory share one
+  fixed corpus baseline (`tests/migration_counters/`). Coordination agents run
+  on Linux or Windows, so each platform has a native runner:
+  `tests/run_migration_counters.sh` / `tests/run_migration_dollar_inventory.sh`
+  on Linux and the `.ps1` equivalents on Windows. Shared parsing lives in
+  `tests/runner/runner_common.sh` and `tests/runner/RunnerCommon.ps1`. After
+  compiler-source changes, agent validation must use the runner for the host OS.
+  Ubuntu and Windows CI invoke the matching native scripts so either merge path
+  enforces the same baselines.
 
 ## Pull request boundary status (1–22)
 
