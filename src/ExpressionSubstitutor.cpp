@@ -4014,7 +4014,7 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 								substituted_arg_types)) {
 							if (std::optional<ASTNode>
 									instantiated_member =
-										parser_
+										parser_.templateEngine()
 											.tryInstantiateMemberFunctionTemplateCall(
 												materialized_owner_name,
 												member_name,
