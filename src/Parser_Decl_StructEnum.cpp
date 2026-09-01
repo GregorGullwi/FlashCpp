@@ -554,6 +554,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Create struct declaration node - string_view points directly into source text
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 	struct_ref.set_is_local_class(is_local_class_declaration);
+	const auto stampStructLexicalScope = [&struct_node]() {
+		SymbolTableDetail::stampLexicalScopeOnDeclaration(
+			struct_node, gSymbolTable.currentScopeId());
+	};
 	if (owns_replayed_local_class_identity) {
 		struct_ref.set_semantic_name(type_name);
 	}
@@ -1094,6 +1098,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Forward declaration - just register the type and return
 			advance(); // consume ';'
 			struct_ref.set_is_forward_declaration(true);
+			stampStructLexicalScope();
 			return saved_position.success(struct_node);
 		}
 	}
@@ -4106,6 +4111,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		delayed_function_bodies_.clear();
 
 		// Return without parsing the bodies - they'll be parsed during instantiation
+		stampStructLexicalScope();
 		return saved_position.success(struct_node);
 	}
 
@@ -4166,6 +4172,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// They will be added to the AST by the caller
 	pending_struct_variables_ = std::move(struct_variables);
 
+	stampStructLexicalScope();
 	return saved_position.success(struct_node);
 }
 

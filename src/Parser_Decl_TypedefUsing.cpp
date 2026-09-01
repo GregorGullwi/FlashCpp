@@ -2187,5 +2187,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 	// Create and return typedef declaration node
 	auto typedef_node = emplace_node<TypedefDeclarationNode>(type_spec, *alias_token);
+	SymbolTableDetail::stampLexicalScopeOnDeclaration(
+		typedef_node, gSymbolTable.currentScopeId());
 	return saved_position.success(typedef_node);
 }
