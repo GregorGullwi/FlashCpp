@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 20
+Last updated: 2026-09-01 after pull request boundary 21
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 20 are landed.
+  and entities). Pull request boundaries 1 through 21 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -77,20 +77,24 @@ Last updated: 2026-09-01 after pull request boundary 20
   measured production workload: production parser probes do not yet use this
   arena. Diagnostic rendering must occur while its owning engine is alive.
   Measured x64 sizes: arena 80 -> 96 bytes; `DiagnosticEngine` 144 bytes;
-  `FrontendContext` 1296 -> 1456 bytes. No new semantic record or arena is added.
-- `printArenaTelemetry` fills scratch, syntax, and semantic `AllocationDomain`
-  stats. Syntax used/reserved bytes are forwarded from `gChunkedAnyStorage`;
-  semantic used/reserved bytes come from DeclarationBuilder declaration and
-  entity arenas (`sizeof` 32 each). Semantic peak used/reserved bytes are
-  recorded at arena allocation, not at telemetry refresh. `ChunkedVector`
-  reserved bytes count retained chunk capacity across rollback. IR domain
-  bytes remain unwired. String-table
-  entries/spelling bytes, InlineVector spills, scope count/current `ScopeId`,
-  scope-arena used/reserved bytes, declaration/entity counts, and per-arena
-  used/reserved bytes are reported under `--perf-stats`. Sampled compiler tests
-  peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
+  `FrontendContext` 1456 bytes plus 48 bytes for syntax-family count storage.
+- `printArenaTelemetry` fills scratch, syntax, semantic, and IR
+  `AllocationDomain` stats. Syntax used/reserved bytes are forwarded from
+  `gChunkedAnyStorage`; semantic used/reserved bytes come from DeclarationBuilder
+  declaration and entity arenas (`sizeof` 32 each). Semantic peak used/reserved
+  bytes are recorded at arena allocation, not at telemetry refresh. IR domain
+  bytes record `IrToObjConverter` text-section and initialized global-data
+  lowering buffers at object write; object-writer section buffers remain outside
+  this slice until a dedicated IR arena exists. Syntax objects are also grouped
+  into coarse AST families (declaration, statement, expression, type-specifier,
+  template, other) via `SyntaxAstTelemetry.h`. `ChunkedVector` reserved bytes
+  count retained chunk capacity across rollback. String-table entries/spelling
+  bytes, InlineVector spills, scope count/current `ScopeId`, scope-arena
+  used/reserved bytes, declaration/entity counts, and per-arena used/reserved
+  bytes are reported under `--perf-stats`. Sampled compiler tests peaked at 114
+  persistent scopes; chunk size 256 is explicit headroom.
 
-## Pull request boundary status (1–20)
+## Pull request boundary status (1–21)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -114,6 +118,7 @@ Last updated: 2026-09-01 after pull request boundary 20
 | 18 | Route insert, enter/exit, replace, using-decl materialization, and publication target resolution through `ScopeMetadataView` when persistent publication is enabled |
 | 19 | Delete `Scope::{parent_scope_id, scope_type, depth, namespace_handle}`; unbound tables use `scope_metadata_` sidecar; align stale `ScopeId` publication contract in tests; harden publication binding lifetime and rebind sync |
 | 20 | Stamp `lexical_scope_id` on struct, enum, typedef, and class-template wrapper nodes at `SymbolTable` insert/replace/insertGlobal |
+| 21 | Wire IR allocation-domain bytes from codegen lowering buffers; report coarse syntax AST family counts through `FrontendContext` |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -156,10 +161,11 @@ boundary 1 is started, not finished.
     `SymbolTable` insertion in place because lookup remains authoritative;
     parser tentative parsing and non-wired insert families remain open
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
-    InlineVector spill counts are reported through FrontendContext": syntax,
-    semantic, and scratch domain used/reserved bytes now report; IR domain and
-    per-type AST family counts remain unwired; scope-arena used/reserved bytes
-    now report separately from allocation domains
+    InlineVector spill counts are reported through FrontendContext": all four
+    allocation domains now report used/reserved bytes (IR covers lowering
+    buffers only); coarse syntax AST family counts and declaration/entity
+    record totals report; per-record semantic type breakdown and full IR arena
+    ownership remain open
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
     `Scope::scope_id` and legacy metadata fields on `Scope` are deleted.
@@ -171,14 +177,13 @@ boundary 1 is started, not finished.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage): follow-on boundary-1 work
 
-Boundary-20 validation: Linux clang++ unity build is warning-clean; insert stamping
-tests for enum, struct, and typedef pass, including parsed enum-class, struct,
-and typedef probes. Struct and top-level typedef nodes are also stamped at parse
-time because they are not inserted into `gSymbolTable` at global scope.
+Boundary-21 validation: Linux clang++ unity and sharded compiler builds are
+warning-clean; doctest probes classify template and block syntax nodes into
+coarse AST families and record IR domain peaks from `recordIrDomainStats`.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 22-25%, confidence medium
+- Implementation effort completed overall: 23-26%, confidence medium
 
 ## Remaining work
 
@@ -190,8 +195,7 @@ Next blocker:
   (default arguments, exception specifications, friends, templates) only
   after canonical `TypeId` exists; keep `SymbolTable::insert` as function
   merge authority until canonical function/type identity (boundary 3A) replaces
-  the `matches_signature` bridge; wire IR domain byte accounting and per-type
-  AST family counts.
+  the `matches_signature` bridge.
 
 Then, in order:
 

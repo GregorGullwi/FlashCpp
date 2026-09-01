@@ -5473,6 +5473,47 @@ TEST_SUITE("FrontendContext") {
 		CHECK(context.domainStats(AllocationDomain::Ir).current_bytes == 0);
 	}
 
+	TEST_CASE("FrontendContext syntax AST family counts classify legacy bridge objects") {
+		FrontendContext context;
+		context.refreshSyntaxAstFamilyCounts();
+		const std::array<uint64_t, static_cast<std::size_t>(SyntaxAstFamily::Count)> before =
+			context.syntaxAstFamilyCounts();
+
+		TemplateEnvironmentSnapshotNode& template_node =
+			gChunkedAnyStorage.emplace_back<TemplateEnvironmentSnapshotNode>();
+		(void)template_node;
+		BlockNode& block_node = gChunkedAnyStorage.emplace_back<BlockNode>();
+		(void)block_node;
+
+		context.refreshSyntaxAstFamilyCounts();
+		const std::array<uint64_t, static_cast<std::size_t>(SyntaxAstFamily::Count)> after =
+			context.syntaxAstFamilyCounts();
+		CHECK(after[static_cast<std::size_t>(SyntaxAstFamily::Template)] ==
+			  before[static_cast<std::size_t>(SyntaxAstFamily::Template)] + 1);
+		CHECK(after[static_cast<std::size_t>(SyntaxAstFamily::Statement)] ==
+			  before[static_cast<std::size_t>(SyntaxAstFamily::Statement)] + 1);
+		CHECK(classifySyntaxAstFamily(std::type_index(typeid(TemplateEnvironmentSnapshotNode))) ==
+			  SyntaxAstFamily::Template);
+		CHECK(classifySyntaxAstFamily(std::type_index(typeid(BlockNode))) == SyntaxAstFamily::Statement);
+	}
+
+	TEST_CASE("FrontendContext IR domain stats record lowering buffer bytes") {
+		FrontendContext context;
+		context.recordIrDomainStats(128, 256);
+		const DomainByteStats ir = context.domainStats(AllocationDomain::Ir);
+		CHECK(ir.current_bytes == 128);
+		CHECK(ir.peak_bytes == 128);
+		CHECK(ir.reserved_bytes == 256);
+		CHECK(ir.peak_reserved_bytes == 256);
+
+		context.recordIrDomainStats(64, 512);
+		const DomainByteStats ir_after_drop = context.domainStats(AllocationDomain::Ir);
+		CHECK(ir_after_drop.current_bytes == 64);
+		CHECK(ir_after_drop.peak_bytes == 128);
+		CHECK(ir_after_drop.reserved_bytes == 512);
+		CHECK(ir_after_drop.peak_reserved_bytes == 512);
+	}
+
 	TEST_CASE("Legacy ChunkedAnyVector emplace_back enforces allow-list on storage") {
 		requireLegacyAstChunkedAnyEmplaceAllowed<TemplateEnvironmentSnapshotNode, true>();
 		LegacyAstChunkedAnyVector storage;

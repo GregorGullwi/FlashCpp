@@ -2,6 +2,7 @@
 #include "IRConverter.h"
 #include "IrGenerator.h"
 #include "OverloadResolution.h"
+#include "FrontendContext.h"
 
 namespace {
 uint32_t codeViewTypeIndex(TypeCategory type_cat) {
@@ -631,6 +632,15 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 
 	{
 		ProfilingTimer timer("Write object file", show_timing);
+		if (FrontendContext* active = FrontendContext::active()) {
+			uint64_t ir_used_bytes = textSectionData.size();
+			uint64_t ir_reserved_bytes = textSectionData.capacity();
+			for (const GlobalVariableInfo& global : global_variables_) {
+				ir_used_bytes += global.init_data.size();
+				ir_reserved_bytes += global.init_data.capacity();
+			}
+			active->recordIrDomainStats(ir_used_bytes, ir_reserved_bytes);
+		}
 		writer.write(std::string(filename));
 	}
 
