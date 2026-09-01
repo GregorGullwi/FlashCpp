@@ -302,8 +302,9 @@ public:
 		const ScopeId insert_scope_id = last_declaring_scope_id_;
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(node, insert_scope_id);
 		auto& current_scope = scopes_[current_scope_index_];
-		const bool ns_scope = current_scope.scope_type == ScopeType::Namespace;
-		const bool global_scope = current_scope.scope_type == ScopeType::Global;
+		const ScopeMetadataView current_metadata = scopeMetadataAtIndex(current_scope_index_);
+		const bool ns_scope = current_metadata.scope_type == ScopeType::Namespace;
+		const bool global_scope = current_metadata.scope_type == ScopeType::Global;
 
 		// For namespace scopes, namespace_symbols_ is the source of truth for
 		// redeclaration / overload detection across reopened blocks. Global and
@@ -714,7 +715,7 @@ public:
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(
 			new_node, currentScopeId());
 		auto& current_scope = scopes_[current_scope_index_];
-		if (current_scope.scope_type == ScopeType::Namespace) {
+		if (scopeMetadataAtIndex(current_scope_index_).scope_type == ScopeType::Namespace) {
 			NamespaceHandle ns_handle = get_current_namespace_handle();
 			StringHandle key = StringTable::getOrInternStringHandle(identifier);
 			auto ns_map_it = namespace_symbols_.find(ns_handle);
@@ -1343,8 +1344,8 @@ public:
 	}
 
 	void enter_scope(ScopeType scopeType) {
-		const Scope& parent = scopes_[current_scope_index_];
-		const uint32_t new_depth = parent.depth + 1;
+		const ScopeMetadataView parent_metadata = scopeMetadataAtIndex(current_scope_index_);
+		const uint32_t new_depth = parent_metadata.depth + 1;
 		const ScopeId parent_id = currentScopeId();
 		scopes_.emplace_back(Scope(scopeType, new_depth));
 		Scope& scope = scopes_.back();
@@ -1354,8 +1355,8 @@ public:
 	}
 
 	void enter_namespace(NamespaceHandle ns_handle) {
-		const Scope& parent = scopes_[current_scope_index_];
-		const uint32_t new_depth = parent.depth + 1;
+		const ScopeMetadataView parent_metadata = scopeMetadataAtIndex(current_scope_index_);
+		const uint32_t new_depth = parent_metadata.depth + 1;
 		const ScopeId parent_id = currentScopeId();
 		Scope scope(ScopeType::Namespace, new_depth);
 		scope.parent_scope_id = parent_id;
@@ -1379,8 +1380,8 @@ public:
 		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(parent_handle, name_handle);
 		if (!ns_handle.isValid()) {
 			FLASH_LOG(Symbols, Error, "Namespace handle creation failed for '", namespace_name, "'");
-			const Scope& parent = scopes_[current_scope_index_];
-			const uint32_t new_depth = parent.depth + 1;
+			const ScopeMetadataView parent_metadata = scopeMetadataAtIndex(current_scope_index_);
+			const uint32_t new_depth = parent_metadata.depth + 1;
 			const ScopeId parent_id = currentScopeId();
 			scopes_.emplace_back(Scope(ScopeType::Namespace, new_depth, name_handle));
 			Scope& scope = scopes_.back();
@@ -1397,13 +1398,13 @@ public:
 			publishPersistentScopeCursorIfEnabled();
 			return;
 		}
-		const Scope& current = scopes_[current_scope_index_];
-		if (!current.parent_scope_id) {
+		const ScopeMetadataView current_metadata = scopeMetadataAtIndex(current_scope_index_);
+		if (!current_metadata.parent_id) {
 			current_scope_index_ = 0;
 			publishPersistentScopeCursorIfEnabled();
 			return;
 		}
-		current_scope_index_ = current.parent_scope_id.value - 1;
+		current_scope_index_ = current_metadata.parent_id.value - 1;
 		publishPersistentScopeCursorIfEnabled();
 	}
 
@@ -1963,7 +1964,7 @@ private:
 		// name a member of that namespace. Merge into namespace_symbols_ so ordinary
 		// lookup (which probes that map first for Namespace scopes) sees the full
 		// overload set. Block/function scopes stay local to scope.symbols.
-		if (current_scope.scope_type == ScopeType::Namespace) {
+		if (scopeMetadataAtIndex(current_scope_index_).scope_type == ScopeType::Namespace) {
 			NamespaceHandle dest_ns = get_current_namespace_handle();
 			StringHandle ns_key = StringTable::getOrInternStringHandle(key);
 			auto& ns_symbols = namespace_symbols_[dest_ns];
