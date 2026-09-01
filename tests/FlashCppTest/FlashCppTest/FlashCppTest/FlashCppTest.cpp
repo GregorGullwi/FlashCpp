@@ -4973,6 +4973,64 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.entity(published.entity_id).owner_id == ownerIdFromNamespaceHandle(ns_handle));
 	}
 
+	TEST_CASE("DeclarationBuilder prepareFunctionPublication rejects absent ScopeId without throwing") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const StringHandle name =
+			StringTable::getOrInternStringHandle("decl_builder_absent_scope");
+		const FunctionDeclRequest invalid{
+			ScopeId{},
+			name,
+			TypeId{71},
+			TypeId{81},
+			LanguageLinkage::CPlusPlus,
+			false,
+			false,
+			false};
+		CHECK(builder.prepareFunctionPublication(invalid, table).isRejected());
+	}
+
+	TEST_CASE("DeclarationBuilder prepareFunctionPublication rejects block scope without throwing") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+		table.enter_scope(ScopeType::Block);
+		const ScopeId block_scope_id = table.currentScopeId();
+		const StringHandle name =
+			StringTable::getOrInternStringHandle("decl_builder_block_scope_fn");
+		const FunctionDeclRequest request{
+			block_scope_id,
+			name,
+			TypeId{71},
+			TypeId{81},
+			LanguageLinkage::CPlusPlus,
+			false,
+			false,
+			false};
+		CHECK(builder.prepareFunctionPublication(request, table).isRejected());
+	}
+
+	TEST_CASE("DeclarationBuilder prepareFunctionPublication throws on stale ScopeId") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		table.enablePersistentScopePublication();
+		const StringHandle name =
+			StringTable::getOrInternStringHandle("decl_builder_stale_scope");
+		const FunctionDeclRequest invalid{
+			ScopeId{999},
+			name,
+			TypeId{71},
+			TypeId{81},
+			LanguageLinkage::CPlusPlus,
+			false,
+			false,
+			false};
+		CHECK_THROWS_AS(builder.prepareFunctionPublication(invalid, table), InternalError);
+	}
+
 	TEST_CASE("SymbolTable enter_scope without an active FrontendContext still succeeds") {
 		SymbolTable table;
 		table.enter_scope(ScopeType::Block);
