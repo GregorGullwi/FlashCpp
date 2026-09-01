@@ -4510,8 +4510,8 @@ TEST_SUITE("FrontendContext") {
 		const ScopeId sibling_id = table.currentScopeId();
 		CHECK(sibling_id.value == depth + 2);
 		CHECK(context.scopeRecord(sibling_id).parent_id == ScopeId{1});
-		CHECK(table.scopeById(ScopeId{2}).scope_type == ScopeType::Block);
-		CHECK(table.scopeById(sibling_id).scope_type == ScopeType::Function);
+		CHECK(readScopeMetadata(table, ScopeId{2}).scope_type == ScopeType::Block);
+		CHECK(readScopeMetadata(table, sibling_id).scope_type == ScopeType::Function);
 		CHECK(table.findScopeById(ScopeId{}) == nullptr);
 		CHECK(table.findScopeById(ScopeId{depth + 3}) == nullptr);
 		CHECK_THROWS_AS(table.scopeById(ScopeId{}), InternalError);
@@ -4756,14 +4756,14 @@ TEST_SUITE("FrontendContext") {
 		const FrontendContext& context,
 		const SymbolTable& table,
 		ScopeId id) {
-		const Scope* scope = table.findScopeById(id);
-		REQUIRE(scope != nullptr);
+		REQUIRE(table.findScopeById(id) != nullptr);
 		const ScopeRecord& record = context.scopeRecord(id);
+		const ScopeMetadataView metadata = readScopeMetadata(table, id);
 		CHECK(record.id == id);
-		CHECK(record.parent_id == scope->parent_scope_id);
-		CHECK(record.depth == scope->depth);
-		CHECK(record.scope_type == scope->scope_type);
-		CHECK(record.namespace_handle == scope->namespace_handle);
+		CHECK(record.parent_id == metadata.parent_id);
+		CHECK(record.depth == metadata.depth);
+		CHECK(record.scope_type == metadata.scope_type);
+		CHECK(record.namespace_handle == metadata.namespace_handle);
 		CHECK(record.reserved == 0);
 	}
 
@@ -4868,7 +4868,7 @@ TEST_SUITE("FrontendContext") {
 			ScopeId{99},
 			99u,
 			NamespaceHandle{NamespaceHandle::INVALID_HANDLE});
-		CHECK(table.scopeById(namespace_scope_id).scope_type == ScopeType::Block);
+		CHECK(table.legacyScopeMetadata(namespace_scope_id).scope_type == ScopeType::Block);
 
 		const std::optional<ASTNode> found_after_poison = table.lookup("scope_record_lookup_probe");
 		REQUIRE(found_after_poison.has_value());
@@ -5673,7 +5673,16 @@ TEST_SUITE("FrontendContext") {
 			TypeId{55},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
-		CHECK(builder.publishFunction(missing_scope, table).status == PublishStatus::Rejected);
+		CHECK_THROWS_AS(builder.publishFunction(missing_scope, table), InternalError);
+
+		const FunctionDeclRequest absent_scope = makeFunctionDeclRequest(
+			ScopeId{},
+			name,
+			TypeId{37},
+			TypeId{55},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
+		CHECK(builder.publishFunction(absent_scope, table).status == PublishStatus::Rejected);
 
 		table.enter_scope(ScopeType::Block);
 		const FunctionDeclRequest block_scope = makeFunctionDeclRequest(

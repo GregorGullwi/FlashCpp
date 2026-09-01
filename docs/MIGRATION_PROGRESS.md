@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 18
+Last updated: 2026-09-01 after pull request boundary 19
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 18 are landed.
+  and entities). Pull request boundaries 1 through 19 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -41,17 +41,18 @@ Last updated: 2026-09-01 after pull request boundary 18
   `SymbolTable::currentScopeId()` derives identity from the append-only slot; bounds-checked ID access no longer
   compares a second stored ID. `ScopeRecord::id` remains context-owned. Scope
   IDs are translation-unit-local slot identities, not context/generation tags.
-  Named later deletion: `Scope::{parent_scope_id, scope_type, depth,
-  namespace_handle}` once non-lookup consumers also read `ScopeRecord`.
-  Lookup, ADL namespace-chain walks, using-directive/declaration collection,
-  namespace-alias resolution, and scope-limit depth now read `ScopeMetadataView`
-  from `FrontendContext` `ScopeRecord` arenas when persistent publication is
-  enabled; unbound `SymbolTable` instances continue to read legacy `Scope`
-  slots. `SymbolTable::insert`, `enter_scope`, `enter_namespace`, `exit_scope`,
+  `Scope` now holds symbol maps, using-directives, aliases, and namespace
+  spelling only; parent, depth, type, and namespace-handle metadata live in
+  `SymbolTable::scope_metadata_` for unbound tables and in `ScopeRecord` when
+  persistent publication is enabled. Lookup, ADL namespace-chain walks,
+  using-directive/declaration collection, namespace-alias resolution, and
+  scope-limit depth read `ScopeMetadataView` from `FrontendContext`
+  `ScopeRecord` arenas when persistent publication is enabled; unbound
+  `SymbolTable` instances read the parallel `scope_metadata_` sidecar.
+  `SymbolTable::insert`, `enter_scope`, `enter_namespace`, `exit_scope`,
   `replace_variable`, using-declaration materialization, and
-  `DeclarationBuilder::resolvePublicationTarget` now read scope metadata through
-  `ScopeMetadataView` when publication is enabled; legacy `Scope` slots remain
-  dual-written until a later deletion slice. Each published `SymbolTable` binds to
+  `DeclarationBuilder::resolvePublicationTarget` read scope metadata through
+  `ScopeMetadataView` in both modes. Each published `SymbolTable` binds to
   the `FrontendContext` active at `enablePersistentScopePublication()`; lookup,
   publication, cursor updates, and reset read that bound arena rather than
   `FrontendContext::active()`.
@@ -89,7 +90,7 @@ Last updated: 2026-09-01 after pull request boundary 18
   used/reserved bytes are reported under `--perf-stats`. Sampled compiler tests
   peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
 
-## Pull request boundary status (1–18)
+## Pull request boundary status (1–19)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -109,8 +110,9 @@ Last updated: 2026-09-01 after pull request boundary 18
 | 14 | FrontendContext-owned `ScopeRecord` arena; opt-in dual-write from `SymbolTable` enter/exit/clear; `publishScopeState` deleted |
 | 15 | Delete duplicate `Scope::scope_id` storage; route identity reads through slot-based `currentScopeId()`; compile-time field guard and mutation-validated 4096-level scope/sibling regression |
 | 16 | Explicit scratch allocation budget, context-owned scratch-limit diagnostics, checked address alignment and block publication; delete the unbounded allocation path |
-| 17 | Route SymbolTable lookup scope-chain metadata through `ScopeMetadataView` / `ScopeRecord` when persistent publication is enabled; preserve legacy `Scope` reads for unbound tables; mutation-validated poison test |
-| 18 | Route insert, enter/exit, replace, using-decl materialization, and publication target resolution through `ScopeMetadataView` when publication is enabled; legacy dual-write retained |
+| 17 | Route SymbolTable lookup scope-chain metadata through `ScopeMetadataView` / `ScopeRecord` when persistent publication is enabled; preserve legacy sidecar reads for unbound tables; mutation-validated poison test |
+| 18 | Route insert, enter/exit, replace, using-decl materialization, and publication target resolution through `ScopeMetadataView` when persistent publication is enabled |
+| 19 | Delete `Scope::{parent_scope_id, scope_type, depth, namespace_handle}`; unbound tables use `scope_metadata_` sidecar; align stale `ScopeId` publication contract in tests |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -159,19 +161,18 @@ boundary 1 is started, not finished.
     now report separately from allocation domains
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
-    `Scope::scope_id` is deleted. Lookup and insert/enter/exit scope-chain metadata
-    now read `ScopeRecord` when publication is enabled, while symbol maps still
-    live on `SymbolTable::scopes_`. The 4096-level enter/exit/sibling probe passes
-    with a 1 MiB stack. This scope path is iterative; broader parser/template stack
+    `Scope::scope_id` and legacy metadata fields on `Scope` are deleted.
+    Lookup and insert/enter/exit scope-chain metadata read `ScopeRecord` when
+    publication is enabled, or `scope_metadata_` on unbound tables, while symbol
+    maps still live on `SymbolTable::scopes_`. The 4096-level enter/exit/sibling
+    probe passes with a 1 MiB stack. This scope path is iterative; broader parser/template stack
     bounds remain open.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage, enum/struct AST scope
     stamping): follow-on boundary-1 work
 
-Boundary-18 validation: Linux clang++ unity build is warning-clean; new insert/enter/exit
-mutation test and SymbolTable scope tests pass. Full unity suite: 475/477 pass; the
-same two pre-existing failures reproduce on clean `main`. Fixed-corpus migration
-counters unchanged.
+Boundary-19 validation: Linux clang++ unity build is warning-clean; FrontendContext
+suite (80 cases) and scope poison/4096-level probes pass.
 
 ## Effort estimate
 
@@ -183,20 +184,18 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Delete `Scope::{parent_scope_id, scope_type, depth, namespace_handle}` now that
-  lookup, insert, enter/exit, and publication target resolution read
-  `ScopeRecord` when publication is enabled; keep unbound backend/test tables on
-  the legacy read path until they opt into publication.
+- Continue architecture boundary 1: expand shadow wire or merge coverage
+  (default arguments, exception specifications, friends, templates) only
+  after canonical `TypeId` exists; keep `SymbolTable::insert` as function
+  merge authority until canonical function/type identity (boundary 3A) replaces
+  the `matches_signature` bridge; wire IR domain byte accounting and per-type
+  AST family counts; stamp `ScopeId` on remaining symbol-table node kinds
+  (enum, struct, typedef).
 
 Then, in order:
 
-1. Continue architecture boundary 1: expand shadow wire or merge coverage
-   (default arguments, exception specifications, friends, templates) only
-   after canonical `TypeId` exists; delete remaining `Scope` metadata fields;
-   keep `SymbolTable::insert` as function merge authority until canonical
-   function/type identity (boundary 3A) replaces the `matches_signature`
-   bridge; wire IR domain byte accounting and per-type AST family counts; stamp
-   `ScopeId` on remaining symbol-table node kinds (enum, struct, typedef).
+1. Wire `tests/run_migration_counters.ps1` into `ci-ubuntu.yml` after
+  generating and verifying the baseline on a Linux build.
 
 Named follow-ups carried forward:
 
