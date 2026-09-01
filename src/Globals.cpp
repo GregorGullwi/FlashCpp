@@ -25,6 +25,18 @@ LazyMemberResolver gLazyMemberResolver;
 InstantiationQueue gInstantiationQueue;
 } // namespace FlashCpp
 
+namespace {
+
+FrontendContext* requirePersistentScopePublicationContext(const SymbolTable& table) {
+	FrontendContext* context = table.persistentScopePublicationContext();
+	if (context == nullptr) {
+		throw InternalError("SymbolTable: persistent scope publication is missing its bound FrontendContext");
+	}
+	return context;
+}
+
+} // namespace
+
 // Persistent-scope dual-write lives here so SymbolTable.h does not include
 // FrontendContext.h (and so this is not its own modular translation unit).
 void SymbolTable::enablePersistentScopePublication() {
@@ -32,13 +44,24 @@ void SymbolTable::enablePersistentScopePublication() {
 	if (context == nullptr) {
 		throw InternalError("SymbolTable: persistent scope publication requires an active FrontendContext");
 	}
+	if (publish_persistent_scopes_) {
+		if (persistent_scope_publication_context_ != context) {
+			throw InternalError("SymbolTable: persistent scope publication is already bound to a different FrontendContext");
+		}
+		return;
+	}
 	if (scopeCount() != 1 || currentScopeId().value != 1) {
 		throw InternalError("SymbolTable: persistent scope publication can only be enabled at the global scope");
 	}
 	if (context->scopeRecordCount() != 1) {
 		throw InternalError("SymbolTable: active FrontendContext is not at its initial global scope record");
 	}
+	persistent_scope_publication_context_ = context;
 	publish_persistent_scopes_ = true;
+}
+
+FrontendContext* SymbolTable::persistentScopePublicationContext() const {
+	return persistent_scope_publication_context_;
 }
 
 void bindPersistentScopePublication(SymbolTable& table) {
@@ -51,40 +74,29 @@ void bindPersistentScopePublication(SymbolTable& table) {
 }
 
 void publishPersistentScopeEnter(
+	SymbolTable& table,
 	ScopeId id,
 	ScopeId parent_id,
 	ScopeType scope_type,
 	uint32_t depth,
 	NamespaceHandle namespace_handle) {
-	FrontendContext* context = FrontendContext::active();
-	if (context == nullptr) {
-		throw InternalError("persistent scope publication enabled without an active FrontendContext");
-	}
+	FrontendContext* context = requirePersistentScopePublicationContext(table);
 	context->recordPersistentScopeEnter(id, parent_id, scope_type, depth, namespace_handle);
 }
 
-void publishPersistentScopeCursor(ScopeId current_scope_id) {
-	FrontendContext* context = FrontendContext::active();
-	if (context == nullptr) {
-		throw InternalError("persistent scope publication enabled without an active FrontendContext");
-	}
+void publishPersistentScopeCursor(SymbolTable& table, ScopeId current_scope_id) {
+	FrontendContext* context = requirePersistentScopePublicationContext(table);
 	context->setPersistentScopeCursor(current_scope_id);
 }
 
-void resetPersistentScopes() {
-	FrontendContext* context = FrontendContext::active();
-	if (context == nullptr) {
-		throw InternalError("persistent scope publication enabled without an active FrontendContext");
-	}
+void resetPersistentScopes(SymbolTable& table) {
+	FrontendContext* context = requirePersistentScopePublicationContext(table);
 	context->resetPersistentScopes();
 }
 
 ScopeMetadataView readScopeMetadata(const SymbolTable& table, ScopeId scope_id) {
 	if (table.persistentScopePublicationEnabled()) {
-		FrontendContext* context = FrontendContext::active();
-		if (context == nullptr) {
-			throw InternalError("readScopeMetadata: persistent publication without an active FrontendContext");
-		}
+		FrontendContext* context = requirePersistentScopePublicationContext(table);
 		const ScopeRecord& record = context->scopeRecord(scope_id);
 		return ScopeMetadataView{
 			record.parent_id,

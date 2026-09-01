@@ -48,7 +48,10 @@ Last updated: 2026-09-01 after pull request boundary 17
   from `FrontendContext` `ScopeRecord` arenas when persistent publication is
   enabled; unbound `SymbolTable` instances continue to read legacy `Scope`
   slots. `SymbolTable::insert` and scope enter/exit still dual-write legacy
-  metadata until a later deletion slice.
+  metadata until a later deletion slice. Each published `SymbolTable` binds to
+  the `FrontendContext` active at `enablePersistentScopePublication()`; lookup,
+  publication, cursor updates, and reset read that bound arena rather than
+  `FrontendContext::active()`.
   `SymbolTable::insertCore` stamps `DeclarationNode::lexical_scope_id` (and
   function, template-function, variable, template-variable, and bare declaration
   nodes) at the shared insert choke point; enum/struct and other symbol kinds
