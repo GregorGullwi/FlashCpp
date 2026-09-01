@@ -30,6 +30,20 @@ try {
 	$freshness = Test-FlashCppBinaryFreshness -BinaryPath $binary -SourceFiles @((Get-Item -LiteralPath $source))
 	Assert-Runner $freshness.IsFresh "fresh compiler timestamps pass"
 
+	$resolveRoot = Join-Path $tempRoot "resolve_repo"
+	$shardedDir = Join-Path $resolveRoot "x64/Sharded"
+	$debugDir = Join-Path $resolveRoot "x64/Debug"
+	New-Item -ItemType Directory -Path $shardedDir -Force | Out-Null
+	New-Item -ItemType Directory -Path $debugDir -Force | Out-Null
+	$linuxBinary = Join-Path $shardedDir "FlashCpp"
+	$windowsBinary = Join-Path $debugDir "FlashCpp.exe"
+	Set-Content -LiteralPath $linuxBinary -Value "linux"
+	Set-Content -LiteralPath $windowsBinary -Value "windows"
+	(Get-Item -LiteralPath $linuxBinary).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(1)
+	(Get-Item -LiteralPath $windowsBinary).LastWriteTimeUtc = [DateTime]::UtcNow
+	$resolvedPath = Resolve-FlashCppCompilerPath -RepoRoot $resolveRoot
+	Assert-Runner ($resolvedPath -eq $linuxBinary) "Resolve-FlashCppCompilerPath selects the newest FlashCpp or FlashCppMSVC binary under x64"
+
 	$compileOnlyKind = Get-FlashCppTestKind -FileName "test_compile_only.cpp" -SourceContent "int value();" -PlatformExclusions @() -SupportSources @() -CompileOnlyOverrides @()
 	$failureKind = Get-FlashCppTestKind -FileName "test_invalid_e1001.cpp" -SourceContent "int main() { return 0; }" -PlatformExclusions @() -SupportSources @() -CompileOnlyOverrides @()
 	Assert-Runner ($compileOnlyKind -eq "CompileOnly") "eligible sources without main are scheduled as compile-only"

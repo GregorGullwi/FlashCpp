@@ -47,13 +47,9 @@ Write-Host ""
 # Find the FlashCpp compiler executable
 # On GitHub Actions, MSBuild builds FlashCppMSVC.exe
 # Locally, build_flashcpp.bat builds FlashCpp.exe
-# Search for the newest executable in any subfolder under x64/
-$flashCppPath = ""
-$allExes = Get-ChildItem -Path "x64" -Recurse -Include "FlashCpp.exe","FlashCppMSVC.exe" -ErrorAction SilentlyContinue
-if ($allExes) {
-	$newestExe = $allExes | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-	$flashCppPath = $newestExe.FullName
-} else {
+# Linux make sharded builds x64/Sharded/FlashCpp
+$flashCppPath = Resolve-FlashCppCompilerPath -RepoRoot $RepoRoot
+if (-not $flashCppPath) {
 	Write-Host "FlashCpp not found, building..."
 	& .\build_flashcpp.bat
 	if ($LASTEXITCODE -ne 0) {
@@ -61,13 +57,9 @@ if ($allExes) {
 		Write-FlashCppCiRecord -Path $CiOutput -Kind "runner" -Name "compiler" -Status "build-failed" -Detail "build_flashcpp.bat failed"
 		exit 1
 	}
-	# Try again after build
-	$allExes = Get-ChildItem -Path "x64" -Recurse -Include "FlashCpp.exe","FlashCppMSVC.exe" -ErrorAction SilentlyContinue
-	if ($allExes) {
-		$newestExe = $allExes | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-		$flashCppPath = $newestExe.FullName
-	} else {
-		Write-Host "ERROR: FlashCpp.exe not found after build" -ForegroundColor Red
+	$flashCppPath = Resolve-FlashCppCompilerPath -RepoRoot $RepoRoot
+	if (-not $flashCppPath) {
+		Write-Host "ERROR: FlashCpp compiler not found after build" -ForegroundColor Red
 		Write-FlashCppCiRecord -Path $CiOutput -Kind "runner" -Name "compiler" -Status "missing-binary" -Detail "compiler executable not found after build"
 		exit 1
 	}
@@ -75,11 +67,11 @@ if ($allExes) {
 
 # Resolve to absolute path so parallel runspaces (which have a different working
 # directory) can still invoke the compiler without a CommandNotFoundException.
-$flashCppPath = (Get-Item $flashCppPath).FullName
+$flashCppPath = (Get-Item -LiteralPath $flashCppPath).FullName
 
 $freshness = Test-FlashCppBinaryFreshness -BinaryPath $flashCppPath -SourceFiles @(Get-FlashCppRelevantSourceFiles -RepoRoot $RepoRoot)
 if (-not $freshness.IsFresh) {
-	$message = "Compiler binary is older than $($freshness.NewestSource). Run .\build_flashcpp.bat and retry."
+	$message = "Compiler binary is older than $($freshness.NewestSource). Rebuild the compiler and retry."
 	Write-Host "ERROR: $message" -ForegroundColor Red
 	Write-FlashCppCiRecord -Path $CiOutput -Kind "runner" -Name "compiler" -Status "stale-binary" -Detail $message
 	exit 1

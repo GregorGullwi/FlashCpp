@@ -36,3 +36,27 @@ jobs:
           # Run the test script which compiles and links all .cpp files in tests/
           # and fails the build if any compilation or linking errors occur
           bash tests/run_all_tests.sh
+
+      - name: Install PowerShell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https software-properties-common
+          source /etc/os-release
+          wget -q "https://packages.microsoft.com/config/ubuntu/${VERSION_ID}/packages-microsoft-prod.deb"
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: Migration counter baselines
+        shell: pwsh
+        run: |
+          ./tests/run_migration_counters.ps1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Migration counter check failed!" -ForegroundColor Red
+            exit 1
+          }
+          ./tests/run_migration_dollar_inventory.ps1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Dollar inventory check failed!" -ForegroundColor Red
+            exit 1
+          }
