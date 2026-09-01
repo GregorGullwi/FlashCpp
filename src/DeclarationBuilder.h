@@ -6,10 +6,12 @@
 #include "ScopeRecord.h"
 #include "StringTable.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
@@ -47,7 +49,18 @@ inline NamespaceHandle namespaceHandleFromOwnerId(OwnerId owner_id) {
 
 enum class DeclKind : uint8_t {
 	Function = 0,
+	Count,
 };
+
+inline std::string_view declKindLabel(DeclKind kind) {
+	switch (kind) {
+	case DeclKind::Function:
+		return "function";
+	case DeclKind::Count:
+		break;
+	}
+	return "unknown";
+}
 
 enum class LanguageLinkage : uint8_t {
 	CPlusPlus = 0,
@@ -251,6 +264,10 @@ public:
 	std::size_t telemetryParameterListInternCount() const {
 		return parameter_list_ids_.size();
 	}
+
+	std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> declarationKindCounts() const;
+
+	std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> entityKindCounts() const;
 
 	uint64_t declarationArenaUsedBytes() const {
 		return declarations_.usedBytes();

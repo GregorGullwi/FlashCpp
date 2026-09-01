@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 22
+Last updated: 2026-09-01 after pull request boundary 23
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 22 are landed.
+  and entities). Pull request boundaries 1 through 23 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -87,11 +87,13 @@ Last updated: 2026-09-01 after pull request boundary 22
   lowering buffers at object write; object-writer section buffers remain outside
   this slice until a dedicated IR arena exists. Syntax objects are also grouped
   into coarse AST families (declaration, statement, expression, type-specifier,
-  template, other) via `SyntaxAstTelemetry.h`. `ChunkedVector` reserved bytes
-  count retained chunk capacity across rollback. String-table entries/spelling
-  bytes, InlineVector spills, scope count/current `ScopeId`, scope-arena
-  used/reserved bytes, declaration/entity counts, and per-arena used/reserved
-  bytes are reported under `--perf-stats`. Sampled compiler tests
+  template, other) via `SyntaxAstTelemetry.h`. Semantic declaration and entity
+  records are grouped by `DeclKind` through `DeclarationBuilder`; declarator and
+  parameter-list intern registry sizes report under `--perf-stats`. `ChunkedVector`
+  reserved bytes count retained chunk capacity across rollback. String-table
+  entries/spelling bytes, InlineVector spills, scope count/current `ScopeId`,
+  scope-arena used/reserved bytes, declaration/entity counts, and per-arena
+  used/reserved bytes are reported under `--perf-stats`. Sampled compiler tests
   peaked at 114 persistent scopes; chunk size 256 is explicit headroom.
 - Migration choke-point counters and the inline `find('$')` inventory share one
   fixed corpus baseline (`tests/migration_counters/`). Coordination agents run
@@ -103,7 +105,7 @@ Last updated: 2026-09-01 after pull request boundary 22
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–22)
+## Pull request boundary status (1–23)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -129,6 +131,7 @@ Last updated: 2026-09-01 after pull request boundary 22
 | 20 | Stamp `lexical_scope_id` on struct, enum, typedef, and class-template wrapper nodes at `SymbolTable` insert/replace/insertGlobal |
 | 21 | Wire IR allocation-domain bytes from codegen lowering buffers; report coarse syntax AST family counts through `FrontendContext` |
 | 22 | Enforce migration counter and dollar-inventory baselines on Ubuntu CI via native bash runners; keep PowerShell runners on Windows CI |
+| 23 | Report semantic `DeclKind` breakdown and DeclarationBuilder intern registry sizes through `FrontendContext` arena telemetry |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -173,9 +176,10 @@ boundary 1 is started, not finished.
   - Boundary 1 "arena bytes, record counts, string-table bytes, and selected
     InlineVector spill counts are reported through FrontendContext": all four
     allocation domains now report used/reserved bytes (IR covers lowering
-    buffers only); coarse syntax AST family counts and declaration/entity
-    record totals report; per-record semantic type breakdown and full IR arena
-    ownership remain open
+    buffers only); coarse syntax AST family counts, declaration/entity record
+    totals, semantic `DeclKind` breakdown, and declarator/parameter-list intern
+    registry sizes report; per-family InlineVector spill attribution and full IR
+    arena ownership remain open
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
     `Scope::scope_id` and legacy metadata fields on `Scope` are deleted.
@@ -187,14 +191,13 @@ boundary 1 is started, not finished.
   - Boundary 1 remaining exit criteria (full merge rules beyond the initial
     free-function set, full template-facade coverage): follow-on boundary-1 work
 
-Boundary-22 validation: bash runner self-tests cover migration telemetry
-parsing and compiler discovery; `run_migration_counters.sh` and
-`run_migration_dollar_inventory.sh` pass against the checked-in baselines on
-Linux; Ubuntu CI invokes the bash scripts without installing PowerShell.
+Boundary-23 validation: `make sharded` and targeted unity doctest
+`FrontendContext semantic declaration kind counts track DeclarationBuilder records`
+pass on Linux; migration counter and dollar-inventory baselines unchanged.
 
 ## Effort estimate
 
-- Implementation effort completed overall: 24-27%, confidence medium
+- Implementation effort completed overall: 25-28%, confidence medium
 
 ## Remaining work
 

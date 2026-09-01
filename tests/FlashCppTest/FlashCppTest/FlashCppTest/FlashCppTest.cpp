@@ -5499,6 +5499,49 @@ TEST_SUITE("FrontendContext") {
 		CHECK(classifySyntaxAstFamily(std::type_index(typeid(BlockNode))) == SyntaxAstFamily::Statement);
 	}
 
+	TEST_CASE("FrontendContext semantic declaration kind counts track DeclarationBuilder records") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+
+		context.refreshSemanticDeclKindCounts();
+		const std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> before_decls =
+			context.declarationKindCounts();
+		const std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> before_entities =
+			context.entityKindCounts();
+		const std::size_t declarator_interns_before = builder.telemetryDeclaratorInternCount();
+		const std::size_t parameter_lists_before = builder.telemetryParameterListInternCount();
+
+		const FunctionDeclRequest request = makeFunctionDeclRequest(
+			global_scope,
+			StringTable::getOrInternStringHandle("semantic_telemetry_fn"),
+			TypeId{901},
+			TypeId{902},
+			FunctionDeclForm::Declaration,
+			LanguageLinkage::CPlusPlus);
+		{
+			PublicationTransaction transaction(builder);
+			PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
+			REQUIRE_FALSE(prepared.isRejected());
+			REQUIRE(builder.commitFunctionPublication(prepared, transaction).status == PublishStatus::Created);
+			transaction.commit();
+		}
+
+		context.refreshSemanticDeclKindCounts();
+		const std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> after_decls =
+			context.declarationKindCounts();
+		const std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> after_entities =
+			context.entityKindCounts();
+		CHECK(after_decls[static_cast<std::size_t>(DeclKind::Function)] ==
+			  before_decls[static_cast<std::size_t>(DeclKind::Function)] + 1);
+		CHECK(after_entities[static_cast<std::size_t>(DeclKind::Function)] ==
+			  before_entities[static_cast<std::size_t>(DeclKind::Function)] + 1);
+		CHECK(builder.telemetryDeclaratorInternCount() >= declarator_interns_before);
+		CHECK(builder.telemetryParameterListInternCount() >= parameter_lists_before);
+		CHECK(declKindLabel(DeclKind::Function) == "function");
+	}
+
 	TEST_CASE("FrontendContext IR domain stats record lowering buffer bytes") {
 		FrontendContext context;
 		context.recordIrDomainStats(128, 256);

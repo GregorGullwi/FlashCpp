@@ -4,12 +4,34 @@
 #include "CompileError.h"
 #include "SymbolTable.h"
 
+#include <cassert>
+
 DeclarationBuilder::DeclarationBuilder() = default;
 
 DeclarationBuilder::~DeclarationBuilder() = default;
 
 std::size_t DeclarationBuilder::telemetryDeclaratorInternCount() const {
 	return declarator_type_canon_.size();
+}
+
+std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> DeclarationBuilder::declarationKindCounts() const {
+	std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> counts{};
+	for (std::size_t index = 0; index < declarations_.size(); ++index) {
+		const uint8_t kind_value = declarations_[index].kind;
+		assert(kind_value < static_cast<uint8_t>(DeclKind::Count));
+		++counts[kind_value];
+	}
+	return counts;
+}
+
+std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> DeclarationBuilder::entityKindCounts() const {
+	std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> counts{};
+	for (std::size_t index = 0; index < entities_.size(); ++index) {
+		const uint8_t kind_value = entities_[index].kind;
+		assert(kind_value < static_cast<uint8_t>(DeclKind::Count));
+		++counts[kind_value];
+	}
+	return counts;
 }
 
 PreparedFunctionPublication::PreparedFunctionPublication(
