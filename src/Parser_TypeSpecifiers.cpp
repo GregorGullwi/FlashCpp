@@ -2915,7 +2915,7 @@ ParseResult Parser::parse_type_specifier() {
 							member_path_builder.commit();
 						TemplateParamNameViewVector dependent_member_components =
 							splitDependentMemberPathComponents(dependent_member_path);
-						InlineVector<DependentMemberSegmentInfo, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> all_segment_infos;
+						TemplateVector<DependentMemberSegmentInfo, 4> all_segment_infos;
 						// The member path may contain prefix components (e.g. "Node" in
 						// "Node::Apply<1 args>") that appear before the terminal member
 						// whose template args we just parsed.  Without padding, those

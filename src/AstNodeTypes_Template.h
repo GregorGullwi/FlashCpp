@@ -104,9 +104,9 @@ private:
 };
 
 using TemplateParameterVector =
-	InlineVector<TemplateParameterNode, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+	TemplateVector<TemplateParameterNode, 4>;
 using TemplateAstNodeVector =
-	InlineVector<ASTNode, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+	TemplateVector<ASTNode, 4>;
 
 // Template function declaration node - represents a function template
 class TemplateFunctionDeclarationNode {
@@ -185,10 +185,10 @@ struct DeferredAliasMemberTemplateSegment {
 	bool has_template_arguments = false;
 };
 
-inline InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> makeDeferredAliasMemberTemplateSegments(
+inline TemplateVector<DeferredAliasMemberTemplateSegment, 4> makeDeferredAliasMemberTemplateSegments(
 	StringHandle target_member_template_name,
 	TemplateAstNodeVector target_member_template_args) {
-	InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> segments;
+	TemplateVector<DeferredAliasMemberTemplateSegment, 4> segments;
 	if (target_member_template_name.isValid()) {
 		DeferredAliasMemberTemplateSegment segment;
 		segment.name = target_member_template_name;
@@ -245,7 +245,7 @@ public:
 					  const TypeSpecifierNode& target_type,
 					  StringHandle target_template_name,
 					  TemplateAstNodeVector target_template_args,
-					  InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> target_member_template_segments)
+					  TemplateVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments)
 		: template_parameters_(std::move(template_params)),
 		  template_param_names_(std::move(param_names)),
 		  alias_name_(alias_name),
@@ -285,7 +285,7 @@ public:
 					  ASTNode target_type,
 					  StringHandle target_template_name,
 					  TemplateAstNodeVector target_template_args,
-					  InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> target_member_template_segments)
+					  TemplateVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments)
 		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>(), target_template_name, std::move(target_template_args), std::move(target_member_template_segments)) {}
 
 	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
@@ -323,7 +323,7 @@ private:
 	bool is_deferred_;  // True if target is a template with unresolved parameters
 	StringHandle target_template_name_;	// Template name (e.g., "integral_constant")
 	TemplateAstNodeVector target_template_args_;	// Unevaluated argument AST nodes
-	InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> target_member_template_segments_;	// Dependent member chain (e.g., "type::rebind")
+	TemplateVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments_;	// Dependent member chain (e.g., "type::rebind")
 };
 
 // Deduction guide declaration: template<typename T> ClassName(T) -> ClassName<T>;
@@ -333,13 +333,13 @@ public:
 	DeductionGuideNode() = delete;
 	DeductionGuideNode(TemplateParameterVector template_params,
 					   std::string_view class_name,
-					   InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> guide_params,
+					   OverloadVector<TypeSpecifierNode, 4> guide_params,
 					   std::vector<ASTNode> deduced_template_args)
 		: template_parameters_(std::move(template_params)), class_name_(class_name), guide_parameters_(std::move(guide_params)), deduced_template_args_(std::move(deduced_template_args)) {}
 
 	const TemplateParameterVector& template_parameters() const { return template_parameters_; }
 	std::string_view class_name() const { return class_name_; }
-	const InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>& guide_parameters() const {
+	const OverloadVector<TypeSpecifierNode, 4>& guide_parameters() const {
 		return guide_parameters_;
 	}
 	std::span<const ASTNode> deduced_template_args() const { return deduced_template_args_; }
@@ -347,7 +347,7 @@ public:
 private:
 	TemplateParameterVector template_parameters_;
 	std::string_view class_name_;  // Name of the class template
-	InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> guide_parameters_;
+	OverloadVector<TypeSpecifierNode, 4> guide_parameters_;
 	std::vector<ASTNode> deduced_template_args_;
 };
 
@@ -1639,7 +1639,7 @@ private:
 	std::vector<DeferredBaseClassSpecifier> deferred_base_classes_;	// Decltype base classes (for templates)
 	std::vector<DeferredTemplateBaseClassSpecifier> deferred_template_base_classes_;	 // Template-dependent base classes
 	std::vector<ASTNode> friend_declarations_;  // Friend declarations
-	InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> nested_classes_;  // Nested classes
+	TemplateVector<ASTNode, 2> nested_classes_;  // Nested classes
 	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
 	std::vector<StaticMemberDecl> static_members_;  // Static members (for templates)
 	std::vector<AnonymousUnionInfo> anonymous_unions_;  // Anonymous union tracking info

@@ -5966,7 +5966,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 				if (const MemberContext* member_context = getCurrentMemberContext()) {
 					if (const StructTypeInfo* struct_info =
 						tryGetStructTypeInfo(member_context->type_index)) {
-						InlineVector<const TypeInfo*, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> nested_enum_matches;
+						TemplateVector<const TypeInfo*, 2> nested_enum_matches;
 						visitStructHierarchyDepthFirst(struct_info, [&](const StructTypeInfo& visited_struct) {
 							for (TypeIndex nested_enum_index : visited_struct.getNestedEnumIndices()) {
 								const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
@@ -6777,7 +6777,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return type_context_.intern(result_desc);
 					}
 					if (!result_desc.array_dimensions.empty()) {
-						InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> remaining_dimensions;
+						TemplateVector<size_t, 4> remaining_dimensions;
 						for (size_t i = 1; i < result_desc.array_dimensions.size(); ++i) {
 							remaining_dimensions.push_back(result_desc.array_dimensions[i]);
 						}

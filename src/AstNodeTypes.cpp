@@ -1918,7 +1918,7 @@ void TypeInfo::setInstantiationContext(TemplateParamNameVector param_names,
 }
 
 void TypeInfo::setInstantiationContext(TemplateParamNameVector param_names,
-									   InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> parameter_type_indices,
+									   TemplateVector<TypeIndex, 4> parameter_type_indices,
 									   TemplateArgInfoVector param_args,
 									   const InstantiationContext* parent) {
 	InstantiationContext ctx;

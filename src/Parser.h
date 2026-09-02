@@ -1203,7 +1203,7 @@ private:
 		bool is_pack = false;
 		std::vector<TemplateTypeArg> pack_args;
 	};
-	InlineVector<TemplateParamSubstitution, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> template_param_substitutions_;
+	TemplateVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 
 	// Root-local lexical bindings for one template-body substitution.
 	// Capacity 8 covers typical member bodies with up to eight simultaneously
@@ -1217,8 +1217,8 @@ private:
 		long long value = 0;
 	};
 	struct TemplateBodySubstitutionState {
-		InlineVector<SubstitutedLocalBinding, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> local_bindings;
-		InlineVector<SubstitutedConstexprLocal, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> constexpr_locals;
+		TemplateVector<SubstitutedLocalBinding, 8> local_bindings;
+		TemplateVector<SubstitutedConstexprLocal, 8> constexpr_locals;
 		TemplateEnvironment environment;
 		TypeIndex owner_type_index{};
 		StringHandle owner_type_name{};
@@ -1859,7 +1859,7 @@ private:
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
 		TemplateAstNodeVector& out_target_template_arg_nodes,
-		InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& out_target_member_template_segments,
+		TemplateVector<DeferredAliasMemberTemplateSegment, 4>& out_target_member_template_segments,
 		bool consume_dependent_member_suffix);
 	// Simple struct to hold constant expression evaluation results
 	// Public members are intentional for this lightweight data structure
@@ -2242,7 +2242,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	// Populate template_param_substitutions_ from a normalized template environment
 	// for body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
 	void populateTemplateParamSubstitutions(
-		InlineVector<TemplateParamSubstitution, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& subs,
+		TemplateVector<TemplateParamSubstitution, 4>& subs,
 		const TemplateEnvironment& environment);
 	// RAII guard that installs parse-time PACK bindings for replayed
 	// initializer/body parsing so a `<Pack...>` expansion resolves its arity

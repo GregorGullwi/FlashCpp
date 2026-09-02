@@ -450,7 +450,7 @@ inline OutOfLineMemberStubResolution findPlainOutOfLineMemberStubByIdentity(
 	const std::string_view out_of_line_name =
 		out_of_line_decl.decl_node().identifier_token().value();
 	OutOfLineMemberStubResolution resolution;
-	InlineVector<FunctionDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> resolved_matches;
+	OverloadVector<FunctionDeclarationNode*, 4> resolved_matches;
 	const ASTNode* matched_source_member = nullptr;
 
 	for (size_t source_member_index = 0;
@@ -527,7 +527,7 @@ inline OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 	std::span<const TemplateTypeArg> outer_template_args,
 	TypeIndex owner_type_index) {
 	OutOfLineConstructorStubResolution resolution;
-	InlineVector<ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> resolved_matches;
+	OverloadVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	const ASTNode* matched_source_member = nullptr;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
@@ -590,7 +590,7 @@ inline OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	const StructDeclarationNode* out_of_line_lookup_owner,
 	const StructDeclarationNode* out_of_line_pattern_owner) {
 	OutOfLineConstructorStubResolution resolution;
-	InlineVector<ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> resolved_matches;
+	OverloadVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	const ASTNode* matched_source_member = nullptr;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
@@ -1034,7 +1034,7 @@ private:
 	TemplateDefinitionLookupContext replay_definition_lookup_context_;
 	Parser::ScopedDefinitionLookupContext lookup_scope_;
 	FlashCpp::ScopedState<Parser::ActiveTemplateParameterState> template_params_guard_;
-	FlashCpp::ScopedState<InlineVector<Parser::TemplateParamSubstitution, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>> substitutions_guard_;
+	FlashCpp::ScopedState<TemplateVector<Parser::TemplateParamSubstitution, 4>> substitutions_guard_;
 };
 
 inline void registerAliasTemplateWithOuterBinding(
@@ -1516,7 +1516,7 @@ struct SignatureValidationIndirection {
 	size_t pointer_depth = 0;
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
 	CVQualifier cv_qualifier = CVQualifier::None;
-	InlineVector<CVQualifier, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> pointer_level_cv_qualifiers;
+	TemplateVector<CVQualifier, 4> pointer_level_cv_qualifiers;
 };
 
 inline void mergeAliasIndirectionForSignatureValidation(
@@ -3757,10 +3757,10 @@ inline TemplateParamNameVector collectParamNameHandles(
 }
 
 template <typename ParamContainer>
-inline InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> collectParamTypeIndices(
+inline TemplateVector<TypeIndex, 4> collectParamTypeIndices(
 	const ParamContainer& template_params,
 	size_t max_count) {
-	InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> type_indices;
+	TemplateVector<TypeIndex, 4> type_indices;
 	for (size_t i = 0; i < template_params.size() && i < max_count; ++i) {
 		if (const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
 			param != nullptr) {

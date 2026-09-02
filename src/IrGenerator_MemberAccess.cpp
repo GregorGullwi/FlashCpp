@@ -452,7 +452,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			if (element_size_bits <= 0) {
 				throw InternalError("Pointer-to-array subscript could not resolve element size");
 			}
-			const InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& dim_sizes = pointee_desc.array_dimensions;
+			const TemplateVector<size_t, 4>& dim_sizes = pointee_desc.array_dimensions;
 
 			// Materialize the base address: the dereferenced pointer's VALUE
 			// is the address of the pointee array object ([dcl.ptr]/1), so no

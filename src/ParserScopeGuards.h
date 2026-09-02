@@ -116,7 +116,7 @@ private:
 		registered_parameters_.clear();
 	}
 
-	InlineVector<RegisteredParameter, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> registered_parameters_;
+	TemplateVector<RegisteredParameter, 4> registered_parameters_;
 };
 
 // =============================================================================

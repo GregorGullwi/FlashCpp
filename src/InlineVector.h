@@ -67,12 +67,16 @@ inline thread_local std::array<uint64_t, static_cast<std::size_t>(InlineVectorSp
  * range stays contiguous and can back std::span.
  *
  * @tparam T The element type
- * @tparam N The inline capacity (default: 4)
  * @tparam SpillFamily Migration telemetry family attributed when inline storage spills
+ * @tparam N The inline capacity (default: 4)
  */
-template <typename T, size_t N = 4, InlineVectorSpillFamily SpillFamily = InlineVectorSpillFamily::Unknown>
+template <typename T, InlineVectorSpillFamily SpillFamily, size_t N = 4>
 class InlineVector {
 public:
+	static_assert(SpillFamily != InlineVectorSpillFamily::Unknown &&
+				  SpillFamily != InlineVectorSpillFamily::Count,
+		"InlineVector requires a concrete spill telemetry family");
+
 	InlineVector() = default;
 
 	InlineVector(std::initializer_list<T> init) {
@@ -660,5 +664,17 @@ inlineVectorSpillFamilyCounts() {
 
 } // namespace FlashCpp
 
+namespace FlashCpp {
+
+template <typename T, size_t N = 4>
+using OverloadVector = InlineVector<T, InlineVectorSpillFamily::OverloadResolution, N>;
+
+template <typename T, size_t N = 4>
+using TemplateVector = InlineVector<T, InlineVectorSpillFamily::TemplateArgument, N>;
+
+} // namespace FlashCpp
+
 // Make InlineVector available outside namespace for convenience
 using FlashCpp::InlineVector;
+using FlashCpp::OverloadVector;
+using FlashCpp::TemplateVector;

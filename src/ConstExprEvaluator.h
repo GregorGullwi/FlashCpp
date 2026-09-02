@@ -403,7 +403,7 @@ struct BlockScopeTracker {
 		std::string_view name;  // Variable name (view into interned string storage)
 		TypeIndex type_index;   // Type of the struct
 	};
-	InlineVector<DestructorEntry, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> destructor_entries;
+	TemplateVector<DestructorEntry, 4> destructor_entries;
 
 	// Called by the VariableDeclarationNode handler before writing the
 	// new binding into the flat map.  Pass the current bindings so that

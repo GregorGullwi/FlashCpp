@@ -552,7 +552,7 @@ struct MemberStoreOp {
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Member declaration reference qualifier (not access kind)
 	StringHandle vtable_symbol;		// For vptr initialization - stores vtable symbol name
 	StringHandle virtual_base_table_symbol;	// For hidden virtual-base table initialization
-	InlineVector<int32_t, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> virtual_base_table_offsets;
+	TemplateVector<int32_t, 1> virtual_base_table_offsets;
 	bool is_pointer_to_member = false;			   // True if accessing through pointer (ptr->member), false for direct (obj.member)
 	std::optional<size_t> bitfield_width;			  // Width in bits for bitfield members
 	size_t bitfield_bit_offset = 0;					// Bit offset within the storage unit for bitfield members

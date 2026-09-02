@@ -85,3 +85,4 @@ To show IR, use `--log-level=Codegen:debug`
 * Before committing a standard-header fix, inspect the compiler-source diff for `std::`, `_MSVC`, vendor-reserved identifiers, and exact standard-library helper names. If any appear in implementation code, either remove the special case or explicitly justify it as a builtin/intrinsic path in the code and PR summary.
 * Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.
 * When creating tests, mix different native types and sizes with structs and templates to get good coverage of each feature.
+* PR Descriptions should be describing the solved problem in a descriptive way, not just listing bullet points. It should not contain a list of run tests, but describe what any added tests actually verify.

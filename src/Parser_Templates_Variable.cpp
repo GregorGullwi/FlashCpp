@@ -262,7 +262,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	bool has_deferred_target = false;
 	StringHandle target_template_name;
 	TemplateAstNodeVector target_template_arg_nodes;
-	InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> target_member_template_segments;
+	TemplateVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments;
 	{
 		SaveHandle after_target_pos = save_token_position();
 		restore_token_position(target_type_start_pos);

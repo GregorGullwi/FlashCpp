@@ -1827,7 +1827,7 @@ bool astNodesHaveDeferredTemplateDependency(
 
 template <size_t N>
 bool astNodesHaveDeferredTemplateDependency(
-	const InlineVector<ASTNode, N, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& nodes,
+	const TemplateVector<ASTNode, N>& nodes,
 	const TemplateParamNameVector& current_template_param_names) {
 	return std::any_of(
 		nodes.begin(),

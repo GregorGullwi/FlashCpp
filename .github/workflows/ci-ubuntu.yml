@@ -41,4 +41,3 @@ jobs:
         run: |
           bash tests/run_migration_counters.sh
           bash tests/run_migration_dollar_inventory.sh
-          bash tests/run_inline_vector_inventory.sh

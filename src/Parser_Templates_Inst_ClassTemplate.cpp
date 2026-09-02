@@ -515,7 +515,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				type_info.name_ = inst_handle;
 				auto template_args_info = toTemplateArgInfoList(template_args);
 				TemplateParamNameVector placeholder_param_names;
-				InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> placeholder_param_type_indices;
+				TemplateVector<TypeIndex, 4> placeholder_param_type_indices;
 				if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 					template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					const auto& placeholder_params =
@@ -8427,7 +8427,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const size_t expansion_count = base_pack_bindings.pack_bindings.empty()
 						? 1
 						: base_pack_bindings.expansion_count;
-					InlineVector<const TypeInfo*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> resolved_base_types;
+					TemplateVector<const TypeInfo*, 4> resolved_base_types;
 					bool defer_entire_base = false;
 					for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
 						TemplateArgSubstitutionMap subst_map =
@@ -9041,7 +9041,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Collect same-name/same-shape candidates, then require a positive
 					// substituted-signature match before replay attachment.
-					InlineVector<const StructMemberFunctionDecl*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> same_name_candidates;
+					TemplateVector<const StructMemberFunctionDecl*, 4> same_name_candidates;
 					const size_t ool_inner_template_param_count =
 						out_of_line_member.inner_template_params.size();
 					const size_t ool_function_param_count = ool_func.parameter_nodes().size();

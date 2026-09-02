@@ -871,7 +871,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// (preserves the pre-partial-ordering behavior and avoids spurious ambiguity errors).
 	size_t best_idx = std::numeric_limits<size_t>::max();
 	int best_specificity = -1;
-	InlineVector<CandidateResult, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> viable;
+	OverloadVector<CandidateResult, 4> viable;
 	viable.reserve(template_candidates.size());
 	for (size_t i = 0; i < template_candidates.size(); ++i) {
 		auto candidate = tryDeduceCandidate(template_candidates[i]);
@@ -963,7 +963,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	if (viable.size() > 1) {
 		TemplateAstNodeVector shape_overloads;
-		InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> shape_candidate_indices;
+		TemplateVector<size_t, 4> shape_candidate_indices;
 		shape_overloads.reserve(viable.size());
 		shape_candidate_indices.reserve(viable.size());
 		for (size_t i = 0; i < viable.size(); ++i) {
@@ -1273,8 +1273,8 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));
 	}
 	for (const auto& outer_arg : outer_args) {
-		const InlineVector<ASTNode, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> no_params;
-		const InlineVector<TemplateTypeArg, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> no_args;
+		const TemplateVector<ASTNode, 1> no_params;
+		const TemplateVector<TemplateTypeArg, 1> no_args;
 		lazy_info.template_args.push_back(materializeTemplateArg(
 			outer_arg,
 			no_params,
@@ -1437,11 +1437,11 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			-> const ConstructorDeclarationNode* {
 		TemplateAstNodeVector instantiated_matches;
 		instantiated_matches.reserve(struct_info.member_functions.size());
-		InlineVector<const ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> concrete_matches;
+		OverloadVector<const ConstructorDeclarationNode*, 4> concrete_matches;
 		concrete_matches.reserve(struct_info.member_functions.size());
-		InlineVector<const ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> source_template_matches;
+		OverloadVector<const ConstructorDeclarationNode*, 4> source_template_matches;
 		source_template_matches.reserve(struct_info.member_functions.size());
-		InlineVector<const ConstructorDeclarationNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> template_ctor_candidates;
+		OverloadVector<const ConstructorDeclarationNode*, 4> template_ctor_candidates;
 		template_ctor_candidates.reserve(struct_info.member_functions.size());
 		for (const auto& member_func : struct_info.member_functions) {
 			if (!member_func.is_constructor) {
@@ -1796,7 +1796,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		// Determine call arg types for this explicit call path.  Do this before
 		// the cache lookup so we can skip stale cached overloads whose pointer
 		// depth doesn't match the current call's arguments.
-		const InlineVector<TypeSpecifierNode, 1, FlashCpp::InlineVectorSpillFamily::OverloadResolution> empty_call_arg_types_storage;
+		const OverloadVector<TypeSpecifierNode, 1> empty_call_arg_types_storage;
 		std::span<const TypeSpecifierNode> call_arg_types =
 			current_explicit_call_arg_types_ != nullptr
 				? *current_explicit_call_arg_types_
@@ -2405,7 +2405,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 		if (alias_type_spec.is_array()) {
 			const std::span<const size_t> target_dimensions = target.array_dimensions();
-			InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> merged_dimensions;
+			TemplateVector<size_t, 4> merged_dimensions;
 			merged_dimensions.reserve(
 				target_dimensions.size() + alias_type_spec.array_dimensions().size());
 			for (size_t dimension : target_dimensions) {
@@ -2579,8 +2579,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		const auto& template_param = template_param_node;
 		tparam_nodes_by_name.emplace(template_param.nameHandle(), &template_param);
 	}
-	InlineVector<size_t, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> template_param_arg_starts;
-	InlineVector<size_t, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> template_param_arg_counts;
+	TemplateVector<size_t, 8> template_param_arg_starts;
+	TemplateVector<size_t, 8> template_param_arg_counts;
 	template_param_arg_starts.reserve(template_params.size());
 	template_param_arg_counts.reserve(template_params.size());
 	for (size_t i = 0; i < template_params.size(); ++i) {
