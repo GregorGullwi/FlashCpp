@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-01 after pull request boundary 32
+Last updated: 2026-09-02 after pull request boundary 33
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 32 are landed.
+  and entities). Pull request boundaries 1 through 33 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -109,10 +109,12 @@ Last updated: 2026-09-01 after pull request boundary 32
 - Migration choke-point counters and the inline `find('$')` inventory share one
   fixed corpus baseline (`tests/migration_counters/`). Coordination agents run
   on Linux or Windows, so each platform has a native runner:
-  `tests/run_migration_counters.sh` / `tests/run_migration_dollar_inventory.sh`
-  on Linux and the `.ps1` equivalents on Windows. Shared parsing lives in
-  `tests/runner/runner_common.sh` and `tests/runner/RunnerCommon.ps1`. After
-  compiler-source changes, agent validation must use the runner for the host OS.
+  `tests/run_migration_counters.sh`, `tests/run_migration_dollar_inventory.sh`,
+  and `tests/run_inline_vector_inventory.sh` on Linux and the `.ps1`
+  equivalents on Windows. Counter parsing lives in `tests/runner/runner_common.sh`
+  and `tests/runner/RunnerCommon.ps1`; the InlineVector inventory uses native
+  source scanners. After compiler-source changes, agent validation must use the
+  runner for the host OS.
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
@@ -152,6 +154,7 @@ Last updated: 2026-09-01 after pull request boundary 32
 | 30 | Tag all `InlineVector` containers in `OverloadResolution.h` with `InlineVectorSpillFamily::OverloadResolution`; overload-resolution spill telemetry no longer attributes to `unknown` |
 | 31 | Tag `lookupMemberFunctionTemplateCandidatesForInstantiation` spill vectors with `OverloadResolution`; attach `TemplateEngine` in `Templates:InheritedStaticStructMemberUsesInstantiatedOwner` doctest |
 | 32 | Tag every explicit `InlineVector` in `src/` and doctest fixtures with `overload-resolution` or `template-argument` spill families |
+| 33 | Add native CI inventories that reject untagged or `unknown`-family explicit `InlineVector` instantiations in `src/` and doctest fixtures |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -201,7 +204,9 @@ boundary 1 is started, not finished.
     totals, semantic `DeclKind` breakdown, declarator/parameter-list intern
     registry sizes, and per-family InlineVector spill breakdown report for all
     tagged compiler `InlineVector` containers (`overload-resolution` and
-    `template-argument`); full IR arena ownership remains open
+    `template-argument`); native PowerShell and bash inventories now reject any
+    explicit source or doctest `InlineVector` instantiation that omits a concrete
+    family, and both inventories run in CI; full IR arena ownership remains open
   - Boundary 1 persistent-scope ownership deliverable (not an explicit exit
     criterion): compact `ScopeRecord` metadata is context-owned; duplicate
     `Scope::scope_id` and legacy metadata fields on `Scope` are deleted.
@@ -216,11 +221,10 @@ boundary 1 is started, not finished.
     lexical `ScopeId`s while sharing one `OwnerId` / `EntityId`, and preserves
     `inline` plus definition state through the redeclaration chain.
 
-Boundary-32 validation: `build_flashcpp.bat`; migration counter baselines
-unchanged; `comparison_operators_ret1.cpp`,
-`concept_comprehensive_ret15.cpp`, and
-`test_template_recursive_static_constexpr_member_ret0.cpp`; zero untagged
-`InlineVector<` instantiations under `src/`; and `git diff --check` pass.
+Boundary-33 validation: `build_flashcpp.bat`; migration counter baselines
+unchanged; PowerShell and bash InlineVector inventories pass with 156 explicit
+instantiations and zero untagged uses; removing a fixture spill-family tag makes
+both inventories fail; and `git diff --check` passes.
 
 ## Effort estimate
 

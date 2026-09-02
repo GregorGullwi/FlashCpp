@@ -54,3 +54,8 @@ jobs:
             Write-Host "Dollar inventory check failed!" -ForegroundColor Red
             exit 1
           }
+          .\tests\run_inline_vector_inventory.ps1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "InlineVector family inventory check failed!" -ForegroundColor Red
+            exit 1
+          }
