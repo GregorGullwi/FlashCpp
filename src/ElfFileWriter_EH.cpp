@@ -653,14 +653,8 @@ void ElfFileWriter::generate_eh_frame() {
 					// Add section symbol for .gcc_except_table
 					auto* except_section = getSectionByName(".gcc_except_table");
 					if (except_section) {
-						auto* accessor = getSymbolAccessor();
-						// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
-						accessor->add_symbol(*string_accessor_, ".gcc_except_table",
-											 0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION,
-											 ELFIO::STV_DEFAULT, except_section->get_index());
-						gcc_except_table_sym_index = static_cast<ELFIO::Elf_Word>(accessor->get_symbols_num() - 1);
-						symbol_index_cache_[".gcc_except_table"] = gcc_except_table_sym_index;
-						found_except_table = true;
+						gcc_except_table_sym_index = addLocalSectionSymbol(*except_section);
+						found_except_table = gcc_except_table_sym_index != 0;
 					}
 				}
 			}
@@ -783,111 +777,92 @@ void ElfFileWriter::generate_gcc_except_table() {
 	except_section->set_addr_align(4);
 	except_section->set_data(reinterpret_cast<const char*>(gcc_except_table_data.data()),
 							 gcc_except_table_data.size());
+	section_name_cache_[".gcc_except_table"] = except_section;
 
-	// Add a DATA symbol for the .gcc_except_table section
-	// Use STB_WEAK instead of STB_LOCAL so it doesn't break symbol ordering
-	// (WEAK symbols are treated like GLOBAL for ordering purposes)
-	auto* accessor = getSymbolAccessor();
-	if (accessor && string_accessor_) {
-		// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
-		ELFIO::Elf_Word gcc_etc_sym_idx = accessor->add_symbol(*string_accessor_, ".gcc_except_table",
-															   0, gcc_except_table_data.size(),
-															   ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
-															   ELFIO::STV_HIDDEN, except_section->get_index());
-		// Keep cache in sync so generate_eh_frame() can find this symbol without a full rebuild
-		symbol_index_cache_[".gcc_except_table"] = gcc_etc_sym_idx;
-	}
+	// Local section symbol so generate_eh_frame() can find this section
+	// without a full rebuild. Must not be STB_WEAK: same-named weaks merge
+	// across TUs and one object's FDEs then point at another object's LSDA.
+	addLocalSectionSymbol(*except_section);
 
 	// For indirect encoding (0x9b), we need to:
-	// 1. Create a .data section with 8-byte entries for each typeinfo pointer
+	// 1. Append 8-byte typeinfo pointer slots to this object's .data
 	// 2. Add R_X86_64_64 relocations from .data to typeinfo symbols
 	// 3. Add R_X86_64_PC32 relocations from LSDA type table to .data entries
 	if (g_enable_debug_output) {
 		std::cerr << "[DEBUG] all_type_table_relocations.size() = " << all_type_table_relocations.size() << std::endl;
 	}
 	if (!all_type_table_relocations.empty()) {
-		// Create .data section for typeinfo pointer storage (8 bytes per entry)
+		if (!data_section_) {
+			throw std::runtime_error(".data section is missing");
+		}
+		uint32_t typeinfo_base = static_cast<uint32_t>(data_section_->get_size());
+		if (typeinfo_base % 8 != 0) {
+			const uint32_t pad = 8 - (typeinfo_base % 8);
+			std::vector<char> zeros(pad, 0);
+			data_section_->append_data(zeros.data(), zeros.size());
+			typeinfo_base += pad;
+		}
 		std::vector<uint8_t> typeinfo_data(all_type_table_relocations.size() * 8, 0);
+		data_section_->append_data(reinterpret_cast<const char*>(typeinfo_data.data()),
+			typeinfo_data.size());
 
-		auto* typeinfo_data_section = elf_writer_.sections.add(".data");
-		typeinfo_data_section->set_type(ELFIO::SHT_PROGBITS);
-		typeinfo_data_section->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
-		typeinfo_data_section->set_addr_align(8);
-		typeinfo_data_section->set_data(reinterpret_cast<const char*>(typeinfo_data.data()),
-										typeinfo_data.size());
-
-		// Add .data section symbol (needed for LSDA relocations)
-		// Use STB_WEAK instead of STB_LOCAL to avoid symbol ordering issues
-		// (local symbols must come before global ones, but we're adding this late)
-		auto* sym_accessor = getSymbolAccessor();
-		ELFIO::Elf_Xword data_section_sym_index = 0;
-		if (sym_accessor && string_accessor_) {
-			sym_accessor->add_symbol(*string_accessor_, ".data",
-									 0, 0, ELFIO::STB_WEAK, ELFIO::STT_SECTION,
-									 ELFIO::STV_HIDDEN, typeinfo_data_section->get_index());
-			data_section_sym_index = sym_accessor->get_symbols_num() - 1;
-			// Keep cache in sync
-			symbol_index_cache_[".data"] = static_cast<ELFIO::Elf_Word>(data_section_sym_index);
+		const ELFIO::Elf_Word data_section_sym_index = lookupSymbolIndex(".data");
+		if (data_section_sym_index == 0) {
+			throw std::runtime_error(".data section symbol is missing");
 		}
 
 		// Create .rela.data for typeinfo R_X86_64_64 relocations
-		auto* rela_data = elf_writer_.sections.add(".rela.data");
-		rela_data->set_type(ELFIO::SHT_RELA);
-		rela_data->set_flags(ELFIO::SHF_INFO_LINK);
-		rela_data->set_info(typeinfo_data_section->get_index());
-		rela_data->set_link(symtab_section_->get_index());
-		rela_data->set_addr_align(8);
-		rela_data->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
-
-		auto rela_data_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
-			elf_writer_, rela_data);
+		getOrCreateRelocationSection(".data");
+		ELFIO::relocation_section_accessor* rela_data_ptr = getRelocationAccessor(".rela.data");
+		if (!rela_data_ptr) {
+			throw std::runtime_error(".rela.data accessor is missing");
+		}
+		ELFIO::relocation_section_accessor& rela_data_accessor = *rela_data_ptr;
 
 		// Create .rela.gcc_except_table for LSDA type table R_X86_64_PC32 relocations
-		auto* rela_except_table = elf_writer_.sections.add(".rela.gcc_except_table");
-		rela_except_table->set_type(ELFIO::SHT_RELA);
-		rela_except_table->set_flags(ELFIO::SHF_INFO_LINK);
-		rela_except_table->set_info(except_section->get_index());
-		rela_except_table->set_link(symtab_section_->get_index());
-		rela_except_table->set_addr_align(8);
-		rela_except_table->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+		getOrCreateRelocationSection(".gcc_except_table");
+		ELFIO::relocation_section_accessor* rela_except_ptr = getRelocationAccessor(".rela.gcc_except_table");
+		if (!rela_except_ptr) {
+			throw std::runtime_error(".rela.gcc_except_table accessor is missing");
+		}
+		ELFIO::relocation_section_accessor& rela_except_accessor = *rela_except_ptr;
 
-		auto rela_except_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
-			elf_writer_, rela_except_table);
-
+		auto* sym_accessor_ptr = getSymbolAccessor();
+		if (!sym_accessor_ptr) {
+			throw std::runtime_error("Symbol table is not initialized");
+		}
+		ELFIO::symbol_section_accessor& sym_accessor = *sym_accessor_ptr;
 		uint32_t data_offset = 0;
 		// Build symbol cache once before the loop to avoid O(N²) typeinfo symbol lookups
 		buildSymbolIndexCache();
 		for (const auto& [lsda_offset, symbol] : all_type_table_relocations) {
 			// Find or add the typeinfo symbol using cache (O(1))
 			ELFIO::Elf_Xword typeinfo_sym_index = 0;
-
-			if (sym_accessor) {
-				auto cache_it = symbol_index_cache_.find(symbol);
-				if (cache_it != symbol_index_cache_.end()) {
-					typeinfo_sym_index = cache_it->second;
-				} else {
-					// Add as undefined external symbol
-					sym_accessor->add_symbol(*string_accessor_, symbol.c_str(),
-											 0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
-											 ELFIO::STV_DEFAULT, 0);
-					typeinfo_sym_index = sym_accessor->get_symbols_num() - 1;
-					symbol_index_cache_[symbol] = static_cast<ELFIO::Elf_Word>(typeinfo_sym_index);
-				}
-
-				// Add R_X86_64_64 relocation from .data to typeinfo symbol
-				rela_data_accessor->add_entry(data_offset,
-											  static_cast<ELFIO::Elf_Word>(typeinfo_sym_index),
-											  ELFIO::R_X86_64_64,
-											  0);
-
-				// Add R_X86_64_PC32 relocation from LSDA type table to .data entry
-				rela_except_accessor->add_entry(lsda_offset,
-												static_cast<ELFIO::Elf_Word>(data_section_sym_index),
-												ELFIO::R_X86_64_PC32,
-												static_cast<ELFIO::Elf_Sxword>(data_offset));
-
-				data_offset += 8;  // Each typeinfo pointer is 8 bytes
+			auto cache_it = symbol_index_cache_.find(symbol);
+			if (cache_it != symbol_index_cache_.end()) {
+				typeinfo_sym_index = cache_it->second;
+			} else {
+				// Add as undefined external symbol
+				sym_accessor.add_symbol(*string_accessor_, symbol.c_str(),
+										 0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
+										 ELFIO::STV_DEFAULT, 0);
+				typeinfo_sym_index = sym_accessor.get_symbols_num() - 1;
+				symbol_index_cache_[symbol] = static_cast<ELFIO::Elf_Word>(typeinfo_sym_index);
 			}
+
+			// Add R_X86_64_64 relocation from .data to typeinfo symbol
+			rela_data_accessor.add_entry(typeinfo_base + data_offset,
+										  static_cast<ELFIO::Elf_Word>(typeinfo_sym_index),
+										  ELFIO::R_X86_64_64,
+										  0);
+
+			// Add R_X86_64_PC32 relocation from LSDA type table to .data entry
+			rela_except_accessor.add_entry(lsda_offset,
+											data_section_sym_index,
+											ELFIO::R_X86_64_PC32,
+											static_cast<ELFIO::Elf_Sxword>(typeinfo_base + data_offset));
+
+			data_offset += 8;  // Each typeinfo pointer is 8 bytes
 		}
 	}
 
@@ -969,6 +944,14 @@ void ElfFileWriter::createStandardSections() {
 	// Create string accessor for symbol names
 	string_accessor_ = std::make_unique<ELFIO::string_section_accessor>(strtab_section_);
 
+	// Section symbols must be STB_LOCAL. Named STB_WEAK ".gcc_except_table"
+	// / ".data" symbols merge across TUs, so one object's FDEs point at
+	// another object's LSDA and __cxa_throw calls terminate (signal 6).
+	addLocalSectionSymbol(*text_section_);
+	addLocalSectionSymbol(*data_section_);
+	addLocalSectionSymbol(*bss_section_);
+	addLocalSectionSymbol(*rodata_section_);
+
 	// .rela.text - relocations for .text section
 	rela_text_section_ = elf_writer_.sections.add(".rela.text");
 	rela_text_section_->set_type(ELFIO::SHT_RELA);
@@ -992,6 +975,45 @@ void ElfFileWriter::createStandardSections() {
 	if (g_enable_debug_output) {
 		std::cerr << "Created standard ELF sections" << std::endl;
 	}
+}
+
+ELFIO::Elf_Word ElfFileWriter::addLocalSectionSymbol(ELFIO::section& section) {
+	auto* accessor_ptr = getSymbolAccessor();
+	if (!accessor_ptr || !string_accessor_) {
+		throw std::runtime_error("Symbol table is not initialized");
+	}
+	ELFIO::symbol_section_accessor& accessor = *accessor_ptr;
+	const std::string& name = section.get_name();
+	const ELFIO::Elf_Word existing = lookupSymbolIndex(name);
+	if (existing != 0) {
+		return existing;
+	}
+	// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
+	const ELFIO::Elf_Word idx = accessor.add_symbol(*string_accessor_, name.c_str(),
+		0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION, ELFIO::STV_DEFAULT, section.get_index());
+	// Keep cache in sync so generate_eh_frame() can find this symbol without a full rebuild
+	symbol_index_cache_[name] = idx;
+	return idx;
+}
+
+void ElfFileWriter::arrangeLocalSymbols() {
+	auto* accessor_ptr = getSymbolAccessor();
+	if (!accessor_ptr) {
+		return;
+	}
+	ELFIO::symbol_section_accessor& accessor = *accessor_ptr;
+	accessor.arrange_local_symbols([this](ELFIO::Elf_Xword first, ELFIO::Elf_Xword second) {
+		for (auto& sec : elf_writer_.sections) {
+			const ELFIO::Elf_Word type = sec->get_type();
+			if (type != ELFIO::SHT_RELA && type != ELFIO::SHT_REL) {
+				continue;
+			}
+			ELFIO::relocation_section_accessor rela(elf_writer_, sec.get());
+			rela.swap_symbols(first, second);
+		}
+	});
+	symbol_index_cache_.clear();
+	symbol_index_cache_dirty_ = true;
 }
 
 /**
@@ -1211,6 +1233,9 @@ void ElfFileWriter::finalizeSections() {
 	generate_gcc_except_table();
 	// Then generate .eh_frame with LSDA pointers
 	generate_eh_frame();
+	// .gcc_except_table's local section symbol is added after function
+	// globals; bubble locals to the front and retarget relocations.
+	arrangeLocalSymbols();
 
 	// Update section sizes and offsets
 	// ELFIO handles most of this automatically, but we need to set sh_info for .symtab
