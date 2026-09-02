@@ -60,9 +60,9 @@ struct ImplicitDefaultConstructorSemanticRecord {
 	bool is_deleted = false;
 	bool requires_synthetic_ir = false;
 	bool has_unresolved_base_initialization = false;
-	InlineVector<ImplicitDefaultBaseInitialization, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> complete_object_virtual_base_initializers;
-	InlineVector<ImplicitDefaultBaseInitialization, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> base_object_direct_base_initializers;
-	InlineVector<ImplicitDefaultMemberInitialization, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> member_initializers;
+	TemplateVector<ImplicitDefaultBaseInitialization, 1> complete_object_virtual_base_initializers;
+	TemplateVector<ImplicitDefaultBaseInitialization, 1> base_object_direct_base_initializers;
+	TemplateVector<ImplicitDefaultMemberInitialization, 2> member_initializers;
 };
 
 // Struct type information
@@ -117,7 +117,7 @@ struct StructTypeInfo {
 	};
 	// Full deferred-template-base metadata captured at parse time.
 	// Name and rich spec stay in one record to avoid parallel-container drift.
-	InlineVector<DeferredTemplateBaseEntry, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> deferred_template_bases;
+	TemplateVector<DeferredTemplateBaseEntry, 4> deferred_template_bases;
 	bool vtable_defined_in_tu = false;	// True when the backend has compiled a member function body for this class in the current TU
 	std::vector<const StructMemberFunction*> vtable;	 // Virtual function table (pointers to member functions)
 	std::string_view vtable_symbol;	// MSVC mangled vtable symbol name (e.g., "??_7Base@@6B@"), empty if no vtable
@@ -855,7 +855,7 @@ struct StructTypeInfo {
 		bool include_implicit = true) const;
 
 	// Collect constructor candidates matching argument count.
-	InlineVector<const StructMemberFunction*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>
+	OverloadVector<const StructMemberFunction*, 4>
 	getConstructorsByParameterCount(size_t parameter_count, bool skip_implicit) const;
 
 	// Find destructor
@@ -1167,7 +1167,7 @@ struct TypeInfo {
 		static constexpr uint32_t kNoColdPayload = UINT32_MAX;
 
 		TypeIndex type_index;		// Carries both gTypeInfo slot and TypeCategory
-		InlineVector<CVQualifier, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> pointer_cv_qualifiers;
+		TemplateVector<CVQualifier, 4> pointer_cv_qualifiers;
 		size_t pointer_depth;		  // Pointer indirection level
 		CVQualifier cv_qualifier;  // cv-qualifiers on the argument
 		ReferenceQualifier ref_qualifier;
@@ -1175,8 +1175,8 @@ struct TypeInfo {
 		bool is_value;		   // true if this is a non-type argument
 		bool is_pack;
 		bool is_array;
-		InlineVector<size_t, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
-		InlineVector<StringHandle, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
+		TemplateVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
+		TemplateVector<StringHandle, 2> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		bool is_template_template_arg;  // true if this is a template template argument
 		StringHandle template_name;  // Name of the template for template-template arguments
@@ -1228,9 +1228,9 @@ struct TypeInfo {
 	};
 
 	using TemplateArgInfoVector =
-		InlineVector<TemplateArgInfo, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+		TemplateVector<TemplateArgInfo, 4>;
 	using TemplateArgInfoSingleVector =
-		InlineVector<TemplateArgInfo, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument>;
+		TemplateVector<TemplateArgInfo, 1>;
 
 	struct DependentQualifiedNameRecord {
 		enum class OwnerKind : uint8_t {
@@ -1261,7 +1261,7 @@ struct TypeInfo {
 		TypeIndex owner_type;
 		const StructDeclarationNode* current_instantiation_declaration = nullptr;
 		TemplateArgInfoVector owner_template_arguments;
-		InlineVector<Member, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> member_chain;
+		TemplateVector<Member, 4> member_chain;
 		bool names_current_instantiation;
 
 		DependentQualifiedNameRecord()
@@ -1290,7 +1290,7 @@ struct TypeInfo {
 			bool is_pack = false;
 		};
 
-		InlineVector<Binding, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> bindings;
+		TemplateVector<Binding, 4> bindings;
 		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
 
 		// Legacy fields for compatibility (populated in parallel during transition)
@@ -1402,7 +1402,7 @@ struct TypeInfo {
 								 TemplateArgInfoVector param_args,
 								 const InstantiationContext* parent);
 	void setInstantiationContext(TemplateParamNameVector param_names,
-								 InlineVector<TypeIndex, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> parameter_type_indices,
+								 TemplateVector<TypeIndex, 4> parameter_type_indices,
 								 TemplateArgInfoVector param_args,
 								 const InstantiationContext* parent);
 

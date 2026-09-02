@@ -622,7 +622,7 @@ public:
 	explicit NewExpressionNode(ASTNode type_node, bool is_array,
 							   std::optional<ASTNode> size_expr,
 							   ChunkedVector<ASTNode, 128, 256> constructor_args,
-							   InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> placement_args,
+							   TemplateVector<ASTNode, 2> placement_args,
 							   bool has_value_init,
 							   bool is_brace_init)
 		: type_node_(type_node), is_array_(is_array),
@@ -642,14 +642,14 @@ public:
 			return std::nullopt;
 		return placement_args_[0];
 	}
-	const InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& placement_args() const { return placement_args_; }
+	const TemplateVector<ASTNode, 2>& placement_args() const { return placement_args_; }
 
 private:
 	ASTNode type_node_;	// TypeSpecifierNode
 	bool is_array_;		// true for new[], false for new
 	std::optional<ASTNode> size_expr_;  // For new Type[size], the size expression
 	ChunkedVector<ASTNode, 128, 256> constructor_args_;	// For new Type(args)
-	InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> placement_args_;  // For new (addr [,extra...]) Type, all placement arguments
+	TemplateVector<ASTNode, 2> placement_args_;  // For new (addr [,extra...]) Type, all placement arguments
 	bool has_value_init_;
 	bool is_brace_init_;
 };

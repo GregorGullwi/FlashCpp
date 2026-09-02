@@ -239,7 +239,7 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 bool Parser::parseDeferredAliasTargetTemplateId(
 	StringHandle& out_target_template_name,
 	TemplateAstNodeVector& out_target_template_arg_nodes,
-	InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& out_target_member_template_segments,
+	TemplateVector<DeferredAliasMemberTemplateSegment, 4>& out_target_member_template_segments,
 	bool consume_dependent_member_suffix) {
 	out_target_template_name = StringHandle{};
 	out_target_template_arg_nodes.clear();

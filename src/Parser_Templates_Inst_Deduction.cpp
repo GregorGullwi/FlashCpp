@@ -65,7 +65,7 @@ static int enterSourceNamespaceScopes(NamespaceHandle source_namespace) {
 		return 0;
 	}
 	// Collect chain from innermost to outermost (excluding global)
-	InlineVector<NamespaceHandle, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> chain;
+	TemplateVector<NamespaceHandle, 8> chain;
 	NamespaceHandle cur = source_namespace;
 	while (cur.isValid() && !cur.isGlobal()) {
 		chain.push_back(cur);
@@ -1270,7 +1270,7 @@ void registerOuterBindingInScope(
 // can resolve references like "return N;" without touching getTypesByNameMap().
 // ─────────────────────────────────────────────────────────────────────────────
 void Parser::populateTemplateParamSubstitutions(
-	InlineVector<TemplateParamSubstitution, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& subs,
+	TemplateVector<TemplateParamSubstitution, 4>& subs,
 	const TemplateEnvironment& environment) {
 	auto make_substitution = [](StringHandle param_name, const TemplateTypeArg& arg) {
 		TemplateParamSubstitution subst;
@@ -3964,7 +3964,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				&sfinae_type_map_);
 
 			NamespaceHandle source_namespace = func_decl.namespace_handle();
-			InlineVector<NamespaceHandle, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> entered_namespaces;
+			TemplateVector<NamespaceHandle, 8> entered_namespaces;
 			NamespaceHandle current_namespace = source_namespace;
 			while (current_namespace.isValid() && !current_namespace.isGlobal()) {
 				entered_namespaces.push_back(current_namespace);

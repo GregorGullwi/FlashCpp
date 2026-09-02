@@ -248,7 +248,7 @@ struct TypeIndexArg {
 
 	// Array information - critical for differentiating T[], T[N], and T
 	bool is_array = false;
-	InlineVector<size_t, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> array_sizes;  // Empty for T, full dimension list for arrays
+	TemplateVector<size_t, 2> array_sizes;  // Empty for T, full dimension list for arrays
 	std::optional<FunctionSignature> function_signature; // Needed for function pointer identity
 	bool is_dependent = false;
 	StringHandle dependent_name{};
@@ -525,8 +525,8 @@ struct StructuralClassValueMember {
 
 struct StructuralClassValue {
 	TypeIndex type_index{};
-	InlineVector<StructuralClassValue*, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> base_values;
-	InlineVector<StructuralClassValueMember, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> members;
+	TemplateVector<StructuralClassValue*, 2> base_values;
+	TemplateVector<StructuralClassValueMember, 4> members;
 
 	bool operator==(const StructuralClassValue& other) const;
 	size_t hash() const;
@@ -672,7 +672,7 @@ struct TemplateArgIdentity {
  */
 struct OrderedTemplateInstantiationIdentity {
 	StringHandle base_template{};
-	InlineVector<TemplateArgIdentity, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> args;
+	TemplateVector<TemplateArgIdentity, 4> args;
 
 	bool operator==(const OrderedTemplateInstantiationIdentity& other) const {
 		return base_template == other.base_template &&
@@ -742,9 +742,9 @@ using ValueArgKey = NonTypeValueIdentity;
 
 struct TemplateInstantiationKey {
 	StringHandle base_template;							// Template name handle
-	InlineVector<TypeIndexArg, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> type_args;				 // Type arguments
-	InlineVector<ValueArgKey, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> value_args;				 // Non-type arguments
-	InlineVector<StringHandle, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> template_template_args; // Template template args
+	TemplateVector<TypeIndexArg, 4> type_args;				 // Type arguments
+	TemplateVector<ValueArgKey, 4> value_args;				 // Non-type arguments
+	TemplateVector<StringHandle, 2> template_template_args; // Template template args
 	OrderedTemplateInstantiationIdentity ordered_identity; // Phase 7: ordered argument identity
 
 	TemplateInstantiationKey() = default;
@@ -827,7 +827,7 @@ struct TemplateInstantiationKeyHash {
  */
 struct FunctionSignatureKey {
 	StringHandle function_name;					// Function name handle
-	InlineVector<TypeIndexArg, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> param_types;	   // Parameter types (8 inline for common cases)
+	TemplateVector<TypeIndexArg, 8> param_types;	   // Parameter types (8 inline for common cases)
 
 	FunctionSignatureKey() = default;
 

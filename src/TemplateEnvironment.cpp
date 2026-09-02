@@ -194,7 +194,7 @@ TemplateParameterKind inferBindingKind(const TemplateTypeArg& arg) {
 
 void appendContextBindings(
 	const TypeInfo::InstantiationContext* context,
-	InlineVector<TemplateBinding, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& out_bindings) {
+	TemplateVector<TemplateBinding, 4>& out_bindings) {
 	if (context == nullptr) {
 		return;
 	}
@@ -238,10 +238,10 @@ void appendContextBindings(
 
 // Build only the bindings introduced by the current scope. Parent bindings stay
 // in their own snapshot node so nested snapshots can share the parent chain.
-InlineVector<TemplateBindingSnapshot, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> buildSnapshotBindingsForCurrentScope(
+TemplateVector<TemplateBindingSnapshot, 4> buildSnapshotBindingsForCurrentScope(
 	std::span<const StringHandle> param_names,
 	std::span<const TypeInfo::TemplateArgInfo> args) {
-	InlineVector<TemplateBindingSnapshot, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> bindings;
+	TemplateVector<TemplateBindingSnapshot, 4> bindings;
 	const size_t pair_count = std::min(param_names.size(), args.size());
 	bindings.reserve(pair_count);
 	for (size_t i = 0; i < pair_count; ++i) {
@@ -268,7 +268,7 @@ void forEachTemplateEnvironmentSnapshotBinding(
 	Fn&& fn) {
 	// Walk parent-first so legacy replay and environment reconstruction see the
 	// same outer-to-inner binding order that flattened snapshots previously had.
-	InlineVector<const TemplateEnvironmentSnapshotNode*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> chain;
+	TemplateVector<const TemplateEnvironmentSnapshotNode*, 4> chain;
 	for (const TemplateEnvironmentSnapshotNode* current = node;
 		current != nullptr;
 		current = current->parent) {
@@ -318,7 +318,7 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 	const TemplateEnvironmentSnapshot* parent) {
 	TemplateEnvironmentSnapshot snapshot;
 	// An empty snapshot is represented by a null node pointer.
-	InlineVector<TemplateBindingSnapshot, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> bindings =
+	TemplateVector<TemplateBindingSnapshot, 4> bindings =
 		buildSnapshotBindingsForCurrentScope(param_names, args);
 	if (bindings.empty()) {
 		// Keep empty snapshots pointer-free, but preserve an existing parent chain

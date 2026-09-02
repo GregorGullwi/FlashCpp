@@ -257,7 +257,7 @@ private:
 			for (const ASTNode& argument : constructor_arguments) {
 				stored_constructor_arguments.push_back(argument);
 			}
-			InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> stored_placement_arguments;
+			TemplateVector<ASTNode, 2> stored_placement_arguments;
 			for (const ASTNode& argument : placement_arguments) {
 				stored_placement_arguments.push_back(argument);
 			}

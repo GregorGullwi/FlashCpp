@@ -558,9 +558,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 			if (found_nested_def && peek() == "("_tok) {
 				auto merge_template_metadata = []<typename T>(
-					InlineVector<T, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& dest,
-					const InlineVector<T, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& outer_values,
-					const InlineVector<T, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument>& inner_values) {
+					TemplateVector<T, 4>& dest,
+					const TemplateVector<T, 4>& outer_values,
+					const TemplateVector<T, 4>& inner_values) {
 					dest.reserve(outer_values.size() + inner_values.size());
 					dest.insert(dest.end(), outer_values.begin(), outer_values.end());
 					dest.insert(dest.end(), inner_values.begin(), inner_values.end());
@@ -953,7 +953,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
 		TemplateAstNodeVector target_template_arg_nodes;
-		InlineVector<DeferredAliasMemberTemplateSegment, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> target_member_template_segments;
+		TemplateVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments;
 
 		if ((is_struct_type(type_spec.category())) &&
 			type_spec.type_index().index() < getTypeInfoCount()) {

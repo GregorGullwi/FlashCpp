@@ -93,13 +93,13 @@ struct ArgumentConversionInfo {
 };
 
 using ArgumentConversionInfoVector =
-	InlineVector<ArgumentConversionInfo, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+	OverloadVector<ArgumentConversionInfo, 4>;
 using OverloadResolutionTypeSpecifierVector =
-	InlineVector<TypeSpecifierNode, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+	OverloadVector<TypeSpecifierNode, 4>;
 using OverloadResolutionSizeIndexVector =
-	InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+	OverloadVector<size_t, 4>;
 using OverloadResolutionAstNodePtrVector =
-	InlineVector<const ASTNode*, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>;
+	OverloadVector<const ASTNode*, 4>;
 
 inline bool isSameTypeIgnoringTopLevelCvAndRef(
 	const TypeSpecifierNode& lhs,

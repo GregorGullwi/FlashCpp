@@ -552,8 +552,8 @@ public:
 		bool is_const_method;
 		StringHandle registry_key;
 	};
-	InlineVector<OdrUsedLazyEntry, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> snapshotOdrUsedLazyEntries() const {
-		InlineVector<OdrUsedLazyEntry, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> out;
+	TemplateVector<OdrUsedLazyEntry, 8> snapshotOdrUsedLazyEntries() const {
+		TemplateVector<OdrUsedLazyEntry, 8> out;
 		out.reserve(lazy_members_.size());
 		for (const auto& [key_handle, info] : lazy_members_) {
 			if (odr_used_.find(key_handle) != odr_used_.end()) {
@@ -672,7 +672,7 @@ private:
 		auto bucket_it = lazy_member_lookup_.find(lookup_key);
 		if (bucket_it != lazy_member_lookup_.end()) {
 			auto& bucket = bucket_it->second;
-			InlineVector<StringHandle, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> filtered_bucket;
+			TemplateVector<StringHandle, 2> filtered_bucket;
 			filtered_bucket.reserve(bucket.size());
 			for (StringHandle bucket_key : bucket) {
 				if (bucket_key != exact_key) {
@@ -692,7 +692,7 @@ private:
 	std::unordered_map<StringHandle, LazyMemberFunctionInfo, TransparentStringHash, std::equal_to<>> lazy_members_;
 
 	// Secondary index from owner/name/const bucket to exact lazy-member keys.
-	std::unordered_map<StringHandle, InlineVector<StringHandle, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument>, TransparentStringHash, std::equal_to<>> lazy_member_lookup_;
+	std::unordered_map<StringHandle, TemplateVector<StringHandle, 2>, TransparentStringHash, std::equal_to<>> lazy_member_lookup_;
 
 	// Keys (same format as `lazy_members_`) that sema has proven to be
 	// ODR-used. Persists across `markInstantiated` — see the block comment
@@ -1132,8 +1132,8 @@ public:
 	}
 
 	// Get all nested types for a parent class that need instantiation
-	InlineVector<const LazyNestedTypeInfo*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> getNestedTypesForParent(StringHandle parent_class_name) const {
-		InlineVector<const LazyNestedTypeInfo*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> result;
+	TemplateVector<const LazyNestedTypeInfo*, 4> getNestedTypesForParent(StringHandle parent_class_name) const {
+		TemplateVector<const LazyNestedTypeInfo*, 4> result;
 		for (const auto& [key, info] : lazy_nested_types_) {
 			if (info.parent_class_name == parent_class_name) {
 				result.push_back(&info);
@@ -1211,8 +1211,8 @@ public:
 	}
 
 	// Get all concept names (for debugging)
-	InlineVector<std::string_view, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> getAllConceptNames() const {
-		InlineVector<std::string_view, 8, FlashCpp::InlineVectorSpillFamily::TemplateArgument> names;
+	TemplateVector<std::string_view, 8> getAllConceptNames() const {
+		TemplateVector<std::string_view, 8> names;
 		names.reserve(concepts_.size());
 		for (const auto& pair : concepts_) {
 			names.push_back(pair.first);

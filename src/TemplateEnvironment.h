@@ -27,19 +27,19 @@ struct TemplateBinding {
 	StringHandle name;
 	TemplateParameterKind kind{};
 	bool is_pack = false;
-	InlineVector<TemplateTypeArg, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> args;
+	TemplateVector<TemplateTypeArg, 1> args;
 };
 
 struct TemplateBindingSnapshot {
 	StringHandle name;
 	TemplateParameterKind kind{};
 	bool is_pack = false;
-	InlineVector<TypeInfo::TemplateArgInfo, 1, FlashCpp::InlineVectorSpillFamily::TemplateArgument> args;
+	TemplateVector<TypeInfo::TemplateArgInfo, 1> args;
 };
 
 struct TemplateEnvironmentSnapshotNode {
 	const TemplateEnvironmentSnapshotNode* parent = nullptr;
-	InlineVector<TemplateBindingSnapshot, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> bindings;
+	TemplateVector<TemplateBindingSnapshot, 4> bindings;
 };
 
 struct TemplateEnvironmentSnapshot {
@@ -47,7 +47,7 @@ struct TemplateEnvironmentSnapshot {
 };
 
 struct TemplateEnvironment {
-	InlineVector<TemplateBinding, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> bindings;
+	TemplateVector<TemplateBinding, 4> bindings;
 	const TemplateEnvironment* parent = nullptr;
 
 	const TemplateTypeArg* findOne(StringHandle name) const;
@@ -87,7 +87,7 @@ struct TemplateInstantiationContext {
 	std::span<const TemplateParameterNode> template_parameters;
 	std::span<const TemplateTypeArg> template_arguments;
 	TemplateEnvironment environment;
-	InlineVector<TemplatePackExpansionState, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> pack_state;
+	TemplateVector<TemplatePackExpansionState, 2> pack_state;
 	TypeIndex current_instantiation_type{};
 	TemplateLookupContext lookup_context;
 	const TemplateDefinitionLookupContext* definition_lookup_context = nullptr;

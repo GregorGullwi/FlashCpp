@@ -537,7 +537,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 		// Check for placement new: new (args...) Type
 		// Placement new can have multiple arguments: new (arg1, arg2, ...) Type
-		InlineVector<ASTNode, 2, FlashCpp::InlineVectorSpillFamily::TemplateArgument> all_placement_args;
+		TemplateVector<ASTNode, 2> all_placement_args;
 		if (peek() == "("_tok) {
 			// This could be placement new or constructor call
 			// We need to look ahead to distinguish:

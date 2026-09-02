@@ -98,7 +98,7 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	}
 	if (!resolved_alias.array_dimensions.empty()) {
 		const std::span<const size_t> type_dimensions = type_spec.array_dimensions();
-		InlineVector<size_t, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> array_dimensions;
+		TemplateVector<size_t, 4> array_dimensions;
 		array_dimensions.reserve(type_dimensions.size() + resolved_alias.array_dimensions.size());
 		for (size_t dimension : type_dimensions) {
 			array_dimensions.push_back(dimension);
@@ -263,8 +263,8 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 		signature.updateReturnType(substitute_function_type);
 	}
 	if (!signature.parameter_types().empty()) {
-		signature.updateParameterTypes([&](InlineVector<FunctionType, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution>& parameter_types) {
-			InlineVector<FunctionType, 4, FlashCpp::InlineVectorSpillFamily::OverloadResolution> substituted_parameter_types;
+		signature.updateParameterTypes([&](OverloadVector<FunctionType, 4>& parameter_types) {
+			OverloadVector<FunctionType, 4> substituted_parameter_types;
 			substituted_parameter_types.reserve(parameter_types.size());
 			for (FunctionType& parameter_type : parameter_types) {
 				bool expanded_pack = false;

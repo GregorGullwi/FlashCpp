@@ -1196,7 +1196,7 @@ bool Parser::expandPackExpansionArgs(
 	std::span<const PackParamInfo> function_pack_infos,
 	ChunkedVector<ASTNode>& out_args) {
 	const ASTNode& pattern = pack_expansion.pattern();
-	InlineVector<std::pair<size_t, size_t>, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> template_param_arg_ranges;
+	TemplateVector<std::pair<size_t, size_t>, 4> template_param_arg_ranges;
 	template_param_arg_ranges.reserve(template_params.size());
 
 	// Keep the argument boundary recorded by deduction. In particular, a
@@ -1367,7 +1367,7 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 }
 
 TemplateAstNodeVector Parser::expandPackExpressionArgument(const ASTNode& pattern) {
-	InlineVector<const PackParamInfo*, 4, FlashCpp::InlineVectorSpillFamily::TemplateArgument> packs_in_expr;
+	TemplateVector<const PackParamInfo*, 4> packs_in_expr;
 	for (const auto& pack_info : pack_param_info_) {
 		if (pack_info.pack_size > 0 && exprContainsIdentifier(pattern, pack_info.original_name)) {
 			packs_in_expr.push_back(&pack_info);
