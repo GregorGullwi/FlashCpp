@@ -147,8 +147,8 @@ void ElfFileWriter::add_typeinfo(std::string_view typeinfo_symbol, const void* t
 	// Add typeinfo data to .rodata
 	rodata->append_data(reinterpret_cast<const char*>(typeinfo_data), typeinfo_size);
 
-	// Add typeinfo symbol
-	getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL,
+	// Add typeinfo symbol. Class typeinfo has Itanium vague linkage.
+	getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
 					  rodata->get_index(), typeinfo_offset, typeinfo_size);
 }
 
@@ -747,9 +747,11 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// Header size = vbase prefix + offset_to_top + RTTI
 	uint32_t header_size = static_cast<uint32_t>(n_vbase_entries * 8 + 16);
 
-	// Add vtable symbol pointing to the function pointer array (skip prefix, offset-to-top, and RTTI)
+	// Add vtable symbol pointing to the function pointer array (skip prefix, offset-to-top, and RTTI).
+	// Itanium vague linkage: the same inline/template class can emit this vtable
+	// from every TU, so the definition must be STB_WEAK (not STB_GLOBAL).
 	uint32_t symbol_offset = vtable_offset + header_size;
-	getOrCreateSymbol(vtable_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL,
+	getOrCreateSymbol(vtable_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
 					  rodata->get_index(), symbol_offset, vtable_data_size - header_size);
 
 	// Add relocations for each function pointer
@@ -758,7 +760,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 
 	// Add relocation for RTTI pointer if typeinfo was emitted
 	if (!typeinfo_symbol.empty()) {
-		auto typeinfo_symbol_idx = getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL);
+		auto typeinfo_symbol_idx = getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK);
 		// RTTI pointer is at vtable_offset + vbase_prefix_size + offset_to_top_size
 		uint32_t rtti_reloc_offset = vtable_offset + static_cast<uint32_t>(n_vbase_entries * 8) + 8;
 		rela_accessor->add_entry(rtti_reloc_offset, typeinfo_symbol_idx, ELFIO::R_X86_64_64, 0);

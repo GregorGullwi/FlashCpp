@@ -1809,6 +1809,7 @@ bool Parser::parse_function_type_parameter_list(std::vector<FunctionType>& out_p
 bool Parser::parse_static_member_function(
 	ParseResult& type_and_name_result,
 	bool is_static_constexpr,
+	bool is_inline_specifier,
 	StringHandle struct_name_handle,
 	StructDeclarationNode& struct_ref,
 	StructTypeInfo* struct_info,
@@ -1861,6 +1862,9 @@ bool Parser::parse_static_member_function(
 
 	// Mark as constexpr
 	member_func_ref.set_is_constexpr(is_static_constexpr);
+	if (is_inline_specifier) {
+		member_func_ref.set_is_inline(true);
+	}
 
 	// Mark as static member function (no implicit 'this' parameter)
 	member_func_ref.set_is_static(true);
@@ -1913,6 +1917,8 @@ bool Parser::parse_static_member_function(
 
 	// Parse function body if present
 	if (peek() == "{"_tok) {
+		// In-class static member function definition is implicitly inline.
+		member_func_ref.set_is_inline(true);
 		// DELAYED PARSING: Save the current position (start of '{')
 		SaveHandle body_start = save_token_position();
 
@@ -1953,6 +1959,7 @@ bool Parser::parse_static_member_function(
 		} else if (peek() == "default"_tok) {
 			advance(); // consume 'default'
 			member_func_ref.set_is_implicit(true);
+			member_func_ref.set_is_inline(true);
 			if (!consume(";"_tok)) {
 				type_and_name_result = ParseResult::error("Expected ';' after '= default'", peek_info());
 				return true;
@@ -2008,6 +2015,7 @@ ParseResult Parser::parse_static_member_block(
 	// Handle optional const and constexpr
 	CVQualifier cv_qual = CVQualifier::None;
 	bool is_static_constexpr = false;
+	bool is_static_inline = false;
 	while (peek().is_keyword()) {
 		std::string_view kw = peek_info().value();
 		if (kw == "const") {
@@ -2018,6 +2026,7 @@ ParseResult Parser::parse_static_member_block(
 			cv_qual |= CVQualifier::Const; // constexpr implies const
 			advance();
 		} else if (kw == "inline") {
+			is_static_inline = true;
 			advance(); // consume 'inline'
 		} else {
 			break;
@@ -2034,6 +2043,7 @@ ParseResult Parser::parse_static_member_block(
 	if (parse_static_member_function(
 			type_and_name,
 			is_static_constexpr,
+			is_static_inline,
 			struct_name_handle,
 			struct_ref,
 			struct_info,

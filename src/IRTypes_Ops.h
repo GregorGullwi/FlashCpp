@@ -821,7 +821,7 @@ struct FunctionDeclOp {
 	Linkage linkage = Linkage::None;
 	bool is_variadic = false;
 	bool has_hidden_return_param = false;  // True if function uses hidden return parameter (struct return)
-	bool is_inline = false;	// True if function is inline or implicitly inline (e.g., defined in class body)
+	bool is_inline = false;	// True if the function has C++ vague linkage (inline, in-class, template, constexpr)
 	bool is_static_member = false;  // True if this is a static member function (no 'this' pointer)
 	bool is_noexcept = false;  // True if function is declared noexcept
 	StringHandle mangled_name;  // Pure StringHandle

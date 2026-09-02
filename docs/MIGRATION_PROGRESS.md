@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-02 after pull request boundary 35
+Last updated: 2026-09-02 after pull request boundary 35 (vague-linkage COMDAT predicate)
 
 ## Position
 
@@ -257,6 +257,13 @@ Named follow-ups carried forward:
   individual flags to 0 for shipping builds when ready.
 - Blanket `noexcept` on member functions stays deferred until boundaries 5-8
   shrink the exception surface to invariant-only paths.
+- Function `SELECT_ANY` COMDATs follow C++ vague linkage (`inline`, in-class
+  definition including first-declaration `= default`, constexpr/consteval, and
+  template instantiation). Unique out-of-line members remain strong EXTERNAL
+  `.text` definitions (`tests/multi_tu/unique_out_of_line_member_ret51`). They
+  are not driven by `is_member_function()` or `namespace std`. ELF vtables for
+  the same classes use `STB_WEAK` so two TUs can link without multiple
+  definition of `_ZTV*`.
 - MSVC emits each `??_R1`/`??_R2`/`??_R3`/`??_R4` as its own `SELECT_ANY`
   COMDAT; FlashCpp currently keeps those symbols as `STATIC` secondaries in the
   vtable's `SELECT_ANY` section so extra `EXTERNAL` leaders do not become

@@ -152,6 +152,73 @@ function Get-FlashCppMultiTuCases {
 	return $cases
 }
 
+function Test-FlashCppExpectStrongDefs {
+	param(
+		[string]$DumpbinPath,
+		[string[]]$ObjectFiles,
+		[string]$ExpectFile
+	)
+
+	if (-not (Test-Path -LiteralPath $ExpectFile)) {
+		return $null
+	}
+	$expectedNames = @(
+		Get-Content -LiteralPath $ExpectFile |
+			ForEach-Object { $_.Trim() } |
+			Where-Object { $_ -ne "" -and -not $_.StartsWith("#") }
+	)
+	if ($expectedNames.Count -eq 0) {
+		return $null
+	}
+	if (-not (Test-Path -LiteralPath $DumpbinPath)) {
+		return "dumpbin.exe not found next to the MSVC linker"
+	}
+
+	$defined = @{}
+	foreach ($name in $expectedNames) {
+		$defined[$name] = [pscustomobject]@{ Found = $false; ComdatIn = @() }
+	}
+
+	foreach ($objFile in $ObjectFiles) {
+		$symbolOutput = & $DumpbinPath /SYMBOLS $objFile 2>&1 | Out-String
+		$sectIsComdat = @{}
+		$currentSect = $null
+		foreach ($line in ($symbolOutput -split "`r?`n")) {
+			if ($line -match '\b(SECT\d+)\b.*\bStatic\b') {
+				$currentSect = $Matches[1]
+			}
+			if ($currentSect -and $line -match 'selection.*pick any') {
+				$sectIsComdat[$currentSect] = $true
+			}
+			if ($line -match '\b(SECT\d+)\b.*\bExternal\b.*\|\s+(\S+)') {
+				$sect = $Matches[1]
+				$name = $Matches[2]
+				if (-not $defined.ContainsKey($name)) {
+					continue
+				}
+				$defined[$name].Found = $true
+				if ($sectIsComdat.ContainsKey($sect)) {
+					$defined[$name].ComdatIn += [System.IO.Path]::GetFileName($objFile)
+				}
+			}
+		}
+	}
+
+	$failures = @()
+	foreach ($name in $expectedNames) {
+		$info = $defined[$name]
+		if (-not $info.Found) {
+			$failures += "missing strong definition $name"
+		} elseif ($info.ComdatIn.Count -gt 0) {
+			$failures += "$name is SELECT_ANY COMDAT in $($info.ComdatIn -join ', ')"
+		}
+	}
+	if ($failures.Count -eq 0) {
+		return $null
+	}
+	return ($failures -join "; ")
+}
+
 function Initialize-FlashCppCiOutput {
 	param([string]$Path)
 

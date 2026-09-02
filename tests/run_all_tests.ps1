@@ -633,6 +633,17 @@ function Invoke-TestOneMultiTuCase {
 		}
 
 		if ($objectFiles.Count -eq $case.Sources.Count) {
+			$expectStrongFile = Join-Path $case.Directory "expect_strong_defs.txt"
+			if (Test-Path -LiteralPath $expectStrongFile) {
+				$dumpbinPath = Join-Path (Split-Path $linkerPath -Parent) "dumpbin.exe"
+				$strongDefError = Test-FlashCppExpectStrongDefs -DumpbinPath $dumpbinPath -ObjectFiles $objectFiles -ExpectFile $expectStrongFile
+				if ($strongDefError) {
+					$resultLine = "OBJ_CHECK_FAIL|$($case.Name)|$strongDefError"
+				}
+			}
+		}
+
+		if ($objectFiles.Count -eq $case.Sources.Count -and $resultLine.StartsWith("WORKER_ERROR")) {
 			$linkArgs = @("/LIBPATH:$libPath1", "/SUBSYSTEM:CONSOLE", "/OUT:$exeFile", "/PDB:$pdbFile") + $objectFiles
 			$linkArgs += @("kernel32.lib", "libucrt.lib", "legacy_stdio_definitions.lib")
 			if ($libPath2) { $linkArgs = @("/LIBPATH:$libPath2") + $linkArgs }
@@ -947,6 +958,7 @@ foreach ($file in @($referenceFiles) + @($multiTuCases)) {
 		"LINKER_DRIVER_FAIL" {}
 		"RUNTIME_TIMEOUT" {}
 		"WORKER_ERROR" {}
+		"OBJ_CHECK_FAIL" {}
 		default {
 			$nonWaivableFailures += $file.Name
 			$nonWaivableFailureDetails[$file.Name] = "$status`: $detail"
@@ -956,7 +968,7 @@ foreach ($file in @($referenceFiles) + @($multiTuCases)) {
 	if ($status -in @(
 		"COMPILER_TIMEOUT", "COMPILER_CRASH", "COMPILER_INTERNAL", "COMPILER_DRIVER_FAIL",
 		"SUPPORT_COMPILE_FAIL", "LINKER_CRASH", "LINKER_DRIVER_FAIL", "RUNTIME_TIMEOUT",
-		"WORKER_ERROR"
+		"WORKER_ERROR", "OBJ_CHECK_FAIL"
 	)) {
 		$nonWaivableFailures += $file.Name
 		$nonWaivableFailureDetails[$file.Name] = "$status`: $detail"

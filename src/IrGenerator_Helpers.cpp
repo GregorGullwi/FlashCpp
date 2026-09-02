@@ -116,6 +116,11 @@ void AstToIr::queueConstructorDefinition(
 				&materialized_constructor->as<ConstructorDeclarationNode>();
 		}
 	}
+	// Unique out-of-line constructors are defined in another TU. Do not emit a
+	// local body; the call remains an EXTERNAL reference.
+	if (!constructor_to_queue->is_materialized() && !constructor_to_queue->is_implicit()) {
+		return;
+	}
 	queueDeferredMemberFunctionFromNode(
 		type_info.name(),
 		ASTNode(constructor_to_queue),

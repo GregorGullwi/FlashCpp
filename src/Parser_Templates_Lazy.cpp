@@ -444,6 +444,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		substituteConstructorInitializers(ctor_decl, new_ctor_ref);
 		new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 		new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
+		new_ctor_ref.set_is_inline(ctor_decl.is_inline());
 		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 
 		std::optional<ASTNode> body_to_substitute;
@@ -719,6 +720,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		} else {
 			new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 		}
+
+		new_dtor_ref.set_is_inline(dtor_decl.is_inline());
+		new_dtor_ref.set_is_constexpr(dtor_decl.is_constexpr());
 
 		ASTNode substituted_body = substituteLazyMemberBody(
 			*dtor_decl.get_definition(),

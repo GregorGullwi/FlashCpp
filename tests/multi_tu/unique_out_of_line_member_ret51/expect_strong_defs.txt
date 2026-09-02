@@ -1,0 +1,8 @@
+# MSVC-mangled unique out-of-line definitions. These must be strong EXTERNAL
+# symbols, not SELECT_ANY COMDAT. Duplicating any of them in a second TU must
+# LNK2005 rather than silently merge.
+??0UniqueOutOfLine@@QEAA@Z
+??1UniqueOutOfLine@@QEAA@XZ
+?uniqueValue@UniqueOutOfLine@@QEBAHXZ
+?extra@UniqueOutOfLine@@QEBAFXZ
+?uniqueFreeHelper@@YAHXZ
