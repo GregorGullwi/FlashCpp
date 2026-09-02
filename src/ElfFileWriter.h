@@ -427,6 +427,8 @@ private:
 	void generate_eh_frame();
 	void generate_gcc_except_table();
 	void createStandardSections();
+	ELFIO::Elf_Word addLocalSectionSymbol(ELFIO::section& section);
+	void arrangeLocalSymbols();
 	ELFIO::section* getSectionByName(const std::string& name);
 	ELFIO::section* getSectionForType(SectionType type);
 	ELFIO::symbol_section_accessor* getSymbolAccessor();
