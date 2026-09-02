@@ -281,6 +281,18 @@ Named follow-ups carried forward:
   and their relocs dropped; native per-symbol emission (no copy-out) is
   still Gate 0 criterion 8.
 
+- ELF exception metadata keeps each object's LSDA/typeinfo slots local.
+  That alone did not fix the multi-TU throw crashes: the CIE personality
+  relocation followed the later FDE relocations, so GNU ld disabled the
+  `.eh_frame_hdr` lookup table; per-object zero terminators then stopped the
+  unwinder's linear scan before later TUs. Relocations now follow record order,
+  and relocatable `.eh_frame` sections have no terminator. FDE code pointers
+  also use the local `.text` section plus offset, so merging a weak function
+  does not redirect another object's FDE to the winning definition. The int/double
+  multi-TU cases and `eh_unwind_sections_ret0` cover catches and propagation
+  through a TU without handlers; `tests/runner/run_elf_eh_frame_tests.sh`
+  also checks object records, PIE/no-PIE output, and both link orders.
+
 ## Active findings
 
 Current findings only; delete entries when their resolution lands.

@@ -31,6 +31,9 @@ jobs:
           mkdir -p x64/Debug
           ln -sf ../Sharded/FlashCpp x64/Debug/FlashCpp
 
+      - name: Check ELF unwind records and multi-TU link orders
+        run: bash tests/runner/run_elf_eh_frame_tests.sh
+
       - name: Run All Tests
         run: |
           # Run the test script which compiles and links all .cpp files in tests/

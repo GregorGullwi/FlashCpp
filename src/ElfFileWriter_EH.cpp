@@ -600,9 +600,9 @@ void ElfFileWriter::generate_eh_frame() {
 		generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info, has_exception_handlers);
 	}
 
-	// Add zero terminator (4 bytes of 0) to mark end of .eh_frame
-	for (int i = 0; i < 4; ++i)
-		eh_frame_data.push_back(0);
+	// Do not terminate a relocatable object's .eh_frame: other objects' CIEs
+	// and FDEs follow it at link time. A zero-length record here would stop
+	// the unwinder's linear scan before those records.
 
 	// Create .eh_frame section
 	auto* eh_frame_section = elf_writer_.sections.add(".eh_frame");
@@ -625,54 +625,10 @@ void ElfFileWriter::generate_eh_frame() {
 	auto rela_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
 		elf_writer_, rela_eh_frame);
 
-	// Add relocations for each FDE's PC begin field
-	// Build symbol cache once before the loop to avoid O(N²) symbol lookups
-	buildSymbolIndexCache();
-	// Cache the .gcc_except_table symbol index (looked up at most once)
-	ELFIO::Elf_Word gcc_except_table_sym_index = 0;
-	bool found_except_table = false;
-
-	for (const auto& fde_info : functions_with_fdes_) {
-		// R_X86_64_PC32: PC-relative 32-bit signed (S + A - P)
-		// where S = symbol value, A = addend, P = place (offset being relocated)
-		// Look up the symbol index via cache (O(1)) instead of O(N) scan
-		ELFIO::Elf_Word sym_idx = lookupSymbolIndex(fde_info.function_symbol);
-		rela_accessor->add_entry(fde_info.pc_begin_offset,
-								 sym_idx,
-								 ELFIO::R_X86_64_PC32,
-								 0);	 // Addend (0 for PC-relative to function start)
-
-		// Add LSDA relocation if function has exception handling
-		if (fde_info.has_exception_handling && fde_info.lsda_pointer_offset > 0) {
-			// Locate .gcc_except_table symbol index (cached after first lookup)
-			if (!found_except_table) {
-				gcc_except_table_sym_index = lookupSymbolIndex(".gcc_except_table");
-				if (gcc_except_table_sym_index != 0) {
-					found_except_table = true;
-				} else {
-					// Add section symbol for .gcc_except_table
-					auto* except_section = getSectionByName(".gcc_except_table");
-					if (except_section) {
-						gcc_except_table_sym_index = addLocalSectionSymbol(*except_section);
-						found_except_table = gcc_except_table_sym_index != 0;
-					}
-				}
-			}
-
-			// Add R_X86_64_PC32 relocation for LSDA pointer (pcrel|sdata4 encoding)
-			if (g_enable_debug_output) {
-				std::cerr << "[DEBUG] LSDA relocation for " << fde_info.function_symbol
-						  << ": offset=" << fde_info.lsda_pointer_offset
-						  << " lsda_offset=" << fde_info.lsda_offset << std::endl;
-			}
-			rela_accessor->add_entry(fde_info.lsda_pointer_offset,
-									 static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
-									 ELFIO::R_X86_64_PC32,
-									 static_cast<ELFIO::Elf_Sxword>(fde_info.lsda_offset));
-		}
-	}
-
 	// Add relocation for personality routine pointer in CIE
+	// Emit this before the FDE relocations so .rela.eh_frame is in increasing
+	// offset order. GNU ld scans CIE/FDE records and relocations together;
+	// putting this CIE relocation last disables its .eh_frame_hdr table.
 	// The personality encoding is indirect (0x9b = indirect|pcrel|sdata4), which means:
 	// - The pointer in .eh_frame is NOT the address of __gxx_personality_v0
 	// - Instead, it's a PC-relative pointer to a GOT-like entry that CONTAINS the address
@@ -724,6 +680,58 @@ void ElfFileWriter::generate_eh_frame() {
 									 static_cast<ELFIO::Elf_Word>(dw_ref_sym_index),
 									 ELFIO::R_X86_64_PC32,
 									 0);
+		}
+	}
+
+	// Add relocations for each FDE's PC begin field
+	// Build symbol cache once before the loop to avoid O(N²) symbol lookups
+	buildSymbolIndexCache();
+	const ELFIO::Elf_Word text_sym_index = lookupSymbolIndex(".text");
+	if (text_sym_index == 0) {
+		throw InternalError(".text section symbol is missing for unwind records");
+	}
+	// Cache the .gcc_except_table symbol index (looked up at most once)
+	ELFIO::Elf_Word gcc_except_table_sym_index = 0;
+	bool found_except_table = false;
+
+	for (const auto& fde_info : functions_with_fdes_) {
+		// R_X86_64_PC32: PC-relative 32-bit signed (S + A - P)
+		// where S = symbol value, A = addend, P = place (offset being relocated)
+		// An FDE describes this object's actual code, not the linker's chosen
+		// definition of a weak function. Keep it local even when another TU's
+		// definition wins, otherwise duplicate FDEs describe the same address.
+		rela_accessor->add_entry(fde_info.pc_begin_offset,
+								 text_sym_index,
+								 ELFIO::R_X86_64_PC32,
+								 static_cast<ELFIO::Elf_Sxword>(fde_info.function_start_offset));
+
+		// Add LSDA relocation if function has exception handling
+		if (fde_info.has_exception_handling && fde_info.lsda_pointer_offset > 0) {
+			// Locate .gcc_except_table symbol index (cached after first lookup)
+			if (!found_except_table) {
+				gcc_except_table_sym_index = lookupSymbolIndex(".gcc_except_table");
+				if (gcc_except_table_sym_index != 0) {
+					found_except_table = true;
+				} else {
+					// Add section symbol for .gcc_except_table
+					auto* except_section = getSectionByName(".gcc_except_table");
+					if (except_section) {
+						gcc_except_table_sym_index = addLocalSectionSymbol(*except_section);
+						found_except_table = gcc_except_table_sym_index != 0;
+					}
+				}
+			}
+
+			// Add R_X86_64_PC32 relocation for LSDA pointer (pcrel|sdata4 encoding)
+			if (g_enable_debug_output) {
+				std::cerr << "[DEBUG] LSDA relocation for " << fde_info.function_symbol
+						  << ": offset=" << fde_info.lsda_pointer_offset
+						  << " lsda_offset=" << fde_info.lsda_offset << std::endl;
+			}
+			rela_accessor->add_entry(fde_info.lsda_pointer_offset,
+									 static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
+									 ELFIO::R_X86_64_PC32,
+									 static_cast<ELFIO::Elf_Sxword>(fde_info.lsda_offset));
 		}
 	}
 

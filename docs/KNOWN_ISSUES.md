@@ -1,5 +1,28 @@
 # Known Issues
 
+## Initialized global definition after an extern declaration is rejected
+
+`extern int value; int value = 17;` is valid C++20, but the parser reports
+`Redefined symbol with different value` for the initialized definition.
+This was encountered while adding the multi-TU ELF unwind regression, before
+any exception metadata is emitted. TODO: merge the declaration and definition
+of the same namespace-scope variable without treating the extern declaration
+as an initialized definition. Owner: parser variable redeclaration handling.
+
+## Windows cross-TU class exception payload corruption
+
+While extending `tests/multi_tu/eh_unwind_sections_ret0`, a typed reference
+handler matched `ExceptionPayload<int>{123}` thrown in a different TU, but
+reading its `value` member did not yield 123 on Windows. The equivalent Linux
+case preserved the value. A two-member `ExceptionPayload<long long>` containing
+`{1234567890123LL, 7}` also matched, but its second member was corrupted.
+Multiple conditional builtin/class throws in the same function additionally
+made a double payload fail depending on stack layout; separating the throw
+sites removed that double failure. TODO: audit Windows throw staging slots,
+shadow-space reservation, and catch-object binding. The ELF unwind regression
+checks scalar values and typed class matching without asserting class payload
+copying on Windows. Owner: Windows exception-object lowering.
+
 ## Declaration-parse errors are masked by the expression-statement fallback
 
 When `parse_function_declaration` returns a `ParseResult` error, the top-level
