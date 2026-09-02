@@ -93,6 +93,9 @@ public:
 		COFFI::auxiliary_symbol_record aux_record;
 		std::memcpy(aux_record.value, &aux, sizeof(aux_record.value));
 		sym->get_auxiliary_symbols().push_back(aux_record);
+		// COFFI calculates the file-header symbol count before serializing the
+		// auxiliary records, so the final symbol must carry this count already.
+		sym->set_aux_symbols_number(1);
 	}
 
 	ObjectFileWriter() {
@@ -485,10 +488,19 @@ public:
 	}
 
 	// --- Method declarations (ObjFileWriter_Symbols.cpp) ---
+	struct ComdatReloc {
+		uint32_t virtual_address = 0;
+		uint32_t symbol_table_index = 0;
+		uint32_t type = 0;
+	};
+
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
 	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline);
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage, bool is_inline);
 	void emitInlineFunctionComdats(std::span<const uint8_t> text_data);
+	void emit_vague_linkage_comdat_rdata(std::string_view external_symbol_name, std::span<const char> data,
+		std::span<const ComdatReloc> relocations, uint32_t external_symbol_value);
+	void add_vague_linkage_comdat_rdata_symbol(COFFI::section* section, std::string_view symbol_name, uint32_t value);
 	void add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset);
 	void add_data(std::span<const uint8_t> data, SectionType section_type);
 	void add_data(std::span<const char> data, SectionType section_type);
@@ -571,15 +583,27 @@ protected:
 	std::unordered_map<SectionType, int32_t> sectiontype_to_index;
 	CodeView::DebugInfoBuilder debug_builder_;
 
+	struct PendingPdataRecord {
+		uint32_t offset = 0;
+		uint32_t begin_rva = 0;
+		uint32_t end_rva = 0;
+		uint32_t unwind_rva = 0;
+	};
+
+	struct FunctionUnwindBundle {
+		std::vector<std::pair<uint32_t, uint32_t>> xdata_ranges;
+		std::vector<PendingPdataRecord> pdata_records;
+	};
+
 	// Pending function info for exception handling
 	struct PendingFunctionInfo {
 		std::string name;
-		uint32_t offset;
-		uint32_t length;
-		bool is_inline;
-		bool has_cpp_or_seh_metadata;
+		uint32_t offset = 0;
+		uint32_t length = 0;
+		bool is_inline = false;
 	};
 	std::vector<PendingFunctionInfo> pending_functions_;
+	std::unordered_map<std::string, FunctionUnwindBundle, ObjectFileCommon::StringViewHash, std::equal_to<>> function_unwind_bundles_;
 
 	// Track functions that already have exception info to avoid duplicates
 	std::vector<std::string> added_exception_functions_;
@@ -596,6 +620,27 @@ protected:
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;
 	uint32_t inline_comdat_section_counter_ = 0;
+	uint32_t inline_comdat_xdata_section_counter_ = 0;
+	uint32_t inline_comdat_pdata_section_counter_ = 0;
+	uint32_t inline_comdat_rdata_section_counter_ = 0;
+	uint32_t replaced_undef_counter_ = 0;
+
+	COFFI::section* emitComdatSection(std::string_view section_name_prefix, uint32_t& section_counter,
+		int32_t section_flags, std::span<const char> data, std::span<const ComdatReloc> relocations,
+		uint16_t associated_section_number, uint8_t comdat_selection, std::string_view external_symbol_name,
+		bool external_is_function, uint32_t external_symbol_value);
+	void recordFunctionXdataRange(std::string_view mangled_name, uint32_t offset, uint32_t length);
+	void recordFunctionPdataEntry(std::string_view mangled_name, const PendingPdataRecord& entry);
+	void emitVagueLinkageComdatRdata(std::string_view external_symbol_name, std::span<const char> data,
+		std::span<const ComdatReloc> relocations, uint32_t external_symbol_value);
+	void addComdatSectionExternalSymbol(COFFI::section* section, std::string_view symbol_name, uint32_t value);
+	void addComdatSectionRelocations(COFFI::section* section, std::span<const ComdatReloc> relocations);
+	void finalizeComdatSectionRelocationCount(COFFI::section* section);
+	COFFI::symbol* findComdatSectionSymbol(COFFI::section* section);
+	void retargetRelocations(uint32_t old_symbol_index, uint32_t new_symbol_index);
+	void neutralizeReplacedUndefSymbol(COFFI::symbol* symbol);
+	COFFI::symbol* defineComdatExternalSymbol(COFFI::section* section, std::string_view symbol_name, uint32_t value,
+		bool is_function, bool is_external);
 
 	// Thread-local reusable buffer for string literal processing
 	inline static thread_local std::string string_literal_buffer_;

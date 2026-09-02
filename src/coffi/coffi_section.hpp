@@ -91,6 +91,7 @@ class section
 
     //------------------------------------------------------------------------------
     virtual const std::vector<relocation>& get_relocations() const    = 0;
+    virtual std::vector<relocation>&       get_relocations()          = 0;
     virtual void add_relocation_entry(const rel_entry_generic* entry) = 0;
 };
 
@@ -216,6 +217,11 @@ template <class T> class section_impl_tmpl : public section
 
     //------------------------------------------------------------------------------
     virtual const std::vector<relocation>& get_relocations() const
+    {
+        return relocations;
+    }
+
+    virtual std::vector<relocation>& get_relocations()
     {
         return relocations;
     }
