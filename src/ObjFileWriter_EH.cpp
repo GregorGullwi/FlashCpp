@@ -1168,6 +1168,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 				auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 				post_catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 				add_data(post_catch_xdata, SectionType::XDATA);
+				recordFunctionXdataRange(mangled_name, post_catch_xdata_offset, static_cast<uint32_t>(post_catch_xdata.size()));
 				add_xdata_relocation(post_catch_xdata_offset + post_catch_handler_rva_local, "__CxxFrameHandler3");
 				add_cpp_funcinfo_relocation(post_catch_xdata_offset, post_catch_funcinfo_rva_local);
 				has_post_catch_xdata = true;
@@ -1246,7 +1247,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 			return funclet_try_blocks;
 		};
 
-		auto emit_catch_funclet_xdata = [this, function_start, effective_frame_size = unwind_info.effective_frame_size, &add_cpp_funcinfo_relocation, &emit_cpp_metadata_relocations](
+		auto emit_catch_funclet_xdata = [this, mangled_name, function_start, effective_frame_size = unwind_info.effective_frame_size, &add_cpp_funcinfo_relocation, &emit_cpp_metadata_relocations](
 											bool zero_prologue,
 											std::string_view funclet_metadata_name,
 											uint32_t funclet_start_rel,
@@ -1293,6 +1294,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 											 local_cpp_xdata_rva_field_offsets,
 											 local_cpp_text_rva_field_offsets);
 				add_data(catch_xdata, SectionType::XDATA);
+				recordFunctionXdataRange(mangled_name, catch_xdata_offset, static_cast<uint32_t>(catch_xdata.size()));
 				add_xdata_relocation(catch_xdata_offset + catch_handler_rva_local, "__CxxFrameHandler3");
 				emit_cpp_metadata_relocations(catch_xdata_offset, local_cpp_xdata_rva_field_offsets, local_cpp_text_rva_field_offsets);
 				return {catch_xdata_offset, catch_xdata_offset + local_cpp_funcinfo_offset};
@@ -1300,6 +1302,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 
 			patch_xdata_u32(catch_xdata, catch_funcinfo_rva_local, inherited_funcinfo_rva);
 			add_data(catch_xdata, SectionType::XDATA);
+			recordFunctionXdataRange(mangled_name, catch_xdata_offset, static_cast<uint32_t>(catch_xdata.size()));
 			add_xdata_relocation(catch_xdata_offset + catch_handler_rva_local, "__CxxFrameHandler3");
 			add_cpp_funcinfo_relocation(catch_xdata_offset, catch_funcinfo_rva_local);
 			return {catch_xdata_offset, inherited_funcinfo_rva};
@@ -1434,6 +1437,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 			auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 			uint32_t cleanup_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 			add_data(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(cleanup_xdata.data()), cleanup_xdata.size()), SectionType::XDATA);
+			recordFunctionXdataRange(mangled_name, cleanup_xdata_offset, static_cast<uint32_t>(cleanup_xdata.size()));
 			pending_pdata_entries.push_back({function_start + cleanup_range.start,
 											 function_start + cleanup_range.end,
 											 cleanup_xdata_offset});
@@ -1456,6 +1460,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 		*reinterpret_cast<uint32_t*>(&pdata[8]) = entry.unwind_rva;
 		add_data(pdata, SectionType::PDATA);
 		add_pdata_relocations(pdata_offset, mangled_name, entry.unwind_rva);
+		recordFunctionPdataEntry(mangled_name, {pdata_offset, entry.begin_rva, entry.end_rva, entry.unwind_rva});
 	}
 }
 

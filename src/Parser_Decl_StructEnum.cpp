@@ -2434,48 +2434,27 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				is_virtual = true;
 			}
 
-			// Check for = default or = delete
-			bool is_defaulted = false;
-			bool is_deleted = false;
-			if (peek() == "="_tok) {
-				advance(); // consume '='
-
-				if (peek().is_keyword()) {
-					if (peek() == "default"_tok) {
-						advance(); // consume 'default'
-						is_defaulted = true;
-
-						// Expect ';'
-						if (!consume(";"_tok)) {
-							return ParseResult::error("Expected ';' after '= default'", peek_info());
-						}
-
-						// Create an empty block for the destructor body
-						auto [block_node, block_ref] = create_node_ref(BlockNode());
-						// Generate mangled name for the destructor
-						NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
-						dtor_ref.set_mangled_name(mangled);
-						dtor_ref.set_definition(block_node);
-					} else if (peek() == "delete"_tok) {
-						advance(); // consume 'delete'
-						is_deleted = true;
-
-						// Expect ';'
-						if (!consume(";"_tok)) {
-							return ParseResult::error("Expected ';' after '= delete'", peek_info());
-						}
-
-						// Track deleted destructors to prevent their use
-						if (struct_info) {
-							struct_info->markDestructorDeleted();
-						}
-						continue; // Don't add deleted destructor to struct
-					} else {
-						return ParseResult::error("Expected 'default' or 'delete' after '='", peek_info());
-					}
-				} else {
-					return ParseResult::error("Expected 'default' or 'delete' after '='", peek_info());
+			// = default / = delete may already have been consumed by parse_function_trailing_specifiers.
+			bool is_defaulted = dtor_func_specs.is_defaulted();
+			bool is_deleted = dtor_func_specs.is_deleted();
+			if (is_defaulted) {
+				if (!consume(";"_tok)) {
+					return ParseResult::error("Expected ';' after '= default'", peek_info());
 				}
+
+				auto [block_node, block_ref] = create_node_ref(BlockNode());
+				NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
+				dtor_ref.set_mangled_name(mangled);
+				dtor_ref.set_definition(block_node);
+			} else if (is_deleted) {
+				if (!consume(";"_tok)) {
+					return ParseResult::error("Expected ';' after '= delete'", peek_info());
+				}
+
+				if (struct_info) {
+					struct_info->markDestructorDeleted();
+				}
+				continue;
 			}
 
 			// Parse destructor body if present (and not defaulted/deleted)

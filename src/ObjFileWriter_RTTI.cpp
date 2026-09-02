@@ -1,6 +1,7 @@
 #include "ObjFileWriter.h"
 #include "Log.h"
 #include "StringLiteralTokenUtils.h"
+#include <optional>
 
 // ObjFileWriter_RTTI.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
@@ -108,6 +109,40 @@ uint32_t getMsvcClassHierarchyAttributes(std::string_view class_name) {
 
 	return attributes;
 }
+
+struct VagueLinkageRdataGroup {
+	std::vector<char> bytes;
+	std::vector<ObjectFileWriter::ComdatReloc> relocs;
+	struct NamedOffset {
+		std::string name;
+		uint32_t offset = 0;
+	};
+	std::vector<NamedOffset> external_symbols;
+
+	uint32_t size() const {
+		return static_cast<uint32_t>(bytes.size());
+	}
+
+	void append(std::span<const char> data) {
+		bytes.insert(bytes.end(), data.begin(), data.end());
+	}
+
+	void append(const std::vector<char>& data) {
+		append(std::span<const char>(data));
+	}
+
+	void addImageRelative(uint32_t offset, uint32_t symbol_table_index) {
+		relocs.push_back({offset, symbol_table_index, IMAGE_REL_AMD64_ADDR32NB});
+	}
+
+	void addAddr64(uint32_t offset, uint32_t symbol_table_index) {
+		relocs.push_back({offset, symbol_table_index, IMAGE_REL_AMD64_ADDR64});
+	}
+
+	void addExternalSymbol(std::string name, uint32_t offset) {
+		external_symbols.push_back({std::move(name), offset});
+	}
+};
 } // namespace
 
 void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, std::span<const SehTryBlockInfo> seh_try_blocks, uint32_t stack_frame_size) {
@@ -137,14 +172,6 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 	if (is_seh && is_cpp) {
 		FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
 		is_cpp = false;	// Prevent C++ EH metadata from corrupting SEH scope table
-	}
-	if (is_seh || is_cpp) {
-		for (auto it = pending_functions_.rbegin(); it != pending_functions_.rend(); ++it) {
-			if (it->name == mangled_name) {
-				it->has_cpp_or_seh_metadata = true;
-				break;
-			}
-		}
 	}
 
 	// Determine flags based on exception type
@@ -212,6 +239,7 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 
 	// Add the XDATA to the section
 	add_data(xdata, SectionType::XDATA);
+	recordFunctionXdataRange(mangled_name, xdata_offset, static_cast<uint32_t>(xdata.size()));
 
 	// Emit relocations for exception handler and metadata
 	emit_exception_relocations(xdata_offset, handler_rva_offset, is_seh, is_cpp,
@@ -392,6 +420,7 @@ void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_
 		COFFI::auxiliary_symbol_record aux_record;
 		std::memcpy(aux_record.value, &aux, sizeof(aux_record.value));
 		section_sym->get_auxiliary_symbols().push_back(aux_record);
+		section_sym->set_aux_symbols_number(1);
 
 		auto symbol = coffi_.add_symbol(var_name);
 		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
@@ -447,7 +476,13 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 								  [[maybe_unused]] const RTTITypeInfo* rtti_info,
 								  [[maybe_unused]] TypeIndex subobject_type_index,
 								  [[maybe_unused]] int64_t offset_to_top) {
-	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
+	VagueLinkageRdataGroup vtable_group;
+	struct NamedReloc {
+		uint32_t offset = 0;
+		std::string symbol_name;
+		uint32_t type = 0;
+	};
+	std::vector<NamedReloc> named_relocs;
 	const bool is_secondary_vtable = offset_to_top != 0;
 
 	if (g_enable_debug_output)
@@ -469,34 +504,26 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 
 	// ??_R0 - Type Descriptor (16 bytes header + mangled name)
 	std::string type_desc_symbol = get_or_create_type_descriptor(class_name, subobject_type_index);
-	uint32_t type_desc_symbol_index = get_or_create_symbol_index(type_desc_symbol);
-	auto addImageRelativeRelocation = [&](uint32_t virtual_address, uint32_t symbol_table_index) {
-		COFFI::rel_entry_generic reloc;
-		reloc.virtual_address = virtual_address;
-		reloc.symbol_table_index = symbol_table_index;
-		reloc.type = IMAGE_REL_AMD64_ADDR32NB;
-		rdata_section->add_relocation_entry(&reloc);
+	auto addDeferredRelocationByName = [&](uint32_t virtual_address, std::string symbol_name, uint32_t type) {
+		named_relocs.push_back({virtual_address, std::move(symbol_name), type});
 	};
 
 	std::string chd_symbol = "??_R3" + mangled_class_name + "8";
-	uint32_t chd_symbol_index = 0;
 
 	if (!is_secondary_vtable) {
-		// ??_R1 - Base Class Descriptors (one for self + one per base)
 		std::vector<uint32_t> bcd_offsets;
-		std::vector<uint32_t> bcd_symbol_indices;
+		std::vector<std::string> bcd_symbol_names;
 
+		// ??_R1 - Base Class Descriptors (one for self + one per base)
 		// Self descriptor
-		uint32_t self_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		uint32_t self_bcd_offset = vtable_group.size();
 		std::string self_bcd_symbol = "??_R1" + mangled_class_name + "8";  // "8" suffix for self
 		std::vector<char> self_bcd_data;
 		self_bcd_data.reserve(28);  // 7 image-relative / scalar DWORDs
-
 		// type_descriptor image-relative pointer (4 bytes) - relocation added below
 		ObjectFileCommon::appendZeros(self_bcd_data, 4);
 		// num_contained_bases (4 bytes)
-		uint32_t num_contained = static_cast<uint32_t>(base_class_info.size());
-		ObjectFileCommon::appendLE(self_bcd_data, num_contained);
+		ObjectFileCommon::appendLE(self_bcd_data, static_cast<uint32_t>(base_class_info.size()));
 		// mdisp (4 bytes) - 0 for self
 		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
 		// pdisp (4 bytes) - -1 for non-virtual
@@ -507,154 +534,90 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0x40));
 		// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
 		ObjectFileCommon::appendZeros(self_bcd_data, 4);
-
-		add_data(self_bcd_data, SectionType::RDATA);
-		auto self_bcd_sym = coffi_.add_symbol(self_bcd_symbol);
-		self_bcd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		self_bcd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		self_bcd_sym->set_section_number(rdata_section->get_index() + 1);
-		self_bcd_sym->set_value(self_bcd_offset);
-
-		// Add relocation for type_descriptor pointer in self BCD
-		addImageRelativeRelocation(self_bcd_offset, type_desc_symbol_index);
-
+		vtable_group.append(self_bcd_data);
+		vtable_group.addExternalSymbol(self_bcd_symbol, self_bcd_offset);
+		addDeferredRelocationByName(self_bcd_offset, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
 		bcd_offsets.push_back(self_bcd_offset);
-		bcd_symbol_indices.push_back(self_bcd_sym->get_index());
-
-		if (g_enable_debug_output)
-			std::cerr << "  Added ??_R1 self BCD '" << self_bcd_symbol << "' at offset "
-					  << self_bcd_offset << std::endl;
+			bcd_symbol_names.push_back(self_bcd_symbol);
 
 		// Base class descriptors
 		for (size_t i = 0; i < base_class_info.size(); ++i) {
 			const auto& bci = base_class_info[i];
 			std::string base_mangled = buildMsvcTypeDescriptorName(bci.name, {});
 			std::string base_type_desc_symbol = get_or_create_type_descriptor(bci.name);
-			uint32_t base_type_desc_index = get_or_create_symbol_index(base_type_desc_symbol);
 
-			uint32_t base_bcd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+			uint32_t base_bcd_offset = vtable_group.size();
 			std::string_view base_bcd_symbol_sv = StringBuilder()
 													  .append("??_R1"sv)
 													  .append(mangled_class_name)
 													  .append("0"sv)
 													  .append(base_mangled)
 													  .append("_"sv)
-													  .append(static_cast<uint64_t>(bcd_symbol_indices.size()))
+													  .append(static_cast<uint64_t>(bcd_symbol_names.size()))
 													  .commit();
 			std::string base_bcd_symbol(base_bcd_symbol_sv);
 			std::vector<char> base_bcd_data;
-
 			// type_descriptor image-relative pointer (4 bytes) - will add relocation
 			ObjectFileCommon::appendZeros(base_bcd_data, 4);
-
 			// num_contained_bases (4 bytes) - actual value from base class info
-			uint32_t base_num_contained = bci.num_contained_bases;
-			ObjectFileCommon::appendLE(base_bcd_data, base_num_contained);
-
+			ObjectFileCommon::appendLE(base_bcd_data, bci.num_contained_bases);
 			// mdisp (4 bytes) - offset of base in derived class
-			uint32_t mdisp = bci.offset;
-			ObjectFileCommon::appendLE(base_bcd_data, mdisp);
-
+			ObjectFileCommon::appendLE(base_bcd_data, bci.offset);
 			// pdisp (4 bytes) - vbtable displacement
 			// -1 for non-virtual bases (not applicable)
 			// 0+ for virtual bases (offset into vbtable)
-			int32_t pdisp = bci.is_virtual ? 0 : -1;
-			ObjectFileCommon::appendLE(base_bcd_data, pdisp);
-
+			ObjectFileCommon::appendLE(base_bcd_data, bci.is_virtual ? 0 : -1);
 			// vdisp (4 bytes) - displacement inside vbtable (0 for simplicity)
 			ObjectFileCommon::appendLE(base_bcd_data, uint32_t(0));
-
 			// attributes (4 bytes) - flags
 			// Bit 0: virtual base (1 if virtual, 0 if non-virtual)
 			// Bit 6: pClassDescriptor field is present
-			uint32_t attributes = (bci.is_virtual ? 1u : 0u) | 0x40u;
-			ObjectFileCommon::appendLE(base_bcd_data, attributes);
+			ObjectFileCommon::appendLE(base_bcd_data, (bci.is_virtual ? 1u : 0u) | 0x40u);
 			// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
 			ObjectFileCommon::appendZeros(base_bcd_data, 4);
-
-			add_data(base_bcd_data, SectionType::RDATA);
-			auto base_bcd_sym = coffi_.add_symbol(base_bcd_symbol);
-			base_bcd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-			base_bcd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-			base_bcd_sym->set_section_number(rdata_section->get_index() + 1);
-			base_bcd_sym->set_value(base_bcd_offset);
-
-			// Add relocation for type_descriptor pointer in base BCD
-			addImageRelativeRelocation(base_bcd_offset, base_type_desc_index);
-
+			vtable_group.append(base_bcd_data);
+			vtable_group.addExternalSymbol(base_bcd_symbol, base_bcd_offset);
+			addDeferredRelocationByName(base_bcd_offset, base_type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
 			bcd_offsets.push_back(base_bcd_offset);
-			bcd_symbol_indices.push_back(base_bcd_sym->get_index());
-
-			if (g_enable_debug_output)
-				std::cerr << "  Added ??_R1 base BCD for " << bci.name << std::endl;
+			bcd_symbol_names.push_back(base_bcd_symbol);
 		}
 
 		// ??_R2 - Base Class Array (pointers to all BCDs)
-		uint32_t bca_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		uint32_t bca_offset = vtable_group.size();
 		std::string bca_symbol = "??_R2" + mangled_class_name + "8";
 		std::vector<char> bca_data(bcd_offsets.size() * 4, 0);
-
-		add_data(bca_data, SectionType::RDATA);
-		auto bca_sym = coffi_.add_symbol(bca_symbol);
-		bca_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		bca_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		bca_sym->set_section_number(rdata_section->get_index() + 1);
-		bca_sym->set_value(bca_offset);
-		uint32_t bca_symbol_index = bca_sym->get_index();
-
-		// Add relocations for BCD pointers in BCA
-		for (size_t i = 0; i < bcd_offsets.size(); ++i) {
-			addImageRelativeRelocation(bca_offset + static_cast<uint32_t>(i * 4), bcd_symbol_indices[i]);
+		vtable_group.append(bca_data);
+		vtable_group.addExternalSymbol(bca_symbol, bca_offset);
+		for (size_t i = 0; i < bcd_symbol_names.size(); ++i) {
+			addDeferredRelocationByName(bca_offset + static_cast<uint32_t>(i * 4), bcd_symbol_names[i], IMAGE_REL_AMD64_ADDR32NB);
 		}
 
-		if (g_enable_debug_output)
-			std::cerr << "  Added ??_R2 Base Class Array '" << bca_symbol << "' at offset "
-					  << bca_offset << std::endl;
-
 		// ??_R3 - Class Hierarchy Descriptor
-		uint32_t chd_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+		uint32_t chd_offset = vtable_group.size();
 		std::vector<char> chd_data;
-
 		// signature (4 bytes) - 0
 		ObjectFileCommon::appendLE(chd_data, uint32_t(0));
 		// attributes (4 bytes) - inheritance model flags
 		ObjectFileCommon::appendLE(chd_data, getMsvcClassHierarchyAttributes(class_name));
 		// num_base_classes (4 bytes) - total including self
-		uint32_t total_bases = static_cast<uint32_t>(bcd_offsets.size());
-		ObjectFileCommon::appendLE(chd_data, total_bases);
+		ObjectFileCommon::appendLE(chd_data, static_cast<uint32_t>(bcd_offsets.size()));
 		// base_class_array image-relative pointer (4 bytes) - will add relocation
 		ObjectFileCommon::appendZeros(chd_data, 4);
-
-		add_data(chd_data, SectionType::RDATA);
-		auto chd_sym = coffi_.add_symbol(chd_symbol);
-		chd_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		chd_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		chd_sym->set_section_number(rdata_section->get_index() + 1);
-		chd_sym->set_value(chd_offset);
-		chd_symbol_index = chd_sym->get_index();
-
-		// Add relocation for base_class_array pointer in CHD
-		addImageRelativeRelocation(chd_offset + 12, bca_symbol_index);
-
+		vtable_group.append(chd_data);
+		vtable_group.addExternalSymbol(chd_symbol, chd_offset);
+		addDeferredRelocationByName(chd_offset + 12, bca_symbol, IMAGE_REL_AMD64_ADDR32NB);
 		// Each BCD also stores an image-relative pointer back to the CHD.
 		for (uint32_t bcd_offset : bcd_offsets) {
-			addImageRelativeRelocation(bcd_offset + 24, chd_symbol_index);
+			addDeferredRelocationByName(bcd_offset + 24, chd_symbol, IMAGE_REL_AMD64_ADDR32NB);
 		}
-
-		if (g_enable_debug_output)
-			std::cerr << "  Added ??_R3 Class Hierarchy Descriptor '" << chd_symbol << "' at offset "
-					  << chd_offset << std::endl;
-	} else {
-		chd_symbol_index = get_or_create_symbol_index(chd_symbol);
 	}
 
 	// ??_R4 - Complete Object Locator
-	uint32_t col_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+	uint32_t col_offset = vtable_group.size();
 	std::string col_symbol = is_secondary_vtable
 		? (std::string(vtable_symbol) + "$col")
 		: ("??_R4" + mangled_class_name + "6B@");
 	std::vector<char> col_data;
-
 	// signature (4 bytes) - 1 for 64-bit
 	ObjectFileCommon::appendLE(col_data, uint32_t(1));
 	// offset (4 bytes) - offset of this vtable within the complete object
@@ -667,95 +630,60 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	ObjectFileCommon::appendZeros(col_data, 4);
 	// self image-relative pointer (4 bytes) - relocation added at offset+20
 	ObjectFileCommon::appendZeros(col_data, 4);
+	vtable_group.append(col_data);
+	vtable_group.addExternalSymbol(col_symbol, col_offset);
+	addDeferredRelocationByName(col_offset + 12, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
+	addDeferredRelocationByName(col_offset + 16, chd_symbol, IMAGE_REL_AMD64_ADDR32NB);
+	addDeferredRelocationByName(col_offset + 20, col_symbol, IMAGE_REL_AMD64_ADDR32NB);
 
-	add_data(col_data, SectionType::RDATA);
-	auto col_sym = coffi_.add_symbol(col_symbol);
-	col_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-	col_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-	col_sym->set_section_number(rdata_section->get_index() + 1);
-	col_sym->set_value(col_offset);
-	uint32_t col_symbol_index = col_sym->get_index();
-
-	// Add relocations for type_descriptor, hierarchy, and self pointers in COL.
-	addImageRelativeRelocation(col_offset + 12, type_desc_symbol_index);
-	addImageRelativeRelocation(col_offset + 16, chd_symbol_index);
-	addImageRelativeRelocation(col_offset + 20, col_symbol_index);
-
-	if (g_enable_debug_output)
-		std::cerr << "  Added ??_R4 Complete Object Locator '" << col_symbol << "' at offset "
-				  << col_offset << std::endl;
-
-	// Step 2: Emit vtable structure
 	// Layout: [vbase offsets in reverse order][COL pointer][function pointers...]
-	uint32_t vtable_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-
 	// The vptr points at the first function. Keeping the entries in reverse
 	// order makes virtual-base index zero the closest entry, matching the
 	// Itanium prefix convention and the backend's vtable[-(2+i)] lookup.
+	uint32_t vtable_offset = vtable_group.size();
 	size_t vtable_size = (virtual_base_offsets.size() + 1 + function_symbols.size()) * 8;
 	std::vector<char> vtable_data(vtable_size, 0);
 	for (size_t i = 0; i < virtual_base_offsets.size(); ++i) {
 		const int64_t offset = virtual_base_offsets[virtual_base_offsets.size() - 1 - i];
 		std::memcpy(vtable_data.data() + i * sizeof(int64_t), &offset, sizeof(offset));
 	}
+	vtable_group.append(vtable_data);
 
-	// Add the vtable data to .rdata section
-	add_data(vtable_data, SectionType::RDATA);
+	// COL (Complete Object Locator) pointer at vtable[0] (before actual vtable)
+	uint32_t col_reloc_offset = vtable_offset + static_cast<uint32_t>(virtual_base_offsets.size() * 8);
+	named_relocs.push_back({col_reloc_offset, col_symbol, IMAGE_REL_AMD64_ADDR64});
 
-	// Add relocation for COL (Complete Object Locator) pointer at vtable[0] (before actual vtable)
-	{
-		uint32_t col_reloc_offset = vtable_offset + static_cast<uint32_t>(virtual_base_offsets.size() * 8);
-
-		if (g_enable_debug_output)
-			std::cerr << "  DEBUG: Creating COL relocation at offset " << col_reloc_offset
-					  << " pointing to symbol '" << col_symbol << "' (file index " << col_symbol_index << ")" << std::endl;
-
-		COFFI::rel_entry_generic relocation;
-		relocation.virtual_address = col_reloc_offset;
-		relocation.symbol_table_index = col_symbol_index;
-		relocation.type = IMAGE_REL_AMD64_ADDR64;
-
-		rdata_section->add_relocation_entry(&relocation);
-
-		if (g_enable_debug_output)
-			std::cerr << "  Added COL pointer relocation at vtable[-1]" << std::endl;
-	}
-
-	// Step 3: Add a symbol for vtable (points to first virtual function, AFTER COL)
+	// Vtable symbol points to the first virtual function, AFTER COL
 	uint32_t vtable_symbol_offset = vtable_offset + static_cast<uint32_t>((virtual_base_offsets.size() + 1) * 8);
-	auto symbol = coffi_.add_symbol(std::string(vtable_symbol));
-	symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-	symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);	 // Vtables are external
-	symbol->set_section_number(rdata_section->get_index() + 1);
-	symbol->set_value(vtable_symbol_offset);
-
-	// Add relocations for each function pointer in the vtable
+	vtable_group.addExternalSymbol(std::string(vtable_symbol), vtable_symbol_offset);
 	for (size_t i = 0; i < function_symbols.size(); ++i) {
 		if (function_symbols[i].empty()) {
 			// Skip empty entries (pure virtual functions might be empty initially)
 			continue;
 		}
-
 		uint32_t reloc_offset = vtable_symbol_offset + static_cast<uint32_t>(i * 8);
-
-		// Get the symbol index (COFFI handles aux entries automatically)
-		uint32_t func_symbol_index = get_or_create_symbol_index(std::string(function_symbols[i]));
-
-		COFFI::rel_entry_generic relocation;
-		relocation.virtual_address = reloc_offset;
-		relocation.symbol_table_index = func_symbol_index;
-		relocation.type = IMAGE_REL_AMD64_ADDR64;  // 64-bit absolute address
-
-		rdata_section->add_relocation_entry(&relocation);
-
-		if (g_enable_debug_output)
-			std::cerr << "  Added relocation for vtable[" << i << "] -> " << function_symbols[i]
-					  << " at offset " << reloc_offset << " (file index " << func_symbol_index << ")" << std::endl;
+		addDeferredRelocationByName(reloc_offset, std::string(function_symbols[i]), IMAGE_REL_AMD64_ADDR64);
 	}
 
-	if (g_enable_debug_output)
-		std::cerr << "Added vtable '" << vtable_symbol << "' at offset " << vtable_symbol_offset
-				  << " in .rdata section (total size with RTTI: " << vtable_size << " bytes)" << std::endl;
+	COFFI::section* vtable_section = emitComdatSection(
+		".rdata$", inline_comdat_rdata_section_counter_,
+		IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES,
+		vtable_group.bytes, {}, 0, IMAGE_COMDAT_SELECT_ANY, vtable_symbol, false, vtable_symbol_offset);
+	for (const VagueLinkageRdataGroup::NamedOffset& external_symbol : vtable_group.external_symbols) {
+		if (external_symbol.name != vtable_symbol) {
+			add_vague_linkage_comdat_rdata_symbol(vtable_section, external_symbol.name, external_symbol.offset);
+		}
+	}
+
+	std::vector<ComdatReloc> final_relocs;
+	final_relocs.reserve(named_relocs.size());
+	for (const NamedReloc& named_reloc : named_relocs) {
+		final_relocs.push_back({
+			named_reloc.offset,
+			get_or_create_symbol_index(named_reloc.symbol_name),
+			named_reloc.type});
+	}
+	addComdatSectionRelocations(vtable_section, final_relocs);
 }
 
 // Get or create MSVC _ThrowInfo metadata symbol for a built-in thrown type.
@@ -881,7 +809,6 @@ std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view cla
 static std::string emitMsvcTypeDescriptor(ObjectFileWriter& writer,
 										  COFFI::coffi& coffi,
 										  std::unordered_map<std::string, uint32_t, ObjectFileCommon::StringViewHash, std::equal_to<>>& symbol_cache,
-										  const std::unordered_map<SectionType, int32_t>& section_index_map,
 										  std::string_view mangled_type_name) {
 	std::string type_desc_symbol = buildMsvcTypeDescriptorSymbol(mangled_type_name);
 
@@ -897,10 +824,6 @@ static std::string emitMsvcTypeDescriptor(ObjectFileWriter& writer,
 		}
 	}
 
-	// Type descriptor not found or was only an external reference - create it
-	auto rdata_section = coffi.get_sections()[section_index_map.at(SectionType::RDATA)];
-	uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-
 	std::vector<char> type_desc_data;
 	type_desc_data.reserve(16 + mangled_type_name.size() + 1); // 8+8 header + name + null
 	// vtable pointer (8 bytes) - null, patched by relocation below
@@ -912,14 +835,6 @@ static std::string emitMsvcTypeDescriptor(ObjectFileWriter& writer,
 		type_desc_data.push_back(c);
 	type_desc_data.push_back(0);
 
-	writer.add_data(type_desc_data, SectionType::RDATA);
-	auto type_desc_sym = coffi.add_symbol(type_desc_symbol);
-	type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-	type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-	type_desc_sym->set_section_number(rdata_section->get_index() + 1);
-	type_desc_sym->set_value(type_desc_offset);
-
-	// Relocate vftable pointer to type_info::vftable
 	auto* type_info_vftable = coffi.get_symbol("??_7type_info@@6B@");
 	if (!type_info_vftable) {
 		type_info_vftable = coffi.add_symbol("??_7type_info@@6B@");
@@ -929,25 +844,28 @@ static std::string emitMsvcTypeDescriptor(ObjectFileWriter& writer,
 		type_info_vftable->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 	}
 
-	COFFI::rel_entry_generic td_vft_reloc;
-	td_vft_reloc.virtual_address = type_desc_offset;
-	td_vft_reloc.symbol_table_index = type_info_vftable->get_index();
-	td_vft_reloc.type = IMAGE_REL_AMD64_ADDR64;
-	rdata_section->add_relocation_entry(&td_vft_reloc);
+	std::vector<ObjectFileWriter::ComdatReloc> comdat_relocs;
+	comdat_relocs.push_back({0, type_info_vftable->get_index(), IMAGE_REL_AMD64_ADDR64});
+	writer.emit_vague_linkage_comdat_rdata(type_desc_symbol, std::span<const char>(type_desc_data),
+		std::span<const ObjectFileWriter::ComdatReloc>(comdat_relocs), 0);
+
+	auto* type_desc_sym = coffi.get_symbol(type_desc_symbol);
+	if (!type_desc_sym) {
+		throw InternalError("COMDAT type descriptor symbol was not created");
+	}
 
 	// Update cache
 	symbol_cache[type_desc_symbol] = type_desc_sym->get_index();
 
 	if (g_enable_debug_output)
-		std::cerr << "Created ??_R0 Type Descriptor '" << type_desc_symbol << "' at offset "
-				  << type_desc_offset << std::endl;
+		std::cerr << "Created ??_R0 Type Descriptor '" << type_desc_symbol << "' as COMDAT" << std::endl;
 
 	return type_desc_symbol;
 }
 
 std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index) {
 	std::string mangled_class_name = buildMsvcTypeDescriptorName(class_name, type_index);
-	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, sectiontype_to_index, mangled_class_name);
+	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, mangled_class_name);
 }
 
 std::string ObjectFileWriter::get_or_create_builtin_type_descriptor(TypeCategory cat) {
@@ -962,12 +880,24 @@ std::string ObjectFileWriter::get_or_create_builtin_type_descriptor(TypeCategory
 											 .append("."sv)
 											 .append(code)
 											 .commit();
-	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, sectiontype_to_index, mangled_type_name);
+	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, mangled_type_name);
 }
 
 // Helper: get or create symbol index for a function name (cached for O(1) repeated lookups)
 uint32_t ObjectFileWriter::get_or_create_symbol_index(const std::string& symbol_name) {
-	// Check cache first
+	auto findDefinedSymbolIndex = [&](std::string_view name) -> std::optional<uint32_t> {
+		auto* defined_symbol = coffi_.get_symbol(name);
+		if (defined_symbol != nullptr && defined_symbol->get_section_number() > 0) {
+			return defined_symbol->get_index();
+		}
+		return std::nullopt;
+	};
+
+	if (auto defined_index = findDefinedSymbolIndex(symbol_name); defined_index.has_value()) {
+		symbol_index_cache_[symbol_name] = *defined_index;
+		return *defined_index;
+	}
+
 	auto cache_it = symbol_index_cache_.find(symbol_name);
 	if (cache_it != symbol_index_cache_.end()) {
 		if (g_enable_debug_output)
@@ -981,11 +911,13 @@ uint32_t ObjectFileWriter::get_or_create_symbol_index(const std::string& symbol_
 	for (size_t i = 0; i < symbols->size(); ++i) {
 		if ((*symbols)[i].get_name() == symbol_name) {
 			uint32_t file_index = (*symbols)[i].get_index();
-			if (g_enable_debug_output)
-				std::cerr << "    DEBUG get_or_create_symbol_index: Found existing symbol '" << symbol_name
-						  << "' at array index " << i << ", file index " << file_index << std::endl;
-			symbol_index_cache_[symbol_name] = file_index;
-			return file_index;
+			if ((*symbols)[i].get_section_number() > 0) {
+				if (g_enable_debug_output)
+					std::cerr << "    DEBUG get_or_create_symbol_index: Found existing defined symbol '" << symbol_name
+							  << "' at array index " << i << ", file index " << file_index << std::endl;
+				symbol_index_cache_[symbol_name] = file_index;
+				return file_index;
+			}
 		}
 	}
 
@@ -998,7 +930,6 @@ uint32_t ObjectFileWriter::get_or_create_symbol_index(const std::string& symbol_
 	symbol->set_section_number(0);  // External reference
 	symbol->set_value(0);
 
-	// Return the index from COFFI (which includes aux entries)
 	uint32_t file_index = symbol->get_index();
 	symbol_index_cache_[symbol_name] = file_index;
 	if (g_enable_debug_output)

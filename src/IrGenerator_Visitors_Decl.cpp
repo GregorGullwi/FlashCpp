@@ -3331,6 +3331,7 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 	// Generate mangled name for destructor
 	// Use the dedicated mangling function for destructors to ensure correct platform-specific mangling
 	// (e.g., MSVC uses ??1ClassName@... format)
+	dtor_decl_op.is_inline = true;
 	dtor_decl_op.mangled_name = NameMangling::generateMangledNameFromNode(node);
 	current_function_mangled_name_ = dtor_decl_op.mangled_name;
 

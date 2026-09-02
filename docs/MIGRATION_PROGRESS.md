@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-02 after pull request boundary 34
+Last updated: 2026-09-02 after pull request boundary 35
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 34 are landed.
+  and entities). Pull request boundaries 1 through 35 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -116,7 +116,7 @@ Last updated: 2026-09-02 after pull request boundary 34
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–34)
+## Pull request boundary status (1–35)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -154,6 +154,7 @@ Last updated: 2026-09-02 after pull request boundary 34
 | 32 | Tag every explicit `InlineVector` in `src/` and doctest fixtures with `overload-resolution` or `template-argument` spill families |
 | 33 | Require a concrete `InlineVector` spill family at compile time and provide concise `OverloadVector` / `TemplateVector` aliases |
 | 34 | Add two-TU shared-aggregate ABI and inline/template-function regressions; emit non-EH free inline/template functions in `SELECT_ANY` COFF COMDAT sections while recording the remaining RTTI/vtable and grouped-unwind ownership blockers |
+| 35 | Emit C++ inline/template members, virtual special members, and grouped unwind/RTTI as COFF COMDATs; two-TU polymorphic vtable/RTTI regressions |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -256,6 +257,12 @@ Named follow-ups carried forward:
   individual flags to 0 for shipping builds when ready.
 - Blanket `noexcept` on member functions stays deferred until boundaries 5-8
   shrink the exception surface to invariant-only paths.
+- MSVC emits each `??_R1`/`??_R2`/`??_R3`/`??_R4` as its own `SELECT_ANY`
+  COMDAT; FlashCpp currently keeps those symbols as `STATIC` secondaries in the
+  vtable's `SELECT_ANY` section so extra `EXTERNAL` leaders do not become
+  `LNK2005` strong defs. Per-symbol RTTI COMDATs remain an ABI-fidelity
+  follow-up. Unified `.text`/`.xdata`/`.pdata` still retain dead copies of
+  functions that also have COMDAT groups.
 
 ## Active findings
 

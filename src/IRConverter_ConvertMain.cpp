@@ -7696,8 +7696,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
 	bool is_inline = func_decl.is_inline;
-	const bool is_free_vague_linkage_function =
-		is_inline && struct_name.empty() && linkage != Linkage::C;
+	const bool has_vague_linkage_comdat = is_inline && linkage != Linkage::C;
 	if (!struct_name.empty()) {
 			// Member function - include struct name
 		writer.addFunctionSignature(func_name, return_type, parameter_types, struct_name, linkage, is_variadic, mangled_name, is_inline);
@@ -7965,7 +7964,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	current_function_prologue_offset_ = 0;
 
 	uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
-	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage, is_free_vague_linkage_function);
+	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage, has_vague_linkage_comdat);
 	functionSymbols[std::string(func_name)] = func_offset;
 
 		// Track function for debug information

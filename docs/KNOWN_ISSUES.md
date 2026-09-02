@@ -1,20 +1,5 @@
 # Known Issues
 
-## Multi-TU RTTI and vtable vague-linkage emission is not implemented
-
-Free inline and template functions without C++/SEH metadata now emit
-`SELECT_ANY` COFF COMDAT code sections. Functions with that metadata retain
-ordinary `.text` emission until their code, unwind records, and relocations can
-move as one group. Their polymorphic RTTI/vtable data also still uses ordinary
-external `.rdata` definitions. A reduced two-unit repro containing an inline
-member function, a defaulted virtual destructor, and `typeid` therefore emits
-duplicate strong `??_7` vftable and `??_R4` complete-object-locator
-definitions; it also leaves the defaulted destructor unresolved. Owner:
-architecture boundary 2 (multi-TU object model). The next implementation slice
-must give RTTI/vtable data, virtual special members, and grouped unwind metadata
-correct COMDAT ownership, then restore a two-unit
-inline/template/vtable/RTTI regression.
-
 ## Declaration-parse errors are masked by the expression-statement fallback
 
 When `parse_function_declaration` returns a `ParseResult` error, the top-level
