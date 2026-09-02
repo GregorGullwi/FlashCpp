@@ -7632,6 +7632,30 @@ void IrToObjConverter<TWriterClass>::resetFunctionState() {
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitCurrentFunctionUnwind(uint32_t function_length, uint32_t total_stack) {
+	auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+	auto seh_try_blocks = convertSehInfoToWriterFormat();
+
+	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+		patchElfCatchFilterValues(try_blocks);
+		std::vector<ElfFileWriter::CleanupBlockInfo> cleanup_blocks;
+		if (current_function_cleanup_lp_offset_ > 0) {
+			cleanup_blocks.push_back({0, current_function_cleanup_lp_offset_, current_function_cleanup_lp_offset_});
+		}
+		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_, cleanup_blocks);
+		elf_catch_filter_patches_.clear();
+	} else if (current_function_has_vague_linkage_comdat_) {
+		std::span<const uint8_t> text_bytes(textSectionData.data() + current_function_offset_, function_length);
+		writer.emitNativeVagueLinkageFunction(StringTable::getStringView(current_function_mangled_name_), text_bytes);
+		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), 0, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack);
+		writer.finishNativeComdatFunction();
+		textSectionData.resize(current_function_offset_);
+	} else {
+		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack);
+	}
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::injectNoexceptTerminateLPIfNeeded() {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		if (g_enable_exceptions && current_function_is_noexcept_ && current_function_cleanup_lp_offset_ == 0) {
@@ -7853,9 +7877,6 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		}
 		cleanup_funclet_lea_rbp_patches_.clear();
 
-		auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-		auto seh_try_blocks = convertSehInfoToWriterFormat();
-
 			// noexcept enforcement: inject terminate LP if needed (ELF only)
 		injectNoexceptTerminateLPIfNeeded();
 
@@ -7866,21 +7887,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		writer.update_function_length(finalized_mangled_name, function_length);
 		writer.set_function_debug_range(finalized_mangled_name, 0, 0); // doesn't seem needed
 
-			// Add exception handling information (required for x64) - uses mangled name
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-				// Patch ELF catch handler selector filter values before passing to writer.
-				// The filter values must match the LSDA type table ordering.
-			patchElfCatchFilterValues(try_blocks);
-				// Build cleanup block info for Phase 2 function-level cleanup LPs
-			std::vector<ElfFileWriter::CleanupBlockInfo> cleanup_blocks;
-			if (current_function_cleanup_lp_offset_ > 0) {
-				cleanup_blocks.push_back({0, current_function_cleanup_lp_offset_, current_function_cleanup_lp_offset_});
-			}
-			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_, cleanup_blocks);
-			elf_catch_filter_patches_.clear();
-		} else {
-			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
-		}
+		emitCurrentFunctionUnwind(function_length, static_cast<uint32_t>(total_stack));
 
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
@@ -7966,6 +7973,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 	uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
 	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage, has_vague_linkage_comdat);
+	current_function_has_vague_linkage_comdat_ = has_vague_linkage_comdat;
 	functionSymbols[std::string(func_name)] = func_offset;
 
 		// Track function for debug information
@@ -17483,9 +17491,6 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		}
 		cleanup_funclet_lea_rbp_patches_.clear();
 
-		auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-		auto seh_try_blocks = convertSehInfoToWriterFormat();
-
 			// noexcept enforcement: inject terminate LP if needed (ELF only)
 		injectNoexceptTerminateLPIfNeeded();
 
@@ -17494,24 +17499,7 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			// Update function length
 		writer.update_function_length(StringTable::getStringView(current_function_mangled_name_), function_length);
 
-			// Set debug range to match reference exactly
-		if (function_length > 13) {
-				//writer.set_function_debug_range(current_function_name_, 8, 5); // prologue=8, epilogue=3
-		}
-
-			// Add exception handling information (required for x64) - uses mangled name
-		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			patchElfCatchFilterValues(try_blocks);
-				// Build cleanup block info for Phase 2 function-level cleanup LPs
-			std::vector<ElfFileWriter::CleanupBlockInfo> cleanup_blocks;
-			if (current_function_cleanup_lp_offset_ > 0) {
-				cleanup_blocks.push_back({0, current_function_cleanup_lp_offset_, current_function_cleanup_lp_offset_});
-			}
-			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_, cleanup_blocks);
-			elf_catch_filter_patches_.clear();
-		} else {
-			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
-		}
+		emitCurrentFunctionUnwind(function_length, static_cast<uint32_t>(total_stack));
 
 			// Clear the current function state
 		current_function_name_ = StringHandle();

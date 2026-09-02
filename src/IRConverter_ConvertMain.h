@@ -521,6 +521,10 @@ private:
 	// Reset per-function state between function declarations
 	void resetFunctionState();
 
+	// COFF: emit vague-linkage code/unwind as native COMDATs, or write unique
+	// functions into the unified sections. ELF keeps the existing unwind path.
+	void emitCurrentFunctionUnwind(uint32_t function_length, uint32_t total_stack);
+
 	// Helper: emit a noexcept terminate landing pad (ELF only) if the current function is
 	// declared noexcept and no cleanup LP was already emitted.
 	// The LP is reached by the personality routine when an exception would escape a noexcept
@@ -998,6 +1002,7 @@ private:
 	StringHandle current_function_name_;
 	StringHandle current_function_mangled_name_;	 // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
+	bool current_function_has_vague_linkage_comdat_ = false;
 	bool current_function_is_variadic_ = false;
 	TypeIndex current_function_return_type_index_{0, TypeCategory::Void};  // TypeCategory embedded; replaces Type current_function_return_type_
 	int current_function_return_size_in_bits_ = 0;

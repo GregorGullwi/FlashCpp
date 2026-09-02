@@ -266,6 +266,36 @@ function Test-FlashCppExpectComdatDefs {
 	return ($failures -join "; ")
 }
 
+function Test-FlashCppExpectNoInt3InUnifiedText {
+	param(
+		[string]$DumpbinPath,
+		[string[]]$ObjectFiles
+	)
+
+	if (-not (Test-Path -LiteralPath $DumpbinPath)) {
+		return "dumpbin.exe not found next to the MSVC linker"
+	}
+
+	$failures = @()
+	foreach ($objFile in $ObjectFiles) {
+		$headerOutput = & $DumpbinPath /HEADERS $objFile 2>&1 | Out-String
+		if ($headerOutput -notmatch '(?m)^\s*\.text\$') {
+			continue
+		}
+		$rawOutput = & $DumpbinPath /RAWDATA /SECTION:.text $objFile 2>&1 | Out-String
+		$hexBytes = [regex]::Matches($rawOutput, '(?m)^\s+[0-9A-F]{8}:((?:\s+[0-9A-F]{2})+)') |
+			ForEach-Object { $_.Groups[1].Value }
+		$joined = ($hexBytes -join ' ').ToUpperInvariant()
+		if ($joined -match '(?:^|\s)(?:CC\s+){15}CC(?:\s|$)') {
+			$failures += "$(Split-Path -Leaf $objFile): unified .text still contains INT3 leftover copies"
+		}
+	}
+	if ($failures.Count -eq 0) {
+		return $null
+	}
+	return ($failures -join "; ")
+}
+
 function Initialize-FlashCppCiOutput {
 	param([string]$Path)
 

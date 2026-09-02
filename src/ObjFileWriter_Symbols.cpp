@@ -32,7 +32,10 @@ void ObjectFileWriter::addFunctionSignature([[maybe_unused]] std::string_view na
 void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage, bool is_inline) {
 	if (g_enable_debug_output)
 		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
-	pending_functions_.push_back({std::string(mangled_name), section_offset, 0, is_inline});
+	if (native_comdat_function_active_) {
+		throw InternalError("Native COMDAT function was not finished before the next symbol");
+	}
+	pending_functions_.push_back({std::string(mangled_name), section_offset, 0, is_inline, false});
 	if (!is_inline) {
 		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 		auto symbol_func = coffi_.add_symbol(mangled_name);
@@ -40,6 +43,8 @@ void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32
 		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		symbol_func->set_section_number(section_text->get_index() + 1);
 		symbol_func->set_value(section_offset);
+	} else {
+		beginNativeComdatFunction(mangled_name, section_offset);
 	}
 
 	// Handle dllexport - add export directive
@@ -87,6 +92,10 @@ void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32
 }
 
 void ObjectFileWriter::add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset) {
+	if (native_comdat_function_active_ && section_offset >= native_comdat_function_start_) {
+		native_comdat_static_symbols_.push_back({std::string(symbol_name), section_offset - native_comdat_function_start_});
+		return;
+	}
 	auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 	auto* symbol = coffi_.get_symbol(symbol_name);
 	if (!symbol) {
@@ -103,6 +112,18 @@ void ObjectFileWriter::add_data(std::span<const uint8_t> data, SectionType secti
 }
 
 void ObjectFileWriter::add_data(std::span<const char> data, SectionType section_type) {
+	if (section_type == SectionType::XDATA && native_comdat_xdata_section_ != nullptr) {
+		if (!data.empty()) {
+			native_comdat_xdata_section_->append_data(data.data(), static_cast<uint32_t>(data.size()));
+		}
+		return;
+	}
+	if (section_type == SectionType::PDATA && native_comdat_pdata_section_ != nullptr) {
+		if (!data.empty()) {
+			native_comdat_pdata_section_->append_data(data.data(), static_cast<uint32_t>(data.size()));
+		}
+		return;
+	}
 	int section_index = sectiontype_to_index[section_type];
 	if (g_enable_debug_output)
 		std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type) << " (index=" << section_index << ")";
@@ -155,6 +176,14 @@ void ObjectFileWriter::add_relocation(uint64_t offset, std::string_view symbol_n
 		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 	}
 
+	if (shouldBufferNativeTextReloc(offset)) {
+		native_comdat_text_relocs_.push_back({
+			static_cast<uint32_t>(offset - native_comdat_function_start_),
+			symbol_str,
+			relocation_type});
+		return;
+	}
+
 	auto symbol_index = symbol->get_index();
 	auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 	COFFI::rel_entry_generic relocation;
@@ -180,6 +209,14 @@ void ObjectFileWriter::add_text_relocation(uint64_t offset, const std::string& s
 		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 		if (g_enable_debug_output)
 			std::cerr << "Created external symbol for text relocation: " << symbol_name << std::endl;
+	}
+
+	if (shouldBufferNativeTextReloc(offset)) {
+		native_comdat_text_relocs_.push_back({
+			static_cast<uint32_t>(offset - native_comdat_function_start_),
+			symbol_name,
+			relocation_type});
+		return;
 	}
 
 	auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
@@ -243,22 +280,21 @@ void ObjectFileWriter::add_pdata_relocations(uint32_t pdata_offset, std::string_
 	if (g_enable_debug_output)
 		std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
-	// Use the .text section symbol (value=0) for BeginAddress/EndAddress relocations.
-	// The pdata data already contains absolute .text offsets as addends, so:
+	// Use the unwind text section symbol (value=0) for BeginAddress/EndAddress.
+	// The pdata data already contains section-relative offsets as addends, so:
 	//   result = text_RVA + 0 + addend = text_RVA + addend = correct
 	// Using the function symbol would double-count: text_RVA + func_start + func_start
-	auto* text_symbol = coffi_.get_symbol(".text");
+	COFFI::symbol* text_symbol = unwindTextSymbol();
 	if (!text_symbol) {
 		throw std::runtime_error("Text section symbol not found");
 	}
 
-	// Get the .xdata section symbol
-	auto* xdata_symbol = coffi_.get_symbol(".xdata");
+	COFFI::symbol* xdata_symbol = unwindXdataSymbol();
 	if (!xdata_symbol) {
 		throw std::runtime_error("XDATA section symbol not found");
 	}
 
-	auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
+	COFFI::section* pdata_section = unwindPdataSection();
 
 	// Relocation 1: Function start address (offset 0 in PDATA entry)
 	// Addend in data = function_start (absolute .text offset)
@@ -304,7 +340,7 @@ void ObjectFileWriter::add_xdata_relocation(uint32_t xdata_offset, std::string_v
 			std::cerr << "Created external symbol for exception handler: " << handler_name << std::endl;
 	}
 
-	auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+	COFFI::section* xdata_section = unwindXdataSection();
 
 	// Add relocation for the exception handler RVA in XDATA
 	COFFI::rel_entry_generic reloc;
@@ -799,439 +835,196 @@ void ObjectFileWriter::emit_vague_linkage_comdat_rdata(std::string_view external
 	emitVagueLinkageComdatRdata(external_symbol_name, data, relocations, external_symbol_value);
 }
 
-void ObjectFileWriter::emitInlineFunctionComdats(std::span<const uint8_t> text_data) {
-	// The COFF section-definition symbol must precede the external COMDAT
-	// leader. COFFI cannot reorder symbols after emission, so vague-linkage
-	// function symbols are deferred until this point.
-	auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
-	auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-	auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
-	const auto& text_relocations = text_section->get_relocations();
-	const auto& xdata_relocations = xdata_section->get_relocations();
-	const char* xdata_bytes = xdata_section->get_data();
-	const uint32_t xdata_byte_count = static_cast<uint32_t>(xdata_section->get_data_size());
-	const char* pdata_bytes = pdata_section->get_data();
-	const uint32_t pdata_byte_count = static_cast<uint32_t>(pdata_section->get_data_size());
-	auto* unified_text_symbol = coffi_.get_symbol(".text");
-	auto* unified_xdata_symbol = coffi_.get_symbol(".xdata");
-	if (!unified_text_symbol || !unified_xdata_symbol) {
-		throw InternalError("Unified unwind section symbols are missing");
-	}
-	// Capture indices immediately. add_symbol() can reallocate the symbol
-	// vector, so later uses of these pointers would be dangling. .text is
-	// index 0, so a zeroed dangling pointer still "worked" for text remaps
-	// and hid the same bug for .xdata (index != 0).
-	const uint32_t unified_text_symbol_index = unified_text_symbol->get_index();
-	const uint32_t unified_xdata_symbol_index = unified_xdata_symbol->get_index();
-	std::vector<std::pair<uint32_t, uint32_t>> copied_text_ranges;
-	std::vector<std::pair<uint32_t, uint32_t>> copied_xdata_ranges;
-	std::vector<uint32_t> copied_pdata_offsets;
+void ObjectFileWriter::beginNativeComdatFunction(std::string_view mangled_name, uint32_t unified_offset) {
+	native_comdat_function_active_ = true;
+	native_comdat_function_start_ = unified_offset;
+	native_comdat_function_name_ = std::string(mangled_name);
+	native_comdat_text_relocs_.clear();
+	native_comdat_static_symbols_.clear();
+}
 
-	auto addRegularFunctionSymbol = [&](const PendingFunctionInfo& function) {
-		auto symbol = coffi_.add_symbol(function.name);
+bool ObjectFileWriter::shouldBufferNativeTextReloc(uint64_t offset) {
+	return native_comdat_function_active_ && offset >= native_comdat_function_start_;
+}
+
+COFFI::section* ObjectFileWriter::unwindXdataSection() {
+	if (native_comdat_xdata_section_ != nullptr) {
+		return native_comdat_xdata_section_;
+	}
+	return coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+}
+
+COFFI::section* ObjectFileWriter::unwindPdataSection() {
+	if (native_comdat_pdata_section_ != nullptr) {
+		return native_comdat_pdata_section_;
+	}
+	return coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
+}
+
+COFFI::symbol* ObjectFileWriter::unwindTextSymbol() {
+	if (native_comdat_text_section_ != nullptr) {
+		COFFI::symbol* symbol = coffi_.get_symbol(native_comdat_text_symbol_index_);
+		if (symbol == nullptr) {
+			throw InternalError("Native COMDAT text section symbol is missing");
+		}
+		return symbol;
+	}
+	return coffi_.get_symbol(".text");
+}
+
+COFFI::symbol* ObjectFileWriter::unwindXdataSymbol() {
+	if (native_comdat_xdata_section_ != nullptr) {
+		COFFI::symbol* symbol = coffi_.get_symbol(native_comdat_xdata_symbol_index_);
+		if (symbol == nullptr) {
+			throw InternalError("Native COMDAT xdata section symbol is missing");
+		}
+		return symbol;
+	}
+	return coffi_.get_symbol(".xdata");
+}
+
+void ObjectFileWriter::finalizeComdatSectionAux(COFFI::section* section) {
+	COFFI::symbol* section_symbol = findComdatSectionSymbol(section);
+	if (section_symbol == nullptr) {
+		throw InternalError("COMDAT section symbol was not created");
+	}
+	auto& aux_symbols = section_symbol->get_auxiliary_symbols();
+	if (aux_symbols.empty()) {
+		throw InternalError("COMDAT section symbol is missing aux format 5");
+	}
+	COFFI::auxiliary_symbol_record_5 aux = {};
+	std::memcpy(&aux, aux_symbols[0].value, sizeof(aux_symbols[0].value));
+	aux.length = static_cast<uint32_t>(section->get_data_size());
+	aux.number_of_relocations = static_cast<uint16_t>(section->get_relocations().size());
+	std::memcpy(aux_symbols[0].value, &aux, sizeof(aux_symbols[0].value));
+}
+
+void ObjectFileWriter::emitNativeVagueLinkageFunction(std::string_view mangled_name, std::span<const uint8_t> text_bytes) {
+	PendingFunctionInfo* pending = nullptr;
+	for (auto it = pending_functions_.rbegin(); it != pending_functions_.rend(); ++it) {
+		if (it->name == mangled_name) {
+			pending = &(*it);
+			break;
+		}
+	}
+	if (pending == nullptr) {
+		throw InternalError("Native COMDAT emission was requested for an unknown function");
+	}
+	if (!pending->is_inline) {
+		throw InternalError("Native COMDAT emission was requested for a unique function");
+	}
+	if (pending->natively_emitted) {
+		throw InternalError("Native COMDAT function was emitted twice");
+	}
+
+	native_comdat_function_active_ = false;
+
+	if (text_bytes.empty()) {
+		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+		auto symbol = coffi_.add_symbol(pending->name);
 		symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
 		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		symbol->set_section_number(text_section->get_index() + 1);
-		symbol->set_value(function.offset);
-	};
+		symbol->set_section_number(section_text->get_index() + 1);
+		symbol->set_value(pending->offset);
+		pending->natively_emitted = true;
+		native_comdat_text_relocs_.clear();
+		native_comdat_static_symbols_.clear();
+		native_comdat_function_name_.clear();
+		return;
+	}
 
-	auto patchU32 = [](std::vector<char>& buffer, uint32_t offset, uint32_t value) {
-		if (offset + 4 > buffer.size()) {
-			throw InternalError("COMDAT patch offset is outside section data");
-		}
-		std::memcpy(buffer.data() + offset, &value, sizeof(value));
-	};
+	std::vector<ComdatReloc> text_relocations_out;
+	text_relocations_out.reserve(native_comdat_text_relocs_.size());
+	for (const PendingNativeTextReloc& reloc : native_comdat_text_relocs_) {
+		text_relocations_out.push_back({
+			reloc.local_offset,
+			get_or_create_symbol_index(reloc.symbol_name),
+			reloc.type});
+	}
 
-	auto readU32 = [](std::span<const char> buffer, uint32_t offset) -> uint32_t {
-		if (offset + 4 > buffer.size()) {
-			throw InternalError("COMDAT read offset is outside section data");
-		}
-		uint32_t value = 0;
-		std::memcpy(&value, buffer.data() + offset, sizeof(value));
-		return value;
-	};
+	std::vector<char> text_comdat_data(reinterpret_cast<const char*>(text_bytes.data()),
+		reinterpret_cast<const char*>(text_bytes.data() + text_bytes.size()));
+	COFFI::section* text_comdat_section = emitComdatSection(
+		".text$", inline_comdat_section_counter_,
+		IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_ALIGN_16BYTES,
+		text_comdat_data, text_relocations_out, 0, IMAGE_COMDAT_SELECT_ANY, pending->name, true, 0);
+	auto* text_comdat_symbol = findComdatSectionSymbol(text_comdat_section);
+	if (!text_comdat_symbol) {
+		throw InternalError("COMDAT text section symbol was not created");
+	}
+	native_comdat_text_section_ = text_comdat_section;
+	native_comdat_text_symbol_index_ = text_comdat_symbol->get_index();
+	native_comdat_leader_section_number_ = static_cast<uint16_t>(text_comdat_section->get_index() + 1);
 
+	for (const PendingNativeStaticSymbol& static_symbol : native_comdat_static_symbols_) {
+		COFFI::symbol* symbol = coffi_.add_symbol(static_symbol.name);
+		symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
+		symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		symbol->set_section_number(native_comdat_leader_section_number_);
+		symbol->set_value(static_symbol.local_offset);
+	}
+
+	COFFI::section* xdata_comdat_section = emitComdatSection(
+		".xdata$", inline_comdat_xdata_section_counter_,
+		IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES,
+		{}, {}, native_comdat_leader_section_number_, IMAGE_COMDAT_SELECT_ASSOCIATIVE, {}, false, 0);
+	auto* xdata_comdat_symbol = findComdatSectionSymbol(xdata_comdat_section);
+	if (!xdata_comdat_symbol) {
+		throw InternalError("COMDAT xdata section symbol was not created");
+	}
+	native_comdat_xdata_section_ = xdata_comdat_section;
+	native_comdat_xdata_symbol_index_ = xdata_comdat_symbol->get_index();
+
+	COFFI::section* pdata_comdat_section = emitComdatSection(
+		".pdata$", inline_comdat_pdata_section_counter_,
+		IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES,
+		{}, {}, native_comdat_leader_section_number_, IMAGE_COMDAT_SELECT_ASSOCIATIVE, {}, false, 0);
+	if (pdata_comdat_section == nullptr) {
+		throw InternalError("COMDAT pdata section was not created");
+	}
+	native_comdat_pdata_section_ = pdata_comdat_section;
+
+	native_comdat_text_relocs_.clear();
+	native_comdat_static_symbols_.clear();
+	pending->natively_emitted = true;
+}
+
+void ObjectFileWriter::finishNativeComdatFunction() {
+	if (native_comdat_xdata_section_ != nullptr) {
+		finalizeComdatSectionAux(native_comdat_xdata_section_);
+	}
+	if (native_comdat_pdata_section_ != nullptr) {
+		finalizeComdatSectionAux(native_comdat_pdata_section_);
+	}
+	native_comdat_function_active_ = false;
+	native_comdat_function_start_ = 0;
+	native_comdat_function_name_.clear();
+	native_comdat_text_relocs_.clear();
+	native_comdat_static_symbols_.clear();
+	native_comdat_text_section_ = nullptr;
+	native_comdat_text_symbol_index_ = 0;
+	native_comdat_leader_section_number_ = 0;
+	native_comdat_xdata_section_ = nullptr;
+	native_comdat_xdata_symbol_index_ = 0;
+	native_comdat_pdata_section_ = nullptr;
+}
+
+void ObjectFileWriter::emitInlineFunctionComdats(std::span<const uint8_t> text_data) {
+	(void)text_data;
 	for (const PendingFunctionInfo& function : pending_functions_) {
-		if (!function.is_inline) {
+		if (!function.is_inline || function.natively_emitted) {
 			continue;
 		}
 		if (function.length == 0) {
-			addRegularFunctionSymbol(function);
+			auto symbol = coffi_.add_symbol(function.name);
+			symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
+			symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+			symbol->set_section_number(coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]]->get_index() + 1);
+			symbol->set_value(function.offset);
 			continue;
 		}
-		if (function.offset > text_data.size() || function.length > text_data.size() - function.offset) {
-			throw InternalError("Inline function COMDAT range is outside the text section");
-		}
-
-		auto unwind_it = function_unwind_bundles_.find(function.name);
-		uint32_t comdat_begin = function.offset;
-		uint32_t comdat_end = function.offset + function.length;
-		if (unwind_it != function_unwind_bundles_.end()) {
-			for (const PendingPdataRecord& pdata_record : unwind_it->second.pdata_records) {
-				if (pdata_record.begin_rva < comdat_begin) {
-					comdat_begin = pdata_record.begin_rva;
-				}
-				if (pdata_record.end_rva > comdat_end) {
-					comdat_end = pdata_record.end_rva;
-				}
-			}
-		}
-		if (comdat_end > text_data.size() || comdat_begin > comdat_end) {
-			throw InternalError("Inline function COMDAT range is outside the text section");
-		}
-		const uint32_t leader_value = function.offset - comdat_begin;
-
-		std::vector<ComdatReloc> text_relocations_out;
-		for (const COFFI::relocation& relocation : text_relocations) {
-			if (relocation.get_virtual_address() < comdat_begin ||
-				relocation.get_virtual_address() >= comdat_end) {
-				continue;
-			}
-			text_relocations_out.push_back({
-				relocation.get_virtual_address() - comdat_begin,
-				relocation.get_symbol_table_index(),
-				relocation.get_type()});
-		}
-
-		copied_text_ranges.push_back({comdat_begin, comdat_end - comdat_begin});
-		std::vector<char> text_comdat_data(reinterpret_cast<const char*>(text_data.data() + comdat_begin),
-			reinterpret_cast<const char*>(text_data.data() + comdat_end));
-		COFFI::section* text_comdat_section = emitComdatSection(
-			".text$", inline_comdat_section_counter_,
-			IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE | IMAGE_SCN_ALIGN_16BYTES,
-			text_comdat_data, text_relocations_out, 0, IMAGE_COMDAT_SELECT_ANY, function.name, true, leader_value);
-		auto* text_comdat_symbol = findComdatSectionSymbol(text_comdat_section);
-		if (!text_comdat_symbol) {
-			throw InternalError("COMDAT text section symbol was not created");
-		}
-		const uint32_t text_comdat_symbol_index = text_comdat_symbol->get_index();
-		const uint16_t leader_section_number = static_cast<uint16_t>(text_comdat_section->get_index() + 1);
-		const int32_t unified_text_section_number = static_cast<int32_t>(text_section->get_index() + 1);
-		struct RehomedTextSymbol {
-			uint32_t old_index = 0;
-			std::string name;
-			uint16_t type = 0;
-			uint32_t new_value = 0;
-		};
-		std::vector<RehomedTextSymbol> rehomed_text_symbols;
-		auto* symbols = coffi_.get_symbols();
-		for (size_t i = 0; i < symbols->size(); ++i) {
-			COFFI::symbol& symbol = (*symbols)[i];
-			if (symbol.get_section_number() != unified_text_section_number ||
-				symbol.get_storage_class() != IMAGE_SYM_CLASS_STATIC ||
-				symbol.get_aux_symbols_number() != 0) {
-				continue;
-			}
-			const uint32_t value = symbol.get_value();
-			if (value < comdat_begin || value >= comdat_end) {
-				continue;
-			}
-			rehomed_text_symbols.push_back({symbol.get_index(), symbol.get_name(), symbol.get_type(),
-				value - comdat_begin});
-		}
-		for (const RehomedTextSymbol& rehomed : rehomed_text_symbols) {
-			COFFI::symbol* new_symbol = coffi_.add_symbol(rehomed.name);
-			new_symbol->set_type(rehomed.type);
-			new_symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-			new_symbol->set_section_number(leader_section_number);
-			new_symbol->set_value(rehomed.new_value);
-			retargetRelocations(rehomed.old_index, new_symbol->get_index());
-			COFFI::symbol* old_symbol = coffi_.get_symbol(rehomed.old_index);
-			if (old_symbol == nullptr) {
-				throw InternalError("Replaced unified text COMDAT symbol is missing");
-			}
-			neutralizeReplacedUndefSymbol(old_symbol);
-		}
-
-		if (unwind_it == function_unwind_bundles_.end() || unwind_it->second.xdata_ranges.empty()) {
-			continue;
-		}
-
-		struct XdataComdat {
-			uint32_t unified_offset = 0;
-			uint32_t length = 0;
-			COFFI::section* section = nullptr;
-			uint32_t symbol_index = 0;
-		};
-		std::vector<XdataComdat> xdata_comdats;
-		xdata_comdats.reserve(unwind_it->second.xdata_ranges.size());
-		for (const auto& xdata_range : unwind_it->second.xdata_ranges) {
-			if (xdata_range.first + xdata_range.second > xdata_byte_count) {
-				throw InternalError("Inline function XDATA range is outside the xdata section");
-			}
-			std::vector<char> xdata_comdat_data(xdata_bytes + xdata_range.first,
-				xdata_bytes + xdata_range.first + xdata_range.second);
-			std::vector<ComdatReloc> xdata_relocations_out;
-			for (const COFFI::relocation& relocation : xdata_relocations) {
-				if (relocation.get_virtual_address() < xdata_range.first ||
-					relocation.get_virtual_address() >= xdata_range.first + xdata_range.second) {
-					continue;
-				}
-				const uint32_t local_offset = relocation.get_virtual_address() - xdata_range.first;
-				uint32_t symbol_index = relocation.get_symbol_table_index();
-				if (symbol_index == unified_text_symbol_index) {
-					uint32_t addend = readU32(std::span<const char>(xdata_comdat_data), local_offset);
-					// IPtoStateMap end markers are exclusive and may equal
-					// comdat_end (one-past-last byte of the copied range).
-					if (addend >= comdat_begin && addend <= comdat_end) {
-						symbol_index = text_comdat_symbol_index;
-						patchU32(xdata_comdat_data, local_offset, addend - comdat_begin);
-					}
-				}
-				xdata_relocations_out.push_back({local_offset, symbol_index, relocation.get_type()});
-			}
-
-			COFFI::section* xdata_comdat_section = emitComdatSection(
-				".xdata$", inline_comdat_xdata_section_counter_,
-				IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES,
-				xdata_comdat_data, xdata_relocations_out, leader_section_number, IMAGE_COMDAT_SELECT_ASSOCIATIVE, {}, false, 0);
-			auto* xdata_comdat_symbol = findComdatSectionSymbol(xdata_comdat_section);
-			if (!xdata_comdat_symbol) {
-				throw InternalError("COMDAT xdata section symbol was not created");
-			}
-			copied_xdata_ranges.push_back({xdata_range.first, xdata_range.second});
-			xdata_comdats.push_back({xdata_range.first, xdata_range.second, xdata_comdat_section,
-				xdata_comdat_symbol->get_index()});
-		}
-
-		auto findXdataComdat = [&](uint32_t unified_offset) -> const XdataComdat* {
-			for (const XdataComdat& xdata_comdat : xdata_comdats) {
-				if (unified_offset >= xdata_comdat.unified_offset &&
-					unified_offset < xdata_comdat.unified_offset + xdata_comdat.length) {
-					return &xdata_comdat;
-				}
-			}
-			return nullptr;
-		};
-
-		for (const XdataComdat& xdata_comdat : xdata_comdats) {
-			char* section_bytes = const_cast<char*>(xdata_comdat.section->get_data());
-			const uint32_t section_size = static_cast<uint32_t>(xdata_comdat.section->get_data_size());
-			for (auto& relocation : xdata_comdat.section->get_relocations()) {
-				if (relocation.get_symbol_table_index() != unified_xdata_symbol_index) {
-					continue;
-				}
-				const uint32_t local_offset = relocation.get_virtual_address();
-				uint32_t addend = readU32(std::span<const char>(section_bytes, section_size), local_offset);
-				const XdataComdat* target = findXdataComdat(addend);
-				if (target == nullptr) {
-					continue;
-				}
-				if (local_offset + 4 > section_size) {
-					throw InternalError("COMDAT xdata reloc is outside section data");
-				}
-				uint32_t local_addend = addend - target->unified_offset;
-				std::memcpy(section_bytes + local_offset, &local_addend, sizeof(local_addend));
-				relocation.set_symbol(target->symbol_index);
-			}
-		}
-
-		for (const PendingPdataRecord& pdata_record : unwind_it->second.pdata_records) {
-			if (pdata_record.offset + 12 > pdata_byte_count) {
-				throw InternalError("Inline function PDATA range is outside the pdata section");
-			}
-			std::vector<char> pdata_comdat_data(pdata_bytes + pdata_record.offset,
-				pdata_bytes + pdata_record.offset + 12);
-			patchU32(pdata_comdat_data, 0, pdata_record.begin_rva - comdat_begin);
-			patchU32(pdata_comdat_data, 4, pdata_record.end_rva - comdat_begin);
-
-			const XdataComdat* xdata_target = findXdataComdat(pdata_record.unwind_rva);
-			if (xdata_target == nullptr) {
-				throw InternalError("Inline function PDATA references unknown XDATA range");
-			}
-			patchU32(pdata_comdat_data, 8, pdata_record.unwind_rva - xdata_target->unified_offset);
-
-			std::vector<ComdatReloc> pdata_relocations_out = {
-				{0, text_comdat_symbol_index, IMAGE_REL_AMD64_ADDR32NB},
-				{4, text_comdat_symbol_index, IMAGE_REL_AMD64_ADDR32NB},
-				{8, xdata_target->symbol_index, IMAGE_REL_AMD64_ADDR32NB},
-			};
-			copied_pdata_offsets.push_back(pdata_record.offset);
-			emitComdatSection(".pdata$", inline_comdat_pdata_section_counter_,
-				IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES,
-				pdata_comdat_data, pdata_relocations_out, leader_section_number, IMAGE_COMDAT_SELECT_ASSOCIATIVE, {}, false, 0);
-		}
+		throw InternalError("Vague-linkage function was not natively emitted as COMDAT");
 	}
-
-	// Copy-out leaves the original bytes in the unified sections. Zeroing
-	// .pdata in place produces RVA 0-0 records (LNK1223). Compact instead:
-	// drop copied unwind rows, then INT3 the leftover .text copies.
-	compactUnifiedPdataAfterComdatCopy(pdata_section, copied_pdata_offsets);
-	compactUnifiedXdataAfterComdatCopy(xdata_section, pdata_section, copied_xdata_ranges, unified_xdata_symbol_index);
-	neutralizeCopiedUnifiedText(text_section, copied_text_ranges);
-}
-
-void ObjectFileWriter::compactUnifiedPdataAfterComdatCopy(COFFI::section* pdata_section, std::span<const uint32_t> dropped_offsets) {
-	if (dropped_offsets.empty()) {
-		return;
-	}
-	const uint32_t old_size = static_cast<uint32_t>(pdata_section->get_data_size());
-	if (old_size % 12 != 0) {
-		throw InternalError("Unified PDATA size is not a multiple of 12");
-	}
-	const uint32_t slot_count = old_size / 12;
-	std::vector<uint8_t> dropped_slot(slot_count, 0);
-	for (uint32_t offset : dropped_offsets) {
-		if (offset % 12 != 0 || offset + 12 > old_size) {
-			throw InternalError("Copied PDATA offset is outside the unified section");
-		}
-		dropped_slot[offset / 12] = 1;
-	}
-
-	const char* old_bytes = pdata_section->get_data();
-	std::vector<uint32_t> new_slot_offset(slot_count, ~0u);
-	std::vector<char> new_data;
-	new_data.reserve(old_size);
-	for (uint32_t slot = 0; slot < slot_count; ++slot) {
-		if (dropped_slot[slot] != 0) {
-			continue;
-		}
-		new_slot_offset[slot] = static_cast<uint32_t>(new_data.size());
-		new_data.insert(new_data.end(), old_bytes + slot * 12, old_bytes + slot * 12 + 12);
-	}
-
-	auto& relocations = pdata_section->get_relocations();
-	size_t write = 0;
-	for (size_t read = 0; read < relocations.size(); ++read) {
-		const uint32_t va = relocations[read].get_virtual_address();
-		if (va + 4 > old_size) {
-			throw InternalError("Unified PDATA reloc is outside section data");
-		}
-		const uint32_t slot = va / 12;
-		if (slot >= slot_count || dropped_slot[slot] != 0) {
-			continue;
-		}
-		if (write != read) {
-			relocations[write] = relocations[read];
-		}
-		relocations[write].set_virtual_address(new_slot_offset[slot] + (va % 12));
-		++write;
-	}
-	relocations.erase(relocations.begin() + static_cast<std::ptrdiff_t>(write), relocations.end());
-	pdata_section->set_reloc_count(static_cast<uint32_t>(relocations.size()));
-	pdata_section->set_data(new_data.empty() ? nullptr : new_data.data(), static_cast<uint32_t>(new_data.size()));
-}
-
-void ObjectFileWriter::compactUnifiedXdataAfterComdatCopy(COFFI::section* xdata_section, COFFI::section* pdata_section,
-	std::span<const std::pair<uint32_t, uint32_t>> dropped_ranges, uint32_t unified_xdata_symbol_index) {
-	if (dropped_ranges.empty()) {
-		return;
-	}
-	const uint32_t old_size = static_cast<uint32_t>(xdata_section->get_data_size());
-	std::vector<uint8_t> dropped(old_size, 0);
-	for (const auto& range : dropped_ranges) {
-		if (range.second == 0) {
-			continue;
-		}
-		if (range.first > old_size || range.second > old_size - range.first) {
-			throw InternalError("Copied XDATA range is outside the unified section");
-		}
-		std::fill(dropped.begin() + range.first, dropped.begin() + range.first + range.second, 1);
-	}
-
-	const char* old_bytes = xdata_section->get_data();
-	std::vector<uint32_t> new_offset(old_size, ~0u);
-	std::vector<char> new_data;
-	new_data.reserve(old_size);
-	for (uint32_t i = 0; i < old_size; ++i) {
-		if (dropped[i] != 0) {
-			continue;
-		}
-		new_offset[i] = static_cast<uint32_t>(new_data.size());
-		new_data.push_back(old_bytes[i]);
-	}
-
-	auto& relocations = xdata_section->get_relocations();
-	size_t write = 0;
-	for (size_t read = 0; read < relocations.size(); ++read) {
-		const uint32_t va = relocations[read].get_virtual_address();
-		if (va + 4 > old_size) {
-			throw InternalError("Unified XDATA reloc is outside section data");
-		}
-		if (dropped[va] != 0) {
-			continue;
-		}
-		if (write != read) {
-			relocations[write] = relocations[read];
-		}
-		const uint32_t new_va = new_offset[va];
-		relocations[write].set_virtual_address(new_va);
-		if (relocations[write].get_symbol_table_index() == unified_xdata_symbol_index) {
-			uint32_t addend = 0;
-			std::memcpy(&addend, new_data.data() + new_va, sizeof(addend));
-			if (addend >= old_size || new_offset[addend] == ~0u) {
-				throw InternalError("Unified XDATA reloc targets copied XDATA");
-			}
-			const uint32_t mapped_addend = new_offset[addend];
-			std::memcpy(new_data.data() + new_va, &mapped_addend, sizeof(mapped_addend));
-		}
-		++write;
-	}
-	relocations.erase(relocations.begin() + static_cast<std::ptrdiff_t>(write), relocations.end());
-	xdata_section->set_reloc_count(static_cast<uint32_t>(relocations.size()));
-	xdata_section->set_data(new_data.empty() ? nullptr : new_data.data(), static_cast<uint32_t>(new_data.size()));
-
-	const uint32_t pdata_size = static_cast<uint32_t>(pdata_section->get_data_size());
-	if (pdata_size % 12 != 0) {
-		throw InternalError("Unified PDATA size is not a multiple of 12");
-	}
-	if (pdata_size == 0) {
-		return;
-	}
-	char* pdata_bytes = const_cast<char*>(pdata_section->get_data());
-	for (uint32_t offset = 0; offset < pdata_size; offset += 12) {
-		uint32_t unwind_rva = 0;
-		std::memcpy(&unwind_rva, pdata_bytes + offset + 8, sizeof(unwind_rva));
-		if (unwind_rva >= old_size || new_offset[unwind_rva] == ~0u) {
-			throw InternalError("Unified PDATA references copied XDATA");
-		}
-		const uint32_t mapped_unwind = new_offset[unwind_rva];
-		std::memcpy(pdata_bytes + offset + 8, &mapped_unwind, sizeof(mapped_unwind));
-	}
-}
-
-void ObjectFileWriter::neutralizeCopiedUnifiedText(COFFI::section* text_section, std::span<const std::pair<uint32_t, uint32_t>> copied_ranges) {
-	if (copied_ranges.empty()) {
-		return;
-	}
-	const uint32_t text_size = static_cast<uint32_t>(text_section->get_data_size());
-	char* text_bytes = const_cast<char*>(text_section->get_data());
-	if (text_bytes == nullptr && text_size != 0) {
-		throw InternalError("Unified text section data is missing");
-	}
-	for (const auto& range : copied_ranges) {
-		if (range.second == 0) {
-			continue;
-		}
-		if (range.first > text_size || range.second > text_size - range.first) {
-			throw InternalError("Copied text range is outside the unified section");
-		}
-		std::memset(text_bytes + range.first, 0xCC, range.second);
-	}
-
-	auto offsetInCopiedRange = [&](uint32_t va) {
-		for (const auto& range : copied_ranges) {
-			if (va >= range.first && va < range.first + range.second) {
-				return true;
-			}
-		}
-		return false;
-	};
-
-	auto& relocations = text_section->get_relocations();
-	size_t write = 0;
-	for (size_t read = 0; read < relocations.size(); ++read) {
-		const uint32_t va = relocations[read].get_virtual_address();
-		if (offsetInCopiedRange(va)) {
-			continue;
-		}
-		if (write != read) {
-			relocations[write] = relocations[read];
-		}
-		++write;
-	}
-	relocations.erase(relocations.begin() + static_cast<std::ptrdiff_t>(write), relocations.end());
-	text_section->set_reloc_count(static_cast<uint32_t>(relocations.size()));
 }
 
 void ObjectFileWriter::set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size) {

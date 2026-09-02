@@ -839,9 +839,9 @@ void ObjectFileWriter::emit_exception_relocations(uint32_t xdata_offset, uint32_
 		// These relocations are against the .text section symbol (value=0) so the linker computes:
 		//   result = text_RVA + 0 + addend = text_RVA + addend
 		// The addend in data is the absolute .text offset (function_start + offset_within_func)
-		auto* text_symbol = coffi_.get_symbol(".text");
+		COFFI::symbol* text_symbol = unwindTextSymbol();
 		if (text_symbol) {
-			auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+			COFFI::section* xdata_sec = unwindXdataSection();
 			for (const auto& sr : scope_relocs) {
 				// BeginAddress relocation
 				COFFI::rel_entry_generic reloc_begin;
@@ -883,9 +883,9 @@ void ObjectFileWriter::emit_exception_relocations(uint32_t xdata_offset, uint32_
 
 		// Add IMAGE_REL_AMD64_ADDR32NB relocations for C++ EH metadata RVAs.
 		// These fields are image-relative RVAs and must be fixed by the linker.
-		auto* xdata_symbol = coffi_.get_symbol(".xdata");
-		auto* text_symbol = coffi_.get_symbol(".text");
-		auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+		COFFI::symbol* xdata_symbol = unwindXdataSymbol();
+		COFFI::symbol* text_symbol = unwindTextSymbol();
+		COFFI::section* xdata_sec = unwindXdataSection();
 
 		if (xdata_symbol) {
 			for (uint32_t field_off : cpp_xdata_rva_field_offsets) {
@@ -938,8 +938,8 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 	};
 
 	auto add_cpp_funcinfo_relocation = [this](uint32_t record_xdata_offset, uint32_t funcinfo_rva_local_offset) {
-		auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-		auto* xdata_sym = coffi_.get_symbol(".xdata");
+		COFFI::section* xdata_sec = unwindXdataSection();
+		COFFI::symbol* xdata_sym = unwindXdataSymbol();
 		if (!xdata_sym) {
 			return;
 		}
@@ -1108,7 +1108,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 				appendLE_xdata(post_catch_xdata, uint32_t(0));
 				uint32_t post_catch_funcinfo_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
 				appendLE_xdata(post_catch_xdata, xdata_offset + cpp_funcinfo_local_offset);
-				auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+				auto xdata_section_curr = unwindXdataSection();
 				post_catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 				add_data(post_catch_xdata, SectionType::XDATA);
 				recordFunctionXdataRange(mangled_name, post_catch_xdata_offset, static_cast<uint32_t>(post_catch_xdata.size()));
@@ -1140,9 +1140,9 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 		auto emit_cpp_metadata_relocations = [this](uint32_t record_xdata_offset,
 													std::span<const uint32_t> cpp_xdata_rva_field_offsets,
 													std::span<const uint32_t> cpp_text_rva_field_offsets) {
-			auto* xdata_symbol = coffi_.get_symbol(".xdata");
-			auto* text_symbol = coffi_.get_symbol(".text");
-			auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+			COFFI::symbol* xdata_symbol = unwindXdataSymbol();
+			COFFI::symbol* text_symbol = unwindTextSymbol();
+			COFFI::section* xdata_sec = unwindXdataSection();
 
 			if (xdata_symbol) {
 				for (uint32_t field_off : cpp_xdata_rva_field_offsets) {
@@ -1212,7 +1212,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 			uint32_t catch_funcinfo_rva_local = static_cast<uint32_t>(catch_xdata.size());
 			appendLE_xdata(catch_xdata, uint32_t(0));
 
-			auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+			auto xdata_section_curr = unwindXdataSection();
 			uint32_t catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 				// Keep catch funclets on the parent FuncInfo for now. Synthesized local
 				// FuncInfo still trips FH3 fail-fast on nested throws from inside catches,
@@ -1377,7 +1377,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 				static_cast<char>(0x02),
 				static_cast<char>(0x50)};
 
-			auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+			auto xdata_section_curr = unwindXdataSection();
 			uint32_t cleanup_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 			add_data(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(cleanup_xdata.data()), cleanup_xdata.size()), SectionType::XDATA);
 			recordFunctionXdataRange(mangled_name, cleanup_xdata_offset, static_cast<uint32_t>(cleanup_xdata.size()));
@@ -1395,7 +1395,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 	});
 
 	for (const auto& entry : pending_pdata_entries) {
-		auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
+		auto pdata_section = unwindPdataSection();
 		uint32_t pdata_offset = static_cast<uint32_t>(pdata_section->get_data_size());
 		std::vector<char> pdata(12);
 		*reinterpret_cast<uint32_t*>(&pdata[0]) = entry.begin_rva;

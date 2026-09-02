@@ -715,10 +715,11 @@ non-template members remain strong. Mangled-name spelling
 (`??$bump@H@@YAHH@Z` vs hashed `bump$…` / `StrongBox$…`) is architecture
 boundary 3B, not this linkage choice.
 
-Function COMDATs are still produced by copy-out from unified `.text` /
-`.xdata` / `.pdata`. After copy-out, the unified unwind tables are
-compacted and leftover `.text` copies are INT3'd. Native emission without
-copy-out remains Gate 0 criterion 8.
+Function COMDATs are emitted natively into `.text$N` / `.xdata$N` / `.pdata$N`
+during codegen. Unique functions remain in unified `.text` / `.xdata` / `.pdata`.
+COFFI cannot reorder symbols, so the section-definition STATIC+aux5 is created
+immediately before the EXTERNAL leader. Gate 0 criterion 8 is closed for COFF
+function COMDATs.
 
 Exit criteria:
 

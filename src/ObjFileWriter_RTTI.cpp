@@ -127,7 +127,7 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 	added_exception_functions_.push_back(std::string(mangled_name));
 
 	// Get current XDATA section size to calculate the offset for this function's unwind info
-	auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+	COFFI::section* xdata_section = unwindXdataSection();
 	uint32_t xdata_offset = static_cast<uint32_t>(xdata_section->get_data_size());
 
 	// Determine if this is SEH or C++ exception handling
