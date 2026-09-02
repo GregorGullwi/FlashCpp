@@ -3598,6 +3598,7 @@ private:	 // Resume private methods
 	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();
 	ParseResult parse_variable_declaration();
+	ParseResult duplicateVariableDeclarationError(const Token& identifier_token);
 	FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();	//  Shared specifier parsing
 	bool looks_like_function_parameters();  // Detect if '(' starts function params vs direct init
 	bool looks_like_elaborated_type_variable_declaration();  // Disambiguate 'struct Foo f = ...' from 'struct Foo { ... }'

@@ -1,13 +1,20 @@
 # Known Issues
 
-## Initialized global definition after an extern declaration is rejected
+## Native COFF emission runtime regressions at 2fde52b9
 
-`extern int value; int value = 17;` is valid C++20, but the parser reports
-`Redefined symbol with different value` for the initialized definition.
-This was encountered while adding the multi-TU ELF unwind regression, before
-any exception metadata is emitted. TODO: merge the declaration and definition
-of the same namespace-scope variable without treating the extern declaration
-as an initialized definition. Owner: parser variable redeclaration handling.
+The native function COMDAT change in `2fde52b9` regresses existing runtime
+tests. An isolated build of that commit without the extern-parser changes
+reproduces a crash in `test_addressof_static_storage_ret42.cpp` and incorrect
+returns in `test_conversion_operator_type_alias_ret42.cpp` and
+`test_rvo_large_struct_ret0.cpp`. These cases pass with the parser slice on
+the preceding `e2ea6c1b` baseline.
+
+The complete Windows suite passes with the parser slice on `e2ea6c1b`.
+Rebasing it onto `2fde52b9` produces 94 runtime crashes and 24 return-value
+mismatches, while compilation, linking, 264 negative diagnostic contracts,
+and all 11 multi-TU cases pass. Native COFF runtime correctness is therefore
+an integration blocker despite the grouped-section checks passing.
+Owner: native COFF object emission; resolve before advancing Gate 0.
 
 ## Windows cross-TU class exception payload corruption
 
