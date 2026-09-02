@@ -4,6 +4,7 @@
 #include <cassert>
 #include <format>
 #include <functional>
+#include <optional>
 #include <span>
 
 enum class TypeCategory : uint8_t;
@@ -907,6 +908,20 @@ inline std::string_view getTypeName(TypeCategory cat) {
 	default:
 		return "";
 	}
+}
+
+inline std::optional<TypeCategory> typeCategoryFromName(std::string_view name) {
+	if (name.empty()) {
+		return std::nullopt;
+	}
+	for (uint8_t raw = static_cast<uint8_t>(TypeCategory::Void);
+		 raw <= static_cast<uint8_t>(TypeCategory::LongDouble); ++raw) {
+		const TypeCategory cat = static_cast<TypeCategory>(raw);
+		if (getTypeName(cat) == name) {
+			return cat;
+		}
+	}
+	return std::nullopt;
 }
 
 /// Helper function to determine if a type category is signed (for MOVSX vs MOVZX)

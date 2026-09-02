@@ -321,6 +321,19 @@ path. Constexpr evaluation often collapses
 `long double` to `double`. Do not paper over return ABI with size guesses or INTEGER
 fallbacks; wait until `long double` lowering can emit the SysV x87 convention.
 
+## One-byte `catch (char)` copies the wrong value
+
+`throw`/`catch` for arithmetic builtins now emit MSVC `??_R0` / `_TI1*` /
+`_CTA1*` / `_CT??_R0*` `SELECT_ANY` metadata from the type-code table, and
+`bool`, `short`, `int`, `unsigned`, `long long`, and `double` round-trip
+(tests/test_eh_throw_catch_mixed_builtins_ret0.cpp,
+tests/multi_tu/throw_int_two_tu_ret52, tests/multi_tu/throw_double_two_tu_ret53).
+`try { throw 'Q'; } catch (char value)` enters the handler but `value != 'Q'`.
+Do not hide this by omitting `char` from throw-info emission or by matching
+`catch (char)` against `int` type descriptors. Owner: Windows catch-object
+lowering for 1-byte builtins (`CatchBegin` load/store width vs CatchableType
+`sizeOrOffset`).
+
 ## Implicit default-constructor deletion misses const scalar members
 
 `StructMember` does not currently preserve the declared cv-qualification of a

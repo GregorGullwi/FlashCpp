@@ -493,6 +493,11 @@ public:
 		uint32_t symbol_table_index = 0;
 		uint32_t type = 0;
 	};
+	struct NamedComdatReloc {
+		uint32_t virtual_address = 0;
+		std::string symbol_name;
+		uint32_t type = 0;
+	};
 
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
 	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline);
@@ -500,7 +505,6 @@ public:
 	void emitInlineFunctionComdats(std::span<const uint8_t> text_data);
 	void emit_vague_linkage_comdat_rdata(std::string_view external_symbol_name, std::span<const char> data,
 		std::span<const ComdatReloc> relocations, uint32_t external_symbol_value);
-	void add_vague_linkage_comdat_rdata_symbol(COFFI::section* section, std::string_view symbol_name, uint32_t value);
 	void add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset);
 	void add_data(std::span<const uint8_t> data, SectionType section_type);
 	void add_data(std::span<const char> data, SectionType section_type);
@@ -569,6 +573,8 @@ public:
 	std::string get_or_create_builtin_throwinfo(TypeCategory type);
 	std::string get_or_create_type_descriptor(std::string_view class_name);
 	std::string get_or_create_type_descriptor(std::string_view class_name, TypeIndex type_index);
+	std::string get_or_create_type_descriptor_for_spelling(std::string_view type_name);
+	static std::string_view msvcBuiltinTypeCode(TypeCategory cat);
 	// MSVC ??_R0 Type Descriptor for a built-in/arithmetic type (int, float, …).
 	// Produces a proper descriptor symbol (e.g. "??_R0H@8" for int) so that
 	// typeid(int) yields a stable cross-TU pointer rather than a hash placeholder.
@@ -633,7 +639,8 @@ protected:
 	void recordFunctionPdataEntry(std::string_view mangled_name, const PendingPdataRecord& entry);
 	void emitVagueLinkageComdatRdata(std::string_view external_symbol_name, std::span<const char> data,
 		std::span<const ComdatReloc> relocations, uint32_t external_symbol_value);
-	void addComdatSectionExternalSymbol(COFFI::section* section, std::string_view symbol_name, uint32_t value);
+	void emitVagueLinkageComdatRdataNamed(std::string_view external_symbol_name, std::span<const char> data,
+		std::span<const NamedComdatReloc> named_relocations, uint32_t external_symbol_value);
 	void addComdatSectionRelocations(COFFI::section* section, std::span<const ComdatReloc> relocations);
 	void finalizeComdatSectionRelocationCount(COFFI::section* section);
 	COFFI::symbol* findComdatSectionSymbol(COFFI::section* section);

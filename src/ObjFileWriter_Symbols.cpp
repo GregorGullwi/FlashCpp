@@ -338,38 +338,12 @@ void ObjectFileWriter::add_rdata_relocation(uint32_t rdata_offset, std::string_v
 // Simple type name mangling for exception type descriptors
 // Converts C++ type names to MSVC-style mangled names
 std::string ObjectFileWriter::mangleTypeName(const std::string& type_name) const {
-	// Simple mapping for built-in types
-	// MSVC type codes: H=int, I=unsigned int, D=char, E=unsigned char, etc.
-	if (type_name == "int")
-		return "H@";
-	if (type_name == "unsigned int")
-		return "I@";
-	if (type_name == "char")
-		return "D@";
-	if (type_name == "unsigned char")
-		return "E@";
-	if (type_name == "short")
-		return "F@";
-	if (type_name == "unsigned short")
-		return "G@";
-	if (type_name == "long")
-		return "J@";
-	if (type_name == "unsigned long")
-		return "K@";
-	if (type_name == "long long")
-		return "_J@";
-	if (type_name == "unsigned long long")
-		return "_K@";
-	if (type_name == "float")
-		return "M@";
-	if (type_name == "double")
-		return "N@";
-	if (type_name == "long double")
-		return "O@";
-	if (type_name == "bool")
-		return "_N@";
-	if (type_name == "void")
-		return "X@";
+	if (auto cat = typeCategoryFromName(type_name)) {
+		std::string_view code = msvcBuiltinTypeCode(*cat);
+		if (!code.empty()) {
+			return std::string(StringBuilder().append(code).append("@"sv).commit());
+		}
+	}
 
 	// For class/struct types, use the name directly with @ suffix
 	// This is a simplified approach - full MSVC would encode nested namespaces, templates, etc.
@@ -380,13 +354,15 @@ std::string ObjectFileWriter::mangleTypeName(const std::string& type_name) const
 // Returns (type descriptor symbol name, type descriptor runtime name string)
 // for use in MSVC exception metadata.
 std::pair<std::string, std::string> ObjectFileWriter::getMsvcTypeDescriptorInfo(const std::string& type_name) const {
-	// Built-ins use canonical MSVC RTTI descriptor naming with @8 suffix
-	// and runtime type name strings with leading dot (e.g., ".H" for int).
-	if (type_name == "int") {
-		return {"??_R0H@8", ".H"};
+	if (auto cat = typeCategoryFromName(type_name)) {
+		std::string_view code = msvcBuiltinTypeCode(*cat);
+		if (!code.empty()) {
+			std::string symbol(StringBuilder().append("??_R0"sv).append(code).append("@8"sv).commit());
+			std::string runtime(StringBuilder().append("."sv).append(code).commit());
+			return {std::move(symbol), std::move(runtime)};
+		}
 	}
 
-	// Fallback to existing simplified naming for non-builtins.
 	std::string mangled_type_name = mangleTypeName(type_name);
 	return {"??_R0" + mangled_type_name, mangled_type_name};
 }
@@ -396,49 +372,17 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 		return std::string();
 	}
 
-	// Keep canonical, known-good path for int.
-	if (type_name == "int") {
-		return get_or_create_builtin_throwinfo(TypeCategory::Int);
+	if (auto builtin_category = typeCategoryFromName(type_name)) {
+		if (*builtin_category == TypeCategory::Void) {
+			return std::string();
+		}
+		return get_or_create_builtin_throwinfo(*builtin_category);
 	}
 
 	auto cached_it = throw_info_symbols_.find(type_name);
 	if (cached_it != throw_info_symbols_.end()) {
 		return cached_it->second;
 	}
-
-	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
-	if (!rdata_section) {
-		return std::string();
-	}
-
-	auto ensure_type_descriptor_symbol = [&](const std::string& catch_type_name) -> std::string {
-		auto [type_desc_symbol, type_runtime_name] = getMsvcTypeDescriptorInfo(catch_type_name);
-
-		auto* type_desc_sym = coffi_.get_symbol(type_desc_symbol);
-		if (!type_desc_sym) {
-			uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-
-			std::vector<char> type_desc_data;
-			type_desc_data.resize(POINTER_SIZE * 2, 0);
-			for (char c : type_runtime_name) {
-				type_desc_data.push_back(c);
-			}
-			type_desc_data.push_back(0);
-
-			add_data(type_desc_data, SectionType::RDATA);
-
-			type_desc_sym = coffi_.add_symbol(type_desc_symbol);
-			type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-			type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-			type_desc_sym->set_section_number(rdata_section->get_index() + 1);
-			type_desc_sym->set_value(type_desc_offset);
-
-			// vftable pointer at offset 0 -> type_info::vftable
-			add_rdata_relocation(type_desc_offset, "??_7type_info@@6B@", IMAGE_REL_AMD64_ADDR64);
-		}
-
-		return type_desc_symbol;
-	};
 
 	struct CatchableTypeEntry {
 		std::string catch_type_name;
@@ -541,10 +485,8 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 		catchable_type_symbols.push_back(catchable_type_symbol);
 
 		auto* catchable_type_sym = coffi_.get_symbol(catchable_type_symbol);
-		if (!catchable_type_sym) {
-			const std::string type_desc_symbol = ensure_type_descriptor_symbol(catchable_type.catch_type_name);
-			uint32_t catchable_type_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-
+		if (catchable_type_sym == nullptr || catchable_type_sym->get_section_number() <= 0) {
+			const std::string type_desc_symbol = get_or_create_type_descriptor_for_spelling(catchable_type.catch_type_name);
 			std::vector<char> catchable_type_data;
 			catchable_type_data.reserve(28);
 			ObjectFileCommon::appendLE(catchable_type_data, catchable_type.properties);
@@ -554,61 +496,43 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 			ObjectFileCommon::appendLE(catchable_type_data, static_cast<uint32_t>(catchable_type.vdisp));
 			ObjectFileCommon::appendLE(catchable_type_data, catchable_type.size_or_offset);
 			ObjectFileCommon::appendLE(catchable_type_data, uint32_t(0));
-
-			add_data(catchable_type_data, SectionType::RDATA);
-
-			catchable_type_sym = coffi_.add_symbol(catchable_type_symbol);
-			catchable_type_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-			catchable_type_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-			catchable_type_sym->set_section_number(rdata_section->get_index() + 1);
-			catchable_type_sym->set_value(catchable_type_offset);
-
-			add_rdata_relocation(catchable_type_offset + 4, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
+			std::vector<NamedComdatReloc> catchable_type_relocs{
+				{4, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB}};
+			emitVagueLinkageComdatRdataNamed(catchable_type_symbol, catchable_type_data, catchable_type_relocs, 0);
 		}
 	}
 
 	auto* catchable_array_sym = coffi_.get_symbol(catchable_array_symbol);
-	if (!catchable_array_sym) {
-		uint32_t catchable_array_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+	if (catchable_array_sym == nullptr || catchable_array_sym->get_section_number() <= 0) {
 		std::vector<char> catchable_array_data;
 		catchable_array_data.reserve(4 + catchable_type_symbols.size() * 4);
 		ObjectFileCommon::appendLE(catchable_array_data, static_cast<uint32_t>(catchable_type_symbols.size()));
 		for (size_t i = 0; i < catchable_type_symbols.size(); ++i) {
 			ObjectFileCommon::appendLE(catchable_array_data, uint32_t(0));
 		}
-		add_data(catchable_array_data, SectionType::RDATA);
-
-		catchable_array_sym = coffi_.add_symbol(catchable_array_symbol);
-		catchable_array_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		catchable_array_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-		catchable_array_sym->set_section_number(rdata_section->get_index() + 1);
-		catchable_array_sym->set_value(catchable_array_offset);
-
+		std::vector<NamedComdatReloc> catchable_array_relocs;
+		catchable_array_relocs.reserve(catchable_type_symbols.size());
 		for (size_t i = 0; i < catchable_type_symbols.size(); ++i) {
-			add_rdata_relocation(catchable_array_offset + 4 + static_cast<uint32_t>(i * 4), catchable_type_symbols[i], IMAGE_REL_AMD64_ADDR32NB);
+			catchable_array_relocs.push_back({
+				4 + static_cast<uint32_t>(i * 4),
+				catchable_type_symbols[i],
+				IMAGE_REL_AMD64_ADDR32NB});
 		}
+		emitVagueLinkageComdatRdataNamed(catchable_array_symbol, catchable_array_data, catchable_array_relocs, 0);
 	}
 
 	auto* throw_info_sym = coffi_.get_symbol(throw_info_symbol);
-	if (!throw_info_sym) {
-		uint32_t throw_info_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+	if (throw_info_sym == nullptr || throw_info_sym->get_section_number() <= 0) {
 		std::vector<char> throw_info_data(0x1C, 0);
-		add_data(throw_info_data, SectionType::RDATA);
-
-		throw_info_sym = coffi_.add_symbol(throw_info_symbol);
-		throw_info_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		throw_info_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-		throw_info_sym->set_section_number(rdata_section->get_index() + 1);
-		throw_info_sym->set_value(throw_info_offset);
-
+		std::vector<NamedComdatReloc> throw_info_relocs;
 		if (!destructor_symbol.empty()) {
 			// pmfnUnwind should reference a real destructor only when one is required and emitted.
 			// For trivial implicit destructors (e.g. throw bad_any_cast{}), forcing a destructor
 			// symbol here creates an unnecessary unresolved external during link.
-			add_rdata_relocation(throw_info_offset + 4, destructor_symbol, IMAGE_REL_AMD64_ADDR32NB);
+			throw_info_relocs.push_back({4, std::string(destructor_symbol), IMAGE_REL_AMD64_ADDR32NB});
 		}
-
-		add_rdata_relocation(throw_info_offset + 12, catchable_array_symbol, IMAGE_REL_AMD64_ADDR32NB);
+		throw_info_relocs.push_back({12, catchable_array_symbol, IMAGE_REL_AMD64_ADDR32NB});
+		emitVagueLinkageComdatRdataNamed(throw_info_symbol, throw_info_data, throw_info_relocs, 0);
 	}
 
 	throw_info_symbols_[type_name] = throw_info_symbol;
@@ -849,10 +773,6 @@ void ObjectFileWriter::finalizeComdatSectionRelocationCount(COFFI::section* sect
 	std::memcpy(aux_symbols[0].value, &aux, sizeof(aux_symbols[0].value));
 }
 
-void ObjectFileWriter::addComdatSectionExternalSymbol(COFFI::section* section, std::string_view symbol_name, uint32_t value) {
-	defineComdatExternalSymbol(section, symbol_name, value, false, false);
-}
-
 void ObjectFileWriter::emitVagueLinkageComdatRdata(std::string_view external_symbol_name, std::span<const char> data,
 	std::span<const ComdatReloc> relocations, uint32_t external_symbol_value) {
 	emitComdatSection(".rdata$", inline_comdat_rdata_section_counter_,
@@ -860,13 +780,22 @@ void ObjectFileWriter::emitVagueLinkageComdatRdata(std::string_view external_sym
 		data, relocations, 0, IMAGE_COMDAT_SELECT_ANY, external_symbol_name, false, external_symbol_value);
 }
 
-void ObjectFileWriter::emit_vague_linkage_comdat_rdata(std::string_view external_symbol_name, std::span<const char> data,
-	std::span<const ComdatReloc> relocations, uint32_t external_symbol_value) {
+void ObjectFileWriter::emitVagueLinkageComdatRdataNamed(std::string_view external_symbol_name, std::span<const char> data,
+	std::span<const NamedComdatReloc> named_relocations, uint32_t external_symbol_value) {
+	std::vector<ComdatReloc> relocations;
+	relocations.reserve(named_relocations.size());
+	for (const NamedComdatReloc& named_relocation : named_relocations) {
+		relocations.push_back({
+			named_relocation.virtual_address,
+			get_or_create_symbol_index(named_relocation.symbol_name),
+			named_relocation.type});
+	}
 	emitVagueLinkageComdatRdata(external_symbol_name, data, relocations, external_symbol_value);
 }
 
-void ObjectFileWriter::add_vague_linkage_comdat_rdata_symbol(COFFI::section* section, std::string_view symbol_name, uint32_t value) {
-	addComdatSectionExternalSymbol(section, symbol_name, value);
+void ObjectFileWriter::emit_vague_linkage_comdat_rdata(std::string_view external_symbol_name, std::span<const char> data,
+	std::span<const ComdatReloc> relocations, uint32_t external_symbol_value) {
+	emitVagueLinkageComdatRdata(external_symbol_name, data, relocations, external_symbol_value);
 }
 
 void ObjectFileWriter::emitInlineFunctionComdats(std::span<const uint8_t> text_data) {
