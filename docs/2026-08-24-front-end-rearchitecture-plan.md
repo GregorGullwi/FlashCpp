@@ -689,6 +689,37 @@ Implements: [basic.def.odr], [basic.link], [dcl.inline], [temp.spec],
 [temp.inst]. Section layout, COMDAT groups, `.eh_frame`, and relocation
 kinds follow the Itanium psABI and Microsoft x64 ABI, not ISO clauses.
 
+Object-file policy for explicit instantiations (2026-09-02): ISO
+[temp.explicit] still allows only one explicit instantiation definition in
+the program, but neither MSVC nor Clang encodes that as a unique strong
+symbol. Measured on
+`tests/multi_tu/explicit_instantiation_comdat_ret54` (`template int
+bump<int>(int);`, `template class StrongBox<int>;`):
+
+- MSVC `cl` and `clang-cl` emit `??$bump@H@@YAHH@Z`,
+  `?set@?$StrongBox@H@@QEAAXH@Z`, and `?get@?$StrongBox@H@@QEBAHXZ` as
+  External `SELECT_ANY` (pick any). Unique non-templates (`firstBump`,
+  `firstBox`) stay ordinary External `.text`. Two TUs that both contain
+  the explicit instantiations link; the linker merges COMDATs rather than
+  LNK2005.
+- `clang++` Itanium ELF emits the same specializations as `STB_WEAK` in
+  per-symbol `.text.*` sections (`llvm-nm` `W`). `firstBump` / `firstBox`
+  are `STB_GLOBAL`. Implicit `bump<short>` in the other TU is also weak.
+
+FlashCpp matches that mergeable policy on COFF and ELF: explicit
+instantiation definitions of function and class-template members use the
+same vague-linkage emission as implicit instantiations (COFF `SELECT_ANY`,
+ELF `STB_WEAK`). Do not demote them to unique strong EXTERNAL / `STB_GLOBAL`
+to “enforce” [temp.explicit] in the object file. Unique out-of-line
+non-template members remain strong. Mangled-name spelling
+(`??$bump@H@@YAHH@Z` vs hashed `bump$…` / `StrongBox$…`) is architecture
+boundary 3B, not this linkage choice.
+
+Function COMDATs are still produced by copy-out from unified `.text` /
+`.xdata` / `.pdata`. After copy-out, the unified unwind tables are
+compacted and leftover `.text` copies are INT3'd. Native emission without
+copy-out remains Gate 0 criterion 8.
+
 Exit criteria:
 
 - two translation units sharing inline functions, template instantiations,

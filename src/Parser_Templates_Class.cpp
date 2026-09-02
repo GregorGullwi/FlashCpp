@@ -151,6 +151,246 @@ ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::
 	return ParseResult::success();
 }
 
+bool Parser::instantiateNamedMemberExplicitInstantiation(
+	std::string_view owner_name,
+	std::string_view member_name,
+	std::span<const TemplateTypeArg> owner_template_args,
+	std::span<const TypeSpecifierNode> param_types) {
+	std::string_view canonical_owner = owner_name;
+	if (std::optional<ASTNode> instantiated =
+			instantiateLazyMemberForCanonicalOwner(canonical_owner, member_name, owner_template_args);
+		instantiated.has_value()) {
+		if (!instantiated->is<FunctionDeclarationNode>() || param_types.empty()) {
+			return true;
+		}
+		const FunctionDeclarationNode& func = instantiated->as<FunctionDeclarationNode>();
+		return func.parameter_nodes().size() == param_types.size();
+	}
+
+	if (!owner_template_args.empty()) {
+		(void)try_instantiate_class_template(owner_name, owner_template_args, false);
+	}
+
+	std::string_view instantiated_name = canonical_owner;
+	if (instantiated_name.empty() && !owner_template_args.empty()) {
+		instantiated_name = get_instantiated_class_name(owner_name, owner_template_args);
+	}
+	if (instantiated_name.empty()) {
+		instantiated_name = owner_name;
+	}
+
+	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+	if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+		return false;
+	}
+	StructTypeInfo* struct_info = type_it->second->getStructInfo();
+	if (struct_info == nullptr) {
+		return false;
+	}
+	StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+	for (const StructMemberFunction& member : struct_info->member_functions) {
+		if (member.name != member_handle) {
+			continue;
+		}
+		if (member.function_decl.is<FunctionDeclarationNode>() && !param_types.empty()) {
+			const FunctionDeclarationNode& func = member.function_decl.as<FunctionDeclarationNode>();
+			if (func.parameter_nodes().size() != param_types.size()) {
+				continue;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
+ParseResult Parser::parse_explicit_function_or_member_instantiation(bool is_extern) {
+	ParseResult type_result = parse_type_specifier();
+	if (type_result.is_error()) {
+		return type_result;
+	}
+	if (!type_result.node().has_value() || !type_result.node()->is<TypeSpecifierNode>()) {
+		return ParseResult::error("Expected return type in explicit instantiation", peek_info());
+	}
+	TypeSpecifierNode return_type = type_result.node()->as<TypeSpecifierNode>();
+	consume_pointer_ref_modifiers(return_type);
+
+	struct NameComponent {
+		Token name;
+		std::optional<TemplateArgumentVector> template_args;
+	};
+	std::vector<NameComponent> components;
+	if (peek().is_eof() || peek_info().type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected identifier in explicit instantiation", peek_info());
+	}
+
+	while (true) {
+		Token name_token = peek_info();
+		advance();
+		std::optional<TemplateArgumentVector> template_args;
+		if (peek() == "<"_tok) {
+			template_args = parse_explicit_template_arguments();
+			if (!template_args.has_value()) {
+				return ParseResult::error(
+					"Failed to parse template arguments in explicit instantiation",
+					current_token_);
+			}
+		}
+		components.push_back({name_token, std::move(template_args)});
+		if (peek() != "::"_tok) {
+			break;
+		}
+		advance();
+		if (peek().is_eof() || peek_info().type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected identifier after '::' in explicit instantiation", peek_info());
+		}
+	}
+
+	if (peek() != "("_tok) {
+		return ParseResult::error("Expected '(' after explicit instantiation name", peek_info());
+	}
+	FlashCpp::ParsedParameterList params;
+	ParseResult param_result = parse_parameter_list(params, CallingConvention::Default);
+	if (param_result.is_error()) {
+		return param_result;
+	}
+
+	FlashCpp::MemberQualifiers member_quals;
+	skip_function_trailing_specifiers(member_quals);
+	if (!consume(";"_tok)) {
+		return ParseResult::error("Expected ';' after explicit template instantiation", current_token_);
+	}
+
+	if (is_extern) {
+		FLASH_LOG(Templates, Trace, "Extern template function declaration (suppresses implicit instantiation)");
+		return ParseResult::success();
+	}
+
+	std::vector<TypeSpecifierNode> param_types;
+	param_types.reserve(params.parameters.size());
+	for (const ASTNode& param : params.parameters) {
+		if (!param.is<DeclarationNode>()) {
+			continue;
+		}
+		param_types.push_back(param.as<DeclarationNode>().type_specifier_node());
+	}
+
+	const NameComponent& last = components.back();
+	auto instantiate_free_function = [&](std::string_view function_name) -> bool {
+		std::optional<ASTNode> instantiated;
+		// Prefer the call-compatible instantiation when a parameter list is
+		// present so `bump(40)` and `template int bump<int>(int);` share one
+		// symbol. The explicit-args materialization path uses a different
+		// identifier token (`bump$...`) that ordinary calls do not.
+		if (!param_types.empty()) {
+			instantiated = try_instantiate_template(function_name, param_types);
+		}
+		if (!instantiated.has_value() && last.template_args.has_value()) {
+			instantiated = try_instantiate_template_explicit(
+				function_name,
+				*last.template_args,
+				param_types);
+		}
+		return instantiated.has_value();
+	};
+
+	if (components.size() == 1) {
+		if (!instantiate_free_function(last.name.value())) {
+			const std::string message = std::string(StringBuilder()
+				.append("Could not explicitly instantiate function template '")
+				.append(last.name.value())
+				.append("'")
+				.commit());
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::ExplicitInstantiationMissingPrimaryTemplate,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(last.name),
+				message,
+				{});
+		}
+		return ParseResult::success();
+	}
+
+	bool owner_is_class_template = false;
+	for (size_t i = 0; i + 1 < components.size(); ++i) {
+		if (components[i].template_args.has_value()) {
+			owner_is_class_template = true;
+			break;
+		}
+	}
+
+	if (owner_is_class_template) {
+		StringBuilder owner_builder;
+		std::optional<TemplateArgumentVector> owner_args;
+		for (size_t i = 0; i + 1 < components.size(); ++i) {
+			if (i != 0) {
+				owner_builder.append("::");
+			}
+			owner_builder.append(components[i].name.value());
+			if (components[i].template_args.has_value()) {
+				owner_args = components[i].template_args;
+			}
+		}
+		StringHandle owner_handle = StringTable::getOrInternStringHandle(owner_builder.commit());
+		std::string_view owner_name = StringTable::getStringView(owner_handle);
+		bool instantiated_member = false;
+		if (last.template_args.has_value()) {
+			if (try_instantiate_member_function_template_explicit(
+					owner_name,
+					last.name.value(),
+					*last.template_args).has_value()) {
+				instantiated_member = true;
+			}
+		}
+		if (!instantiated_member && owner_args.has_value()) {
+			instantiated_member = instantiateNamedMemberExplicitInstantiation(
+				owner_name,
+				last.name.value(),
+				*owner_args,
+				param_types);
+		}
+		if (!instantiated_member) {
+			const std::string message = std::string(StringBuilder()
+				.append("Could not explicitly instantiate member '")
+				.append(last.name.value())
+				.append("'")
+				.commit());
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::ExplicitInstantiationMissingPrimaryTemplate,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(last.name),
+				message,
+				{});
+		}
+		return ParseResult::success();
+	}
+
+	StringBuilder qualified_name_builder;
+	for (size_t i = 0; i < components.size(); ++i) {
+		if (i != 0) {
+			qualified_name_builder.append("::");
+		}
+		qualified_name_builder.append(components[i].name.value());
+	}
+	StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+	if (!instantiate_free_function(StringTable::getStringView(qualified_handle))) {
+		const std::string message = std::string(StringBuilder()
+			.append("Could not explicitly instantiate function template '")
+			.append(StringTable::getStringView(qualified_handle))
+			.append("'")
+			.commit());
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::ExplicitInstantiationMissingPrimaryTemplate,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(last.name),
+			message,
+			{});
+	}
+	return ParseResult::success();
+}
+
 // Parse template declaration: template<typename T> ...
 // Also handles explicit template instantiation: template void Func<int>(); or template class Container<int>;
 ParseResult Parser::parse_template_declaration() {
@@ -270,16 +510,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			return saved_position.success();
 		}
 
-		// Handle other explicit instantiations (functions, etc.)
-		// For now, just consume until ';'
-		FLASH_LOG(Templates, Trace, "Explicit template instantiation (other): skipping");
-		while (peek() != ";"_tok) {
-			advance();
-		}
-		if (peek() == ";"_tok) {
-			advance(); // consume ';'
-		}
-		return saved_position.success();
+		// template void foo<int>();
+		// template void Container<int>::set(int);
+		return saved_position.propagate(parse_explicit_function_or_member_instantiation(is_extern));
 	}
 
 	// Expect '<' to start template parameter list

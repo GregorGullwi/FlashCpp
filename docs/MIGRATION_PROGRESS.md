@@ -259,19 +259,27 @@ Named follow-ups carried forward:
   shrink the exception surface to invariant-only paths.
 - Function `SELECT_ANY` COMDATs follow C++ vague linkage (`inline`, in-class
   definition including first-declaration `= default`, constexpr/consteval, and
-  template instantiation). Unique out-of-line members remain strong EXTERNAL
-  `.text` definitions (`tests/multi_tu/unique_out_of_line_member_ret51`). They
-  are not driven by `is_member_function()` or `namespace std`. ELF vtables for
-  the same classes use `STB_WEAK` so two TUs can link without multiple
-  definition of `_ZTV*`.
+  template instantiation, including explicit instantiation definitions such as
+  `template int bump<int>(int);` and `template class StrongBox<int>;`). MSVC
+  and Clang both emit those specializations as mergeable symbols (COFF pick
+  any / ELF `STB_WEAK`); FlashCpp matches that, rather than unique strong
+  defs (`tests/multi_tu/explicit_instantiation_comdat_ret54`). Unique
+  out-of-line non-template members remain strong EXTERNAL
+  `.text` (`tests/multi_tu/unique_out_of_line_member_ret51`). They are not
+  driven by `is_member_function()` or `namespace std`. ELF vtables for the
+  same classes use `STB_WEAK` so two TUs can link without multiple definition
+  of `_ZTV*`. Decision text: architecture boundary 2 in
+  `docs/2026-08-24-front-end-rearchitecture-plan.md`.
 - MSVC RTTI components (`??_R0` through `??_R4`, plus the vtable) each get
   their own `SELECT_ANY` `.rdata$N` COMDAT. Builtin throw metadata (`_TI1H`,
   `_CTA1H`, `_CT??_R0H@84`) is likewise `SELECT_ANY` so two TUs that both
   `throw int` can link (`tests/multi_tu/throw_int_two_tu_ret52`). The same
   MSVC type-code table covers the other arithmetic builtins (`_TI1N` for
-  double, `_TI1_N` for bool, …). Unified
-  `.text`/`.xdata`/`.pdata` still retain dead copies of functions that also
-  have COMDAT groups.
+  double, `_TI1_N` for bool, …). After function COMDAT copy-out, unified
+  `.pdata` and `.xdata` are compacted so leftover unwind rows are not left
+  as RVA 0-0 records (LNK1223). Remaining unified `.text` copies are INT3'd
+  and their relocs dropped; native per-symbol emission (no copy-out) is
+  still Gate 0 criterion 8.
 
 ## Active findings
 

@@ -1,5 +1,6 @@
 #include "ObjFileWriter.h"
 #include "Log.h"
+#include <cstring>
 #include <set>
 
 // ObjFileWriter_Symbols.cpp - Out-of-line method definitions for ObjectFileWriter
@@ -822,6 +823,9 @@ void ObjectFileWriter::emitInlineFunctionComdats(std::span<const uint8_t> text_d
 	// and hid the same bug for .xdata (index != 0).
 	const uint32_t unified_text_symbol_index = unified_text_symbol->get_index();
 	const uint32_t unified_xdata_symbol_index = unified_xdata_symbol->get_index();
+	std::vector<std::pair<uint32_t, uint32_t>> copied_text_ranges;
+	std::vector<std::pair<uint32_t, uint32_t>> copied_xdata_ranges;
+	std::vector<uint32_t> copied_pdata_offsets;
 
 	auto addRegularFunctionSymbol = [&](const PendingFunctionInfo& function) {
 		auto symbol = coffi_.add_symbol(function.name);
@@ -889,6 +893,7 @@ void ObjectFileWriter::emitInlineFunctionComdats(std::span<const uint8_t> text_d
 				relocation.get_type()});
 		}
 
+		copied_text_ranges.push_back({comdat_begin, comdat_end - comdat_begin});
 		std::vector<char> text_comdat_data(reinterpret_cast<const char*>(text_data.data() + comdat_begin),
 			reinterpret_cast<const char*>(text_data.data() + comdat_end));
 		COFFI::section* text_comdat_section = emitComdatSection(
@@ -984,6 +989,7 @@ void ObjectFileWriter::emitInlineFunctionComdats(std::span<const uint8_t> text_d
 			if (!xdata_comdat_symbol) {
 				throw InternalError("COMDAT xdata section symbol was not created");
 			}
+			copied_xdata_ranges.push_back({xdata_range.first, xdata_range.second});
 			xdata_comdats.push_back({xdata_range.first, xdata_range.second, xdata_comdat_section,
 				xdata_comdat_symbol->get_index()});
 		}
@@ -1040,11 +1046,192 @@ void ObjectFileWriter::emitInlineFunctionComdats(std::span<const uint8_t> text_d
 				{4, text_comdat_symbol_index, IMAGE_REL_AMD64_ADDR32NB},
 				{8, xdata_target->symbol_index, IMAGE_REL_AMD64_ADDR32NB},
 			};
+			copied_pdata_offsets.push_back(pdata_record.offset);
 			emitComdatSection(".pdata$", inline_comdat_pdata_section_counter_,
 				IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_4BYTES,
 				pdata_comdat_data, pdata_relocations_out, leader_section_number, IMAGE_COMDAT_SELECT_ASSOCIATIVE, {}, false, 0);
 		}
 	}
+
+	// Copy-out leaves the original bytes in the unified sections. Zeroing
+	// .pdata in place produces RVA 0-0 records (LNK1223). Compact instead:
+	// drop copied unwind rows, then INT3 the leftover .text copies.
+	compactUnifiedPdataAfterComdatCopy(pdata_section, copied_pdata_offsets);
+	compactUnifiedXdataAfterComdatCopy(xdata_section, pdata_section, copied_xdata_ranges, unified_xdata_symbol_index);
+	neutralizeCopiedUnifiedText(text_section, copied_text_ranges);
+}
+
+void ObjectFileWriter::compactUnifiedPdataAfterComdatCopy(COFFI::section* pdata_section, std::span<const uint32_t> dropped_offsets) {
+	if (dropped_offsets.empty()) {
+		return;
+	}
+	const uint32_t old_size = static_cast<uint32_t>(pdata_section->get_data_size());
+	if (old_size % 12 != 0) {
+		throw InternalError("Unified PDATA size is not a multiple of 12");
+	}
+	const uint32_t slot_count = old_size / 12;
+	std::vector<uint8_t> dropped_slot(slot_count, 0);
+	for (uint32_t offset : dropped_offsets) {
+		if (offset % 12 != 0 || offset + 12 > old_size) {
+			throw InternalError("Copied PDATA offset is outside the unified section");
+		}
+		dropped_slot[offset / 12] = 1;
+	}
+
+	const char* old_bytes = pdata_section->get_data();
+	std::vector<uint32_t> new_slot_offset(slot_count, ~0u);
+	std::vector<char> new_data;
+	new_data.reserve(old_size);
+	for (uint32_t slot = 0; slot < slot_count; ++slot) {
+		if (dropped_slot[slot] != 0) {
+			continue;
+		}
+		new_slot_offset[slot] = static_cast<uint32_t>(new_data.size());
+		new_data.insert(new_data.end(), old_bytes + slot * 12, old_bytes + slot * 12 + 12);
+	}
+
+	auto& relocations = pdata_section->get_relocations();
+	size_t write = 0;
+	for (size_t read = 0; read < relocations.size(); ++read) {
+		const uint32_t va = relocations[read].get_virtual_address();
+		if (va + 4 > old_size) {
+			throw InternalError("Unified PDATA reloc is outside section data");
+		}
+		const uint32_t slot = va / 12;
+		if (slot >= slot_count || dropped_slot[slot] != 0) {
+			continue;
+		}
+		if (write != read) {
+			relocations[write] = relocations[read];
+		}
+		relocations[write].set_virtual_address(new_slot_offset[slot] + (va % 12));
+		++write;
+	}
+	relocations.erase(relocations.begin() + static_cast<std::ptrdiff_t>(write), relocations.end());
+	pdata_section->set_reloc_count(static_cast<uint32_t>(relocations.size()));
+	pdata_section->set_data(new_data.empty() ? nullptr : new_data.data(), static_cast<uint32_t>(new_data.size()));
+}
+
+void ObjectFileWriter::compactUnifiedXdataAfterComdatCopy(COFFI::section* xdata_section, COFFI::section* pdata_section,
+	std::span<const std::pair<uint32_t, uint32_t>> dropped_ranges, uint32_t unified_xdata_symbol_index) {
+	if (dropped_ranges.empty()) {
+		return;
+	}
+	const uint32_t old_size = static_cast<uint32_t>(xdata_section->get_data_size());
+	std::vector<uint8_t> dropped(old_size, 0);
+	for (const auto& range : dropped_ranges) {
+		if (range.second == 0) {
+			continue;
+		}
+		if (range.first > old_size || range.second > old_size - range.first) {
+			throw InternalError("Copied XDATA range is outside the unified section");
+		}
+		std::fill(dropped.begin() + range.first, dropped.begin() + range.first + range.second, 1);
+	}
+
+	const char* old_bytes = xdata_section->get_data();
+	std::vector<uint32_t> new_offset(old_size, ~0u);
+	std::vector<char> new_data;
+	new_data.reserve(old_size);
+	for (uint32_t i = 0; i < old_size; ++i) {
+		if (dropped[i] != 0) {
+			continue;
+		}
+		new_offset[i] = static_cast<uint32_t>(new_data.size());
+		new_data.push_back(old_bytes[i]);
+	}
+
+	auto& relocations = xdata_section->get_relocations();
+	size_t write = 0;
+	for (size_t read = 0; read < relocations.size(); ++read) {
+		const uint32_t va = relocations[read].get_virtual_address();
+		if (va + 4 > old_size) {
+			throw InternalError("Unified XDATA reloc is outside section data");
+		}
+		if (dropped[va] != 0) {
+			continue;
+		}
+		if (write != read) {
+			relocations[write] = relocations[read];
+		}
+		const uint32_t new_va = new_offset[va];
+		relocations[write].set_virtual_address(new_va);
+		if (relocations[write].get_symbol_table_index() == unified_xdata_symbol_index) {
+			uint32_t addend = 0;
+			std::memcpy(&addend, new_data.data() + new_va, sizeof(addend));
+			if (addend >= old_size || new_offset[addend] == ~0u) {
+				throw InternalError("Unified XDATA reloc targets copied XDATA");
+			}
+			const uint32_t mapped_addend = new_offset[addend];
+			std::memcpy(new_data.data() + new_va, &mapped_addend, sizeof(mapped_addend));
+		}
+		++write;
+	}
+	relocations.erase(relocations.begin() + static_cast<std::ptrdiff_t>(write), relocations.end());
+	xdata_section->set_reloc_count(static_cast<uint32_t>(relocations.size()));
+	xdata_section->set_data(new_data.empty() ? nullptr : new_data.data(), static_cast<uint32_t>(new_data.size()));
+
+	const uint32_t pdata_size = static_cast<uint32_t>(pdata_section->get_data_size());
+	if (pdata_size % 12 != 0) {
+		throw InternalError("Unified PDATA size is not a multiple of 12");
+	}
+	if (pdata_size == 0) {
+		return;
+	}
+	char* pdata_bytes = const_cast<char*>(pdata_section->get_data());
+	for (uint32_t offset = 0; offset < pdata_size; offset += 12) {
+		uint32_t unwind_rva = 0;
+		std::memcpy(&unwind_rva, pdata_bytes + offset + 8, sizeof(unwind_rva));
+		if (unwind_rva >= old_size || new_offset[unwind_rva] == ~0u) {
+			throw InternalError("Unified PDATA references copied XDATA");
+		}
+		const uint32_t mapped_unwind = new_offset[unwind_rva];
+		std::memcpy(pdata_bytes + offset + 8, &mapped_unwind, sizeof(mapped_unwind));
+	}
+}
+
+void ObjectFileWriter::neutralizeCopiedUnifiedText(COFFI::section* text_section, std::span<const std::pair<uint32_t, uint32_t>> copied_ranges) {
+	if (copied_ranges.empty()) {
+		return;
+	}
+	const uint32_t text_size = static_cast<uint32_t>(text_section->get_data_size());
+	char* text_bytes = const_cast<char*>(text_section->get_data());
+	if (text_bytes == nullptr && text_size != 0) {
+		throw InternalError("Unified text section data is missing");
+	}
+	for (const auto& range : copied_ranges) {
+		if (range.second == 0) {
+			continue;
+		}
+		if (range.first > text_size || range.second > text_size - range.first) {
+			throw InternalError("Copied text range is outside the unified section");
+		}
+		std::memset(text_bytes + range.first, 0xCC, range.second);
+	}
+
+	auto offsetInCopiedRange = [&](uint32_t va) {
+		for (const auto& range : copied_ranges) {
+			if (va >= range.first && va < range.first + range.second) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	auto& relocations = text_section->get_relocations();
+	size_t write = 0;
+	for (size_t read = 0; read < relocations.size(); ++read) {
+		const uint32_t va = relocations[read].get_virtual_address();
+		if (offsetInCopiedRange(va)) {
+			continue;
+		}
+		if (write != read) {
+			relocations[write] = relocations[read];
+		}
+		++write;
+	}
+	relocations.erase(relocations.begin() + static_cast<std::ptrdiff_t>(write), relocations.end());
+	text_section->set_reloc_count(static_cast<uint32_t>(relocations.size()));
 }
 
 void ObjectFileWriter::set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size) {
