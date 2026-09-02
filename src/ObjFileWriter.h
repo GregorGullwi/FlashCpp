@@ -502,6 +502,8 @@ public:
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
 	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline);
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage, bool is_inline);
+	void emitNativeVagueLinkageFunction(std::string_view mangled_name, std::span<const uint8_t> text_bytes);
+	void finishNativeComdatFunction();
 	void emitInlineFunctionComdats(std::span<const uint8_t> text_data);
 	void emit_vague_linkage_comdat_rdata(std::string_view external_symbol_name, std::span<const char> data,
 		std::span<const ComdatReloc> relocations, uint32_t external_symbol_value);
@@ -607,9 +609,31 @@ protected:
 		uint32_t offset = 0;
 		uint32_t length = 0;
 		bool is_inline = false;
+		bool natively_emitted = false;
 	};
 	std::vector<PendingFunctionInfo> pending_functions_;
 	std::unordered_map<std::string, FunctionUnwindBundle, ObjectFileCommon::StringViewHash, std::equal_to<>> function_unwind_bundles_;
+
+	struct PendingNativeTextReloc {
+		uint32_t local_offset = 0;
+		std::string symbol_name;
+		uint32_t type = 0;
+	};
+	struct PendingNativeStaticSymbol {
+		std::string name;
+		uint32_t local_offset = 0;
+	};
+	bool native_comdat_function_active_ = false;
+	uint32_t native_comdat_function_start_ = 0;
+	std::string native_comdat_function_name_;
+	std::vector<PendingNativeTextReloc> native_comdat_text_relocs_;
+	std::vector<PendingNativeStaticSymbol> native_comdat_static_symbols_;
+	COFFI::section* native_comdat_text_section_ = nullptr;
+	uint32_t native_comdat_text_symbol_index_ = 0;
+	uint16_t native_comdat_leader_section_number_ = 0;
+	COFFI::section* native_comdat_xdata_section_ = nullptr;
+	uint32_t native_comdat_xdata_symbol_index_ = 0;
+	COFFI::section* native_comdat_pdata_section_ = nullptr;
 
 	// Track functions that already have exception info to avoid duplicates
 	std::vector<std::string> added_exception_functions_;
@@ -637,10 +661,13 @@ protected:
 		bool external_is_function, uint32_t external_symbol_value);
 	void recordFunctionXdataRange(std::string_view mangled_name, uint32_t offset, uint32_t length);
 	void recordFunctionPdataEntry(std::string_view mangled_name, const PendingPdataRecord& entry);
-	void compactUnifiedPdataAfterComdatCopy(COFFI::section* pdata_section, std::span<const uint32_t> dropped_offsets);
-	void compactUnifiedXdataAfterComdatCopy(COFFI::section* xdata_section, COFFI::section* pdata_section,
-		std::span<const std::pair<uint32_t, uint32_t>> dropped_ranges, uint32_t unified_xdata_symbol_index);
-	void neutralizeCopiedUnifiedText(COFFI::section* text_section, std::span<const std::pair<uint32_t, uint32_t>> copied_ranges);
+	void beginNativeComdatFunction(std::string_view mangled_name, uint32_t unified_offset);
+	bool shouldBufferNativeTextReloc(uint64_t offset);
+	COFFI::section* unwindXdataSection();
+	COFFI::section* unwindPdataSection();
+	COFFI::symbol* unwindTextSymbol();
+	COFFI::symbol* unwindXdataSymbol();
+	void finalizeComdatSectionAux(COFFI::section* section);
 	void emitVagueLinkageComdatRdata(std::string_view external_symbol_name, std::span<const char> data,
 		std::span<const ComdatReloc> relocations, uint32_t external_symbol_value);
 	void emitVagueLinkageComdatRdataNamed(std::string_view external_symbol_name, std::span<const char> data,

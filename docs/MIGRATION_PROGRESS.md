@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-02 after pull request boundary 35 (vague-linkage COMDAT predicate)
+Last updated: 2026-09-02 after native COFF function COMDAT emission
 
 ## Position
 
@@ -235,6 +235,12 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
+- Architecture boundary 2 / Gate 0: COFF function COMDATs now emit natively
+  (criterion 8 closed for that path). Remaining Gate 0 items are Windows
+  cross-TU class exception payload, `typeid` inside function templates,
+  Windows `catch (char)` width, ELF `.data.rel.ro` / multi-TU RTTI reloc
+  kinds, and PIE-safe output. Do not start architecture boundary 3A until
+  the multi-TU corpus still links without linker warnings.
 - Continue architecture boundary 1: expand shadow wire or merge coverage
   (default arguments, exception specifications, friends, templates) only
   after canonical `TypeId` exists; keep `SymbolTable::insert` as function
@@ -275,11 +281,12 @@ Named follow-ups carried forward:
   `_CTA1H`, `_CT??_R0H@84`) is likewise `SELECT_ANY` so two TUs that both
   `throw int` can link (`tests/multi_tu/throw_int_two_tu_ret52`). The same
   MSVC type-code table covers the other arithmetic builtins (`_TI1N` for
-  double, `_TI1_N` for bool, …). After function COMDAT copy-out, unified
-  `.pdata` and `.xdata` are compacted so leftover unwind rows are not left
-  as RVA 0-0 records (LNK1223). Remaining unified `.text` copies are INT3'd
-  and their relocs dropped; native per-symbol emission (no copy-out) is
-  still Gate 0 criterion 8.
+  double, `_TI1_N` for bool, …). Vague-linkage functions emit directly into
+  `.text$N` / `.xdata$N` / `.pdata$N` during codegen (STATIC+aux5 before
+  the EXTERNAL leader). Unified `.text` holds only unique functions;
+  leftover INT3 copies and unwind compaction are gone. Gate 0 criterion 8
+  is closed for COFF function COMDATs. Remaining Gate 0 work:
+  `.data.rel.ro` / RTTI reloc kinds on ELF, and PIE-safe output.
 
 - ELF exception metadata keeps each object's LSDA/typeinfo slots local.
   That alone did not fix the multi-TU throw crashes: the CIE personality

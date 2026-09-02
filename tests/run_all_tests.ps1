@@ -648,6 +648,12 @@ function Invoke-TestOneMultiTuCase {
 					$resultLine = "OBJ_CHECK_FAIL|$($case.Name)|$comdatDefError"
 				}
 			}
+			if ($resultLine.StartsWith("WORKER_ERROR")) {
+				$int3Error = Test-FlashCppExpectNoInt3InUnifiedText -DumpbinPath $dumpbinPath -ObjectFiles $objectFiles
+				if ($int3Error) {
+					$resultLine = "OBJ_CHECK_FAIL|$($case.Name)|$int3Error"
+				}
+			}
 		}
 
 		if ($objectFiles.Count -eq $case.Sources.Count -and $resultLine.StartsWith("WORKER_ERROR")) {
