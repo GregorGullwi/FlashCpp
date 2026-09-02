@@ -1814,6 +1814,12 @@ private:
 	ParseResult parse_template_declaration();  // NEW: Parse template declarations
 	ParseResult parse_extern_template_declaration();
 	ParseResult parse_template_declaration_impl(ExternTemplateDeclarationKind declaration_kind);
+	ParseResult parse_explicit_function_or_member_instantiation(bool is_extern);
+	bool instantiateNamedMemberExplicitInstantiation(
+		std::string_view owner_name,
+		std::string_view member_name,
+		std::span<const TemplateTypeArg> owner_template_args,
+		std::span<const TypeSpecifierNode> param_types);
 	ParseResult parse_concept_declaration();	 // NEW: Parse C++20 concept declarations
 	ParseResult parse_requires_expression();	 // NEW: Parse C++20 requires expressions
 	ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);	// NEW: Parse member function templates

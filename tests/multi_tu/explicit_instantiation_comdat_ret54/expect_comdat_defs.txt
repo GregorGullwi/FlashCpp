@@ -1,0 +1,6 @@
+# FlashCpp spellings today. MSVC/clang-cl use ??$bump@H@@YAHH@Z and
+# ?set@?$StrongBox@H@@QEAAXH@Z / ?get@?$StrongBox@H@@QEBAHXZ (boundary 3B).
+# These must be External SELECT_ANY so two TUs can both explicitly instantiate.
+?bump@@YAHHZ
+?set@StrongBox$20e8b858dc128220@@QEAAXHZ
+?get@StrongBox$20e8b858dc128220@@QEBAHXZ

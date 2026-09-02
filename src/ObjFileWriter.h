@@ -637,6 +637,10 @@ protected:
 		bool external_is_function, uint32_t external_symbol_value);
 	void recordFunctionXdataRange(std::string_view mangled_name, uint32_t offset, uint32_t length);
 	void recordFunctionPdataEntry(std::string_view mangled_name, const PendingPdataRecord& entry);
+	void compactUnifiedPdataAfterComdatCopy(COFFI::section* pdata_section, std::span<const uint32_t> dropped_offsets);
+	void compactUnifiedXdataAfterComdatCopy(COFFI::section* xdata_section, COFFI::section* pdata_section,
+		std::span<const std::pair<uint32_t, uint32_t>> dropped_ranges, uint32_t unified_xdata_symbol_index);
+	void neutralizeCopiedUnifiedText(COFFI::section* text_section, std::span<const std::pair<uint32_t, uint32_t>> copied_ranges);
 	void emitVagueLinkageComdatRdata(std::string_view external_symbol_name, std::span<const char> data,
 		std::span<const ComdatReloc> relocations, uint32_t external_symbol_value);
 	void emitVagueLinkageComdatRdataNamed(std::string_view external_symbol_name, std::span<const char> data,

@@ -1,0 +1,3 @@
+# Unique non-template functions stay strong EXTERNAL, not SELECT_ANY.
+?firstBump@@YAHXZ
+?firstBox@@YAHXZ
