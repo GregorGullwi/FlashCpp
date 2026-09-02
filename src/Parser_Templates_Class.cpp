@@ -1992,6 +1992,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 									ctor_ref.set_is_implicit(true);
 									ctor_ref.set_is_explicitly_defaulted(true);
+									ctor_ref.set_is_inline(true);
 									auto [block_node, block_ref] = create_node_ref(BlockNode());
 									ctor_ref.set_definition(block_node);
 								} else if (peek() == "delete"_tok) {
@@ -2055,6 +2056,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// has_function_try: "try :" form was detected above — "try" already consumed, peek is "{".
 						// Normal: peek is "{" or "try" (try-block without init list).
 						if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok || has_function_try)) {
+							ctor_ref.set_is_inline(true);
 							// Parse the constructor body immediately rather than delaying
 							// This avoids pointer invalidation issues with delayed parsing
 							ParseResult block_result;
@@ -2170,6 +2172,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 								return ParseResult::error("Expected ';' after '= default'", peek_info());
 							}
 
+							dtor_ref.set_is_inline(true);
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
 							NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
 							dtor_ref.set_mangled_name(mangled);
@@ -2189,6 +2192,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 					// Parse function body if present (handles both '{...}' and function-try-blocks 'try{...}catch...').
 						if (peek() == "{"_tok || peek() == "try"_tok) {
+							dtor_ref.set_is_inline(true);
 							SaveHandle body_start = save_token_position();
 							skip_function_body();  // skip '{...}' or 'try{...}catch(...){...}'
 
@@ -2353,6 +2357,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 					// Check for function body and use delayed parsing
 					if (peek() == "{"_tok) {
+						member_func_ref.set_is_inline(true);
 						// Save position at start of body
 						SaveHandle body_start = save_token_position();
 
@@ -3509,6 +3514,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 									ctor_ref.set_is_implicit(true);
 									ctor_ref.set_is_explicitly_defaulted(true);
+									ctor_ref.set_is_inline(true);
 									auto [block_node, block_ref] = create_node_ref(BlockNode());
 									ctor_ref.set_definition(block_node);
 								} else if (peek() == "delete"_tok) {
@@ -3570,6 +3576,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 						// Parse constructor body if present
 						if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
+							ctor_ref.set_is_inline(true);
 							SaveHandle body_start = save_token_position();
 
 							auto type_it = getTypesByNameMap().find(instantiated_name);
@@ -3663,6 +3670,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							return ParseResult::error("Expected ';' after '= default'", peek_info());
 						}
 
+						dtor_ref.set_is_inline(true);
 						// Create an empty block for the destructor body
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
 						NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
@@ -3684,6 +3692,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 					// Parse function body if present (and not defaulted/deleted)
 					if (peek() == "{"_tok) {
+						dtor_ref.set_is_inline(true);
 						// Save position at start of body
 						SaveHandle body_start = save_token_position();
 
@@ -3862,8 +3871,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							return ParseResult::error("Expected ';' after '= default'", peek_info());
 						}
 
-						// Mark as implicit
+						// Mark as implicit. First-declaration `= default` is implicitly inline.
 						member_func_ref.set_is_implicit(true);
+						member_func_ref.set_is_inline(true);
 
 						ASTNode block_node = create_defaulted_member_function_body(member_func_ref);
 						member_func_ref.set_definition(block_node);
@@ -3893,6 +3903,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 					// Check for function body and use delayed parsing
 					if (peek() == "{"_tok) {
+						member_func_ref.set_is_inline(true);
 						// Save position at start of body
 						SaveHandle body_start = save_token_position();
 

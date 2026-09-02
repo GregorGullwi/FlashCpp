@@ -618,6 +618,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					if (peek() == "default"_tok) {
 						advance();
 						ctor_ref.set_is_implicit(true);
+						ctor_ref.set_is_explicitly_defaulted(true);
+						ctor_ref.set_is_inline(true);
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
 						ctor_ref.set_definition(block_node);
 					} else if (peek() == "delete"_tok) {
@@ -632,6 +634,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						return ParseResult::error("Expected ';' after '= default' or '= delete'", peek_info());
 					}
 				} else if (peek() == "{"_tok) {
+					ctor_ref.set_is_inline(true);
 					// DELAYED PARSING: Save the current position (start of '{')
 					// This allows member variables declared later in the class to be visible
 					SaveHandle body_start = save_token_position();

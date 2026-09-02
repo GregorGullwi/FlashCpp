@@ -139,7 +139,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	bool is_constexpr = specs.is_constexpr();
 	bool is_constinit = specs.is_constinit();
 	bool is_consteval = specs.is_consteval();
-	[[maybe_unused]] bool is_inline = specs.is_inline;
+	bool is_inline = specs.is_inline;
 
 	// Create AttributeInfo for backward compatibility with existing code paths
 	AttributeInfo attr_info;
@@ -555,6 +555,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		func_ref.set_is_constexpr(is_constexpr);
 		func_ref.set_is_constinit(is_constinit);
 		func_ref.set_is_consteval(is_consteval);
+		func_ref.set_is_inline(is_inline);
 
 		// Search for existing member function declaration with the same name, const qualification, and matching signature
 		StructMemberFunction* existing_member = find_member_function_by_signature(
@@ -702,6 +703,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			// Update parameter nodes to use definition's parameter names
 			// C++ allows declaration and definition to have different parameter names
 			existing_func_ref.update_parameter_nodes_from_definition(func_ref.parameter_nodes());
+			if (is_inline) {
+				existing_func_ref.set_is_inline(true);
+			}
 			finalize_function_after_definition(existing_func_ref, true);
 		}
 
@@ -1608,11 +1612,17 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 				FLASH_LOG(Parser, Error, "Destructor '", class_name, "::~", class_name, "' already has a definition");
 				return ParseResult::error("Destructor already has definition", func_name_token);
 			}
+			if (specs.is_inline) {
+				dtor.set_is_inline(true);
+			}
 			// Note: Destructors have no parameters, so no need to update parameter nodes
 		} else if (ctor_ref) {
 			if (!ctor_ref->set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Constructor '", class_name, "::", class_name, "' already has a definition");
 				return ParseResult::error("Constructor already has definition", func_name_token);
+			}
+			if (specs.is_inline) {
+				ctor_ref->set_is_inline(true);
 			}
 			// Update parameter nodes to use definition's parameter names
 			// C++ allows declaration and definition to have different parameter names

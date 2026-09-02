@@ -423,7 +423,9 @@ void AstToIr::generateDeferredMemberFunctions() {
 					continue;
 				}
 				if (!ctor.is_materialized()) {
-					throw InternalError("Deferred constructor queue received an unmaterialized constructor");
+					if (!ctor.is_implicit()) {
+						continue;
+					}
 				}
 				recordCodegenToParserCallback();
 				parser_.enqueuePendingSemanticRootIfNeeded(info.function_node);

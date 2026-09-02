@@ -1827,6 +1827,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Check if it's const or constexpr (some may already be consumed by parse_member_leading_specifiers)
 			CVQualifier cv_qual = CVQualifier::None;
 			bool is_static_constexpr = !!(member_specs & FlashCpp::MLS_Constexpr);
+			bool is_static_inline = !!(member_specs & FlashCpp::MLS_Inline);
 			while (true) {
 				AttributeInfo attributes;
 				if (tryParseDeclspecSpecifiers(attributes)) {
@@ -1849,6 +1850,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					cv_qual |= CVQualifier::Const; // constexpr implies const
 					advance();
 				} else if (keyword == "inline"_tok) {
+					is_static_inline = true;
 					advance(); // consume 'inline'
 				} else {
 					break;
@@ -1866,6 +1868,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			if (parse_static_member_function(
 					type_and_name_result,
 					is_static_constexpr,
+					is_static_inline,
 					qualified_struct_name,
 					struct_ref,
 					struct_info,
@@ -2110,6 +2113,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Apply specifiers from member_specs
 				ctor_ref.set_explicit(member_specs & FlashCpp::MLS_Explicit);
 				ctor_ref.set_constexpr(member_specs & FlashCpp::MLS_Constexpr);
+				ctor_ref.set_is_inline(member_specs & FlashCpp::MLS_Inline);
 
 				// Enter a temporary scope for parsing the initializer list (Phase 3: RAII)
 				// This allows the initializer expressions to reference the constructor parameters
@@ -2234,9 +2238,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								return ParseResult::error("Expected ';' after '= default'", peek_info());
 							}
 
-							// Mark as implicit (same behavior as compiler-generated)
+							// Mark as implicit (same behavior as compiler-generated).
+							// First-declaration `= default` is implicitly inline ([dcl.fct.def.default]).
 							ctor_ref.set_is_implicit(true);
 							ctor_ref.set_is_explicitly_defaulted(true);
+							ctor_ref.set_is_inline(true);
 
 							// Create an empty block for the constructor body
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
@@ -2311,6 +2317,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Parse constructor body if present (and not defaulted/deleted)
 				if (!is_defaulted && !is_deleted && (peek() == "{"_tok || has_function_try)) {
+					// In-class constructor definition is implicitly inline.
+					ctor_ref.set_is_inline(true);
 					// DELAYED PARSING: Save the current position.
 					// If has_function_try, 'try' was already consumed so peek() is at '{'.
 					// We save here at '{', then skip the body and any catch clauses.
@@ -2398,6 +2406,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Use qualified_struct_name for nested classes so the member function references the correct type
 			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(qualified_struct_name, StringTable::getOrInternStringHandle(dtor_name));
 			dtor_ref.set_is_constexpr(member_specs & FlashCpp::MLS_Constexpr);
+			dtor_ref.set_is_inline(member_specs & FlashCpp::MLS_Inline);
 
 			// Parse trailing specifiers (noexcept, override, final, __attribute__, etc.)
 			// Destructor trailing specifiers are similar to member function specifiers
@@ -2442,6 +2451,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					return ParseResult::error("Expected ';' after '= default'", peek_info());
 				}
 
+				// First-declaration `= default` is implicitly inline ([dcl.fct.def.default]).
+				dtor_ref.set_is_inline(true);
 				auto [block_node, block_ref] = create_node_ref(BlockNode());
 				NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
 				dtor_ref.set_mangled_name(mangled);
@@ -2459,6 +2470,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Parse destructor body if present (and not defaulted/deleted)
 			if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok)) {
+				// In-class destructor definition is implicitly inline.
+				dtor_ref.set_is_inline(true);
 				// DELAYED PARSING: Save the current position (start of '{' or 'try')
 				SaveHandle body_start = save_token_position();
 
@@ -2624,9 +2637,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				member_func_ref.add_parameter_node(param);
 			}
 
-			// Mark as constexpr/consteval if those keywords were present
+			// Mark as constexpr/consteval/inline if those keywords were present
 			member_func_ref.set_is_constexpr(member_specs & FlashCpp::MLS_Constexpr);
 			member_func_ref.set_is_consteval(member_specs & FlashCpp::MLS_Consteval);
+			member_func_ref.set_is_inline(member_specs & FlashCpp::MLS_Inline);
 
 			// Use unified trailing specifiers parsing (Phase 2)
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
@@ -2671,8 +2685,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					return ParseResult::error("Expected ';' after '= default'", peek_info());
 				}
 
-				// Mark as implicit (same behavior as compiler-generated)
+				// Mark as implicit (same behavior as compiler-generated).
+				// First-declaration `= default` is implicitly inline ([dcl.fct.def.default]).
 				member_func_ref.set_is_implicit(true);
+				member_func_ref.set_is_inline(true);
 
 				ASTNode block_node = create_defaulted_member_function_body(member_func_ref);
 				member_func_ref.set_definition(block_node);
@@ -2727,6 +2743,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Parse function body if present (and not defaulted/deleted)
 			if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok)) {
+				// In-class member function definition is implicitly inline.
+				member_func_ref.set_is_inline(true);
 				// DELAYED PARSING: Save the current position (start of '{' or 'try')
 				SaveHandle body_start = save_token_position();
 
@@ -3567,8 +3585,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				auto [block_node, block_ref] = create_node_ref(BlockNode());
 				derived_ctor_ref.set_definition(block_node);
 
-				// Mark this as an implicit constructor (even though it's inherited)
+				// Inherited constructors are defined in the class and are inline.
 				derived_ctor_ref.set_is_implicit(false);
+				derived_ctor_ref.set_is_inline(true);
 
 				// Add the inherited constructor to the struct type info
 				struct_info->addConstructor(
@@ -5017,6 +5036,9 @@ ParseResult Parser::parse_friend_declaration() {
 				func_ref.add_parameter_node(param);
 			}
 			func_ref.set_is_variadic(param_list.is_variadic);
+			// A friend function defined in a class is an inline function.
+			func_ref.set_is_inline(true);
+			func_ref.set_is_hidden_friend(true);
 
 			// Save body position and skip the body; it will be parsed in the second pass
 			SaveHandle body_start = save_token_position();
@@ -5094,6 +5116,7 @@ ParseResult Parser::parse_friend_declaration() {
 			}
 			func_ref.set_is_variadic(param_list.is_variadic);
 			func_ref.set_is_deleted(is_deleted_friend);
+			func_ref.set_is_hidden_friend(true);
 
 			StringHandle func_name_handle = StringTable::getOrInternStringHandle(function_name);
 			if (!parsing_template_class_) {
@@ -5101,6 +5124,7 @@ ParseResult Parser::parse_friend_declaration() {
 
 				if (is_defaulted_friend) {
 					func_ref.set_is_implicit(true);
+					func_ref.set_is_inline(true);
 					ASTNode block_node = create_defaulted_member_function_body(func_ref);
 					func_ref.set_definition(block_node);
 					finalize_function_after_definition(func_ref);
@@ -5108,6 +5132,7 @@ ParseResult Parser::parse_friend_declaration() {
 				}
 			} else if (is_defaulted_friend) {
 				func_ref.set_is_implicit(true);
+				func_ref.set_is_inline(true);
 				ASTNode block_node = create_defaulted_member_function_body(func_ref);
 				func_ref.set_definition(block_node);
 				finalize_function_after_definition(func_ref);
@@ -5632,6 +5657,8 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 		} else if (pattern_func.has_template_body_position()) {
 			new_func_ref.set_template_body_position(pattern_func.template_body_position());
 		}
+
+		copy_function_properties(new_func_ref, pattern_func);
 
 		StringHandle func_name_handle = pattern_decl.identifier_token().handle();
 		if (!func_name_handle.isValid()) {

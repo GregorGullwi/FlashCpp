@@ -704,6 +704,11 @@ public:
 	void set_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
 	bool is_constexpr() const { return is_constexpr_; }
 
+	// C++ inline constructor: `inline`, an in-class definition (including
+	// first-declaration `= default`), or an inherited constructor.
+	void set_is_inline(bool is_inline) { is_inline_ = is_inline; }
+	bool is_inline() const { return is_inline_; }
+
 	// requires clause support (C++20)
 	void set_requires_clause(ASTNode requires_clause) { requires_clause_ = requires_clause; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
@@ -840,6 +845,7 @@ private:
 	bool is_noexcept_ = false;  // noexcept specifier
 	bool is_explicit_ = false;  // explicit specifier
 	bool is_constexpr_ = false;	// constexpr specifier
+	bool is_inline_ = false;  // True if the constructor has C++ inline semantics
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	std::optional<ASTNode> requires_clause_;	 // C++20 trailing requires clause
 	TemplateParameterVector template_parameters_;
@@ -968,6 +974,11 @@ public:
 	void set_is_constexpr(bool v) { is_constexpr_ = v; }
 	bool is_constexpr() const { return is_constexpr_; }
 
+	// C++ inline destructor: `inline` or an in-class definition (including
+	// first-declaration `= default`).
+	void set_is_inline(bool is_inline) { is_inline_ = is_inline; }
+	bool is_inline() const { return is_inline_; }
+
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
 		outer_template_param_names_.clear();
@@ -1010,6 +1021,7 @@ private:
 	bool is_noexcept_ = true;  // C++11+: destructors are implicitly noexcept(true)
 	bool has_noexcept_specifier_ = false;  // True iff an explicit noexcept / noexcept(expr) was written
 	bool is_constexpr_ = false;  // True iff the destructor was declared with 'constexpr'
+	bool is_inline_ = false;  // True if the destructor has C++ inline semantics
 	std::optional<ExpressionHandle> noexcept_expression_; // For explicit noexcept(expr)
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
 	TemplateParamNameVector outer_template_param_names_;

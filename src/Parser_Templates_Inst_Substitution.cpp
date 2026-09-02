@@ -5994,6 +5994,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			if (orig_ctor.is_materialized()) {
 				new_ctor_ref.set_definition(*orig_ctor.get_definition());
 			}
+			new_ctor_ref.set_is_inline(orig_ctor.is_inline());
+			new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
+			new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 
 			// Add the constructor to struct_info
 			struct_info->addConstructor(new_ctor_node, mem_func.access);
@@ -6022,6 +6025,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			if (orig_dtor.is_materialized()) {
 				new_dtor_ref.set_definition(*orig_dtor.get_definition());
 			}
+			new_dtor_ref.set_is_inline(orig_dtor.is_inline());
+			new_dtor_ref.set_is_constexpr(orig_dtor.is_constexpr());
 
 			struct_info->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
 			registerLateMaterializedTopLevelNode(new_dtor_node);

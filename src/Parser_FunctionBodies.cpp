@@ -591,6 +591,7 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	dest.set_is_deleted(src.is_deleted());
 	dest.set_is_static(src.is_static());
 	dest.set_is_inline(src.is_inline());
+	dest.set_is_hidden_friend(src.is_hidden_friend());
 	dest.set_is_const_member_function(src.is_const_member_function());
 	dest.set_is_volatile_member_function(src.is_volatile_member_function());
 	dest.set_is_implicit(src.is_implicit());

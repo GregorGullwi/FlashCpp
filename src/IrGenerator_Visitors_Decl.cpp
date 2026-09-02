@@ -170,6 +170,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	const bool is_free_inline =
 		node.is_inline() &&
 		!node.is_member_function() &&
+		!node.is_hidden_friend() &&
 		node.decl_node().identifier_token().value() != "main";
 	if (is_free_inline && needed_inline_function_nodes_.count(node_key) == 0) {
 		deferred_inline_function_nodes_.emplace(node_key, ASTNode(&node));
@@ -435,17 +436,12 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		func_decl_op.is_noexcept = is_truly_noexcept;
 	}
 
-	// Member functions defined inside the class body are implicitly inline (C++ standard)
-	// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
-	// This includes constructors, destructors, and regular member functions defined inline
-	// Also mark functions in std namespace as inline to handle standard library functions that
-	// are defined in headers (like std::abs) and may be instantiated multiple times
-	bool is_in_std_namespace = false;
-	if (!current_namespace_stack_.empty()) {
-		is_in_std_namespace = (current_namespace_stack_[0] == "std");
-	}
-	func_decl_op.is_inline = node.is_inline() || node.is_member_function() ||
-		node.has_outer_template_bindings() || is_in_std_namespace;
+	// C++ vague linkage: explicit `inline`, in-class definition, first-declaration
+	// `= default`, compiler-generated special members, constexpr/consteval, or a
+	// template instantiation. Unique out-of-line members stay strong EXTERNAL defs.
+	func_decl_op.is_inline = node.is_inline() || node.is_implicit() ||
+		node.is_constexpr() || node.is_consteval() ||
+		node.has_outer_template_bindings();
 
 	// Use pre-computed mangled name from AST node if available (Phase 6 migration)
 	// Fall back to generating it here if not (for backward compatibility during migration)
@@ -1868,9 +1864,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	ctor_decl_op.return_pointer_depth = PointerDepth{};	// Pointer depth is 0 for void
 	ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
 	ctor_decl_op.is_variadic = false;  // Constructors are never variadic
-	// Constructors defined inside class body are implicitly inline (C++ standard)
-	// Mark them as inline so they get weak linkage in the object file
-	ctor_decl_op.is_inline = true;
+	ctor_decl_op.is_inline = node.is_inline() || node.is_implicit() ||
+		node.is_constexpr() || node.has_outer_template_bindings();
 
 	// Generate mangled name for constructor
 	// For template instantiations, use struct_name_for_ctor which has the correct instantiated name
@@ -3331,7 +3326,8 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 	// Generate mangled name for destructor
 	// Use the dedicated mangling function for destructors to ensure correct platform-specific mangling
 	// (e.g., MSVC uses ??1ClassName@... format)
-	dtor_decl_op.is_inline = true;
+	dtor_decl_op.is_inline = node.is_inline() || node.is_constexpr() ||
+		node.has_outer_template_bindings();
 	dtor_decl_op.mangled_name = NameMangling::generateMangledNameFromNode(node);
 	current_function_mangled_name_ = dtor_decl_op.mangled_name;
 

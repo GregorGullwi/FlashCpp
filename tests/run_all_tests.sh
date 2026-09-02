@@ -437,7 +437,7 @@ link_and_run_objects() {
 	fi
 	if [ "$link_exit_code" -ne 0 ]; then
 		local link_errors
-		link_errors=$(echo "$link_output" | grep -E "undefined reference to|error: linker command failed|relocation.*PIE" | head -1)
+		link_errors=$(echo "$link_output" | grep -E "undefined reference to|multiple definition|duplicate symbol|relocation.*PIE|error: linker command failed" | head -1)
 		echo "LINK_FAIL|$base|$variant: $link_errors" > "$result_file"
 		rm -f "$exe"
 		return

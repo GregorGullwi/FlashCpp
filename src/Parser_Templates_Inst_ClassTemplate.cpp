@@ -2581,6 +2581,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
+					new_ctor_ref.set_is_inline(orig_ctor.is_inline());
 					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
 					registerSourceMemberStructInfoIndex(
@@ -3941,6 +3942,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
+					new_ctor_ref.set_is_inline(orig_ctor.is_inline());
 
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
 					registerSourceMemberStubIdentity(
@@ -8811,6 +8813,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_ctor.set_is_implicit(original_ctor.is_implicit());
 					substituted_ctor.set_is_explicitly_defaulted(
 						original_ctor.is_explicitly_defaulted());
+					substituted_ctor.set_is_inline(original_ctor.is_inline());
 					substituted_ctor.set_noexcept(original_ctor.is_noexcept());
 					substituted_ctor.set_explicit(original_ctor.is_explicit());
 					substituted_ctor.set_constexpr(original_ctor.is_constexpr());
@@ -10749,6 +10752,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ctor_pack_param_info.size()));
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
+					new_ctor_ref.set_is_inline(ctor_decl.is_inline());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 					if (substituted_body.has_value()) {
 						new_ctor_ref.set_definition(*substituted_body);
@@ -10831,6 +10835,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
+					new_ctor_ref.set_is_inline(ctor_decl.is_inline());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 					new_ctor_ref.set_explicit(ctor_decl.is_explicit());
 					new_ctor_ref.set_constexpr(ctor_decl.is_constexpr());
@@ -10912,6 +10917,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 					}
 
+					new_dtor_ref.set_is_inline(dtor_decl.is_inline());
+					new_dtor_ref.set_is_constexpr(dtor_decl.is_constexpr());
 					new_dtor_ref.set_definition(substituted_body);
 
 					// Add the substituted destructor to the instantiated struct
@@ -10947,6 +10954,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setOuterTemplateBindingsFromParams(new_dtor_ref, template_params, template_args_to_use);
 				new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
 				new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
+				new_dtor_ref.set_is_inline(dtor_decl.is_inline());
+				new_dtor_ref.set_is_constexpr(dtor_decl.is_constexpr());
 				if (dtor_decl.has_template_body_position()) {
 					new_dtor_ref.set_template_body_position(dtor_decl.template_body_position());
 				}

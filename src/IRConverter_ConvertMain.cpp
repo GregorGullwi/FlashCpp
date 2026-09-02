@@ -7696,6 +7696,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
 	bool is_inline = func_decl.is_inline;
+	// SELECT_ANY COMDAT follows C++ vague linkage, not "is a member function".
 	const bool has_vague_linkage_comdat = is_inline && linkage != Linkage::C;
 	if (!struct_name.empty()) {
 			// Member function - include struct name

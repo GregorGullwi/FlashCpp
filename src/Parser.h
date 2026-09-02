@@ -4026,6 +4026,7 @@ private:	 // Resume private methods
 	bool parse_static_member_function(
 		ParseResult& type_and_name_result,
 		bool is_static_constexpr,
+		bool is_inline_specifier,
 		StringHandle struct_name_handle,
 		StructDeclarationNode& struct_ref,
 		StructTypeInfo* struct_info,
