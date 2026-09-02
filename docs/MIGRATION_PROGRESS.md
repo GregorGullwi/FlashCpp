@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-02 after native COFF function COMDAT emission and the namespace-scope extern variable merge slice
+Last updated: 2026-09-02 after native COFF COMDAT reloc and catch-symbol fixes
 
 ## Position
 
@@ -258,11 +258,6 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Native COFF runtime regressions at `2fde52b9`: integrating the otherwise
-  passing extern-parser slice produces 94 runtime crashes and 24 incorrect
-  returns. Three representative failures also reproduce without the parser
-  changes. Details and fixtures are in `docs/KNOWN_ISSUES.md`; resolve this
-  before treating the native emission path as a green integration baseline.
 - Architecture boundary 2 / Gate 0: COFF function COMDATs now emit natively
   (criterion 8 closed for that path). Remaining Gate 0 items are Windows
   cross-TU class exception payload, `typeid` inside function templates,
@@ -312,7 +307,10 @@ Named follow-ups carried forward:
   double, `_TI1_N` for bool, …). Vague-linkage functions emit directly into
   `.text$N` / `.xdata$N` / `.pdata$N` during codegen (STATIC+aux5 before
   the EXTERNAL leader). Unified `.text` holds only unique functions;
-  leftover INT3 copies and unwind compaction are gone. Gate 0 criterion 8
+  leftover INT3 copies and unwind compaction are gone. Native emission now
+  attaches each function's pending global-variable relocs to its `.text$N`
+  before the unified buffer is reused, and `$catch$` symbols bind to the
+  unwind text section instead of unified `.text`. Gate 0 criterion 8
   is closed for COFF function COMDATs. Remaining Gate 0 work:
   `.data.rel.ro` / RTTI reloc kinds on ELF, and PIE-safe output.
 

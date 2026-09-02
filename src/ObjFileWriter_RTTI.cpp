@@ -389,11 +389,7 @@ void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_
 		section_sym->get_auxiliary_symbols().push_back(aux_record);
 		section_sym->set_aux_symbols_number(1);
 
-		auto symbol = coffi_.add_symbol(var_name);
-		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		symbol->set_section_number(section->get_index() + 1);
-		symbol->set_value(0);
+		defineComdatExternalSymbol(section, var_name, 0, false, true);
 
 		if (g_enable_debug_output)
 			std::cerr << "Added selectany COMDAT global '" << var_name << "' in section '"
@@ -418,12 +414,21 @@ void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_
 		add_data(zero_data, (is_initialized || is_rodata) ? section_type : SectionType::BSS);
 	}
 
-	// Add a symbol for this global variable
-	auto symbol = coffi_.add_symbol(var_name);
+	// Promote an existing UNDEF created by an earlier text reloc in a native
+	// COMDAT. Relocs already point at that index; adding a second symbol would
+	// leave those relocs bound to an unresolved external.
+	auto* symbol = coffi_.get_symbol(var_name);
+	if (symbol != nullptr && symbol->get_section_number() > 0) {
+		throw InternalError("Global variable already defined");
+	}
+	if (symbol == nullptr) {
+		symbol = coffi_.add_symbol(var_name);
+	}
 	symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 	symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);	 // Global variables are external
 	symbol->set_section_number(section->get_index() + 1);
 	symbol->set_value(offset);
+	symbol_index_cache_[std::string(var_name)] = symbol->get_index();
 
 	if (g_enable_debug_output)
 		std::cerr << "Added global variable '" << var_name << "' at offset " << offset
@@ -800,19 +805,14 @@ uint32_t ObjectFileWriter::get_or_create_symbol_index(const std::string& symbol_
 		return cache_it->second;
 	}
 
-	// Check if symbol already exists in COFFI
-	auto symbols = coffi_.get_symbols();
-	for (size_t i = 0; i < symbols->size(); ++i) {
-		if ((*symbols)[i].get_name() == symbol_name) {
-			uint32_t file_index = (*symbols)[i].get_index();
-			if ((*symbols)[i].get_section_number() > 0) {
-				if (g_enable_debug_output)
-					std::cerr << "    DEBUG get_or_create_symbol_index: Found existing defined symbol '" << symbol_name
-							  << "' at array index " << i << ", file index " << file_index << std::endl;
-				symbol_index_cache_[symbol_name] = file_index;
-				return file_index;
-			}
-		}
+	// Reuse an existing UNDEF instead of creating a second external with the
+	// same name. Native COMDAT text relocs may have created it before the
+	// defining symbol is emitted.
+	auto* existing_symbol = coffi_.get_symbol(symbol_name);
+	if (existing_symbol != nullptr) {
+		uint32_t file_index = existing_symbol->get_index();
+		symbol_index_cache_[symbol_name] = file_index;
+		return file_index;
 	}
 
 	// Symbol doesn't exist, create it as an external reference
