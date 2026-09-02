@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-02 after native COFF function COMDAT emission
+Last updated: 2026-09-02 after native COFF function COMDAT emission and the namespace-scope extern variable merge slice
 
 ## Position
 
@@ -13,6 +13,29 @@ Last updated: 2026-09-02 after native COFF function COMDAT emission
   and entities). Pull request boundaries 1 through 35 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
+- Namespace-scope variable lookup now merges compatible `extern` declarations
+  with their definition, including declarations in reopened namespaces.
+  `SymbolTable` remains the merge authority; this does not publish variables
+  through the shadow `DeclarationBuilder` path or close architecture boundary 2.
+  The reduced mixed-type regression covers declarations on both sides of a
+  definition, and the two-TU `extern_definition_ret42` regression checks that
+  a header declaration and its defining TU share initialized scalar storage.
+  Negative regressions preserve duplicate-definition, incompatible-type,
+  conflicting-storage, and thread-local consistency diagnostics.
+  Array redeclarations retain known bounds, including omitted-bound definitions
+  with partial or absent initialization; conflicting ranks and inner bounds
+  remain errors. Callable types use the existing structured signature comparison.
+  The mixed-type regression also covers a class-template specialization.
+- Parser variable-merge stack review (Clang 18, `-O0 -fstack-usage`): the largest
+  changed frame, `parse_declaration_or_function_definition`, is 31,848 bytes
+  (baseline 31,864); `parse_variable_declaration` is 5,912 (baseline 5,752),
+  and `SymbolTable::insert` is 1,224 (baseline 1,144). The new bound-inheritance,
+  completion, and compatibility helpers use 376, 360, and 232 bytes respectively.
+  The 8,192-redeclaration regression compiles with a compiler copy constrained
+  to a 1 MiB Windows stack and its output returns 42.
+  Variable merging does not recurse over the declaration chain. Existing
+  template-instantiation stack use still grows with logical template depth;
+  that separate known issue is not closed by this slice.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
   `EntityId` into typed `ChunkedVector` arenas keyed by `OwnerId` (namespace
   registry identity), not lexical `ScopeId`. Publication targets are validated
@@ -235,6 +258,11 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
+- Native COFF runtime regressions at `2fde52b9`: integrating the otherwise
+  passing extern-parser slice produces 94 runtime crashes and 24 incorrect
+  returns. Three representative failures also reproduce without the parser
+  changes. Details and fixtures are in `docs/KNOWN_ISSUES.md`; resolve this
+  before treating the native emission path as a green integration baseline.
 - Architecture boundary 2 / Gate 0: COFF function COMDATs now emit natively
   (criterion 8 closed for that path). Remaining Gate 0 items are Windows
   cross-TU class exception payload, `typeid` inside function templates,

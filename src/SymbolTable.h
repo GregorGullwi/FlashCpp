@@ -153,6 +153,69 @@ inline bool functionAcceptsArgumentCount(
 
 namespace SymbolTableDetail {
 
+inline bool variableTypesCompatible(
+	const TypeSpecifierNode& first,
+	const TypeSpecifierNode& second) {
+	// matches_signature() handles aliases and the base type identity, but it is
+	// intentionally permissive for function overloads.  Variables need their
+	// complete declared shape to agree as well.
+	if (!first.matches_signature(second) ||
+		first.cv_qualifier() != second.cv_qualifier() ||
+		first.reference_qualifier() != second.reference_qualifier() ||
+		first.has_pointee_array_declarator() != second.has_pointee_array_declarator() ||
+		first.has_function_signature() != second.has_function_signature()) {
+		return false;
+	}
+
+	if (first.pointer_depth() != second.pointer_depth()) {
+		return false;
+	}
+	const auto first_pointers = first.pointer_levels();
+	const auto second_pointers = second.pointer_levels();
+	if (first_pointers.size() != second_pointers.size()) {
+		return false;
+	}
+	for (size_t index = 0; index < first_pointers.size(); ++index) {
+		if (first_pointers[index].cv_qualifier != second_pointers[index].cv_qualifier) {
+			return false;
+		}
+	}
+
+	if (first.is_array() != second.is_array()) {
+		return false;
+	}
+	const bool first_unknown_outer_bound = first.has_unsized_outer_array_dimension();
+	const bool second_unknown_outer_bound = second.has_unsized_outer_array_dimension();
+	const size_t first_dimension_count = first.array_dimension_count() +
+		(first_unknown_outer_bound ? 1 : 0);
+	const size_t second_dimension_count = second.array_dimension_count() +
+		(second_unknown_outer_bound ? 1 : 0);
+	if (first_dimension_count != second_dimension_count) {
+		return false;
+	}
+	const size_t shared_dimensions = std::min(
+		first_dimension_count, second_dimension_count);
+	for (size_t index = 0; index < shared_dimensions; ++index) {
+		const size_t first_dimension = first_unknown_outer_bound && index == 0
+			? 0
+			: first.array_dimensions()[index - (first_unknown_outer_bound ? 1 : 0)];
+		const size_t second_dimension = second_unknown_outer_bound && index == 0
+			? 0
+			: second.array_dimensions()[index - (second_unknown_outer_bound ? 1 : 0)];
+		// A declaration of an unknown bound is compatible with a later bound.
+		if (first_dimension != 0 && second_dimension != 0 && first_dimension != second_dimension) {
+			return false;
+		}
+	}
+
+	if (!first.has_function_signature()) {
+		return true;
+	}
+
+	return FlashCpp::equalFunctionSignatureIdentity(
+		first.function_signature(), second.function_signature());
+}
+
 inline void stampLexicalScopeOnDeclaration(ASTNode& node, ScopeId scope_id) {
 	if (!scope_id) {
 		return;
@@ -333,6 +396,40 @@ public:
 		// This includes DeclarationNode and VariableDeclarationNode
 		// Use helper function to check for both FunctionDeclarationNode and TemplateFunctionDeclarationNode
 		if (!is_function_or_template_function(node)) {
+			// Namespace-scope extern declarations and definitions share one entity.
+			// The parser inserts a declaration before parsing its initializer, so the
+			// final definition is merged by completeVariableDeclaration().
+			if ((global_scope || ns_scope) &&
+				node.is<VariableDeclarationNode>() &&
+				!existing_nodes.empty() &&
+				existing_nodes[0].is<VariableDeclarationNode>()) {
+				const auto& new_variable = node.as<VariableDeclarationNode>();
+				auto& existing_variable = existing_nodes[0].as<VariableDeclarationNode>();
+				TypeSpecifierNode& existing_type =
+					existing_variable.declaration().type_specifier_node();
+				if (existing_variable.declaration().is_array() &&
+					!existing_type.is_array() &&
+					!existing_type.has_pointee_array_declarator()) {
+					// Early insertion historically leaves object-array bounds in the
+					// DeclarationNode only. Preserve that declaration as an unknown
+					// bound until a redeclaration supplies a complete type.
+					existing_type.set_array(true, std::nullopt);
+					existing_type.set_unsized_outer_array_dimension(true);
+				}
+				const bool compatible = SymbolTableDetail::variableTypesCompatible(
+					new_variable.declaration().type_specifier_node(),
+					existing_type);
+				const bool storage_compatible =
+					new_variable.is_thread_local() == existing_variable.is_thread_local() &&
+					(new_variable.storage_class() == StorageClass::Extern ||
+					 existing_variable.storage_class() == StorageClass::Extern) &&
+					(existing_variable.storage_class() != StorageClass::Extern ||
+					 new_variable.storage_class() == StorageClass::None ||
+					 new_variable.storage_class() == StorageClass::Extern);
+				if (compatible && storage_compatible) {
+					return true;
+				}
+			}
 			// Check if any existing symbol has a different type
 			if (!existing_nodes.empty() && existing_nodes[0].type_name() != node.type_name()) {
 				return false;
@@ -456,6 +553,149 @@ public:
 			}
 		}
 
+		return true;
+	}
+
+	// Complete a namespace-scope variable after its initializer has been parsed.
+	// The initial insert occurs before parsing the initializer to preserve the
+	// point-of-declaration lookup rule.
+	bool inheritVariableArrayBound(std::string_view identifier, ASTNode node) {
+		const ScopeMetadataView metadata = scopeMetadataAtIndex(current_scope_index_);
+		if (metadata.scope_type != ScopeType::Global && metadata.scope_type != ScopeType::Namespace) {
+			return true;
+		}
+		if (!node.is<VariableDeclarationNode>()) {
+			return false;
+		}
+
+		std::vector<ASTNode>* existing_ptr = nullptr;
+		if (metadata.scope_type == ScopeType::Namespace) {
+			const NamespaceHandle namespace_handle = get_current_namespace_handle();
+			const StringHandle key = StringTable::getOrInternStringHandle(identifier);
+			auto namespace_it = namespace_symbols_.find(namespace_handle);
+			if (namespace_it != namespace_symbols_.end()) {
+				auto symbol_it = namespace_it->second.find(key);
+				if (symbol_it != namespace_it->second.end()) {
+					existing_ptr = &symbol_it->second;
+				}
+			}
+		} else {
+			auto symbol_it = scopes_[current_scope_index_].symbols.find(identifier);
+			if (symbol_it != scopes_[current_scope_index_].symbols.end()) {
+				existing_ptr = &symbol_it->second;
+			}
+		}
+		if (existing_ptr == nullptr || existing_ptr->empty() ||
+			!existing_ptr->front().is<VariableDeclarationNode>()) {
+			return true;
+		}
+
+		DeclarationNode& new_declaration = node.as<VariableDeclarationNode>().declaration();
+		TypeSpecifierNode& new_type = new_declaration.type_specifier_node();
+		const TypeSpecifierNode& existing_type =
+			existing_ptr->front().as<VariableDeclarationNode>().declaration().type_specifier_node();
+		if (!new_declaration.is_unsized_array() ||
+			!new_type.has_unsized_outer_array_dimension() ||
+			!existing_type.is_array() ||
+			existing_type.has_unsized_outer_array_dimension()) {
+			return true;
+		}
+		if (!SymbolTableDetail::variableTypesCompatible(new_type, existing_type)) {
+			return false;
+		}
+
+		// The prior declaration supplies the omitted outer bound.  Marking the
+		// declarator complete prevents initializer inference from replacing it.
+		new_type.set_array_dimensions(existing_type.array_dimensions());
+		new_type.set_unsized_outer_array_dimension(false);
+		const DeclarationNode& existing_declaration =
+			existing_ptr->front().as<VariableDeclarationNode>().declaration();
+		new_declaration.set_array_dimensions(
+			std::vector<ASTNode>(
+				existing_declaration.array_dimensions().begin(),
+				existing_declaration.array_dimensions().end()));
+		new_declaration.set_unsized_array(false);
+		return true;
+	}
+
+	bool completeVariableDeclaration(std::string_view identifier, ASTNode node) {
+		const ScopeMetadataView metadata = scopeMetadataAtIndex(current_scope_index_);
+		if (metadata.scope_type != ScopeType::Global && metadata.scope_type != ScopeType::Namespace) {
+			return true;
+		}
+
+		std::vector<ASTNode>* existing_ptr = nullptr;
+		NamespaceHandle namespace_handle{};
+		StringHandle key{};
+		if (metadata.scope_type == ScopeType::Namespace) {
+			namespace_handle = get_current_namespace_handle();
+			key = StringTable::getOrInternStringHandle(identifier);
+			auto namespace_it = namespace_symbols_.find(namespace_handle);
+			if (namespace_it != namespace_symbols_.end()) {
+				auto symbol_it = namespace_it->second.find(key);
+				if (symbol_it != namespace_it->second.end()) {
+					existing_ptr = &symbol_it->second;
+				}
+			}
+		} else {
+			auto symbol_it = scopes_[current_scope_index_].symbols.find(identifier);
+			if (symbol_it != scopes_[current_scope_index_].symbols.end()) {
+				existing_ptr = &symbol_it->second;
+			}
+		}
+		if (existing_ptr == nullptr || existing_ptr->empty() || !node.is<VariableDeclarationNode>() ||
+			!existing_ptr->front().is<VariableDeclarationNode>()) {
+			return false;
+		}
+
+		const auto& new_variable = node.as<VariableDeclarationNode>();
+		const auto& existing_variable = existing_ptr->front().as<VariableDeclarationNode>();
+		if (existing_ptr->front().raw_pointer() == node.raw_pointer()) {
+			return true;
+		}
+		if (new_variable.is_thread_local() != existing_variable.is_thread_local() ||
+			(existing_variable.storage_class() == StorageClass::Extern &&
+			 new_variable.storage_class() != StorageClass::None &&
+			 new_variable.storage_class() != StorageClass::Extern)) {
+			return false;
+		}
+		if (!SymbolTableDetail::variableTypesCompatible(
+				new_variable.declaration().type_specifier_node(),
+				existing_variable.declaration().type_specifier_node())) {
+			return false;
+		}
+
+		const bool new_is_definition =
+			new_variable.storage_class() != StorageClass::Extern ||
+			new_variable.initializer().has_value();
+		const bool existing_is_definition =
+			existing_variable.storage_class() != StorageClass::Extern ||
+			existing_variable.initializer().has_value();
+		if (new_is_definition && existing_is_definition) {
+			return false;
+		}
+		const bool existing_has_unknown_outer_bound =
+			existing_variable.declaration().type_specifier_node().has_unsized_outer_array_dimension();
+		const bool new_has_known_outer_bound =
+			!new_variable.declaration().type_specifier_node().has_unsized_outer_array_dimension();
+		if ((new_is_definition && !existing_is_definition) ||
+			(!new_is_definition && !existing_is_definition &&
+				existing_has_unknown_outer_bound && new_has_known_outer_bound)) {
+			const void* existing_raw_pointer = existing_ptr->front().raw_pointer();
+			existing_ptr->front() = node;
+			if (metadata.scope_type == ScopeType::Global) {
+				auto& mirrored_symbols = namespace_symbols_[get_current_namespace_handle()];
+				auto mirrored_it = mirrored_symbols.find(StringTable::getOrInternStringHandle(identifier));
+				if (mirrored_it != mirrored_symbols.end()) {
+					for (ASTNode& mirrored_node : mirrored_it->second) {
+						if (mirrored_node.raw_pointer() == existing_raw_pointer) {
+							mirrored_node = node;
+							break;
+						}
+					}
+				}
+			}
+		}
 		return true;
 	}
 

@@ -1075,10 +1075,7 @@ ParseResult Parser::parse_variable_declaration() {
 		// This preserves the is_constexpr flag and initializer for constant expression evaluation
 		const Token& identifier_token = decl.identifier_token();
 		if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
-			// Duplicate variable declaration in the same scope
-			FLASH_LOG(Parser, Warning, "Variable '", identifier_token.value(),
-					  "' is being redeclared in the same scope");
-			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+			return duplicateVariableDeclarationError(identifier_token);
 		}
 
 		return ParseResult::success(var_decl_node);
@@ -1259,6 +1256,10 @@ ParseResult Parser::parse_variable_declaration() {
 		first_var_decl.declaration().set_type_node(type_specifier);
 	}
 	first_var_decl.set_initializer(first_init_expr);
+	if (!gSymbolTable.completeVariableDeclaration(
+			first_decl.identifier_token().value(), first_var_node)) {
+		return duplicateVariableDeclarationError(first_decl.identifier_token());
+	}
 
 	// Validate: __declspec(dllimport) data must not have a definition (initializer)
 	if (first_var_decl.linkage() == Linkage::DllImport && first_init_expr.has_value()) {
@@ -1369,6 +1370,10 @@ ParseResult Parser::parse_variable_declaration() {
 
 			auto& var_decl_ref = var_decl_node.as<VariableDeclarationNode>();
 			var_decl_ref.set_initializer(init_expr);
+			if (!gSymbolTable.completeVariableDeclaration(
+					var_decl_ref.declaration().identifier_token().value(), var_decl_node)) {
+				return duplicateVariableDeclarationError(var_decl_ref.declaration().identifier_token());
+			}
 
 			// Validate: __declspec(dllimport) data must not have a definition (initializer)
 			if (var_decl_ref.linkage() == Linkage::DllImport && init_expr.has_value()) {
@@ -1477,7 +1482,8 @@ ParseResult Parser::parse_direct_initialization() {
 }
 
 void Parser::prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_node, TypeSpecifierNode& type_specifier) {
-	if (!decl_node.is_array() && !decl_node.is_unsized_array()) {
+	if ((!decl_node.is_array() && !decl_node.is_unsized_array()) ||
+		type_specifier.has_pointee_array_declarator()) {
 		return;
 	}
 

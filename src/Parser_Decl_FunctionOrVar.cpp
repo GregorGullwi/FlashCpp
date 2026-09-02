@@ -7,6 +7,16 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+ParseResult Parser::duplicateVariableDeclarationError(const Token& identifier_token) {
+	context_.diagnostics().report(
+		DiagnosticId::DuplicateDeclaration,
+		DiagnosticSeverity::Error,
+		lexer_.getSourceLocation(identifier_token),
+		"Redefined symbol with different value",
+		{});
+	return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+}
+
 bool Parser::isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const {
 	if (!struct_info) {
 		return false;
@@ -1068,14 +1078,22 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		DeclarationNode& registered_decl = global_decl_node.declaration();
 		TypeSpecifierNode& type_specifier = registered_decl.type_specifier_node();
 		const Token& identifier_token = registered_decl.identifier_token();
+		// Materialize explicit array bounds before the declaration is inserted so
+		// redeclaration matching can compare complete object types. Keep the
+		// first ordinary global declaration on the legacy preparation path.
+		if (specs.storage_class == StorageClass::Extern ||
+			gSymbolTable.contains(identifier_token.value()) ||
+			registered_decl.is_unsized_array()) {
+			prepareArrayTypeForBraceInitializer(registered_decl, type_specifier);
+			if (registered_decl.is_unsized_array()) {
+				type_specifier.set_unsized_outer_array_dimension(true);
+			}
+		}
+		if (!gSymbolTable.inheritVariableArrayBound(identifier_token.value(), global_var_node)) {
+			return duplicateVariableDeclarationError(identifier_token);
+		}
 		if (!gSymbolTable.insert(identifier_token.value(), global_var_node)) {
-			context_.diagnostics().report(
-				DiagnosticId::DuplicateDeclaration,
-				DiagnosticSeverity::Error,
-				lexer_.getSourceLocation(identifier_token),
-				"Redefined symbol with different value",
-				{});
-		return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+			return duplicateVariableDeclarationError(identifier_token);
 		}
 
 		// Phase 3 Consolidation: Use shared copy initialization helper for = and = {} forms
@@ -1144,6 +1162,10 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		}
 
 		global_decl_node.set_initializer(initializer);
+		if (!gSymbolTable.completeVariableDeclaration(
+				identifier_token.value(), global_var_node)) {
+			return duplicateVariableDeclarationError(identifier_token);
+		}
 
 		// Validate: __declspec(dllimport) data must not have a definition (initializer)
 		if (specs.linkage == Linkage::DllImport && initializer.has_value()) {
