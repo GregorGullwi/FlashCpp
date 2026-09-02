@@ -5,12 +5,12 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-02 after pull request boundary 33
+Last updated: 2026-09-02 after pull request boundary 34
 
 ## Position
 
 - Architecture boundary in progress: 1 (front-end context, arenas, identities,
-  and entities). Pull request boundaries 1 through 33 are landed.
+  and entities). Pull request boundaries 1 through 34 are landed.
   Architecture boundary 1 exit criteria remain open through
   follow-on boundary-1 work.
 - `FrontendContext` owns `DeclarationBuilder`, which publishes `DeclId` /
@@ -116,7 +116,7 @@ Last updated: 2026-09-02 after pull request boundary 33
   Ubuntu and Windows CI invoke the matching native scripts so either merge path
   enforces the same baselines.
 
-## Pull request boundary status (1–32)
+## Pull request boundary status (1–34)
 
 | Boundary | Delivered |
 |----------|-----------|
@@ -153,6 +153,7 @@ Last updated: 2026-09-02 after pull request boundary 33
 | 31 | Tag `lookupMemberFunctionTemplateCandidatesForInstantiation` spill vectors with `OverloadResolution`; attach `TemplateEngine` in `Templates:InheritedStaticStructMemberUsesInstantiatedOwner` doctest |
 | 32 | Tag every explicit `InlineVector` in `src/` and doctest fixtures with `overload-resolution` or `template-argument` spill families |
 | 33 | Require a concrete `InlineVector` spill family at compile time and provide concise `OverloadVector` / `TemplateVector` aliases |
+| 34 | Add two-TU shared-aggregate ABI and inline/template-function regressions; emit non-EH free inline/template functions in `SELECT_ANY` COFF COMDAT sections while recording the remaining RTTI/vtable and grouped-unwind ownership blockers |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture

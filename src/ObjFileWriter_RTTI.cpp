@@ -138,6 +138,14 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 		FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
 		is_cpp = false;	// Prevent C++ EH metadata from corrupting SEH scope table
 	}
+	if (is_seh || is_cpp) {
+		for (auto it = pending_functions_.rbegin(); it != pending_functions_.rend(); ++it) {
+			if (it->name == mangled_name) {
+				it->has_cpp_or_seh_metadata = true;
+				break;
+			}
+		}
+	}
 
 	// Determine flags based on exception type
 	uint8_t unwind_flags = 0x00;
@@ -382,7 +390,7 @@ void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_
 		aux.number = 0;
 		aux.selection = IMAGE_COMDAT_SELECT_ANY;
 		COFFI::auxiliary_symbol_record aux_record;
-		std::memcpy(aux_record.value, &aux, sizeof(aux));
+		std::memcpy(aux_record.value, &aux, sizeof(aux_record.value));
 		section_sym->get_auxiliary_symbols().push_back(aux_record);
 
 		auto symbol = coffi_.add_symbol(var_name);
