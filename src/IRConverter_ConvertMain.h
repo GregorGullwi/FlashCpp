@@ -525,6 +525,11 @@ private:
 	// functions into the unified sections. ELF keeps the existing unwind path.
 	void emitCurrentFunctionUnwind(uint32_t function_length, uint32_t total_stack);
 
+	// Apply pending global-variable text relocs that belong to the function
+	// currently being finalized. Vague-linkage COMDATs must consume these before
+	// native emission, because later functions reuse the same unified offsets.
+	void flushPendingGlobalRelocationsForCurrentFunction(uint32_t function_start, uint32_t function_length);
+
 	// Helper: emit a noexcept terminate landing pad (ELF only) if the current function is
 	// declared noexcept and no cleanup LP was already emitted.
 	// The LP is reached by the personality routine when an exception would escape a noexcept

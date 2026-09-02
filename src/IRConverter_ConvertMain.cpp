@@ -7632,6 +7632,21 @@ void IrToObjConverter<TWriterClass>::resetFunctionState() {
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::flushPendingGlobalRelocationsForCurrentFunction(uint32_t function_start, uint32_t function_length) {
+	const uint64_t function_end = static_cast<uint64_t>(function_start) + function_length;
+	std::vector<PendingGlobalRelocation> remaining;
+	remaining.reserve(pending_global_relocations_.size());
+	for (const PendingGlobalRelocation& reloc : pending_global_relocations_) {
+		if (reloc.offset >= function_start && reloc.offset < function_end) {
+			writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type, reloc.addend);
+		} else {
+			remaining.push_back(reloc);
+		}
+	}
+	pending_global_relocations_ = std::move(remaining);
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitCurrentFunctionUnwind(uint32_t function_length, uint32_t total_stack) {
 	auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 	auto seh_try_blocks = convertSehInfoToWriterFormat();
@@ -7645,6 +7660,7 @@ void IrToObjConverter<TWriterClass>::emitCurrentFunctionUnwind(uint32_t function
 		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_, cleanup_blocks);
 		elf_catch_filter_patches_.clear();
 	} else if (current_function_has_vague_linkage_comdat_) {
+		flushPendingGlobalRelocationsForCurrentFunction(current_function_offset_, function_length);
 		std::span<const uint8_t> text_bytes(textSectionData.data() + current_function_offset_, function_length);
 		writer.emitNativeVagueLinkageFunction(StringTable::getStringView(current_function_mangled_name_), text_bytes);
 		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), 0, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack);
@@ -17355,11 +17371,6 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 						  vtable.rtti_info, vtable.subobject_type_index, vtable.offset_to_top);
 	}
 
-		// Now add pending global variable relocations (after symbols are created)
-	for (const auto& reloc : pending_global_relocations_) {
-		writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type, reloc.addend);
-	}
-
 		// Patch all pending branches before finalizing
 	finalizeFunctionBranches();
 
@@ -17515,6 +17526,14 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		current_catch_continuation_label_ = StringHandle();
 		catch_return_bridges_.clear();
 	}
+
+		// Unique-function global relocs stay pending until symbols exist. Vague-linkage
+		// functions already consumed theirs at native COMDAT emission so later functions
+		// cannot steal the same unified offsets.
+	for (const auto& reloc : pending_global_relocations_) {
+		writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type, reloc.addend);
+	}
+	pending_global_relocations_.clear();
 
 	writer.add_data(textSectionData, SectionType::TEXT);
 	if constexpr (std::is_same_v<TWriterClass, ObjectFileWriter>) {

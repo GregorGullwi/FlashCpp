@@ -629,17 +629,27 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 		sb.append("$catch$").append(parent_mangled_name).append("$").append(handler_idx);
 		std::string catch_symbol_name(sb.commit());
 
+		COFFI::symbol* text_symbol = unwindTextSymbol();
+		if (text_symbol == nullptr) {
+			throw InternalError("Catch funclet text section symbol is missing");
+		}
+		const int32_t text_section_number = text_symbol->get_section_number();
+		const uint32_t catch_value = function_start + funclet_entry_offset;
+
 		auto* existing = coffi_.get_symbol(catch_symbol_name);
-		if (existing) {
+		if (existing != nullptr) {
+			existing->set_type(0x20);
+			existing->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+			existing->set_section_number(text_section_number);
+			existing->set_value(catch_value);
 			return catch_symbol_name;
 		}
 
-		auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 		auto* catch_symbol = coffi_.add_symbol(catch_symbol_name);
 		catch_symbol->set_type(0x20);  // function symbol
 		catch_symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
-		catch_symbol->set_section_number(text_section->get_index() + 1);
-		catch_symbol->set_value(function_start + funclet_entry_offset);
+		catch_symbol->set_section_number(text_section_number);
+		catch_symbol->set_value(catch_value);
 
 		return catch_symbol_name;
 	};
