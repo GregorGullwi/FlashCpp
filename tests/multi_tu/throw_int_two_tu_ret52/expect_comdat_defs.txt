@@ -1,0 +1,5 @@
+# Builtin throw metadata and the int type descriptor must be SELECT_ANY.
+_TI1H
+_CTA1H
+_CT??_R0H@84
+??_R0H@8

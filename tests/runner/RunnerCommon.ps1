@@ -152,30 +152,15 @@ function Get-FlashCppMultiTuCases {
 	return $cases
 }
 
-function Test-FlashCppExpectStrongDefs {
+function Get-FlashCppExpectedSymbolDefs {
 	param(
 		[string]$DumpbinPath,
 		[string[]]$ObjectFiles,
-		[string]$ExpectFile
+		[string[]]$ExpectedNames
 	)
-
-	if (-not (Test-Path -LiteralPath $ExpectFile)) {
-		return $null
-	}
-	$expectedNames = @(
-		Get-Content -LiteralPath $ExpectFile |
-			ForEach-Object { $_.Trim() } |
-			Where-Object { $_ -ne "" -and -not $_.StartsWith("#") }
-	)
-	if ($expectedNames.Count -eq 0) {
-		return $null
-	}
-	if (-not (Test-Path -LiteralPath $DumpbinPath)) {
-		return "dumpbin.exe not found next to the MSVC linker"
-	}
 
 	$defined = @{}
-	foreach ($name in $expectedNames) {
+	foreach ($name in $ExpectedNames) {
 		$defined[$name] = [pscustomobject]@{ Found = $false; ComdatIn = @() }
 	}
 
@@ -184,13 +169,13 @@ function Test-FlashCppExpectStrongDefs {
 		$sectIsComdat = @{}
 		$currentSect = $null
 		foreach ($line in ($symbolOutput -split "`r?`n")) {
-			if ($line -match '\b(SECT\d+)\b.*\bStatic\b') {
+			if ($line -match '\b(SECT[0-9A-F]+)\b.*\bStatic\b') {
 				$currentSect = $Matches[1]
 			}
 			if ($currentSect -and $line -match 'selection.*pick any') {
 				$sectIsComdat[$currentSect] = $true
 			}
-			if ($line -match '\b(SECT\d+)\b.*\bExternal\b.*\|\s+(\S+)') {
+			if ($line -match '\b(SECT[0-9A-F]+)\b.*\bExternal\b.*\|\s+(\S+)') {
 				$sect = $Matches[1]
 				$name = $Matches[2]
 				if (-not $defined.ContainsKey($name)) {
@@ -203,7 +188,38 @@ function Test-FlashCppExpectStrongDefs {
 			}
 		}
 	}
+	return $defined
+}
 
+function Read-FlashCppExpectSymbolFile {
+	param([string]$ExpectFile)
+
+	if (-not (Test-Path -LiteralPath $ExpectFile)) {
+		return @()
+	}
+	return @(
+		Get-Content -LiteralPath $ExpectFile |
+			ForEach-Object { $_.Trim() } |
+			Where-Object { $_ -ne "" -and -not $_.StartsWith("#") }
+	)
+}
+
+function Test-FlashCppExpectStrongDefs {
+	param(
+		[string]$DumpbinPath,
+		[string[]]$ObjectFiles,
+		[string]$ExpectFile
+	)
+
+	$expectedNames = @(Read-FlashCppExpectSymbolFile -ExpectFile $ExpectFile)
+	if ($expectedNames.Count -eq 0) {
+		return $null
+	}
+	if (-not (Test-Path -LiteralPath $DumpbinPath)) {
+		return "dumpbin.exe not found next to the MSVC linker"
+	}
+
+	$defined = Get-FlashCppExpectedSymbolDefs -DumpbinPath $DumpbinPath -ObjectFiles $ObjectFiles -ExpectedNames $expectedNames
 	$failures = @()
 	foreach ($name in $expectedNames) {
 		$info = $defined[$name]
@@ -211,6 +227,37 @@ function Test-FlashCppExpectStrongDefs {
 			$failures += "missing strong definition $name"
 		} elseif ($info.ComdatIn.Count -gt 0) {
 			$failures += "$name is SELECT_ANY COMDAT in $($info.ComdatIn -join ', ')"
+		}
+	}
+	if ($failures.Count -eq 0) {
+		return $null
+	}
+	return ($failures -join "; ")
+}
+
+function Test-FlashCppExpectComdatDefs {
+	param(
+		[string]$DumpbinPath,
+		[string[]]$ObjectFiles,
+		[string]$ExpectFile
+	)
+
+	$expectedNames = @(Read-FlashCppExpectSymbolFile -ExpectFile $ExpectFile)
+	if ($expectedNames.Count -eq 0) {
+		return $null
+	}
+	if (-not (Test-Path -LiteralPath $DumpbinPath)) {
+		return "dumpbin.exe not found next to the MSVC linker"
+	}
+
+	$defined = Get-FlashCppExpectedSymbolDefs -DumpbinPath $DumpbinPath -ObjectFiles $ObjectFiles -ExpectedNames $expectedNames
+	$failures = @()
+	foreach ($name in $expectedNames) {
+		$info = $defined[$name]
+		if (-not $info.Found) {
+			$failures += "missing External definition $name"
+		} elseif ($info.ComdatIn.Count -eq 0) {
+			$failures += "$name is a strong External def, not SELECT_ANY COMDAT"
 		}
 	}
 	if ($failures.Count -eq 0) {

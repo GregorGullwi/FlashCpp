@@ -633,12 +633,19 @@ function Invoke-TestOneMultiTuCase {
 		}
 
 		if ($objectFiles.Count -eq $case.Sources.Count) {
+			$dumpbinPath = Join-Path (Split-Path $linkerPath -Parent) "dumpbin.exe"
 			$expectStrongFile = Join-Path $case.Directory "expect_strong_defs.txt"
 			if (Test-Path -LiteralPath $expectStrongFile) {
-				$dumpbinPath = Join-Path (Split-Path $linkerPath -Parent) "dumpbin.exe"
 				$strongDefError = Test-FlashCppExpectStrongDefs -DumpbinPath $dumpbinPath -ObjectFiles $objectFiles -ExpectFile $expectStrongFile
 				if ($strongDefError) {
 					$resultLine = "OBJ_CHECK_FAIL|$($case.Name)|$strongDefError"
+				}
+			}
+			$expectComdatFile = Join-Path $case.Directory "expect_comdat_defs.txt"
+			if ($resultLine.StartsWith("WORKER_ERROR") -and (Test-Path -LiteralPath $expectComdatFile)) {
+				$comdatDefError = Test-FlashCppExpectComdatDefs -DumpbinPath $dumpbinPath -ObjectFiles $objectFiles -ExpectFile $expectComdatFile
+				if ($comdatDefError) {
+					$resultLine = "OBJ_CHECK_FAIL|$($case.Name)|$comdatDefError"
 				}
 			}
 		}

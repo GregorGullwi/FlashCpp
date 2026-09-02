@@ -1,0 +1,5 @@
+# Builtin throw metadata and the double type descriptor must be SELECT_ANY.
+_TI1N
+_CTA1N
+_CT??_R0N@84
+??_R0N@8

@@ -1,0 +1,7 @@
+# Each MSVC RTTI component is its own SELECT_ANY EXTERNAL leader.
+??_7PolymorphicBase@@6B@
+??_R0?AUPolymorphicBase@@@8
+??_R1.?AUPolymorphicBase@@8
+??_R2.?AUPolymorphicBase@@8
+??_R3.?AUPolymorphicBase@@8
+??_R4.?AUPolymorphicBase@@6B@

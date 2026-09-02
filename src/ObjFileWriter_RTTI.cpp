@@ -42,36 +42,6 @@ std::string buildMsvcTypeDescriptorSymbol(std::string_view mangled_type_name) {
 	return std::string(type_desc_symbol_sv);
 }
 
-// Map a built-in/arithmetic TypeCategory to its MSVC RTTI Type Descriptor
-// code (the bit that appears between ".?A"-less prefix and the "@" terminator
-// and is also embedded in the ??_R0 symbol name). Returns an empty view for
-// categories that don't correspond to a standard MSVC built-in mangling.
-std::string_view getMsvcBuiltinTypeCode(TypeCategory cat) {
-	using namespace std::literals;
-	switch (cat) {
-	case TypeCategory::Void:              return "X"sv;
-	case TypeCategory::Bool:              return "_N"sv;
-	case TypeCategory::Char:              return "D"sv;
-	case TypeCategory::UnsignedChar:      return "E"sv;
-	case TypeCategory::WChar:             return "_W"sv;
-	case TypeCategory::Char8:             return "_Q"sv; // C++20 char8_t
-	case TypeCategory::Char16:            return "_S"sv;
-	case TypeCategory::Char32:            return "_U"sv;
-	case TypeCategory::Short:             return "F"sv;
-	case TypeCategory::UnsignedShort:     return "G"sv;
-	case TypeCategory::Int:               return "H"sv;
-	case TypeCategory::UnsignedInt:       return "I"sv;
-	case TypeCategory::Long:              return "J"sv;
-	case TypeCategory::UnsignedLong:      return "K"sv;
-	case TypeCategory::LongLong:          return "_J"sv;
-	case TypeCategory::UnsignedLongLong:  return "_K"sv;
-	case TypeCategory::Float:             return "M"sv;
-	case TypeCategory::Double:            return "N"sv;
-	case TypeCategory::LongDouble:        return "O"sv;
-	default:                              return {};
-	}
-}
-
 uint32_t getMsvcClassHierarchyAttributes(std::string_view class_name) {
 	const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(class_name));
 	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
@@ -110,40 +80,37 @@ uint32_t getMsvcClassHierarchyAttributes(std::string_view class_name) {
 	return attributes;
 }
 
-struct VagueLinkageRdataGroup {
-	std::vector<char> bytes;
-	std::vector<ObjectFileWriter::ComdatReloc> relocs;
-	struct NamedOffset {
-		std::string name;
-		uint32_t offset = 0;
-	};
-	std::vector<NamedOffset> external_symbols;
-
-	uint32_t size() const {
-		return static_cast<uint32_t>(bytes.size());
-	}
-
-	void append(std::span<const char> data) {
-		bytes.insert(bytes.end(), data.begin(), data.end());
-	}
-
-	void append(const std::vector<char>& data) {
-		append(std::span<const char>(data));
-	}
-
-	void addImageRelative(uint32_t offset, uint32_t symbol_table_index) {
-		relocs.push_back({offset, symbol_table_index, IMAGE_REL_AMD64_ADDR32NB});
-	}
-
-	void addAddr64(uint32_t offset, uint32_t symbol_table_index) {
-		relocs.push_back({offset, symbol_table_index, IMAGE_REL_AMD64_ADDR64});
-	}
-
-	void addExternalSymbol(std::string name, uint32_t offset) {
-		external_symbols.push_back({std::move(name), offset});
-	}
-};
 } // namespace
+
+// Map a built-in/arithmetic TypeCategory to its MSVC RTTI Type Descriptor
+// code (the bit that appears between ".?A"-less prefix and the "@" terminator
+// and is also embedded in the ??_R0 symbol name). Returns an empty view for
+// categories that don't correspond to a standard MSVC built-in mangling.
+std::string_view ObjectFileWriter::msvcBuiltinTypeCode(TypeCategory cat) {
+	using namespace std::literals;
+	switch (cat) {
+	case TypeCategory::Void:              return "X"sv;
+	case TypeCategory::Bool:              return "_N"sv;
+	case TypeCategory::Char:              return "D"sv;
+	case TypeCategory::UnsignedChar:      return "E"sv;
+	case TypeCategory::WChar:             return "_W"sv;
+	case TypeCategory::Char8:             return "_Q"sv; // C++20 char8_t
+	case TypeCategory::Char16:            return "_S"sv;
+	case TypeCategory::Char32:            return "_U"sv;
+	case TypeCategory::Short:             return "F"sv;
+	case TypeCategory::UnsignedShort:     return "G"sv;
+	case TypeCategory::Int:               return "H"sv;
+	case TypeCategory::UnsignedInt:       return "I"sv;
+	case TypeCategory::Long:              return "J"sv;
+	case TypeCategory::UnsignedLong:      return "K"sv;
+	case TypeCategory::LongLong:          return "_J"sv;
+	case TypeCategory::UnsignedLongLong:  return "_K"sv;
+	case TypeCategory::Float:             return "M"sv;
+	case TypeCategory::Double:            return "N"sv;
+	case TypeCategory::LongDouble:        return "O"sv;
+	default:                              return {};
+	}
+}
 
 void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, std::span<const SehTryBlockInfo> seh_try_blocks, uint32_t stack_frame_size) {
 	// Check if exception info has already been added for this function
@@ -476,13 +443,6 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 								  [[maybe_unused]] const RTTITypeInfo* rtti_info,
 								  [[maybe_unused]] TypeIndex subobject_type_index,
 								  [[maybe_unused]] int64_t offset_to_top) {
-	VagueLinkageRdataGroup vtable_group;
-	struct NamedReloc {
-		uint32_t offset = 0;
-		std::string symbol_name;
-		uint32_t type = 0;
-	};
-	std::vector<NamedReloc> named_relocs;
 	const bool is_secondary_vtable = offset_to_top != 0;
 
 	if (g_enable_debug_output)
@@ -491,36 +451,28 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 				  << " with " << function_symbols.size() << " entries"
 				  << " and " << base_class_names.size() << " base classes" << std::endl;
 
-	// Step 1: Emit MSVC RTTI data structures for this class
-	// MSVC uses a multi-component RTTI format:
+	// Each MSVC RTTI component is its own SELECT_ANY COMDAT. Extra EXTERNAL
+	// leaders in one SELECT_ANY section become LNK2005 strong defs.
 	//   ??_R0 - Type Descriptor
 	//   ??_R1 - Base Class Descriptor(s)
 	//   ??_R2 - Base Class Array
 	//   ??_R3 - Class Hierarchy Descriptor
 	//   ??_R4 - Complete Object Locator
-
 	// MSVC RTTI uses .?AV for class and .?AU for struct names.
 	std::string mangled_class_name = buildMsvcTypeDescriptorName(class_name, subobject_type_index);
-
 	// ??_R0 - Type Descriptor (16 bytes header + mangled name)
 	std::string type_desc_symbol = get_or_create_type_descriptor(class_name, subobject_type_index);
-	auto addDeferredRelocationByName = [&](uint32_t virtual_address, std::string symbol_name, uint32_t type) {
-		named_relocs.push_back({virtual_address, std::move(symbol_name), type});
-	};
-
 	std::string chd_symbol = "??_R3" + mangled_class_name + "8";
 
 	if (!is_secondary_vtable) {
-		std::vector<uint32_t> bcd_offsets;
 		std::vector<std::string> bcd_symbol_names;
 
 		// ??_R1 - Base Class Descriptors (one for self + one per base)
 		// Self descriptor
-		uint32_t self_bcd_offset = vtable_group.size();
 		std::string self_bcd_symbol = "??_R1" + mangled_class_name + "8";  // "8" suffix for self
 		std::vector<char> self_bcd_data;
 		self_bcd_data.reserve(28);  // 7 image-relative / scalar DWORDs
-		// type_descriptor image-relative pointer (4 bytes) - relocation added below
+		// type_descriptor image-relative pointer (4 bytes) - relocation at +0
 		ObjectFileCommon::appendZeros(self_bcd_data, 4);
 		// num_contained_bases (4 bytes)
 		ObjectFileCommon::appendLE(self_bcd_data, static_cast<uint32_t>(base_class_info.size()));
@@ -532,21 +484,19 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0));
 		// attributes (4 bytes) - include the pClassDescriptor field
 		ObjectFileCommon::appendLE(self_bcd_data, uint32_t(0x40));
-		// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
+		// class hierarchy descriptor image-relative pointer (4 bytes) - relocation at +24
 		ObjectFileCommon::appendZeros(self_bcd_data, 4);
-		vtable_group.append(self_bcd_data);
-		vtable_group.addExternalSymbol(self_bcd_symbol, self_bcd_offset);
-		addDeferredRelocationByName(self_bcd_offset, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
-		bcd_offsets.push_back(self_bcd_offset);
-			bcd_symbol_names.push_back(self_bcd_symbol);
+		std::vector<NamedComdatReloc> self_bcd_relocs{
+			{0, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB},
+			{24, chd_symbol, IMAGE_REL_AMD64_ADDR32NB}};
+		emitVagueLinkageComdatRdataNamed(self_bcd_symbol, self_bcd_data, self_bcd_relocs, 0);
+		bcd_symbol_names.push_back(self_bcd_symbol);
 
 		// Base class descriptors
 		for (size_t i = 0; i < base_class_info.size(); ++i) {
 			const auto& bci = base_class_info[i];
 			std::string base_mangled = buildMsvcTypeDescriptorName(bci.name, {});
 			std::string base_type_desc_symbol = get_or_create_type_descriptor(bci.name);
-
-			uint32_t base_bcd_offset = vtable_group.size();
 			std::string_view base_bcd_symbol_sv = StringBuilder()
 													  .append("??_R1"sv)
 													  .append(mangled_class_name)
@@ -557,7 +507,7 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 													  .commit();
 			std::string base_bcd_symbol(base_bcd_symbol_sv);
 			std::vector<char> base_bcd_data;
-			// type_descriptor image-relative pointer (4 bytes) - will add relocation
+			// type_descriptor image-relative pointer (4 bytes)
 			ObjectFileCommon::appendZeros(base_bcd_data, 4);
 			// num_contained_bases (4 bytes) - actual value from base class info
 			ObjectFileCommon::appendLE(base_bcd_data, bci.num_contained_bases);
@@ -573,47 +523,40 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 			// Bit 0: virtual base (1 if virtual, 0 if non-virtual)
 			// Bit 6: pClassDescriptor field is present
 			ObjectFileCommon::appendLE(base_bcd_data, (bci.is_virtual ? 1u : 0u) | 0x40u);
-			// class hierarchy descriptor image-relative pointer (4 bytes) - relocation added later
+			// class hierarchy descriptor image-relative pointer (4 bytes)
 			ObjectFileCommon::appendZeros(base_bcd_data, 4);
-			vtable_group.append(base_bcd_data);
-			vtable_group.addExternalSymbol(base_bcd_symbol, base_bcd_offset);
-			addDeferredRelocationByName(base_bcd_offset, base_type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
-			bcd_offsets.push_back(base_bcd_offset);
-			bcd_symbol_names.push_back(base_bcd_symbol);
+			std::vector<NamedComdatReloc> base_bcd_relocs{
+				{0, base_type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB},
+				{24, chd_symbol, IMAGE_REL_AMD64_ADDR32NB}};
+			emitVagueLinkageComdatRdataNamed(base_bcd_symbol, base_bcd_data, base_bcd_relocs, 0);
+			bcd_symbol_names.push_back(std::move(base_bcd_symbol));
 		}
 
 		// ??_R2 - Base Class Array (pointers to all BCDs)
-		uint32_t bca_offset = vtable_group.size();
 		std::string bca_symbol = "??_R2" + mangled_class_name + "8";
-		std::vector<char> bca_data(bcd_offsets.size() * 4, 0);
-		vtable_group.append(bca_data);
-		vtable_group.addExternalSymbol(bca_symbol, bca_offset);
+		std::vector<char> bca_data(bcd_symbol_names.size() * 4, 0);
+		std::vector<NamedComdatReloc> bca_relocs;
+		bca_relocs.reserve(bcd_symbol_names.size());
 		for (size_t i = 0; i < bcd_symbol_names.size(); ++i) {
-			addDeferredRelocationByName(bca_offset + static_cast<uint32_t>(i * 4), bcd_symbol_names[i], IMAGE_REL_AMD64_ADDR32NB);
+			bca_relocs.push_back({static_cast<uint32_t>(i * 4), bcd_symbol_names[i], IMAGE_REL_AMD64_ADDR32NB});
 		}
+		emitVagueLinkageComdatRdataNamed(bca_symbol, bca_data, bca_relocs, 0);
 
 		// ??_R3 - Class Hierarchy Descriptor
-		uint32_t chd_offset = vtable_group.size();
 		std::vector<char> chd_data;
 		// signature (4 bytes) - 0
 		ObjectFileCommon::appendLE(chd_data, uint32_t(0));
 		// attributes (4 bytes) - inheritance model flags
 		ObjectFileCommon::appendLE(chd_data, getMsvcClassHierarchyAttributes(class_name));
 		// num_base_classes (4 bytes) - total including self
-		ObjectFileCommon::appendLE(chd_data, static_cast<uint32_t>(bcd_offsets.size()));
-		// base_class_array image-relative pointer (4 bytes) - will add relocation
+		ObjectFileCommon::appendLE(chd_data, static_cast<uint32_t>(bcd_symbol_names.size()));
+		// base_class_array image-relative pointer (4 bytes)
 		ObjectFileCommon::appendZeros(chd_data, 4);
-		vtable_group.append(chd_data);
-		vtable_group.addExternalSymbol(chd_symbol, chd_offset);
-		addDeferredRelocationByName(chd_offset + 12, bca_symbol, IMAGE_REL_AMD64_ADDR32NB);
-		// Each BCD also stores an image-relative pointer back to the CHD.
-		for (uint32_t bcd_offset : bcd_offsets) {
-			addDeferredRelocationByName(bcd_offset + 24, chd_symbol, IMAGE_REL_AMD64_ADDR32NB);
-		}
+		std::vector<NamedComdatReloc> chd_relocs{{12, bca_symbol, IMAGE_REL_AMD64_ADDR32NB}};
+		emitVagueLinkageComdatRdataNamed(chd_symbol, chd_data, chd_relocs, 0);
 	}
 
 	// ??_R4 - Complete Object Locator
-	uint32_t col_offset = vtable_group.size();
 	std::string col_symbol = is_secondary_vtable
 		? (std::string(vtable_symbol) + "$col")
 		: ("??_R4" + mangled_class_name + "6B@");
@@ -624,102 +567,75 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 	ObjectFileCommon::appendLE(col_data, static_cast<uint32_t>(-offset_to_top));
 	// cd_offset (4 bytes) - 0
 	ObjectFileCommon::appendLE(col_data, uint32_t(0));
-	// type_descriptor image-relative pointer (4 bytes) - relocation added at offset+12
+	// type_descriptor image-relative pointer (4 bytes) - relocation at +12
 	ObjectFileCommon::appendZeros(col_data, 4);
-	// hierarchy image-relative pointer (4 bytes) - relocation added at offset+16
+	// hierarchy image-relative pointer (4 bytes) - relocation at +16
 	ObjectFileCommon::appendZeros(col_data, 4);
-	// self image-relative pointer (4 bytes) - relocation added at offset+20
+	// self image-relative pointer (4 bytes) - relocation at +20
 	ObjectFileCommon::appendZeros(col_data, 4);
-	vtable_group.append(col_data);
-	vtable_group.addExternalSymbol(col_symbol, col_offset);
-	addDeferredRelocationByName(col_offset + 12, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB);
-	addDeferredRelocationByName(col_offset + 16, chd_symbol, IMAGE_REL_AMD64_ADDR32NB);
-	addDeferredRelocationByName(col_offset + 20, col_symbol, IMAGE_REL_AMD64_ADDR32NB);
+	std::vector<NamedComdatReloc> col_relocs{
+		{12, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB},
+		{16, chd_symbol, IMAGE_REL_AMD64_ADDR32NB},
+		{20, col_symbol, IMAGE_REL_AMD64_ADDR32NB}};
+	emitVagueLinkageComdatRdataNamed(col_symbol, col_data, col_relocs, 0);
 
 	// Layout: [vbase offsets in reverse order][COL pointer][function pointers...]
 	// The vptr points at the first function. Keeping the entries in reverse
 	// order makes virtual-base index zero the closest entry, matching the
 	// Itanium prefix convention and the backend's vtable[-(2+i)] lookup.
-	uint32_t vtable_offset = vtable_group.size();
 	size_t vtable_size = (virtual_base_offsets.size() + 1 + function_symbols.size()) * 8;
 	std::vector<char> vtable_data(vtable_size, 0);
 	for (size_t i = 0; i < virtual_base_offsets.size(); ++i) {
 		const int64_t offset = virtual_base_offsets[virtual_base_offsets.size() - 1 - i];
 		std::memcpy(vtable_data.data() + i * sizeof(int64_t), &offset, sizeof(offset));
 	}
-	vtable_group.append(vtable_data);
-
 	// COL (Complete Object Locator) pointer at vtable[0] (before actual vtable)
-	uint32_t col_reloc_offset = vtable_offset + static_cast<uint32_t>(virtual_base_offsets.size() * 8);
-	named_relocs.push_back({col_reloc_offset, col_symbol, IMAGE_REL_AMD64_ADDR64});
-
+	uint32_t col_reloc_offset = static_cast<uint32_t>(virtual_base_offsets.size() * 8);
 	// Vtable symbol points to the first virtual function, AFTER COL
-	uint32_t vtable_symbol_offset = vtable_offset + static_cast<uint32_t>((virtual_base_offsets.size() + 1) * 8);
-	vtable_group.addExternalSymbol(std::string(vtable_symbol), vtable_symbol_offset);
+	uint32_t vtable_symbol_offset = static_cast<uint32_t>((virtual_base_offsets.size() + 1) * 8);
+	std::vector<NamedComdatReloc> vtable_relocs;
+	vtable_relocs.push_back({col_reloc_offset, col_symbol, IMAGE_REL_AMD64_ADDR64});
 	for (size_t i = 0; i < function_symbols.size(); ++i) {
 		if (function_symbols[i].empty()) {
 			// Skip empty entries (pure virtual functions might be empty initially)
 			continue;
 		}
-		uint32_t reloc_offset = vtable_symbol_offset + static_cast<uint32_t>(i * 8);
-		addDeferredRelocationByName(reloc_offset, std::string(function_symbols[i]), IMAGE_REL_AMD64_ADDR64);
+		vtable_relocs.push_back({
+			vtable_symbol_offset + static_cast<uint32_t>(i * 8),
+			std::string(function_symbols[i]),
+			IMAGE_REL_AMD64_ADDR64});
 	}
-
-	COFFI::section* vtable_section = emitComdatSection(
-		".rdata$", inline_comdat_rdata_section_counter_,
-		IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES,
-		vtable_group.bytes, {}, 0, IMAGE_COMDAT_SELECT_ANY, vtable_symbol, false, vtable_symbol_offset);
-	for (const VagueLinkageRdataGroup::NamedOffset& external_symbol : vtable_group.external_symbols) {
-		if (external_symbol.name != vtable_symbol) {
-			add_vague_linkage_comdat_rdata_symbol(vtable_section, external_symbol.name, external_symbol.offset);
-		}
-	}
-
-	std::vector<ComdatReloc> final_relocs;
-	final_relocs.reserve(named_relocs.size());
-	for (const NamedReloc& named_reloc : named_relocs) {
-		final_relocs.push_back({
-			named_reloc.offset,
-			get_or_create_symbol_index(named_reloc.symbol_name),
-			named_reloc.type});
-	}
-	addComdatSectionRelocations(vtable_section, final_relocs);
+	emitVagueLinkageComdatRdataNamed(vtable_symbol, vtable_data, vtable_relocs, vtable_symbol_offset);
 }
 
-// Get or create MSVC _ThrowInfo metadata symbol for a built-in thrown type.
-// Current implementation provides concrete metadata for int (Type::Int), which
-// is enough to make basic throw/catch(int) and noexcept(int throw) flows work.
-//
-// Emitted layout mirrors MSVC x64 objects:
-//   _TI1H            (ThrowInfo, 0x1C bytes)
-//   _CTA1H           (CatchableTypeArray, 0x0C bytes)
-//   _CT??_R0H@84     (CatchableType, 0x24 bytes)
-//   ??_R0H@8         (RTTI Type Descriptor, created on-demand if missing)
+// Get or create MSVC _ThrowInfo metadata for a built-in thrown type.
+// Layout mirrors MSVC x64 objects; the type code comes from msvcBuiltinTypeCode
+// (H=int, N=double, _N=bool, ...):
+//   _TI1<code>            ThrowInfo (0x1C bytes)
+//   _CTA1<code>           CatchableTypeArray (0x0C bytes)
+//   _CT??_R0<code>@84     CatchableType (0x24 bytes)
+//   ??_R0<code>@8         RTTI Type Descriptor
 std::string ObjectFileWriter::get_or_create_builtin_throwinfo(TypeCategory type) {
-	if (type != TypeCategory::Int) {
+	std::string_view code = msvcBuiltinTypeCode(type);
+	if (code.empty() || type == TypeCategory::Void) {
 		return std::string();
 	}
 
-	const std::string throw_info_symbol = "_TI1H";
+	std::string throw_info_symbol(StringBuilder().append("_TI1"sv).append(code).commit());
 	auto* existing_throw_info = coffi_.get_symbol(throw_info_symbol);
-	if (existing_throw_info) {
+	if (existing_throw_info && existing_throw_info->get_section_number() > 0) {
 		return throw_info_symbol;
 	}
 
-	auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
-
-	// Ensure RTTI type descriptor for int exists: ??_R0H@8
 	// Delegate to the shared emitMsvcTypeDescriptor path so that
 	// symbol_index_cache_ is populated — avoids duplicate symbols when
-	// both throw(int) and typeid(int) appear in the same TU.
-	const std::string type_desc_symbol_name = get_or_create_builtin_type_descriptor(TypeCategory::Int);
-	auto* type_desc_symbol = coffi_.get_symbol(type_desc_symbol_name);
+	// both throw(T) and typeid(T) appear in the same TU.
+	const std::string type_desc_symbol_name = get_or_create_builtin_type_descriptor(type);
 
-	// Emit CatchableType: _CT??_R0H@84 (0x24 bytes)
-	const std::string catchable_type_symbol_name = "_CT??_R0H@84";
-	auto* catchable_type_symbol = coffi_.get_symbol(catchable_type_symbol_name);
-	if (!catchable_type_symbol) {
-		uint32_t ct_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+	// Emit CatchableType: _CT??_R0<code>@84 (0x24 bytes)
+	std::string catchable_type_symbol_name(StringBuilder().append("_CT??_R0"sv).append(code).append("@84"sv).commit());
+	auto* existing_catchable_type = coffi_.get_symbol(catchable_type_symbol_name);
+	if (existing_catchable_type == nullptr || existing_catchable_type->get_section_number() <= 0) {
 		std::vector<char> ct_data(0x24, 0);
 		// properties = 1 (simple by-value scalar)
 		ct_data[0] = 0x01;
@@ -728,64 +644,32 @@ std::string ObjectFileWriter::get_or_create_builtin_throwinfo(TypeCategory type)
 		ct_data[0x0D] = static_cast<char>(0xFF);
 		ct_data[0x0E] = static_cast<char>(0xFF);
 		ct_data[0x0F] = static_cast<char>(0xFF);
-		// sizeOrOffset = 4 (sizeof(int))
-		ct_data[0x14] = 0x04;
-
-		add_data(ct_data, SectionType::RDATA);
-
-		catchable_type_symbol = coffi_.add_symbol(catchable_type_symbol_name);
-		catchable_type_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		catchable_type_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		catchable_type_symbol->set_section_number(rdata_section->get_index() + 1);
-		catchable_type_symbol->set_value(ct_offset);
-
-		// pType -> ??_R0H@8 (image-relative)
-		COFFI::rel_entry_generic ct_type_reloc;
-		ct_type_reloc.virtual_address = ct_offset + 0x04;
-		ct_type_reloc.symbol_table_index = type_desc_symbol->get_index();
-		ct_type_reloc.type = IMAGE_REL_AMD64_ADDR32NB;
-		rdata_section->add_relocation_entry(&ct_type_reloc);
+		const uint32_t type_size = static_cast<uint32_t>(get_type_size_bits(type) / 8);
+		// sizeOrOffset
+		ct_data[0x14] = static_cast<char>(type_size & 0xFF);
+		ct_data[0x15] = static_cast<char>((type_size >> 8) & 0xFF);
+		ct_data[0x16] = static_cast<char>((type_size >> 16) & 0xFF);
+		ct_data[0x17] = static_cast<char>((type_size >> 24) & 0xFF);
+		// pType -> ??_R0<code>@8 (image-relative)
+		std::vector<NamedComdatReloc> ct_relocs{{0x04, type_desc_symbol_name, IMAGE_REL_AMD64_ADDR32NB}};
+		emitVagueLinkageComdatRdataNamed(catchable_type_symbol_name, ct_data, ct_relocs, 0);
 	}
 
-	// Emit CatchableTypeArray: _CTA1H (0x0C bytes)
-	const std::string cta_symbol_name = "_CTA1H";
-	auto* cta_symbol = coffi_.get_symbol(cta_symbol_name);
-	if (!cta_symbol) {
-		uint32_t cta_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+	// Emit CatchableTypeArray: _CTA1<code> (0x0C bytes)
+	std::string cta_symbol_name(StringBuilder().append("_CTA1"sv).append(code).commit());
+	auto* existing_cta = coffi_.get_symbol(cta_symbol_name);
+	if (existing_cta == nullptr || existing_cta->get_section_number() <= 0) {
 		std::vector<char> cta_data(0x0C, 0);
 		// nCatchableTypes = 1
 		cta_data[0] = 0x01;
-		add_data(cta_data, SectionType::RDATA);
-
-		cta_symbol = coffi_.add_symbol(cta_symbol_name);
-		cta_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-		cta_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		cta_symbol->set_section_number(rdata_section->get_index() + 1);
-		cta_symbol->set_value(cta_offset);
-
-		COFFI::rel_entry_generic cta_reloc;
-		cta_reloc.virtual_address = cta_offset + 0x04;
-		cta_reloc.symbol_table_index = catchable_type_symbol->get_index();
-		cta_reloc.type = IMAGE_REL_AMD64_ADDR32NB;
-		rdata_section->add_relocation_entry(&cta_reloc);
+		std::vector<NamedComdatReloc> cta_relocs{{0x04, catchable_type_symbol_name, IMAGE_REL_AMD64_ADDR32NB}};
+		emitVagueLinkageComdatRdataNamed(cta_symbol_name, cta_data, cta_relocs, 0);
 	}
 
-	// Emit ThrowInfo: _TI1H (0x1C bytes), with pCatchableTypeArray at +0x0C
-	uint32_t ti_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+	// Emit ThrowInfo: _TI1<code> (0x1C bytes), with pCatchableTypeArray at +0x0C
 	std::vector<char> ti_data(0x1C, 0);
-	add_data(ti_data, SectionType::RDATA);
-
-	auto* ti_symbol = coffi_.add_symbol(throw_info_symbol);
-	ti_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-	ti_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-	ti_symbol->set_section_number(rdata_section->get_index() + 1);
-	ti_symbol->set_value(ti_offset);
-
-	COFFI::rel_entry_generic ti_reloc;
-	ti_reloc.virtual_address = ti_offset + 0x0C;
-	ti_reloc.symbol_table_index = cta_symbol->get_index();
-	ti_reloc.type = IMAGE_REL_AMD64_ADDR32NB;
-	rdata_section->add_relocation_entry(&ti_reloc);
+	std::vector<NamedComdatReloc> ti_relocs{{0x0C, cta_symbol_name, IMAGE_REL_AMD64_ADDR32NB}};
+	emitVagueLinkageComdatRdataNamed(throw_info_symbol, ti_data, ti_relocs, 0);
 
 	if (g_enable_debug_output)
 		std::cerr << "Created builtin throw metadata symbol: " << throw_info_symbol << std::endl;
@@ -793,8 +677,8 @@ std::string ObjectFileWriter::get_or_create_builtin_throwinfo(TypeCategory type)
 }
 
 // Get or create MSVC ??_R0 Type Descriptor symbol for a class.
-// Returns the symbol name (e.g., "??_R0.?AVMyClass@@").
-// If the descriptor doesn't exist yet, it will be created in .rdata section.
+// Returns the symbol name (e.g., "??_R0?AVMyClass@@@8").
+// If the descriptor doesn't exist yet, it is emitted as a SELECT_ANY COMDAT.
 std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view class_name) {
 	return get_or_create_type_descriptor(class_name, {});
 }
@@ -869,7 +753,7 @@ std::string ObjectFileWriter::get_or_create_type_descriptor(std::string_view cla
 }
 
 std::string ObjectFileWriter::get_or_create_builtin_type_descriptor(TypeCategory cat) {
-	std::string_view code = getMsvcBuiltinTypeCode(cat);
+	std::string_view code = msvcBuiltinTypeCode(cat);
 	if (code.empty()) {
 		return {};
 	}
@@ -881,6 +765,16 @@ std::string ObjectFileWriter::get_or_create_builtin_type_descriptor(TypeCategory
 											 .append(code)
 											 .commit();
 	return emitMsvcTypeDescriptor(*this, coffi_, symbol_index_cache_, mangled_type_name);
+}
+
+std::string ObjectFileWriter::get_or_create_type_descriptor_for_spelling(std::string_view type_name) {
+	if (auto cat = typeCategoryFromName(type_name)) {
+		std::string builtin_symbol = get_or_create_builtin_type_descriptor(*cat);
+		if (!builtin_symbol.empty()) {
+			return builtin_symbol;
+		}
+	}
+	return get_or_create_type_descriptor(type_name);
 }
 
 // Helper: get or create symbol index for a function name (cached for O(1) repeated lookups)

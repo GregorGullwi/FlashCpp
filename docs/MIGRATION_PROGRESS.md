@@ -264,12 +264,14 @@ Named follow-ups carried forward:
   are not driven by `is_member_function()` or `namespace std`. ELF vtables for
   the same classes use `STB_WEAK` so two TUs can link without multiple
   definition of `_ZTV*`.
-- MSVC emits each `??_R1`/`??_R2`/`??_R3`/`??_R4` as its own `SELECT_ANY`
-  COMDAT; FlashCpp currently keeps those symbols as `STATIC` secondaries in the
-  vtable's `SELECT_ANY` section so extra `EXTERNAL` leaders do not become
-  `LNK2005` strong defs. Per-symbol RTTI COMDATs remain an ABI-fidelity
-  follow-up. Unified `.text`/`.xdata`/`.pdata` still retain dead copies of
-  functions that also have COMDAT groups.
+- MSVC RTTI components (`??_R0` through `??_R4`, plus the vtable) each get
+  their own `SELECT_ANY` `.rdata$N` COMDAT. Builtin throw metadata (`_TI1H`,
+  `_CTA1H`, `_CT??_R0H@84`) is likewise `SELECT_ANY` so two TUs that both
+  `throw int` can link (`tests/multi_tu/throw_int_two_tu_ret52`). The same
+  MSVC type-code table covers the other arithmetic builtins (`_TI1N` for
+  double, `_TI1_N` for bool, …). Unified
+  `.text`/`.xdata`/`.pdata` still retain dead copies of functions that also
+  have COMDAT groups.
 
 ## Active findings
 
