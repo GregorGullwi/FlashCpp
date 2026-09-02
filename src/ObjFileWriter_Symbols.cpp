@@ -31,12 +31,15 @@ void ObjectFileWriter::addFunctionSignature([[maybe_unused]] std::string_view na
 void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage, bool is_inline) {
 	if (g_enable_debug_output)
 		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
-	auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
-	auto symbol_func = coffi_.add_symbol(mangled_name);
-	symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
-	symbol_func->set_storage_class(is_inline && linkage == Linkage::C ? IMAGE_SYM_CLASS_STATIC : IMAGE_SYM_CLASS_EXTERNAL);
-	symbol_func->set_section_number(section_text->get_index() + 1);
-	symbol_func->set_value(section_offset);
+	pending_functions_.push_back({std::string(mangled_name), section_offset, 0, is_inline, false});
+	if (!is_inline) {
+		auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+		auto symbol_func = coffi_.add_symbol(mangled_name);
+		symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
+		symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		symbol_func->set_section_number(section_text->get_index() + 1);
+		symbol_func->set_value(section_offset);
+	}
 
 	// Handle dllexport - add export directive
 	if (linkage == Linkage::DllExport) {
@@ -664,6 +667,93 @@ void ObjectFileWriter::add_function_parameter(const std::string& name, uint32_t 
 
 void ObjectFileWriter::update_function_length(const std::string_view manged_name, uint32_t code_length) {
 	debug_builder_.updateFunctionLength(manged_name, code_length);
+	for (auto it = pending_functions_.rbegin(); it != pending_functions_.rend(); ++it) {
+		if (it->name == manged_name) {
+			it->length = code_length;
+			return;
+		}
+	}
+	throw InternalError("Function length was reported for an unknown symbol");
+}
+
+void ObjectFileWriter::emitInlineFunctionComdats(std::span<const uint8_t> text_data) {
+	auto text_section = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
+	const auto& text_relocations = text_section->get_relocations();
+	auto addRegularFunctionSymbol = [&](const PendingFunctionInfo& function) {
+		auto symbol = coffi_.add_symbol(function.name);
+		symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
+		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		symbol->set_section_number(text_section->get_index() + 1);
+		symbol->set_value(function.offset);
+	};
+
+	for (const PendingFunctionInfo& function : pending_functions_) {
+		if (!function.is_inline) {
+			continue;
+		}
+		if (function.has_cpp_or_seh_metadata || function.length == 0) {
+			addRegularFunctionSymbol(function);
+			continue;
+		}
+		if (function.offset > text_data.size() || function.length > text_data.size() - function.offset) {
+			throw InternalError("Inline function COMDAT range is outside the text section");
+		}
+
+		// COFFI cannot reliably serialize long section names in object files, so
+		// keep this private section name within COFF's eight-byte inline limit.
+		std::string section_name = ".text$" + std::to_string(inline_comdat_section_counter_++);
+		auto section = coffi_.add_section(section_name);
+		section->set_flags(IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_CODE |
+			IMAGE_SCN_ALIGN_16BYTES | IMAGE_SCN_LNK_COMDAT);
+		section->append_data(reinterpret_cast<const char*>(text_data.data() + function.offset), function.length);
+		uint16_t relocation_count = 0;
+		for (const COFFI::relocation& relocation : text_relocations) {
+			if (relocation.get_virtual_address() >= function.offset &&
+				relocation.get_virtual_address() < function.offset + function.length) {
+				++relocation_count;
+			}
+		}
+
+		auto section_symbol = coffi_.add_symbol(section_name);
+		section_symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		section_symbol->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		section_symbol->set_section_number(section->get_index() + 1);
+		section_symbol->set_value(0);
+		COFFI::auxiliary_symbol_record_5 aux = {};
+		aux.length = function.length;
+		aux.number_of_relocations = relocation_count;
+		aux.number_of_linenumbers = 0;
+		aux.check_sum = 0;
+		aux.number = 0;
+		aux.selection = IMAGE_COMDAT_SELECT_ANY;
+		COFFI::auxiliary_symbol_record aux_record;
+		std::memcpy(aux_record.value, &aux, sizeof(aux_record.value));
+		section_symbol->get_auxiliary_symbols().push_back(aux_record);
+		// COFFI calculates the file-header symbol count before serializing the
+		// auxiliary records, so the final symbol must carry this count already.
+		section_symbol->set_aux_symbols_number(1);
+
+		for (const COFFI::relocation& relocation : text_relocations) {
+			if (relocation.get_virtual_address() < function.offset ||
+				relocation.get_virtual_address() >= function.offset + function.length) {
+				continue;
+			}
+			COFFI::rel_entry_generic copied_relocation;
+			copied_relocation.virtual_address = relocation.get_virtual_address() - function.offset;
+			copied_relocation.symbol_table_index = relocation.get_symbol_table_index();
+			copied_relocation.type = relocation.get_type();
+			section->add_relocation_entry(&copied_relocation);
+		}
+
+		// The COFF section-definition symbol must precede the external COMDAT
+		// leader. COFFI cannot reorder symbols after emission, so free
+		// vague-linkage symbols are deliberately deferred until this point.
+		auto* function_symbol = coffi_.add_symbol(function.name);
+		function_symbol->set_type(IMAGE_SYM_TYPE_FUNCTION);
+		function_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		function_symbol->set_section_number(section->get_index() + 1);
+		function_symbol->set_value(0);
+	}
 }
 
 void ObjectFileWriter::set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size) {

@@ -91,7 +91,7 @@ public:
 		aux.number = static_cast<uint16_t>(section->get_index() + 1);
 		aux.selection = 0;
 		COFFI::auxiliary_symbol_record aux_record;
-		std::memcpy(aux_record.value, &aux, sizeof(aux));
+		std::memcpy(aux_record.value, &aux, sizeof(aux_record.value));
 		sym->get_auxiliary_symbols().push_back(aux_record);
 	}
 
@@ -488,6 +488,7 @@ public:
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
 	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline);
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage, bool is_inline);
+	void emitInlineFunctionComdats(std::span<const uint8_t> text_data);
 	void add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset);
 	void add_data(std::span<const uint8_t> data, SectionType section_type);
 	void add_data(std::span<const char> data, SectionType section_type);
@@ -575,6 +576,8 @@ protected:
 		std::string name;
 		uint32_t offset;
 		uint32_t length;
+		bool is_inline;
+		bool has_cpp_or_seh_metadata;
 	};
 	std::vector<PendingFunctionInfo> pending_functions_;
 
@@ -592,6 +595,7 @@ protected:
 
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;
+	uint32_t inline_comdat_section_counter_ = 0;
 
 	// Thread-local reusable buffer for string literal processing
 	inline static thread_local std::string string_literal_buffer_;

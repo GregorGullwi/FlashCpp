@@ -7696,6 +7696,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
 	bool is_inline = func_decl.is_inline;
+	const bool is_free_vague_linkage_function =
+		is_inline && struct_name.empty() && linkage != Linkage::C;
 	if (!struct_name.empty()) {
 			// Member function - include struct name
 		writer.addFunctionSignature(func_name, return_type, parameter_types, struct_name, linkage, is_variadic, mangled_name, is_inline);
@@ -7860,8 +7862,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length
-		writer.update_function_length(mangled, function_length);
-		writer.set_function_debug_range(mangled, 0, 0); // doesn't seem needed
+		const std::string_view finalized_mangled_name = StringTable::getStringView(current_function_mangled_name_);
+		writer.update_function_length(finalized_mangled_name, function_length);
+		writer.set_function_debug_range(finalized_mangled_name, 0, 0); // doesn't seem needed
 
 			// Add exception handling information (required for x64) - uses mangled name
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -7962,7 +7965,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	current_function_prologue_offset_ = 0;
 
 	uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
-	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage, is_inline);
+	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage, is_free_vague_linkage_function);
 	functionSymbols[std::string(func_name)] = func_offset;
 
 		// Track function for debug information
@@ -17489,7 +17492,7 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length
-		writer.update_function_length(std::string(StringTable::getStringView(current_function_name_)), function_length);
+		writer.update_function_length(StringTable::getStringView(current_function_mangled_name_), function_length);
 
 			// Set debug range to match reference exactly
 		if (function_length > 13) {
@@ -17526,6 +17529,9 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 	}
 
 	writer.add_data(textSectionData, SectionType::TEXT);
+	if constexpr (std::is_same_v<TWriterClass, ObjectFileWriter>) {
+		writer.emitInlineFunctionComdats(textSectionData);
+	}
 
 		// Finalize debug information
 	writer.finalize_debug_info();
