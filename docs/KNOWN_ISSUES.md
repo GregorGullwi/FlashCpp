@@ -1,16 +1,25 @@
 # Known Issues
 
-## ELF reference argument from a dereferenced global struct pointer
+## Reference argument lowering follow-ups
 
-Passing `*p` to a `const Reading&` parameter, where `p` is a constexpr global
-pointer to a const polymorphic `Reading` object, passes the address of a pointer
-temporary instead of the object address on ELF. A virtual call through that
-reference then crashes. Reduced shape: `struct Reading { virtual int value()
-const { return 37; } }; const Reading reading; constexpr const Reading* p =
-&reading; int read(const Reading& r) { return r.value(); } int main() {
-return read(*p) - 37; }`. Observed while testing global RELRO placement;
-the pointer-parameter variant in `test_const_global_pointer_relro_ret0.cpp`
-isolates section placement. Follow-up owner: reference argument lowering.
+The address-valued global-pointer dereference case is covered by
+`test_dereferenced_global_reference_argument_ret0.cpp`. Two distinct producer
+issues were exposed while extending that regression:
+
+- Calls through function pointers lower arguments in value context without
+  applying the signature's reference parameters. With `Reading` and `read`
+  from that regression, `int (*fn)(const Reading&) = &read; fn(*reading_pointer);`
+  emits a `Dereference` value load instead of a reference binding and crashes.
+  Owner: indirect-call argument lowering in `IrGenerator_Call_Direct.cpp` and
+  the other indirect-call producers.
+- An ELF virtual call accepting `const Sample&` from `*sample_pointer`, where
+  `Sample` has `short count; long long total;`, materializes aggregate data but
+  then passes its first word as an address. This was observed with
+  `virtual int inspect(const Reading& r, const Sample& s, const int& n) const {
+  return r.value() + s.count + n; }` called with dereferenced global pointers.
+  Owner: semantic reference-binding annotation / aggregate temporary
+  materialization. This differs from the fixed backend case where the argument
+  already explicitly carries `ValueStorage::ContainsAddress`.
 
 ## Declaration-parse errors are masked by the expression-statement fallback
 
