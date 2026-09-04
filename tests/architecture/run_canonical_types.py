@@ -26,12 +26,16 @@ def check_guards():
             raise RuntimeError("canonical identity dependency: " + forbidden)
     for name in ("FlashCpp.vcxproj", "FlashCppMSVC.vcxproj"):
         project = (ROOT / name).read_text()
-        for header in ("CanonicalTypes.h", "TypeQualifiers.h"):
+        for header in ("CanonicalTypes.h", "TypeQualifiers.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
             if 'Include="src\\' + header + '"' not in project:
                 raise RuntimeError("missing project registration: " + header)
+    adapter = re.sub(r"//[^\n]*", "", (ROOT / "src/CanonicalTypeAdapter.h").read_text())
+    for forbidden in ("StringTable", "gTypeInfo", "matches_signature", "Parser"):
+        if re.search(r"\b" + forbidden + r"\b", adapter):
+            raise RuntimeError("adapter identity dependency: " + forbidden)
     for name in ("DeclarationBuilder.h", "DeclarationBuilder.cpp"):
         bridge = (ROOT / "src" / name).read_text()
-        if re.search(r"\bTypeId\b", bridge):
+        if re.search(r"\bTypeId\s+(signature_id|return_type_id|internDeclaratorType|internParameterListSignature)\b", bridge):
             raise RuntimeError("telemetry bridge still uses canonical TypeId")
 
 
@@ -71,6 +75,7 @@ def main():
             "lost_cv_union": ("qualifiers |= input.qualifiers;", "qualifiers = input.qualifiers;"),
             "lost_reference_collapse": ("kind = CanonicalTypeKind::LValueReference;",
                                         "kind = CanonicalTypeKind::RValueReference;"),
+            "lost_rollback": ("if (!commit) {", "if (!commit && false) {"),
             "cv_on_reference": ("qualifiers == CVQualifier::None || isReference(input.kind)",
                                 "qualifiers == CVQualifier::None"),
         }
@@ -79,7 +84,26 @@ def main():
                 raise RuntimeError("mutation anchor changed: " + name)
             directory = OUTPUT / name
             directory.mkdir(parents=True, exist_ok=True)
+            for header in ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
+                (directory / header).write_text((ROOT / "src" / header).read_text())
             (directory / HEADER.name).write_text(original.replace(before, after))
+            build_and_run(name, directory, 1)
+        for name, header, before, after in (
+            ("adapter_cv", "CanonicalTypeAdapter.h", "table.qualify(id, syntax.cv_qualifier())", "table.qualify(id, CVQualifier::None)"),
+            ("adapter_array", "CanonicalTypeAdapter.h", "return {{}, CanonicalTypeImportStatus::UnmigratedArray};",
+             "return {table.builtin(CanonicalBuiltinKind::Int), CanonicalTypeImportStatus::Supported};"),
+            ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",
+             "stats_.peak_bytes += stats_.current_bytes;"),
+        ):
+            directory = OUTPUT / name
+            directory.mkdir(parents=True, exist_ok=True)
+            for sibling in ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
+                text = (ROOT / "src" / sibling).read_text()
+                if sibling == header:
+                    if text.count(before) != 1:
+                        raise RuntimeError("mutation anchor changed: " + name)
+                    text = text.replace(before, after)
+                (directory / sibling).write_text(text)
             build_and_run(name, directory, 1)
 
 

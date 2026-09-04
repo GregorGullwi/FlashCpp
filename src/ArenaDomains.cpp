@@ -154,11 +154,13 @@ ScratchTransaction::~ScratchTransaction() {
 }
 
 void ScratchTransaction::commit() {
+	if (committed_ || rolled_back_) { return; }
 	registry_.commitToCurrent();
 	committed_ = true;
 }
 
 void ScratchTransaction::rollback() {
+	if (committed_ || rolled_back_) { return; }
 	registry_.rollbackTo(registry_state_);
 	arena_.rollbackTo(arena_state_);
 	rolled_back_ = true;

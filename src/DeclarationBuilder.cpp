@@ -1,17 +1,19 @@
 #include "DeclarationBuilder.h"
 
 #include "AstNodeTypes.h"
+#include "CanonicalTypeAdapter.h"
 #include "CompileError.h"
 #include "SymbolTable.h"
 
 #include <cassert>
 
-DeclarationBuilder::DeclarationBuilder() = default;
+DeclarationBuilder::DeclarationBuilder(CanonicalTypeTable& types, SemanticArenaAccounting& accounting)
+	: canonical_types_(types), accounting_(accounting) {}
 
 DeclarationBuilder::~DeclarationBuilder() = default;
 
 std::size_t DeclarationBuilder::telemetryDeclaratorInternCount() const {
-	return declarator_type_canon_.size();
+	return unmigrated_declarator_types_.size() + canonical_declarator_ids_.size();
 }
 
 std::array<uint64_t, static_cast<std::size_t>(DeclKind::Count)> DeclarationBuilder::declarationKindCounts() const {
@@ -188,6 +190,7 @@ EntityId DeclarationBuilder::allocateEntity(EntityRecord record) {
 void DeclarationBuilder::noteSemanticArenaPeaks() {
 	const uint64_t used = declarations_.usedBytes() + entities_.usedBytes();
 	const uint64_t reserved = declarations_.reservedBytes() + entities_.reservedBytes();
+	accounting_.update(SemanticArenaComponent::Declarations, used, reserved);
 	if (used > peak_used_bytes_) {
 		peak_used_bytes_ = used;
 	}
@@ -437,13 +440,48 @@ PublishResult DeclarationBuilder::publishFunction(
 }
 
 TelemetryTypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
-	for (std::size_t index = 0; index < declarator_type_canon_.size(); ++index) {
-		if (declarator_type_canon_[index].matches_signature(type_spec)) {
-			return TelemetryTypeId{static_cast<uint32_t>(index + 1)};
+	const auto imported = importCanonicalType(canonical_types_, type_spec);
+	if (imported.status == CanonicalTypeImportStatus::Invalid) {
+		// The publication bridge is telemetry-only; invalid syntax cannot make
+		// it diagnose or remove the authoritative SymbolTable insertion.
+		return {};
+	}
+	if (imported.status == CanonicalTypeImportStatus::Supported) {
+		++canonical_declarator_requests_;
+		// This bridge compares parameter-signature keys, not exact cv types.
+		const TypeId key = canonical_types_.withoutTopLevelQualifiers(imported.type);
+		const auto existing = canonical_declarator_ids_.find(key.value);
+		if (existing != canonical_declarator_ids_.end()) {
+			return existing->second;
+		}
+		const TelemetryTypeId id{static_cast<uint32_t>(telemetryDeclaratorInternCount() + 1)};
+		canonical_declarator_order_.push_back(key.value);
+		try {
+			canonical_declarator_ids_.emplace(key.value, id);
+		} catch (...) {
+			canonical_declarator_order_.pop_back();
+			throw;
+		}
+		return id;
+	}
+	// Explicit boundary-3A compatibility route; never compare a supported
+	// declarator using the flat representation. Fixed-corpus counter only falls
+	// as additional families migrate. No spelling-based recovery is added here.
+	++unmigrated_declarator_requests_;
+	for (std::size_t index = 0; index < unmigrated_declarator_types_.size(); ++index) {
+		if (unmigrated_declarator_types_[index].matches_signature(type_spec)) {
+			return unmigrated_declarator_ids_[index];
 		}
 	}
-	declarator_type_canon_.push_back(type_spec);
-	return TelemetryTypeId{static_cast<uint32_t>(declarator_type_canon_.size())};
+	const TelemetryTypeId id{static_cast<uint32_t>(telemetryDeclaratorInternCount() + 1)};
+	unmigrated_declarator_types_.push_back(type_spec);
+	try {
+		unmigrated_declarator_ids_.push_back(id);
+	} catch (...) {
+		unmigrated_declarator_types_.pop_back();
+		throw;
+	}
+	return id;
 }
 
 TelemetryTypeId DeclarationBuilder::internParameterListSignature(
@@ -511,37 +549,49 @@ bool shouldPublishParserFreeFunction(const FunctionDeclarationNode& func_decl, S
 
 PublicationTransaction::PublicationTransaction(DeclarationBuilder& builder)
 	: builder_(builder)
+	, canonical_transaction_(builder.canonical_types_)
+	, parent_(builder.active_transaction_)
 	, checkpoint_{
-		  builder.declarations_.size(),
-		  builder.entities_.size(),
-		  builder.declarator_type_canon_.size()} {
-	if (builder.active_publication_transactions_ != 0) {
-		throw InternalError("PublicationTransaction: nested transactions are forbidden");
-	}
-	++builder.active_publication_transactions_;
-	registered_ = true;
+		builder.declarations_.size(), builder.entities_.size(),
+		builder.unmigrated_declarator_types_.size(), builder.canonical_declarator_order_.size()} {
+	builder.active_transaction_ = this;
 }
 
 PublicationTransaction::~PublicationTransaction() noexcept {
 	if (!committed_ && !rolled_back_) {
 		rollback();
 	}
-	if (registered_) {
-		--builder_.active_publication_transactions_;
-	}
 }
 
-void PublicationTransaction::commit() noexcept {
-	committed_ = true;
-	if (registered_) {
-		--builder_.active_publication_transactions_;
-		registered_ = false;
+void PublicationTransaction::commit() {
+	if (committed_ || rolled_back_) {
+		return;
 	}
+	if (builder_.active_transaction_ != this) {
+		throw InternalError("PublicationTransaction: finish transactions in nesting order");
+	}
+	if (parent_ != nullptr) {
+		// Reserve every destination before transferring undo records. If reserve
+		// throws, the child can still roll back and the parent is unchanged.
+		parent_->entity_undos_.reserve(parent_->entity_undos_.size() + entity_undos_.size());
+		parent_->inserted_entity_lookups_.reserve(parent_->inserted_entity_lookups_.size() + inserted_entity_lookups_.size());
+		parent_->inserted_parameter_lists_.reserve(parent_->inserted_parameter_lists_.size() + inserted_parameter_lists_.size());
+		parent_->entity_undos_.insert(parent_->entity_undos_.end(), entity_undos_.begin(), entity_undos_.end());
+		parent_->inserted_entity_lookups_.insert(parent_->inserted_entity_lookups_.end(), inserted_entity_lookups_.begin(), inserted_entity_lookups_.end());
+		parent_->inserted_parameter_lists_.insert(parent_->inserted_parameter_lists_.end(), inserted_parameter_lists_.begin(), inserted_parameter_lists_.end());
+	}
+	canonical_transaction_.commit();
+	committed_ = true;
+	builder_.active_transaction_ = parent_;
 }
 
 void PublicationTransaction::rollback() noexcept {
 	if (rolled_back_ || committed_) {
 		return;
+	}
+
+	if (builder_.active_transaction_ != this) {
+		std::terminate();
 	}
 
 	while (builder_.declarations_.size() > checkpoint_.declaration_count) {
@@ -561,14 +611,22 @@ void PublicationTransaction::rollback() noexcept {
 		builder_.entity_by_key_.erase(key);
 	}
 
-	while (builder_.declarator_type_canon_.size() > checkpoint_.declarator_type_count) {
-		builder_.declarator_type_canon_.pop_back();
+	while (builder_.unmigrated_declarator_types_.size() > checkpoint_.declarator_type_count) {
+		builder_.unmigrated_declarator_types_.pop_back();
+		builder_.unmigrated_declarator_ids_.pop_back();
 	}
 
 	for (const DeclarationBuilder::ParameterListKey& key : inserted_parameter_lists_) {
 		builder_.parameter_list_ids_.erase(key);
 	}
 
+	while (builder_.canonical_declarator_order_.size() > checkpoint_.canonical_declarator_count) {
+		builder_.canonical_declarator_ids_.erase(builder_.canonical_declarator_order_.back());
+		builder_.canonical_declarator_order_.pop_back();
+	}
+	builder_.noteSemanticArenaPeaks();
+	canonical_transaction_.rollback();
+	builder_.active_transaction_ = parent_;
 	rolled_back_ = true;
 }
 
