@@ -374,12 +374,21 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (needs_placeholder_return_deduction) {
 				argument_results.reserve(callExprNode.arguments().size());
 			}
+			size_t arg_index = 0;
 			callExprNode.arguments().visit([&](ASTNode argument) {
-				ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+				const CVReferenceQualifier param_ref_qualifier =
+					functionSignatureParamRefQualifier(indirect_signature, arg_index);
+				ExprResult argument_result = visitExpressionNode(
+					argument.as<ExpressionNode>(),
+					indirectCallArgumentContext(indirect_signature, arg_index));
 				if (needs_placeholder_return_deduction) {
 					argument_results.push_back(argument_result);
 				}
-				arguments.push_back(makeIndirectCallArgument(argument_result));
+				arguments.push_back(buildIndirectCallArgumentFromResult(
+					argument_result,
+					param_ref_qualifier,
+					callExprNode.called_from()));
+				++arg_index;
 			});
 
 			IndirectCallOp op{
@@ -771,10 +780,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 				TempVar ret_var = var_counter.next();
 				std::vector<TypedValue> arguments;
-				callExprNode.arguments().visit([&](ASTNode argument) {
-					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-					arguments.push_back(makeIndirectCallArgument(argument_result));
-				});
+				appendIndirectCallArguments(
+					arguments,
+					callExprNode,
+					resolved_member->function_signature ? &*resolved_member->function_signature : nullptr);
 
 				IndirectCallOp op{
 					.result = ret_var,
@@ -826,10 +835,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 								// Build arguments for the indirect call
 								std::vector<TypedValue> arguments;
-								callExprNode.arguments().visit([&](ASTNode argument) {
-									ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-									arguments.push_back(makeIndirectCallArgument(argument_result));
-								});
+								appendIndirectCallArguments(
+									arguments,
+									callExprNode,
+									member.function_signature ? &*member.function_signature : nullptr);
 
 								IndirectCallOp op{
 									.result = ret_var,
@@ -1299,10 +1308,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 					// Add arguments
 					std::vector<TypedValue> arguments;
-					callExprNode.arguments().visit([&](ASTNode argument) {
-						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-						arguments.push_back(makeIndirectCallArgument(argument_result));
-					});
+					appendIndirectCallArguments(
+						arguments,
+						callExprNode,
+						member.function_signature ? &*member.function_signature : nullptr);
 
 					IndirectCallOp op{
 						.result = ret_var,
@@ -1439,11 +1448,20 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					arg_index++;
 					return;
 				}
-				vcall_op.arguments.push_back(buildOrdinaryCallArgument(
-					argument,
-					param_type,
-					argument_result,
-					callExprNode.called_from()));
+				if (param_ref_qualifier != CVReferenceQualifier::None) {
+					TypedValue reference_arg = buildReferenceCallArgumentFromResult(
+						argument_result,
+						callExprNode.called_from(),
+						true);
+					applyCallParameterBindingMetadata(reference_arg, *param_type);
+					vcall_op.arguments.push_back(std::move(reference_arg));
+				} else {
+					vcall_op.arguments.push_back(buildOrdinaryCallArgument(
+						argument,
+						param_type,
+						argument_result,
+						callExprNode.called_from()));
+				}
 			} else {
 				vcall_op.arguments.push_back(toTypedValue(argument_result));
 			}
@@ -2133,7 +2151,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// ref-binding ran but returned nullopt to avoid double expression evaluation.
 				ExprResult argument_result = sema_evaluated_arg
 												 ? *sema_evaluated_arg
-												 : visitExpressionNode(argument.as<ExpressionNode>());
+												 : visitExpressionNode(
+													   argument.as<ExpressionNode>(),
+													   param_ref_qualifier != CVReferenceQualifier::None
+														   ? ExpressionContext::LValueAddress
+														   : ExpressionContext::Load);
 
 				// Check if parameter expects a reference and argument is a literal
 				if (param_ref_qualifier != CVReferenceQualifier::None) {

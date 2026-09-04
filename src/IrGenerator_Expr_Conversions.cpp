@@ -3142,14 +3142,23 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 		}
 	};
 
-	auto materializeTemporaryAndTakeAddress = [&](ExprResult value_result) -> ExprResult {
-		if (value_result.category() == TypeCategory::Struct) {
-			if (std::holds_alternative<TempVar>(value_result.value)) {
-				registerStructTempDestructorIfNeeded(value_result);
-				return value_result;
-			}
+	auto takeAddressOfValue = [&](const ExprResult& value_result) -> ExprResult {
+		if (value_result.storage == ValueStorage::ContainsAddress) {
+			return value_result;
 		}
-
+		if (const auto* temp_var = std::get_if<TempVar>(&value_result.value)) {
+			TempVar addr_var = emitAddressOf(
+				value_result.category(),
+				value_result.size_in_bits.value,
+				IrValue(*temp_var),
+				source_token);
+			return makeExprResult(
+				value_result.type_index,
+				SizeInBits{POINTER_SIZE_BITS},
+				IrOperand{addr_var},
+				PointerDepth{},
+				ValueStorage::ContainsAddress);
+		}
 		TempVar temp_var = var_counter.next();
 		AssignmentOp assign_op;
 		assign_op.result = temp_var;
@@ -3157,8 +3166,26 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 		assign_op.rhs = toTypedValue(value_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
 
-		TempVar addr_var = emitAddressOf(value_result.category(), value_result.size_in_bits.value, IrValue(temp_var), source_token);
-		return makeExprResult(value_result.type_index, SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
+		TempVar addr_var = emitAddressOf(
+			value_result.category(),
+			value_result.size_in_bits.value,
+			IrValue(temp_var),
+			source_token);
+		return makeExprResult(
+			value_result.type_index,
+			SizeInBits{POINTER_SIZE_BITS},
+			IrOperand{addr_var},
+			PointerDepth{},
+			ValueStorage::ContainsAddress);
+	};
+
+	auto materializeTemporaryAndTakeAddress = [&](ExprResult value_result) -> ExprResult {
+		if (value_result.category() == TypeCategory::Struct) {
+			if (std::holds_alternative<TempVar>(value_result.value)) {
+				registerStructTempDestructorIfNeeded(value_result);
+			}
+		}
+		return takeAddressOfValue(value_result);
 	};
 
 	auto adjustDirectDerivedToBaseBinding = [&](ExprResult address_result) -> ExprResult {

@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-04 after Gate 0 multi-TU warning-free verification
+Last updated: 2026-09-04 after function-pointer and virtual reference-argument lowering
 
 ## Position
 
@@ -275,7 +275,7 @@ Next blocker:
 
 Named follow-ups carried forward:
 
-- ELF global absolute-pointer relocations now select `.data.rel.ro` for read-only objects (mutable globals retain `.data`), sharing the RTTI/vtable RELRO accessor; `test_const_global_pointer_relro_ret0.cpp` covers a const polymorphic object and constexpr pointers to struct, native, and string storage. Windows full-suite and final targeted checks pass; ELF PIE/no-PIE regression and adjacent pointer/multi-TU vtable checks pass warning-free, with `readelf -rW` confirming global absolute relocations in `.rela.data.rel.ro`/`.rela.data` and no `.rela.rodata`. COFF section/COMDAT behavior and literal `.rodata` placement are preserved. The shared backend reference-argument helper now honors `ContainsAddress`, passing the object pointer instead of its temporary's address; `test_dereferenced_global_reference_argument_ret0.cpp` covers direct/virtual and stack-passed references, mutation, template binding, and single evaluation. Clang's changed helper frame is unchanged at 232 bytes for both writers; the helper is nonrecursive and adds no native-stack growth with logical template depth. Remaining producer follow-ups: function-pointer reference arguments and virtual-call const aggregate materialization (`docs/KNOWN_ISSUES.md`).
+- ELF global absolute-pointer relocations now select `.data.rel.ro` for read-only objects (mutable globals retain `.data`), sharing the RTTI/vtable RELRO accessor; `test_const_global_pointer_relro_ret0.cpp` covers a const polymorphic object and constexpr pointers to struct, native, and string storage. Windows full-suite and final targeted checks pass; ELF PIE/no-PIE regression and adjacent pointer/multi-TU vtable checks pass warning-free, with `readelf -rW` confirming global absolute relocations in `.rela.data.rel.ro`/`.rela.data` and no `.rela.rodata`. COFF section/COMDAT behavior and literal `.rodata` placement are preserved. The shared backend reference-argument helper now honors `ContainsAddress`, passing the object pointer instead of its temporary's address; `test_dereferenced_global_reference_argument_ret0.cpp` covers direct/virtual and stack-passed references, mutation, template binding, and single evaluation. Indirect calls now apply the function-pointer signature's reference parameters (`test_function_pointer_reference_argument_ret0.cpp`), and virtual calls bind const aggregate references to the object address rather than the first eightbyte of a materialized copy (`test_virtual_const_aggregate_reference_argument_ret0.cpp`). Clang's changed helper frame is unchanged at 232 bytes for both writers; the helper is nonrecursive and adds no native-stack growth with logical template depth.
 - Before architecture boundary 10A, approve a parser-family routing table for
   the single translation-unit parse entry point.
 - Pre-ICE raw `std::cerr` context dumps at `src/IrGenerator_MemberAccess.cpp`

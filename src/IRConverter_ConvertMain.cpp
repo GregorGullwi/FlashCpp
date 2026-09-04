@@ -5826,7 +5826,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 							stack_offset,
 							arg.effectiveIrType() == IrType::Float);
 						regAlloc.release(temp_xmm);
-					} else if (arg.is_reference() || shouldPassStructByAddress(arg)) {
+					} else if (arg.is_reference() || arg.storage == ValueStorage::ContainsAddress || shouldPassStructByAddress(arg)) {
 						X64Register temp_reg = allocateRegisterWithSpilling();
 						if (!emitLoadAddressLikeArgument(temp_reg, arg)) {
 							throw InternalError("Stack virtual-call argument marked pass-by-address is not addressable");
@@ -5838,6 +5838,13 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 						emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 						regAlloc.release(temp_reg);
 					}
+				} else if (arg.is_reference() || arg.storage == ValueStorage::ContainsAddress) {
+					X64Register temp_reg = allocateRegisterWithSpilling();
+					if (!emitLoadAddressLikeArgument(temp_reg, arg)) {
+						throw InternalError("Stack virtual-call argument marked pass-by-address is not addressable");
+					}
+					emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+					regAlloc.release(temp_reg);
 				} else {
 					X64Register temp_reg = loadTypedValueIntoRegister(arg);
 					emitStoreToRSP(textSectionData, temp_reg, stack_offset);
@@ -5910,15 +5917,13 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
 					}
 				} else {
-					if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-						if ((arg.is_reference() || shouldPassStructByAddress(arg)) &&
-							(std::holds_alternative<StringHandle>(arg.value) ||
-							 std::holds_alternative<TempVar>(arg.value))) {
-							if (!emitLoadAddressLikeArgument(target_reg, arg)) {
-								throw InternalError("Register virtual-call argument marked pass-by-address is not addressable");
-							}
-							continue;
+					if ((arg.is_reference() || arg.storage == ValueStorage::ContainsAddress || shouldPassStructByAddress(arg)) &&
+						(std::holds_alternative<StringHandle>(arg.value) ||
+						 std::holds_alternative<TempVar>(arg.value))) {
+						if (!emitLoadAddressLikeArgument(target_reg, arg)) {
+							throw InternalError("Register virtual-call argument marked pass-by-address is not addressable");
 						}
+						continue;
 					}
 					if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value)) {
 						uint64_t imm_value = *ull_val;
