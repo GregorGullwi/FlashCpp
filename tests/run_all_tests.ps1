@@ -672,6 +672,9 @@ function Invoke-TestOneMultiTuCase {
 			} elseif ($linkExitCode -ne 0 -or -not (Test-Path -LiteralPath $exeFile)) {
 				$detail = ($linkOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 5) -join "`n"
 				$resultLine = "LINK_FAIL|$($case.Name)|$detail"
+			} elseif ($linkOutput -match '(?i)warning') {
+				$warningLine = ($linkOutput -split "`n" | Where-Object { $_ -match '(?i)warning' } | Select-Object -First 1).Trim()
+				$resultLine = "LINK_FAIL|$($case.Name)|linker emitted warning: $warningLine"
 			} else {
 				# Runtime timeout policy (mirrors runner_common.sh): generous
 				# window for parallel-load inflation, one retry so a transient

@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-04 after function-template `typeid` substitution
+Last updated: 2026-09-04 after Gate 0 multi-TU warning-free verification
 
 ## Position
 
@@ -261,10 +261,12 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Architecture boundary 2 / Gate 0: `typeid` inside function templates now
-  substitutes the bound argument (`tests/test_typeid_function_template_ret0.cpp`),
-  not a tautological `typeid(T) == typeid(T)`. Do not start architecture
-  boundary 3A until the multi-TU corpus still links without linker warnings.
+- Architecture boundary 2 / Gate 0 is closed: all 12 multi-TU cases link and
+  run without linker warnings on Windows (the runner now fails the link on
+  `(?i)warning`, matching ELF) and on ELF PIE and no-PIE;
+  `tests/runner/run_elf_eh_frame_tests.sh` passes both link orders and PIE
+  modes. Architecture boundary 3A is unblocked by that criterion and is not
+  started in this snapshot.
 - Continue architecture boundary 1: expand shadow wire or merge coverage
   (default arguments, exception specifications, friends, templates) only
   after canonical `TypeId` exists; keep `SymbolTable::insert` as function
@@ -318,7 +320,8 @@ Named follow-ups carried forward:
   reduced non-`std` two-TU `typeid` template case verifies PIE linking without
   a text-relocation warning. `typeid(T)` inside a function template now
   lowers to the bound argument's typeinfo
-  (`tests/test_typeid_function_template_ret0.cpp`).
+  (`tests/test_typeid_function_template_ret0.cpp`). Gate 0 itself is closed:
+  the 12-case multi-TU corpus links warning-free on Windows and ELF.
 
 - ELF exception metadata keeps each object's LSDA/typeinfo slots local.
   That alone did not fix the multi-TU throw crashes: the CIE personality
