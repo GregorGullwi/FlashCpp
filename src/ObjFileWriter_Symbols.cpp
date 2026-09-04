@@ -431,7 +431,13 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 	};
 
 	std::vector<CatchableTypeEntry> catchable_types;
-	const uint32_t throw_size = static_cast<uint32_t>(type_size == 0 ? 8 : type_size);
+	uint32_t throw_size = static_cast<uint32_t>(type_size);
+	if (throw_size == 0 && thrown_struct_info && thrown_struct_info->sizeInBytes().is_set()) {
+		throw_size = static_cast<uint32_t>(toSizeT(thrown_struct_info->sizeInBytes()));
+	}
+	if (throw_size == 0) {
+		throw_size = 1;
+	}
 	const uint32_t CT_IsSimpleType = 0x00000001u;
 	const uint32_t CT_HasVirtualBase = 0x00000004u;
 
@@ -524,8 +530,12 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 		auto* catchable_type_sym = coffi_.get_symbol(catchable_type_symbol);
 		if (catchable_type_sym == nullptr || catchable_type_sym->get_section_number() <= 0) {
 			const std::string type_desc_symbol = get_or_create_type_descriptor_for_spelling(catchable_type.catch_type_name);
+			// MSVC x64 CatchableType COMDATs are 0x24 bytes (28-byte relative
+			// field prefix plus 8 bytes of trailing padding). The CRT reads
+			// copyFunction as a 4-byte RVA at +0x18; over-reading a 0x1C
+			// section can treat the next COMDAT as a copy constructor.
 			std::vector<char> catchable_type_data;
-			catchable_type_data.reserve(28);
+			catchable_type_data.reserve(0x24);
 			ObjectFileCommon::appendLE(catchable_type_data, catchable_type.properties);
 			ObjectFileCommon::appendLE(catchable_type_data, uint32_t(0));
 			ObjectFileCommon::appendLE(catchable_type_data, catchable_type.mdisp);
@@ -533,6 +543,7 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 			ObjectFileCommon::appendLE(catchable_type_data, static_cast<uint32_t>(catchable_type.vdisp));
 			ObjectFileCommon::appendLE(catchable_type_data, catchable_type.size_or_offset);
 			ObjectFileCommon::appendLE(catchable_type_data, uint32_t(0));
+			ObjectFileCommon::appendZeros(catchable_type_data, 8);
 			std::vector<NamedComdatReloc> catchable_type_relocs{
 				{4, type_desc_symbol, IMAGE_REL_AMD64_ADDR32NB}};
 			emitVagueLinkageComdatRdataNamed(catchable_type_symbol, catchable_type_data, catchable_type_relocs, 0);
@@ -542,10 +553,15 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 	auto* catchable_array_sym = coffi_.get_symbol(catchable_array_symbol);
 	if (catchable_array_sym == nullptr || catchable_array_sym->get_section_number() <= 0) {
 		std::vector<char> catchable_array_data;
-		catchable_array_data.reserve(4 + catchable_type_symbols.size() * 4);
+		const size_t catchable_array_bytes = 4 + catchable_type_symbols.size() * 4;
+		const size_t catchable_array_padded = catchable_array_bytes < 0x0C ? 0x0C : catchable_array_bytes;
+		catchable_array_data.reserve(catchable_array_padded);
 		ObjectFileCommon::appendLE(catchable_array_data, static_cast<uint32_t>(catchable_type_symbols.size()));
 		for (size_t i = 0; i < catchable_type_symbols.size(); ++i) {
 			ObjectFileCommon::appendLE(catchable_array_data, uint32_t(0));
+		}
+		if (catchable_array_data.size() < catchable_array_padded) {
+			ObjectFileCommon::appendZeros(catchable_array_data, catchable_array_padded - catchable_array_data.size());
 		}
 		std::vector<NamedComdatReloc> catchable_array_relocs;
 		catchable_array_relocs.reserve(catchable_type_symbols.size());

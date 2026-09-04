@@ -2245,7 +2245,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 								} else {
 									int catch_size_bits = 0;
 									if (const TypeInfo* ti = tryGetTypeInfo(catch_op->type_index)) {
-										catch_size_bits = ti->sizeInBits().value;
+										if (ti->sizeInBits().is_set()) {
+											catch_size_bits = ti->sizeInBits().value;
+										}
 									} else {
 										catch_size_bits = get_type_size_bits(catch_op->exceptionType());
 									}
@@ -7303,7 +7305,18 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 			}
 
 			if (op.use_copy_constructor && var_type == TypeCategory::Struct && init.type_index.is_valid()) {
-				if (emitSameTypeCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
+				bool emit_copy_ctor = true;
+				if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+					// Catch funclets must not call native-COMDAT copy constructors for
+					// objects larger than 8 bytes: those calls crash (0xC0000005) even
+					// though the same constructor is safe from the parent function.
+					// FH3 has already memcpy'd the catch object into the dispCatchObj
+					// slot; fall through to a sized frame copy into the named parameter.
+					if (in_catch_funclet_ && op.size_in_bits.value > 64) {
+						emit_copy_ctor = false;
+					}
+				}
+				if (emit_copy_ctor && emitSameTypeCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
 					return;
 				}
 			}
@@ -7838,23 +7851,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 		}
 
-				// Patch catch continuation fixups to restore any post-frame stack space
-				// that lives below the establisher frame before resuming parent code.
-		for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
-			if (eh_extra_stack_size > 0) {
-				const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(eh_extra_stack_size);
-				for (int i = 0; i < 4; i++) {
-					textSectionData[fixup_patch_offset + i] = bytes[i];
-				}
-			} else {
-				uint32_t insn_offset = fixup_patch_offset - 3;
-				static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
-				for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
-					textSectionData[insn_offset + i] = kSevenByteNop[i];
-				}
-			}
-		}
-		catch_continuation_sub_rsp_patches_.clear();
+		patchCatchContinuationExtraStackToNop();
 
 		for (auto fixup_patch_offset : catch_continuation_lea_rbp_patches_) {
 			const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
@@ -15965,7 +15962,9 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			int catch_storage_bits = 64;
 			if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
 				if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
-					catch_storage_bits = static_cast<int>(ti->sizeInBits().value);
+					if (ti->sizeInBits().is_set()) {
+						catch_storage_bits = static_cast<int>(ti->sizeInBits().value);
+					}
 				} else {
 					int builtin_size = get_type_size_bits(catch_op.exceptionType());
 					if (builtin_size > 0) {
@@ -16110,10 +16109,21 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			// so later VariableDecl handling must load/dereference it instead of taking
 			// the address of the slot itself.
 		if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
-			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
-			setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()}, 64, false, catch_op.exception_temp);
+			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, 64);
+			int referenced_size_bits = 64;
+			if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
+				if (ti->sizeInBits().is_set()) {
+					referenced_size_bits = static_cast<int>(ti->sizeInBits().value);
+				}
+			} else {
+				int builtin_size = get_type_size_bits(catch_op.exceptionType());
+				if (builtin_size > 0) {
+					referenced_size_bits = builtin_size;
+				}
+			}
+			setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()}, referenced_size_bits, catch_op.is_rvalue_reference(), catch_op.exception_temp);
 		} else if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0) {
-			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, 64);
 			indirect_stack_info_.erase(stack_offset);
 			tempvar_indirect_stack_info_.erase(stack_offset);
 			current_function_tempvar_indirect_info_.erase(catch_op.exception_temp.var_number);
@@ -16215,12 +16225,13 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 		if (use_fixup && label_positions_.find(fixup_handle) == label_positions_.end()) {
 			label_positions_[fixup_handle] = static_cast<uint32_t>(textSectionData.size());
 
-					// Restoring extra post-frame stack is patched later. Depending on the final
-					// frame layout this becomes either SUB RSP, imm32 or a NOP sequence.
+					// Placeholder SUB RSP is always rewritten to a 7-byte NOP: RcConsolidateFrames
+					// resumes with RSP already at the throw-site full frame depth (including any
+					// post-SET_FPREG extra allocation). Re-subtracting that extra misplaces RBP.
 			catch_continuation_sub_rsp_patches_.push_back(emitSubRSPImm32Placeholder());
 
-					// LEA RBP, [RSP + total_stack] — restore the parent's frame pointer after
-					// any post-frame allocation has been reinstated.
+					// LEA RBP, [RSP + total_stack] — rebuild the parent frame pointer from the
+					// already fully allocated RSP.
 			catch_continuation_lea_rbp_patches_.push_back(emitLeaFromRSPDisp32Placeholder(X64Register::RBP));
 
 			emitMovFromFrameBySize(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
@@ -16290,15 +16301,20 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 	const auto& throw_op = instruction.getTypedPayload<ThrowOp>();
 
 	size_t exception_size = throw_op.size_in_bytes;
-	if (exception_size == 0)
-		exception_size = 8; // Minimum size
-
-		// Round exception size up to 8-byte alignment
-	size_t aligned_exception_size = (exception_size + 7) & ~7;
-
 	const StructTypeInfo* thrown_exception_struct_info = nullptr;
 	if (const TypeInfo* ti = tryGetTypeInfo(throw_op.type_index))
 		thrown_exception_struct_info = ti->getStructInfo();
+	if (thrown_exception_struct_info && thrown_exception_struct_info->sizeInBytes().is_set()) {
+		const size_t layout_bytes = toSizeT(thrown_exception_struct_info->sizeInBytes());
+		if (layout_bytes != 0) {
+			exception_size = layout_bytes;
+		}
+	}
+	if (exception_size == 0)
+		exception_size = 1;
+
+		// Round exception size up to 8-byte alignment
+	size_t aligned_exception_size = (exception_size + 7) & ~7;
 
 			// Platform-specific exception handling
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -16456,13 +16472,20 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			// Using [RSP+32] is unsafe because it can overlap with the saved RBP
 			// when the stack frame is small (e.g., a function that only throws).
 			// Instead, allocate a proper slot via the temp var mechanism.
+			//
+			// _CxxThrowException's prologue saves RBX/RSI into the caller's
+			// [RSP+18h]/[RSP+20h] home area. A throw slot that lands in that
+			// window is overwritten before RaiseException snapshots the object,
+			// so cross-TU catch-by-value/ref copies zeros. Keep 32 bytes of
+			// stack below the slot (MSVC places the object at [RSP+20h]+).
 		int32_t throw_temp_size = static_cast<int32_t>((aligned_exception_size + 7) & ~7);
 		next_temp_var_offset_ += throw_temp_size;
 		int32_t throw_slot_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+		next_temp_var_offset_ += 32;
 			// Extend scope_stack_space to account for this allocation
 		if (!variable_scopes.empty()) {
 			auto& scope = variable_scopes.back();
-			int32_t required = -(throw_slot_offset);
+			int32_t required = static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_;
 			if (required > -scope.scope_stack_space) {
 				scope.scope_stack_space = -required;
 			}
@@ -16844,6 +16867,21 @@ uint32_t IrToObjConverter<TWriterClass>::emitSubRSPImm32Placeholder() {
 	textSectionData.push_back(0x00);
 
 	return patch_position;
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::patchCatchContinuationExtraStackToNop() {
+		// RcConsolidateFrames / the catch-funclet return resume at the throw-site RSP,
+		// which already includes any extra allocation below the SET_FPREG establisher.
+		// The placeholder SUB RSP, imm32 must become a NOP rather than re-applying that extra.
+	static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
+	for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
+		uint32_t insn_offset = fixup_patch_offset - 3;
+		for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
+			textSectionData[insn_offset + i] = kSevenByteNop[i];
+		}
+	}
+	catch_continuation_sub_rsp_patches_.clear();
 }
 
 template <class TWriterClass>
@@ -17455,17 +17493,7 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			}
 		}
 
-		for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
-			uint32_t insn_offset = fixup_patch_offset - 3;
-					// _JumpToContinuation resumes with RSP already restored to the function's
-					// fully allocated stack depth. Re-applying eh_extra_stack_size here would
-					// double-adjust RSP before re-entering the parent frame continuation.
-			static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
-			for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
-				textSectionData[insn_offset + i] = kSevenByteNop[i];
-			}
-		}
-		catch_continuation_sub_rsp_patches_.clear();
+		patchCatchContinuationExtraStackToNop();
 
 		for (auto fixup_patch_offset : catch_continuation_lea_rbp_patches_) {
 			const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
