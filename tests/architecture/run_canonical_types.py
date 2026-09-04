@@ -71,13 +71,19 @@ def main():
         original = HEADER.read_text()
         mutations = {
             "duplicate_identity": ("if (existing != ids_.end()) {", "if (false) {"),
-            "lost_pointee": ("return internUnlocked({pointee,", "return internUnlocked({TypeId{1},"),
+            "lost_pointee": (".child = pointee,", ".child = TypeId{1},"),
             "lost_cv_union": ("qualifiers |= input.qualifiers;", "qualifiers = input.qualifiers;"),
             "lost_reference_collapse": ("kind = CanonicalTypeKind::LValueReference;",
                                         "kind = CanonicalTypeKind::RValueReference;"),
             "lost_rollback": ("if (!commit) {", "if (!commit && false) {"),
             "cv_on_reference": ("qualifiers == CVQualifier::None || isReference(input.kind)",
                                 "qualifiers == CVQualifier::None"),
+            "lost_array_extent": (".array_extent = extent,", ".array_extent = 1,"),
+            "lost_array_element": (".child = element,", ".child = TypeId{1},"),
+            "lost_unknown_bound": ("return arrayUnlocked(element, 0, CanonicalTypeNodeFlags::None);",
+                                   "return arrayUnlocked(element, 1, CanonicalTypeNodeFlags::KnownArrayBound);"),
+            "lost_array_cv": ("while (input.kind == CanonicalTypeKind::Array) {",
+                              "while (false && input.kind == CanonicalTypeKind::Array) {"),
         }
         for name, (before, after) in mutations.items():
             if original.count(before) != 1:
@@ -90,8 +96,14 @@ def main():
             build_and_run(name, directory, 1)
         for name, header, before, after in (
             ("adapter_cv", "CanonicalTypeAdapter.h", "table.qualify(id, syntax.cv_qualifier())", "table.qualify(id, CVQualifier::None)"),
-            ("adapter_array", "CanonicalTypeAdapter.h", "return {{}, CanonicalTypeImportStatus::UnmigratedArray};",
-             "return {table.builtin(CanonicalBuiltinKind::Int), CanonicalTypeImportStatus::Supported};"),
+            ("adapter_array_order", "CanonicalTypeAdapter.h",
+             "for (size_t index = dimensions.size(); index-- > first_dimension;)",
+             "for (size_t index = first_dimension; index < dimensions.size(); ++index)"),
+            ("adapter_array_binding", "CanonicalTypeAdapter.h", "if (has_pointee_array) {",
+             "if (false && has_pointee_array) {"),
+            ("adapter_parameter_decay", "CanonicalTypeAdapter.h",
+             "context == CanonicalTypeImportContext::FunctionParameter",
+             "context == CanonicalTypeImportContext::Exact"),
             ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",
              "stats_.peak_bytes += stats_.current_bytes;"),
         ):

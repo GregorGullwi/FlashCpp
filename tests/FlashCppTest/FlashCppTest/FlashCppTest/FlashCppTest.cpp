@@ -4790,11 +4790,16 @@ TEST_CASE("Canonical adapter preserves supported identity and defers entire unsu
 	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
 	CHECK(imported.type == types.qualify(types.pointer(types.qualify(types.builtin(CanonicalBuiltinKind::Int),
 		CVQualifier::Const)), CVQualifier::Volatile));
+	TypeSpecifierNode array(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const std::array<size_t, 2> dimensions{2, 3};
+	array.set_array_dimensions(dimensions);
+	const auto array_import = importCanonicalType(types, array);
+	REQUIRE(array_import.status == CanonicalTypeImportStatus::Supported);
+	CHECK(array_import.type == types.array(types.array(types.builtin(CanonicalBuiltinKind::Int), 3), 2));
+	const auto parameter_import = importCanonicalFunctionParameterType(types, array);
+	REQUIRE(parameter_import.status == CanonicalTypeImportStatus::Supported);
+	CHECK(parameter_import.type == types.pointer(types.array(types.builtin(CanonicalBuiltinKind::Int), 3)));
 	const auto before = types.size();
-	integer.set_pointee_array_declarator(true);
-	CHECK(importCanonicalType(types, integer).status == CanonicalTypeImportStatus::UnmigratedArray);
-	CHECK(types.size() == before);
-	integer.set_pointee_array_declarator(false);
 	integer.set_pack_expansion(true);
 	CHECK(importCanonicalType(types, integer).status == CanonicalTypeImportStatus::Unresolved);
 	CHECK(types.size() == before);

@@ -23,7 +23,12 @@ enum class CanonicalBuiltinKind : uint8_t {
 };
 
 enum class CanonicalTypeKind : uint8_t {
-	Builtin, Qualified, Pointer, LValueReference, RValueReference,
+	Builtin, Qualified, Pointer, LValueReference, RValueReference, Array,
+};
+
+enum class CanonicalTypeNodeFlags : uint8_t {
+	None = 0,
+	KnownArrayBound = 1 << 0,
 };
 
 // An immutable structural node. A child is a canonical identity in this table,
@@ -33,11 +38,11 @@ struct CanonicalTypeNode {
 	CanonicalTypeKind kind;
 	CanonicalBuiltinKind builtin;
 	CVQualifier qualifiers;
-	uint8_t reserved;
+	CanonicalTypeNodeFlags flags;
+	uint64_t array_extent;
 	friend bool operator==(CanonicalTypeNode, CanonicalTypeNode) = default;
 };
 
-static_assert(sizeof(CanonicalTypeNode) == 8);
 static_assert(std::is_trivially_copyable_v<CanonicalTypeNode>);
 
 struct CanonicalTypeArenaStats {
@@ -71,13 +76,20 @@ public:
 		if (kind >= CanonicalBuiltinKind::Count) {
 			throw InternalError("canonical type: invalid builtin kind");
 		}
-		return internUnlocked({TypeId{}, CanonicalTypeKind::Builtin, kind, CVQualifier::None, 0});
+		return internUnlocked({
+			.child = TypeId{},
+			.kind = CanonicalTypeKind::Builtin,
+			.builtin = kind,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = 0,
+		});
 	}
 
 	TypeId qualify(TypeId type, CVQualifier qualifiers) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
-		const CanonicalTypeNode input = nodeUnlocked(type);
+		CanonicalTypeNode input = nodeUnlocked(type);
 		if (static_cast<uint8_t>(qualifiers) > static_cast<uint8_t>(CVQualifier::ConstVolatile)) {
 			throw InternalError("canonical type: invalid cv qualifiers");
 		}
@@ -86,11 +98,29 @@ public:
 		if (qualifiers == CVQualifier::None || isReference(input.kind)) {
 			return type;
 		}
+		std::vector<CanonicalTypeNode> arrays;
+		while (input.kind == CanonicalTypeKind::Array) {
+			arrays.push_back(input);
+			type = input.child;
+			input = nodeUnlocked(type);
+		}
 		if (input.kind == CanonicalTypeKind::Qualified) {
 			qualifiers |= input.qualifiers;
 			type = input.child;
 		}
-		return internUnlocked({type, CanonicalTypeKind::Qualified, CanonicalBuiltinKind::Void, qualifiers, 0});
+		type = internUnlocked({
+			.child = type,
+			.kind = CanonicalTypeKind::Qualified,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = qualifiers,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = 0,
+		});
+		for (auto array = arrays.rbegin(); array != arrays.rend(); ++array) {
+			array->child = type;
+			type = internUnlocked(*array);
+		}
+		return type;
 	}
 
 	TypeId pointer(TypeId pointee) {
@@ -99,7 +129,29 @@ public:
 		if (isReference(nodeUnlocked(pointee).kind)) {
 			throw InternalError("canonical type: pointer to reference");
 		}
-		return internUnlocked({pointee, CanonicalTypeKind::Pointer, CanonicalBuiltinKind::Void, CVQualifier::None, 0});
+		return internUnlocked({
+			.child = pointee,
+			.kind = CanonicalTypeKind::Pointer,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = 0,
+		});
+	}
+
+	TypeId array(TypeId element, size_t extent) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (extent == 0) {
+			throw InternalError("canonical type: zero array bound");
+		}
+		return arrayUnlocked(element, static_cast<uint64_t>(extent), CanonicalTypeNodeFlags::KnownArrayBound);
+	}
+
+	TypeId arrayOfUnknownBound(TypeId element) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return arrayUnlocked(element, 0, CanonicalTypeNodeFlags::None);
 	}
 
 	TypeId reference(TypeId referent, ReferenceQualifier qualifier) {
@@ -123,7 +175,14 @@ public:
 		if (base.kind == CanonicalTypeKind::Builtin && base.builtin == CanonicalBuiltinKind::Void) {
 			throw InternalError("canonical type: reference to void");
 		}
-		return internUnlocked({referent, kind, CanonicalBuiltinKind::Void, CVQualifier::None, 0});
+		return internUnlocked({
+			.child = referent,
+			.kind = kind,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = 0,
+		});
 	}
 
 	TypeId withoutTopLevelQualifiers(TypeId id) const {
@@ -157,13 +216,36 @@ private:
 			const uint64_t key = static_cast<uint64_t>(node.child.value)
 				| (static_cast<uint64_t>(node.kind) << 32)
 				| (static_cast<uint64_t>(node.builtin) << 40)
-				| (static_cast<uint64_t>(node.qualifiers) << 48);
-			return std::hash<uint64_t>{}(key);
+				| (static_cast<uint64_t>(node.qualifiers) << 48)
+				| (static_cast<uint64_t>(node.flags) << 56);
+			const size_t first = std::hash<uint64_t>{}(key);
+			const size_t second = std::hash<uint64_t>{}(node.array_extent);
+			return first ^ (second + 0x9e3779b9u + (first << 6) + (first >> 2));
 		}
 	};
 
 	static bool isReference(CanonicalTypeKind kind) {
 		return kind == CanonicalTypeKind::LValueReference || kind == CanonicalTypeKind::RValueReference;
+	}
+
+	TypeId arrayUnlocked(TypeId element, uint64_t extent, CanonicalTypeNodeFlags flags) {
+		CanonicalTypeNode element_node = nodeUnlocked(element);
+		if (element_node.kind == CanonicalTypeKind::Qualified) {
+			element_node = nodeUnlocked(element_node.child);
+		}
+		if (isReference(element_node.kind) ||
+			(element_node.kind == CanonicalTypeKind::Builtin && element_node.builtin == CanonicalBuiltinKind::Void) ||
+			(element_node.kind == CanonicalTypeKind::Array && element_node.flags != CanonicalTypeNodeFlags::KnownArrayBound)) {
+			throw InternalError("canonical type: invalid array element type");
+		}
+		return internUnlocked({
+			.child = element,
+			.kind = CanonicalTypeKind::Array,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = flags,
+			.array_extent = extent,
+		});
 	}
 
 	CanonicalTypeNode nodeUnlocked(TypeId id) const {
@@ -243,24 +325,26 @@ private:
 			return;
 		}
 		// Trace-local structural spelling only: never serialize numeric TypeIds.
-		// Each slash-separated node is kind,builtin,cv; the last is a builtin.
+		// Each slash-separated node is kind,builtin,cv,known-bound,extent.
 		StringBuilder shape;
 		for (;;) {
 			shape.append(static_cast<uint64_t>(node.kind)).append(',');
 			shape.append(static_cast<uint64_t>(node.builtin)).append(',');
-			shape.append(static_cast<uint64_t>(node.qualifiers));
+			shape.append(static_cast<uint64_t>(node.qualifiers)).append(',');
+			shape.append(static_cast<uint64_t>(node.flags)).append(',');
+			shape.append(node.array_extent);
 			if (!node.child) {
 				break;
 			}
 			shape.append('/');
 			node = nodeUnlocked(node.child);
 		}
-		FLASH_LOG(Types, Trace, "canonical-request-v1 ", shape.commit());
+		FLASH_LOG(Types, Trace, "canonical-request-v2 ", shape.commit());
 	}
 
-	// The shallow architectural corpus measures 31 records: 32 slots (256 bytes).
+	// The shallow architectural corpus measures 42 records: 64 slots (1,024 bytes).
 	// Deep-nesting probes deliberately spill; no source-depth-sized inline array.
-	static constexpr uint32_t kChunkSize = 32;
+	static constexpr uint32_t kChunkSize = 64;
 	size_t live_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
 	std::vector<size_t> transaction_marks_;

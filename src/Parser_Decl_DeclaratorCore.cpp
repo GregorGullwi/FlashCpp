@@ -244,6 +244,11 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 								type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);	// lvalue reference
 							}
 							type_spec.set_array(true);
+							if (array_size_expr.has_value()) {
+								addConstantArrayDimensionsToTypeSpec(
+									type_spec,
+									std::span<const ASTNode>(&*array_size_expr, 1));
+							}
 
 							// Use a synthetic unnamed token if no name was provided
 							if (!has_name) {
@@ -964,7 +969,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 // re-resolve the full set later from the declaration's expressions.
 void Parser::addConstantArrayDimensionsToTypeSpec(
 	TypeSpecifierNode& type_spec,
-	const std::vector<ASTNode>& dimension_exprs) {
+	std::span<const ASTNode> dimension_exprs) {
 	std::vector<size_t> dimensions;
 	dimensions.reserve(dimension_exprs.size());
 	for (const ASTNode& dimension_expr : dimension_exprs) {
