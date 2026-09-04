@@ -1,14 +1,5 @@
 # Known Issues
 
-## Chained function-call additions can corrupt the result
-
-The expression in `test_canonical_type_adapter_ret0.cpp` originally added six
-function-call results with mixed return and argument types. Each call returns
-the expected value independently, but one chained addition returned 248 instead
-of 0 after subtracting the expected total. The canonical adapter fixture uses
-independent checks so it exercises the intended declarator shapes. Reduce and
-fix the expression-lowering defect separately.
-
 ## Declaration-parse errors are masked by the expression-statement fallback
 
 When `parse_function_declaration` returns a `ParseResult` error, the top-level
