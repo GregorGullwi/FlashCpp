@@ -40,8 +40,8 @@ PreparedFunctionPublication::PreparedFunctionPublication(
 	ScopeId lexical_scope_id,
 	OwnerId owner_id,
 	StringHandle name,
-	TypeId signature_id,
-	TypeId return_type_id,
+	TelemetryTypeId signature_id,
+	TelemetryTypeId return_type_id,
 	uint8_t flags)
 	: status_(status)
 	, entity_id_(entity_id)
@@ -220,8 +220,8 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 			ScopeId{},
 			OwnerId{},
 			StringHandle{},
-			TypeId{},
-			TypeId{},
+			TelemetryTypeId{},
+			TelemetryTypeId{},
 			0);
 	}
 
@@ -234,8 +234,8 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 			ScopeId{},
 			OwnerId{},
 			StringHandle{},
-			TypeId{},
-			TypeId{},
+			TelemetryTypeId{},
+			TelemetryTypeId{},
 			0);
 	}
 
@@ -267,8 +267,8 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 			ScopeId{},
 			OwnerId{},
 			StringHandle{},
-			TypeId{},
-			TypeId{},
+			TelemetryTypeId{},
+			TelemetryTypeId{},
 			0);
 	}
 
@@ -280,8 +280,8 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 			ScopeId{},
 			OwnerId{},
 			StringHandle{},
-			TypeId{},
-			TypeId{},
+			TelemetryTypeId{},
+			TelemetryTypeId{},
 			0);
 	}
 
@@ -293,8 +293,8 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 			ScopeId{},
 			OwnerId{},
 			StringHandle{},
-			TypeId{},
-			TypeId{},
+			TelemetryTypeId{},
+			TelemetryTypeId{},
 			0);
 	}
 
@@ -306,8 +306,8 @@ PreparedFunctionPublication DeclarationBuilder::prepareFunctionPublication(
 			ScopeId{},
 			OwnerId{},
 			StringHandle{},
-			TypeId{},
-			TypeId{},
+			TelemetryTypeId{},
+			TelemetryTypeId{},
 			0);
 	}
 
@@ -436,17 +436,17 @@ PublishResult DeclarationBuilder::publishFunction(
 	return result;
 }
 
-TypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
+TelemetryTypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
 	for (std::size_t index = 0; index < declarator_type_canon_.size(); ++index) {
 		if (declarator_type_canon_[index].matches_signature(type_spec)) {
-			return TypeId{static_cast<uint32_t>(index + 1)};
+			return TelemetryTypeId{static_cast<uint32_t>(index + 1)};
 		}
 	}
 	declarator_type_canon_.push_back(type_spec);
-	return TypeId{static_cast<uint32_t>(declarator_type_canon_.size())};
+	return TelemetryTypeId{static_cast<uint32_t>(declarator_type_canon_.size())};
 }
 
-TypeId DeclarationBuilder::internParameterListSignature(
+TelemetryTypeId DeclarationBuilder::internParameterListSignature(
 	std::span<const ASTNode> parameter_nodes,
 	bool is_variadic,
 	PublicationTransaction* transaction) {
@@ -463,7 +463,7 @@ TypeId DeclarationBuilder::internParameterListSignature(
 		return existing->second;
 	}
 
-	const TypeId signature_id{static_cast<uint32_t>(parameter_list_ids_.size() + 1)};
+	const TelemetryTypeId signature_id{static_cast<uint32_t>(parameter_list_ids_.size() + 1)};
 	if (transaction != nullptr) {
 		transaction->noteParameterListInsert(key);
 	}

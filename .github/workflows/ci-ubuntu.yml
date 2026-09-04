@@ -25,6 +25,9 @@ jobs:
       - name: Run Runner Self-Tests
         run: bash tests/runner/run_runner_self_tests.sh
 
+      - name: Canonical type identity and mutation guards
+        run: python3 tests/architecture/run_canonical_types.py --mutations
+
       - name: Build FlashCpp with Make
         run: |
           make sharded -j$(nproc) CXX=clang++

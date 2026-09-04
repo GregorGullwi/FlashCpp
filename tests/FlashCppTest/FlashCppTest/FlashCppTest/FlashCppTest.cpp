@@ -2245,6 +2245,26 @@ TEST_SUITE("FrontendContext") {
 		CHECK(arena.discardedBytes() > 0);
 	}
 
+	TEST_CASE("FrontendContext owns canonical type storage and accounts for its bytes") {
+		FrontendContext context;
+		CHECK(context.canonicalTypes().size() == 0);
+		const TypeId integer = context.canonicalTypes().builtin(CanonicalBuiltinKind::Int);
+		const TypeId pointer = context.canonicalTypes().pointer(integer);
+		context.refreshSemanticDomainStats();
+		const auto stats = context.canonicalTypes().arenaStats();
+		CHECK(stats.used_bytes == 2 * sizeof(CanonicalTypeNode));
+		CHECK(context.domainStats(AllocationDomain::Semantic).current_bytes == stats.used_bytes);
+		CHECK(context.domainStats(AllocationDomain::Semantic).reserved_bytes == stats.reserved_bytes);
+		{
+			FrontendContext other;
+			CHECK(other.canonicalTypes().size() == 0);
+			other.canonicalTypes().builtin(CanonicalBuiltinKind::Double);
+			CHECK(other.canonicalTypes().size() == 1);
+		}
+		CHECK(context.canonicalTypes().pointer(integer) == pointer);
+		CHECK(context.canonicalTypes().size() == 2);
+	}
+
 	TEST_CASE("FrontendContext exposes active context and scratch telemetry") {
 		FrontendContext outer;
 		CHECK(FrontendContext::active() == &outer);
@@ -2889,8 +2909,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			namespace_scope_id,
 			name,
-			TypeId{71},
-			TypeId{81},
+			TelemetryTypeId{71},
+			TelemetryTypeId{81},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(request, table);
@@ -2911,8 +2931,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest invalid = makeFunctionDeclRequest(
 			ScopeId{},
 			name,
-			TypeId{71},
-			TypeId{81},
+			TelemetryTypeId{71},
+			TelemetryTypeId{81},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.prepareFunctionPublication(invalid, table).isRejected());
@@ -2930,8 +2950,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			block_scope_id,
 			name,
-			TypeId{71},
-			TypeId{81},
+			TelemetryTypeId{71},
+			TelemetryTypeId{81},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.prepareFunctionPublication(request, table).isRejected());
@@ -2947,8 +2967,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest invalid = makeFunctionDeclRequest(
 			ScopeId{999},
 			name,
-			TypeId{71},
-			TypeId{81},
+			TelemetryTypeId{71},
+			TelemetryTypeId{81},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK_THROWS_AS(builder.prepareFunctionPublication(invalid, table), InternalError);
@@ -3201,8 +3221,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{10},
-			TypeId{20},
+			TelemetryTypeId{10},
+			TelemetryTypeId{20},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(request, table).status == PublishStatus::Created);
@@ -3230,8 +3250,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{11},
-			TypeId{21},
+			TelemetryTypeId{11},
+			TelemetryTypeId{21},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 
@@ -3315,8 +3335,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			StringTable::getOrInternStringHandle("semantic_telemetry_fn"),
-			TypeId{901},
-			TypeId{902},
+			TelemetryTypeId{901},
+			TelemetryTypeId{902},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		{
@@ -3384,8 +3404,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{10},
-			TypeId{20},
+			TelemetryTypeId{10},
+			TelemetryTypeId{20},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult result = builder.publishFunction(request, table);
@@ -3402,8 +3422,8 @@ TEST_SUITE("FrontendContext") {
 		CHECK(decl.entity_id == result.entity_id);
 		CHECK_FALSE(decl.previous_decl_id);
 		CHECK(decl.lexical_scope_id == global_scope);
-		CHECK(decl.signature_id == TypeId{10});
-		CHECK(decl.return_type_id == TypeId{20});
+		CHECK(decl.signature_id == TelemetryTypeId{10});
+		CHECK(decl.return_type_id == TelemetryTypeId{20});
 		CHECK(builder.entity(result.entity_id).owner_id == ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE));
 	}
 
@@ -3416,8 +3436,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest first = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{11},
-			TypeId{21},
+			TelemetryTypeId{11},
+			TelemetryTypeId{21},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult created = builder.publishFunction(first, table);
@@ -3426,8 +3446,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest second = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{11},
-			TypeId{21},
+			TelemetryTypeId{11},
+			TelemetryTypeId{21},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult merged = builder.publishFunction(second, table);
@@ -3460,8 +3480,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest declaration = makeFunctionDeclRequest(
 			first_block,
 			fn_name,
-			TypeId{60},
-			TypeId{70},
+			TelemetryTypeId{60},
+			TelemetryTypeId{70},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult created = builder.publishFunction(declaration, table);
@@ -3475,8 +3495,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest definition = makeFunctionDeclRequest(
 			second_block,
 			fn_name,
-			TypeId{60},
-			TypeId{70},
+			TelemetryTypeId{60},
+			TelemetryTypeId{70},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult merged = builder.publishFunction(definition, table);
@@ -3506,14 +3526,14 @@ TEST_SUITE("FrontendContext") {
 		table.enter_namespace(ns_a);
 		const ScopeId scope_a = table.currentScopeId();
 		const PublishResult a = builder.publishFunction(
-			makeFunctionDeclRequest(scope_a, fn_name, TypeId{61}, TypeId{71}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
+			makeFunctionDeclRequest(scope_a, fn_name, TelemetryTypeId{61}, TelemetryTypeId{71}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 		table.exit_scope();
 
 		table.enter_namespace(ns_b);
 		const ScopeId scope_b = table.currentScopeId();
 		const PublishResult b = builder.publishFunction(
-			makeFunctionDeclRequest(scope_b, fn_name, TypeId{61}, TypeId{71}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
+			makeFunctionDeclRequest(scope_b, fn_name, TelemetryTypeId{61}, TelemetryTypeId{71}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 
 		CHECK(a.status == PublishStatus::Created);
@@ -3533,8 +3553,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest first = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{12},
-			TypeId{22},
+			TelemetryTypeId{12},
+			TelemetryTypeId{22},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
@@ -3544,8 +3564,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest second = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{12},
-			TypeId{22},
+			TelemetryTypeId{12},
+			TelemetryTypeId{22},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult rejected = builder.publishFunction(second, table);
@@ -3565,15 +3585,15 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest first = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{31},
-			TypeId{41},
+			TelemetryTypeId{31},
+			TelemetryTypeId{41},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		const FunctionDeclRequest second = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{32},
-			TypeId{41},
+			TelemetryTypeId{32},
+			TelemetryTypeId{41},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult a = builder.publishFunction(first, table);
@@ -3593,8 +3613,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest first = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{33},
-			TypeId{50},
+			TelemetryTypeId{33},
+			TelemetryTypeId{50},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
@@ -3603,8 +3623,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest conflict = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{33},
-			TypeId{51},
+			TelemetryTypeId{33},
+			TelemetryTypeId{51},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult rejected = builder.publishFunction(conflict, table);
@@ -3621,8 +3641,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest first = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{34},
-			TypeId{52},
+			TelemetryTypeId{34},
+			TelemetryTypeId{52},
 			FunctionDeclForm::ConstexprDeclaration,
 			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(first, table).status == PublishStatus::Created);
@@ -3630,8 +3650,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest mismatch = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{34},
-			TypeId{52},
+			TelemetryTypeId{34},
+			TelemetryTypeId{52},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(mismatch, table).status == PublishStatus::Rejected);
@@ -3639,8 +3659,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest match = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{34},
-			TypeId{52},
+			TelemetryTypeId{34},
+			TelemetryTypeId{52},
 			FunctionDeclForm::ConstexprDefinition,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult merged = builder.publishFunction(match, table);
@@ -3658,8 +3678,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest definition = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{35},
-			TypeId{53},
+			TelemetryTypeId{35},
+			TelemetryTypeId{53},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder.publishFunction(definition, table).status == PublishStatus::Created);
@@ -3668,8 +3688,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest inline_after = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{35},
-			TypeId{53},
+			TelemetryTypeId{35},
+			TelemetryTypeId{53},
 			FunctionDeclForm::InlineDeclaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(inline_after, table).status == PublishStatus::Rejected);
@@ -3682,16 +3702,16 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest inline_first = makeFunctionDeclRequest(
 			global_scope2,
 			name,
-			TypeId{35},
-			TypeId{53},
+			TelemetryTypeId{35},
+			TelemetryTypeId{53},
 			FunctionDeclForm::InlineDeclaration,
 			LanguageLinkage::CPlusPlus);
 		REQUIRE(builder2.publishFunction(inline_first, table2).status == PublishStatus::Created);
 		const FunctionDeclRequest definition_after = makeFunctionDeclRequest(
 			global_scope2,
 			name,
-			TypeId{35},
-			TypeId{53},
+			TelemetryTypeId{35},
+			TelemetryTypeId{53},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult merged = builder2.publishFunction(definition_after, table2);
@@ -3708,16 +3728,16 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest base = makeFunctionDeclRequest(
 			table.currentScopeId(),
 			name,
-			TypeId{37},
-			TypeId{55},
+			TelemetryTypeId{37},
+			TelemetryTypeId{55},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 
 		const FunctionDeclRequest missing_scope = makeFunctionDeclRequest(
 			ScopeId{999},
 			name,
-			TypeId{37},
-			TypeId{55},
+			TelemetryTypeId{37},
+			TelemetryTypeId{55},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK_THROWS_AS(builder.publishFunction(missing_scope, table), InternalError);
@@ -3725,8 +3745,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest absent_scope = makeFunctionDeclRequest(
 			ScopeId{},
 			name,
-			TypeId{37},
-			TypeId{55},
+			TelemetryTypeId{37},
+			TelemetryTypeId{55},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(absent_scope, table).status == PublishStatus::Rejected);
@@ -3735,8 +3755,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest block_scope = makeFunctionDeclRequest(
 			table.currentScopeId(),
 			name,
-			TypeId{37},
-			TypeId{55},
+			TelemetryTypeId{37},
+			TelemetryTypeId{55},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(block_scope, table).status == PublishStatus::Rejected);
@@ -3746,8 +3766,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest function_scope = makeFunctionDeclRequest(
 			table.currentScopeId(),
 			name,
-			TypeId{37},
-			TypeId{55},
+			TelemetryTypeId{37},
+			TelemetryTypeId{55},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(function_scope, table).status == PublishStatus::Rejected);
@@ -3766,8 +3786,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest invalid_scope = makeFunctionDeclRequest(
 			ScopeId{},
 			name,
-			TypeId{37},
-			TypeId{55},
+			TelemetryTypeId{37},
+			TelemetryTypeId{55},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.publishFunction(invalid_scope, table).status == PublishStatus::Rejected);
@@ -3786,8 +3806,8 @@ TEST_SUITE("FrontendContext") {
 			ScopeId,
 			OwnerId,
 			StringHandle,
-			TypeId,
-			TypeId,
+			TelemetryTypeId,
+			TelemetryTypeId,
 			uint8_t>);
 	}
 
@@ -3800,8 +3820,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest first = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{71},
-			TypeId{81},
+			TelemetryTypeId{71},
+			TelemetryTypeId{81},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		PreparedFunctionPublication prepared = builder.prepareFunctionPublication(first, table);
@@ -3818,8 +3838,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest redecl = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{71},
-			TypeId{81},
+			TelemetryTypeId{71},
+			TelemetryTypeId{81},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		PreparedFunctionPublication prepared_redecl =
@@ -3838,8 +3858,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest decl = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{92},
-			TypeId{102},
+			TelemetryTypeId{92},
+			TelemetryTypeId{102},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		const PublishResult created = builder.publishFunction(decl, table);
@@ -3849,8 +3869,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest definition = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{92},
-			TypeId{102},
+			TelemetryTypeId{92},
+			TelemetryTypeId{102},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		PublicationTransaction transaction(builder);
@@ -3874,7 +3894,7 @@ TEST_SUITE("FrontendContext") {
 		const std::size_t parameter_lists_before = builder.telemetryParameterListInternCount();
 
 		PublicationTransaction transaction(builder);
-		const TypeId signature_id =
+		const TelemetryTypeId signature_id =
 			builder.internParameterListSignature(std::span<const ASTNode>{}, false, &transaction);
 		CHECK(signature_id.value >= 1u);
 		transaction.rollback();
@@ -3891,8 +3911,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{91},
-			TypeId{101},
+			TelemetryTypeId{91},
+			TelemetryTypeId{101},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 
@@ -3916,18 +3936,18 @@ TEST_SUITE("FrontendContext") {
 		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_intern_txn");
 
 		PublicationTransaction transaction(builder);
-		const TypeId return_id = builder.internDeclaratorType(int_type);
+		const TelemetryTypeId return_id = builder.internDeclaratorType(int_type);
 		const FunctionDeclRequest invalid = makeFunctionDeclRequest(
 			ScopeId{},
 			name,
-			TypeId{200},
+			TelemetryTypeId{200},
 			return_id,
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		CHECK(builder.prepareFunctionPublication(invalid, table).isRejected());
 		transaction.rollback();
 
-		const TypeId second_return_id = builder.internDeclaratorType(int_type);
+		const TelemetryTypeId second_return_id = builder.internDeclaratorType(int_type);
 		CHECK(second_return_id.value == 1u);
 	}
 
@@ -3954,8 +3974,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{93},
-			TypeId{103},
+			TelemetryTypeId{93},
+			TelemetryTypeId{103},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 
@@ -3983,10 +4003,10 @@ TEST_SUITE("FrontendContext") {
 		const StringHandle create_b = StringTable::getOrInternStringHandle("txn_multi_create_b");
 
 		const PublishResult first_a = builder.publishFunction(
-			makeFunctionDeclRequest(global_scope, merge_a, TypeId{201}, TypeId{301}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
+			makeFunctionDeclRequest(global_scope, merge_a, TelemetryTypeId{201}, TelemetryTypeId{301}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 		const PublishResult first_b = builder.publishFunction(
-			makeFunctionDeclRequest(global_scope, merge_b, TypeId{202}, TypeId{302}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
+			makeFunctionDeclRequest(global_scope, merge_b, TelemetryTypeId{202}, TelemetryTypeId{302}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 		REQUIRE(first_a.status == PublishStatus::Created);
 		REQUIRE(first_b.status == PublishStatus::Created);
@@ -3998,16 +4018,16 @@ TEST_SUITE("FrontendContext") {
 		{
 			PublicationTransaction transaction(builder);
 			PreparedFunctionPublication created_prep_a = builder.prepareFunctionPublication(
-				makeFunctionDeclRequest(global_scope, create_a, TypeId{203}, TypeId{303}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
+				makeFunctionDeclRequest(global_scope, create_a, TelemetryTypeId{203}, TelemetryTypeId{303}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 				table);
 			PreparedFunctionPublication created_prep_b = builder.prepareFunctionPublication(
-				makeFunctionDeclRequest(global_scope, create_b, TypeId{204}, TypeId{304}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
+				makeFunctionDeclRequest(global_scope, create_b, TelemetryTypeId{204}, TelemetryTypeId{304}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 				table);
 			PreparedFunctionPublication merged_prep_a = builder.prepareFunctionPublication(
-				makeFunctionDeclRequest(global_scope, merge_a, TypeId{201}, TypeId{301}, FunctionDeclForm::Definition, LanguageLinkage::CPlusPlus),
+				makeFunctionDeclRequest(global_scope, merge_a, TelemetryTypeId{201}, TelemetryTypeId{301}, FunctionDeclForm::Definition, LanguageLinkage::CPlusPlus),
 				table);
 			PreparedFunctionPublication merged_prep_b = builder.prepareFunctionPublication(
-				makeFunctionDeclRequest(global_scope, merge_b, TypeId{202}, TypeId{302}, FunctionDeclForm::Definition, LanguageLinkage::CPlusPlus),
+				makeFunctionDeclRequest(global_scope, merge_b, TelemetryTypeId{202}, TelemetryTypeId{302}, FunctionDeclForm::Definition, LanguageLinkage::CPlusPlus),
 				table);
 			REQUIRE_FALSE(created_prep_a.isRejected());
 			REQUIRE_FALSE(created_prep_b.isRejected());
@@ -4032,7 +4052,7 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.entity(first_b.entity_id).flags == entity_b_before.flags);
 
 		const PublishResult recreate_a = builder.publishFunction(
-			makeFunctionDeclRequest(global_scope, create_a, TypeId{203}, TypeId{303}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
+			makeFunctionDeclRequest(global_scope, create_a, TelemetryTypeId{203}, TelemetryTypeId{303}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
 			table);
 		CHECK(recreate_a.status == PublishStatus::Created);
 		CHECK(recreate_a.entity_id != first_a.entity_id);
@@ -4048,8 +4068,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest request = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{205},
-			TypeId{305},
+			TelemetryTypeId{205},
+			TelemetryTypeId{305},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 
@@ -4086,8 +4106,8 @@ TEST_SUITE("FrontendContext") {
 			const FunctionDeclRequest request = makeFunctionDeclRequest(
 				global_scope,
 				name,
-				TypeId{index + 1u},
-				TypeId{index + 1000u},
+				TelemetryTypeId{index + 1u},
+				TelemetryTypeId{index + 1000u},
 				FunctionDeclForm::Declaration,
 				LanguageLinkage::CPlusPlus);
 			REQUIRE(builder.publishFunction(request, table).status == PublishStatus::Created);
@@ -4102,8 +4122,8 @@ TEST_SUITE("FrontendContext") {
 		const FunctionDeclRequest rollback_request = makeFunctionDeclRequest(
 			global_scope,
 			rollback_name,
-			TypeId{9999},
-			TypeId{10000},
+			TelemetryTypeId{9999},
+			TelemetryTypeId{10000},
 			FunctionDeclForm::Declaration,
 			LanguageLinkage::CPlusPlus);
 		PreparedFunctionPublication prepared =
@@ -4154,8 +4174,8 @@ float symtab_undo_conflict_row(int value);
 		const FunctionDeclRequest first = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{111},
-			TypeId{121},
+			TelemetryTypeId{111},
+			TelemetryTypeId{121},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		{
@@ -4174,8 +4194,8 @@ float symtab_undo_conflict_row(int value);
 		const FunctionDeclRequest duplicate = makeFunctionDeclRequest(
 			global_scope,
 			name,
-			TypeId{111},
-			TypeId{121},
+			TelemetryTypeId{111},
+			TelemetryTypeId{121},
 			FunctionDeclForm::Definition,
 			LanguageLinkage::CPlusPlus);
 		PublicationTransaction reject_transaction(builder);

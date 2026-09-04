@@ -40,7 +40,7 @@ inline NamespaceHandle namespaceHandleFromOwnerId(OwnerId owner_id) {
 
 // Front-end declaration/entity publisher for architecture boundary 1.
 // Domain for this slice: namespace-targeted free functions with C++ language
-// linkage in one translation unit. Opaque TypeId values are caller-supplied
+// linkage in one translation unit. Opaque TelemetryTypeId values are caller-supplied
 // compatibility keys until canonical types land in boundary 3A.
 // signature_id identifies the parameter-type-list for overload identity;
 // return_type_id must agree across redeclarations of the same entity.
@@ -75,8 +75,8 @@ enum class PublishStatus : uint8_t {
 struct FunctionDeclRequest {
 	ScopeId lexical_scope_id;
 	StringHandle name;
-	TypeId signature_id;
-	TypeId return_type_id;
+	TelemetryTypeId signature_id;
+	TelemetryTypeId return_type_id;
 	LanguageLinkage language_linkage;
 	bool is_definition;
 	bool is_inline;
@@ -94,8 +94,8 @@ enum class FunctionDeclForm : uint8_t {
 inline FunctionDeclRequest makeFunctionDeclRequest(
 	ScopeId lexical_scope_id,
 	StringHandle name,
-	TypeId signature_id,
-	TypeId return_type_id,
+	TelemetryTypeId signature_id,
+	TelemetryTypeId return_type_id,
 	FunctionDeclForm form,
 	LanguageLinkage language_linkage) {
 	FunctionDeclRequest request{};
@@ -136,8 +136,8 @@ struct DeclarationRecord {
 	DeclId previous_decl_id;
 	ScopeId lexical_scope_id;
 	StringHandle name;
-	TypeId signature_id;
-	TypeId return_type_id;
+	TelemetryTypeId signature_id;
+	TelemetryTypeId return_type_id;
 	uint8_t kind;
 	uint8_t language_linkage;
 	uint8_t flags;
@@ -150,8 +150,8 @@ struct EntityRecord {
 	DeclId latest_decl_id;
 	OwnerId owner_id;
 	StringHandle name;
-	TypeId signature_id;
-	TypeId return_type_id;
+	TelemetryTypeId signature_id;
+	TelemetryTypeId return_type_id;
 	uint8_t kind;
 	uint8_t language_linkage;
 	uint8_t flags;
@@ -181,8 +181,8 @@ class PreparedFunctionPublication {
 		ScopeId lexical_scope_id,
 		OwnerId owner_id,
 		StringHandle name,
-		TypeId signature_id,
-		TypeId return_type_id,
+		TelemetryTypeId signature_id,
+		TelemetryTypeId return_type_id,
 		uint8_t flags);
 
 public:
@@ -208,8 +208,8 @@ private:
 	ScopeId lexical_scope_id_;
 	OwnerId owner_id_;
 	StringHandle name_;
-	TypeId signature_id_;
-	TypeId return_type_id_;
+	TelemetryTypeId signature_id_;
+	TelemetryTypeId return_type_id_;
 	uint8_t flags_ = 0;
 	uint8_t consumed_ = 0;
 };
@@ -242,8 +242,8 @@ public:
 	// Telemetry-only opaque keys until architecture boundary 3A canonical types.
 	// Uses TypeSpecifierNode::matches_signature(), which does not compare nested
 	// FunctionSignature payloads; do not use for merge authority.
-	TypeId internDeclaratorType(const TypeSpecifierNode& type_spec);
-	TypeId internParameterListSignature(
+	TelemetryTypeId internDeclaratorType(const TypeSpecifierNode& type_spec);
+	TelemetryTypeId internParameterListSignature(
 		std::span<const ASTNode> parameter_nodes,
 		bool is_variadic,
 		PublicationTransaction* transaction);
@@ -349,7 +349,7 @@ private:
 	ChunkedVector<EntityRecord, kEntityArenaChunkSize> entities_;
 	std::unordered_map<EntityLookupKey, EntityId, EntityLookupKeyHash> entity_by_key_;
 	std::vector<TypeSpecifierNode> declarator_type_canon_;
-	std::unordered_map<ParameterListKey, TypeId, ParameterListKeyHash> parameter_list_ids_;
+	std::unordered_map<ParameterListKey, TelemetryTypeId, ParameterListKeyHash> parameter_list_ids_;
 	std::uint32_t active_publication_transactions_ = 0;
 	uint64_t peak_used_bytes_ = 0;
 	uint64_t peak_reserved_bytes_ = 0;

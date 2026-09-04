@@ -476,6 +476,8 @@
     <ClInclude Include="src\MigrationStats.h" />
     <ClInclude Include="src\MigrationTelemetryConfig.h" />
     <ClInclude Include="src\FrontendIds.h" />
+    <ClInclude Include="src\CanonicalTypes.h" />
+    <ClInclude Include="src\TypeQualifiers.h" />
     <ClInclude Include="src\ArenaDomains.h" />
     <ClInclude Include="src\DeclarationBuilder.h" />
     <ClInclude Include="src\FrontendContext.h" />
