@@ -97,7 +97,7 @@ ELFIO::relocation_section_accessor* ElfFileWriter::getOrCreateDataRelRoRelocatio
 
 void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
 											 bool is_initialized, std::span<const char> init_data, bool is_rodata,
-											 bool is_selectany) {
+											 bool is_selectany, bool has_absolute_relocation) {
 	(void)is_selectany; // MSVC COMDAT; on ELF emit a normal global (weak would be closer but unused on Windows path)
 	if (g_enable_debug_output) {
 		std::cerr << "Adding global variable: " << var_name
@@ -108,7 +108,9 @@ void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t s
 
 	ELFIO::section* section;
 	if (is_rodata) {
-		section = getSectionByName(".rodata");
+		// Pointer-bearing constants must be writable during PIE relocation.
+		// String literals and constants without relocations remain in .rodata.
+		section = has_absolute_relocation ? getOrCreateDataRelRoSection() : getSectionByName(".rodata");
 		if (!section) {
 			throw std::runtime_error(".rodata section not found");
 		}
@@ -124,7 +126,7 @@ void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t s
 
 		getOrCreateSymbol(var_name, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL,
 						  section->get_index(), offset, init_data.empty() ? size_in_bytes : init_data.size());
-	} else if (is_initialized) {
+	} else if (is_initialized || has_absolute_relocation) {
 		section = getSectionByName(".data");
 		if (!section) {
 			throw std::runtime_error(".data section not found");

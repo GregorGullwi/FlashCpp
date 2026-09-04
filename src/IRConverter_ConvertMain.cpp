@@ -17396,7 +17396,7 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		}
 		writer.add_global_variable_data(StringTable::getStringView(global.name), global.size_in_bytes,
 										global.is_initialized, global.init_data, global.is_rodata,
-										global.is_selectany);
+										global.is_selectany, global.reloc_target.isValid());
 	}
 
 		// Emit data section relocations for pointer/reference globals initialized with &symbol

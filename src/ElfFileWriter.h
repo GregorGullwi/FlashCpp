@@ -261,29 +261,29 @@ public:
 				}
 			}
 		}
-		if (!found)
-			return;
+		if (!found) {
+			throw InternalError("Global data relocation has no defined source symbol");
+		}
 		if (data_section_index >= elf_writer_.sections.size()) {
-			if (g_enable_debug_output) {
-				std::cerr << "Skipping data relocation for " << var_name
-						  << ": section index " << data_section_index
-						  << " is out of bounds" << std::endl;
-			}
-			return;
+			throw InternalError("Global data relocation section index is out of bounds");
 		}
 		auto* data_section = elf_writer_.sections[data_section_index];
 		if (!data_section) {
-			if (g_enable_debug_output) {
-				std::cerr << "Skipping data relocation for " << var_name
-						  << ": null section at index " << data_section_index << std::endl;
-			}
-			return;
+			throw InternalError("Global data relocation section is missing");
+		}
+		if ((data_section->get_flags() & ELFIO::SHF_WRITE) == 0) {
+			throw InternalError("Absolute global pointer relocation requires writable storage");
 		}
 
 		// Get or create the target symbol (may be in .data, .bss, or external)
 		auto target_index = getOrCreateSymbol(target_name, ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
 
 		// Get or create the relocation section matching the variable's containing section
+		// Share the RELRO accessor with subsequent vtable/RTTI emission so it
+		// cannot create a second relocation section with the same name.
+		if (data_section->get_name() == ".data.rel.ro") {
+			getOrCreateDataRelRoRelocationAccessor();
+		}
 		std::string rela_section_name = ".rela" + data_section->get_name();
 		auto* rela_data = getSectionByName(rela_section_name);
 		if (!rela_data) {
@@ -354,7 +354,7 @@ public:
 	 */
 
 	// --- Method declarations (ElfFileWriter_GlobalRTTI.cpp) ---
-	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata, bool is_selectany);
+	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata, bool is_selectany, bool has_absolute_relocation);
 	void add_typeinfo(std::string_view typeinfo_symbol, const void* typeinfo_data, size_t typeinfo_size);
 	std::string get_or_create_builtin_typeinfo(TypeCategory cat);
 	std::string get_or_create_class_typeinfo(std::string_view class_name);
