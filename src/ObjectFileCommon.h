@@ -145,7 +145,7 @@ concept FileWriter = requires(T writer,
 	writer.add_function_exception_info(name, offset, size, try_blocks, unwind_map, seh_try_blocks, size);
 
 		// Global data
-	writer.add_global_variable_data(name, size_t{0}, size_t{0}, std::span<const uint8_t>{}, false, false);
+	writer.add_global_variable_data(name, size_t{0}, false, std::span<const char>{}, false, false, false);
 };
 
 } // namespace ObjectFileCommon

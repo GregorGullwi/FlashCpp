@@ -273,6 +273,7 @@ Next blocker:
 
 Named follow-ups carried forward:
 
+- ELF global absolute-pointer relocations now select `.data.rel.ro` for read-only objects (mutable globals retain `.data`), sharing the RTTI/vtable RELRO accessor; `test_const_global_pointer_relro_ret0.cpp` covers a const polymorphic object and constexpr pointers to struct, native, and string storage. Windows full-suite and final targeted checks pass; ELF PIE/no-PIE regression and adjacent pointer/multi-TU vtable checks pass warning-free, with `readelf -rW` confirming global absolute relocations in `.rela.data.rel.ro`/`.rela.data` and no `.rela.rodata`. COFF section/COMDAT behavior and literal `.rodata` placement are preserved. Separate follow-up: dereferenced global struct pointers passed to reference parameters (`docs/KNOWN_ISSUES.md`).
 - Before architecture boundary 10A, approve a parser-family routing table for
   the single translation-unit parse entry point.
 - Pre-ICE raw `std::cerr` context dumps at `src/IrGenerator_MemberAccess.cpp`

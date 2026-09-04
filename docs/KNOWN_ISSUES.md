@@ -1,5 +1,17 @@
 # Known Issues
 
+## ELF reference argument from a dereferenced global struct pointer
+
+Passing `*p` to a `const Reading&` parameter, where `p` is a constexpr global
+pointer to a const polymorphic `Reading` object, passes the address of a pointer
+temporary instead of the object address on ELF. A virtual call through that
+reference then crashes. Reduced shape: `struct Reading { virtual int value()
+const { return 37; } }; const Reading reading; constexpr const Reading* p =
+&reading; int read(const Reading& r) { return r.value(); } int main() {
+return read(*p) - 37; }`. Observed while testing global RELRO placement;
+the pointer-parameter variant in `test_const_global_pointer_relro_ret0.cpp`
+isolates section placement. Follow-up owner: reference argument lowering.
+
 ## Declaration-parse errors are masked by the expression-statement fallback
 
 When `parse_function_declaration` returns a `ParseResult` error, the top-level

@@ -345,7 +345,8 @@ std::string_view ObjectFileWriter::add_string_literal(std::string_view str_conte
 // Add a global variable with raw initialization data
 void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
 												bool is_initialized, std::span<const char> init_data, bool is_rodata,
-												bool is_selectany) {
+												bool is_selectany, bool has_absolute_relocation) {
+	(void)has_absolute_relocation; // COFF permits absolute pointer relocations in .rdata.
 	if (is_selectany) {
 		// MSVC __declspec(selectany): each definition lives in its own COMDAT section
 		// (e.g. .data$_Avx2WmemEnabledWeakValue) with IMAGE_COMDAT_SELECT_ANY so the
