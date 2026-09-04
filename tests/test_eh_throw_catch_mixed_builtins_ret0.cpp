@@ -35,5 +35,12 @@ int main() {
 			failures |= 16;
 		}
 	}
+	try {
+		throw 'Q';
+	} catch (char value) {
+		if (value != 'Q') {
+			failures |= 32;
+		}
+	}
 	return failures;
 }

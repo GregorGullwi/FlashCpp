@@ -907,6 +907,8 @@ private:
 
 	uint32_t emitSubRSPImm32Placeholder();
 
+	void patchCatchContinuationExtraStackToNop();
+
 	uint32_t emitLeaFromRSPDisp32Placeholder(X64Register destination_register);
 
 	void patchRel32(uint32_t patch_position, uint32_t target_position);

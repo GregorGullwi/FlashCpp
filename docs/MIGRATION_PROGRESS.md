@@ -259,9 +259,8 @@ Replaces the previous remaining-work section entirely on every update.
 Next blocker:
 
 - Architecture boundary 2 / Gate 0: COFF function COMDATs now emit natively
-  (criterion 8 closed for that path). Remaining Gate 0 items are Windows
-  cross-TU class exception payload, `typeid` inside function templates,
-  Windows `catch (char)` width, ELF `.data.rel.ro` / multi-TU RTTI reloc
+  (criterion 8 closed for that path). Remaining Gate 0 items are `typeid`
+  inside function templates, ELF `.data.rel.ro` / multi-TU RTTI reloc
   kinds, and PIE-safe output. Do not start architecture boundary 3A until
   the multi-TU corpus still links without linker warnings.
 - Continue architecture boundary 1: expand shadow wire or merge coverage
