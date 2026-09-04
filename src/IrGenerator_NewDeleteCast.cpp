@@ -1160,8 +1160,9 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		return {};
 	};
 
-	if (typeidNode.is_type()) {
-			// typeid(Type) - compile-time constant
+	if (typeidNode.is_type() || typeidNode.operand().is<TypeSpecifierNode>()) {
+			// typeid(Type) - compile-time constant. Instantiation may promote a
+			// dependent identifier operand to a TypeSpecifierNode.
 		const auto& type_node = typeidNode.operand().as<TypeSpecifierNode>();
 
 			// Get type information
