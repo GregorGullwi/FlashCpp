@@ -16,6 +16,7 @@
 #include "InstantiationQueue.h"
 #include "TemplateEngine.h"
 #include <string>
+#include <fstream>
 #include <algorithm>
 #include <typeindex>
 #include <memory>
@@ -25,6 +26,7 @@
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
+#include "../../../architecture/CanonicalTypeTests.h"
 
 namespace {
 void isolateGlobalSymbolTable() {
@@ -3951,18 +3953,20 @@ TEST_SUITE("FrontendContext") {
 		CHECK(second_return_id.value == 1u);
 	}
 
-	TEST_CASE("PublicationTransaction rejects nesting") {
+	TEST_CASE("PublicationTransaction nested commit remains provisional") {
 		FrontendContext context;
-		DeclarationBuilder& builder = context.declarationBuilder();
+		auto& builder = context.declarationBuilder();
+		const TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 		PublicationTransaction outer(builder);
-		bool threw = false;
-		try {
-			PublicationTransaction nested(builder);
-		} catch (const InternalError&) {
-			threw = true;
+		{
+			PublicationTransaction inner(builder);
+			builder.internDeclaratorType(integer);
+			inner.commit();
 		}
-		CHECK(threw);
-		outer.commit();
+		CHECK(builder.telemetryDeclaratorInternCount() == 1);
+		outer.rollback();
+		CHECK(builder.telemetryDeclaratorInternCount() == 0);
+		CHECK(context.canonicalTypes().size() == 0);
 	}
 
 	TEST_CASE("PublicationTransaction rolls back on stack unwinding") {
@@ -4016,6 +4020,7 @@ TEST_SUITE("FrontendContext") {
 		const std::size_t entities_before = builder.entityCount();
 
 		{
+			PublicationTransaction outer(builder);
 			PublicationTransaction transaction(builder);
 			PreparedFunctionPublication created_prep_a = builder.prepareFunctionPublication(
 				makeFunctionDeclRequest(global_scope, create_a, TelemetryTypeId{203}, TelemetryTypeId{303}, FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus),
@@ -4041,7 +4046,8 @@ TEST_SUITE("FrontendContext") {
 					PublishStatus::MergedRedeclaration);
 			CHECK(builder.declarationCount() == decls_before + 4u);
 			CHECK(builder.entityCount() == entities_before + 2u);
-			transaction.rollback();
+			transaction.commit();
+			outer.rollback();
 		}
 
 		CHECK(builder.declarationCount() == decls_before);
@@ -4715,4 +4721,102 @@ TEST_SUITE("Diagnostics") {
 		static_assert(sizeof(SourceRange) == 24, "range packs two compact locations");
 		CHECK(true);
 	}
+}
+
+TEST_CASE("Canonical types participate in scratch rollback") {
+	FrontendContext context;
+	const auto before = context.canonicalTypes().size();
+	{
+		auto transaction = context.beginScratchTransaction();
+		context.canonicalTypes().builtin(CanonicalBuiltinKind::Int);
+		transaction.rollback();
+	}
+	CHECK(context.canonicalTypes().size() == before);
+}
+TEST_CASE("Semantic peak excludes nonoverlapping allocations") {
+	FrontendContext context;
+	auto& builder = context.declarationBuilder();
+	SymbolTable table;
+	const auto request = makeFunctionDeclRequest(table.currentScopeId(),
+		StringTable::getOrInternStringHandle("review_peak"), TelemetryTypeId{11}, TelemetryTypeId{21},
+		FunctionDeclForm::Declaration, LanguageLinkage::CPlusPlus);
+	{
+		PublicationTransaction transaction(builder);
+		auto prepared = builder.prepareFunctionPublication(request,table);
+		REQUIRE(builder.commitFunctionPublication(prepared, transaction).status==PublishStatus::Created);
+		transaction.rollback();
+	}
+	context.refreshSemanticDomainStats();
+	const auto actual_peak = context.domainStats(AllocationDomain::Semantic).peak_bytes;
+	context.canonicalTypes().builtin(CanonicalBuiltinKind::Int);
+	context.refreshSemanticDomainStats();
+	const auto stats = context.domainStats(AllocationDomain::Semantic);
+
+	CHECK(stats.peak_bytes == actual_peak);
+}
+
+TEST_CASE("Canonical type core identity contract") {
+	CHECK(CanonicalTypeTests::run() == 0);
+}
+
+TEST_CASE("Canonical adapter imports the source corpus at publication") {
+	gTypeInfo.clear(); gNativeTypes.clear(); gTypesByName.clear();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream input("tests/test_canonical_type_adapter_ret0.cpp");
+	REQUIRE(input.is_open());
+	const std::string code((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>{});
+	CompileContext test_context;
+	test_context.setInputFile("tests/test_canonical_type_adapter_ret0.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	CHECK(context.canonicalTypes().size() > 0);
+	CHECK(context.declarationBuilder().canonicalDeclaratorRequests() > 0);
+	CHECK(context.declarationBuilder().unmigratedDeclaratorRequests() > 0);
+}
+
+TEST_CASE("Canonical adapter preserves supported identity and defers entire unsupported shapes") {
+	FrontendContext context;
+	auto& types = context.canonicalTypes();
+	TypeSpecifierNode character(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	TypeSpecifierNode signed_character(TypeCategory::Char, TypeQualifier::Signed, 8, Token{}, CVQualifier::None);
+	CHECK(context.declarationBuilder().internDeclaratorType(character) !=
+		context.declarationBuilder().internDeclaratorType(signed_character));
+	TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	integer.add_pointer_level(CVQualifier::Volatile);
+	const auto imported = importCanonicalType(types, integer);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(imported.type == types.qualify(types.pointer(types.qualify(types.builtin(CanonicalBuiltinKind::Int),
+		CVQualifier::Const)), CVQualifier::Volatile));
+	const auto before = types.size();
+	integer.set_pointee_array_declarator(true);
+	CHECK(importCanonicalType(types, integer).status == CanonicalTypeImportStatus::UnmigratedArray);
+	CHECK(types.size() == before);
+	integer.set_pointee_array_declarator(false);
+	integer.set_pack_expansion(true);
+	CHECK(importCanonicalType(types, integer).status == CanonicalTypeImportStatus::Unresolved);
+	CHECK(types.size() == before);
+}
+
+TEST_CASE("Frontend scratch rolls back nested declaration and canonical registries together") {
+	FrontendContext context;
+	auto& builder = context.declarationBuilder();
+	const auto stable = context.canonicalTypes().builtin(CanonicalBuiltinKind::Double);
+	const TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	{
+		auto outer = context.beginScratchTransaction();
+		{
+			auto inner = context.beginScratchTransaction();
+			builder.internDeclaratorType(integer);
+			inner.commit();
+		}
+		CHECK(builder.telemetryDeclaratorInternCount() == 1);
+		outer.rollback();
+	}
+	CHECK(builder.telemetryDeclaratorInternCount() == 0);
+	CHECK(context.canonicalTypes().size() == 1);
+	CHECK(context.canonicalTypes().builtin(CanonicalBuiltinKind::Double) == stable);
+	CHECK(builder.internDeclaratorType(integer).value == 1);
 }

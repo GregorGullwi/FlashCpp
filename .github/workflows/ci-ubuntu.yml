@@ -37,6 +37,9 @@ jobs:
       - name: Check ELF unwind records and multi-TU link orders
         run: bash tests/runner/run_elf_eh_frame_tests.sh
 
+      - name: Canonical production adapter counters and traces
+        run: python3 tests/architecture/run_canonical_adapter.py --compiler x64/Sharded/FlashCpp
+
       - name: Run All Tests
         run: |
           # Run the test script which compiles and links all .cpp files in tests/

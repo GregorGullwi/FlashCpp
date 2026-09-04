@@ -32,6 +32,9 @@ jobs:
           # Build only the FlashCppMSVC project with MSBuild (Sharded) - uses MSVC toolset
           msbuild FlashCppMSVC.vcxproj /p:Configuration=Sharded /p:Platform=x64 /m
 
+      - name: Canonical production adapter counters and traces
+        run: python tests/architecture/run_canonical_adapter.py --compiler x64/Sharded/FlashCppMSVC.exe
+
       - name: Test Reference Files (Compile & Link)
         shell: pwsh
         run: |

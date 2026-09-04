@@ -9,36 +9,34 @@ Last updated: 2026-09-04 after canonical type foundation (feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's first slice is on `codex/canonical-type-nodes`,
-pending review (pull request boundary 38). Gate 0 is closed. Architecture
-boundary 1 remains incomplete; further shadow/merge coverage waits for
-canonical function/signature identity. Pull request numbers are distinct from
-architecture boundaries 0–11.
+Architecture boundary 3A's first slice is on `codex/canonical-type-nodes`
+(pull request 1971). Gate 0 is closed. Architecture boundary 1 remains
+incomplete; canonical function/signature identity still blocks further
+shadow/merge coverage.
 
-- `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` with
-  immutable recursive nodes for C++20 fundamental types, cv qualification,
-  pointers, and references. Qualification unions cv bits; references collapse.
-  Construction accepts no spelling, parser/member-context, or legacy flat-type
-  inputs. `TypeId` is context-local, never a cross-context hash or ABI name.
-- `DeclarationBuilder` uses distinct `TelemetryTypeId` keys. Its
-  `matches_signature` bridge cannot produce or consume canonical `TypeId` and
-  must not diagnose or erase lookup state. `SymbolTable` retains lookup and
-  merge authority. No production declarator path has migrated to the table.
-- Remaining 3A work: arrays, functions, member pointers, records/enums,
-  templates, dependent types, speculative canonical publication, the declarator
-  adapter, and deletion of the flat semantic representation. Capture a
-  production structural-request trace before reconsidering the single mutex.
-  Canonical function signatures are the blocker for declaration-merge migration.
-- Stop here for review of this slice. Do not begin another type family, 3B, or the
-  parallel-frontend experiment without operator direction and the plan's gates.
+- `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
+  fundamental types, cv qualification, pointers, and references. Immutable
+  8-byte nodes use context-local `TypeId`; construction accepts no spelling or
+  legacy flat-type identity.
+- The production `DeclarationBuilder` adapter imports those supported shapes,
+  records structural `canonical-request-v1` traces, and explicitly defers arrays,
+  callable, nominal, and unresolved shapes to the telemetry-only flat bridge.
+  `SymbolTable` retains lookup and merge authority.
+- Canonical nodes and builder registries participate in nested publication and
+  frontend scratch transactions. Rollback reuses discarded arena slots, while
+  committed IDs remain stable. Event-based accounting measures the true combined
+  declaration/type high-water mark instead of adding unrelated component peaks.
+- Remaining 3A work includes arrays, functions, member pointers, nominal and
+  dependent types, templates, and deletion of the flat semantic representation.
+  Stop here for review before starting another family, 3B, or the parallel
+  frontend experiment.
 
-The shallow canonical probe measures 31 nodes: the arena uses 32-element chunks
-(256 node bytes). Nodes are 8 bytes; the table is 336 bytes on Windows clang-cl.
-Node arena accounting excludes the interner hash index's heap storage. The
-65,536-level pointer probe passes with the normal 1 MiB Windows stack. Largest
-new table-method frame: `reference`, 216 bytes (unoptimized clang-cl
-`-fstack-usage`; no predecessor frame). Table methods do not recurse with type
-depth; legacy template recursion remains unbounded.
+The shallow native probe measures 31 nodes. Nodes are 8 bytes; the table is 384
+bytes on Windows clang-cl. Its 32-element chunks reserve 256 node bytes at a
+time; hash-index heap storage is excluded. A 65,536-level pointer probe passes
+on the normal 1 MiB Windows stack. `importCanonicalType` is the largest new changed frame at 328 bytes;
+`internDeclaratorType` grows from 104 to 168 bytes. Canonical construction and
+rollback are iterative, so native stack use does not grow with type depth.
 
 ## Established foundation
 
@@ -94,10 +92,14 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest foundation validation: MSVC sharded build; 2,972 single-file tests,
+Latest validation: warning-free MSVC sharded build; 2,973 single-file tests,
 12 multi-TU cases, and 264 negative contracts pass. Native canonical tests and
-five source-copy mutations pass; mutation rejection requires exit 1, not a
-compile failure or crash. Windows and Ubuntu CI run these guards. Context/
+nine source-copy mutations pass on Windows; the native baseline is also
+warning-clean under Ubuntu clang. Mutation rejection requires a test failure,
+not a compile failure or crash. Shared core assertions run in `FlashCppTest` and
+the standalone harness. A production fixture requires at least 11 supported
+requests, permits at most 3 deferred requests, and validates structural traces
+in both CI jobs. Context/
 declaration doctests: 91 pass; two failures reproduce unchanged on clean
 `36d1b33b` (90 passing baseline cases), detailed under Active findings.
 

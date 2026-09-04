@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ChunkedAnyVector.h"
+#include "CanonicalTypes.h"
 #include "FrontendIds.h"
 #include "NamespaceRegistry.h"
 #include "ScopeRecord.h"
@@ -221,7 +222,7 @@ public:
 	static constexpr uint32_t kDeclarationArenaChunkSize = 64;
 	static constexpr uint32_t kEntityArenaChunkSize = 64;
 
-	DeclarationBuilder();
+	DeclarationBuilder(CanonicalTypeTable& types, SemanticArenaAccounting& accounting);
 	~DeclarationBuilder();
 
 	DeclarationBuilder(const DeclarationBuilder&) = delete;
@@ -239,9 +240,8 @@ public:
 		PreparedFunctionPublication& prepared,
 		PublicationTransaction& transaction);
 
-	// Telemetry-only opaque keys until architecture boundary 3A canonical types.
-	// Uses TypeSpecifierNode::matches_signature(), which does not compare nested
-	// FunctionSignature payloads; do not use for merge authority.
+	// Supported families use canonical equality; the explicitly unmigrated
+	// families retain matches_signature until 3A replaces them. Telemetry only.
 	TelemetryTypeId internDeclaratorType(const TypeSpecifierNode& type_spec);
 	TelemetryTypeId internParameterListSignature(
 		std::span<const ASTNode> parameter_nodes,
@@ -260,6 +260,8 @@ public:
 	}
 
 	std::size_t telemetryDeclaratorInternCount() const;
+	uint64_t canonicalDeclaratorRequests() const { return canonical_declarator_requests_; }
+	uint64_t unmigratedDeclaratorRequests() const { return unmigrated_declarator_requests_; }
 
 	std::size_t telemetryParameterListInternCount() const {
 		return parameter_list_ids_.size();
@@ -348,9 +350,16 @@ private:
 	ChunkedVector<DeclarationRecord, kDeclarationArenaChunkSize> declarations_;
 	ChunkedVector<EntityRecord, kEntityArenaChunkSize> entities_;
 	std::unordered_map<EntityLookupKey, EntityId, EntityLookupKeyHash> entity_by_key_;
-	std::vector<TypeSpecifierNode> declarator_type_canon_;
+	CanonicalTypeTable& canonical_types_;
+	SemanticArenaAccounting& accounting_;
+	std::unordered_map<uint32_t, TelemetryTypeId> canonical_declarator_ids_;
+	std::vector<uint32_t> canonical_declarator_order_;
+	std::vector<TypeSpecifierNode> unmigrated_declarator_types_;
+	std::vector<TelemetryTypeId> unmigrated_declarator_ids_;
+	uint64_t canonical_declarator_requests_ = 0;
+	uint64_t unmigrated_declarator_requests_ = 0;
+	PublicationTransaction* active_transaction_ = nullptr;
 	std::unordered_map<ParameterListKey, TelemetryTypeId, ParameterListKeyHash> parameter_list_ids_;
-	std::uint32_t active_publication_transactions_ = 0;
 	uint64_t peak_used_bytes_ = 0;
 	uint64_t peak_reserved_bytes_ = 0;
 };
@@ -359,6 +368,7 @@ struct DeclarationBuilderCheckpoint {
 	std::size_t declaration_count = 0;
 	std::size_t entity_count = 0;
 	std::size_t declarator_type_count = 0;
+	std::size_t canonical_declarator_count = 0;
 };
 
 struct EntityUndo {
@@ -376,7 +386,7 @@ public:
 	PublicationTransaction(const PublicationTransaction&) = delete;
 	PublicationTransaction& operator=(const PublicationTransaction&) = delete;
 
-	void commit() noexcept;
+	void commit();
 	void rollback() noexcept;
 
 private:
@@ -385,13 +395,14 @@ private:
 	void noteParameterListInsert(const DeclarationBuilder::ParameterListKey& key);
 
 	DeclarationBuilder& builder_;
+	CanonicalTypeTransaction canonical_transaction_;
+	PublicationTransaction* parent_;
 	DeclarationBuilderCheckpoint checkpoint_;
 	std::vector<EntityUndo> entity_undos_;
 	std::vector<DeclarationBuilder::EntityLookupKey> inserted_entity_lookups_;
 	std::vector<DeclarationBuilder::ParameterListKey> inserted_parameter_lists_;
 	bool committed_ = false;
 	bool rolled_back_ = false;
-	bool registered_ = false;
 };
 
 FunctionDeclRequest buildFreeFunctionDeclRequest(

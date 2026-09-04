@@ -4,9 +4,13 @@
 #include <limits>
 #include <mutex>
 #include <type_traits>
+#include <thread>
+#include <vector>
 #include <unordered_map>
 
+#include "ArenaAccounting.h"
 #include "ChunkedAnyVector.h"
+#include "Log.h"
 #include "CompileError.h"
 #include "FrontendIds.h"
 #include "TypeQualifiers.h"
@@ -41,16 +45,21 @@ struct CanonicalTypeArenaStats {
 	uint64_t reserved_bytes;
 };
 
+class CanonicalTypeTransaction;
+
 // Boundary 3A's first family. IDs are local to one FrontendContext and are not
 // portable hashes or ABI names. Equal requests in that context return one ID,
-// regardless of request order. No production parser path is migrated yet;
-// DeclarationBuilder's flat bridge remains explicitly telemetry-only until the
-// later 3A declarator adapter can represent every family in a signature.
+// regardless of request order. The declarator adapter imports supported families
+// into this table. Declaration merging remains explicitly telemetry-only until
+// later 3A work can represent every family in a signature.
 // One mutex protects publication and reads; keep this boundary until the real
 // structural-request trace passes the parallel-experiment handoff gates.
 class CanonicalTypeTable {
+	friend class CanonicalTypeTransaction;
+
 public:
 	CanonicalTypeTable() = default;
+	explicit CanonicalTypeTable(SemanticArenaAccounting& accounting) : accounting_(&accounting) {}
 	CanonicalTypeTable(const CanonicalTypeTable&) = delete;
 	CanonicalTypeTable& operator=(const CanonicalTypeTable&) = delete;
 	CanonicalTypeTable(CanonicalTypeTable&&) = delete;
@@ -58,6 +67,7 @@ public:
 
 	TypeId builtin(CanonicalBuiltinKind kind) {
 		std::lock_guard lock(mutex_);
+		checkTransactionThread();
 		if (kind >= CanonicalBuiltinKind::Count) {
 			throw InternalError("canonical type: invalid builtin kind");
 		}
@@ -66,6 +76,7 @@ public:
 
 	TypeId qualify(TypeId type, CVQualifier qualifiers) {
 		std::lock_guard lock(mutex_);
+		checkTransactionThread();
 		const CanonicalTypeNode input = nodeUnlocked(type);
 		if (static_cast<uint8_t>(qualifiers) > static_cast<uint8_t>(CVQualifier::ConstVolatile)) {
 			throw InternalError("canonical type: invalid cv qualifiers");
@@ -84,6 +95,7 @@ public:
 
 	TypeId pointer(TypeId pointee) {
 		std::lock_guard lock(mutex_);
+		checkTransactionThread();
 		if (isReference(nodeUnlocked(pointee).kind)) {
 			throw InternalError("canonical type: pointer to reference");
 		}
@@ -92,6 +104,7 @@ public:
 
 	TypeId reference(TypeId referent, ReferenceQualifier qualifier) {
 		std::lock_guard lock(mutex_);
+		checkTransactionThread();
 		CanonicalTypeNode input = nodeUnlocked(referent);
 		if (qualifier != ReferenceQualifier::LValueReference && qualifier != ReferenceQualifier::RValueReference) {
 			throw InternalError("canonical type: invalid reference qualifier");
@@ -113,19 +126,29 @@ public:
 		return internUnlocked({referent, kind, CanonicalBuiltinKind::Void, CVQualifier::None, 0});
 	}
 
+	TypeId withoutTopLevelQualifiers(TypeId id) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(id);
+		return input.kind == CanonicalTypeKind::Qualified ? input.child : id;
+	}
+
 	CanonicalTypeNode node(TypeId id) const {
 		std::lock_guard lock(mutex_);
+		checkTransactionThread();
 		return nodeUnlocked(id);
 	}
 
 	size_t size() const {
 		std::lock_guard lock(mutex_);
-		return nodes_.size();
+		checkTransactionThread();
+		return live_count_;
 	}
 
 	CanonicalTypeArenaStats arenaStats() const {
 		std::lock_guard lock(mutex_);
-		return {nodes_.usedBytes(), nodes_.reservedBytes()};
+		checkTransactionThread();
+		return {static_cast<uint64_t>(live_count_) * sizeof(CanonicalTypeNode), nodes_.reservedBytes()};
 	}
 
 private:
@@ -144,35 +167,138 @@ private:
 	}
 
 	CanonicalTypeNode nodeUnlocked(TypeId id) const {
-		if (!id || id.value > nodes_.size()) {
+		if (!id || id.value > live_count_) {
 			throw InternalError("canonical type: TypeId is outside this table");
 		}
 		return nodes_[id.value - 1];
 	}
 
 	TypeId internUnlocked(CanonicalTypeNode node) {
+		traceRequestUnlocked(node);
 		const auto existing = ids_.find(node);
 		if (existing != ids_.end()) {
 			return existing->second;
 		}
-		if (nodes_.size() >= std::numeric_limits<uint32_t>::max()) {
+		if (live_count_ >= std::numeric_limits<uint32_t>::max()) {
 			throw InternalError("canonical type: TypeId space exhausted");
 		}
-		const TypeId id{static_cast<uint32_t>(nodes_.size() + 1)};
-		nodes_.push_back(node);
+		const TypeId id{static_cast<uint32_t>(live_count_ + 1)};
+		if (live_count_ == nodes_.size()) {
+			nodes_.push_back(node);
+		} else {
+			// Reuse discarded slots; repeated failed probes must not repeatedly
+			// reserve new chunks from ChunkedVector's monotonic allocator.
+			nodes_[live_count_] = node;
+		}
+		++live_count_;
+		noteArenaBytes();
 		try {
 			ids_.emplace(node, id);
 		} catch (...) {
-			nodes_.pop_back();
+			--live_count_;
+			noteArenaBytes();
 			throw;
 		}
 		return id;
 	}
 
+	void noteArenaBytes() {
+		if (accounting_ != nullptr) {
+			accounting_->update(SemanticArenaComponent::Types, static_cast<uint64_t>(live_count_) * sizeof(CanonicalTypeNode), nodes_.reservedBytes());
+		}
+	}
+
+	void checkTransactionThread() const {
+		if (!transaction_marks_.empty() && transaction_owner_ != std::this_thread::get_id()) {
+			throw InternalError("canonical type transaction belongs to another thread");
+		}
+	}
+
+	size_t beginTransaction() {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		transaction_marks_.push_back(live_count_);
+		transaction_owner_ = std::this_thread::get_id();
+		return transaction_marks_.size();
+	}
+
+	void finishTransaction(size_t depth, bool commit) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (depth == 0 || depth != transaction_marks_.size()) {
+			throw InternalError("canonical type transactions must finish in nesting order");
+		}
+		if (!commit) {
+			while (live_count_ > transaction_marks_.back()) {
+				ids_.erase(nodes_[live_count_ - 1]);
+				--live_count_;
+			}
+			noteArenaBytes();
+		}
+		transaction_marks_.pop_back();
+	}
+
+	void traceRequestUnlocked(CanonicalTypeNode node) const {
+		if (!FLASH_LOG_ENABLED(Types, Trace)) {
+			return;
+		}
+		// Trace-local structural spelling only: never serialize numeric TypeIds.
+		// Each slash-separated node is kind,builtin,cv; the last is a builtin.
+		StringBuilder shape;
+		for (;;) {
+			shape.append(static_cast<uint64_t>(node.kind)).append(',');
+			shape.append(static_cast<uint64_t>(node.builtin)).append(',');
+			shape.append(static_cast<uint64_t>(node.qualifiers));
+			if (!node.child) {
+				break;
+			}
+			shape.append('/');
+			node = nodeUnlocked(node.child);
+		}
+		FLASH_LOG(Types, Trace, "canonical-request-v1 ", shape.commit());
+	}
+
 	// The shallow architectural corpus measures 31 records: 32 slots (256 bytes).
 	// Deep-nesting probes deliberately spill; no source-depth-sized inline array.
 	static constexpr uint32_t kChunkSize = 32;
+	size_t live_count_ = 0;
+	SemanticArenaAccounting* accounting_ = nullptr;
+	std::vector<size_t> transaction_marks_;
+	std::thread::id transaction_owner_;
 	mutable std::mutex mutex_;
 	ChunkedVector<CanonicalTypeNode, kChunkSize> nodes_;
 	std::unordered_map<CanonicalTypeNode, TypeId, NodeHash> ids_;
 };
+
+// Checkpoints publish only when the surrounding transaction commits. Nested
+// commit preserves the outer checkpoint; outer rollback discards both scopes.
+// IDs from a discarded probe must not escape it, as with declaration IDs.
+class CanonicalTypeTransaction {
+public:
+	explicit CanonicalTypeTransaction(CanonicalTypeTable& table)
+		: table_(table), depth_(table.beginTransaction()) {}
+	~CanonicalTypeTransaction() {
+		if (depth_ != 0) {
+			table_.finishTransaction(depth_, false);
+		}
+	}
+	CanonicalTypeTransaction(const CanonicalTypeTransaction&) = delete;
+	CanonicalTypeTransaction& operator=(const CanonicalTypeTransaction&) = delete;
+	void commit() {
+		if (depth_ != 0) {
+			table_.finishTransaction(depth_, true);
+			depth_ = 0;
+		}
+	}
+	void rollback() {
+		if (depth_ != 0) {
+			table_.finishTransaction(depth_, false);
+			depth_ = 0;
+		}
+	}
+private:
+	CanonicalTypeTable& table_;
+	size_t depth_;
+};
+
+static_assert(sizeof(CanonicalTypeTransaction) == 2 * sizeof(void*));

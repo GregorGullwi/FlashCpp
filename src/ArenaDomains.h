@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "ArenaAccounting.h"
+
 class DiagnosticEngine;
 
 enum class AllocationDomain : uint8_t {
@@ -13,13 +15,6 @@ enum class AllocationDomain : uint8_t {
 	Semantic,
 	Scratch,
 	Ir,
-};
-
-struct DomainByteStats {
-	uint64_t current_bytes = 0;
-	uint64_t peak_bytes = 0;
-	uint64_t reserved_bytes = 0;
-	uint64_t peak_reserved_bytes = 0;
 };
 
 struct ScratchArenaState {

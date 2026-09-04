@@ -19,6 +19,23 @@
 
 class SymbolTable;
 
+// A frontend probe covers both scratch storage and semantic registries. Nested
+// publication commits remain provisional until the outer frontend probe commits.
+class FrontendScratchTransaction {
+public:
+	FrontendScratchTransaction(MonotonicScratchArena& arena, ScratchProbeRegistry& registry, DeclarationBuilder& builder)
+		: scratch_(arena, registry), publication_(builder) {}
+	FrontendScratchTransaction(const FrontendScratchTransaction&) = delete;
+	FrontendScratchTransaction& operator=(const FrontendScratchTransaction&) = delete;
+	void commit() { publication_.commit(); scratch_.commit(); }
+	void rollback() { publication_.rollback(); scratch_.rollback(); }
+	MonotonicScratchArena& arena() { return scratch_.arena(); }
+	ScratchProbeRegistry& registry() { return scratch_.registry(); }
+private:
+	ScratchTransaction scratch_;
+	PublicationTransaction publication_;
+};
+
 // Per-translation-unit front-end shell. Active-context lookup uses a thread-local
 // stack so concurrent compilations do not share state; each FrontendContext owns
 // its own arenas and domain stats.
@@ -53,8 +70,8 @@ public:
 		return stack.back();
 	}
 
-	ScratchTransaction beginScratchTransaction() {
-		return ScratchTransaction(scratch_arena_, scratch_registry_);
+	FrontendScratchTransaction beginScratchTransaction() {
+		return FrontendScratchTransaction(scratch_arena_, scratch_registry_, declaration_builder_);
 	}
 
 	DiagnosticEngine& diagnostics() {
@@ -229,17 +246,7 @@ public:
 	}
 
 	void refreshSemanticDomainStats() {
-		const auto types = canonical_types_.arenaStats();
-		const uint64_t used =
-			declaration_builder_.declarationArenaUsedBytes() + declaration_builder_.entityArenaUsedBytes() + types.used_bytes;
-		const uint64_t reserved =
-			declaration_builder_.declarationArenaReservedBytes() +
-			declaration_builder_.entityArenaReservedBytes() + types.reserved_bytes;
-		DomainByteStats& stats = domain_stats_[static_cast<std::size_t>(AllocationDomain::Semantic)];
-		stats.current_bytes = used;
-		stats.peak_bytes = declaration_builder_.peakSemanticArenaUsedBytes() + types.used_bytes;
-		stats.reserved_bytes = reserved;
-		stats.peak_reserved_bytes = declaration_builder_.peakSemanticArenaReservedBytes() + types.reserved_bytes;
+		domain_stats_[static_cast<std::size_t>(AllocationDomain::Semantic)] = semantic_accounting_.snapshot();
 	}
 
 	void refreshSyntaxDomainStats() {
@@ -272,6 +279,8 @@ public:
 		refreshSyntaxDomainStats();
 		refreshSyntaxAstFamilyCounts();
 		refreshSemanticDeclKindCounts();
+		FLASH_LOG(General, Info, "Canonical declarator requests: ", declaration_builder_.canonicalDeclaratorRequests());
+		FLASH_LOG(General, Info, "Unmigrated declarator requests: ", declaration_builder_.unmigratedDeclaratorRequests());
 		const char* domain_names[] = {"syntax", "semantic", "scratch", "ir"};
 		FLASH_LOG(General, Info, "\nFrontendContext arena telemetry:");
 		for (std::size_t index = 0; index < domain_stats_.size(); ++index) {
@@ -440,8 +449,9 @@ private:
 	DiagnosticEngine diagnostics_;
 	MonotonicScratchArena scratch_arena_{diagnostics_, kScratchByteLimit};
 	ScratchProbeRegistry scratch_registry_;
-	CanonicalTypeTable canonical_types_;
-	DeclarationBuilder declaration_builder_;
+	SemanticArenaAccounting semantic_accounting_;
+	CanonicalTypeTable canonical_types_{semantic_accounting_};
+	DeclarationBuilder declaration_builder_{canonical_types_, semantic_accounting_};
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
 	ScopeId current_scope_id_{1};
 	std::vector<SymbolTable*> persistent_scope_publication_tables_;
