@@ -12142,6 +12142,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			// Get struct size in bytes from TypedValue (round up to handle partial bytes)
 		int struct_size_bytes = (op.lhs.size_in_bits.value + 7) / 8;
 
+		// The copy uses RAX directly, outside register allocation. Preserve any
+		// dirty arithmetic result before the first aggregate load overwrites it.
+		spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+
 			// Copy struct using 8-byte chunks, then handle remaining bytes
 		int offset = 0;
 		while (offset + 8 <= struct_size_bytes) {
