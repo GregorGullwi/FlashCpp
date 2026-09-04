@@ -1226,8 +1226,9 @@ Do not combine these with the core migration without a concrete dependency:
 
 ### Gate 0: diagnosable multi-TU baseline
 
-Do not begin architecture boundary 3A until the multi-TU corpus links and runs
-without linker warnings.
+Closed 2026-09-04: the multi-TU corpus links and runs without linker warnings
+on Windows and ELF (PIE and no-PIE), including `run_elf_eh_frame_tests.sh`.
+Architecture boundary 3A may begin.
 
 ### Gate 1: identity foundation
 
