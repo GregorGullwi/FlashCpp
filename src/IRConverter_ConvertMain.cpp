@@ -14062,7 +14062,16 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		const StringHandle dispatch_symbol = op.vtable_symbol.isValid()
 			? op.vtable_symbol
 			: op.virtual_base_table_symbol;
-		writer.add_relocation(relocation_offset, StringTable::getStringView(dispatch_symbol));
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Vtables are data objects. Their RIP-relative address materialization
+			// uses the direct PC-relative data relocation, not a PLT call relocation.
+			writer.add_relocation(
+				relocation_offset,
+				StringTable::getStringView(dispatch_symbol),
+				ELFIO::R_X86_64_PC32);
+		} else {
+			writer.add_relocation(relocation_offset, StringTable::getStringView(dispatch_symbol));
+		}
 
 		// Store vtable pointer to [RCX + op.offset] (this pointer is in RCX)
 		// First load 'this' pointer into RCX

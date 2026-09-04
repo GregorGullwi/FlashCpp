@@ -60,6 +60,41 @@ bool findVBaseOffset(const StructTypeInfo* si, TypeIndex target_tidx,
 }
 } // namespace
 
+ELFIO::section* ElfFileWriter::getOrCreateDataRelRoSection() {
+	auto* data_rel_ro = getSectionByName(".data.rel.ro");
+	if (data_rel_ro != nullptr) {
+		return data_rel_ro;
+	}
+
+	data_rel_ro = elf_writer_.sections.add(".data.rel.ro");
+	data_rel_ro->set_type(ELFIO::SHT_PROGBITS);
+	data_rel_ro->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
+	data_rel_ro->set_addr_align(8);
+	section_name_cache_[".data.rel.ro"] = data_rel_ro;
+	addLocalSectionSymbol(*data_rel_ro);
+	return data_rel_ro;
+}
+
+ELFIO::relocation_section_accessor* ElfFileWriter::getOrCreateDataRelRoRelocationAccessor() {
+	ELFIO::section* data_rel_ro = getOrCreateDataRelRoSection();
+	if (ELFIO::relocation_section_accessor* accessor =
+			getRelocationAccessor(".rela.data.rel.ro");
+		accessor != nullptr) {
+		return accessor;
+	}
+
+	auto* rela_data_rel_ro = elf_writer_.sections.add(".rela.data.rel.ro");
+	rela_data_rel_ro->set_type(ELFIO::SHT_RELA);
+	rela_data_rel_ro->set_flags(ELFIO::SHF_INFO_LINK);
+	rela_data_rel_ro->set_info(data_rel_ro->get_index());
+	rela_data_rel_ro->set_link(symtab_section_->get_index());
+	rela_data_rel_ro->set_addr_align(8);
+	rela_data_rel_ro->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+	rela_accessors_[".rela.data.rel.ro"] =
+		std::make_unique<ELFIO::relocation_section_accessor>(elf_writer_, rela_data_rel_ro);
+	return rela_accessors_[".rela.data.rel.ro"].get();
+}
+
 void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
 											 bool is_initialized, std::span<const char> init_data, bool is_rodata,
 											 bool is_selectany) {
@@ -136,20 +171,16 @@ void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t s
 void ElfFileWriter::add_typeinfo(std::string_view typeinfo_symbol, const void* typeinfo_data, size_t typeinfo_size) {
 	FLASH_LOG_FORMAT(Codegen, Debug, "Adding typeinfo '{}' of size {}", typeinfo_symbol, typeinfo_size);
 
-	// Get .rodata section (typeinfo goes in read-only data)
-	auto* rodata = getSectionByName(".rodata");
-	if (!rodata) {
-		throw std::runtime_error(".rodata section not found");
-	}
+	// RTTI contains ABI pointer fields. Keep it writable while static relocations
+	// are applied, then let the PIE linker place it in the GNU RELRO segment.
+	auto* data_rel_ro = getOrCreateDataRelRoSection();
+	uint32_t typeinfo_offset = data_rel_ro->get_size();
 
-	uint32_t typeinfo_offset = rodata->get_size();
-
-	// Add typeinfo data to .rodata
-	rodata->append_data(reinterpret_cast<const char*>(typeinfo_data), typeinfo_size);
+	data_rel_ro->append_data(reinterpret_cast<const char*>(typeinfo_data), typeinfo_size);
 
 	// Add typeinfo symbol. Class typeinfo has Itanium vague linkage.
 	getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
-					  rodata->get_index(), typeinfo_offset, typeinfo_size);
+					  data_rel_ro->get_index(), typeinfo_offset, typeinfo_size);
 }
 
 /**
@@ -266,16 +297,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 	//      [0] vtable: _ZTVN10__cxxabiv117__class_type_infoE + 16
 	//      [8] name:   _ZTS<classname>
 	// ------------------------------------------------------------------
-	// Get or create the .data.rel.ro section
-	auto* data_rel_ro = getSectionByName(".data.rel.ro");
-	if (!data_rel_ro) {
-		data_rel_ro = elf_writer_.sections.add(".data.rel.ro");
-		data_rel_ro->set_type(ELFIO::SHT_PROGBITS);
-		data_rel_ro->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
-		data_rel_ro->set_addr_align(8);
-		// Keep section_name_cache_ in sync
-		section_name_cache_[".data.rel.ro"] = data_rel_ro;
-	}
+	auto* data_rel_ro = getOrCreateDataRelRoSection();
 
 	const char zeros[16] = {};
 	uint32_t ti_offset = data_rel_ro->get_size();
@@ -288,20 +310,8 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(std::string_view class_n
 	// ------------------------------------------------------------------
 	// 3. Add R_X86_64_64 relocations for both pointer slots
 	// ------------------------------------------------------------------
-	// Get or create .rela.data.rel.ro
-	ELFIO::relocation_section_accessor* rela_acc = getRelocationAccessor(".rela.data.rel.ro");
-	if (!rela_acc) {
-		auto* rela_sec = elf_writer_.sections.add(".rela.data.rel.ro");
-		rela_sec->set_type(ELFIO::SHT_RELA);
-		rela_sec->set_flags(ELFIO::SHF_INFO_LINK);
-		rela_sec->set_info(data_rel_ro->get_index());
-		rela_sec->set_link(symtab_section_->get_index());
-		rela_sec->set_addr_align(8);
-		rela_sec->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
-		rela_accessors_[".rela.data.rel.ro"] =
-			std::make_unique<ELFIO::relocation_section_accessor>(elf_writer_, rela_sec);
-		rela_acc = rela_accessors_[".rela.data.rel.ro"].get();
-	}
+	ELFIO::relocation_section_accessor* rela_acc =
+		getOrCreateDataRelRoRelocationAccessor();
 
 	// Relocation 1: vtable pointer
 	// __class_type_info vtable is _ZTVN10__cxxabiv117__class_type_infoE.
@@ -379,29 +389,10 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 	getOrCreateSymbol(typename_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
 					  rodata->get_index(), name_offset, type_name_str.size() + 1);
 
-	// Ensure .data.rel.ro and its relocation section exist
-	auto* data_rel_ro = getSectionByName(".data.rel.ro");
-	if (!data_rel_ro) {
-		data_rel_ro = elf_writer_.sections.add(".data.rel.ro");
-		data_rel_ro->set_type(ELFIO::SHT_PROGBITS);
-		data_rel_ro->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
-		data_rel_ro->set_addr_align(8);
-		section_name_cache_[".data.rel.ro"] = data_rel_ro;
-	}
-
-	ELFIO::relocation_section_accessor* rela_acc = getRelocationAccessor(".rela.data.rel.ro");
-	if (!rela_acc) {
-		auto* rela_sec = elf_writer_.sections.add(".rela.data.rel.ro");
-		rela_sec->set_type(ELFIO::SHT_RELA);
-		rela_sec->set_flags(ELFIO::SHF_INFO_LINK);
-		rela_sec->set_info(data_rel_ro->get_index());
-		rela_sec->set_link(symtab_section_->get_index());
-		rela_sec->set_addr_align(8);
-		rela_sec->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
-		rela_accessors_[".rela.data.rel.ro"] =
-			std::make_unique<ELFIO::relocation_section_accessor>(elf_writer_, rela_sec);
-		rela_acc = rela_accessors_[".rela.data.rel.ro"].get();
-	}
+	// RTTI's vtable/name/base pointer slots require a relocatable RELRO object.
+	auto* data_rel_ro = getOrCreateDataRelRoSection();
+	ELFIO::relocation_section_accessor* rela_acc =
+		getOrCreateDataRelRoRelocationAccessor();
 
 	std::vector<TypeIndex> reachable_virtual_bases;
 	{
@@ -617,11 +608,9 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	FLASH_LOG_FORMAT(Codegen, Debug, "Adding vtable '{}' for class {} with {} virtual functions",
 					 vtable_symbol, class_name, function_symbols.size());
 
-	// Get .rodata section (vtables go in read-only data)
-	auto* rodata = getSectionByName(".rodata");
-	if (!rodata) {
-		throw std::runtime_error(".rodata section not found");
-	}
+	// Vtables carry absolute function and RTTI pointers, so they share the
+	// writable-at-link-time, read-only-after-relocation section with RTTI.
+	auto* data_rel_ro = getOrCreateDataRelRoSection();
 
 	// Itanium C++ ABI vtable structure:
 	// - Offset to top (8 bytes) - always 0 for simple cases
@@ -732,17 +721,16 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 
 	// Align the concrete vtable object itself to pointer alignment before we
 	// record offsets or append bytes.
-	size_t rodata_size = rodata->get_size();
-	size_t padding = (8 - (rodata_size % 8)) % 8;
+	size_t data_rel_ro_size = data_rel_ro->get_size();
+	size_t padding = (8 - (data_rel_ro_size % 8)) % 8;
 	if (padding != 0) {
 		static const char zero_padding[8] = {};
-		rodata->append_data(zero_padding, padding);
+		data_rel_ro->append_data(zero_padding, padding);
 	}
 
-	uint32_t vtable_offset = rodata->get_size();
+	uint32_t vtable_offset = data_rel_ro->get_size();
 
-	// Add vtable data to .rodata
-	rodata->append_data(vtable_data_buf, vtable_data_size);
+	data_rel_ro->append_data(vtable_data_buf, vtable_data_size);
 
 	// Header size = vbase prefix + offset_to_top + RTTI
 	uint32_t header_size = static_cast<uint32_t>(n_vbase_entries * 8 + 16);
@@ -752,11 +740,11 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// from every TU, so the definition must be STB_WEAK (not STB_GLOBAL).
 	uint32_t symbol_offset = vtable_offset + header_size;
 	getOrCreateSymbol(vtable_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
-					  rodata->get_index(), symbol_offset, vtable_data_size - header_size);
+					  data_rel_ro->get_index(), symbol_offset, vtable_data_size - header_size);
 
-	// Add relocations for each function pointer
-	[[maybe_unused]] auto* rela_rodata = getOrCreateRelocationSection(".rodata");
-	auto* rela_accessor = getRelocationAccessor(".rela.rodata");
+	// Itanium vtable pointer slots use absolute 64-bit relocations, matching
+	// the ABI object model and keeping all dynamic relocation targets in RELRO.
+	auto* rela_accessor = getOrCreateDataRelRoRelocationAccessor();
 
 	// Add relocation for RTTI pointer if typeinfo was emitted
 	if (!typeinfo_symbol.empty()) {

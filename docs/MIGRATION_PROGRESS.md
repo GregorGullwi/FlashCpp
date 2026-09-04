@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-02 after native COFF COMDAT reloc and catch-symbol fixes
+Last updated: 2026-09-04 after ELF RTTI/vtable RELRO and PIE-safety work
 
 ## Position
 
@@ -178,6 +178,7 @@ Last updated: 2026-09-02 after native COFF COMDAT reloc and catch-symbol fixes
 | 33 | Require a concrete `InlineVector` spill family at compile time and provide concise `OverloadVector` / `TemplateVector` aliases |
 | 34 | Add two-TU shared-aggregate ABI and inline/template-function regressions; emit non-EH free inline/template functions in `SELECT_ANY` COFF COMDAT sections while recording the remaining RTTI/vtable and grouped-unwind ownership blockers |
 | 35 | Emit C++ inline/template members, virtual special members, and grouped unwind/RTTI as COFF COMDATs; two-TU polymorphic vtable/RTTI regressions |
+| 36 | Put ELF RTTI and vtables in `.data.rel.ro`, use Itanium `R_X86_64_64` pointer-slot relocations and `R_X86_64_PC32` data address materialization, and add a non-`std` two-TU template-`typeid` PIE regression |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -244,9 +245,10 @@ boundary 1 is started, not finished.
     lexical `ScopeId`s while sharing one `OwnerId` / `EntityId`, and preserves
     `inline` plus definition state through the redeclaration chain.
 
-Boundary-33 validation: `build_flashcpp.bat`; migration counter baselines
-unchanged; all 156 explicit project uses migrate to the concrete-family aliases;
-an omitted family fails compilation; and `git diff --check` passes.
+Boundary-36 validation: `build_flashcpp.bat`; warning-clean clang debug and
+sharded builds; Windows `tests/run_all_tests.ps1` (2,966 positive, 264 negative,
+and 12 multi-TU cases); all 12 WSL multi-TU cases in PIE and no-PIE modes; and
+`tests/runner/run_elf_eh_frame_tests.sh` (both link orders and PIE modes).
 
 ## Effort estimate
 
@@ -258,11 +260,13 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Architecture boundary 2 / Gate 0: COFF function COMDATs now emit natively
-  (criterion 8 closed for that path). Remaining Gate 0 items are `typeid`
-  inside function templates, ELF `.data.rel.ro` / multi-TU RTTI reloc
-  kinds, and PIE-safe output. Do not start architecture boundary 3A until
-  the multi-TU corpus still links without linker warnings.
+- Architecture boundary 2 / Gate 0: ELF RTTI and vtables now use writable
+  `.data.rel.ro` storage until static relocation, `R_X86_64_64` for their
+  Itanium ABI pointer slots, and `R_X86_64_PC32` for code materializing their
+  addresses. The multi-TU runner rejects linker warnings, and the complete
+  ELF corpus links and runs warning-free in PIE and no-PIE modes. The remaining
+  Gate 0 item is `typeid` inside function templates; do not start architecture
+  boundary 3A until it closes and the multi-TU corpus remains warning-free.
 - Continue architecture boundary 1: expand shadow wire or merge coverage
   (default arguments, exception specifications, friends, templates) only
   after canonical `TypeId` exists; keep `SymbolTable::insert` as function
@@ -310,8 +314,10 @@ Named follow-ups carried forward:
   attaches each function's pending global-variable relocs to its `.text$N`
   before the unified buffer is reused, and `$catch$` symbols bind to the
   unwind text section instead of unified `.text`. Gate 0 criterion 8
-  is closed for COFF function COMDATs. Remaining Gate 0 work:
-  `.data.rel.ro` / RTTI reloc kinds on ELF, and PIE-safe output.
+  is closed for COFF function COMDATs. ELF RTTI/vtable objects now likewise
+  retain their relocation-bearing pointer fields in `.data.rel.ro`; the
+  reduced non-`std` two-TU `typeid` template case verifies PIE linking without
+  a text-relocation warning.
 
 - ELF exception metadata keeps each object's LSDA/typeinfo slots local.
   That alone did not fix the multi-TU throw crashes: the CIE personality
