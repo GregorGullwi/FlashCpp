@@ -4314,7 +4314,10 @@ bool IrToObjConverter<TWriterClass>::emitLoadAddressLikeArgument(X64Register tar
 				}
 			}
 		}
-		if (ref_info.has_value()) {
+		// Lowered lvalues such as *ptr already carry the object address. A
+		// pointer copy need not have indirect-stack metadata, so honor the IR
+		// storage discriminator instead of taking the address of its slot.
+		if (arg.storage == ValueStorage::ContainsAddress || ref_info.has_value()) {
 			emitMovFromFrame(target_reg, var_offset);
 			if (address_adjustment != 0) {
 				emitAddRegImm32(textSectionData, target_reg, address_adjustment);
