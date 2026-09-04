@@ -151,6 +151,7 @@ private:
 	ASTNode substituteQualifiedIdentifier(const QualifiedIdentifierNode& qual_id);
 	ASTNode substituteMemberAccess(const MemberAccessNode& member_access);
 	ASTNode substituteSizeofExpr(const SizeofExprNode& sizeof_expr);
+	ASTNode substituteTypeidExpr(const TypeidNode& typeid_expr);
 	ASTNode substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr);
 	ASTNode substituteStaticCast(const StaticCastNode& cast_node);
 	ASTNode substituteInitializerListConstruction(const InitializerListConstructionNode& init_list);

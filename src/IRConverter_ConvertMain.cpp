@@ -4947,13 +4947,18 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Check if this is a prvalue return being used to initialize a variable
 		bool is_prvalue_return = isTempVarPRValue(call_op.result);
 
-		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "FunctionCall result: {} is_prvalue={}",
-						 call_op.result.name(), is_prvalue_return);
+			FLASH_LOG_FORMAT(Codegen, Debug,
+							 "FunctionCall result: {} is_prvalue={}",
+							 call_op.result.name(), is_prvalue_return);
 
-			// Store return value - RAX for integers, XMM0 for floats
-			// For struct returns using return slot, the struct is already in place - no copy needed
-		if (call_op.return_type_index.category() != TypeCategory::Void && !call_op.usesReturnSlot()) {
+			// Store return value - RAX for integers, XMM0 for floats.
+			// `const void*` is TypeCategory::Void with a 64-bit pointer size; skipping
+			// that store drops the callee's RAX before the caller compares it.
+		const bool returns_valueless_void =
+			call_op.return_type_index.category() == TypeCategory::Void &&
+			!call_op.returns_reference &&
+			!(call_op.return_size_in_bits.is_set() && call_op.return_size_in_bits.value > 0);
+		if (!returns_valueless_void && !call_op.usesReturnSlot()) {
 			if (call_op.returns_reference) {
 					// A reference result is a 64-bit pointer in RAX, never a by-value
 					// aggregate. Store it directly; running SysV struct classification
@@ -15712,7 +15717,11 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	textSectionData.push_back(0xFF); // CALL r/m64
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
-	if (op.returnType() != TypeCategory::Void && !op.usesReturnSlot()) {
+	const bool returns_valueless_void =
+		op.returnType() == TypeCategory::Void &&
+		!op.returns_reference &&
+		!op.return_pointer_depth.is_pointer();
+	if (!returns_valueless_void && !op.usesReturnSlot()) {
 		if (op.returns_reference || op.return_pointer_depth.is_pointer()) {
 				// A reference (T& / T&&) or pointer (T*) result is a 64-bit address in
 				// RAX, never a by-value aggregate. Store it directly; running SysV struct

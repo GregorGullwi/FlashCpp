@@ -5,7 +5,7 @@ Living state snapshot for
 pull request overwrites this file in place; this is not a history. Earlier
 states are recoverable from git history.
 
-Last updated: 2026-09-04 after ELF RTTI/vtable RELRO and PIE-safety work
+Last updated: 2026-09-04 after function-template `typeid` substitution
 
 ## Position
 
@@ -179,6 +179,7 @@ Last updated: 2026-09-04 after ELF RTTI/vtable RELRO and PIE-safety work
 | 34 | Add two-TU shared-aggregate ABI and inline/template-function regressions; emit non-EH free inline/template functions in `SELECT_ANY` COFF COMDAT sections while recording the remaining RTTI/vtable and grouped-unwind ownership blockers |
 | 35 | Emit C++ inline/template members, virtual special members, and grouped unwind/RTTI as COFF COMDATs; two-TU polymorphic vtable/RTTI regressions |
 | 36 | Put ELF RTTI and vtables in `.data.rel.ro`, use Itanium `R_X86_64_64` pointer-slot relocations and `R_X86_64_PC32` data address materialization, and add a non-`std` two-TU template-`typeid` PIE regression |
+| 37 | Parse `typeid(T)` as a type-id in function templates, substitute the bound type, and compare it with `typeid` of the argument (`tests/test_typeid_function_template_ret0.cpp`). Also store `const void*` call results so those comparisons keep the callee pointer |
 
 Pull request boundaries are not the same as architecture boundaries 0–11.
 Architecture boundary 0 tracking slices are substantially closed; architecture
@@ -260,13 +261,10 @@ Replaces the previous remaining-work section entirely on every update.
 
 Next blocker:
 
-- Architecture boundary 2 / Gate 0: ELF RTTI and vtables now use writable
-  `.data.rel.ro` storage until static relocation, `R_X86_64_64` for their
-  Itanium ABI pointer slots, and `R_X86_64_PC32` for code materializing their
-  addresses. The multi-TU runner rejects linker warnings, and the complete
-  ELF corpus links and runs warning-free in PIE and no-PIE modes. The remaining
-  Gate 0 item is `typeid` inside function templates; do not start architecture
-  boundary 3A until it closes and the multi-TU corpus remains warning-free.
+- Architecture boundary 2 / Gate 0: `typeid` inside function templates now
+  substitutes the bound argument (`tests/test_typeid_function_template_ret0.cpp`),
+  not a tautological `typeid(T) == typeid(T)`. Do not start architecture
+  boundary 3A until the multi-TU corpus still links without linker warnings.
 - Continue architecture boundary 1: expand shadow wire or merge coverage
   (default arguments, exception specifications, friends, templates) only
   after canonical `TypeId` exists; keep `SymbolTable::insert` as function
@@ -317,7 +315,9 @@ Named follow-ups carried forward:
   is closed for COFF function COMDATs. ELF RTTI/vtable objects now likewise
   retain their relocation-bearing pointer fields in `.data.rel.ro`; the
   reduced non-`std` two-TU `typeid` template case verifies PIE linking without
-  a text-relocation warning.
+  a text-relocation warning. `typeid(T)` inside a function template now
+  lowers to the bound argument's typeinfo
+  (`tests/test_typeid_function_template_ret0.cpp`).
 
 - ELF exception metadata keeps each object's LSDA/typeinfo slots local.
   That alone did not fix the multi-TU throw crashes: the CIE personality

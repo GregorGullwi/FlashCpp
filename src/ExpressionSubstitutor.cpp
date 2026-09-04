@@ -504,6 +504,8 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return substituteMemberAccess(expr.as<MemberAccessNode>());
 	} else if (expr.is<SizeofExprNode>()) {
 		return substituteSizeofExpr(expr.as<SizeofExprNode>());
+	} else if (expr.is<TypeidNode>()) {
+		return substituteTypeidExpr(expr.as<TypeidNode>());
 	} else if (expr.is<TypeTraitExprNode>()) {
 		return substituteTypeTraitExpr(expr.as<TypeTraitExprNode>());
 	} else if (expr.is<StaticCastNode>()) {
@@ -4896,6 +4898,32 @@ ASTNode ExpressionSubstitutor::substituteMemberAccess(const MemberAccessNode& me
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing member access on member: ", member_access.member_name());
 	return rewriteStructurally(
 		ASTNode::emplace_node<ExpressionNode>(member_access));
+}
+
+ASTNode ExpressionSubstitutor::substituteTypeidExpr(const TypeidNode& typeid_expr) {
+	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Processing typeid expression");
+	const ASTNode& operand = typeid_expr.operand();
+	if (typeid_expr.is_type() || operand.is<TypeSpecifierNode>()) {
+		if (!operand.is<TypeSpecifierNode>()) {
+			return rewriteStructurally(ASTNode::emplace_node<ExpressionNode>(typeid_expr));
+		}
+		TypeSpecifierNode substituted_type = substituteTypeSpecifier(operand.as<TypeSpecifierNode>());
+		TypeSpecifierNode& stored_type =
+			gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(substituted_type));
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+			TypeidNode(ASTNode(&stored_type), true, typeid_expr.typeid_token()));
+		return ASTNode(&new_expr);
+	}
+
+	ASTNode substituted_operand = substitute(operand);
+	if (substituted_operand.is<TypeSpecifierNode>()) {
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+			TypeidNode(substituted_operand, true, typeid_expr.typeid_token()));
+		return ASTNode(&new_expr);
+	}
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+		TypeidNode(substituted_operand, false, typeid_expr.typeid_token()));
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof_expr) {

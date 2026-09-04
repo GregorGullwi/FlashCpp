@@ -1066,26 +1066,30 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 			return ParseResult::error("Expected '(' after 'typeid'", current_token_);
 		}
 
-		// Try to parse as a type first
+		// Try to parse as a type first. Abstract declarators belong to the type-id
+		// (typeid(int*), typeid(T*)), matching sizeof/alignof.
 		SaveHandle saved_pos = save_token_position();
+		const bool has_typename_keyword = (peek() == "typename"_tok);
 		ParseResult type_result = parse_type_specifier();
 
-		bool parsed_resolved_type = false;
+		bool is_type_id_operand = false;
 		if (!type_result.is_error() && type_result.node().has_value() &&
 			type_result.node()->is<TypeSpecifierNode>()) {
-			const auto& type_node = type_result.node()->as<TypeSpecifierNode>();
-			parsed_resolved_type =
-				type_node.category() != TypeCategory::UserDefined || type_node.type_index().is_valid();
+			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			consume_type_id_abstract_declarators(type_spec);
+			if (peek() == ")"_tok) {
+				const bool resolved_type =
+					type_spec.category() != TypeCategory::UserDefined || type_spec.type_index().is_valid();
+				const bool type_template_parameter =
+					type_spec.token().handle().isValid() &&
+					currentTemplateParamKind(type_spec.token().handle()) == TemplateParameterKind::Type;
+				// Reject bare unresolved names so typeid(x) stays an expression, but keep
+				// current type template parameters (typeid(T)) and explicit typename.
+				is_type_id_operand = has_typename_keyword || resolved_type || type_template_parameter;
+			}
 		}
 
-		// Check if this is really a type by seeing if ')' follows and the parsed type
-		// resolved to something more concrete than a bare unresolved user-defined name.
-		// This disambiguates between "typeid(int)" and "typeid(x)" where x would
-		// otherwise parse as a speculative user-defined type.
-		bool is_type_followed_by_paren = parsed_resolved_type && peek() == ")"_tok;
-
-		if (is_type_followed_by_paren) {
-			// Successfully parsed as type and ')' follows
+		if (is_type_id_operand) {
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after typeid type", current_token_);
 			}
