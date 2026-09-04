@@ -14,14 +14,15 @@ struct CanonicalTypeImport {
 
 static_assert(sizeof(CanonicalTypeImport) == 8);
 
+enum class CanonicalTypeImportContext : uint8_t {
+	Exact, FunctionParameter,
+};
+
 // Boundary-3A adapter: inspect only resolved declarator structure. Unsupported
-// families stay explicit; never flatten an array/callable/dependent type into
-// a supported pointee. Spelling, parser state and gTypeInfo are not identity.
-inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
-	if (syntax.is_array() || syntax.has_pointee_array_declarator() ||
-		!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension()) {
-		return {{}, CanonicalTypeImportStatus::UnmigratedArray};
-	}
+// families stay explicit; never flatten a callable/dependent type into a
+// supported pointee. Spelling, parser state and gTypeInfo are not identity.
+inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (syntax.has_function_signature() || syntax.has_member_class()) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 	}
@@ -85,15 +86,73 @@ inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const 
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
 	}
+	const bool has_ordinary_array = syntax.is_array() && !syntax.has_pointee_array_declarator();
+	const bool has_pointee_array = syntax.has_pointee_array_declarator();
+	const bool has_array_shape = has_ordinary_array || has_pointee_array ||
+		!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension();
+	if (has_array_shape) {
+		if ((!has_ordinary_array && !has_pointee_array) ||
+			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array) ||
+			(has_pointee_array && syntax.pointer_levels().empty())) {
+			return {{}, CanonicalTypeImportStatus::Invalid};
+		}
+		if (has_ordinary_array && syntax.array_dimensions().empty() &&
+			!syntax.has_unsized_outer_array_dimension()) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedArray};
+		}
+		for (const size_t extent : syntax.array_dimensions()) {
+			if (extent == 0) {
+				return {{}, CanonicalTypeImportStatus::UnmigratedArray};
+			}
+		}
+	}
 	CanonicalTypeTransaction transaction(table);
 	auto id = table.builtin(builtin);
 	id = table.qualify(id, syntax.cv_qualifier());
-	for (const auto& pointer : syntax.pointer_levels()) {
-		id = table.qualify(table.pointer(id), pointer.cv_qualifier);
+	const auto addPointers = [&] {
+		for (const auto& pointer : syntax.pointer_levels()) {
+			id = table.qualify(table.pointer(id), pointer.cv_qualifier);
+		}
+	};
+	const auto addKnownDimensions = [&](size_t first_dimension) {
+		const std::span<const size_t> dimensions = syntax.array_dimensions();
+		for (size_t index = dimensions.size(); index-- > first_dimension;) {
+			id = table.array(id, dimensions[index]);
+		}
+	};
+	if (has_pointee_array) {
+		if (syntax.array_dimensions().empty()) {
+			id = table.arrayOfUnknownBound(id);
+		} else {
+			addKnownDimensions(0);
+		}
+		addPointers();
+	} else {
+		addPointers();
+		if (has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&
+			reference == ReferenceQualifier::None) {
+			const size_t first_inner_dimension = syntax.has_unsized_outer_array_dimension() ? 0 : 1;
+			addKnownDimensions(first_inner_dimension);
+			id = table.pointer(id);
+		} else if (has_ordinary_array) {
+			addKnownDimensions(0);
+			if (syntax.has_unsized_outer_array_dimension()) {
+				id = table.arrayOfUnknownBound(id);
+			}
+		}
 	}
 	if (reference != ReferenceQualifier::None) {
 		id = table.reference(id, reference);
 	}
 	transaction.commit();
 	return {id, CanonicalTypeImportStatus::Supported};
+}
+
+inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
+	return importCanonicalTypeImpl(table, syntax, CanonicalTypeImportContext::Exact);
+}
+
+inline CanonicalTypeImport importCanonicalFunctionParameterType(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax) {
+	return importCanonicalTypeImpl(table, syntax, CanonicalTypeImportContext::FunctionParameter);
 }

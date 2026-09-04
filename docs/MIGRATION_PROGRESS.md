@@ -5,38 +5,41 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-04 after canonical type foundation (feature branch)
+Last updated: 2026-09-04 after canonical array types (local feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's first slice is on `codex/canonical-type-nodes`
-(pull request 1971). Gate 0 is closed. Architecture boundary 1 remains
-incomplete; canonical function/signature identity still blocks further
-shadow/merge coverage.
+Architecture boundary 3A's array slice is on `codex/canonical-array-types`
+for local review. The builtin/cv/pointer/reference foundation landed in pull
+request 1971. Gate 0 is closed. Architecture boundary 1 remains incomplete;
+canonical function/signature identity still blocks further shadow/merge coverage.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
-  fundamental types, cv qualification, pointers, and references. Immutable
-  8-byte nodes use context-local `TypeId`; construction accepts no spelling or
-  legacy flat-type identity.
+  fundamental types, cv qualification, pointers, references, and arrays of known
+  or unknown bound. Immutable 16-byte nodes use context-local `TypeId`;
+  construction accepts no spelling or legacy flat-type identity.
 - The production `DeclarationBuilder` adapter imports those supported shapes,
-  records structural `canonical-request-v1` traces, and explicitly defers arrays,
-  callable, nominal, and unresolved shapes to the telemetry-only flat bridge.
-  `SymbolTable` retains lookup and merge authority.
+  records structural `canonical-request-v2` traces, applies outer-array-to-pointer
+  adjustment for function parameters, and explicitly defers incomplete array
+  metadata plus callable, nominal, and unresolved shapes to the telemetry-only
+  flat bridge. `SymbolTable` retains lookup and merge authority.
 - Canonical nodes and builder registries participate in nested publication and
   frontend scratch transactions. Rollback reuses discarded arena slots, while
   committed IDs remain stable. Event-based accounting measures the true combined
   declaration/type high-water mark instead of adding unrelated component peaks.
-- Remaining 3A work includes arrays, functions, member pointers, nominal and
-  dependent types, templates, and deletion of the flat semantic representation.
-  Stop here for review before starting another family, 3B, or the parallel
-  frontend experiment.
+- Remaining 3A work includes functions, member pointers, nominal and dependent
+  types, templates, complete declarator interleaving, and deletion of the flat
+  semantic representation. Stop here for review before starting another family,
+  3B, or the parallel frontend experiment.
 
-The shallow native probe measures 31 nodes. Nodes are 8 bytes; the table is 384
-bytes on Windows clang-cl. Its 32-element chunks reserve 256 node bytes at a
-time; hash-index heap storage is excluded. A 65,536-level pointer probe passes
-on the normal 1 MiB Windows stack. `importCanonicalType` is the largest new changed frame at 328 bytes;
-`internDeclaratorType` grows from 104 to 168 bytes. Canonical construction and
-rollback are iterative, so native stack use does not grow with type depth.
+The shallow native probe measures 42 nodes. Nodes are 16 bytes; the table is 416
+bytes on Windows clang-cl. Its measured 64-element chunks reserve 1,024 node
+bytes at a time; hash-index heap storage is excluded. A 65,536-level mixed
+pointer/array probe passes on the normal 1 MiB Windows stack.
+`importCanonicalTypeImpl` is the largest new changed frame at 440 bytes and
+`CanonicalTypeTable::qualify` is 280 bytes. Canonical construction, cv propagation,
+tracing, and rollback are iterative, so native stack use does not grow with type
+depth.
 
 ## Established foundation
 
@@ -92,16 +95,14 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation: warning-free MSVC sharded build; 2,973 single-file tests,
-12 multi-TU cases, and 264 negative contracts pass. Native canonical tests and
-nine source-copy mutations pass on Windows; the native baseline is also
-warning-clean under Ubuntu clang. Mutation rejection requires a test failure,
-not a compile failure or crash. Shared core assertions run in `FlashCppTest` and
-the standalone harness. A production fixture requires at least 11 supported
-requests, permits at most 3 deferred requests, and validates structural traces
-in both CI jobs. Context/
-declaration doctests: 91 pass; two failures reproduce unchanged on clean
-`36d1b33b` (90 passing baseline cases), detailed under Active findings.
+Latest validation for the array slice: warning-free MSVC sharded build; 2,973
+single-file tests, 12 multi-TU cases, and 264 negative contracts pass. Native
+canonical tests and 15 source-copy mutations pass on Windows. Mutation rejection
+requires a test failure, not a compile failure or crash. Shared core assertions
+compile and run in the standalone harness; the unity doctest build retains its
+clean-tree LLVM out-of-memory failure detailed under Active findings. The
+production fixture now requires at least 12 supported requests, permits at most
+2 deferred requests, and requires a structural array trace in both CI jobs.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -145,8 +146,10 @@ Explicit exit criteria: **9/78 complete (11.5%)**. The nine completed criteria a
 Advanced, not completed:
 
 - **3A:** no parser/member-stack dependency, parse-order independence, and
-  string-insertion-order independence are proved for builtin/cv/pointer/reference
-  nodes only. Remaining families and production migration keep all three open.
+  string-insertion-order independence are proved for builtin/cv/pointer/reference/
+  array nodes only. Array bounds, unknown bounds, dimension order, cv propagation,
+  pointer binding, and parameter adjustment are mutation-validated. Remaining
+  families and production migration keep all three criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -165,7 +168,8 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's canonical families and adapters before expanding boundary-1 shadow
+- Finish 3A's callable, member-pointer, nominal, template, and dependent families
+  and adapters before expanding boundary-1 shadow
   coverage (default arguments, exception specifications, friends, templates) or
   removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single

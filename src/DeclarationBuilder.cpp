@@ -440,7 +440,18 @@ PublishResult DeclarationBuilder::publishFunction(
 }
 
 TelemetryTypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
-	const auto imported = importCanonicalType(canonical_types_, type_spec);
+	return internDeclaratorTypeImport(type_spec, importCanonicalType(canonical_types_, type_spec));
+}
+
+TelemetryTypeId DeclarationBuilder::internFunctionParameterType(const TypeSpecifierNode& type_spec) {
+	return internDeclaratorTypeImport(
+		type_spec,
+		importCanonicalFunctionParameterType(canonical_types_, type_spec));
+}
+
+TelemetryTypeId DeclarationBuilder::internDeclaratorTypeImport(
+	const TypeSpecifierNode& type_spec,
+	CanonicalTypeImport imported) {
 	if (imported.status == CanonicalTypeImportStatus::Invalid) {
 		// The publication bridge is telemetry-only; invalid syntax cannot make
 		// it diagnose or remove the authoritative SymbolTable insertion.
@@ -493,7 +504,7 @@ TelemetryTypeId DeclarationBuilder::internParameterListSignature(
 	key.param_type_ids.reserve(parameter_nodes.size());
 	for (const ASTNode& parameter_node : parameter_nodes) {
 		const TypeSpecifierNode& param_type = parameter_node.as<DeclarationNode>().type_specifier_node();
-		key.param_type_ids.push_back(internDeclaratorType(param_type).value);
+		key.param_type_ids.push_back(internFunctionParameterType(param_type).value);
 	}
 
 	const auto existing = parameter_list_ids_.find(key);
