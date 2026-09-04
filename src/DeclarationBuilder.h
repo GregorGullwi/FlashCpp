@@ -18,6 +18,7 @@
 #include <vector>
 
 class ASTNode;
+struct CanonicalTypeImport;
 class FunctionDeclarationNode;
 class PublicationTransaction;
 class SymbolTable;
@@ -345,6 +346,10 @@ private:
 	bool isValidRequest(const FunctionDeclRequest& request) const;
 	DeclId allocateDeclaration(DeclarationRecord record);
 	EntityId allocateEntity(EntityRecord record);
+	TelemetryTypeId internDeclaratorTypeImport(
+		const TypeSpecifierNode& type_spec,
+		CanonicalTypeImport imported);
+	TelemetryTypeId internFunctionParameterType(const TypeSpecifierNode& type_spec);
 	void noteSemanticArenaPeaks();
 
 	ChunkedVector<DeclarationRecord, kDeclarationArenaChunkSize> declarations_;
