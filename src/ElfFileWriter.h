@@ -431,6 +431,8 @@ private:
 	void arrangeLocalSymbols();
 	ELFIO::section* getSectionByName(const std::string& name);
 	ELFIO::section* getSectionForType(SectionType type);
+	ELFIO::section* getOrCreateDataRelRoSection();
+	ELFIO::relocation_section_accessor* getOrCreateDataRelRoRelocationAccessor();
 	ELFIO::symbol_section_accessor* getSymbolAccessor();
 	ELFIO::section* getOrCreateRelocationSection(const std::string& section_name);
 	ELFIO::relocation_section_accessor* getRelocationAccessor(const std::string& rela_section_name);

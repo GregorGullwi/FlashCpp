@@ -442,6 +442,13 @@ link_and_run_objects() {
 		rm -f "$exe"
 		return
 	fi
+	if echo "$link_output" | grep -qi "warning:"; then
+		local link_warning
+		link_warning=$(echo "$link_output" | grep -i "warning:" | head -1)
+		echo "LINK_FAIL|$base|$variant: linker emitted warning: $link_warning" > "$result_file"
+		rm -f "$exe"
+		return
+	fi
 
 	local runtime_attempts=0
 	local runtime_timed_out=0
