@@ -156,6 +156,11 @@ private:
 	void populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type);
 	void populateIndirectCallReturnInfo(IndirectCallOp& call_op, const FunctionSignature& signature);
 	ExprResult buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var);
+	CVReferenceQualifier functionSignatureParamRefQualifier(const FunctionSignature* signature, size_t arg_index) const;
+	ExpressionContext indirectCallArgumentContext(const FunctionSignature* signature, size_t arg_index) const;
+	TypedValue buildIndirectCallArgumentFromResult(const ExprResult& argument_result, CVReferenceQualifier param_ref_qualifier, const Token& token);
+	TypedValue buildIndirectCallArgument(const ASTNode& argument, const FunctionSignature* signature, size_t arg_index, const Token& token);
+	void appendIndirectCallArguments(std::vector<TypedValue>& arguments, const CallExprNode& callExprNode, const FunctionSignature* signature);
 
 	// Shared helper: build the ExprResult for a function call given its return type
 	// and the TempVar holding the raw call result.  Handles:

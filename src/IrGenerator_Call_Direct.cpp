@@ -665,12 +665,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			// Mark function return value as prvalue (Option 2: Value Category Tracking)
 			setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
-			// Generate IR for function arguments
+			// Generate IR for function arguments using the pointer's parameter
+			// types so reference parameters bind the object address, not a
+			// value load of *ptr.
 			std::vector<TypedValue> arguments;
-			callExprNode.arguments().visit([&](ASTNode argument) {
-				ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-				arguments.push_back(makeIndirectCallArgument(argumentIrOperands));
-			});
+			const FunctionSignature* indirect_signature =
+				func_type.has_function_signature() ? &func_type.function_signature() : nullptr;
+			appendIndirectCallArguments(arguments, callExprNode, indirect_signature);
 
 			// Add the indirect call instruction
 			IndirectCallOp op{

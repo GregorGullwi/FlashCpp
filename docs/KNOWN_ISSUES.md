@@ -1,26 +1,5 @@
 # Known Issues
 
-## Reference argument lowering follow-ups
-
-The address-valued global-pointer dereference case is covered by
-`test_dereferenced_global_reference_argument_ret0.cpp`. Two distinct producer
-issues were exposed while extending that regression:
-
-- Calls through function pointers lower arguments in value context without
-  applying the signature's reference parameters. With `Reading` and `read`
-  from that regression, `int (*fn)(const Reading&) = &read; fn(*reading_pointer);`
-  emits a `Dereference` value load instead of a reference binding and crashes.
-  Owner: indirect-call argument lowering in `IrGenerator_Call_Direct.cpp` and
-  the other indirect-call producers.
-- An ELF virtual call accepting `const Sample&` from `*sample_pointer`, where
-  `Sample` has `short count; long long total;`, materializes aggregate data but
-  then passes its first word as an address. This was observed with
-  `virtual int inspect(const Reading& r, const Sample& s, const int& n) const {
-  return r.value() + s.count + n; }` called with dereferenced global pointers.
-  Owner: semantic reference-binding annotation / aggregate temporary
-  materialization. This differs from the fixed backend case where the argument
-  already explicitly carries `ValueStorage::ContainsAddress`.
-
 ## Declaration-parse errors are masked by the expression-statement fallback
 
 When `parse_function_declaration` returns a `ParseResult` error, the top-level

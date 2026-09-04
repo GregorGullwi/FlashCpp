@@ -583,9 +583,11 @@ void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpe
 	if (param_type.is_rvalue_reference()) {
 		value.ref_qualifier = ReferenceQualifier::RValueReference;
 		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+		value.storage = ValueStorage::ContainsAddress;
 	} else if (param_type.is_reference()) {
 		value.ref_qualifier = ReferenceQualifier::LValueReference;
 		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+		value.storage = ValueStorage::ContainsAddress;
 	} else {
 		value.ref_qualifier = ReferenceQualifier::None;
 	}
@@ -783,11 +785,13 @@ TypedValue AstToIr::buildReferenceCallArgumentFromResult(
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
 
 		TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var), token);
-		return makeTypedValue(
+		TypedValue address = makeTypedValue(
 			argument_result.type_index.withCategory(literal_type),
 			SizeInBits{POINTER_SIZE_BITS},
 			IrValue(addr_var),
 			ReferenceQualifier::LValueReference);
+		address.storage = ValueStorage::ContainsAddress;
+		return address;
 	}
 
 	if (std::holds_alternative<TempVar>(argument_result.value)) {
@@ -796,28 +800,104 @@ TypedValue AstToIr::buildReferenceCallArgumentFromResult(
 		TempVar expr_var = std::get<TempVar>(argument_result.value);
 
 		bool is_already_address = false;
-		if (reuse_address_valued_temp) {
+		if (reuse_address_valued_temp &&
+			argument_result.storage == ValueStorage::ContainsAddress) {
 			auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
 			if (metadata_storage.hasMetadata(expr_var)) {
 				TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
 				is_already_address =
 					metadata.category == ValueCategory::LValue ||
 					metadata.category == ValueCategory::XValue;
+			} else {
+				is_already_address = true;
 			}
 		}
+		auto asAddressValuedReference = [&](TypedValue value) {
+			value.ref_qualifier = ReferenceQualifier::LValueReference;
+			value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+			value.storage = ValueStorage::ContainsAddress;
+			return value;
+		};
+
 		if (is_already_address) {
-			return toTypedValue(argument_result);
+			return asAddressValuedReference(toTypedValue(argument_result));
 		}
 
 		TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var), token);
-		return makeTypedValue(
+		return asAddressValuedReference(makeTypedValue(
 			argument_result.type_index.withCategory(expr_type),
 			SizeInBits{POINTER_SIZE_BITS},
-			IrValue(addr_var),
-			ReferenceQualifier::LValueReference);
+			IrValue(addr_var)));
 	}
 
-	return toTypedValue(argument_result);
+	TypedValue value = toTypedValue(argument_result);
+	value.ref_qualifier = ReferenceQualifier::LValueReference;
+	value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+	value.storage = ValueStorage::ContainsAddress;
+	return value;
+}
+
+CVReferenceQualifier AstToIr::functionSignatureParamRefQualifier(const FunctionSignature* signature, size_t arg_index) const {
+	if (!signature || arg_index >= signature->parameter_types().size()) {
+		return CVReferenceQualifier::None;
+	}
+	const ReferenceQualifier qualifier = signature->parameter_types()[arg_index].reference_qualifier;
+	if (qualifier == ReferenceQualifier::RValueReference) {
+		return CVReferenceQualifier::RValueReference;
+	}
+	if (qualifier != ReferenceQualifier::None) {
+		return CVReferenceQualifier::LValueReference;
+	}
+	return CVReferenceQualifier::None;
+}
+
+ExpressionContext AstToIr::indirectCallArgumentContext(const FunctionSignature* signature, size_t arg_index) const {
+	return functionSignatureParamRefQualifier(signature, arg_index) != CVReferenceQualifier::None
+		? ExpressionContext::LValueAddress
+		: ExpressionContext::Load;
+}
+
+TypedValue AstToIr::buildIndirectCallArgumentFromResult(
+	const ExprResult& argument_result,
+	CVReferenceQualifier param_ref_qualifier,
+	const Token& token) {
+	if (param_ref_qualifier != CVReferenceQualifier::None) {
+		TypedValue argument = buildReferenceCallArgumentFromResult(argument_result, token, true);
+		argument.ref_qualifier = param_ref_qualifier == CVReferenceQualifier::RValueReference
+			? ReferenceQualifier::RValueReference
+			: ReferenceQualifier::LValueReference;
+		argument.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+		argument.storage = ValueStorage::ContainsAddress;
+		return argument;
+	}
+	return makeIndirectCallArgument(argument_result);
+}
+
+TypedValue AstToIr::buildIndirectCallArgument(
+	const ASTNode& argument,
+	const FunctionSignature* signature,
+	size_t arg_index,
+	const Token& token) {
+	const CVReferenceQualifier param_ref_qualifier = functionSignatureParamRefQualifier(signature, arg_index);
+	ExprResult argument_result = visitExpressionNode(
+		argument.as<ExpressionNode>(),
+		indirectCallArgumentContext(signature, arg_index));
+	return buildIndirectCallArgumentFromResult(argument_result, param_ref_qualifier, token);
+}
+
+void AstToIr::appendIndirectCallArguments(
+	std::vector<TypedValue>& arguments,
+	const CallExprNode& callExprNode,
+	const FunctionSignature* signature) {
+	size_t arg_index = 0;
+	callExprNode.arguments().visit([&](ASTNode argument) {
+		arguments.push_back(buildIndirectCallArgument(
+			argument,
+			signature,
+			arg_index,
+			callExprNode.called_from()));
+		++arg_index;
+	});
 }
 
 bool AstToIr::resolvedConstructorMatchesTargetType(const ConstructorDeclarationNode& ctor, TypeIndex target_type_index) const {
