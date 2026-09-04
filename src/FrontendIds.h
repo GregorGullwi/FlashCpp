@@ -61,6 +61,17 @@ struct TypeId {
 	friend constexpr bool operator==(TypeId, TypeId) = default;
 };
 
+// Opaque compatibility identity used by the declaration publication bridge.
+// This remains distinct from canonical TypeId until boundary 3A replaces it.
+struct TelemetryTypeId {
+	uint32_t value = 0;
+	constexpr TelemetryTypeId() = default;
+	explicit constexpr TelemetryTypeId(uint32_t raw_value) : value(raw_value) {}
+	TelemetryTypeId(const void* pointer_identity) = delete;
+	explicit constexpr operator bool() const { return value != 0; }
+	friend constexpr bool operator==(TelemetryTypeId, TelemetryTypeId) = default;
+};
+
 struct TemplateDeclId {
 	uint32_t value = 0;
 	constexpr TemplateDeclId() = default;
@@ -76,4 +87,5 @@ static_assert(sizeof(DeclId) == 4);
 static_assert(sizeof(EntityId) == 4);
 static_assert(sizeof(ExprId) == 4);
 static_assert(sizeof(TypeId) == 4);
+static_assert(sizeof(TelemetryTypeId) == 4);
 static_assert(sizeof(TemplateDeclId) == 4);

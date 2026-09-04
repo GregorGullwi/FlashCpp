@@ -2,6 +2,7 @@
 
 #include "ArenaDomains.h"
 #include "ChunkedString.h"
+#include "CanonicalTypes.h"
 #include "CompileError.h"
 #include "DeclarationBuilder.h"
 #include "FrontendIds.h"
@@ -195,6 +196,14 @@ public:
 		current_scope_id_ = ScopeId{1};
 	}
 
+	CanonicalTypeTable& canonicalTypes() {
+		return canonical_types_;
+	}
+
+	const CanonicalTypeTable& canonicalTypes() const {
+		return canonical_types_;
+	}
+
 	DeclarationBuilder& declarationBuilder() {
 		return declaration_builder_;
 	}
@@ -220,16 +229,17 @@ public:
 	}
 
 	void refreshSemanticDomainStats() {
+		const auto types = canonical_types_.arenaStats();
 		const uint64_t used =
-			declaration_builder_.declarationArenaUsedBytes() + declaration_builder_.entityArenaUsedBytes();
+			declaration_builder_.declarationArenaUsedBytes() + declaration_builder_.entityArenaUsedBytes() + types.used_bytes;
 		const uint64_t reserved =
 			declaration_builder_.declarationArenaReservedBytes() +
-			declaration_builder_.entityArenaReservedBytes();
+			declaration_builder_.entityArenaReservedBytes() + types.reserved_bytes;
 		DomainByteStats& stats = domain_stats_[static_cast<std::size_t>(AllocationDomain::Semantic)];
 		stats.current_bytes = used;
-		stats.peak_bytes = declaration_builder_.peakSemanticArenaUsedBytes();
+		stats.peak_bytes = declaration_builder_.peakSemanticArenaUsedBytes() + types.used_bytes;
 		stats.reserved_bytes = reserved;
-		stats.peak_reserved_bytes = declaration_builder_.peakSemanticArenaReservedBytes();
+		stats.peak_reserved_bytes = declaration_builder_.peakSemanticArenaReservedBytes() + types.reserved_bytes;
 	}
 
 	void refreshSyntaxDomainStats() {
@@ -430,6 +440,7 @@ private:
 	DiagnosticEngine diagnostics_;
 	MonotonicScratchArena scratch_arena_{diagnostics_, kScratchByteLimit};
 	ScratchProbeRegistry scratch_registry_;
+	CanonicalTypeTable canonical_types_;
 	DeclarationBuilder declaration_builder_;
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
 	ScopeId current_scope_id_{1};

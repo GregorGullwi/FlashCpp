@@ -22,6 +22,10 @@ jobs:
         shell: pwsh
         run: .\tests\runner\run_runner_self_tests.ps1
 
+      - name: Canonical type identity and mutation guards
+        shell: pwsh
+        run: python tests/architecture/run_canonical_types.py --mutations
+
       - name: Build FlashCppMSVC project (Sharded)
         shell: powershell
         run: |
