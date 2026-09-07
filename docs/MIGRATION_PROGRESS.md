@@ -160,9 +160,10 @@ Advanced, not completed:
   dimension order, cv propagation, pointer binding, parameter adjustment, function
   parameter lists, function cv/ref, variadic, noexcept, FunctionPointer wrapping,
   Function-as-parameter decay, Record EntityId identity, and member-pointer
-  owner/pointee distinction are mutation-validated. The pointer-to-member owner
-  criterion is advanced at the table API but not closed: production adapter import
-  still waits on class EntityId publication. Remaining families and flat-field
+  owner/pointee distinction are mutation-validated. Class EntityId publication
+  and EntityId-backed adapter MOP/MFP import are landed; spelling-only owners and
+  pointee-erased MOP forms stay deferred, and production declarators still need
+  parse-time `member_class_entity` binding. Remaining families and flat-field
   deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
