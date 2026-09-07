@@ -5,15 +5,16 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-07 after canonical member-pointer types (local feature branch)
+Last updated: 2026-09-07 after class EntityId publication for member-pointer import
+(local feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's member-pointer slice is on
-`boundary-3a-canonical-member-pointers` for local review. Function types and
-earlier families are on `main`. Gate 0 is closed. Architecture boundary 1 remains
-incomplete; class EntityId publication and remaining nominal families still block
-expanding shadow/merge coverage and production member-pointer import.
+Architecture boundary 3A's class EntityId / member-pointer import slice is on
+`boundary-3a-class-entityid-member-pointer-import` for local review. Member-pointer
+table identity and earlier families are on `main`. Gate 0 is closed. Architecture
+boundary 1 remains incomplete; full record/enum layout and remaining nominal
+families still block expanding shadow/merge coverage.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
   fundamental types, cv qualification, pointers, references, arrays of known or
@@ -22,21 +23,21 @@ expanding shadow/merge coverage and production member-pointer import.
   16-byte nodes use context-local `TypeId`; parameter lists and member-pointer
   owners are recursive links, not a second identity space. Construction accepts
   no spelling or legacy flat-type identity.
-- The production `DeclarationBuilder` adapter imports the previously supported
-  shapes and still defers spelling-backed member pointers, incomplete array
-  metadata, nominal, and unresolved shapes to the telemetry-only flat bridge.
-  Table-level member pointers are mutation-validated with EntityId-keyed Record
-  owners; wiring class EntityId into the adapter is the next publication step.
-  `SymbolTable` retains lookup and merge authority.
+- `DeclarationBuilder` publishes `DeclKind::Class` for global/namespace
+  non-template structs, stamps `EntityId` on `StructDeclarationNode`, and the
+  adapter imports EntityId-backed MOP/MFP. Spelling-only owners and MOP forms
+  that erased the pointee stay `UnmigratedCallable`. `Sample` remains the
+  deferred nominal in the production fixture. `SymbolTable` retains lookup and
+  merge authority.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable.
-- Remaining 3A work includes class EntityId publication for adapter member-pointer
-  import, full record/enum layout, calling-convention and dll-linkage callables,
-  unstructured signatures, dependent `noexcept`, dependent types, templates,
-  complete declarator interleaving, and deletion of the flat semantic
-  representation. Stop here for review before starting another family, 3B, or
-  the parallel frontend experiment.
+- Remaining 3A work includes parse-time `member_class_entity` binding for
+  production declarators, full record/enum layout, calling-convention and
+  dll-linkage callables, unstructured signatures, dependent `noexcept`,
+  dependent types, templates, complete declarator interleaving, and deletion of
+  the flat semantic representation. Stop here for review before starting another
+  family, 3B, or the parallel frontend experiment.
 
 The shallow native probe measures 59 nodes. Nodes are 16 bytes; the table is 464
 bytes on Linux clang++. Its measured 64-element chunks reserve 1,024 node bytes
@@ -65,8 +66,12 @@ Preserve these ownership contracts during subsequent migration:
   location uses `ScopeId`. Namespace/global C++ non-template free functions
   publish after `SymbolTable::insert` through
   `commitParserFreeFunctionPublication`, `prepareFunctionPublication`, and
-  `PublicationTransaction`. Rejected shadow publication leaves lookup intact.
-  The nontransactional adapter and `SymbolTableInsertUndo` APIs are deleted.
+  `PublicationTransaction`. Namespace/global non-template class/struct
+  declarations publish through `commitParserClassPublication` /
+  `prepareClassPublication` (lookup key signature id 0) and stamp
+  `StructDeclarationNode::entity_id`. Rejected shadow publication leaves lookup
+  intact. The nontransactional adapter and `SymbolTableInsertUndo` APIs are
+  deleted.
 - `FrontendContext` owns `ChunkedVector<ScopeRecord, 256>` (16-byte records;
   sampled peak 114 scopes). `Parser::parse()` reconstructs and binds
   `gSymbolTable`; `AstToIr::symbol_table` remains unbound. Bound tables use their
@@ -99,13 +104,14 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the member-pointer slice: native canonical tests and
-source-copy mutations pass, including Record EntityId identity, member-object
-owner distinction, and spelling-backed MOP/MFP remaining UnmigratedCallable.
-Mutation rejection requires a test failure, not a compile failure or crash. The
-production fixture is unchanged at 13 supported / 1 deferred with array and
-function traces. Fixed-corpus migration counters were not remeasured on this
-slice and remain at the prior baselines below.
+Latest validation for the class EntityId slice: native canonical tests and
+source-copy mutations pass; EntityId-backed MOP/MFP import as Supported;
+spelling-only owners remain UnmigratedCallable; DeclarationBuilder class
+create/merge unit tests pass. Mutation rejection requires a test failure, not a
+compile failure or crash. The production fixture is unchanged at 13 supported /
+1 deferred with array and function traces. Fixed-corpus migration counters were
+remeasured and remain within the prior baselines below (one
+`template_old_engine` improvement observed but not ratcheted).
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -154,9 +160,10 @@ Advanced, not completed:
   dimension order, cv propagation, pointer binding, parameter adjustment, function
   parameter lists, function cv/ref, variadic, noexcept, FunctionPointer wrapping,
   Function-as-parameter decay, Record EntityId identity, and member-pointer
-  owner/pointee distinction are mutation-validated. The pointer-to-member owner
-  criterion is advanced at the table API but not closed: production adapter import
-  still waits on class EntityId publication. Remaining families and flat-field
+  owner/pointee distinction are mutation-validated. Class EntityId publication
+  and EntityId-backed adapter MOP/MFP import are landed; spelling-only owners and
+  pointee-erased MOP forms stay deferred, and production declarators still need
+  parse-time `member_class_entity` binding. Remaining families and flat-field
   deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.

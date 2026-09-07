@@ -1,6 +1,9 @@
 #include "Parser.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
+#include "DeclarationBuilder.h"
+#include "FrontendContext.h"
+#include "MigrationStats.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
@@ -554,9 +557,30 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Create struct declaration node - string_view points directly into source text
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 	struct_ref.set_is_local_class(is_local_class_declaration);
-	const auto stampStructLexicalScope = [&struct_node]() {
+	const auto stampStructLexicalScope = [&struct_node, this]() {
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(
 			struct_node, gSymbolTable.currentScopeId());
+		StructDeclarationNode& stamped = struct_node.as<StructDeclarationNode>();
+		if (!shouldPublishParserClass(
+				stamped,
+				gSymbolTable.get_current_scope_type(),
+				parsing_template_class_)) {
+			return;
+		}
+		FrontendContext* front_end = frontendContext();
+		if (front_end == nullptr) {
+			return;
+		}
+		const PublishResult published = commitParserClassPublication(
+			front_end->declarationBuilder(),
+			stamped,
+			gSymbolTable.currentScopeId(),
+			!stamped.is_forward_declaration(),
+			gSymbolTable);
+		if (published.status == PublishStatus::Created ||
+			published.status == PublishStatus::MergedRedeclaration) {
+			recordDeclarationBuilderPublish();
+		}
 	};
 	if (owns_replayed_local_class_identity) {
 		struct_ref.set_semantic_name(type_name);

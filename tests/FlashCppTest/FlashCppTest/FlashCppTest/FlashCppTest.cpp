@@ -3429,6 +3429,62 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.entity(result.entity_id).owner_id == ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE));
 	}
 
+	TEST_CASE("DeclarationBuilder creates DeclId and EntityId for first class") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_class_first");
+		const ClassDeclRequest request {
+			.lexical_scope_id = global_scope,
+			.name = name,
+			.is_definition = false,
+		};
+		const PublishResult result = builder.publishClass(request, table);
+		CHECK(result.status == PublishStatus::Created);
+		CHECK(result.decl_id.value == 1u);
+		CHECK(result.entity_id.value == 1u);
+		CHECK(builder.declarationCount() == 1u);
+		CHECK(builder.entityCount() == 1u);
+		const DeclarationRecord& decl = builder.declaration(result.decl_id);
+		CHECK(decl.kind == static_cast<uint8_t>(DeclKind::Class));
+		CHECK(decl.entity_id == result.entity_id);
+		CHECK(decl.signature_id.value == 0u);
+		CHECK(decl.return_type_id.value == 0u);
+		CHECK(builder.entity(result.entity_id).kind == static_cast<uint8_t>(DeclKind::Class));
+		CHECK(builder.entity(result.entity_id).first_decl_id == result.decl_id);
+		CHECK(builder.entity(result.entity_id).latest_decl_id == result.decl_id);
+	}
+
+	TEST_CASE("DeclarationBuilder merges compatible class redeclaration into one EntityId") {
+		FrontendContext context;
+		DeclarationBuilder& builder = context.declarationBuilder();
+		SymbolTable table;
+		const ScopeId global_scope = table.currentScopeId();
+		const StringHandle name = StringTable::getOrInternStringHandle("decl_builder_class_redecl");
+		const ClassDeclRequest forward {
+			.lexical_scope_id = global_scope,
+			.name = name,
+			.is_definition = false,
+		};
+		const ClassDeclRequest definition {
+			.lexical_scope_id = global_scope,
+			.name = name,
+			.is_definition = true,
+		};
+		const PublishResult first = builder.publishClass(forward, table);
+		const PublishResult second = builder.publishClass(definition, table);
+		CHECK(first.status == PublishStatus::Created);
+		CHECK(second.status == PublishStatus::MergedRedeclaration);
+		CHECK(second.entity_id == first.entity_id);
+		CHECK(second.decl_id != first.decl_id);
+		CHECK(builder.declarationCount() == 2u);
+		CHECK(builder.entityCount() == 1u);
+		CHECK(builder.entity(first.entity_id).first_decl_id == first.decl_id);
+		CHECK(builder.entity(first.entity_id).latest_decl_id == second.decl_id);
+		CHECK(builder.declaration(second.decl_id).previous_decl_id == first.decl_id);
+	}
+
 	TEST_CASE("DeclarationBuilder merges compatible function redeclaration into one EntityId") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();

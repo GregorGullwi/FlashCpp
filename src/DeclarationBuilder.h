@@ -21,6 +21,7 @@ class ASTNode;
 struct CanonicalTypeImport;
 class FunctionDeclarationNode;
 class PublicationTransaction;
+class StructDeclarationNode;
 class SymbolTable;
 class TypeSpecifierNode;
 
@@ -51,6 +52,7 @@ inline NamespaceHandle namespaceHandleFromOwnerId(OwnerId owner_id) {
 
 enum class DeclKind : uint8_t {
 	Function = 0,
+	Class = 1,
 	Count,
 };
 
@@ -58,6 +60,8 @@ inline std::string_view declKindLabel(DeclKind kind) {
 	switch (kind) {
 	case DeclKind::Function:
 		return "function";
+	case DeclKind::Class:
+		return "class";
 	case DeclKind::Count:
 		break;
 	}
@@ -125,6 +129,12 @@ inline FunctionDeclRequest makeFunctionDeclRequest(
 	}
 	return request;
 }
+
+struct ClassDeclRequest {
+	ScopeId lexical_scope_id;
+	StringHandle name;
+	bool is_definition;
+};
 
 struct PublishResult {
 	PublishStatus status;
@@ -216,6 +226,44 @@ private:
 	uint8_t consumed_ = 0;
 };
 
+class PreparedClassPublication {
+	friend class DeclarationBuilder;
+
+	PreparedClassPublication(
+		PublishStatus status,
+		EntityId entity_id,
+		ScopeId lexical_scope_id,
+		OwnerId owner_id,
+		StringHandle name,
+		uint8_t flags);
+
+public:
+	PreparedClassPublication() = delete;
+	PreparedClassPublication(const PreparedClassPublication&) = delete;
+	PreparedClassPublication& operator=(const PreparedClassPublication&) = delete;
+	PreparedClassPublication(PreparedClassPublication&& other) noexcept;
+	PreparedClassPublication& operator=(PreparedClassPublication&& other) noexcept;
+
+	bool isRejected() const {
+		return status_ == PublishStatus::Rejected;
+	}
+
+	PublishResult rejection() const {
+		return PublishResult{status_, DeclId{}, entity_id_};
+	}
+
+private:
+	void consume();
+
+	PublishStatus status_ = PublishStatus::Rejected;
+	EntityId entity_id_;
+	ScopeId lexical_scope_id_;
+	OwnerId owner_id_;
+	StringHandle name_;
+	uint8_t flags_ = 0;
+	uint8_t consumed_ = 0;
+};
+
 class DeclarationBuilder {
 	friend class PublicationTransaction;
 
@@ -239,6 +287,16 @@ public:
 
 	PublishResult commitFunctionPublication(
 		PreparedFunctionPublication& prepared,
+		PublicationTransaction& transaction);
+
+	PublishResult publishClass(const ClassDeclRequest& request, const SymbolTable& symbol_table);
+
+	PreparedClassPublication prepareClassPublication(
+		const ClassDeclRequest& request,
+		const SymbolTable& symbol_table) const;
+
+	PublishResult commitClassPublication(
+		PreparedClassPublication& prepared,
 		PublicationTransaction& transaction);
 
 	// Supported families use canonical equality; the explicitly unmigrated
@@ -338,12 +396,14 @@ private:
 
 	static PublishResult makeRejected(EntityId existing_entity);
 	static uint8_t requestFlags(const FunctionDeclRequest& request);
+	static uint8_t requestFlags(const ClassDeclRequest& request);
 	static bool hasFlag(uint8_t flags, uint8_t bit);
 	static bool isPublishableScopeType(ScopeType scope_type);
 	static std::optional<PublicationTarget> resolvePublicationTarget(
 		const SymbolTable& symbol_table,
 		ScopeId lexical_scope_id);
 	bool isValidRequest(const FunctionDeclRequest& request) const;
+	bool isValidRequest(const ClassDeclRequest& request) const;
 	DeclId allocateDeclaration(DeclarationRecord record);
 	EntityId allocateEntity(EntityRecord record);
 	TelemetryTypeId internDeclaratorTypeImport(
@@ -419,12 +479,24 @@ FunctionDeclRequest buildFreeFunctionDeclRequest(
 
 bool shouldPublishParserFreeFunction(const FunctionDeclarationNode& func_decl, ScopeType scope_type);
 
+bool shouldPublishParserClass(
+	const StructDeclarationNode& struct_decl,
+	ScopeType scope_type,
+	bool parsing_template_class);
+
 // Build request, prepare once, and commit through a publication transaction.
 // SymbolTable insert must already have succeeded. SymbolTable remains lookup
 // authority when prepare rejects after insert.
 PublishResult commitParserFreeFunctionPublication(
 	DeclarationBuilder& builder,
 	const FunctionDeclarationNode& func_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition,
+	const SymbolTable& symbol_table);
+
+PublishResult commitParserClassPublication(
+	DeclarationBuilder& builder,
+	StructDeclarationNode& struct_decl,
 	ScopeId lexical_scope_id,
 	bool is_definition,
 	const SymbolTable& symbol_table);

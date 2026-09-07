@@ -236,12 +236,28 @@ inline void checkAdapter() {
 		Token{}, CVQualifier::None);
 	member_pointer.set_function_signature(member_signature);
 	member_pointer.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
-	// Spelling-backed owners stay deferred until class EntityId publication.
+	// Spelling-backed owners stay deferred until class EntityId is bound.
 	require(importCanonicalType(table, member_pointer).status == CanonicalTypeImportStatus::UnmigratedCallable);
 	TypeSpecifierNode member_object(TypeCategory::MemberObjectPointer, TypeQualifier::None, 64,
 		Token{}, CVQualifier::None);
 	member_object.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
 	require(importCanonicalType(table, member_object).status == CanonicalTypeImportStatus::UnmigratedCallable);
+
+	member_pointer.set_member_class_entity(EntityId{7});
+	const auto imported_mfp = importCanonicalType(table, member_pointer);
+	require(imported_mfp.status == CanonicalTypeImportStatus::Supported);
+	require(imported_mfp.type == table.memberFunctionPointer(
+		table.record(EntityId{7}), imported_member.type));
+
+	TypeSpecifierNode data_member(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	data_member.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
+	data_member.set_member_class_entity(EntityId{7});
+	data_member.add_pointer_level(CVQualifier::None);
+	const auto imported_mop = importCanonicalType(table, data_member);
+	require(imported_mop.status == CanonicalTypeImportStatus::Supported);
+	require(imported_mop.type == table.memberObjectPointer(
+		table.record(EntityId{7}), table.builtin(CanonicalBuiltinKind::Int)));
+	require(imported_mop.type != imported_mfp.type);
 }
 
 inline int run() {
