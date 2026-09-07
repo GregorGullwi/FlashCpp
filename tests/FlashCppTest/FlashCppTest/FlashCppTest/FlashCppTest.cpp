@@ -4861,7 +4861,15 @@ TEST_CASE("Canonical adapter imports the source corpus at publication") {
 	REQUIRE(!parser.parse().is_error());
 	CHECK(context.canonicalTypes().size() > 0);
 	CHECK(context.declarationBuilder().canonicalDeclaratorRequests() > 0);
-	CHECK(context.declarationBuilder().unmigratedDeclaratorRequests() > 0);
+	bool found_record = false;
+	const CanonicalTypeTable& types = context.canonicalTypes();
+	for (uint32_t index = 1; index <= types.size(); ++index) {
+		if (types.node(TypeId{index}).kind == CanonicalTypeKind::Record) {
+			found_record = true;
+			break;
+		}
+	}
+	CHECK(found_record);
 }
 
 TEST_CASE("Canonical adapter preserves supported identity and defers entire unsupported shapes") {

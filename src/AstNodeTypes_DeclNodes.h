@@ -1571,6 +1571,10 @@ const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 class TypeSpecifierNode;
 void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec);
 
+// Bind a published class EntityId onto a named struct TypeSpecifierNode.
+// Uses type_index / injected-class metadata only as a temporary bridge.
+void tryBindPublishedTypeEntity(TypeSpecifierNode& type_spec);
+
 // Print allocation stats for gTypeInfo, gTypesByName, and gNativeTypes to the General/Info log
 void setTypeTableStatsEnabled(bool enabled);
 void printTypeTableStats();
@@ -1965,6 +1969,7 @@ public:
 		template_parameter_name_ = other.template_parameter_name_;
 		injected_class_declaration_ = other.injected_class_declaration_;
 		member_class_entity_ = other.member_class_entity_;
+		type_entity_ = other.type_entity_;
 	}
 	// Pointer-to-member support (for types like int Class::*)
 	bool has_member_class() const { return member_class_name_.has_value(); }
@@ -1984,6 +1989,11 @@ public:
 		member_class_name_.reset();
 		member_class_entity_ = {};
 	}
+	// Published class/struct identity for the named type itself (not a member owner).
+	bool has_type_entity() const { return static_cast<bool>(type_entity_); }
+	EntityId type_entity() const { return type_entity_; }
+	void set_type_entity(EntityId entity_id) { type_entity_ = entity_id; }
+	void clear_type_entity() { type_entity_ = {}; }
 
 	void set_type_index(TypeIndex index) {
 		if (template_parameter_name_.isValid() && index.index() != type_index_.index()) {
@@ -2035,6 +2045,7 @@ private:
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	EntityId member_class_entity_; // Published class owner; never StringHandle identity
+	EntityId type_entity_; // Published named type entity; never StringHandle identity
 	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
 
 public:
