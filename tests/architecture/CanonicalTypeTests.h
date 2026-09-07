@@ -293,6 +293,51 @@ inline void checkAdapter() {
 	require(importCanonicalType(table, published_enum_array).status ==
 		CanonicalTypeImportStatus::UnmigratedNominal);
 	require(table.size() == enum_array_before);
+	const CanonicalRecordLayout record_layout{
+		.entity = EntityId{3},
+		.size_bytes = 16,
+		.layout_data_size_bytes = 9,
+		.non_virtual_size_bytes = 16,
+		.alignment = 8,
+		.member_count = 2,
+		.direct_base_count = 0,
+		.flags = CanonicalRecordLayoutFlags::None,
+	};
+	table.publishRecordLayout(record_layout);
+	require(table.recordLayout(EntityId{3}) == record_layout);
+	const CanonicalEnumLayout enum_layout{
+		.entity = EntityId{5},
+		.underlying_type = table.builtin(CanonicalBuiltinKind::UnsignedShort),
+		.size_bytes = 2,
+		.enumerator_count = 2,
+		.flags = CanonicalEnumLayoutFlags::Scoped,
+	};
+	table.publishEnumLayout(enum_layout);
+	require(table.enumLayout(EntityId{5}) == enum_layout);
+	require(importCanonicalType(table, published_enum_array).type ==
+		table.array(table.enumeration(EntityId{5}), 2));
+	TypeSpecifierNode published_record_array(TypeCategory::Struct, TypeQualifier::None, 128, Token{},
+		CVQualifier::None);
+	published_record_array.set_type_entity(EntityId{3});
+	published_record_array.set_array_dimensions(enum_array_dimensions);
+	require(importCanonicalType(table, published_record_array).type ==
+		table.array(table.record(EntityId{3}), 2));
+	CanonicalRecordLayout conflicting_record_layout = record_layout;
+	conflicting_record_layout.alignment = 4;
+	rejects([&] { table.publishRecordLayout(conflicting_record_layout); });
+	CanonicalTypeTransaction layout_transaction(table);
+	table.publishRecordLayout({
+		.entity = EntityId{9},
+		.size_bytes = 4,
+		.layout_data_size_bytes = 4,
+		.non_virtual_size_bytes = 4,
+		.alignment = 4,
+		.member_count = 1,
+		.direct_base_count = 0,
+		.flags = CanonicalRecordLayoutFlags::None,
+	});
+	layout_transaction.rollback();
+	require(!table.hasRecordLayout(EntityId{9}));
 }
 
 inline int run() {

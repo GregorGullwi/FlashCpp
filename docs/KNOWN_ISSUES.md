@@ -405,3 +405,23 @@ bounded-depth regression to architecture boundary 10E (bounded parser control
 flow), coordinating with the template/semantic worklist migration where the
 measured path crosses that boundary. Do not pursue a standalone stack-reserve
 change before that work.
+
+## Initialized arrays of records can miscompile at runtime
+
+While adding canonical-layout coverage on 2026-09-07, this reduced program
+compiled and linked but returned `250` instead of `0`:
+
+```cpp
+struct Sample { char small; double large; };
+int main() {
+	Sample values[2] = {{7, 9.5}, {11, 4.5}};
+	return values[1].small - 11;
+}
+```
+
+The failure is in legacy aggregate-array initialization/indexing lowering, not
+canonical nominal-array identity: an uninitialized `Sample values[2];` still
+exercises the new canonical array import without the runtime path. Owner:
+aggregate array IR lowering. Keep the reduced source as the reproduction when
+that lowering is migrated; do not broaden this canonical-layout slice into a
+codegen repair.

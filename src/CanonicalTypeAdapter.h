@@ -137,6 +137,54 @@ inline CanonicalTypeImport importCanonicalEnum(CanonicalTypeTable& table,
 	return {id, CanonicalTypeImportStatus::Supported};
 }
 
+inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
+	const EntityId entity = resolveNamedTypeEntity(syntax);
+	if (!entity) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	const bool is_record = syntax.category() == TypeCategory::Struct;
+	if ((is_record && !table.hasRecordLayout(entity)) ||
+		(!is_record && !table.hasEnumLayout(entity))) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	const bool has_ordinary_array = syntax.is_array() && !syntax.has_pointee_array_declarator();
+	const bool has_pointee_array = syntax.has_pointee_array_declarator();
+	if ((!has_ordinary_array && !has_pointee_array) ||
+		syntax.has_unsized_outer_array_dimension() || syntax.array_dimensions().empty()) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	for (const size_t extent : syntax.array_dimensions()) {
+		if (extent == 0) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+	}
+	if (has_pointee_array && syntax.pointer_levels().empty()) {
+		return {{}, CanonicalTypeImportStatus::Invalid};
+	}
+	CanonicalTypeTransaction transaction(table);
+	auto id = is_record ? table.record(entity) : table.enumeration(entity);
+	id = table.qualify(id, syntax.cv_qualifier());
+	if (has_pointee_array) {
+		id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+	} else {
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+		if (context == CanonicalTypeImportContext::FunctionParameter &&
+			syntax.reference_qualifier() == ReferenceQualifier::None) {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 1);
+			id = table.pointer(id);
+		} else {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+		}
+	}
+	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+		id = table.reference(id, syntax.reference_qualifier());
+	}
+	transaction.commit();
+	return {id, CanonicalTypeImportStatus::Supported};
+}
+
 inline CanonicalTypeImport importCanonicalFunctionSignature(
 	CanonicalTypeTable& table,
 	const FunctionSignature& signature) {
@@ -308,7 +356,7 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		const bool has_array_shape = has_ordinary_array || has_pointee_array ||
 			!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension();
 		if (has_array_shape) {
-			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+			return importCanonicalCompleteNominalArray(table, syntax, context);
 		}
 		CanonicalTypeTransaction transaction(table);
 		const auto imported = syntax.category() == TypeCategory::Struct

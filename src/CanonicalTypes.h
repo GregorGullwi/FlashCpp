@@ -71,6 +71,49 @@ struct CanonicalTypeArenaStats {
 	uint64_t reserved_bytes;
 };
 
+enum class CanonicalRecordLayoutFlags : uint8_t {
+	None = 0,
+	Union = 1 << 0,
+};
+
+enum class CanonicalEnumLayoutFlags : uint8_t {
+	None = 0,
+	Scoped = 1 << 0,
+};
+
+// Complete-object layout is separate from immutable canonical type identity.
+// It is keyed by the published EntityId and contains no spelling, TypeIndex,
+// AST pointer, or parser-owned state. Member and base schemas remain later 3A
+// families; this snapshot proves only that a nominal type has a complete object
+// representation suitable for fixed-bound array formation.
+struct CanonicalRecordLayout {
+	EntityId entity;
+	uint32_t size_bytes;
+	uint32_t layout_data_size_bytes;
+	uint32_t non_virtual_size_bytes;
+	uint16_t alignment;
+	uint16_t member_count;
+	uint16_t direct_base_count;
+	CanonicalRecordLayoutFlags flags;
+	uint8_t reserved = 0;
+	friend bool operator==(CanonicalRecordLayout, CanonicalRecordLayout) = default;
+};
+
+struct CanonicalEnumLayout {
+	EntityId entity;
+	TypeId underlying_type;
+	uint32_t size_bytes;
+	uint16_t enumerator_count;
+	CanonicalEnumLayoutFlags flags;
+	uint8_t reserved = 0;
+	friend bool operator==(CanonicalEnumLayout, CanonicalEnumLayout) = default;
+};
+
+static_assert(std::is_trivially_copyable_v<CanonicalRecordLayout>);
+static_assert(std::is_trivially_copyable_v<CanonicalEnumLayout>);
+static_assert(sizeof(CanonicalRecordLayout) == 24);
+static_assert(sizeof(CanonicalEnumLayout) == 16);
+
 class CanonicalTypeTransaction;
 
 // Boundary 3A type table. IDs are local to one FrontendContext and are not
@@ -283,8 +326,9 @@ public:
 		});
 	}
 
-	// Opaque class identity for member-pointer owners. Full record members,
-	// bases, and layout are a later 3A family; EntityId is the only key.
+	// Opaque class identity for member-pointer owners. Complete-object layout is
+	// published separately by EntityId; member and base schemas remain later 3A
+	// families, so EntityId remains this node's only key.
 	TypeId record(EntityId entity) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -301,8 +345,8 @@ public:
 		});
 	}
 
-	// Opaque enum identity. Underlying type and enumerator layout remain a later
-	// 3A family; EntityId is the only key.
+	// Opaque enum identity. Underlying-type layout is published separately by
+	// EntityId; EntityId remains this node's only key.
 	TypeId enumeration(EntityId entity) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -454,6 +498,72 @@ public:
 		return EntityId{static_cast<uint32_t>(input.array_extent)};
 	}
 
+	void publishRecordLayout(CanonicalRecordLayout layout) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!layout.entity || layout.size_bytes == 0 || layout.alignment == 0 ||
+			(layout.alignment & (layout.alignment - 1u)) != 0 ||
+			layout.layout_data_size_bytes > layout.size_bytes ||
+			layout.non_virtual_size_bytes > layout.size_bytes) {
+			throw InternalError("canonical type: invalid complete record layout");
+		}
+		publishLayoutUnlocked(record_layouts_, live_record_layout_count_, record_layout_ids_, layout,
+			"canonical type: conflicting record layout publication");
+		noteArenaBytes();
+	}
+
+	void publishEnumLayout(CanonicalEnumLayout layout) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!layout.entity || !layout.underlying_type || layout.size_bytes == 0) {
+			throw InternalError("canonical type: invalid complete enum layout");
+		}
+		const CanonicalTypeNode underlying = nodeUnlocked(layout.underlying_type);
+		if (underlying.kind != CanonicalTypeKind::Builtin ||
+			underlying.builtin == CanonicalBuiltinKind::Void ||
+			underlying.builtin == CanonicalBuiltinKind::Float ||
+			underlying.builtin == CanonicalBuiltinKind::Double ||
+			underlying.builtin == CanonicalBuiltinKind::LongDouble ||
+			underlying.builtin == CanonicalBuiltinKind::Nullptr) {
+			throw InternalError("canonical type: enum underlying type is not an integer builtin");
+		}
+		publishLayoutUnlocked(enum_layouts_, live_enum_layout_count_, enum_layout_ids_, layout,
+			"canonical type: conflicting enum layout publication");
+		noteArenaBytes();
+	}
+
+	bool hasRecordLayout(EntityId entity) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return entity && record_layout_ids_.contains(entity.value);
+	}
+
+	bool hasEnumLayout(EntityId entity) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return entity && enum_layout_ids_.contains(entity.value);
+	}
+
+	CanonicalRecordLayout recordLayout(EntityId entity) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto found = record_layout_ids_.find(entity.value);
+		if (!entity || found == record_layout_ids_.end()) {
+			throw InternalError("canonical type: record has no complete layout");
+		}
+		return record_layouts_[found->second];
+	}
+
+	CanonicalEnumLayout enumLayout(EntityId entity) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto found = enum_layout_ids_.find(entity.value);
+		if (!entity || found == enum_layout_ids_.end()) {
+			throw InternalError("canonical type: enum has no complete layout");
+		}
+		return enum_layouts_[found->second];
+	}
+
 	size_t size() const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -463,10 +573,16 @@ public:
 	CanonicalTypeArenaStats arenaStats() const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
-		return {static_cast<uint64_t>(live_count_) * sizeof(CanonicalTypeNode), nodes_.reservedBytes()};
+		return {usedBytesUnlocked(), reservedBytesUnlocked()};
 	}
 
 private:
+	struct TransactionMark {
+		size_t node_count;
+		size_t record_layout_count;
+		size_t enum_layout_count;
+	};
+
 	struct NodeHash {
 		size_t operator()(CanonicalTypeNode node) const {
 			const uint64_t key = static_cast<uint64_t>(node.child.value)
@@ -559,9 +675,47 @@ private:
 		return id;
 	}
 
+	template<typename Layout>
+	void publishLayoutUnlocked(
+		ChunkedVector<Layout, 16>& layouts,
+		size_t& live_count,
+		std::unordered_map<uint32_t, size_t>& ids,
+		Layout layout,
+		const char* conflict_message) {
+		const auto existing = ids.find(layout.entity.value);
+		if (existing != ids.end()) {
+			if (layouts[existing->second] != layout) {
+				throw InternalError(conflict_message);
+			}
+			return;
+		}
+		const size_t index = live_count;
+		if (index == layouts.size()) {
+			layouts.push_back(layout);
+		} else {
+			layouts[index] = layout;
+		}
+		try {
+			ids.emplace(layout.entity.value, index);
+		} catch (...) {
+			throw;
+		}
+		++live_count;
+	}
+
+	uint64_t usedBytesUnlocked() const {
+		return static_cast<uint64_t>(live_count_) * sizeof(CanonicalTypeNode) +
+			static_cast<uint64_t>(live_record_layout_count_) * sizeof(CanonicalRecordLayout) +
+			static_cast<uint64_t>(live_enum_layout_count_) * sizeof(CanonicalEnumLayout);
+	}
+
+	uint64_t reservedBytesUnlocked() const {
+		return nodes_.reservedBytes() + record_layouts_.reservedBytes() + enum_layouts_.reservedBytes();
+	}
+
 	void noteArenaBytes() {
 		if (accounting_ != nullptr) {
-			accounting_->update(SemanticArenaComponent::Types, static_cast<uint64_t>(live_count_) * sizeof(CanonicalTypeNode), nodes_.reservedBytes());
+			accounting_->update(SemanticArenaComponent::Types, usedBytesUnlocked(), reservedBytesUnlocked());
 		}
 	}
 
@@ -574,7 +728,7 @@ private:
 	size_t beginTransaction() {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
-		transaction_marks_.push_back(live_count_);
+		transaction_marks_.push_back({live_count_, live_record_layout_count_, live_enum_layout_count_});
 		transaction_owner_ = std::this_thread::get_id();
 		return transaction_marks_.size();
 	}
@@ -586,9 +740,18 @@ private:
 			throw InternalError("canonical type transactions must finish in nesting order");
 		}
 		if (!commit) {
-			while (live_count_ > transaction_marks_.back()) {
+			const TransactionMark mark = transaction_marks_.back();
+			while (live_count_ > mark.node_count) {
 				ids_.erase(nodes_[live_count_ - 1]);
 				--live_count_;
+			}
+			while (live_record_layout_count_ > mark.record_layout_count) {
+				record_layout_ids_.erase(record_layouts_[live_record_layout_count_ - 1].entity.value);
+				--live_record_layout_count_;
+			}
+			while (live_enum_layout_count_ > mark.enum_layout_count) {
+				enum_layout_ids_.erase(enum_layouts_[live_enum_layout_count_ - 1].entity.value);
+				--live_enum_layout_count_;
 			}
 			noteArenaBytes();
 		}
@@ -700,12 +863,20 @@ private:
 	// (1,024 node bytes). Deep-nesting probes deliberately spill.
 	static constexpr uint32_t kChunkSize = 64;
 	size_t live_count_ = 0;
+	size_t live_record_layout_count_ = 0;
+	size_t live_enum_layout_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
-	std::vector<size_t> transaction_marks_;
+	std::vector<TransactionMark> transaction_marks_;
 	std::thread::id transaction_owner_;
 	mutable std::mutex mutex_;
 	ChunkedVector<CanonicalTypeNode, kChunkSize> nodes_;
 	std::unordered_map<CanonicalTypeNode, TypeId, NodeHash> ids_;
+	// Layout samples use 16 slots (384 record bytes / 256 enum bytes per chunk)
+	// until a production corpus provides a larger measured complete-layout peak.
+	ChunkedVector<CanonicalRecordLayout, 16> record_layouts_;
+	ChunkedVector<CanonicalEnumLayout, 16> enum_layouts_;
+	std::unordered_map<uint32_t, size_t> record_layout_ids_;
+	std::unordered_map<uint32_t, size_t> enum_layout_ids_;
 };
 
 // Checkpoints publish only when the surrounding transaction commits. Nested

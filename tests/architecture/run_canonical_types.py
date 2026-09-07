@@ -139,6 +139,12 @@ def main():
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = 1,"),
+            "lost_record_layout": (
+                "return entity && record_layout_ids_.contains(entity.value);",
+                "return entity && false;"),
+            "lost_enum_layout": (
+                "return entity && enum_layout_ids_.contains(entity.value);",
+                "return entity && false;"),
         }
         for name, (before, after) in mutations.items():
             if original.count(before) != 1:
@@ -156,8 +162,9 @@ def main():
             ("adapter_array_order", "CanonicalTypeAdapter.h",
              "for (size_t index = dimensions.size(); index-- > first_dimension;)",
              "for (size_t index = first_dimension; index < dimensions.size(); ++index)"),
-            ("adapter_array_binding", "CanonicalTypeAdapter.h", "if (has_pointee_array) {",
-             "if (false && has_pointee_array) {"),
+            ("adapter_array_binding", "CanonicalTypeAdapter.h",
+             "auto id = table.builtin(builtin);\n\tid = table.qualify(id, syntax.cv_qualifier());\n\tif (has_pointee_array) {",
+             "auto id = table.builtin(builtin);\n\tid = table.qualify(id, syntax.cv_qualifier());\n\tif (false && has_pointee_array) {"),
             ("adapter_parameter_decay", "CanonicalTypeAdapter.h",
              "has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&",
              "has_ordinary_array && context == CanonicalTypeImportContext::Exact &&"),
