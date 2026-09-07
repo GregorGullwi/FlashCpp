@@ -4213,19 +4213,18 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	stampStructLexicalScope();
 	if (struct_ref.has_entity_id() && struct_info->hasCompleteObjectLayout()) {
-		if (FrontendContext* front_end = frontendContext()) {
-			front_end->canonicalTypes().publishRecordLayout({
-				.entity = struct_ref.entity_id(),
-				.size_bytes = canonicalLayoutSize(toSizeT(struct_info->sizeInBytes())),
-				.layout_data_size_bytes = canonicalLayoutSize(toSizeT(struct_info->layout_data_size)),
-				.non_virtual_size_bytes = canonicalLayoutSize(toSizeT(struct_info->non_virtual_size)),
-				.alignment = canonicalLayoutCount(struct_info->alignment),
-				.member_count = canonicalLayoutCount(struct_info->members.size()),
-				.direct_base_count = canonicalLayoutCount(struct_info->base_classes.size()),
-				.flags = struct_info->is_union
-					? CanonicalRecordLayoutFlags::Union : CanonicalRecordLayoutFlags::None,
-			});
-		}
+		FrontendContext& front_end = requireFrontendContext();
+		front_end.canonicalTypes().publishRecordLayout({
+			.entity = struct_ref.entity_id(),
+			.size_bytes = canonicalLayoutSize(toSizeT(struct_info->sizeInBytes())),
+			.layout_data_size_bytes = canonicalLayoutSize(toSizeT(struct_info->layout_data_size)),
+			.non_virtual_size_bytes = canonicalLayoutSize(toSizeT(struct_info->non_virtual_size)),
+			.alignment = canonicalLayoutCount(struct_info->alignment),
+			.member_count = canonicalLayoutCount(struct_info->members.size()),
+			.direct_base_count = canonicalLayoutCount(struct_info->base_classes.size()),
+			.flags = struct_info->is_union
+				? CanonicalRecordLayoutFlags::Union : CanonicalRecordLayoutFlags::None,
+		});
 	}
 	return saved_position.success(struct_node);
 }
@@ -4524,23 +4523,22 @@ ParseResult Parser::parse_enum_declaration() {
 	// enum_info was already stored in gTypeInfo before the loop
 	stampEnumLexicalScope();
 	if (enum_ref.has_entity_id()) {
-		if (FrontendContext* front_end = frontendContext()) {
-			const TypeSpecifierNode underlying_syntax = enum_ref.has_underlying_type()
-				? *enum_ref.underlying_type()
-				: TypeSpecifierNode(enum_info.underlying_type, TypeQualifier::None,
-					enum_info.underlying_size.value, Token{}, CVQualifier::None);
-			const CanonicalTypeImport imported_underlying = importCanonicalType(
-				front_end->canonicalTypes(), underlying_syntax);
-			if (imported_underlying.status == CanonicalTypeImportStatus::Supported) {
-				front_end->canonicalTypes().publishEnumLayout({
-					.entity = enum_ref.entity_id(),
-					.underlying_type = imported_underlying.type,
-					.size_bytes = canonicalLayoutSize(toSizeT(enum_info.sizeInBytes())),
-					.enumerator_count = canonicalLayoutCount(enum_info.enumerators.size()),
-					.flags = enum_info.is_scoped
-						? CanonicalEnumLayoutFlags::Scoped : CanonicalEnumLayoutFlags::None,
-				});
-			}
+		FrontendContext& front_end = requireFrontendContext();
+		const TypeSpecifierNode underlying_syntax = enum_ref.has_underlying_type()
+			? *enum_ref.underlying_type()
+			: TypeSpecifierNode(enum_info.underlying_type, TypeQualifier::None,
+				enum_info.underlying_size.value, Token{}, CVQualifier::None);
+		const CanonicalTypeImport imported_underlying = importCanonicalType(
+			front_end.canonicalTypes(), underlying_syntax);
+		if (imported_underlying.status == CanonicalTypeImportStatus::Supported) {
+			front_end.canonicalTypes().publishEnumLayout({
+				.entity = enum_ref.entity_id(),
+				.underlying_type = imported_underlying.type,
+				.size_bytes = canonicalLayoutSize(toSizeT(enum_info.sizeInBytes())),
+				.enumerator_count = canonicalLayoutCount(enum_info.enumerators.size()),
+				.flags = enum_info.is_scoped
+					? CanonicalEnumLayoutFlags::Scoped : CanonicalEnumLayoutFlags::None,
+			});
 		}
 	}
 	return saved_position.success(enum_node);
