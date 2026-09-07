@@ -34,16 +34,149 @@ inline TypeId addCanonicalArrayDimensions(CanonicalTypeTable& table, TypeId id,
 	return id;
 }
 
-// Boundary-3A adapter: inspect only resolved declarator structure. Unsupported
-// families stay explicit; never flatten a callable/dependent type into a
-// supported pointee. Spelling, parser state and gTypeInfo are not identity.
+inline TypeSpecifierNode typeSpecifierFromFunctionType(const FunctionType& type) {
+	TypeSpecifierNode spec(type.type_index, TypeQualifier::None, 0, Token{}, type.cv_qualifier);
+	spec.set_reference_qualifier(type.reference_qualifier);
+	for (const CVQualifier pointer_cv : type.pointer_qualifiers) {
+		spec.add_pointer_level(pointer_cv);
+	}
+	if (!type.array_dimensions.empty()) {
+		spec.set_array_dimensions(type.array_dimensions);
+	}
+	if (type.has_unsized_outer_array_dimension) {
+		spec.set_unsized_outer_array_dimension(true);
+	}
+	if (type.is_pack_expansion) {
+		spec.set_pack_expansion(true);
+	}
+	if (type.template_parameter_name.isValid()) {
+		spec.set_template_parameter_identity(type.template_parameter_name);
+	}
+	if (type.injected_class_declaration != nullptr) {
+		spec.set_injected_class_declaration(type.injected_class_declaration);
+	}
+	if (type.member_class_name.isValid()) {
+		spec.set_member_class_name(type.member_class_name);
+	}
+	if (type.callable_signature) {
+		spec.set_function_signature(*type.callable_signature);
+	}
+	return spec;
+}
+
 inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context);
+
+inline CanonicalTypeImport importCanonicalFunctionTypeComponent(CanonicalTypeTable& table,
+	const FunctionType& type, CanonicalTypeImportContext context) {
+	return importCanonicalTypeImpl(table, typeSpecifierFromFunctionType(type), context);
+}
+
+inline CVQualifier functionSignatureCV(const FunctionSignature& signature) {
+	CVQualifier cv = CVQualifier::None;
+	if (signature.is_const) {
+		cv |= CVQualifier::Const;
+	}
+	if (signature.is_volatile) {
+		cv |= CVQualifier::Volatile;
+	}
+	return cv;
+}
+
+// Free-function and function-pointer shapes only. Member pointers keep the
+// UnmigratedCallable boundary until their owner identity lands.
+inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
-	if (syntax.has_function_signature() || syntax.has_member_class()) {
+	if (syntax.has_member_class() ||
+		syntax.category() == TypeCategory::MemberFunctionPointer ||
+		syntax.category() == TypeCategory::MemberObjectPointer) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 	}
+	if (!syntax.has_function_signature()) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	const FunctionSignature& signature = syntax.function_signature();
+	if (signature.class_name.isValid() ||
+		signature.calling_convention != CallingConvention::Default ||
+		signature.linkage == Linkage::DllImport ||
+		signature.linkage == Linkage::DllExport) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	if (signature.noexcept_expression.has_value()) {
+		return {{}, CanonicalTypeImportStatus::Unresolved};
+	}
+	if (!signature.hasStructuredTypes()) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+
+	const auto imported_return = importCanonicalFunctionTypeComponent(
+		table, signature.return_type(), CanonicalTypeImportContext::Exact);
+	if (imported_return.status != CanonicalTypeImportStatus::Supported) {
+		return imported_return;
+	}
+	std::vector<TypeId> parameters;
+	parameters.reserve(signature.parameter_types().size());
+	for (const FunctionType& parameter : signature.parameter_types()) {
+		const auto imported_parameter = importCanonicalFunctionTypeComponent(
+			table, parameter, CanonicalTypeImportContext::FunctionParameter);
+		if (imported_parameter.status != CanonicalTypeImportStatus::Supported) {
+			return imported_parameter;
+		}
+		TypeId parameter_type = imported_parameter.type;
+		if (table.node(parameter_type).kind == CanonicalTypeKind::Function) {
+			parameter_type = table.pointer(parameter_type);
+		}
+		parameters.push_back(parameter_type);
+	}
+
+	auto id = table.function(
+		imported_return.type,
+		parameters,
+		signature.is_variadic,
+		functionSignatureCV(signature),
+		signature.function_reference_qualifier,
+		signature.is_noexcept);
+	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {
+		if (syntax.pointer_levels().empty()) {
+			id = table.pointer(id);
+		} else {
+			id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+		}
+	}
+	id = table.qualify(id, syntax.cv_qualifier());
+	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+		id = table.reference(id, syntax.reference_qualifier());
+	}
+	// [dcl.fct] parameter adjustment: function type becomes pointer to function.
+	if (context == CanonicalTypeImportContext::FunctionParameter &&
+		table.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {
+		id = table.pointer(id);
+	}
+	return {id, CanonicalTypeImportStatus::Supported};
+}
+
+// Boundary-3A adapter: inspect only resolved declarator structure. Unsupported
+// families stay explicit; never flatten a dependent type into a supported
+// pointee. Spelling, parser state and gTypeInfo are not identity.
+inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (syntax.is_pack_expansion() || syntax.has_template_parameter_identity() || syntax.has_concept_constraint()) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
+	}
+	if (syntax.has_member_class() ||
+		syntax.category() == TypeCategory::MemberFunctionPointer ||
+		syntax.category() == TypeCategory::MemberObjectPointer) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	if (syntax.has_function_signature() ||
+		syntax.category() == TypeCategory::Function ||
+		syntax.category() == TypeCategory::FunctionPointer) {
+		CanonicalTypeTransaction transaction(table);
+		const auto imported = importCanonicalCallable(table, syntax, context);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			transaction.commit();
+		}
+		return imported;
 	}
 	CanonicalBuiltinKind builtin;
 	const bool is_unsigned = syntax.qualifier() == TypeQualifier::Unsigned;
@@ -71,11 +204,6 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	case TypeCategory::Double: builtin = CanonicalBuiltinKind::Double; break;
 	case TypeCategory::LongDouble: builtin = CanonicalBuiltinKind::LongDouble; break;
 	case TypeCategory::Nullptr: builtin = CanonicalBuiltinKind::Nullptr; break;
-	case TypeCategory::Function:
-	case TypeCategory::FunctionPointer:
-	case TypeCategory::MemberFunctionPointer:
-	case TypeCategory::MemberObjectPointer:
-		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 	case TypeCategory::Struct:
 	case TypeCategory::Enum:
 	case TypeCategory::UserDefined:

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <span>
 #include <type_traits>
 #include <thread>
 #include <vector>
@@ -24,15 +25,32 @@ enum class CanonicalBuiltinKind : uint8_t {
 
 enum class CanonicalTypeKind : uint8_t {
 	Builtin, Qualified, Pointer, LValueReference, RValueReference, Array,
+	Function, FunctionParam,
 };
 
 enum class CanonicalTypeNodeFlags : uint8_t {
 	None = 0,
 	KnownArrayBound = 1 << 0,
+	VariadicFunction = 1 << 1,
+	NoexceptFunction = 1 << 2,
+	FunctionLValueRef = 1 << 3,
+	FunctionRValueRef = 1 << 4,
 };
+
+inline CanonicalTypeNodeFlags operator|(CanonicalTypeNodeFlags a, CanonicalTypeNodeFlags b) {
+	return static_cast<CanonicalTypeNodeFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline CanonicalTypeNodeFlags& operator|=(CanonicalTypeNodeFlags& a, CanonicalTypeNodeFlags b) {
+	return a = a | b;
+}
+inline bool hasCanonicalTypeNodeFlag(CanonicalTypeNodeFlags flags, CanonicalTypeNodeFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
 
 // An immutable structural node. A child is a canonical identity in this table,
 // never an AST pointer, spelling, legacy TypeIndex, or telemetry key.
+// FunctionParam links store the parameter TypeId in array_extent and the next
+// link in child, so variable-arity function types stay recursive and 16 bytes.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -44,6 +62,7 @@ struct CanonicalTypeNode {
 };
 
 static_assert(std::is_trivially_copyable_v<CanonicalTypeNode>);
+static_assert(sizeof(CanonicalTypeNode) == 16);
 
 struct CanonicalTypeArenaStats {
 	uint64_t used_bytes;
@@ -52,11 +71,9 @@ struct CanonicalTypeArenaStats {
 
 class CanonicalTypeTransaction;
 
-// Boundary 3A's first family. IDs are local to one FrontendContext and are not
+// Boundary 3A callable family. IDs are local to one FrontendContext and are not
 // portable hashes or ABI names. Equal requests in that context return one ID,
-// regardless of request order. The declarator adapter imports supported families
-// into this table. Declaration merging remains explicitly telemetry-only until
-// later 3A work can represent every family in a signature.
+// regardless of request order. Member pointers remain outside this table.
 // One mutex protects publication and reads; keep this boundary until the real
 // structural-request trace passes the parallel-experiment handoff gates.
 class CanonicalTypeTable {
@@ -93,10 +110,18 @@ public:
 		if (static_cast<uint8_t>(qualifiers) > static_cast<uint8_t>(CVQualifier::ConstVolatile)) {
 			throw InternalError("canonical type: invalid cv qualifiers");
 		}
+		if (input.kind == CanonicalTypeKind::FunctionParam) {
+			throw InternalError("canonical type: qualify function parameter link");
+		}
 		// [dcl.ref]: cv-qualification introduced through a reference typedef is
 		// ignored. Referent qualification remains on the child node.
 		if (qualifiers == CVQualifier::None || isReference(input.kind)) {
 			return type;
+		}
+		// [dcl.fct]: cv-qualifiers on a function type are part of that type.
+		if (input.kind == CanonicalTypeKind::Function) {
+			input.qualifiers |= qualifiers;
+			return internUnlocked(input);
 		}
 		std::vector<CanonicalTypeNode> arrays;
 		while (input.kind == CanonicalTypeKind::Array) {
@@ -104,18 +129,23 @@ public:
 			type = input.child;
 			input = nodeUnlocked(type);
 		}
-		if (input.kind == CanonicalTypeKind::Qualified) {
-			qualifiers |= input.qualifiers;
-			type = input.child;
+		if (input.kind == CanonicalTypeKind::Function) {
+			input.qualifiers |= qualifiers;
+			type = internUnlocked(input);
+		} else {
+			if (input.kind == CanonicalTypeKind::Qualified) {
+				qualifiers |= input.qualifiers;
+				type = input.child;
+			}
+			type = internUnlocked({
+				.child = type,
+				.kind = CanonicalTypeKind::Qualified,
+				.builtin = CanonicalBuiltinKind::Void,
+				.qualifiers = qualifiers,
+				.flags = CanonicalTypeNodeFlags::None,
+				.array_extent = 0,
+			});
 		}
-		type = internUnlocked({
-			.child = type,
-			.kind = CanonicalTypeKind::Qualified,
-			.builtin = CanonicalBuiltinKind::Void,
-			.qualifiers = qualifiers,
-			.flags = CanonicalTypeNodeFlags::None,
-			.array_extent = 0,
-		});
 		for (auto array = arrays.rbegin(); array != arrays.rend(); ++array) {
 			array->child = type;
 			type = internUnlocked(*array);
@@ -126,8 +156,9 @@ public:
 	TypeId pointer(TypeId pointee) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
-		if (isReference(nodeUnlocked(pointee).kind)) {
-			throw InternalError("canonical type: pointer to reference");
+		const auto kind = nodeUnlocked(pointee).kind;
+		if (isReference(kind) || kind == CanonicalTypeKind::FunctionParam) {
+			throw InternalError("canonical type: invalid pointer pointee");
 		}
 		return internUnlocked({
 			.child = pointee,
@@ -158,6 +189,9 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		CanonicalTypeNode input = nodeUnlocked(referent);
+		if (input.kind == CanonicalTypeKind::FunctionParam) {
+			throw InternalError("canonical type: reference to function parameter link");
+		}
 		if (qualifier != ReferenceQualifier::LValueReference && qualifier != ReferenceQualifier::RValueReference) {
 			throw InternalError("canonical type: invalid reference qualifier");
 		}
@@ -185,6 +219,66 @@ public:
 		});
 	}
 
+	// Free-function and cv/ref-qualified function types. Member-pointer owner
+	// identity is a later 3A family and is rejected by the adapter, not here.
+	TypeId function(TypeId return_type, std::span<const TypeId> parameters, bool is_variadic,
+		CVQualifier function_cv, ReferenceQualifier function_ref, bool is_noexcept) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (static_cast<uint8_t>(function_cv) > static_cast<uint8_t>(CVQualifier::ConstVolatile)) {
+			throw InternalError("canonical type: invalid function cv qualifiers");
+		}
+		if (function_ref != ReferenceQualifier::None &&
+			function_ref != ReferenceQualifier::LValueReference &&
+			function_ref != ReferenceQualifier::RValueReference) {
+			throw InternalError("canonical type: invalid function ref qualifier");
+		}
+		const CanonicalTypeNode return_node = nodeUnlocked(return_type);
+		if (return_node.kind == CanonicalTypeKind::Function ||
+			return_node.kind == CanonicalTypeKind::FunctionParam ||
+			return_node.kind == CanonicalTypeKind::Array) {
+			throw InternalError("canonical type: invalid function return type");
+		}
+		CanonicalTypeNodeFlags flags = CanonicalTypeNodeFlags::None;
+		if (is_variadic) {
+			flags |= CanonicalTypeNodeFlags::VariadicFunction;
+		}
+		if (is_noexcept) {
+			flags |= CanonicalTypeNodeFlags::NoexceptFunction;
+		}
+		if (function_ref == ReferenceQualifier::LValueReference) {
+			flags |= CanonicalTypeNodeFlags::FunctionLValueRef;
+		} else if (function_ref == ReferenceQualifier::RValueReference) {
+			flags |= CanonicalTypeNodeFlags::FunctionRValueRef;
+		}
+		TypeId param_link{};
+		for (size_t index = parameters.size(); index-- > 0;) {
+			const TypeId parameter = parameters[index];
+			const CanonicalTypeNode parameter_node = nodeUnlocked(parameter);
+			if (parameter_node.kind == CanonicalTypeKind::Function ||
+				parameter_node.kind == CanonicalTypeKind::FunctionParam ||
+				parameter_node.kind == CanonicalTypeKind::Array) {
+				throw InternalError("canonical type: undecayed function parameter type");
+			}
+			param_link = internUnlocked({
+				.child = param_link,
+				.kind = CanonicalTypeKind::FunctionParam,
+				.builtin = CanonicalBuiltinKind::Void,
+				.qualifiers = CVQualifier::None,
+				.flags = CanonicalTypeNodeFlags::None,
+				.array_extent = parameter.value,
+			});
+		}
+		return internUnlocked({
+			.child = return_type,
+			.kind = CanonicalTypeKind::Function,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = function_cv,
+			.flags = flags,
+			.array_extent = param_link.value,
+		});
+	}
+
 	TypeId withoutTopLevelQualifiers(TypeId id) const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -196,6 +290,45 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		return nodeUnlocked(id);
+	}
+
+	TypeId functionParameterType(TypeId param_link) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(param_link);
+		if (input.kind != CanonicalTypeKind::FunctionParam) {
+			throw InternalError("canonical type: TypeId is not a function parameter link");
+		}
+		if (input.array_extent == 0 || input.array_extent > live_count_) {
+			throw InternalError("canonical type: function parameter TypeId is outside this table");
+		}
+		return TypeId{static_cast<uint32_t>(input.array_extent)};
+	}
+
+	TypeId functionParameterNext(TypeId param_link) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(param_link);
+		if (input.kind != CanonicalTypeKind::FunctionParam) {
+			throw InternalError("canonical type: TypeId is not a function parameter link");
+		}
+		return input.child;
+	}
+
+	TypeId functionParameters(TypeId function) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(function);
+		if (input.kind != CanonicalTypeKind::Function) {
+			throw InternalError("canonical type: TypeId is not a function type");
+		}
+		if (input.array_extent == 0) {
+			return {};
+		}
+		if (input.array_extent > live_count_) {
+			throw InternalError("canonical type: function parameter list is outside this table");
+		}
+		return TypeId{static_cast<uint32_t>(input.array_extent)};
 	}
 
 	size_t size() const {
@@ -234,6 +367,8 @@ private:
 			element_node = nodeUnlocked(element_node.child);
 		}
 		if (isReference(element_node.kind) ||
+			element_node.kind == CanonicalTypeKind::Function ||
+			element_node.kind == CanonicalTypeKind::FunctionParam ||
 			(element_node.kind == CanonicalTypeKind::Builtin && element_node.builtin == CanonicalBuiltinKind::Void) ||
 			(element_node.kind == CanonicalTypeKind::Array && element_node.flags != CanonicalTypeNodeFlags::KnownArrayBound)) {
 			throw InternalError("canonical type: invalid array element type");
@@ -320,30 +455,90 @@ private:
 		transaction_marks_.pop_back();
 	}
 
+	void appendNodeTraceFields(StringBuilder& shape, CanonicalTypeNode node, uint64_t extent) const {
+		shape.append(static_cast<uint64_t>(node.kind)).append(',');
+		shape.append(static_cast<uint64_t>(node.builtin)).append(',');
+		shape.append(static_cast<uint64_t>(node.qualifiers)).append(',');
+		shape.append(static_cast<uint64_t>(node.flags)).append(',');
+		shape.append(extent);
+	}
+
+	void appendTypeIdTrace(StringBuilder& shape, TypeId id) const {
+		CanonicalTypeNode current = nodeUnlocked(id);
+		for (;;) {
+			if (current.kind == CanonicalTypeKind::Function) {
+				appendNodeTraceFields(shape, current, current.array_extent == 0 ? 0ull : 1ull);
+				TypeId param_link = current.array_extent == 0
+					? TypeId{} : TypeId{static_cast<uint32_t>(current.array_extent)};
+				while (param_link) {
+					const CanonicalTypeNode param = nodeUnlocked(param_link);
+					shape.append('/');
+					appendNodeTraceFields(shape, param, 0);
+					shape.append('/');
+					appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(param.array_extent)});
+					param_link = param.child;
+				}
+				shape.append('/');
+				current = nodeUnlocked(current.child);
+				continue;
+			}
+			appendNodeTraceFields(shape, current,
+				current.kind == CanonicalTypeKind::FunctionParam ? 0 : current.array_extent);
+			if (!current.child || current.kind == CanonicalTypeKind::Builtin ||
+				current.kind == CanonicalTypeKind::FunctionParam) {
+				break;
+			}
+			shape.append('/');
+			current = nodeUnlocked(current.child);
+		}
+	}
+
+	void appendNodeTrace(StringBuilder& shape, CanonicalTypeNode node) const {
+		if (node.kind == CanonicalTypeKind::Function) {
+			appendNodeTraceFields(shape, node, node.array_extent == 0 ? 0ull : 1ull);
+			TypeId param_link = node.array_extent == 0
+				? TypeId{} : TypeId{static_cast<uint32_t>(node.array_extent)};
+			while (param_link) {
+				const CanonicalTypeNode param = nodeUnlocked(param_link);
+				shape.append('/');
+				appendNodeTraceFields(shape, param, 0);
+				shape.append('/');
+				appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(param.array_extent)});
+				param_link = param.child;
+			}
+			shape.append('/');
+			appendTypeIdTrace(shape, node.child);
+			return;
+		}
+		if (node.kind == CanonicalTypeKind::FunctionParam) {
+			appendNodeTraceFields(shape, node, 0);
+			shape.append('/');
+			appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(node.array_extent)});
+			return;
+		}
+		appendNodeTraceFields(shape, node, node.array_extent);
+		if (!node.child || node.kind == CanonicalTypeKind::Builtin) {
+			return;
+		}
+		shape.append('/');
+		appendTypeIdTrace(shape, node.child);
+	}
+
 	void traceRequestUnlocked(CanonicalTypeNode node) const {
 		if (!FLASH_LOG_ENABLED(Types, Trace)) {
 			return;
 		}
 		// Trace-local structural spelling only: never serialize numeric TypeIds.
-		// Each slash-separated node is kind,builtin,cv,known-bound,extent.
+		// Each slash-separated node is kind,builtin,cv,flags,extent. Function
+		// nodes emit extent 0/1 for empty/non-empty parameter lists; parameter
+		// TypeIds are expanded as nested structural shapes instead.
 		StringBuilder shape;
-		for (;;) {
-			shape.append(static_cast<uint64_t>(node.kind)).append(',');
-			shape.append(static_cast<uint64_t>(node.builtin)).append(',');
-			shape.append(static_cast<uint64_t>(node.qualifiers)).append(',');
-			shape.append(static_cast<uint64_t>(node.flags)).append(',');
-			shape.append(node.array_extent);
-			if (!node.child) {
-				break;
-			}
-			shape.append('/');
-			node = nodeUnlocked(node.child);
-		}
+		appendNodeTrace(shape, node);
 		FLASH_LOG(Types, Trace, "canonical-request-v2 ", shape.commit());
 	}
 
-	// The shallow architectural corpus measures 42 records: 64 slots (1,024 bytes).
-	// Deep-nesting probes deliberately spill; no source-depth-sized inline array.
+	// The shallow architectural corpus measures records into 64-slot chunks
+	// (1,024 node bytes). Deep-nesting probes deliberately spill.
 	static constexpr uint32_t kChunkSize = 64;
 	size_t live_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
