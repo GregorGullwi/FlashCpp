@@ -32,7 +32,7 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 		if (a.kind == CanonicalTypeKind::Array && a.array_extent != b.array_extent) {
 			return false;
 		}
-		if (a.kind == CanonicalTypeKind::Record) {
+		if (a.kind == CanonicalTypeKind::Record || a.kind == CanonicalTypeKind::Enum) {
 			return a.array_extent == b.array_extent;
 		}
 		if (a.kind == CanonicalTypeKind::Function) {
@@ -274,6 +274,25 @@ inline void checkAdapter() {
 	require(imported_record.type != table.reference(
 		table.qualify(table.record(EntityId{4}), CVQualifier::Const),
 		ReferenceQualifier::LValueReference));
+
+	TypeSpecifierNode unpublished_enum(TypeCategory::Enum, TypeQualifier::None, 16, Token{},
+		CVQualifier::Volatile);
+	require(importCanonicalType(table, unpublished_enum).status ==
+		CanonicalTypeImportStatus::UnmigratedNominal);
+	unpublished_enum.set_type_entity(EntityId{5});
+	const auto imported_enum = importCanonicalType(table, unpublished_enum);
+	require(imported_enum.status == CanonicalTypeImportStatus::Supported);
+	require(imported_enum.type == table.qualify(table.enumeration(EntityId{5}), CVQualifier::Volatile));
+	require(imported_enum.type != table.qualify(table.enumeration(EntityId{6}), CVQualifier::Volatile));
+	TypeSpecifierNode published_enum_array(TypeCategory::Enum, TypeQualifier::None, 16, Token{},
+		CVQualifier::None);
+	published_enum_array.set_type_entity(EntityId{5});
+	const std::array<size_t, 1> enum_array_dimensions{2};
+	published_enum_array.set_array_dimensions(enum_array_dimensions);
+	const auto enum_array_before = table.size();
+	require(importCanonicalType(table, published_enum_array).status ==
+		CanonicalTypeImportStatus::UnmigratedNominal);
+	require(table.size() == enum_array_before);
 }
 
 inline int run() {
@@ -349,9 +368,14 @@ inline int run() {
 		CVQualifier::None, ReferenceQualifier::None, false) == int_fn);
 	const auto owner_a = table.record(EntityId{1});
 	const auto owner_b = table.record(EntityId{2});
+	const auto enum_a = table.enumeration(EntityId{3});
+	const auto enum_b = table.enumeration(EntityId{4});
 	require(owner_a != owner_b);
+	require(enum_a != enum_b && enum_a != owner_a);
 	require(table.record(EntityId{1}) == owner_a);
+	require(table.enumeration(EntityId{3}) == enum_a);
 	require(table.recordEntity(owner_a).value == 1);
+	require(table.enumEntity(enum_a).value == 3);
 	const auto mop_a = table.memberObjectPointer(owner_a, integer);
 	const auto mop_b = table.memberObjectPointer(owner_b, integer);
 	const auto mop_float = table.memberObjectPointer(owner_a, floating);
@@ -377,6 +401,7 @@ inline int run() {
 	require(table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
 		CVQualifier::None, ReferenceQualifier::None, false) == int_fn);
 	require(table.record(EntityId{1}) == owner_a);
+	require(table.enumeration(EntityId{3}) == enum_a);
 	require(table.memberObjectPointer(owner_a, integer) == mop_a);
 	require(table.memberFunctionPointer(owner_a, int_fn) == mfp_a);
 	require(table.size() == count);
@@ -396,6 +421,8 @@ inline int run() {
 		reordered.pointer(reordered.function(reordered.builtin(CanonicalBuiltinKind::Void),
 			reordered_params, false, CVQualifier::None, ReferenceQualifier::None, false))));
 	const auto reordered_owner = reordered.record(EntityId{1});
+	const auto reordered_enum = reordered.enumeration(EntityId{3});
+	require(sameStructure(table, enum_a, reordered, reordered_enum));
 	require(sameStructure(table, mop_a, reordered,
 		reordered.memberObjectPointer(reordered_owner, reordered_int)));
 	require(sameStructure(table, mfp_a, reordered,
@@ -425,6 +452,8 @@ inline int run() {
 			ReferenceQualifier::None, false);
 	});
 	rejects([&] { table.record(EntityId{}); });
+	rejects([&] { table.enumeration(EntityId{}); });
+	rejects([&] { table.enumEntity(owner_a); });
 	rejects([&] { table.memberObjectPointer(integer, integer); });
 	rejects([&] { table.memberObjectPointer(owner_a, int_fn); });
 	rejects([&] { table.memberFunctionPointer(owner_a, integer); });

@@ -3,10 +3,16 @@ struct Sample {
 	double large;
 };
 
+enum class Access : unsigned short {
+	Read = 3,
+	Write = 5,
+};
+
 int readShort(const short* value);
 int readShort(const short* value) { return *value; }
 int readLong(long long& value) { return static_cast<int>(value); }
 int readRecord(const Sample& value) { return value.small; }
+int readAccess(Access value) { return static_cast<int>(value); }
 int readArray(int (&value)[2]) { return value[1]; }
 int invoke(int (*callback)(const short*), const short* value) { return callback(value); }
 
@@ -19,5 +25,5 @@ int main() {
 	Sample record = {7, 9.5};
 	int values[2] = {11, 13};
 	return readShort(&narrow) + readLong(wide) + readRecord(record) +
-		readArray(values) + invoke(readShort, &narrow) + identity(17) - 48;
+		readAccess(Access::Write) + readArray(values) + invoke(readShort, &narrow) + identity(17) - 53;
 }

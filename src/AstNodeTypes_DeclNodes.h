@@ -10,6 +10,7 @@
 class TypeSpecifierNode;
 class ConstructorDeclarationNode;
 class StructDeclarationNode;
+class EnumDeclarationNode;
 namespace FlashCpp {
 struct StructuralClassValue;
 }
@@ -973,6 +974,7 @@ struct Enumerator {
 // Enum type information
 struct EnumTypeInfo {
 	StringHandle name;
+	const EnumDeclarationNode* declaration_node = nullptr;
 	bool is_scoped;					// true for enum class, false for enum
 	TypeCategory underlying_type;	  // Underlying type category (default: Int)
 	SizeInBits underlying_size;	  // Size in bits of underlying type

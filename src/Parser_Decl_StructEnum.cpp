@@ -4217,7 +4217,7 @@ ParseResult Parser::parse_enum_declaration() {
 
 	// Parse enum name (optional for anonymous enums)
 	StringHandle enum_name;
-	//bool is_anonymous = false;
+	bool is_anonymous_enum = false;
 
 	// Check if next token is an identifier (name) or : or { (anonymous enum)
 	if (peek().is_identifier()) {
@@ -4228,7 +4228,7 @@ ParseResult Parser::parse_enum_declaration() {
 		// Anonymous enum - generate a unique name
 		static int anonymous_enum_counter = 0;
 		enum_name = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_enum_").append(std::to_string(anonymous_enum_counter++)));
-		//is_anonymous = true;
+		is_anonymous_enum = true;
 	} else {
 		return ParseResult::error("Expected enum name, ':', or '{'", peek_info());
 	}
@@ -4284,6 +4284,36 @@ ParseResult Parser::parse_enum_declaration() {
 	// with the same unqualified name — getTypesByNameMap()::emplace is a no-op on duplicates).
 	enum_ref.set_type_index(enum_type_info.type_index_);
 	(void)gSymbolTable.insert(enum_name, enum_node);
+	EnumTypeInfo& enum_info = enum_type_info.createEnumInfo(enum_name, is_scoped);
+	enum_info.declaration_node = &enum_ref;
+	const auto stampEnumLexicalScope = [&enum_node, this, is_function_local_enum, is_nested_enum, is_anonymous_enum]() {
+		SymbolTableDetail::stampLexicalScopeOnDeclaration(
+			enum_node, gSymbolTable.currentScopeId());
+		EnumDeclarationNode& stamped = enum_node.as<EnumDeclarationNode>();
+		if (!shouldPublishParserEnum(
+				stamped,
+				gSymbolTable.get_current_scope_type(),
+				parsing_template_class_,
+				is_function_local_enum,
+				is_nested_enum,
+				is_anonymous_enum)) {
+			return;
+		}
+		FrontendContext* front_end = frontendContext();
+		if (front_end == nullptr) {
+			return;
+		}
+		const PublishResult published = commitParserEnumPublication(
+			front_end->declarationBuilder(),
+			stamped,
+			gSymbolTable.currentScopeId(),
+			!stamped.is_forward_declaration(),
+			gSymbolTable);
+		if (published.status == PublishStatus::Created ||
+			published.status == PublishStatus::MergedRedeclaration) {
+			recordDeclarationBuilderPublish();
+		}
+	};
 
 	// Check for underlying type specification (: type)
 	if (peek() == ":"_tok) {
@@ -4297,6 +4327,9 @@ ParseResult Parser::parse_enum_declaration() {
 
 		if (auto type_node = underlying_type_result.node()) {
 			enum_ref.set_underlying_type(type_node->as<TypeSpecifierNode>());
+			enum_info.underlying_type = enum_ref.underlying_type()->type();
+			enum_info.underlying_size = SizeInBits{enum_ref.underlying_type()->size_in_bits()};
+			enum_type_info.fallback_size_bits_ = enum_info.underlying_size.value;
 		}
 	}
 
@@ -4323,6 +4356,7 @@ ParseResult Parser::parse_enum_declaration() {
 		}
 
 		FLASH_LOG(Parser, Debug, "Parsed enum forward declaration: ", std::string(StringTable::getStringView(enum_name)));
+		stampEnumLexicalScope();
 		return saved_position.success(enum_node);
 	}
 
@@ -4330,9 +4364,6 @@ ParseResult Parser::parse_enum_declaration() {
 	if (!consume("{"_tok)) {
 		return ParseResult::error("Expected '{' after enum name", peek_info());
 	}
-
-	// Create enum type info in the cold arena (live during enumerator parsing)
-	EnumTypeInfo& enum_info = enum_type_info.createEnumInfo(enum_name, is_scoped);
 
 	// Determine underlying type (default is int)
 	TypeCategory underlying_type = TypeCategory::Int;
@@ -4459,7 +4490,7 @@ ParseResult Parser::parse_enum_declaration() {
 	consume(";"_tok);
 
 	// enum_info was already stored in gTypeInfo before the loop
-
+	stampEnumLexicalScope();
 	return saved_position.success(enum_node);
 }
 

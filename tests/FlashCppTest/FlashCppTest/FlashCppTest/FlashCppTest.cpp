@@ -4862,14 +4862,50 @@ TEST_CASE("Canonical adapter imports the source corpus at publication") {
 	CHECK(context.canonicalTypes().size() > 0);
 	CHECK(context.declarationBuilder().canonicalDeclaratorRequests() > 0);
 	bool found_record = false;
+	bool found_enum = false;
 	const CanonicalTypeTable& types = context.canonicalTypes();
 	for (uint32_t index = 1; index <= types.size(); ++index) {
 		if (types.node(TypeId{index}).kind == CanonicalTypeKind::Record) {
 			found_record = true;
-			break;
+		}
+		if (types.node(TypeId{index}).kind == CanonicalTypeKind::Enum) {
+			found_enum = static_cast<bool>(types.enumEntity(TypeId{index}));
 		}
 	}
 	CHECK(found_record);
+	CHECK(found_enum);
+}
+
+TEST_CASE("Parser publishes namespace enum declarations through DeclarationBuilder") {
+	gTypeInfo.clear(); gNativeTypes.clear(); gTypesByName.clear();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+
+	const std::string code = R"(
+namespace canonical_enum_publication {
+enum class Phase : unsigned short;
+enum class Phase : unsigned short { cold = 3, hot = 7 };
+}
+)";
+	FrontendContext context;
+	CompileContext test_context;
+	test_context.setInputFile("canonical_enum_publication.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, sema);
+	REQUIRE(!parser.parse().is_error());
+	REQUIRE(context.declarationCount() == 2u);
+	REQUIRE(context.entityCount() == 1u);
+
+	DeclarationBuilder& builder = context.declarationBuilder();
+	const DeclarationRecord& forward = builder.declaration(DeclId{1});
+	const DeclarationRecord& definition = builder.declaration(DeclId{2});
+	const EntityRecord& entity = builder.entity(EntityId{1});
+	CHECK(forward.kind == static_cast<uint8_t>(DeclKind::Enum));
+	CHECK(definition.kind == static_cast<uint8_t>(DeclKind::Enum));
+	CHECK(forward.entity_id == entity.id);
+	CHECK(definition.entity_id == entity.id);
+	CHECK(definition.previous_decl_id == forward.id);
+	CHECK((entity.flags & DeclarationFlags::IsDefinition) != 0);
 }
 
 TEST_CASE("Canonical adapter preserves supported identity and defers entire unsupported shapes") {

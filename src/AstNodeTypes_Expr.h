@@ -136,6 +136,9 @@ public:
 	ScopeId lexical_scope_id() const { return lexical_scope_id_; }
 	void set_lexical_scope_id(ScopeId scope_id) { lexical_scope_id_ = scope_id; }
 	bool has_lexical_scope_id() const { return static_cast<bool>(lexical_scope_id_); }
+	EntityId entity_id() const { return entity_id_; }
+	void set_entity_id(EntityId entity_id) { entity_id_ = entity_id; }
+	bool has_entity_id() const { return static_cast<bool>(entity_id_); }
 
 private:
 	std::string_view name_;					// Points directly into source text from lexer token
@@ -145,6 +148,7 @@ private:
 	std::vector<ASTNode> enumerators_;	   // List of EnumeratorNode
 	TypeIndex type_index_;				   // Index into gTypeInfo — set at parse time, used by codegen
 	ScopeId lexical_scope_id_;
+	EntityId entity_id_;
 };
 
 class MemberAccessNode {
