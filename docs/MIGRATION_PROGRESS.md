@@ -5,49 +5,45 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-07 after canonical function types (local feature branch)
+Last updated: 2026-09-07 after canonical member-pointer types (local feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's function-type slice is on
-`boundary-3a-canonical-function-types` for local review. Builtin/cv/pointer/
-reference and array foundations are on `main`. Gate 0 is closed. Architecture
-boundary 1 remains incomplete; member-pointer and remaining signature families
-still block expanding shadow/merge coverage.
+Architecture boundary 3A's member-pointer slice is on
+`boundary-3a-canonical-member-pointers` for local review. Function types and
+earlier families are on `main`. Gate 0 is closed. Architecture boundary 1 remains
+incomplete; class EntityId publication and remaining nominal families still block
+expanding shadow/merge coverage and production member-pointer import.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
   fundamental types, cv qualification, pointers, references, arrays of known or
-  unknown bound, and free-function / cv-ref-qualified function types (including
-  pointer-to-function). Immutable 16-byte nodes use context-local `TypeId`;
-  variable-arity parameter lists are recursive `FunctionParam` links, not a
-  second identity space. Construction accepts no spelling or legacy flat-type
-  identity.
-- The production `DeclarationBuilder` adapter imports those supported shapes,
-  records structural `canonical-request-v2` traces, applies outer-array-to-pointer
-  and function-to-pointer parameter adjustment, and explicitly defers member
-  pointers, incomplete array metadata, nominal, and unresolved shapes to the
-  telemetry-only flat bridge. `SymbolTable` retains lookup and merge authority.
-- Canonical callable import reuses the existing nested `CanonicalTypeTransaction`
-  and declaration/builder publication checkpoints. Rollback still reuses discarded
-  arena slots; committed IDs remain stable. Event-based accounting measures the
-  true combined declaration/type high-water mark instead of adding unrelated
-  component peaks.
-- Remaining 3A work includes member pointers, calling-convention and dll-linkage
-  callables, unstructured signatures, dependent `noexcept`, nominal and dependent
-  types, templates, complete declarator interleaving, and deletion of the flat
-  semantic representation. Stop here for review before starting another family,
-  3B, or the parallel frontend experiment.
+  unknown bound, free-function / cv-ref-qualified function types, opaque
+  `Record(EntityId)` owners, and member object/function pointers. Immutable
+  16-byte nodes use context-local `TypeId`; parameter lists and member-pointer
+  owners are recursive links, not a second identity space. Construction accepts
+  no spelling or legacy flat-type identity.
+- The production `DeclarationBuilder` adapter imports the previously supported
+  shapes and still defers spelling-backed member pointers, incomplete array
+  metadata, nominal, and unresolved shapes to the telemetry-only flat bridge.
+  Table-level member pointers are mutation-validated with EntityId-keyed Record
+  owners; wiring class EntityId into the adapter is the next publication step.
+  `SymbolTable` retains lookup and merge authority.
+- Canonical nodes participate in nested publication and frontend scratch
+  transactions. Rollback reuses discarded arena slots; committed IDs remain
+  stable.
+- Remaining 3A work includes class EntityId publication for adapter member-pointer
+  import, full record/enum layout, calling-convention and dll-linkage callables,
+  unstructured signatures, dependent `noexcept`, dependent types, templates,
+  complete declarator interleaving, and deletion of the flat semantic
+  representation. Stop here for review before starting another family, 3B, or
+  the parallel frontend experiment.
 
-The shallow native probe measures 50 nodes. Nodes are 16 bytes; the table is 464
+The shallow native probe measures 59 nodes. Nodes are 16 bytes; the table is 464
 bytes on Linux clang++. Its measured 64-element chunks reserve 1,024 node bytes
 at a time; hash-index heap storage is excluded. A 65,536-level mixed
 pointer/array probe passes under the host stack used by the native harness.
-Table construction, cv propagation, function-parameter linking, and rollback are
-iterative. Adapter import and structural tracing remain recursive for nested
-callables; the deep probe does not yet nest function types. Measured Linux
-clang++ `-fstack-usage` frames: `importCanonicalTypeImpl` 792 bytes,
-`importCanonicalCallable` 632, `importCanonicalFunctionTypeComponent` 408,
-`CanonicalTypeTable::qualify` 344, and `CanonicalTypeTable::function` 280.
+Table construction, cv propagation, function-parameter linking, member-pointer
+owner linking, and rollback are iterative.
 
 ## Established foundation
 
@@ -103,15 +99,13 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the function-type slice: Linux clang++ sharded rebuild;
-native canonical tests and source-copy mutations pass, including function
-parameter lists, function cv merge, variadic, noexcept, FunctionPointer wrapping,
-and Function-as-parameter decay mutations. Mutation rejection requires a test
-failure, not a compile failure or crash. The production fixture now requires at
-least 13 supported requests, permits at most 1 deferred request, and requires
-structural array and function traces in both CI jobs. Fixed-corpus migration
-counters were not remeasured on this slice and remain at the prior baselines
-below.
+Latest validation for the member-pointer slice: native canonical tests and
+source-copy mutations pass, including Record EntityId identity, member-object
+owner distinction, and spelling-backed MOP/MFP remaining UnmigratedCallable.
+Mutation rejection requires a test failure, not a compile failure or crash. The
+production fixture is unchanged at 13 supported / 1 deferred with array and
+function traces. Fixed-corpus migration counters were not remeasured on this
+slice and remain at the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -156,11 +150,14 @@ Advanced, not completed:
 
 - **3A:** no parser/member-stack dependency, parse-order independence, and
   string-insertion-order independence are proved for builtin/cv/pointer/reference/
-  array/function nodes only. Array bounds, unknown bounds, dimension order, cv
-  propagation, pointer binding, parameter adjustment, function parameter lists,
-  function cv/ref, variadic, noexcept, FunctionPointer wrapping, and
-  Function-as-parameter decay are mutation-validated. Member pointers, remaining
-  families, and production migration keep all three criteria open.
+  array/function/record/member-pointer nodes only. Array bounds, unknown bounds,
+  dimension order, cv propagation, pointer binding, parameter adjustment, function
+  parameter lists, function cv/ref, variadic, noexcept, FunctionPointer wrapping,
+  Function-as-parameter decay, Record EntityId identity, and member-pointer
+  owner/pointee distinction are mutation-validated. The pointer-to-member owner
+  criterion is advanced at the table API but not closed: production adapter import
+  still waits on class EntityId publication. Remaining families and flat-field
+  deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -179,11 +176,12 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's member-pointer, calling-convention / dll-linkage callable,
-  unstructured-signature, dependent-`noexcept`, nominal, template, and dependent
-  families and adapters before expanding boundary-1 shadow coverage (default
-  arguments, exception specifications, friends, templates) or removing
-  `SymbolTable` merge / `matches_signature` authority.
+- Finish 3A's class EntityId publication for adapter member-pointer import, full
+  record/enum layout, calling-convention / dll-linkage callable,
+  unstructured-signature, dependent-`noexcept`, template, and dependent families
+  and adapters before expanding boundary-1 shadow coverage (default arguments,
+  exception specifications, friends, templates) or removing `SymbolTable` merge /
+  `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

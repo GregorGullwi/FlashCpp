@@ -32,6 +32,9 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 		if (a.kind == CanonicalTypeKind::Array && a.array_extent != b.array_extent) {
 			return false;
 		}
+		if (a.kind == CanonicalTypeKind::Record) {
+			return a.array_extent == b.array_extent;
+		}
 		if (a.kind == CanonicalTypeKind::Function) {
 			TypeId left_param = left.functionParameters(left_id);
 			TypeId right_param = right.functionParameters(right_id);
@@ -45,6 +48,16 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 				}
 				left_param = left.functionParameterNext(left_param);
 				right_param = right.functionParameterNext(right_param);
+			}
+			left_id = a.child;
+			right_id = b.child;
+			continue;
+		}
+		if (a.kind == CanonicalTypeKind::MemberObjectPointer ||
+			a.kind == CanonicalTypeKind::MemberFunctionPointer) {
+			if (!sameStructure(left, left.memberPointerOwner(left_id),
+				right, right.memberPointerOwner(right_id))) {
+				return false;
 			}
 			left_id = a.child;
 			right_id = b.child;
@@ -223,7 +236,12 @@ inline void checkAdapter() {
 		Token{}, CVQualifier::None);
 	member_pointer.set_function_signature(member_signature);
 	member_pointer.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
+	// Spelling-backed owners stay deferred until class EntityId publication.
 	require(importCanonicalType(table, member_pointer).status == CanonicalTypeImportStatus::UnmigratedCallable);
+	TypeSpecifierNode member_object(TypeCategory::MemberObjectPointer, TypeQualifier::None, 64,
+		Token{}, CVQualifier::None);
+	member_object.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
+	require(importCanonicalType(table, member_object).status == CanonicalTypeImportStatus::UnmigratedCallable);
 }
 
 inline int run() {
@@ -297,6 +315,24 @@ inline int run() {
 	require(table.functionParameterType(table.functionParameters(int_fn)) == integer);
 	require(table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
 		CVQualifier::None, ReferenceQualifier::None, false) == int_fn);
+	const auto owner_a = table.record(EntityId{1});
+	const auto owner_b = table.record(EntityId{2});
+	require(owner_a != owner_b);
+	require(table.record(EntityId{1}) == owner_a);
+	require(table.recordEntity(owner_a).value == 1);
+	const auto mop_a = table.memberObjectPointer(owner_a, integer);
+	const auto mop_b = table.memberObjectPointer(owner_b, integer);
+	const auto mop_float = table.memberObjectPointer(owner_a, floating);
+	require(mop_a != mop_b && mop_a != mop_float && mop_a != pointer);
+	require(table.memberPointerOwner(mop_a) == owner_a);
+	require(table.memberPointerPointee(mop_a) == integer);
+	const auto mfp_a = table.memberFunctionPointer(owner_a, int_fn);
+	const auto mfp_b = table.memberFunctionPointer(owner_b, int_fn);
+	const auto mfp_const = table.memberFunctionPointer(owner_a, const_fn);
+	require(mfp_a != mfp_b && mfp_a != mfp_const && mfp_a != mop_a);
+	require(table.memberPointerOwner(mfp_a) == owner_a);
+	require(table.memberPointerPointee(mfp_a) == int_fn);
+	require(table.qualify(mop_a, CVQualifier::Const) != mop_a);
 	const auto array17_pointer_ci = table.array(table.pointer(ci), 17);
 	const auto count = table.size();
 	// Reordered requests, with unrelated spelling-table insertions between them.
@@ -308,6 +344,9 @@ inline int run() {
 	require(table.pointer(integer) == pointer);
 	require(table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
 		CVQualifier::None, ReferenceQualifier::None, false) == int_fn);
+	require(table.record(EntityId{1}) == owner_a);
+	require(table.memberObjectPointer(owner_a, integer) == mop_a);
+	require(table.memberFunctionPointer(owner_a, int_fn) == mfp_a);
 	require(table.size() == count);
 	CanonicalTypeTable reordered;
 	for (size_t i = builtins.size(); i-- > 0;) {
@@ -324,6 +363,15 @@ inline int run() {
 	require(sameStructure(table, table.pointer(int_fn), reordered,
 		reordered.pointer(reordered.function(reordered.builtin(CanonicalBuiltinKind::Void),
 			reordered_params, false, CVQualifier::None, ReferenceQualifier::None, false))));
+	const auto reordered_owner = reordered.record(EntityId{1});
+	require(sameStructure(table, mop_a, reordered,
+		reordered.memberObjectPointer(reordered_owner, reordered_int)));
+	require(sameStructure(table, mfp_a, reordered,
+		reordered.memberFunctionPointer(reordered_owner,
+			reordered.function(reordered.builtin(CanonicalBuiltinKind::Void), reordered_params, false,
+				CVQualifier::None, ReferenceQualifier::None, false))));
+	require(!sameStructure(table, mop_a, reordered,
+		reordered.memberObjectPointer(reordered.record(EntityId{2}), reordered_int)));
 	rejects([&] { table.node(TypeId{}); });
 	rejects([&] { table.pointer(TypeId{0xFFFFFFFFu}); });
 	rejects([&] { table.pointer(lref); });
@@ -344,6 +392,10 @@ inline int run() {
 		table.function(table.builtin(CanonicalBuiltinKind::Void), bad_param, false, CVQualifier::None,
 			ReferenceQualifier::None, false);
 	});
+	rejects([&] { table.record(EntityId{}); });
+	rejects([&] { table.memberObjectPointer(integer, integer); });
+	rejects([&] { table.memberObjectPointer(owner_a, int_fn); });
+	rejects([&] { table.memberFunctionPointer(owner_a, integer); });
 	require(table.size() == count);
 	// Source-controlled nesting does not grow the native stack in the table.
 	std::vector<TypeId> chain{integer};

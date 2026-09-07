@@ -71,7 +71,11 @@ def main():
         original = HEADER.read_text()
         mutations = {
             "duplicate_identity": ("if (existing != ids_.end()) {", "if (false) {"),
-            "lost_pointee": (".child = pointee,", ".child = TypeId{1},"),
+            "lost_pointee": (
+                ".child = pointee,\n"
+                "\t\t\t.kind = CanonicalTypeKind::Pointer,",
+                ".child = TypeId{1},\n"
+                "\t\t\t.kind = CanonicalTypeKind::Pointer,"),
             "lost_cv_union": ("qualifiers |= input.qualifiers;", "qualifiers = input.qualifiers;"),
             "lost_reference_collapse": ("kind = CanonicalTypeKind::LValueReference;",
                                         "kind = CanonicalTypeKind::RValueReference;"),
@@ -103,6 +107,27 @@ def main():
             "lost_noexcept": (
                 "if (is_noexcept) {\n\t\t\tflags |= CanonicalTypeNodeFlags::NoexceptFunction;\n\t\t}",
                 "if (false && is_noexcept) {\n\t\t\tflags |= CanonicalTypeNodeFlags::NoexceptFunction;\n\t\t}"),
+            "lost_member_owner": (
+                "TypeId memberObjectPointer(TypeId owner, TypeId pointee) {\n"
+                "\t\tstd::lock_guard lock(mutex_);\n"
+                "\t\tcheckTransactionThread();\n"
+                "\t\tconst TypeId record_owner = recordOwnerUnlocked(owner);",
+                "TypeId memberObjectPointer(TypeId owner, TypeId pointee) {\n"
+                "\t\tstd::lock_guard lock(mutex_);\n"
+                "\t\tcheckTransactionThread();\n"
+                "\t\trecordOwnerUnlocked(owner);\n"
+                "\t\tconst TypeId record_owner = TypeId{1};"),
+            "lost_record_entity": (
+                ".kind = CanonicalTypeKind::Record,\n"
+                "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t.array_extent = entity.value,",
+                ".kind = CanonicalTypeKind::Record,\n"
+                "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t.array_extent = 1,"),
         }
         for name, (before, after) in mutations.items():
             if original.count(before) != 1:

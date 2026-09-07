@@ -40,7 +40,7 @@ def main():
             raise RuntimeError(f"{source}: no production structural trace")
         for trace in traces:
             if not re.fullmatch(
-                r"(?:(?:[0-7],\d+,[0-3],\d+,\d+)/)*0,\d+,0,0,0",
+                r"(?:(?:\d+,\d+,[0-3],\d+,\d+)/)*0,\d+,0,0,0",
                 trace,
             ):
                 raise RuntimeError(f"{source}: malformed structural request {trace}")
