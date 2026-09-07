@@ -983,6 +983,34 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 	return gTypesByName;
 }
 
+void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec) {
+	if (type_spec.has_member_class_entity()) {
+		return;
+	}
+	if (type_spec.has_injected_class_declaration() &&
+		type_spec.injected_class_declaration()->has_entity_id()) {
+		type_spec.set_member_class_entity(
+			type_spec.injected_class_declaration()->entity_id());
+		return;
+	}
+	if (!type_spec.has_member_class()) {
+		return;
+	}
+	const auto type_it = getTypesByNameMap().find(type_spec.member_class_name());
+	if (type_it == getTypesByNameMap().end() || type_it->second == nullptr ||
+		!type_it->second->isStruct()) {
+		return;
+	}
+	const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+	if (struct_info == nullptr || struct_info->declaration_node == nullptr ||
+		!struct_info->declaration_node->has_entity_id()) {
+		return;
+	}
+	// EntityId is the owner identity. Leave injected-class binding to callers that
+	// already have a declaration pointer; do not re-enter set_injected here.
+	type_spec.set_member_class_entity(struct_info->declaration_node->entity_id());
+}
+
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap() {
 	return gNativeTypes;
 }

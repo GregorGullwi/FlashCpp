@@ -1565,6 +1565,12 @@ bool isExactComparisonCategoryType(TypeIndex type_index);
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
+// Bind a published class EntityId onto a member-pointer TypeSpecifierNode.
+// Spelling is only a temporary name-lookup key; canonical identity stays EntityId.
+// Defined in AstNodeTypes.cpp; parser call sites invoke this after set_member_class_name.
+class TypeSpecifierNode;
+void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec);
+
 // Print allocation stats for gTypeInfo, gTypesByName, and gNativeTypes to the General/Info log
 void setTypeTableStatsEnabled(bool enabled);
 void printTypeTableStats();

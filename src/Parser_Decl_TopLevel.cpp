@@ -899,6 +899,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 								// Mark the type as a pointer-to-member
 								type_spec.add_pointer_level(CVQualifier::None);	// Add pointer level
 								type_spec.set_member_class_name(class_token.handle());
+								tryBindPublishedMemberClassEntity(type_spec);
 								FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
 								discard_saved_token(saved_pos);
 							} else {

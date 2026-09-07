@@ -414,6 +414,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 							type_spec.set_size_in_bits(64);
 							type_spec.limit_pointer_depth(0);
 							type_spec.set_member_class_name(class_name_token.handle());
+							tryBindPublishedMemberClassEntity(type_spec);
 							type_spec.set_function_signature(signature);
 
 							// Create declaration node
@@ -470,6 +471,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 
 				// Set the member class name
 				type_spec.set_member_class_name(class_name_token.handle());
+				tryBindPublishedMemberClassEntity(type_spec);
 
 				// Add a pointer level to indicate this is a pointer
 				type_spec.add_pointer_level(CVQualifier::None);

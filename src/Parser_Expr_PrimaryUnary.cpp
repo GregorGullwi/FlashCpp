@@ -211,6 +211,7 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 				type_spec.set_size_in_bits(64);
 				type_spec.limit_pointer_depth(0);
 				type_spec.set_member_class_name(mop_class_token.handle());
+				tryBindPublishedMemberClassEntity(type_spec);
 				discard_saved_token(mop_save);
 			} else {
 				restore_token_position(mop_save);
@@ -260,6 +261,7 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 								type_spec.limit_pointer_depth(0);
 								type_spec.set_function_signature(mfp_sig);
 								type_spec.set_member_class_name(mfp_class_token.handle());
+								tryBindPublishedMemberClassEntity(type_spec);
 								discard_saved_token(mfp_save);
 							} else {
 								restore_token_position(mfp_save);

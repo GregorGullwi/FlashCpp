@@ -5,14 +5,14 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-07 after class EntityId publication for member-pointer import
+Last updated: 2026-09-07 after parse-time member-pointer EntityId binding
 (local feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's class EntityId / member-pointer import slice is on
-`boundary-3a-class-entityid-member-pointer-import` for local review. Member-pointer
-table identity and earlier families are on `main`. Gate 0 is closed. Architecture
+Architecture boundary 3A's parse-time member-pointer EntityId binding slice is on
+`boundary-3a-member-pointer-entityid-binding` for local review. Class EntityId
+publication and earlier families are on `main`. Gate 0 is closed. Architecture
 boundary 1 remains incomplete; full record/enum layout and remaining nominal
 families still block expanding shadow/merge coverage.
 
@@ -24,16 +24,16 @@ families still block expanding shadow/merge coverage.
   owners are recursive links, not a second identity space. Construction accepts
   no spelling or legacy flat-type identity.
 - `DeclarationBuilder` publishes `DeclKind::Class` for global/namespace
-  non-template structs, stamps `EntityId` on `StructDeclarationNode`, and the
-  adapter imports EntityId-backed MOP/MFP. Spelling-only owners and MOP forms
-  that erased the pointee stay `UnmigratedCallable`. `Sample` remains the
-  deferred nominal in the production fixture. `SymbolTable` retains lookup and
-  merge authority.
+  non-template structs and stamps `EntityId` on `StructDeclarationNode`. Parser
+  `Class::*` sites call `tryBindPublishedMemberClassEntity` so published owners
+  reach the adapter; spelling is only a temporary TypeInfo lookup key. Spelling-
+  only owners and MOP forms that erased the pointee stay `UnmigratedCallable`.
+  `Sample` remains the deferred nominal in the production fixture. `SymbolTable`
+  retains lookup and merge authority.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable.
-- Remaining 3A work includes parse-time `member_class_entity` binding for
-  production declarators, full record/enum layout, calling-convention and
+- Remaining 3A work includes full record/enum layout, calling-convention and
   dll-linkage callables, unstructured signatures, dependent `noexcept`,
   dependent types, templates, complete declarator interleaving, and deletion of
   the flat semantic representation. Stop here for review before starting another
@@ -104,14 +104,13 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the class EntityId slice: native canonical tests and
-source-copy mutations pass; EntityId-backed MOP/MFP import as Supported;
-spelling-only owners remain UnmigratedCallable; DeclarationBuilder class
-create/merge unit tests pass. Mutation rejection requires a test failure, not a
-compile failure or crash. The production fixture is unchanged at 13 supported /
-1 deferred with array and function traces. Fixed-corpus migration counters were
-remeasured and remain within the prior baselines below (one
-`template_old_engine` improvement observed but not ratcheted).
+Latest validation for the member-pointer EntityId binding slice: native canonical
+tests and source-copy mutations pass; parse-time binding produces Supported
+MemberObjectPointer requests in a dedicated production fixture; DeclarationBuilder
+parse test finds MemberObjectPointer nodes after `int Owner::*` parameters.
+Mutation rejection requires a test failure, not a compile failure or crash. The
+existing adapter fixture remains 13 supported / 1 deferred. Fixed-corpus
+migration counters remain within the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -160,10 +159,10 @@ Advanced, not completed:
   dimension order, cv propagation, pointer binding, parameter adjustment, function
   parameter lists, function cv/ref, variadic, noexcept, FunctionPointer wrapping,
   Function-as-parameter decay, Record EntityId identity, and member-pointer
-  owner/pointee distinction are mutation-validated. Class EntityId publication
-  and EntityId-backed adapter MOP/MFP import are landed; spelling-only owners and
-  pointee-erased MOP forms stay deferred, and production declarators still need
-  parse-time `member_class_entity` binding. Remaining families and flat-field
+  owner/pointee distinction are mutation-validated. Class EntityId publication,
+  EntityId-backed adapter MOP/MFP import, and parse-time `member_class_entity`
+  binding for `Class::*` declarators are landed; spelling-only owners and
+  pointee-erased MOP forms stay deferred. Remaining families and flat-field
   deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
@@ -183,8 +182,7 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's class EntityId publication for adapter member-pointer import, full
-  record/enum layout, calling-convention / dll-linkage callable,
+- Finish 3A's full record/enum layout, calling-convention / dll-linkage callable,
   unstructured-signature, dependent-`noexcept`, template, and dependent families
   and adapters before expanding boundary-1 shadow coverage (default arguments,
   exception specifications, friends, templates) or removing `SymbolTable` merge /

@@ -3485,6 +3485,37 @@ TEST_SUITE("FrontendContext") {
 		CHECK(builder.declaration(second.decl_id).previous_decl_id == first.decl_id);
 	}
 
+	TEST_CASE("Member pointer parameters bind published class EntityId at parse") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		const std::string code =
+			"struct Owner { int field; };\n"
+			"int read(const Owner& value, int Owner::* member) { return value.*member; }\n"
+			"int main() { Owner owner{1}; return read(owner, &Owner::field) - 1; }\n";
+		CompileContext test_context;
+		test_context.setInputFile("member_pointer_entityid_binding.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+		bool found_member_object_pointer = false;
+		const CanonicalTypeTable& types = context.canonicalTypes();
+		for (uint32_t index = 1; index <= types.size(); ++index) {
+			if (types.node(TypeId{index}).kind == CanonicalTypeKind::MemberObjectPointer) {
+				found_member_object_pointer = true;
+				break;
+			}
+		}
+		CHECK(found_member_object_pointer);
+		CHECK(context.declarationBuilder().entityKindCounts()[
+			static_cast<std::size_t>(DeclKind::Class)] >= 1u);
+	}
+
 	TEST_CASE("DeclarationBuilder merges compatible function redeclaration into one EntityId") {
 		FrontendContext context;
 		DeclarationBuilder& builder = context.declarationBuilder();

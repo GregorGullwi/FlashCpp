@@ -680,6 +680,7 @@ ParseResult Parser::parse_template_parameter() {
 								nttp_type.limit_pointer_depth(0);
 								nttp_type.set_function_signature(mfp_sig);
 								nttp_type.set_member_class_name(mfp_class_token.handle());
+								tryBindPublishedMemberClassEntity(nttp_type);
 
 								discard_saved_token(fp_decl_pos);
 								parsed_as_function_pointer = true;
@@ -735,6 +736,7 @@ ParseResult Parser::parse_template_parameter() {
 				nttp_type.set_size_in_bits(64);
 				nttp_type.limit_pointer_depth(0);
 				nttp_type.set_member_class_name(mop_class_token.handle());
+				tryBindPublishedMemberClassEntity(nttp_type);
 				discard_saved_token(mop_pos);
 				FLASH_LOG(Parser, Debug, "Parsed member object pointer NTTP: ",
 						  nttp_type.token().value(), " ", mop_class_token.value(), "::*");
@@ -2911,6 +2913,7 @@ try_type_template_argument_parse:
 						if (is_member_ptr) {
 							type_node.set_member_class_name(
 								member_ptr_class_token.handle());
+							tryBindPublishedMemberClassEntity(type_node);
 						}
 
 						if (is_lvalue_ref) {
