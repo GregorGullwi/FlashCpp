@@ -25,15 +25,36 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 	for (;;) {
 		const auto a = left.node(left_id);
 		const auto b = right.node(right_id);
-		if (a.kind != b.kind || a.builtin != b.builtin || a.qualifiers != b.qualifiers) {
+		if (a.kind != b.kind || a.builtin != b.builtin || a.qualifiers != b.qualifiers ||
+			a.flags != b.flags) {
 			return false;
 		}
-		if (a.kind == CanonicalTypeKind::Array &&
-			(a.flags != b.flags || a.array_extent != b.array_extent)) {
+		if (a.kind == CanonicalTypeKind::Array && a.array_extent != b.array_extent) {
 			return false;
+		}
+		if (a.kind == CanonicalTypeKind::Function) {
+			TypeId left_param = left.functionParameters(left_id);
+			TypeId right_param = right.functionParameters(right_id);
+			while (left_param || right_param) {
+				if (!left_param || !right_param) {
+					return false;
+				}
+				if (!sameStructure(left, left.functionParameterType(left_param),
+					right, right.functionParameterType(right_param))) {
+					return false;
+				}
+				left_param = left.functionParameterNext(left_param);
+				right_param = right.functionParameterNext(right_param);
+			}
+			left_id = a.child;
+			right_id = b.child;
+			continue;
 		}
 		if (a.kind == CanonicalTypeKind::Builtin) {
 			return true;
+		}
+		if (a.kind == CanonicalTypeKind::FunctionParam) {
+			return false;
 		}
 		left_id = a.child;
 		right_id = b.child;
@@ -147,6 +168,62 @@ inline void checkAdapter() {
 	integer.set_category(TypeCategory::FunctionPointer);
 	require(importCanonicalType(table, integer).status == CanonicalTypeImportStatus::UnmigratedCallable);
 	require(table.size() == before);
+
+	FunctionCallableTypes callable_storage;
+	callable_storage.return_type = makeFunctionTypeFromSpecifier(
+		TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
+	FunctionType short_param = makeFunctionTypeFromSpecifier(
+		TypeSpecifierNode(TypeCategory::Short, TypeQualifier::None, 16, Token{}, CVQualifier::Const));
+	short_param.pointer_qualifiers.push_back(CVQualifier::None);
+	callable_storage.parameter_types.push_back(short_param);
+	FunctionSignature signature;
+	signature.return_type_index = callable_storage.return_type.type_index;
+	signature.return_pointer_depth = 0;
+	signature.callable_types = &callable_storage;
+	TypeSpecifierNode function_pointer(TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{},
+		CVQualifier::None);
+	function_pointer.set_function_signature(signature);
+	const auto imported_function = importCanonicalType(table, function_pointer);
+	require(imported_function.status == CanonicalTypeImportStatus::Supported);
+	const auto short_const = table.qualify(table.builtin(CanonicalBuiltinKind::Short), CVQualifier::Const);
+	const TypeId expected_params[] = {table.pointer(short_const)};
+	require(imported_function.type == table.pointer(table.function(
+		table.builtin(CanonicalBuiltinKind::Int), expected_params, false, CVQualifier::None,
+		ReferenceQualifier::None, false)));
+
+	FunctionSignature member_signature = signature;
+	member_signature.is_const = true;
+	member_signature.function_reference_qualifier = ReferenceQualifier::LValueReference;
+	TypeSpecifierNode member_function(TypeCategory::Function, TypeQualifier::None, 64, Token{},
+		CVQualifier::None);
+	member_function.set_function_signature(member_signature);
+	const auto imported_member = importCanonicalType(table, member_function);
+	require(imported_member.status == CanonicalTypeImportStatus::Supported);
+	require(imported_member.type == table.function(
+		table.builtin(CanonicalBuiltinKind::Int), expected_params, false, CVQualifier::Const,
+		ReferenceQualifier::LValueReference, false));
+	require(imported_member.type != table.withoutTopLevelQualifiers(imported_function.type));
+	const auto imported_as_parameter = importCanonicalFunctionParameterType(table, member_function);
+	require(imported_as_parameter.status == CanonicalTypeImportStatus::Supported);
+	require(imported_as_parameter.type == table.pointer(imported_member.type));
+
+	signature.is_noexcept = true;
+	TypeSpecifierNode noexcept_function_pointer(TypeCategory::FunctionPointer, TypeQualifier::None, 64,
+		Token{}, CVQualifier::None);
+	noexcept_function_pointer.set_function_signature(signature);
+	const auto imported_noexcept = importCanonicalType(table, noexcept_function_pointer);
+	require(imported_noexcept.status == CanonicalTypeImportStatus::Supported);
+	require(imported_noexcept.type == table.pointer(table.function(
+		table.builtin(CanonicalBuiltinKind::Int), expected_params, false, CVQualifier::None,
+		ReferenceQualifier::None, true)));
+	require(imported_noexcept.type != imported_function.type);
+	signature.is_noexcept = false;
+
+	TypeSpecifierNode member_pointer(TypeCategory::MemberFunctionPointer, TypeQualifier::None, 64,
+		Token{}, CVQualifier::None);
+	member_pointer.set_function_signature(member_signature);
+	member_pointer.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
+	require(importCanonicalType(table, member_pointer).status == CanonicalTypeImportStatus::UnmigratedCallable);
 }
 
 inline int run() {
@@ -199,6 +276,27 @@ inline int run() {
 	require(table.qualify(lref, CVQualifier::ConstVolatile) == lref);
 	require(table.reference(ci, ReferenceQualifier::LValueReference) != lref);
 	require(table.reference(array2, ReferenceQualifier::LValueReference) != array2);
+	const auto void_fn = table.function(table.builtin(CanonicalBuiltinKind::Void),
+		std::span<const TypeId>{}, false, CVQualifier::None, ReferenceQualifier::None, false);
+	const TypeId int_param[] = {integer};
+	const auto int_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
+		CVQualifier::None, ReferenceQualifier::None, false);
+	const auto variadic_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, true,
+		CVQualifier::None, ReferenceQualifier::None, false);
+	const auto const_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
+		CVQualifier::Const, ReferenceQualifier::None, false);
+	const auto ref_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
+		CVQualifier::None, ReferenceQualifier::LValueReference, false);
+	const auto noexcept_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
+		CVQualifier::None, ReferenceQualifier::None, true);
+	require(void_fn != int_fn && int_fn != variadic_fn && int_fn != const_fn);
+	require(int_fn != ref_fn && int_fn != noexcept_fn && const_fn != ref_fn);
+	require(table.qualify(int_fn, CVQualifier::Const) == const_fn);
+	require(table.pointer(int_fn) != int_fn);
+	require(table.functionParameters(void_fn).value == 0);
+	require(table.functionParameterType(table.functionParameters(int_fn)) == integer);
+	require(table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
+		CVQualifier::None, ReferenceQualifier::None, false) == int_fn);
 	const auto array17_pointer_ci = table.array(table.pointer(ci), 17);
 	const auto count = table.size();
 	// Reordered requests, with unrelated spelling-table insertions between them.
@@ -208,6 +306,8 @@ inline int run() {
 		require(table.builtin(static_cast<CanonicalBuiltinKind>(i)) == builtins[i]);
 	}
 	require(table.pointer(integer) == pointer);
+	require(table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
+		CVQualifier::None, ReferenceQualifier::None, false) == int_fn);
 	require(table.size() == count);
 	CanonicalTypeTable reordered;
 	for (size_t i = builtins.size(); i-- > 0;) {
@@ -220,16 +320,30 @@ inline int run() {
 		reordered.array(reordered.pointer(reordered_ci), 17)));
 	require(!sameStructure(table, table.qualify(pointer, CVQualifier::Const),
 		reordered, reordered.pointer(reordered_ci)));
+	const TypeId reordered_params[] = {reordered_int};
+	require(sameStructure(table, table.pointer(int_fn), reordered,
+		reordered.pointer(reordered.function(reordered.builtin(CanonicalBuiltinKind::Void),
+			reordered_params, false, CVQualifier::None, ReferenceQualifier::None, false))));
 	rejects([&] { table.node(TypeId{}); });
 	rejects([&] { table.pointer(TypeId{0xFFFFFFFFu}); });
 	rejects([&] { table.pointer(lref); });
 	rejects([&] { table.array(lref, 2); });
 	rejects([&] { table.array(table.builtin(CanonicalBuiltinKind::Void), 2); });
 	rejects([&] { table.array(integer, 0); });
+	rejects([&] { table.array(int_fn, 2); });
 	rejects([&] { table.reference(table.builtin(CanonicalBuiltinKind::Void), ReferenceQualifier::LValueReference); });
 	rejects([&] { table.reference(integer, ReferenceQualifier::None); });
 	rejects([&] { table.qualify(integer, static_cast<CVQualifier>(4)); });
 	rejects([&] { table.builtin(CanonicalBuiltinKind::Count); });
+	rejects([&] {
+		table.function(int_fn, std::span<const TypeId>{}, false, CVQualifier::None,
+			ReferenceQualifier::None, false);
+	});
+	rejects([&] {
+		const TypeId bad_param[] = {int_fn};
+		table.function(table.builtin(CanonicalBuiltinKind::Void), bad_param, false, CVQualifier::None,
+			ReferenceQualifier::None, false);
+	});
 	require(table.size() == count);
 	// Source-controlled nesting does not grow the native stack in the table.
 	std::vector<TypeId> chain{integer};

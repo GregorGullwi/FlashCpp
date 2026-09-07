@@ -84,6 +84,25 @@ def main():
                                    "return arrayUnlocked(element, 1, CanonicalTypeNodeFlags::KnownArrayBound);"),
             "lost_array_cv": ("while (input.kind == CanonicalTypeKind::Array) {",
                               "while (false && input.kind == CanonicalTypeKind::Array) {"),
+            "lost_function_param": (
+                ".array_extent = param_link.value,",
+                ".array_extent = 0,"),
+            "lost_function_cv_merge": (
+                "// [dcl.fct]: cv-qualifiers on a function type are part of that type.\n"
+                "\t\tif (input.kind == CanonicalTypeKind::Function) {\n"
+                "\t\t\tinput.qualifiers |= qualifiers;\n"
+                "\t\t\treturn internUnlocked(input);\n"
+                "\t\t}",
+                "// [dcl.fct]: cv-qualifiers on a function type are part of that type.\n"
+                "\t\tif (input.kind == CanonicalTypeKind::Function) {\n"
+                "\t\t\treturn type;\n"
+                "\t\t}"),
+            "lost_variadic": (
+                "if (is_variadic) {\n\t\t\tflags |= CanonicalTypeNodeFlags::VariadicFunction;\n\t\t}",
+                "if (false && is_variadic) {\n\t\t\tflags |= CanonicalTypeNodeFlags::VariadicFunction;\n\t\t}"),
+            "lost_noexcept": (
+                "if (is_noexcept) {\n\t\t\tflags |= CanonicalTypeNodeFlags::NoexceptFunction;\n\t\t}",
+                "if (false && is_noexcept) {\n\t\t\tflags |= CanonicalTypeNodeFlags::NoexceptFunction;\n\t\t}"),
         }
         for name, (before, after) in mutations.items():
             if original.count(before) != 1:
@@ -95,15 +114,25 @@ def main():
             (directory / HEADER.name).write_text(original.replace(before, after))
             build_and_run(name, directory, 1)
         for name, header, before, after in (
-            ("adapter_cv", "CanonicalTypeAdapter.h", "table.qualify(id, syntax.cv_qualifier())", "table.qualify(id, CVQualifier::None)"),
+            ("adapter_cv", "CanonicalTypeAdapter.h",
+             "auto id = table.builtin(builtin);\n\tid = table.qualify(id, syntax.cv_qualifier());",
+             "auto id = table.builtin(builtin);\n\tid = table.qualify(id, CVQualifier::None);"),
             ("adapter_array_order", "CanonicalTypeAdapter.h",
              "for (size_t index = dimensions.size(); index-- > first_dimension;)",
              "for (size_t index = first_dimension; index < dimensions.size(); ++index)"),
             ("adapter_array_binding", "CanonicalTypeAdapter.h", "if (has_pointee_array) {",
              "if (false && has_pointee_array) {"),
             ("adapter_parameter_decay", "CanonicalTypeAdapter.h",
-             "context == CanonicalTypeImportContext::FunctionParameter",
-             "context == CanonicalTypeImportContext::Exact"),
+             "has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&",
+             "has_ordinary_array && context == CanonicalTypeImportContext::Exact &&"),
+            ("adapter_function_pointer", "CanonicalTypeAdapter.h",
+             "if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {",
+             "if (false && (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty())) {"),
+            ("adapter_function_param_decay", "CanonicalTypeAdapter.h",
+             "if (context == CanonicalTypeImportContext::FunctionParameter &&\n"
+             "\t\ttable.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {",
+             "if (false && context == CanonicalTypeImportContext::FunctionParameter &&\n"
+             "\t\ttable.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {"),
             ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",
              "stats_.peak_bytes += stats_.current_bytes;"),
         ):

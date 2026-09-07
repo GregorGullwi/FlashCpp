@@ -39,10 +39,15 @@ def main():
         if not traces:
             raise RuntimeError(f"{source}: no production structural trace")
         for trace in traces:
-            if not re.fullmatch(r"(?:(?:[1-4],0,[0-3],0,0|5,0,0,[01],\d+)/)*0,\d+,0,0,0", trace):
+            if not re.fullmatch(
+                r"(?:(?:[0-7],\d+,[0-3],\d+,\d+)/)*0,\d+,0,0,0",
+                trace,
+            ):
                 raise RuntimeError(f"{source}: malformed structural request {trace}")
         if not any(re.search(r"(?:^|/)5,0,0,", trace) for trace in traces):
             raise RuntimeError(f"{source}: no canonical array request")
+        if not any(re.search(r"(?:^|/)6,0,", trace) for trace in traces):
+            raise RuntimeError(f"{source}: no canonical function request")
         (output / (name + ".trace")).write_text("\n".join(traces) + "\n")
         print(f"{source}: supported={counts[0]} deferred={counts[1]} traces={len(traces)}")
 
