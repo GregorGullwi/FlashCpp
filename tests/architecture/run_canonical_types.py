@@ -128,6 +128,17 @@ def main():
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = 1,"),
+            "lost_enum_entity": (
+                ".kind = CanonicalTypeKind::Enum,\n"
+                "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t.array_extent = entity.value,",
+                ".kind = CanonicalTypeKind::Enum,\n"
+                "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t.array_extent = 1,"),
         }
         for name, (before, after) in mutations.items():
             if original.count(before) != 1:
@@ -158,6 +169,9 @@ def main():
              "\t\ttable.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {",
              "if (false && context == CanonicalTypeImportContext::FunctionParameter &&\n"
              "\t\ttable.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {"),
+            ("adapter_enum", "CanonicalTypeAdapter.h",
+             "if (syntax.category() == TypeCategory::Struct || syntax.category() == TypeCategory::Enum) {",
+             "if (syntax.category() == TypeCategory::Struct) {"),
             ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",
              "stats_.peak_bytes += stats_.current_bytes;"),
         ):

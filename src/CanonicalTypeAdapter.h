@@ -105,8 +105,8 @@ inline EntityId resolveNamedTypeEntity(const TypeSpecifierNode& syntax) {
 	return {};
 }
 
-// Opaque Record import for published class/struct types. Enum, alias, and
-// unpublished nominal forms stay deferred until their EntityId path lands.
+// Opaque Record import for published class/struct types. Alias and unpublished
+// nominal forms stay deferred until their EntityId path lands.
 inline CanonicalTypeImport importCanonicalRecord(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax) {
 	const EntityId entity = resolveNamedTypeEntity(syntax);
@@ -114,6 +114,21 @@ inline CanonicalTypeImport importCanonicalRecord(CanonicalTypeTable& table,
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	}
 	auto id = table.record(entity);
+	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+	id = table.qualify(id, syntax.cv_qualifier());
+	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+		id = table.reference(id, syntax.reference_qualifier());
+	}
+	return {id, CanonicalTypeImportStatus::Supported};
+}
+
+inline CanonicalTypeImport importCanonicalEnum(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax) {
+	const EntityId entity = resolveNamedTypeEntity(syntax);
+	if (!entity) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	auto id = table.enumeration(entity);
 	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 	id = table.qualify(id, syntax.cv_qualifier());
 	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
@@ -287,7 +302,7 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		}
 		return imported;
 	}
-	if (syntax.category() == TypeCategory::Struct) {
+	if (syntax.category() == TypeCategory::Struct || syntax.category() == TypeCategory::Enum) {
 		const bool has_ordinary_array = syntax.is_array() && !syntax.has_pointee_array_declarator();
 		const bool has_pointee_array = syntax.has_pointee_array_declarator();
 		const bool has_array_shape = has_ordinary_array || has_pointee_array ||
@@ -296,7 +311,9 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 		}
 		CanonicalTypeTransaction transaction(table);
-		const auto imported = importCanonicalRecord(table, syntax);
+		const auto imported = syntax.category() == TypeCategory::Struct
+			? importCanonicalRecord(table, syntax)
+			: importCanonicalEnum(table, syntax);
 		if (imported.status == CanonicalTypeImportStatus::Supported) {
 			transaction.commit();
 		}
@@ -329,9 +346,9 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	case TypeCategory::LongDouble: builtin = CanonicalBuiltinKind::LongDouble; break;
 	case TypeCategory::Nullptr: builtin = CanonicalBuiltinKind::Nullptr; break;
 	case TypeCategory::Struct:
+	case TypeCategory::Enum:
 		// Handled above; keep the case for exhaustiveness diagnostics.
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
-	case TypeCategory::Enum:
 	case TypeCategory::UserDefined:
 	case TypeCategory::TypeAlias:
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};

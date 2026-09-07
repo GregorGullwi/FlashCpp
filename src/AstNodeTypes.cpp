@@ -1020,21 +1020,28 @@ void tryBindPublishedTypeEntity(TypeSpecifierNode& type_spec) {
 		type_spec.set_type_entity(type_spec.injected_class_declaration()->entity_id());
 		return;
 	}
-	if (type_spec.category() != TypeCategory::Struct) {
-		return;
-	}
 	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-	if (type_info == nullptr || !type_info->isStruct()) {
+	if (type_info == nullptr || type_info->isTypeAlias()) {
 		return;
 	}
-	const StructTypeInfo* struct_info = type_info->getStructInfo();
-	if (struct_info == nullptr || struct_info->declaration_node == nullptr ||
-		!struct_info->declaration_node->has_entity_id()) {
+	if (type_spec.category() == TypeCategory::Struct) {
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
+		if (struct_info == nullptr || struct_info->declaration_node == nullptr ||
+			!struct_info->declaration_node->has_entity_id()) {
+			return;
+		}
+		type_spec.set_type_entity(struct_info->declaration_node->entity_id());
+		if (!type_spec.has_injected_class_declaration()) {
+			type_spec.set_injected_class_declaration(struct_info->declaration_node);
+		}
 		return;
 	}
-	type_spec.set_type_entity(struct_info->declaration_node->entity_id());
-	if (!type_spec.has_injected_class_declaration()) {
-		type_spec.set_injected_class_declaration(struct_info->declaration_node);
+	if (type_spec.category() == TypeCategory::Enum) {
+		const EnumTypeInfo* enum_info = type_info->getEnumInfo();
+		if (enum_info != nullptr && enum_info->declaration_node != nullptr &&
+			enum_info->declaration_node->has_entity_id()) {
+			type_spec.set_type_entity(enum_info->declaration_node->entity_id());
+		}
 	}
 }
 

@@ -26,6 +26,7 @@ enum class CanonicalBuiltinKind : uint8_t {
 enum class CanonicalTypeKind : uint8_t {
 	Builtin, Qualified, Pointer, LValueReference, RValueReference, Array,
 	Function, FunctionParam, Record, MemberObjectPointer, MemberFunctionPointer,
+	Enum,
 };
 
 enum class CanonicalTypeNodeFlags : uint8_t {
@@ -51,7 +52,7 @@ inline bool hasCanonicalTypeNodeFlag(CanonicalTypeNodeFlags flags, CanonicalType
 // never an AST pointer, spelling, legacy TypeIndex, or telemetry key.
 // FunctionParam links store the parameter TypeId in array_extent and the next
 // link in child. Member pointers store the owner TypeId in array_extent and the
-// pointee in child. Opaque Record nodes store EntityId in array_extent.
+// pointee in child. Opaque Record and Enum nodes store EntityId in array_extent.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -74,9 +75,10 @@ class CanonicalTypeTransaction;
 
 // Boundary 3A type table. IDs are local to one FrontendContext and are not
 // portable hashes or ABI names. Equal requests in that context return one ID,
-// regardless of request order. Opaque Record nodes are EntityId-keyed owners for
-// member pointers; full record layout remains a later family. Spelling-backed
-// class names stay outside this table until class EntityId publication lands.
+// regardless of request order. Opaque Record and Enum nodes are EntityId-keyed;
+// records remain member-pointer owners, while full record and enum layout remain
+// later families. Spelling-backed nominal names stay outside this table until
+// EntityId publication lands.
 // One mutex protects publication and reads; keep this boundary until the real
 // structural-request trace passes the parallel-experiment handoff gates.
 class CanonicalTypeTable {
@@ -299,6 +301,24 @@ public:
 		});
 	}
 
+	// Opaque enum identity. Underlying type and enumerator layout remain a later
+	// 3A family; EntityId is the only key.
+	TypeId enumeration(EntityId entity) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!entity) {
+			throw InternalError("canonical type: invalid enum EntityId");
+		}
+		return internUnlocked({
+			.child = TypeId{},
+			.kind = CanonicalTypeKind::Enum,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = entity.value,
+		});
+	}
+
 	TypeId memberObjectPointer(TypeId owner, TypeId pointee) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -420,6 +440,16 @@ public:
 		const auto input = nodeUnlocked(record);
 		if (input.kind != CanonicalTypeKind::Record) {
 			throw InternalError("canonical type: TypeId is not a record");
+		}
+		return EntityId{static_cast<uint32_t>(input.array_extent)};
+	}
+
+	EntityId enumEntity(TypeId enumeration) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(enumeration);
+		if (input.kind != CanonicalTypeKind::Enum) {
+			throw InternalError("canonical type: TypeId is not an enum");
 		}
 		return EntityId{static_cast<uint32_t>(input.array_extent)};
 	}

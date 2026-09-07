@@ -101,12 +101,14 @@ PreparedClassPublication::PreparedClassPublication(
 	ScopeId lexical_scope_id,
 	OwnerId owner_id,
 	StringHandle name,
+	DeclKind kind,
 	uint8_t flags)
 	: status_(status)
 	, entity_id_(entity_id)
 	, lexical_scope_id_(lexical_scope_id)
 	, owner_id_(owner_id)
 	, name_(name)
+	, kind_(kind)
 	, flags_(flags)
 	, consumed_(0) {
 }
@@ -117,6 +119,7 @@ PreparedClassPublication::PreparedClassPublication(PreparedClassPublication&& ot
 	, lexical_scope_id_(other.lexical_scope_id_)
 	, owner_id_(other.owner_id_)
 	, name_(other.name_)
+	, kind_(other.kind_)
 	, flags_(other.flags_)
 	, consumed_(other.consumed_) {
 	other.consumed_ = 1;
@@ -132,6 +135,7 @@ PreparedClassPublication& PreparedClassPublication::operator=(PreparedClassPubli
 	lexical_scope_id_ = other.lexical_scope_id_;
 	owner_id_ = other.owner_id_;
 	name_ = other.name_;
+	kind_ = other.kind_;
 	flags_ = other.flags_;
 	consumed_ = other.consumed_;
 	other.consumed_ = 1;
@@ -231,7 +235,7 @@ bool DeclarationBuilder::isValidRequest(const ClassDeclRequest& request) const {
 	if (!request.name.isValid()) {
 		return false;
 	}
-	return true;
+	return request.kind == DeclKind::Class || request.kind == DeclKind::Enum;
 }
 
 DeclId DeclarationBuilder::allocateDeclaration(DeclarationRecord record) {
@@ -508,7 +512,7 @@ PublishResult DeclarationBuilder::publishFunction(
 	return result;
 }
 
-// Class entities use signature_id == 0 in the lookup key so they cannot collide
+// Nominal entities use signature_id == 0 in the lookup key so they cannot collide
 // with free-function overloads, which always receive a non-zero telemetry
 // signature id from internParameterListSignature.
 PreparedClassPublication DeclarationBuilder::prepareClassPublication(
@@ -516,14 +520,14 @@ PreparedClassPublication DeclarationBuilder::prepareClassPublication(
 	const SymbolTable& symbol_table) const {
 	if (!isValidRequest(request)) {
 		return PreparedClassPublication(
-			PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, 0);
+			PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
 	}
 
 	const std::optional<PublicationTarget> target =
 		resolvePublicationTarget(symbol_table, request.lexical_scope_id);
 	if (!target.has_value()) {
 		return PreparedClassPublication(
-			PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, 0);
+			PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
 	}
 
 	const EntityLookupKey key{target->owner_id.value, request.name.handle, 0};
@@ -535,20 +539,21 @@ PreparedClassPublication DeclarationBuilder::prepareClassPublication(
 			request.lexical_scope_id,
 			target->owner_id,
 			request.name,
+			request.kind,
 			requestFlags(request));
 	}
 
 	const EntityRecord& live_entity = entities_[existing->second.value - 1];
 	const EntityId entity_id = live_entity.id;
-	if (live_entity.kind != static_cast<uint8_t>(DeclKind::Class)) {
+	if (live_entity.kind != static_cast<uint8_t>(request.kind)) {
 		return PreparedClassPublication(
-			PublishStatus::Rejected, entity_id, ScopeId{}, OwnerId{}, StringHandle{}, 0);
+			PublishStatus::Rejected, entity_id, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
 	}
 
 	const bool prior_definition = hasFlag(live_entity.flags, DeclarationFlags::IsDefinition);
 	if (request.is_definition && prior_definition) {
 		return PreparedClassPublication(
-			PublishStatus::Rejected, entity_id, ScopeId{}, OwnerId{}, StringHandle{}, 0);
+			PublishStatus::Rejected, entity_id, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
 	}
 
 	return PreparedClassPublication(
@@ -557,6 +562,7 @@ PreparedClassPublication DeclarationBuilder::prepareClassPublication(
 		request.lexical_scope_id,
 		target->owner_id,
 		request.name,
+		request.kind,
 		requestFlags(request));
 }
 
@@ -579,7 +585,7 @@ PublishResult DeclarationBuilder::commitClassPublication(
 		entity_record.name = prepared.name_;
 		entity_record.signature_id = TelemetryTypeId{};
 		entity_record.return_type_id = TelemetryTypeId{};
-		entity_record.kind = static_cast<uint8_t>(DeclKind::Class);
+		entity_record.kind = static_cast<uint8_t>(prepared.kind_);
 		entity_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
 		entity_record.flags = prepared.flags_;
 		entity_record.reserved = 0;
@@ -593,7 +599,7 @@ PublishResult DeclarationBuilder::commitClassPublication(
 		decl_record.name = prepared.name_;
 		decl_record.signature_id = TelemetryTypeId{};
 		decl_record.return_type_id = TelemetryTypeId{};
-		decl_record.kind = static_cast<uint8_t>(DeclKind::Class);
+		decl_record.kind = static_cast<uint8_t>(prepared.kind_);
 		decl_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
 		decl_record.flags = prepared.flags_;
 		decl_record.reserved = 0;
@@ -640,7 +646,7 @@ PublishResult DeclarationBuilder::commitClassPublication(
 	decl_record.name = prepared.name_;
 	decl_record.signature_id = TelemetryTypeId{};
 	decl_record.return_type_id = TelemetryTypeId{};
-	decl_record.kind = static_cast<uint8_t>(DeclKind::Class);
+	decl_record.kind = static_cast<uint8_t>(prepared.kind_);
 	decl_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
 	decl_record.flags = prepared.flags_;
 	decl_record.reserved = 0;
@@ -809,6 +815,22 @@ bool shouldPublishParserClass(
 	return true;
 }
 
+bool shouldPublishParserEnum(
+	const EnumDeclarationNode& enum_decl,
+	ScopeType scope_type,
+	bool parsing_template_class,
+	bool is_function_local,
+	bool is_nested,
+	bool is_anonymous) {
+	if (parsing_template_class || is_function_local || is_nested || is_anonymous) {
+		return false;
+	}
+	if (enum_decl.name().empty()) {
+		return false;
+	}
+	return scope_type == ScopeType::Global || scope_type == ScopeType::Namespace;
+}
+
 PublicationTransaction::PublicationTransaction(DeclarationBuilder& builder)
 	: builder_(builder)
 	, canonical_transaction_(builder.canonical_types_)
@@ -939,6 +961,7 @@ PublishResult commitParserClassPublication(
 	request.lexical_scope_id = lexical_scope_id;
 	request.name = struct_decl.name();
 	request.is_definition = is_definition;
+	request.kind = DeclKind::Class;
 
 	PublicationTransaction transaction(builder);
 	PreparedClassPublication prepared = builder.prepareClassPublication(request, symbol_table);
@@ -951,6 +974,33 @@ PublishResult commitParserClassPublication(
 	transaction.commit();
 	if (result.status == PublishStatus::Created || result.status == PublishStatus::MergedRedeclaration) {
 		struct_decl.set_entity_id(result.entity_id);
+	}
+	return result;
+}
+
+PublishResult commitParserEnumPublication(
+	DeclarationBuilder& builder,
+	EnumDeclarationNode& enum_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition,
+	const SymbolTable& symbol_table) {
+	ClassDeclRequest request{};
+	request.lexical_scope_id = lexical_scope_id;
+	request.name = StringTable::getOrInternStringHandle(enum_decl.name());
+	request.is_definition = is_definition;
+	request.kind = DeclKind::Enum;
+
+	PublicationTransaction transaction(builder);
+	PreparedClassPublication prepared = builder.prepareClassPublication(request, symbol_table);
+	if (prepared.isRejected()) {
+		transaction.rollback();
+		return prepared.rejection();
+	}
+
+	const PublishResult result = builder.commitClassPublication(prepared, transaction);
+	transaction.commit();
+	if (result.status == PublishStatus::Created || result.status == PublishStatus::MergedRedeclaration) {
+		enum_decl.set_entity_id(result.entity_id);
 	}
 	return result;
 }

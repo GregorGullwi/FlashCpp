@@ -27,5 +27,7 @@ x64/
 src/*.pch
 *.result
 a.out
+*.pyc
+__pycache__/
 package-lock.json
 .copilot-fleet/*

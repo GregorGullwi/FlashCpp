@@ -373,3 +373,35 @@ FlashCpp currently defines `_WIN32`, `_WIN64`, and `_MSC_VER` even for its LP64
 ELF target, where it also defines `__ELF__`. Portable source cannot use `_WIN32`
 alone to distinguish the generated object format. The Win64-only virtual ABI
 regression therefore uses `__ELF__` as its target guard.
+
+## Unity arithmetic test can overflow the native stack
+
+The direct LLVM clang-cl unity test executable crashes with `SIGSEGV - Stack
+overflow` in `Arithmetic operations and nested function calls`
+(`tests/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp:1344`). It was
+reproduced on 2026-09-07 with the direct LLVM driver required by the current
+unit-test setup:
+
+```text
+C:\Program Files\LLVM\bin\clang-cl.exe /nologo /std:c++20 /EHsc /W3 /I src /I tests\external\doctest /I external /I tests\FlashCppTest\FlashCppTest\FlashCppTest tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp /Fe:x64\enum-publication-unit\FlashCppTest.exe
+x64\enum-publication-unit\FlashCppTest.exe --test-case="Arithmetic operations and nested function calls"
+```
+
+The selected test alone crashes before assertions; exact enum-publication tests
+pass. This is unrelated to canonical enum publication. Owner: arithmetic
+expression / nested-call test path. Re-linking the unity executable with a
+32 MiB stack reserve (`/link /STACK:33554432`, versus its default 1 MiB)
+allows the selected test to pass on 2026-09-07. This is a test-harness
+workaround, not a compiler fix: it masks the current native-stack pressure and
+must not be used to declare the path safe or to raise the shipping compiler's
+stack limit.
+
+This aligns with the authoritative rearchitecture plan's stack and recursion
+policy: source-controlled parser, expression, substitution, template, and
+semantic work must not grow native stack with logical depth; the target is at
+least 1,024 template-instantiation levels under the normal OS stack limit with
+nearly constant native-stack use. Defer the underlying investigation and
+bounded-depth regression to architecture boundary 10E (bounded parser control
+flow), coordinating with the template/semantic worklist migration where the
+measured path crosses that boundary. Do not pursue a standalone stack-reserve
+change before that work.

@@ -22,6 +22,7 @@ struct CanonicalTypeImport;
 class FunctionDeclarationNode;
 class PublicationTransaction;
 class StructDeclarationNode;
+class EnumDeclarationNode;
 class SymbolTable;
 class TypeSpecifierNode;
 
@@ -53,6 +54,7 @@ inline NamespaceHandle namespaceHandleFromOwnerId(OwnerId owner_id) {
 enum class DeclKind : uint8_t {
 	Function = 0,
 	Class = 1,
+	Enum = 2,
 	Count,
 };
 
@@ -62,6 +64,8 @@ inline std::string_view declKindLabel(DeclKind kind) {
 		return "function";
 	case DeclKind::Class:
 		return "class";
+	case DeclKind::Enum:
+		return "enum";
 	case DeclKind::Count:
 		break;
 	}
@@ -134,6 +138,7 @@ struct ClassDeclRequest {
 	ScopeId lexical_scope_id;
 	StringHandle name;
 	bool is_definition;
+	DeclKind kind = DeclKind::Class;
 };
 
 struct PublishResult {
@@ -235,6 +240,7 @@ class PreparedClassPublication {
 		ScopeId lexical_scope_id,
 		OwnerId owner_id,
 		StringHandle name,
+		DeclKind kind,
 		uint8_t flags);
 
 public:
@@ -260,6 +266,7 @@ private:
 	ScopeId lexical_scope_id_;
 	OwnerId owner_id_;
 	StringHandle name_;
+	DeclKind kind_ = DeclKind::Class;
 	uint8_t flags_ = 0;
 	uint8_t consumed_ = 0;
 };
@@ -484,6 +491,14 @@ bool shouldPublishParserClass(
 	ScopeType scope_type,
 	bool parsing_template_class);
 
+bool shouldPublishParserEnum(
+	const EnumDeclarationNode& enum_decl,
+	ScopeType scope_type,
+	bool parsing_template_class,
+	bool is_function_local,
+	bool is_nested,
+	bool is_anonymous);
+
 // Build request, prepare once, and commit through a publication transaction.
 // SymbolTable insert must already have succeeded. SymbolTable remains lookup
 // authority when prepare rejects after insert.
@@ -497,6 +512,13 @@ PublishResult commitParserFreeFunctionPublication(
 PublishResult commitParserClassPublication(
 	DeclarationBuilder& builder,
 	StructDeclarationNode& struct_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition,
+	const SymbolTable& symbol_table);
+
+PublishResult commitParserEnumPublication(
+	DeclarationBuilder& builder,
+	EnumDeclarationNode& enum_decl,
 	ScopeId lexical_scope_id,
 	bool is_definition,
 	const SymbolTable& symbol_table);

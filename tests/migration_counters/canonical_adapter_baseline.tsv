@@ -1,2 +1,2 @@
 # path	supported minimum	unmigrated maximum
-tests/test_canonical_type_adapter_ret0.cpp	14	0
+tests/test_canonical_type_adapter_ret0.cpp	16	0
