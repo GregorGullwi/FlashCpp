@@ -25,7 +25,7 @@ enum class CanonicalBuiltinKind : uint8_t {
 
 enum class CanonicalTypeKind : uint8_t {
 	Builtin, Qualified, Pointer, LValueReference, RValueReference, Array,
-	Function, FunctionParam,
+	Function, FunctionParam, Record, MemberObjectPointer, MemberFunctionPointer,
 };
 
 enum class CanonicalTypeNodeFlags : uint8_t {
@@ -50,7 +50,8 @@ inline bool hasCanonicalTypeNodeFlag(CanonicalTypeNodeFlags flags, CanonicalType
 // An immutable structural node. A child is a canonical identity in this table,
 // never an AST pointer, spelling, legacy TypeIndex, or telemetry key.
 // FunctionParam links store the parameter TypeId in array_extent and the next
-// link in child, so variable-arity function types stay recursive and 16 bytes.
+// link in child. Member pointers store the owner TypeId in array_extent and the
+// pointee in child. Opaque Record nodes store EntityId in array_extent.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -71,9 +72,11 @@ struct CanonicalTypeArenaStats {
 
 class CanonicalTypeTransaction;
 
-// Boundary 3A callable family. IDs are local to one FrontendContext and are not
+// Boundary 3A type table. IDs are local to one FrontendContext and are not
 // portable hashes or ABI names. Equal requests in that context return one ID,
-// regardless of request order. Member pointers remain outside this table.
+// regardless of request order. Opaque Record nodes are EntityId-keyed owners for
+// member pointers; full record layout remains a later family. Spelling-backed
+// class names stay outside this table until class EntityId publication lands.
 // One mutex protects publication and reads; keep this boundary until the real
 // structural-request trace passes the parallel-experiment handoff gates.
 class CanonicalTypeTable {
@@ -219,8 +222,7 @@ public:
 		});
 	}
 
-	// Free-function and cv/ref-qualified function types. Member-pointer owner
-	// identity is a later 3A family and is rejected by the adapter, not here.
+	// Free-function and cv/ref-qualified function types.
 	TypeId function(TypeId return_type, std::span<const TypeId> parameters, bool is_variadic,
 		CVQualifier function_cv, ReferenceQualifier function_ref, bool is_noexcept) {
 		std::lock_guard lock(mutex_);
@@ -279,6 +281,62 @@ public:
 		});
 	}
 
+	// Opaque class identity for member-pointer owners. Full record members,
+	// bases, and layout are a later 3A family; EntityId is the only key.
+	TypeId record(EntityId entity) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!entity) {
+			throw InternalError("canonical type: invalid record EntityId");
+		}
+		return internUnlocked({
+			.child = TypeId{},
+			.kind = CanonicalTypeKind::Record,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = entity.value,
+		});
+	}
+
+	TypeId memberObjectPointer(TypeId owner, TypeId pointee) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const TypeId record_owner = recordOwnerUnlocked(owner);
+		const CanonicalTypeNode pointee_node = nodeUnlocked(pointee);
+		if (pointee_node.kind == CanonicalTypeKind::Function ||
+			pointee_node.kind == CanonicalTypeKind::FunctionParam ||
+			(pointee_node.kind == CanonicalTypeKind::Builtin &&
+				pointee_node.builtin == CanonicalBuiltinKind::Void)) {
+			throw InternalError("canonical type: invalid member object pointee");
+		}
+		return internUnlocked({
+			.child = pointee,
+			.kind = CanonicalTypeKind::MemberObjectPointer,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = record_owner.value,
+		});
+	}
+
+	TypeId memberFunctionPointer(TypeId owner, TypeId function) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const TypeId record_owner = recordOwnerUnlocked(owner);
+		if (nodeUnlocked(function).kind != CanonicalTypeKind::Function) {
+			throw InternalError("canonical type: member function pointee must be a function type");
+		}
+		return internUnlocked({
+			.child = function,
+			.kind = CanonicalTypeKind::MemberFunctionPointer,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = record_owner.value,
+		});
+	}
+
 	TypeId withoutTopLevelQualifiers(TypeId id) const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -331,6 +389,41 @@ public:
 		return TypeId{static_cast<uint32_t>(input.array_extent)};
 	}
 
+	TypeId memberPointerOwner(TypeId member_pointer) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(member_pointer);
+		if (input.kind != CanonicalTypeKind::MemberObjectPointer &&
+			input.kind != CanonicalTypeKind::MemberFunctionPointer) {
+			throw InternalError("canonical type: TypeId is not a member pointer");
+		}
+		if (input.array_extent == 0 || input.array_extent > live_count_) {
+			throw InternalError("canonical type: member pointer owner is outside this table");
+		}
+		return TypeId{static_cast<uint32_t>(input.array_extent)};
+	}
+
+	TypeId memberPointerPointee(TypeId member_pointer) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(member_pointer);
+		if (input.kind != CanonicalTypeKind::MemberObjectPointer &&
+			input.kind != CanonicalTypeKind::MemberFunctionPointer) {
+			throw InternalError("canonical type: TypeId is not a member pointer");
+		}
+		return input.child;
+	}
+
+	EntityId recordEntity(TypeId record) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(record);
+		if (input.kind != CanonicalTypeKind::Record) {
+			throw InternalError("canonical type: TypeId is not a record");
+		}
+		return EntityId{static_cast<uint32_t>(input.array_extent)};
+	}
+
 	size_t size() const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -359,6 +452,23 @@ private:
 
 	static bool isReference(CanonicalTypeKind kind) {
 		return kind == CanonicalTypeKind::LValueReference || kind == CanonicalTypeKind::RValueReference;
+	}
+
+	static bool isMemberPointer(CanonicalTypeKind kind) {
+		return kind == CanonicalTypeKind::MemberObjectPointer ||
+			kind == CanonicalTypeKind::MemberFunctionPointer;
+	}
+
+	TypeId recordOwnerUnlocked(TypeId owner) const {
+		CanonicalTypeNode input = nodeUnlocked(owner);
+		if (input.kind == CanonicalTypeKind::Qualified) {
+			owner = input.child;
+			input = nodeUnlocked(owner);
+		}
+		if (input.kind != CanonicalTypeKind::Record) {
+			throw InternalError("canonical type: member pointer owner must be a record");
+		}
+		return owner;
 	}
 
 	TypeId arrayUnlocked(TypeId element, uint64_t extent, CanonicalTypeNodeFlags flags) {
@@ -482,10 +592,19 @@ private:
 				current = nodeUnlocked(current.child);
 				continue;
 			}
+			if (isMemberPointer(current.kind)) {
+				appendNodeTraceFields(shape, current, 0);
+				shape.append('/');
+				appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(current.array_extent)});
+				shape.append('/');
+				current = nodeUnlocked(current.child);
+				continue;
+			}
 			appendNodeTraceFields(shape, current,
 				current.kind == CanonicalTypeKind::FunctionParam ? 0 : current.array_extent);
 			if (!current.child || current.kind == CanonicalTypeKind::Builtin ||
-				current.kind == CanonicalTypeKind::FunctionParam) {
+				current.kind == CanonicalTypeKind::FunctionParam ||
+				current.kind == CanonicalTypeKind::Record) {
 				break;
 			}
 			shape.append('/');
@@ -516,8 +635,17 @@ private:
 			appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(node.array_extent)});
 			return;
 		}
+		if (isMemberPointer(node.kind)) {
+			appendNodeTraceFields(shape, node, 0);
+			shape.append('/');
+			appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(node.array_extent)});
+			shape.append('/');
+			appendTypeIdTrace(shape, node.child);
+			return;
+		}
 		appendNodeTraceFields(shape, node, node.array_extent);
-		if (!node.child || node.kind == CanonicalTypeKind::Builtin) {
+		if (!node.child || node.kind == CanonicalTypeKind::Builtin ||
+			node.kind == CanonicalTypeKind::Record) {
 			return;
 		}
 		shape.append('/');
@@ -530,8 +658,9 @@ private:
 		}
 		// Trace-local structural spelling only: never serialize numeric TypeIds.
 		// Each slash-separated node is kind,builtin,cv,flags,extent. Function
-		// nodes emit extent 0/1 for empty/non-empty parameter lists; parameter
-		// TypeIds are expanded as nested structural shapes instead.
+		// and member-pointer owner/param TypeIds expand as nested shapes.
+		// Record extent carries EntityId, which is entity identity rather than a
+		// TypeId slot.
 		StringBuilder shape;
 		appendNodeTrace(shape, node);
 		FLASH_LOG(Types, Trace, "canonical-request-v2 ", shape.commit());

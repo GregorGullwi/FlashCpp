@@ -83,8 +83,9 @@ inline CVQualifier functionSignatureCV(const FunctionSignature& signature) {
 	return cv;
 }
 
-// Free-function and function-pointer shapes only. Member pointers keep the
-// UnmigratedCallable boundary until their owner identity lands.
+// Free-function and function-pointer shapes. Spelling-backed member pointers
+// remain UnmigratedCallable until class EntityId publication can supply Record
+// owners; the table already interns member pointers from Record TypeIds.
 inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (syntax.has_member_class() ||
