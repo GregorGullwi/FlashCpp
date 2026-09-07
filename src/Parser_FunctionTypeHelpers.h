@@ -88,6 +88,7 @@ inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(c
 	if (!func_decl.parent_struct_name().empty()) {
 		mfp_type.set_member_class_name(
 			StringTable::getOrInternStringHandle(func_decl.parent_struct_name()));
+		tryBindPublishedMemberClassEntity(mfp_type);
 	}
 	return mfp_type;
 }

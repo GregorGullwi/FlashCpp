@@ -236,7 +236,7 @@ inline void checkAdapter() {
 		Token{}, CVQualifier::None);
 	member_pointer.set_function_signature(member_signature);
 	member_pointer.set_member_class_name(StringTable::getOrInternStringHandle("Owner"));
-	// Spelling-backed owners stay deferred until class EntityId is bound.
+	// Spelling-only owners stay deferred until TypeInfo publishes a class EntityId.
 	require(importCanonicalType(table, member_pointer).status == CanonicalTypeImportStatus::UnmigratedCallable);
 	TypeSpecifierNode member_object(TypeCategory::MemberObjectPointer, TypeQualifier::None, 64,
 		Token{}, CVQualifier::None);
