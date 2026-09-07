@@ -4216,7 +4216,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (FrontendContext* front_end = frontendContext()) {
 			front_end->canonicalTypes().publishRecordLayout({
 				.entity = struct_ref.entity_id(),
-				.size_bytes = canonicalLayoutSize(toSizeT(struct_info->total_size)),
+				.size_bytes = canonicalLayoutSize(toSizeT(struct_info->sizeInBytes())),
 				.layout_data_size_bytes = canonicalLayoutSize(toSizeT(struct_info->layout_data_size)),
 				.non_virtual_size_bytes = canonicalLayoutSize(toSizeT(struct_info->non_virtual_size)),
 				.alignment = canonicalLayoutCount(struct_info->alignment),
