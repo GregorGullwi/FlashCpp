@@ -94,6 +94,34 @@ inline EntityId resolveMemberClassEntity(const TypeSpecifierNode& syntax) {
 	return {};
 }
 
+inline EntityId resolveNamedTypeEntity(const TypeSpecifierNode& syntax) {
+	if (syntax.has_type_entity()) {
+		return syntax.type_entity();
+	}
+	if (syntax.has_injected_class_declaration() &&
+		syntax.injected_class_declaration()->has_entity_id()) {
+		return syntax.injected_class_declaration()->entity_id();
+	}
+	return {};
+}
+
+// Opaque Record import for published class/struct types. Enum, alias, and
+// unpublished nominal forms stay deferred until their EntityId path lands.
+inline CanonicalTypeImport importCanonicalRecord(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax) {
+	const EntityId entity = resolveNamedTypeEntity(syntax);
+	if (!entity) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	auto id = table.record(entity);
+	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+	id = table.qualify(id, syntax.cv_qualifier());
+	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+		id = table.reference(id, syntax.reference_qualifier());
+	}
+	return {id, CanonicalTypeImportStatus::Supported};
+}
+
 inline CanonicalTypeImport importCanonicalFunctionSignature(
 	CanonicalTypeTable& table,
 	const FunctionSignature& signature) {
@@ -259,6 +287,21 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		}
 		return imported;
 	}
+	if (syntax.category() == TypeCategory::Struct) {
+		const bool has_ordinary_array = syntax.is_array() && !syntax.has_pointee_array_declarator();
+		const bool has_pointee_array = syntax.has_pointee_array_declarator();
+		const bool has_array_shape = has_ordinary_array || has_pointee_array ||
+			!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension();
+		if (has_array_shape) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+		}
+		CanonicalTypeTransaction transaction(table);
+		const auto imported = importCanonicalRecord(table, syntax);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			transaction.commit();
+		}
+		return imported;
+	}
 	CanonicalBuiltinKind builtin;
 	const bool is_unsigned = syntax.qualifier() == TypeQualifier::Unsigned;
 	switch (syntax.category()) {
@@ -286,6 +329,8 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	case TypeCategory::LongDouble: builtin = CanonicalBuiltinKind::LongDouble; break;
 	case TypeCategory::Nullptr: builtin = CanonicalBuiltinKind::Nullptr; break;
 	case TypeCategory::Struct:
+		// Handled above; keep the case for exhaustiveness diagnostics.
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	case TypeCategory::Enum:
 	case TypeCategory::UserDefined:
 	case TypeCategory::TypeAlias:

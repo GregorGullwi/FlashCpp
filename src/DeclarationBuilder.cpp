@@ -668,13 +668,17 @@ PublishResult DeclarationBuilder::publishClass(
 }
 
 TelemetryTypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
-	return internDeclaratorTypeImport(type_spec, importCanonicalType(canonical_types_, type_spec));
+	TypeSpecifierNode bound = type_spec;
+	tryBindPublishedTypeEntity(bound);
+	return internDeclaratorTypeImport(bound, importCanonicalType(canonical_types_, bound));
 }
 
 TelemetryTypeId DeclarationBuilder::internFunctionParameterType(const TypeSpecifierNode& type_spec) {
+	TypeSpecifierNode bound = type_spec;
+	tryBindPublishedTypeEntity(bound);
 	return internDeclaratorTypeImport(
-		type_spec,
-		importCanonicalFunctionParameterType(canonical_types_, type_spec));
+		bound,
+		importCanonicalFunctionParameterType(canonical_types_, bound));
 }
 
 TelemetryTypeId DeclarationBuilder::internDeclaratorTypeImport(

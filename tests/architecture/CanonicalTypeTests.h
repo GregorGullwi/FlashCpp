@@ -258,6 +258,22 @@ inline void checkAdapter() {
 	require(imported_mop.type == table.memberObjectPointer(
 		table.record(EntityId{7}), table.builtin(CanonicalBuiltinKind::Int)));
 	require(imported_mop.type != imported_mfp.type);
+
+	TypeSpecifierNode unpublished_record(TypeCategory::Struct, TypeQualifier::None, 64, Token{},
+		CVQualifier::Const);
+	unpublished_record.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	require(importCanonicalType(table, unpublished_record).status ==
+		CanonicalTypeImportStatus::UnmigratedNominal);
+
+	unpublished_record.set_type_entity(EntityId{3});
+	const auto imported_record = importCanonicalType(table, unpublished_record);
+	require(imported_record.status == CanonicalTypeImportStatus::Supported);
+	require(imported_record.type == table.reference(
+		table.qualify(table.record(EntityId{3}), CVQualifier::Const),
+		ReferenceQualifier::LValueReference));
+	require(imported_record.type != table.reference(
+		table.qualify(table.record(EntityId{4}), CVQualifier::Const),
+		ReferenceQualifier::LValueReference));
 }
 
 inline int run() {
