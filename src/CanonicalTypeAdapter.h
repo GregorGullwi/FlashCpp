@@ -18,6 +18,22 @@ enum class CanonicalTypeImportContext : uint8_t {
 	Exact, FunctionParameter,
 };
 
+inline TypeId addCanonicalPointerLevels(CanonicalTypeTable& table, TypeId id,
+	std::span<const PointerLevel> pointers) {
+	for (const auto& pointer : pointers) {
+		id = table.qualify(table.pointer(id), pointer.cv_qualifier);
+	}
+	return id;
+}
+
+inline TypeId addCanonicalArrayDimensions(CanonicalTypeTable& table, TypeId id,
+	std::span<const size_t> dimensions, size_t first_dimension) {
+	for (size_t index = dimensions.size(); index-- > first_dimension;) {
+		id = table.array(id, dimensions[index]);
+	}
+	return id;
+}
+
 // Boundary-3A adapter: inspect only resolved declarator structure. Unsupported
 // families stay explicit; never flatten a callable/dependent type into a
 // supported pointee. Spelling, parser state and gTypeInfo are not identity.
@@ -109,33 +125,22 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	CanonicalTypeTransaction transaction(table);
 	auto id = table.builtin(builtin);
 	id = table.qualify(id, syntax.cv_qualifier());
-	const auto addPointers = [&] {
-		for (const auto& pointer : syntax.pointer_levels()) {
-			id = table.qualify(table.pointer(id), pointer.cv_qualifier);
-		}
-	};
-	const auto addKnownDimensions = [&](size_t first_dimension) {
-		const std::span<const size_t> dimensions = syntax.array_dimensions();
-		for (size_t index = dimensions.size(); index-- > first_dimension;) {
-			id = table.array(id, dimensions[index]);
-		}
-	};
 	if (has_pointee_array) {
 		if (syntax.array_dimensions().empty()) {
 			id = table.arrayOfUnknownBound(id);
 		} else {
-			addKnownDimensions(0);
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
 		}
-		addPointers();
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 	} else {
-		addPointers();
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 		if (has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&
 			reference == ReferenceQualifier::None) {
 			const size_t first_inner_dimension = syntax.has_unsized_outer_array_dimension() ? 0 : 1;
-			addKnownDimensions(first_inner_dimension);
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), first_inner_dimension);
 			id = table.pointer(id);
 		} else if (has_ordinary_array) {
-			addKnownDimensions(0);
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
 			if (syntax.has_unsized_outer_array_dimension()) {
 				id = table.arrayOfUnknownBound(id);
 			}
