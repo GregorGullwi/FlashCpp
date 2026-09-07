@@ -2586,35 +2586,42 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					type_info->getStructInfo()->implicit_default_constructor;
 				if (type_info->getStructInfo()->hasAnyConstructor() || implicit_default_constructor.exists) {
 					FLASH_LOG(Codegen, Debug, "Struct ", type_info->name(), " has constructor or needs default constructor");
-						// Check if we have a copy/move initializer like "Tiny t2 = t;"
-						// Skip if the variable was already initialized with an rvalue (function return)
+					// Check if we have a copy/move initializer like "Tiny t2 = t;"
+					// Skip if the variable was already initialized with an rvalue (function return)
 					bool has_copy_init = false;
 					bool has_direct_ctor_call = false;
+					// C++20 [dcl.init.list]/3 / [dcl.init.aggr]: a brace initializer is
+					// aggregate initialization, not default construction. Array element
+					// stores above already materialized provided clauses; do not re-run
+					// the default constructor over those elements.
+					bool has_brace_aggregate_init = false;
 					const ConstructorCallNode* direct_ctor = nullptr;
 
 					FLASH_LOG(Codegen, Debug, "has_rvalue_initializer=", has_rvalue_initializer, " node.initializer()=", (bool)node.initializer());
 					if (node.initializer() && !has_rvalue_initializer) {
 						const ASTNode& init_node = *node.initializer();
-						if (init_node.is<ExpressionNode>()) {
+						if (init_node.is<InitializerListNode>()) {
+							has_brace_aggregate_init = true;
+						} else if (init_node.is<ExpressionNode>()) {
 							const auto& expr = init_node.as<ExpressionNode>();
 							FLASH_LOG(Codegen, Debug, "Checking initializer for ", decl.identifier_token().value());
-								// Check if this is a direct constructor call (e.g., S s(x))
+							// Check if this is a direct constructor call (e.g., S s(x))
 							if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr)) {
 								has_direct_ctor_call = true;
 								direct_ctor = constructor_call;
 								FLASH_LOG(Codegen, Debug, "Found ConstructorCallNode initializer");
-							} else if (!init_node.is<InitializerListNode>()) {
-									// For copy initialization like "AllSizes b = a;", we need to
-									// generate a copy constructor call.
+							} else {
+								// For copy initialization like "AllSizes b = a;", we need to
+								// generate a copy constructor call.
 								has_copy_init = true;
 							}
 						}
 					}
 
 					if (has_direct_ctor_call && direct_ctor) {
-							// Direct constructor call like S s(x) - process its arguments directly
+						// Direct constructor call like S s(x) - process its arguments directly
 						FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info->name());
-							// Find the matching constructor to get parameter types for reference handling
+						// Find the matching constructor to get parameter types for reference handling
 						const ConstructorDeclarationNode* matching_ctor = nullptr;
 						bool ctor_constructs_target_type = false;
 						{
@@ -2735,9 +2742,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 
-							// C++20 aggregate parenthesized initialization (P0960):
-							// If no matching constructor was found and the struct is an aggregate
-							// (no user-defined constructors), generate direct member stores.
+						// C++20 aggregate parenthesized initialization (P0960):
+						// If no matching constructor was found and the struct is an aggregate
+						// (no user-defined constructors), generate direct member stores.
 						bool used_aggregate_paren_init = false;
 						if (!matching_ctor && type_info->getStructInfo() && num_args > 0 && !type_info->getStructInfo()->members.empty()) {
 							bool is_aggregate = true;
@@ -2766,7 +2773,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
 								}
 
-									// Then emit member stores for each argument
+								// Then emit member stores for each argument
 								size_t member_idx = 0;
 								direct_ctor->arguments().visit([&](ASTNode argument) {
 									if (member_idx >= type_info->getStructInfo()->members.size()) {
@@ -2787,7 +2794,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									member_idx++;
 								});
 
-									// Register for destructor if needed
+								// Register for destructor if needed
 								if (type_info->getStructInfo()->hasDestructor()) {
 									registerVariableWithDestructor(
 										std::string(decl.identifier_token().value()),
@@ -3128,7 +3135,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						ConstructorCallOp ctor_op;
 						ctor_op.object = decl.identifier_token().handle();
 
-							// Add initializer as constructor parameter
+						// Add initializer as constructor parameter
 						{
 							if (sema_source_base_class_offset.has_value()) {
 								if (*sema_source_base_class_offset < std::numeric_limits<int>::min() ||
@@ -3145,12 +3152,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 							const TypeSpecifierNode* param_type = sema_selected_param_type;
 
-								// applyConstructorArgConversion now performs the pre-bind scalar conversion
-								// for reference parameters (e.g. int→double for const double&). Reuse the
-								// shared constructor-argument helper so identifier, literal, and general
-								// expression sources all get the correct direct-bind vs
-								// temporary-materialization/address-of handling — consistent with
-								// materializeSelectedConvertingConstructor and brace-init call sites.
+							// applyConstructorArgConversion now performs the pre-bind scalar conversion
+							// for reference parameters (e.g. int→double for const double&). Reuse the
+							// shared constructor-argument helper so identifier, literal, and general
+							// expression sources all get the correct direct-bind vs
+							// temporary-materialization/address-of handling — consistent with
+							// materializeSelectedConvertingConstructor and brace-init call sites.
 							if (param_type) {
 								init_arg = buildConstructorArgumentValue(
 									init_operands,
@@ -3225,8 +3232,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							ctor_op.arguments.push_back(std::move(init_arg));
 						}
 
-							// For copy/move ctors with trailing defaults (e.g. Foo(const Foo&, int=0)),
-							// fill in the default arguments so the backend sees the full parameter list.
+						// For copy/move ctors with trailing defaults (e.g. Foo(const Foo&, int=0)),
+						// fill in the default arguments so the backend sees the full parameter list.
 						if (sema_selected_converting_ctor) {
 							if (sema_selected_converting_ctor->parameter_nodes().size() > ctor_op.arguments.size()) {
 								fillInConstructorDefaultArguments(
@@ -3285,12 +3292,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 						register_destructor_if_needed(decl, type_info);
 					} else if (!has_rvalue_initializer) {
-							// No initializer - check if we need to call default constructor
-							// Call default constructor if:
-							// 1. It's user-defined (not implicit), OR
-							// 2. The struct has default member initializers (implicit ctor needs to init them), OR
-							// 3. The struct has a vtable (implicit ctor needs to init the vptr), OR
-							// 4. The struct has base classes with constructors (implicit ctor needs to call base ctors)
+						// No expression initializer - default-construct, unless brace
+						// aggregate initialization already covered the object/elements.
+						// Call default constructor if:
+						// 1. It's user-defined (not implicit), OR
+						// 2. The struct has default member initializers (implicit ctor needs to init them), OR
+						// 3. The struct has a vtable (implicit ctor needs to init the vptr), OR
+						// 4. The struct has base classes with constructors (implicit ctor needs to call base ctors)
 						const StructMemberFunction* default_ctor = type_info->getStructInfo()->findDefaultConstructor();
 						bool is_implicit_default_ctor = false;
 						if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
@@ -3298,7 +3306,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							is_implicit_default_ctor = ctor_node.is_implicit();
 						}
 
-							// Check if any base class has constructors that need to be called
+						// Check if any base class has constructors that need to be called
 						bool has_base_with_constructors = false;
 						for (const auto& base : type_info->getStructInfo()->base_classes) {
 							if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
@@ -3324,31 +3332,50 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 													   type_info->getStructInfo()->has_vtable ||
 													   has_base_with_constructors;
 
+						// Brace-initialized elements are already aggregate-initialized.
+						// Only value-initialize trailing array elements that lack a clause
+						// ([dcl.init.aggr]/5). Non-array brace-init returns earlier.
+						size_t ctor_start_index = 0;
+						if (has_brace_aggregate_init) {
+							if (!decl.is_array_object()) {
+								needs_default_ctor_call = false;
+							} else {
+								const size_t brace_count =
+									node.initializer()->as<InitializerListNode>().initializers().size();
+								ctor_start_index = brace_count;
+								if (ctor_start_index >= array_count) {
+									needs_default_ctor_call = false;
+								}
+							}
+						}
+
 						if (needs_default_ctor_call) {
 							const ConstructorDeclarationNode* default_ctor_node = nullptr;
 							if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 								default_ctor_node = &default_ctor->function_decl.as<ConstructorDeclarationNode>();
 							}
 							queueConstructorDefinition(*type_info, default_ctor_node);
-								// Check if this is an array - need to call constructor for each element
+							// Check if this is an array - need to call constructor for each element
 							if (decl.is_array()) {
-									// For arrays, we need to call the constructor once for each element
-									// Get array size
-								size_t ctor_array_count = 1;
-								auto size_expr = decl.array_size();
-								if (size_expr.has_value()) {
+								// For arrays, we need to call the constructor once for each element
+								// Get array size
+								size_t ctor_array_count = array_count > 0 ? array_count : 1;
+								if (ctor_array_count <= 1) {
+									auto size_expr = decl.array_size();
+									if (size_expr.has_value()) {
 										// Evaluate the array size expression using ConstExprEvaluator
-									ConstExpr::EvaluationContext array_ctx = makeEvalContext(symbol_table);
-									auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, array_ctx);
-									if (eval_result.success()) {
-										ctor_array_count = static_cast<size_t>(eval_result.as_int());
+										ConstExpr::EvaluationContext array_ctx = makeEvalContext(symbol_table);
+										auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, array_ctx);
+										if (eval_result.success()) {
+											ctor_array_count = static_cast<size_t>(eval_result.as_int());
+										}
 									}
 								}
 
-									// Generate constructor call for each array element
-								for (size_t i = 0; i < ctor_array_count; i++) {
+								// Generate constructor call for each not-yet-initialized element
+								for (size_t i = ctor_start_index; i < ctor_array_count; i++) {
 									ConstructorCallOp ctor_op;
-										// For arrays, we need to specify the element to construct
+									// For arrays, we need to specify the element to construct
 									ctor_op.object = decl.identifier_token().handle();
 									ctor_op.array_index = i;	 // Mark this as an array element constructor call
 
