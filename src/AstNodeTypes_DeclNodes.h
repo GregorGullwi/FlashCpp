@@ -1958,6 +1958,7 @@ public:
 	void copy_binding_identity_from(const TypeSpecifierNode& other) {
 		template_parameter_name_ = other.template_parameter_name_;
 		injected_class_declaration_ = other.injected_class_declaration_;
+		member_class_entity_ = other.member_class_entity_;
 	}
 	// Pointer-to-member support (for types like int Class::*)
 	bool has_member_class() const { return member_class_name_.has_value(); }
@@ -1969,6 +1970,13 @@ public:
 			class_name.isValid()) {
 			function_signature_->class_name = class_name;
 		}
+	}
+	bool has_member_class_entity() const { return static_cast<bool>(member_class_entity_); }
+	EntityId member_class_entity() const { return member_class_entity_; }
+	void set_member_class_entity(EntityId entity_id) { member_class_entity_ = entity_id; }
+	void clear_member_class_identity() {
+		member_class_name_.reset();
+		member_class_entity_ = {};
 	}
 
 	void set_type_index(TypeIndex index) {
@@ -1987,6 +1995,7 @@ public:
 		pointee_array_declarator_ = other.pointee_array_declarator_;
 		has_unsized_outer_array_dimension_ = other.has_unsized_outer_array_dimension_;
 		function_signature_ = other.function_signature_;
+		member_class_name_ = other.member_class_name_;
 		copy_binding_identity_from(other);
 		// Note: is_pack_expansion_ is NOT copied - it's context-specific during parsing
 		// and shouldn't be propagated during type substitution in template instantiation
@@ -2019,6 +2028,7 @@ private:
 	StringHandle template_parameter_name_; // Scoped type-template parameter binding
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
+	EntityId member_class_entity_; // Published class owner; never StringHandle identity
 	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
 
 public:

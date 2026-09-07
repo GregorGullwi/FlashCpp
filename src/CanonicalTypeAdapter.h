@@ -83,22 +83,21 @@ inline CVQualifier functionSignatureCV(const FunctionSignature& signature) {
 	return cv;
 }
 
-// Free-function and function-pointer shapes. Spelling-backed member pointers
-// remain UnmigratedCallable until class EntityId publication can supply Record
-// owners; the table already interns member pointers from Record TypeIds.
-inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
-	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
-	if (syntax.has_member_class() ||
-		syntax.category() == TypeCategory::MemberFunctionPointer ||
-		syntax.category() == TypeCategory::MemberObjectPointer) {
-		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+inline EntityId resolveMemberClassEntity(const TypeSpecifierNode& syntax) {
+	if (syntax.has_member_class_entity()) {
+		return syntax.member_class_entity();
 	}
-	if (!syntax.has_function_signature()) {
-		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	if (syntax.has_injected_class_declaration() &&
+		syntax.injected_class_declaration()->has_entity_id()) {
+		return syntax.injected_class_declaration()->entity_id();
 	}
-	const FunctionSignature& signature = syntax.function_signature();
-	if (signature.class_name.isValid() ||
-		signature.calling_convention != CallingConvention::Default ||
+	return {};
+}
+
+inline CanonicalTypeImport importCanonicalFunctionSignature(
+	CanonicalTypeTable& table,
+	const FunctionSignature& signature) {
+	if (signature.calling_convention != CallingConvention::Default ||
 		signature.linkage == Linkage::DllImport ||
 		signature.linkage == Linkage::DllExport) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
@@ -130,13 +129,89 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 		parameters.push_back(parameter_type);
 	}
 
-	auto id = table.function(
-		imported_return.type,
-		parameters,
-		signature.is_variadic,
-		functionSignatureCV(signature),
-		signature.function_reference_qualifier,
-		signature.is_noexcept);
+	return {
+		table.function(
+			imported_return.type,
+			parameters,
+			signature.is_variadic,
+			functionSignatureCV(signature),
+			signature.function_reference_qualifier,
+			signature.is_noexcept),
+		CanonicalTypeImportStatus::Supported};
+}
+
+// Member pointers require a published class EntityId. Spelling-only owners stay
+// UnmigratedCallable. MemberObjectPointer category that erased the pointee type
+// also stays deferred.
+inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax) {
+	const EntityId owner_entity = resolveMemberClassEntity(syntax);
+	if (!owner_entity) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	const TypeId owner = table.record(owner_entity);
+	if (syntax.category() == TypeCategory::MemberFunctionPointer ||
+		(syntax.has_function_signature() && syntax.has_member_class())) {
+		if (!syntax.has_function_signature()) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+		}
+		FunctionSignature signature = syntax.function_signature();
+		signature.class_name = {};
+		const auto imported_function = importCanonicalFunctionSignature(table, signature);
+		if (imported_function.status != CanonicalTypeImportStatus::Supported) {
+			return imported_function;
+		}
+		auto id = table.memberFunctionPointer(owner, imported_function.type);
+		id = table.qualify(id, syntax.cv_qualifier());
+		if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+			id = table.reference(id, syntax.reference_qualifier());
+		}
+		return {id, CanonicalTypeImportStatus::Supported};
+	}
+	if (syntax.category() == TypeCategory::MemberObjectPointer) {
+		// Cast/MOP forms overwrite the pointee category; recover it later.
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	if (!syntax.has_member_class()) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	TypeSpecifierNode pointee = syntax;
+	pointee.clear_member_class_identity();
+	pointee.clear_injected_class_declaration();
+	pointee.limit_pointer_depth(0);
+	const auto imported_pointee = importCanonicalTypeImpl(
+		table, pointee, CanonicalTypeImportContext::Exact);
+	if (imported_pointee.status != CanonicalTypeImportStatus::Supported) {
+		return imported_pointee;
+	}
+	auto id = table.memberObjectPointer(owner, imported_pointee.type);
+	id = table.qualify(id, syntax.cv_qualifier());
+	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+		id = table.reference(id, syntax.reference_qualifier());
+	}
+	return {id, CanonicalTypeImportStatus::Supported};
+}
+
+// Free-function and function-pointer shapes.
+inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
+	if (syntax.has_member_class() ||
+		syntax.category() == TypeCategory::MemberFunctionPointer ||
+		syntax.category() == TypeCategory::MemberObjectPointer) {
+		return importCanonicalMemberPointer(table, syntax);
+	}
+	if (!syntax.has_function_signature()) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	const FunctionSignature& signature = syntax.function_signature();
+	if (signature.class_name.isValid()) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	const auto imported_function = importCanonicalFunctionSignature(table, signature);
+	if (imported_function.status != CanonicalTypeImportStatus::Supported) {
+		return imported_function;
+	}
+	auto id = imported_function.type;
 	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {
 		if (syntax.pointer_levels().empty()) {
 			id = table.pointer(id);
@@ -167,7 +242,12 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	if (syntax.has_member_class() ||
 		syntax.category() == TypeCategory::MemberFunctionPointer ||
 		syntax.category() == TypeCategory::MemberObjectPointer) {
-		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+		CanonicalTypeTransaction transaction(table);
+		const auto imported = importCanonicalMemberPointer(table, syntax);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			transaction.commit();
+		}
+		return imported;
 	}
 	if (syntax.has_function_signature() ||
 		syntax.category() == TypeCategory::Function ||

@@ -95,6 +95,57 @@ void PreparedFunctionPublication::consume() {
 	consumed_ = 1;
 }
 
+PreparedClassPublication::PreparedClassPublication(
+	PublishStatus status,
+	EntityId entity_id,
+	ScopeId lexical_scope_id,
+	OwnerId owner_id,
+	StringHandle name,
+	uint8_t flags)
+	: status_(status)
+	, entity_id_(entity_id)
+	, lexical_scope_id_(lexical_scope_id)
+	, owner_id_(owner_id)
+	, name_(name)
+	, flags_(flags)
+	, consumed_(0) {
+}
+
+PreparedClassPublication::PreparedClassPublication(PreparedClassPublication&& other) noexcept
+	: status_(other.status_)
+	, entity_id_(other.entity_id_)
+	, lexical_scope_id_(other.lexical_scope_id_)
+	, owner_id_(other.owner_id_)
+	, name_(other.name_)
+	, flags_(other.flags_)
+	, consumed_(other.consumed_) {
+	other.consumed_ = 1;
+	other.status_ = PublishStatus::Rejected;
+}
+
+PreparedClassPublication& PreparedClassPublication::operator=(PreparedClassPublication&& other) noexcept {
+	if (this == &other) {
+		return *this;
+	}
+	status_ = other.status_;
+	entity_id_ = other.entity_id_;
+	lexical_scope_id_ = other.lexical_scope_id_;
+	owner_id_ = other.owner_id_;
+	name_ = other.name_;
+	flags_ = other.flags_;
+	consumed_ = other.consumed_;
+	other.consumed_ = 1;
+	other.status_ = PublishStatus::Rejected;
+	return *this;
+}
+
+void PreparedClassPublication::consume() {
+	if (consumed_ != 0) {
+		throw InternalError("DeclarationBuilder: PreparedClassPublication already committed");
+	}
+	consumed_ = 1;
+}
+
 PublishResult DeclarationBuilder::makeRejected(EntityId existing_entity) {
 	return PublishResult{PublishStatus::Rejected, DeclId{}, existing_entity};
 }
@@ -109,6 +160,14 @@ uint8_t DeclarationBuilder::requestFlags(const FunctionDeclRequest& request) {
 	}
 	if (request.is_constexpr) {
 		flags = static_cast<uint8_t>(flags | DeclarationFlags::IsConstexpr);
+	}
+	return flags;
+}
+
+uint8_t DeclarationBuilder::requestFlags(const ClassDeclRequest& request) {
+	uint8_t flags = 0;
+	if (request.is_definition) {
+		flags = static_cast<uint8_t>(flags | DeclarationFlags::IsDefinition);
 	}
 	return flags;
 }
@@ -160,6 +219,16 @@ bool DeclarationBuilder::isValidRequest(const FunctionDeclRequest& request) cons
 		return false;
 	}
 	if (request.language_linkage != LanguageLinkage::CPlusPlus) {
+		return false;
+	}
+	return true;
+}
+
+bool DeclarationBuilder::isValidRequest(const ClassDeclRequest& request) const {
+	if (!request.lexical_scope_id) {
+		return false;
+	}
+	if (!request.name.isValid()) {
 		return false;
 	}
 	return true;
@@ -439,6 +508,165 @@ PublishResult DeclarationBuilder::publishFunction(
 	return result;
 }
 
+// Class entities use signature_id == 0 in the lookup key so they cannot collide
+// with free-function overloads, which always receive a non-zero telemetry
+// signature id from internParameterListSignature.
+PreparedClassPublication DeclarationBuilder::prepareClassPublication(
+	const ClassDeclRequest& request,
+	const SymbolTable& symbol_table) const {
+	if (!isValidRequest(request)) {
+		return PreparedClassPublication(
+			PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, 0);
+	}
+
+	const std::optional<PublicationTarget> target =
+		resolvePublicationTarget(symbol_table, request.lexical_scope_id);
+	if (!target.has_value()) {
+		return PreparedClassPublication(
+			PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, 0);
+	}
+
+	const EntityLookupKey key{target->owner_id.value, request.name.handle, 0};
+	const auto existing = entity_by_key_.find(key);
+	if (existing == entity_by_key_.end()) {
+		return PreparedClassPublication(
+			PublishStatus::Created,
+			EntityId{},
+			request.lexical_scope_id,
+			target->owner_id,
+			request.name,
+			requestFlags(request));
+	}
+
+	const EntityRecord& live_entity = entities_[existing->second.value - 1];
+	const EntityId entity_id = live_entity.id;
+	if (live_entity.kind != static_cast<uint8_t>(DeclKind::Class)) {
+		return PreparedClassPublication(
+			PublishStatus::Rejected, entity_id, ScopeId{}, OwnerId{}, StringHandle{}, 0);
+	}
+
+	const bool prior_definition = hasFlag(live_entity.flags, DeclarationFlags::IsDefinition);
+	if (request.is_definition && prior_definition) {
+		return PreparedClassPublication(
+			PublishStatus::Rejected, entity_id, ScopeId{}, OwnerId{}, StringHandle{}, 0);
+	}
+
+	return PreparedClassPublication(
+		PublishStatus::MergedRedeclaration,
+		entity_id,
+		request.lexical_scope_id,
+		target->owner_id,
+		request.name,
+		requestFlags(request));
+}
+
+PublishResult DeclarationBuilder::commitClassPublication(
+	PreparedClassPublication& prepared,
+	PublicationTransaction& transaction) {
+	prepared.consume();
+	if (prepared.isRejected()) {
+		return prepared.rejection();
+	}
+
+	const EntityLookupKey key{prepared.owner_id_.value, prepared.name_.handle, 0};
+	if (prepared.status_ == PublishStatus::Created) {
+		if (entity_by_key_.find(key) != entity_by_key_.end()) {
+			throw InternalError("DeclarationBuilder: prepared Created class key already exists");
+		}
+
+		EntityRecord entity_record{};
+		entity_record.owner_id = prepared.owner_id_;
+		entity_record.name = prepared.name_;
+		entity_record.signature_id = TelemetryTypeId{};
+		entity_record.return_type_id = TelemetryTypeId{};
+		entity_record.kind = static_cast<uint8_t>(DeclKind::Class);
+		entity_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
+		entity_record.flags = prepared.flags_;
+		entity_record.reserved = 0;
+
+		const EntityId entity_id = allocateEntity(entity_record);
+
+		DeclarationRecord decl_record{};
+		decl_record.entity_id = entity_id;
+		decl_record.previous_decl_id = DeclId{};
+		decl_record.lexical_scope_id = prepared.lexical_scope_id_;
+		decl_record.name = prepared.name_;
+		decl_record.signature_id = TelemetryTypeId{};
+		decl_record.return_type_id = TelemetryTypeId{};
+		decl_record.kind = static_cast<uint8_t>(DeclKind::Class);
+		decl_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
+		decl_record.flags = prepared.flags_;
+		decl_record.reserved = 0;
+
+		DeclId decl_id{};
+		try {
+			decl_id = allocateDeclaration(decl_record);
+			EntityRecord& live_entity = entities_[entity_id.value - 1];
+			live_entity.first_decl_id = decl_id;
+			live_entity.latest_decl_id = decl_id;
+			const auto insert_result = entity_by_key_.emplace(key, entity_id);
+			if (!insert_result.second) {
+				throw InternalError("DeclarationBuilder: class entity lookup map rejected insertion");
+			}
+			transaction.noteEntityLookupInsert(key);
+		} catch (...) {
+			entity_by_key_.erase(key);
+			if (decl_id) {
+				declarations_.pop_back();
+			}
+			entities_.pop_back();
+			throw;
+		}
+
+		return PublishResult{PublishStatus::Created, decl_id, entity_id};
+	}
+
+	if (!prepared.entity_id_ || prepared.entity_id_.value > entities_.size()) {
+		throw InternalError("DeclarationBuilder: prepared merge class publication has invalid EntityId");
+	}
+	const auto existing = entity_by_key_.find(key);
+	if (existing == entity_by_key_.end() || existing->second != prepared.entity_id_) {
+		throw InternalError("DeclarationBuilder: prepared merge class publication key does not match");
+	}
+
+	EntityRecord& live_entity = entities_[prepared.entity_id_.value - 1];
+	const EntityId entity_id = live_entity.id;
+	transaction.noteEntityMutation(entity_id, live_entity);
+
+	DeclarationRecord decl_record{};
+	decl_record.entity_id = entity_id;
+	decl_record.previous_decl_id = live_entity.latest_decl_id;
+	decl_record.lexical_scope_id = prepared.lexical_scope_id_;
+	decl_record.name = prepared.name_;
+	decl_record.signature_id = TelemetryTypeId{};
+	decl_record.return_type_id = TelemetryTypeId{};
+	decl_record.kind = static_cast<uint8_t>(DeclKind::Class);
+	decl_record.language_linkage = static_cast<uint8_t>(LanguageLinkage::CPlusPlus);
+	decl_record.flags = prepared.flags_;
+	decl_record.reserved = 0;
+
+	const DeclId decl_id = allocateDeclaration(decl_record);
+	live_entity.latest_decl_id = decl_id;
+	if (hasFlag(prepared.flags_, DeclarationFlags::IsDefinition)) {
+		live_entity.flags = static_cast<uint8_t>(live_entity.flags | DeclarationFlags::IsDefinition);
+	}
+
+	return PublishResult{PublishStatus::MergedRedeclaration, decl_id, entity_id};
+}
+
+PublishResult DeclarationBuilder::publishClass(
+	const ClassDeclRequest& request,
+	const SymbolTable& symbol_table) {
+	PreparedClassPublication prepared = prepareClassPublication(request, symbol_table);
+	if (prepared.isRejected()) {
+		return prepared.rejection();
+	}
+	PublicationTransaction transaction(*this);
+	const PublishResult result = commitClassPublication(prepared, transaction);
+	transaction.commit();
+	return result;
+}
+
 TelemetryTypeId DeclarationBuilder::internDeclaratorType(const TypeSpecifierNode& type_spec) {
 	return internDeclaratorTypeImport(type_spec, importCanonicalType(canonical_types_, type_spec));
 }
@@ -550,6 +778,25 @@ bool shouldPublishParserFreeFunction(const FunctionDeclarationNode& func_decl, S
 		return false;
 	}
 	if (func_decl.linkage() == Linkage::C) {
+		return false;
+	}
+	if (scope_type != ScopeType::Global && scope_type != ScopeType::Namespace) {
+		return false;
+	}
+	return true;
+}
+
+bool shouldPublishParserClass(
+	const StructDeclarationNode& struct_decl,
+	ScopeType scope_type,
+	bool parsing_template_class) {
+	if (parsing_template_class) {
+		return false;
+	}
+	if (struct_decl.is_local_class()) {
+		return false;
+	}
+	if (struct_decl.enclosing_class() != nullptr) {
 		return false;
 	}
 	if (scope_type != ScopeType::Global && scope_type != ScopeType::Namespace) {
@@ -675,5 +922,31 @@ PublishResult commitParserFreeFunctionPublication(
 
 	const PublishResult result = builder.commitFunctionPublication(prepared, transaction);
 	transaction.commit();
+	return result;
+}
+
+PublishResult commitParserClassPublication(
+	DeclarationBuilder& builder,
+	StructDeclarationNode& struct_decl,
+	ScopeId lexical_scope_id,
+	bool is_definition,
+	const SymbolTable& symbol_table) {
+	ClassDeclRequest request{};
+	request.lexical_scope_id = lexical_scope_id;
+	request.name = struct_decl.name();
+	request.is_definition = is_definition;
+
+	PublicationTransaction transaction(builder);
+	PreparedClassPublication prepared = builder.prepareClassPublication(request, symbol_table);
+	if (prepared.isRejected()) {
+		transaction.rollback();
+		return prepared.rejection();
+	}
+
+	const PublishResult result = builder.commitClassPublication(prepared, transaction);
+	transaction.commit();
+	if (result.status == PublishStatus::Created || result.status == PublishStatus::MergedRedeclaration) {
+		struct_decl.set_entity_id(result.entity_id);
+	}
 	return result;
 }
