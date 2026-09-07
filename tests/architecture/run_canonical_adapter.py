@@ -52,6 +52,11 @@ def main():
             raise RuntimeError(f"{source}: no canonical record request")
         if not any(re.search(r"(?:^|/)11,0,0,", trace) for trace in traces):
             raise RuntimeError(f"{source}: no canonical enum request")
+        for nominal_kind, label in (("8", "record"), ("11", "enum")):
+            if not any(re.search(
+                    rf"(?:^|/)5,0,0,1,2/(?:1,0,1,0,0/)?{nominal_kind},0,0,0,", trace)
+                    for trace in traces):
+                raise RuntimeError(f"{source}: no complete canonical {label}-array request")
         (output / (name + ".trace")).write_text("\n".join(traces) + "\n")
         print(f"{source}: supported={counts[0]} deferred={counts[1]} traces={len(traces)}")
 
