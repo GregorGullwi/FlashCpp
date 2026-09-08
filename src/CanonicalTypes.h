@@ -902,11 +902,6 @@ private:
 
 	void validateRecordMemberUnlocked(const CanonicalRecordMember& member) const {
 		nodeUnlocked(member.type);
-		if (member.access != CanonicalAccess::Public &&
-			member.access != CanonicalAccess::Protected &&
-			member.access != CanonicalAccess::Private) {
-			throw InternalError("canonical type: invalid record member access");
-		}
 		const bool is_bitfield =
 			hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield);
 		if (is_bitfield != (member.bit_width != 0)) {
@@ -920,14 +915,6 @@ private:
 	void validateRecordBaseUnlocked(const CanonicalRecordBase& base) const {
 		if (!base.entity) {
 			throw InternalError("canonical type: record base requires EntityId");
-		}
-		if (base.access != CanonicalAccess::Public &&
-			base.access != CanonicalAccess::Protected &&
-			base.access != CanonicalAccess::Private) {
-			throw InternalError("canonical type: invalid record base access");
-		}
-		if (base.reserved != 0 || base.reserved2 != 0) {
-			throw InternalError("canonical type: record base reserved fields must be zero");
 		}
 	}
 
