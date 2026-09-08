@@ -5,6 +5,7 @@
 #include "StringTable.h"
 
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
@@ -33,6 +34,17 @@ public:
 		const TemplateDeclId id{raw};
 		ids_by_key_.emplace(key, id);
 		return id;
+	}
+
+	std::optional<TemplateDeclId> findPrimaryClassTemplate(OwnerId owner, StringHandle name) const {
+		if (!owner || !name.isValid()) {
+			return std::nullopt;
+		}
+		const auto existing = ids_by_key_.find(Key{owner.value, name});
+		if (existing == ids_by_key_.end()) {
+			return std::nullopt;
+		}
+		return existing->second;
 	}
 
 	size_t size() const {
