@@ -3811,6 +3811,7 @@ ParseResult Parser::parse_type_specifier() {
 								ReferenceQualifier::None);
 							TypeSpecifierNode concrete_type = resolveTypeInfoToTypeSpec(*param_type_info, outer_spec);
 							concrete_type.set_template_parameter_identity(type_name_handle);
+							stampActiveTemplateParameterDecl(concrete_type, type_name_handle);
 							if (const int concrete_size_bits = getTypeSpecSizeBits(concrete_type); concrete_size_bits > 0) {
 								concrete_type.set_size_in_bits(concrete_size_bits);
 							}
@@ -3823,6 +3824,7 @@ ParseResult Parser::parse_type_specifier() {
 						TypeSpecifierNode param_type(
 							param_type_idx.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None);
 						param_type.set_template_parameter_identity(type_name_handle);
+						stampActiveTemplateParameterDecl(param_type, type_name_handle);
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(param_type));
 					} else {
 						// Template parameter not yet in getTypesByNameMap() - create a placeholder
@@ -3839,6 +3841,7 @@ ParseResult Parser::parse_type_specifier() {
 						TypeSpecifierNode param_type(
 							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None);
 						param_type.set_template_parameter_identity(type_name_handle);
+						stampActiveTemplateParameterDecl(param_type, type_name_handle);
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(param_type));
 					}
 				}

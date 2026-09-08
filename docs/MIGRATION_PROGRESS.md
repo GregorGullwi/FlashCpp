@@ -5,18 +5,19 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-08 after opaque TemplateParameter TypeId import
+Last updated: 2026-09-08 after primary class-template TemplateDeclId publication
 (local feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's template-parameter slice is on
-`codex/boundary-3a-template-parameters` for local review. Dependent-`noexcept`
-ExprId Functions, unstructured signatures, calling-convention / dll-linkage
-callables, record member/base field schemas, complete-object Record/Enum layout,
-opaque Record/Enum import, member-pointer EntityId binding, and earlier families
-are on `main`. Gate 0 is closed. Architecture boundary 1 remains incomplete;
-remaining template specialization / dependent-name families still block expanding
+Architecture boundary 3A's TemplateDeclId-publication slice is on
+`codex/boundary-3a-template-decl-publication` for local review. Opaque
+TemplateParameter TypeId import, dependent-`noexcept` ExprId Functions,
+unstructured signatures, calling-convention / dll-linkage callables, record
+member/base field schemas, complete-object Record/Enum layout, opaque
+Record/Enum import, member-pointer EntityId binding, and earlier families are on
+`main`. Gate 0 is closed. Architecture boundary 1 remains incomplete; remaining
+template specialization / dependent-name families still block expanding
 shadow/merge coverage.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
@@ -31,7 +32,10 @@ shadow/merge coverage.
   owners are recursive links, not a second identity space. Construction accepts
   no spelling or legacy flat-type identity. `FrontendContext` also owns a
   `DependentExpressionTable` that interns dependent unevaluated expressions to
-  `ExprId` using structural identity (not `StringHandle`).
+  `ExprId` using structural identity (not `StringHandle`), and a
+  `TemplateDeclTable` that publishes primary class-template `TemplateDeclId`s
+  keyed by `OwnerId` + template name (redeclaration merge; spelling is a lookup
+  key only).
 - Published global/namespace structs and enums bind `type_entity` / injected-
   class metadata at declarator intern time so `Struct` and `Enum` declarators
   import as opaque `Record(EntityId)` and `Enum(EntityId)` nodes (with
@@ -47,23 +51,27 @@ shadow/merge coverage.
   stay deferred. Function types carry `CanonicalCallingConvention` in the
   Function node's builtin byte and dllimport/dllexport as flag bits. Dependent
   `noexcept(expr)` packs an `ExprId` beside the parameter-list link and sets
-  `DependentNoexceptFunction`. Type-template parameters import as
-  `TemplateParameter` when `TypeSpecifierNode` carries a published
-  `TemplateDeclId` + parameter index (cv/pointer/array/ref wrappers included);
-  spelling-only template-parameter bindings stay Unresolved until that
-  publication lands. The adapter also imports structured callables, flat
-  TypeIndex projections, and dependent-noexcept signatures with published
-  `ExprId` as Supported when every component imports. Invalid-category TypeIndex
-  projections stay UnmigratedCallable. The production adapter fixture remains
-  25 supported / 0 deferred and emits Record/Enum array and function traces.
-  `SymbolTable` retains lookup and merge authority.
+  `DependentNoexceptFunction`. Namespace/global primary class templates publish
+  a `TemplateDeclId` onto `StructDeclarationNode` /
+  `TemplateClassDeclarationNode` when the class name is known; while that
+  template's body is parsed, type-parameter `TypeSpecifierNode`s are stamped with
+  `TemplateDeclId` + parameter index so the adapter imports them as
+  `TemplateParameter` (cv/pointer/array/ref wrappers included). Spelling-only
+  bindings (function templates, nested/member templates, NTTP / template-template
+  parameters, and uses before publication) stay Unresolved. The adapter also
+  imports structured callables, flat TypeIndex projections, and dependent-
+  noexcept signatures with published `ExprId` as Supported when every component
+  imports. Invalid-category TypeIndex projections stay UnmigratedCallable. The
+  production adapter fixture remains 25 supported / 0 deferred and emits
+  Record/Enum array and function traces. `SymbolTable` retains lookup and merge
+  authority.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
-  stable. Dependent-expression interning is not transactional.
-- Remaining 3A work includes TemplateDeclId publication for template parameters,
-  template specializations, dependent names, complete declarator interleaving,
-  and deletion of the flat semantic representation. Stop here for review before
-  starting another family, 3B, or the parallel frontend experiment.
+  stable. Dependent-expression and template-decl interning are not transactional.
+- Remaining 3A work includes template specializations, dependent names, complete
+  declarator interleaving, and deletion of the flat semantic representation.
+  Stop here for review before starting another family, 3B, or the parallel
+  frontend experiment.
 
 The shallow native probe measures 71 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,048 bytes on
@@ -131,14 +139,17 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the template-parameter slice: native canonical tests and
-source-copy mutations pass; TemplateParameter nodes distinguish TemplateDeclId +
-index; adapter imports published decl keys (with wrappers) as Supported and
-leaves spelling-only template-parameter bindings Unresolved; Invalid-category
-TypeIndex projections stay UnmigratedCallable. Production fixture remains 25
-supported / 0 deferred. Fixed-corpus migration counters remain within the prior
-baselines below (one corpus entry improved `template_old_engine` 59→58 without
-baseline file update).
+Latest validation for the TemplateDeclId-publication slice: native canonical
+tests and source-copy mutations pass; `TemplateDeclTable` merges redeclarations
+by owner+name and distinguishes distinct templates; primary class-template
+bodies stamp type-parameter `TypeSpecifierNode`s so adapter import can use
+published decl keys; spelling-only / unpublished bindings stay Unresolved;
+Invalid-category TypeIndex projections stay UnmigratedCallable. Production
+fixture remains 25 supported / 0 deferred. Adjacent `_ret0` coverage includes
+`test_canonical_template_decl_publication_ret0.cpp` and
+`test_canonical_template_parameter_ret0.cpp`. Fixed-corpus migration counters
+remain within the prior baselines below (one corpus entry improved
+`template_old_engine` 59→58 without baseline file update).
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -194,11 +205,13 @@ Advanced, not completed:
   import, complete-object layout snapshots, fixed-bound array import for
   complete published nominal types, EntityId-keyed member/base field schemas,
   cc/dll Function identity, unstructured signature import, dependent-`noexcept`
-  ExprId identity, and opaque TemplateParameter(TemplateDeclId, index) identity
-  are landed; spelling-only template parameters, TemplateDeclId publication,
-  specializations, dependent names, alias, unpublished/incomplete nominal,
-  anonymous-union, and unpublished-base forms stay deferred. Remaining families
-  and flat-field deletion keep all three identity criteria open.
+  ExprId identity, opaque TemplateParameter(TemplateDeclId, index) identity,
+  and primary class-template TemplateDeclId publication (with type-parameter
+  stamping) are landed; function/nested/member template publication, NTTP /
+  template-template canonical nodes, specializations, dependent names, alias,
+  unpublished/incomplete nominal, anonymous-union, and unpublished-base forms
+  stay deferred. Remaining families and flat-field deletion keep all three
+  identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -217,10 +230,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's TemplateDeclId publication, template specialization, and
-  dependent-name families and adapters before expanding boundary-1 shadow
-  coverage (default arguments, exception specifications, friends, templates) or
-  removing `SymbolTable` merge / `matches_signature` authority.
+- Finish 3A's template specialization and dependent-name families and adapters
+  before expanding boundary-1 shadow coverage (default arguments, exception
+  specifications, friends, templates) or removing `SymbolTable` merge /
+  `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

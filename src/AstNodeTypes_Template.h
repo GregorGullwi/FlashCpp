@@ -1645,6 +1645,10 @@ public:
 	void set_entity_id(EntityId entity_id) { entity_id_ = entity_id; }
 	bool has_entity_id() const { return static_cast<bool>(entity_id_); }
 
+	TemplateDeclId template_decl_id() const { return template_decl_id_; }
+	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
+	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
+
 private:
 	StringHandle name_;	// Points directly into source text from lexer token
 	StringHandle semantic_name_; // Canonical identity for replayed local classes
@@ -1677,6 +1681,7 @@ private:
 	StringHandle struct_substitution_failure_reason_;  // Populated iff struct_body_state_tag_ == FailedSubstitution
 	ScopeId lexical_scope_id_;
 	EntityId entity_id_;
+	TemplateDeclId template_decl_id_;
 };
 
 // Template class declaration node - represents a class template
@@ -1700,6 +1705,10 @@ public:
 		return class_declaration_.as<StructDeclarationNode>();
 	}
 
+	TemplateDeclId template_decl_id() const { return template_decl_id_; }
+	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
+	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
+
 	// Deferred template body parsing support
 	void set_deferred_bodies(std::vector<DeferredTemplateMemberBody> bodies) {
 		deferred_bodies_ = std::move(bodies);
@@ -1713,4 +1722,5 @@ private:
 	TemplateParamNameViewVector template_param_names_;	 // Parameter names for lookup
 	ASTNode class_declaration_;	// StructDeclarationNode
 	std::vector<DeferredTemplateMemberBody> deferred_bodies_;  // Member function bodies to parse at instantiation
+	TemplateDeclId template_decl_id_;
 };
