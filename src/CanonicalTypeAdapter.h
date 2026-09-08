@@ -185,14 +185,43 @@ inline CanonicalTypeImport importCanonicalCompleteNominalArray(CanonicalTypeTabl
 	return {id, CanonicalTypeImportStatus::Supported};
 }
 
+inline CanonicalCallingConvention toCanonicalCallingConvention(CallingConvention convention) {
+	switch (convention) {
+	case CallingConvention::Default:
+		return CanonicalCallingConvention::Default;
+	case CallingConvention::Cdecl:
+		return CanonicalCallingConvention::Cdecl;
+	case CallingConvention::Stdcall:
+		return CanonicalCallingConvention::Stdcall;
+	case CallingConvention::Fastcall:
+		return CanonicalCallingConvention::Fastcall;
+	case CallingConvention::Vectorcall:
+		return CanonicalCallingConvention::Vectorcall;
+	case CallingConvention::Thiscall:
+		return CanonicalCallingConvention::Thiscall;
+	case CallingConvention::Clrcall:
+		return CanonicalCallingConvention::Clrcall;
+	}
+	throw InternalError("canonical type adapter: unknown calling convention");
+}
+
+inline CanonicalDllLinkage toCanonicalDllLinkage(Linkage linkage) {
+	switch (linkage) {
+	case Linkage::DllImport:
+		return CanonicalDllLinkage::Import;
+	case Linkage::DllExport:
+		return CanonicalDllLinkage::Export;
+	case Linkage::None:
+	case Linkage::C:
+	case Linkage::CPlusPlus:
+		return CanonicalDllLinkage::None;
+	}
+	throw InternalError("canonical type adapter: unknown linkage");
+}
+
 inline CanonicalTypeImport importCanonicalFunctionSignature(
 	CanonicalTypeTable& table,
 	const FunctionSignature& signature) {
-	if (signature.calling_convention != CallingConvention::Default ||
-		signature.linkage == Linkage::DllImport ||
-		signature.linkage == Linkage::DllExport) {
-		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
-	}
 	if (signature.noexcept_expression.has_value()) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
 	}
@@ -227,7 +256,9 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 			signature.is_variadic,
 			functionSignatureCV(signature),
 			signature.function_reference_qualifier,
-			signature.is_noexcept),
+			signature.is_noexcept,
+			toCanonicalCallingConvention(signature.calling_convention),
+			toCanonicalDllLinkage(signature.linkage)),
 		CanonicalTypeImportStatus::Supported};
 }
 
