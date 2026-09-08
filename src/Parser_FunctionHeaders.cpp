@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
@@ -701,6 +702,7 @@ void Parser::apply_parsed_function_type_qualifiers(
 	signature.function_reference_qualifier = qualifiers.ref_qualifier;
 	signature.is_noexcept = specifiers.is_noexcept;
 	signature.noexcept_expression = specifiers.noexcept_expr;
+	signature.dependent_noexcept = ExprId{};
 	if (!signature.noexcept_expression.has_value()) {
 		return;
 	}
@@ -709,6 +711,9 @@ void Parser::apply_parsed_function_type_qualifiers(
 			signature.noexcept_expression->node(), currentTemplateParamNames());
 	if (dependent_noexcept_expression) {
 		signature.is_noexcept = false;
+		signature.dependent_noexcept =
+			requireFrontendContext().dependentExpressions().intern(
+				signature.noexcept_expression->node());
 		return;
 	}
 
@@ -717,12 +722,16 @@ void Parser::apply_parsed_function_type_qualifiers(
 	if (evaluated.has_value()) {
 		signature.is_noexcept = evaluated->value != 0;
 		signature.noexcept_expression.reset();
+		signature.dependent_noexcept = ExprId{};
 		return;
 	}
 	if (!isDependentTemplateContext()) {
 		throw CompileError("noexcept specification is not a constant expression");
 	}
 	signature.is_noexcept = false;
+	signature.dependent_noexcept =
+		requireFrontendContext().dependentExpressions().intern(
+			signature.noexcept_expression->node());
 }
 
 void Parser::apply_parsed_function_noexcept(

@@ -1,5 +1,6 @@
 #pragma once
 #include "AstNodeTypes_Core.h"
+#include "FrontendIds.h"
 #include "TypeQualifiers.h"
 #include "SourceLocation.h"
 #include <cassert>
@@ -1119,6 +1120,7 @@ struct FunctionSignature {
 	ReferenceQualifier function_reference_qualifier = ReferenceQualifier::None;
 	bool is_noexcept = false;
 	std::optional<ExpressionHandle> noexcept_expression; // Retained until dependent noexcept(expr) is substituted.
+	ExprId dependent_noexcept{}; // Context-local identity while noexcept_expression is retained.
 	FunctionCallableTypes* callable_types = nullptr;
 
 	// Accessor helpers
