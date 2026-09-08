@@ -4360,15 +4360,19 @@ private:	 // Resume private methods
 	}
 
 	void stampActiveTemplateParameterDecl(TypeSpecifierNode& type_spec, StringHandle param_name) {
+		// No published primary class template yet (parameter-list parse, function
+		// templates, nested/member templates). Stamping is a no-op there.
 		if (!active_template_decl_id_) {
-			return;
-		}
-		const auto kind = currentTemplateParamKind(param_name);
-		if (!kind.has_value() || *kind != TemplateParameterKind::Type) {
 			return;
 		}
 		const auto index = current_template_params_.indexOf(param_name);
 		if (!index.has_value()) {
+			throw InternalError("stamp template param: name missing from active parameter list");
+		}
+		// Names-only tracking leaves kinds empty and historically means Type.
+		// When kinds are present, only type parameters get TemplateParameter TypeIds.
+		const auto kind = currentTemplateParamKind(param_name);
+		if (kind.has_value() && *kind != TemplateParameterKind::Type) {
 			return;
 		}
 		type_spec.set_template_parameter_decl(active_template_decl_id_, *index);

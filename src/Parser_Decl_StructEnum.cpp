@@ -689,15 +689,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 	struct_ref.set_is_local_class(is_local_class_declaration);
 	if (parsing_template_class_ && !is_nested_class) {
-		if (FrontendContext* front_end = frontendContext()) {
-			const OwnerId owner = ownerIdFromNamespaceHandle(current_namespace_handle);
-			if (owner && struct_name.isValid()) {
-				const TemplateDeclId template_decl =
-					front_end->templateDecls().publishPrimaryClassTemplate(owner, struct_name);
-				struct_ref.set_template_decl_id(template_decl);
-				active_template_decl_id_ = template_decl;
-			}
-		}
+		FrontendContext& front_end = requireFrontendContext();
+		const OwnerId owner = ownerIdFromNamespaceHandle(current_namespace_handle);
+		const TemplateDeclId template_decl =
+			front_end.templateDecls().publishPrimaryClassTemplate(owner, struct_name);
+		struct_ref.set_template_decl_id(template_decl);
+		active_template_decl_id_ = template_decl;
 	}
 	const auto stampStructLexicalScope = [&struct_node, this]() {
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(
