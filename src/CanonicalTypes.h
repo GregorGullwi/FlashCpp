@@ -29,7 +29,7 @@ enum class CanonicalTypeKind : uint8_t {
 	Builtin, Qualified, Pointer, LValueReference, RValueReference, Array,
 	Function, FunctionParam, Record, MemberObjectPointer, MemberFunctionPointer,
 	Enum, TemplateParameter, TemplateSpecialization, TemplateArg,
-	DependentName, NameBytes,
+	DependentName, DependentTemplateMember, NameBytes,
 };
 
 enum class CanonicalTypeNodeFlags : uint8_t {
@@ -98,6 +98,19 @@ inline uint32_t unpackTemplateParameterIndex(uint64_t array_extent) {
 	return static_cast<uint32_t>(array_extent >> 32);
 }
 
+inline uint64_t packDependentTemplateMemberExtent(TypeId name_link, TypeId arg_link) {
+	return static_cast<uint64_t>(name_link.value) |
+		(static_cast<uint64_t>(arg_link.value) << 32);
+}
+
+inline TypeId unpackDependentTemplateMemberName(uint64_t array_extent) {
+	return TypeId{static_cast<uint32_t>(array_extent)};
+}
+
+inline TypeId unpackDependentTemplateMemberArgs(uint64_t array_extent) {
+	return TypeId{static_cast<uint32_t>(array_extent >> 32)};
+}
+
 // An immutable structural node. A child is a canonical identity in this table,
 // never an AST pointer, spelling, legacy TypeIndex, or telemetry key.
 // FunctionParam links store the parameter TypeId in array_extent and the next
@@ -110,6 +123,9 @@ inline uint32_t unpackTemplateParameterIndex(uint64_t array_extent) {
 // first TemplateArg link in child. TemplateArg links store the argument TypeId
 // in array_extent and the next TemplateArg link in child (type-only this slice).
 // DependentName stores its qualifier in child and a NameBytes link in array_extent.
+// DependentTemplateMember stores its qualifier in child and packs a NameBytes
+// link (low 32) with a TemplateArg chain head (high 32) in array_extent — the
+// unresolved member template-id form without a published TemplateDeclId.
 // NameBytes is an internal content link: child is the next link, builtin holds
 // the byte count (1..8), and array_extent packs identifier bytes little-endian.
 // It is not a type or a spelling-handle identity. All links share node rollback.
@@ -572,29 +588,8 @@ public:
 	TypeId dependentName(TypeId qualifier, std::string_view identifier) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
-		const auto kind = nodeUnlocked(qualifier).kind;
-		if (kind != CanonicalTypeKind::TemplateParameter && kind != CanonicalTypeKind::DependentName) {
+		if (!isDependentQualifierKind(nodeUnlocked(qualifier).kind)) {
 			throw InternalError("canonical type: unsupported dependent-name qualifier");
-		}
-		if (identifier.empty() || identifier.find('\0') != std::string_view::npos) {
-			throw InternalError("canonical type: invalid dependent identifier");
-		}
-		TypeId name_link{};
-		for (size_t end = identifier.size(); end != 0;) {
-			const size_t begin = ((end - 1) / 8) * 8;
-			uint64_t bytes = 0;
-			for (size_t index = begin; index < end; ++index) {
-				bytes |= static_cast<uint64_t>(static_cast<unsigned char>(identifier[index])) << ((index - begin) * 8);
-			}
-			name_link = internUnlocked({
-				.child = name_link,
-				.kind = CanonicalTypeKind::NameBytes,
-				.builtin = static_cast<CanonicalBuiltinKind>(end - begin),
-				.qualifiers = CVQualifier::None,
-				.flags = CanonicalTypeNodeFlags::None,
-				.array_extent = bytes,
-			});
-			end = begin;
 		}
 		return internUnlocked({
 			.child = qualifier,
@@ -602,7 +597,47 @@ public:
 			.builtin = CanonicalBuiltinKind::Void,
 			.qualifiers = CVQualifier::None,
 			.flags = CanonicalTypeNodeFlags::None,
-			.array_extent = name_link.value,
+			.array_extent = packIdentifierBytesUnlocked(identifier).value,
+		});
+	}
+
+	// Unresolved member template-id (T::Foo<Args>) without a published member
+	// TemplateDeclId. Identity is qualifier + identifier content + type-only
+	// argument TypeIds. ::template is a parse disambiguator and is not stored.
+	TypeId dependentTemplateMember(
+		TypeId qualifier,
+		std::string_view identifier,
+		std::span<const TypeId> arguments) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!isDependentQualifierKind(nodeUnlocked(qualifier).kind)) {
+			throw InternalError("canonical type: unsupported dependent template-member qualifier");
+		}
+		TypeId arg_link{};
+		for (size_t index = arguments.size(); index-- > 0;) {
+			const TypeId argument = arguments[index];
+			const CanonicalTypeNode argument_node = nodeUnlocked(argument);
+			if (isInternalLink(argument_node.kind) ||
+				argument_node.kind == CanonicalTypeKind::Array) {
+				throw InternalError("canonical type: invalid dependent template-member argument");
+			}
+			arg_link = internUnlocked({
+				.child = arg_link,
+				.kind = CanonicalTypeKind::TemplateArg,
+				.builtin = CanonicalBuiltinKind::Void,
+				.qualifiers = CVQualifier::None,
+				.flags = CanonicalTypeNodeFlags::None,
+				.array_extent = argument.value,
+			});
+		}
+		return internUnlocked({
+			.child = qualifier,
+			.kind = CanonicalTypeKind::DependentTemplateMember,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = packDependentTemplateMemberExtent(
+				packIdentifierBytesUnlocked(identifier), arg_link),
 		});
 	}
 
@@ -610,7 +645,8 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		const auto input = nodeUnlocked(type);
-		if (input.kind != CanonicalTypeKind::DependentName) {
+		if (input.kind != CanonicalTypeKind::DependentName &&
+			input.kind != CanonicalTypeKind::DependentTemplateMember) {
 			throw InternalError("canonical type: expected dependent name");
 		}
 		return input.child;
@@ -620,11 +656,16 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		const auto input = nodeUnlocked(type);
-		if (input.kind != CanonicalTypeKind::DependentName) {
+		TypeId name_link{};
+		if (input.kind == CanonicalTypeKind::DependentName) {
+			name_link = TypeId{static_cast<uint32_t>(input.array_extent)};
+		} else if (input.kind == CanonicalTypeKind::DependentTemplateMember) {
+			name_link = unpackDependentTemplateMemberName(input.array_extent);
+		} else {
 			throw InternalError("canonical type: expected dependent name");
 		}
 		std::string identifier;
-		TypeId cursor{static_cast<uint32_t>(input.array_extent)};
+		TypeId cursor = name_link;
 		while (cursor) {
 			const auto bytes = nodeUnlocked(cursor);
 			for (uint8_t index = 0; index < static_cast<uint8_t>(bytes.builtin); ++index) {
@@ -633,6 +674,16 @@ public:
 			cursor = bytes.child;
 		}
 		return identifier;
+	}
+
+	TypeId dependentTemplateMemberArguments(TypeId type) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(type);
+		if (input.kind != CanonicalTypeKind::DependentTemplateMember) {
+			throw InternalError("canonical type: expected dependent template member");
+		}
+		return unpackDependentTemplateMemberArgs(input.array_extent);
 	}
 
 	TypeId memberObjectPointer(TypeId owner, TypeId pointee) {
@@ -1077,6 +1128,41 @@ private:
 			kind == CanonicalTypeKind::NameBytes;
 	}
 
+	static bool isDependentQualifierKind(CanonicalTypeKind kind) {
+		return kind == CanonicalTypeKind::TemplateParameter ||
+			kind == CanonicalTypeKind::DependentName ||
+			kind == CanonicalTypeKind::DependentTemplateMember;
+	}
+
+	static bool isDependentNameFamily(CanonicalTypeKind kind) {
+		return kind == CanonicalTypeKind::DependentName ||
+			kind == CanonicalTypeKind::DependentTemplateMember;
+	}
+
+	TypeId packIdentifierBytesUnlocked(std::string_view identifier) {
+		if (identifier.empty() || identifier.find('\0') != std::string_view::npos) {
+			throw InternalError("canonical type: invalid dependent identifier");
+		}
+		TypeId name_link{};
+		for (size_t end = identifier.size(); end != 0;) {
+			const size_t begin = ((end - 1) / 8) * 8;
+			uint64_t bytes = 0;
+			for (size_t index = begin; index < end; ++index) {
+				bytes |= static_cast<uint64_t>(static_cast<unsigned char>(identifier[index])) << ((index - begin) * 8);
+			}
+			name_link = internUnlocked({
+				.child = name_link,
+				.kind = CanonicalTypeKind::NameBytes,
+				.builtin = static_cast<CanonicalBuiltinKind>(end - begin),
+				.qualifiers = CVQualifier::None,
+				.flags = CanonicalTypeNodeFlags::None,
+				.array_extent = bytes,
+			});
+			end = begin;
+		}
+		return name_link;
+	}
+
 	static bool isMemberPointer(CanonicalTypeKind kind) {
 		return kind == CanonicalTypeKind::MemberObjectPointer ||
 			kind == CanonicalTypeKind::MemberFunctionPointer;
@@ -1304,8 +1390,8 @@ private:
 	void appendTypeIdTrace(StringBuilder& shape, TypeId id) const {
 		CanonicalTypeNode current = nodeUnlocked(id);
 		for (;;) {
-			if (current.kind == CanonicalTypeKind::DependentName) {
-				appendDependentNameTrace(shape, current);
+			if (isDependentNameFamily(current.kind)) {
+				appendDependentNameFamilyTrace(shape, current);
 				shape.append('/');
 				current = nodeUnlocked(current.child);
 				continue;
@@ -1368,20 +1454,34 @@ private:
 		}
 	}
 
-	void appendDependentNameTrace(StringBuilder& shape, CanonicalTypeNode node) const {
+	void appendDependentNameFamilyTrace(StringBuilder& shape, CanonicalTypeNode node) const {
 		appendNodeTraceFields(shape, node, 0);
-		TypeId cursor{static_cast<uint32_t>(node.array_extent)};
+		TypeId name_link = node.kind == CanonicalTypeKind::DependentTemplateMember
+			? unpackDependentTemplateMemberName(node.array_extent)
+			: TypeId{static_cast<uint32_t>(node.array_extent)};
+		TypeId cursor = name_link;
 		while (cursor) {
 			const auto bytes = nodeUnlocked(cursor);
 			shape.append('/');
 			appendNodeTraceFields(shape, bytes, bytes.array_extent);
 			cursor = bytes.child;
 		}
+		if (node.kind == CanonicalTypeKind::DependentTemplateMember) {
+			TypeId arg_cursor = unpackDependentTemplateMemberArgs(node.array_extent);
+			while (arg_cursor) {
+				const CanonicalTypeNode arg = nodeUnlocked(arg_cursor);
+				shape.append('/');
+				appendNodeTraceFields(shape, arg, 0);
+				shape.append('/');
+				appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(arg.array_extent)});
+				arg_cursor = arg.child;
+			}
+		}
 	}
 
 	void appendNodeTrace(StringBuilder& shape, CanonicalTypeNode node) const {
-		if (node.kind == CanonicalTypeKind::DependentName) {
-			appendDependentNameTrace(shape, node);
+		if (isDependentNameFamily(node.kind)) {
+			appendDependentNameFamilyTrace(shape, node);
 			shape.append('/');
 			appendTypeIdTrace(shape, node.child);
 			return;
