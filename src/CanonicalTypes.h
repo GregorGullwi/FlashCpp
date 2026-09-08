@@ -904,11 +904,10 @@ private:
 		nodeUnlocked(member.type);
 		const bool is_bitfield =
 			hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield);
-		if (is_bitfield != (member.bit_width != 0)) {
-			throw InternalError("canonical type: invalid record member bitfield encoding");
-		}
-		if (!is_bitfield && member.bit_offset != 0) {
-			throw InternalError("canonical type: non-bitfield member has bit offset");
+		// Zero-width bitfields (C++ layout alignment directives) keep the Bitfield
+		// flag with bit_width == 0. Only non-bitfields must not carry widths/offsets.
+		if (!is_bitfield && (member.bit_width != 0 || member.bit_offset != 0)) {
+			throw InternalError("canonical type: non-bitfield member has bitfield fields");
 		}
 	}
 
