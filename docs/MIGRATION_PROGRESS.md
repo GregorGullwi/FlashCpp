@@ -5,8 +5,8 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-08 after dependent template-member identity
-(local feature branch)
+Last updated: 2026-09-08 after production stamp of type-only member
+template-ids on the live `T::Foo<Args>` parse path (local feature branch)
 
 ## Current boundary and handoff
 
@@ -81,12 +81,16 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   (`T::Foo<int>`, `T::template Nested<U>::type`) are stamped during
   `parse_type_specifier` onto `TypeSpecifierNode` as `DependentName` /
   `DependentTemplateMember` TypeIds (cv/pointer/array/ref wrappers import
-  through the existing adapter; tip may be either kind). `::template` is a
-  parse disambiguator and is not stored. Stamping is a no-op for unpublished
-  templates, non-type parameters, `DependentInstantiation` / other qualifier
-  families, and NTTP / pack / template-template member arguments; binding is
-  never inferred from flat TypeIndex names. Other qualifier families and
-  substitution stay deferred. The adapter also imports structured
+  through the existing adapter; tip may be either kind). The live template-id
+  path is the concatenated qualifier `T::Foo` then `<Args>` then an optional
+  plain `::tail`; captured type-arg syntax is required, and NTTP / pack /
+  expression arguments leave the specifier unstamped instead of throwing.
+  Binding is never recovered from flat TypeIndex names or `TemplateArgInfo`
+  spellings. `::template` is a parse disambiguator and is not stored. Stamping
+  is a no-op for unpublished templates, non-type parameters,
+  `DependentInstantiation` / other qualifier families (`T<Args>::…`), and
+  later template-id segments whose type-only syntax was not captured. Other
+  qualifier families and substitution stay deferred. The adapter also imports structured
   callables, flat TypeIndex projections, and dependent-noexcept signatures with
   published `ExprId` as Supported when every component imports. Invalid-category
   TypeIndex projections stay UnmigratedCallable. The production adapter fixture
@@ -173,10 +177,11 @@ Preserve these ownership contracts during subsequent migration:
 Latest validation for the dependent template-member slice: native canonical
 tests and source-copy mutations pass; `T::Foo<int>` versus `T::Foo<double>` and
 `T::Bar<int>` remain distinct TypeIds; plain tails compose as
-`DependentName(DependentTemplateMember, "type")`; production stamping captures
-type-arg syntax nodes for member template-ids rooted in published type
-parameters; NTTP/pack/template-template args and other qualifier families stay
-unstamped; `::template` is ignored in identity. Production fixture remains
+`DependentName(DependentTemplateMember, "type")`; production stamping runs on
+the concatenated `T::Foo` then `<Args>` path (and optional plain tail),
+fail-closes on NTTP/expression syntax instead of ICE, and does not rebuild
+arguments from TypeIndex names. Other qualifier families stay unstamped;
+`::template` is ignored in identity. Production fixture remains
 25 supported / 0 deferred. Adjacent `_ret0` coverage includes
 `test_canonical_dependent_template_member_ret0.cpp` (OOL function-parameter
 path) and prior dependent-name / template-id ret0s. The Windows suite is 2,984

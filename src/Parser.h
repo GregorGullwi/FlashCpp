@@ -4400,6 +4400,16 @@ private:	 // Resume private methods
 		const TypeInfo::DependentQualifiedNameRecord& record,
 		std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax);
 
+	// Reconstruct T::Foo<Args>::tail from a qualified name whose last identifier
+	// carried the explicit argument list. Trailing members must be plain; any
+	// later template-id without captured type-only syntax leaves the specifier
+	// unstamped. Non-type argument syntax is a no-op, never an ICE.
+	void tryStampTypeParamOwnedMemberTemplateId(
+		TypeSpecifierNode& type_spec,
+		std::string_view qualified_name,
+		std::span<const ASTNode> last_member_arg_nodes,
+		const TypeInfo::DependentQualifiedNameRecord* trailing_members);
+
 	void pushCurrentTemplateParamName(StringHandle param_name) {
 		current_template_params_.pushName(param_name);
 	}
