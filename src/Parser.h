@@ -4378,6 +4378,16 @@ private:	 // Resume private methods
 		type_spec.set_template_parameter_decl(active_template_decl_id_, *index);
 	}
 
+	// Stamp type-only class-template specializations when the primary already
+	// published a TemplateDeclId. No-op for NTTP/template-template/packs,
+	// unpublished nested/member templates, incomplete default fill, or names that
+	// are not class-template primaries. Broken Type-only arg shape ICEs.
+	void tryStampTypeOnlyClassTemplateSpecialization(
+		TypeSpecifierNode& type_spec,
+		StringHandle primary_template_name,
+		std::span<const TemplateTypeArg> filled_args,
+		std::span<const ASTNode> argument_syntax_nodes);
+
 	void pushCurrentTemplateParamName(StringHandle param_name) {
 		current_template_params_.pushName(param_name);
 	}
