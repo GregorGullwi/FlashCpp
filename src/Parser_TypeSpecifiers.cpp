@@ -76,6 +76,19 @@ void appendDependentMemberPathComponents(
 	}
 }
 
+std::optional<std::vector<TypeSpecifierNode>> collectTypeOnlyArgSpecifiers(
+	std::span<const ASTNode> argument_nodes) {
+	std::vector<TypeSpecifierNode> specifiers;
+	specifiers.reserve(argument_nodes.size());
+	for (const ASTNode& argument_node : argument_nodes) {
+		if (!argument_node.is<TypeSpecifierNode>()) {
+			return std::nullopt;
+		}
+		specifiers.push_back(argument_node.as<TypeSpecifierNode>());
+	}
+	return specifiers;
+}
+
 TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
@@ -1701,7 +1714,7 @@ ParseResult Parser::parse_type_specifier() {
 						class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
 						&template_arg_syntax_nodes);
 				} else {
-					template_args = parse_explicit_template_arguments();
+					template_args = parse_explicit_template_arguments(&template_arg_syntax_nodes);
 				}
 			}
 			if (template_args.has_value()) {
@@ -3006,8 +3019,18 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						getTypesByNameMap()[type_name_handle] = &type_info;
 
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						TypeSpecifierNode type_spec(
+							type_info.type_index_.withCategory(TypeCategory::UserDefined),
+							0,
+							type_name_token,
+							cv_qualifier,
+							ReferenceQualifier::None);
+						tryStampTypeParamOwnedMemberTemplateId(
+							type_spec,
+							type_name,
+							template_arg_syntax_nodes,
+							type_info.dependentQualifiedName());
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(type_spec));
 					};
 
 					if (has_dependent_args) {
@@ -3573,6 +3596,11 @@ ParseResult Parser::parse_type_specifier() {
 							primary_template_handle,
 							filled_template_args,
 							template_arg_syntax_nodes);
+						tryStampTypeParamOwnedMemberTemplateId(
+							type_spec.as<TypeSpecifierNode>(),
+							type_name,
+							template_arg_syntax_nodes,
+							nullptr);
 						return ParseResult::success(type_spec);
 					} else {
 						// Return existing placeholder (UserDefined) - don't create duplicates
@@ -3587,6 +3615,11 @@ ParseResult Parser::parse_type_specifier() {
 							primary_template_handle,
 							filled_template_args,
 							template_arg_syntax_nodes);
+						tryStampTypeParamOwnedMemberTemplateId(
+							type_spec.as<TypeSpecifierNode>(),
+							type_name,
+							template_arg_syntax_nodes,
+							nullptr);
 						return ParseResult::success(type_spec);
 					}
 				}
@@ -3637,6 +3670,11 @@ ParseResult Parser::parse_type_specifier() {
 						primary_template_handle,
 						filled_template_args,
 						template_arg_syntax_nodes);
+					tryStampTypeParamOwnedMemberTemplateId(
+						type_spec.as<TypeSpecifierNode>(),
+						type_name,
+						template_arg_syntax_nodes,
+						nullptr);
 					return ParseResult::success(type_spec);
 				}
 				// If type not found, fall through to error handling below
@@ -3767,6 +3805,7 @@ ParseResult Parser::parse_type_specifier() {
 							dependent_name_record.owner_type = owner_it->second->registeredTypeIndex();
 						}
 						std::vector<std::vector<TypeSpecifierNode>> member_template_arg_syntax;
+						bool stamp_member_chain = true;
 
 						while (peek() == "::"_tok) {
 							advance();
@@ -3797,13 +3836,11 @@ ParseResult Parser::parse_type_specifier() {
 								member_record.template_arguments =
 									convertToTemplateArgInfo(*nested_template_args);
 								member_record.has_template_arguments = true;
-								stamped_type_args.reserve(argument_syntax_nodes.size());
-								for (const ASTNode& argument_node : argument_syntax_nodes) {
-									if (!argument_node.is<TypeSpecifierNode>()) {
-										throw InternalError(
-											"dependent member template-id: type-arg syntax is not a TypeSpecifierNode");
-									}
-									stamped_type_args.push_back(argument_node.as<TypeSpecifierNode>());
+								if (auto collected = collectTypeOnlyArgSpecifiers(argument_syntax_nodes);
+									collected.has_value()) {
+									stamped_type_args = std::move(*collected);
+								} else {
+									stamp_member_chain = false;
 								}
 								dependent_type_builder.append("<")
 									.append(nested_template_args->size())
@@ -3842,11 +3879,13 @@ ParseResult Parser::parse_type_specifier() {
 							nested_token,
 							cv_qualifier,
 							ReferenceQualifier::None);
-						tryStampDependentMemberChain(
-							dependent_type_spec,
-							type_name_handle,
-							dependent_name_record,
-							member_template_arg_syntax);
+						if (stamp_member_chain) {
+							tryStampDependentMemberChain(
+								dependent_type_spec,
+								type_name_handle,
+								dependent_name_record,
+								member_template_arg_syntax);
+						}
 						return ParseResult::success(
 							emplace_node<TypeSpecifierNode>(dependent_type_spec));
 					}
@@ -4590,44 +4629,16 @@ void Parser::tryStampDependentMemberChain(
 		const TypeInfo::DependentQualifiedNameRecord::Member& member =
 			record.member_chain[member_index];
 		const std::string_view member_name = StringTable::getStringView(member.name);
-		const std::vector<TypeSpecifierNode>* syntax_args =
-			member_index < member_template_arg_syntax.size()
-				? &member_template_arg_syntax[member_index]
-				: nullptr;
-		const bool has_syntax_args = syntax_args != nullptr && !syntax_args->empty();
-		if (!member.has_template_arguments && !has_syntax_args) {
+		if (!member.has_template_arguments) {
 			// ::template without <> is only a parse disambiguator.
 			qualifier = table.dependentName(qualifier, member_name);
 			continue;
 		}
-		std::vector<TypeSpecifierNode> rebuilt_args;
-		std::span<const TypeSpecifierNode> arg_specs;
-		if (has_syntax_args) {
-			arg_specs = *syntax_args;
-		} else {
-			rebuilt_args.reserve(member.template_arguments.size());
-			for (const TypeInfo::TemplateArgInfo& arg_info : member.template_arguments) {
-				if (arg_info.is_value || arg_info.is_pack || arg_info.is_template_template_arg) {
-					return;
-				}
-				auto rebuilt = makeTypeSpecifierFromTemplateArgInfo(arg_info, type_spec.token());
-				if (!rebuilt.has_value()) {
-					return;
-				}
-				StringHandle arg_param_name = arg_info.dependent_name;
-				if (!arg_param_name.isValid()) {
-					if (const TypeInfo* arg_type = tryGetTypeInfo(arg_info.type_index);
-						arg_type != nullptr) {
-						arg_param_name = arg_type->name_;
-					}
-				}
-				if (arg_param_name.isValid()) {
-					stampActiveTemplateParameterDecl(*rebuilt, arg_param_name);
-				}
-				rebuilt_args.push_back(std::move(*rebuilt));
-			}
-			arg_specs = rebuilt_args;
+		if (member_index >= member_template_arg_syntax.size()) {
+			return;
 		}
+		const std::vector<TypeSpecifierNode>& arg_specs =
+			member_template_arg_syntax[member_index];
 		std::vector<TypeId> argument_ids;
 		argument_ids.reserve(arg_specs.size());
 		for (const TypeSpecifierNode& arg_spec : arg_specs) {
@@ -4643,4 +4654,71 @@ void Parser::tryStampDependentMemberChain(
 		qualifier = table.dependentTemplateMember(qualifier, member_name, argument_ids);
 	}
 	type_spec.set_dependent_name_type(qualifier);
+}
+
+void Parser::tryStampTypeParamOwnedMemberTemplateId(
+	TypeSpecifierNode& type_spec,
+	std::string_view qualified_name,
+	std::span<const ASTNode> last_member_arg_nodes,
+	const TypeInfo::DependentQualifiedNameRecord* trailing_members) {
+	const size_t first_scope = qualified_name.find("::");
+	if (first_scope == std::string_view::npos) {
+		return;
+	}
+	StringHandle owner_param_name =
+		StringTable::getOrInternStringHandle(qualified_name.substr(0, first_scope));
+	const auto owner_index = current_template_params_.indexOf(owner_param_name);
+	if (!owner_index.has_value()) {
+		return;
+	}
+	const auto owner_kind = currentTemplateParamKind(owner_param_name);
+	if (owner_kind.has_value() && *owner_kind != TemplateParameterKind::Type) {
+		return;
+	}
+	auto last_args = collectTypeOnlyArgSpecifiers(last_member_arg_nodes);
+	if (!last_args.has_value()) {
+		return;
+	}
+	TemplateParamNameViewVector components =
+		splitDependentMemberPathComponents(qualified_name.substr(first_scope + 2));
+	if (components.empty()) {
+		return;
+	}
+	if (trailing_members != nullptr) {
+		for (const TypeInfo::DependentQualifiedNameRecord::Member& member :
+			 trailing_members->member_chain) {
+			if (member.has_template_arguments) {
+				return;
+			}
+		}
+	}
+	TypeInfo::DependentQualifiedNameRecord stamp_record;
+	stamp_record.owner_kind =
+		TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
+	stamp_record.owner_name = owner_param_name;
+	std::vector<std::vector<TypeSpecifierNode>> member_template_arg_syntax;
+	member_template_arg_syntax.reserve(
+		components.size() +
+		(trailing_members != nullptr ? trailing_members->member_chain.size() : 0));
+	for (size_t index = 0; index < components.size(); ++index) {
+		TypeInfo::DependentQualifiedNameRecord::Member member;
+		member.name = StringTable::getOrInternStringHandle(components[index]);
+		if (index + 1 == components.size()) {
+			member.has_template_arguments = true;
+			stamp_record.member_chain.push_back(std::move(member));
+			member_template_arg_syntax.push_back(*last_args);
+			continue;
+		}
+		stamp_record.member_chain.push_back(std::move(member));
+		member_template_arg_syntax.emplace_back();
+	}
+	if (trailing_members != nullptr) {
+		for (const TypeInfo::DependentQualifiedNameRecord::Member& member :
+			 trailing_members->member_chain) {
+			stamp_record.member_chain.push_back(member);
+			member_template_arg_syntax.emplace_back();
+		}
+	}
+	tryStampDependentMemberChain(
+		type_spec, owner_param_name, stamp_record, member_template_arg_syntax);
 }
