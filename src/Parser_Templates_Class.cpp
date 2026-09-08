@@ -4956,6 +4956,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			template_param_nodes,
 			std::move(param_names),
 			decl_node);
+		if (decl_node.as<StructDeclarationNode>().has_template_decl_id()) {
+			template_class_node.as<TemplateClassDeclarationNode>().set_template_decl_id(
+				decl_node.as<StructDeclarationNode>().template_decl_id());
+		}
 
 		// Attach deferred member function bodies for two-phase lookup
 		// These will be parsed during template instantiation when TypeInfo is available

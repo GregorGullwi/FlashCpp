@@ -12,6 +12,7 @@
 #include "ScopeRecord.h"
 #include "StringTable.h"
 #include "SyntaxAstTelemetry.h"
+#include "TemplateDeclTable.h"
 
 #include <array>
 #include <cstdint>
@@ -228,6 +229,14 @@ public:
 
 	const DependentExpressionTable& dependentExpressions() const {
 		return dependent_expressions_;
+	}
+
+	TemplateDeclTable& templateDecls() {
+		return template_decls_;
+	}
+
+	const TemplateDeclTable& templateDecls() const {
+		return template_decls_;
 	}
 
 	DeclarationBuilder& declarationBuilder() {
@@ -461,6 +470,7 @@ private:
 	SemanticArenaAccounting semantic_accounting_;
 	CanonicalTypeTable canonical_types_{semantic_accounting_};
 	DependentExpressionTable dependent_expressions_;
+	TemplateDeclTable template_decls_;
 	DeclarationBuilder declaration_builder_{canonical_types_, semantic_accounting_};
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
 	ScopeId current_scope_id_{1};

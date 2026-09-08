@@ -1165,6 +1165,15 @@ private:
 			return std::nullopt;
 		}
 
+		std::optional<uint32_t> indexOf(StringHandle param_name) const {
+			for (size_t i = 0; i < names.size(); ++i) {
+				if (names[i] == param_name) {
+					return static_cast<uint32_t>(i);
+				}
+			}
+			return std::nullopt;
+		}
+
 		std::optional<TypeCategory> nonTypeCategoryOf(StringHandle param_name) const {
 			for (size_t i = 0; i < names.size(); ++i) {
 				if (names[i] != param_name) {
@@ -1182,6 +1191,9 @@ private:
 		}
 	};
 	ActiveTemplateParameterState current_template_params_;
+	// Published primary class-template identity while parsing that template's
+	// body. Cleared with clearCurrentTemplateParameters().
+	TemplateDeclId active_template_decl_id_{};
 
 	// Template parameter substitution for deferred template body parsing
 	// Maps template parameter names to their substituted values (for non-type AND type parameters)
@@ -4344,6 +4356,22 @@ private:	 // Resume private methods
 
 	void clearCurrentTemplateParameters() {
 		current_template_params_.clear();
+		active_template_decl_id_ = {};
+	}
+
+	void stampActiveTemplateParameterDecl(TypeSpecifierNode& type_spec, StringHandle param_name) {
+		if (!active_template_decl_id_) {
+			return;
+		}
+		const auto kind = currentTemplateParamKind(param_name);
+		if (!kind.has_value() || *kind != TemplateParameterKind::Type) {
+			return;
+		}
+		const auto index = current_template_params_.indexOf(param_name);
+		if (!index.has_value()) {
+			return;
+		}
+		type_spec.set_template_parameter_decl(active_template_decl_id_, *index);
 	}
 
 	void pushCurrentTemplateParamName(StringHandle param_name) {

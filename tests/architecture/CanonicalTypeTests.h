@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "CanonicalTypeAdapter.h"
+#include "TemplateDeclTable.h"
 
 namespace CanonicalTypeTests {
 
@@ -568,9 +569,23 @@ inline void checkAdapter() {
 	require(!table.hasRecordFieldSchema(EntityId{12}));
 }
 
+inline void checkTemplateDeclPublication() {
+	TemplateDeclTable decls;
+	const auto name_a = StringTable::getOrInternStringHandle("AlphaTemplate");
+	const auto name_b = StringTable::getOrInternStringHandle("BetaTemplate");
+	const auto first = decls.publishPrimaryClassTemplate(OwnerId{1}, name_a);
+	require(first.value != 0);
+	require(decls.publishPrimaryClassTemplate(OwnerId{1}, name_a) == first);
+	require(decls.publishPrimaryClassTemplate(OwnerId{1}, name_b) != first);
+	require(decls.publishPrimaryClassTemplate(OwnerId{2}, name_a) != first);
+	require(decls.size() == 3);
+	rejects([&] { decls.publishPrimaryClassTemplate(OwnerId{}, name_a); });
+}
+
 inline int run() {
 	checkTransactions();
 	checkAdapter();
+	checkTemplateDeclPublication();
 	static_assert(!std::is_copy_constructible_v<CanonicalTypeTable>);
 	static_assert(!std::is_move_constructible_v<CanonicalTypeTable>);
 	static_assert(!std::is_convertible_v<TelemetryTypeId, TypeId>);
