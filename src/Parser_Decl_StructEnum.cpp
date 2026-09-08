@@ -27,6 +27,120 @@ uint16_t canonicalLayoutCount(size_t value) {
 	return static_cast<uint16_t>(value);
 }
 
+uint8_t canonicalBitfieldWidth(size_t value) {
+	if (value > std::numeric_limits<uint8_t>::max()) {
+		throw InternalError("canonical layout exceeds 8-bit bitfield width limit");
+	}
+	return static_cast<uint8_t>(value);
+}
+
+CanonicalAccess canonicalAccess(AccessSpecifier access) {
+	switch (access) {
+	case AccessSpecifier::Public:
+		return CanonicalAccess::Public;
+	case AccessSpecifier::Protected:
+		return CanonicalAccess::Protected;
+	case AccessSpecifier::Private:
+		return CanonicalAccess::Private;
+	}
+	throw InternalError("canonical layout: unknown access specifier");
+}
+
+TypeSpecifierNode makeCanonicalMemberTypeSpec(const StructMember& member) {
+	TypeSpecifierNode type_spec(
+		member.type_index,
+		TypeQualifier::None,
+		SizeInBits{static_cast<int>(member.size * 8)},
+		Token{},
+		CVQualifier::None);
+	type_spec.set_reference_qualifier(member.reference_qualifier);
+	type_spec.add_pointer_levels(member.pointer_depth);
+	if (member.pointee_array_declarator) {
+		type_spec.set_pointee_array_declarator(true);
+		type_spec.set_pointee_array_dimensions(member.array_dimensions);
+	} else if (member.is_array) {
+		type_spec.set_array_dimensions(member.array_dimensions);
+	}
+	if (member.function_signature.has_value()) {
+		type_spec.set_function_signature(*member.function_signature);
+	}
+	tryBindPublishedTypeEntity(type_spec);
+	tryBindPublishedMemberClassEntity(type_spec);
+	return type_spec;
+}
+
+EntityId resolvePublishedBaseEntity(const BaseClassSpecifier& base) {
+	if (base.is_deferred) {
+		return {};
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(base.type_index);
+	if (type_info == nullptr || !type_info->isStruct()) {
+		return {};
+	}
+	const StructTypeInfo* base_info = type_info->getStructInfo();
+	if (base_info == nullptr || base_info->declaration_node == nullptr ||
+		!base_info->declaration_node->has_entity_id()) {
+		return {};
+	}
+	return base_info->declaration_node->entity_id();
+}
+
+bool tryPublishCanonicalRecordFieldSchema(CanonicalTypeTable& table, EntityId entity,
+	const StructTypeInfo& struct_info) {
+	std::vector<CanonicalRecordMember> members;
+	members.reserve(struct_info.members.size());
+	for (const StructMember& member : struct_info.members) {
+		if (member.anonymous_union_group_index.has_value()) {
+			return false;
+		}
+		TypeSpecifierNode member_syntax = makeCanonicalMemberTypeSpec(member);
+		const CanonicalTypeImport imported = importCanonicalType(table, member_syntax);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return false;
+		}
+		CanonicalRecordMemberFlags flags = CanonicalRecordMemberFlags::None;
+		uint8_t bit_width = 0;
+		uint8_t bit_offset = 0;
+		if (member.bitfield_width.has_value()) {
+			flags = flags | CanonicalRecordMemberFlags::Bitfield;
+			bit_width = canonicalBitfieldWidth(*member.bitfield_width);
+			bit_offset = canonicalBitfieldWidth(member.bitfield_bit_offset);
+		}
+		if (member.is_no_unique_address) {
+			flags = flags | CanonicalRecordMemberFlags::NoUniqueAddress;
+		}
+		members.push_back({
+			.type = imported.type,
+			.offset_bytes = canonicalLayoutSize(member.offset),
+			.size_bytes = canonicalLayoutSize(member.size),
+			.bit_width = bit_width,
+			.bit_offset = bit_offset,
+			.access = canonicalAccess(member.access),
+			.flags = flags,
+		});
+	}
+	std::vector<CanonicalRecordBase> bases;
+	bases.reserve(struct_info.base_classes.size());
+	for (const BaseClassSpecifier& base : struct_info.base_classes) {
+		const EntityId base_entity = resolvePublishedBaseEntity(base);
+		if (!base_entity) {
+			return false;
+		}
+		CanonicalRecordBaseFlags flags = CanonicalRecordBaseFlags::None;
+		if (base.is_virtual) {
+			flags = flags | CanonicalRecordBaseFlags::Virtual;
+		}
+		bases.push_back({
+			.entity = base_entity,
+			.offset_bytes = canonicalLayoutSize(base.offset),
+			.access = canonicalAccess(base.access),
+			.flags = flags,
+		});
+	}
+	table.publishRecordFieldSchema(entity, members, bases);
+	return true;
+}
+
 TemplateArgumentVector materializeClassFriendTemplateArguments(
 	std::span<const TemplateTypeArg> pattern_arguments,
 	std::span<const TemplateParameterNode> template_params,
@@ -4225,6 +4339,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			.flags = struct_info->is_union
 				? CanonicalRecordLayoutFlags::Union : CanonicalRecordLayoutFlags::None,
 		});
+		(void)tryPublishCanonicalRecordFieldSchema(
+			front_end.canonicalTypes(), struct_ref.entity_id(), *struct_info);
 	}
 	return saved_position.success(struct_node);
 }

@@ -338,6 +338,92 @@ inline void checkAdapter() {
 	});
 	layout_transaction.rollback();
 	require(!table.hasRecordLayout(EntityId{9}));
+
+	table.publishRecordLayout({
+		.entity = EntityId{11},
+		.size_bytes = 24,
+		.layout_data_size_bytes = 16,
+		.non_virtual_size_bytes = 16,
+		.alignment = 8,
+		.member_count = 2,
+		.direct_base_count = 1,
+		.flags = CanonicalRecordLayoutFlags::None,
+	});
+	table.publishRecordLayout({
+		.entity = EntityId{10},
+		.size_bytes = 8,
+		.layout_data_size_bytes = 8,
+		.non_virtual_size_bytes = 8,
+		.alignment = 8,
+		.member_count = 0,
+		.direct_base_count = 0,
+		.flags = CanonicalRecordLayoutFlags::None,
+	});
+	const std::array<CanonicalRecordMember, 2> schema_members{{
+		{
+			.type = table.builtin(CanonicalBuiltinKind::Int),
+			.offset_bytes = 0,
+			.size_bytes = 4,
+			.bit_width = 0,
+			.bit_offset = 0,
+			.access = CanonicalAccess::Public,
+			.flags = CanonicalRecordMemberFlags::None,
+		},
+		{
+			.type = table.pointer(table.builtin(CanonicalBuiltinKind::Double)),
+			.offset_bytes = 8,
+			.size_bytes = 8,
+			.bit_width = 0,
+			.bit_offset = 0,
+			.access = CanonicalAccess::Private,
+			.flags = CanonicalRecordMemberFlags::None,
+		},
+	}};
+	const std::array<CanonicalRecordBase, 1> schema_bases{{
+		{
+			.entity = EntityId{10},
+			.offset_bytes = 16,
+			.access = CanonicalAccess::Public,
+			.flags = CanonicalRecordBaseFlags::None,
+		},
+	}};
+	table.publishRecordFieldSchema(EntityId{11}, schema_members, schema_bases);
+	require(table.hasRecordFieldSchema(EntityId{11}));
+	require(table.recordMemberAt(EntityId{11}, 0) == schema_members[0]);
+	require(table.recordMemberAt(EntityId{11}, 1) == schema_members[1]);
+	require(table.recordBaseAt(EntityId{11}, 0) == schema_bases[0]);
+	table.publishRecordFieldSchema(EntityId{11}, schema_members, schema_bases);
+	std::array<CanonicalRecordMember, 2> conflicting_members = schema_members;
+	conflicting_members[1].offset_bytes = 4;
+	rejects([&] {
+		table.publishRecordFieldSchema(EntityId{11}, conflicting_members, schema_bases);
+	});
+	CanonicalTypeTransaction schema_transaction(table);
+	table.publishRecordLayout({
+		.entity = EntityId{12},
+		.size_bytes = 4,
+		.layout_data_size_bytes = 4,
+		.non_virtual_size_bytes = 4,
+		.alignment = 4,
+		.member_count = 1,
+		.direct_base_count = 0,
+		.flags = CanonicalRecordLayoutFlags::None,
+	});
+	const std::array<CanonicalRecordMember, 1> rolled_members{{
+		{
+			.type = table.builtin(CanonicalBuiltinKind::Char),
+			.offset_bytes = 0,
+			.size_bytes = 1,
+			.bit_width = 0,
+			.bit_offset = 0,
+			.access = CanonicalAccess::Protected,
+			.flags = CanonicalRecordMemberFlags::None,
+		},
+	}};
+	table.publishRecordFieldSchema(EntityId{12}, rolled_members, {});
+	schema_transaction.rollback();
+	require(!table.hasRecordLayout(EntityId{12}));
+	require(!table.hasRecordFieldSchema(EntityId{12}));
 }
 
 inline int run() {

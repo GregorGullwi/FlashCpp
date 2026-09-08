@@ -145,6 +145,9 @@ def main():
             "lost_enum_layout": (
                 "return entity && enum_layout_ids_.contains(entity.value);",
                 "return entity && false;"),
+            "lost_record_field_schema": (
+                "return entity && record_field_schema_ids_.contains(entity.value);",
+                "return entity && false;"),
         }
         for name, (before, after) in mutations.items():
             if original.count(before) != 1:
