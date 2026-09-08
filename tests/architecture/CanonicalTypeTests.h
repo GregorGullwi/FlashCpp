@@ -398,6 +398,30 @@ inline void checkAdapter() {
 	rejects([&] {
 		table.publishRecordFieldSchema(EntityId{11}, conflicting_members, schema_bases);
 	});
+	table.publishRecordLayout({
+		.entity = EntityId{13},
+		.size_bytes = 1,
+		.layout_data_size_bytes = 0,
+		.non_virtual_size_bytes = 1,
+		.alignment = 1,
+		.member_count = 1,
+		.direct_base_count = 0,
+		.flags = CanonicalRecordLayoutFlags::None,
+	});
+	const std::array<CanonicalRecordMember, 1> zero_width_bitfield{{
+		{
+			.type = table.builtin(CanonicalBuiltinKind::Int),
+			.offset_bytes = 0,
+			.size_bytes = 0,
+			.bit_width = 0,
+			.bit_offset = 0,
+			.access = CanonicalAccess::Public,
+			.flags = CanonicalRecordMemberFlags::Bitfield,
+		},
+	}};
+	table.publishRecordFieldSchema(EntityId{13}, zero_width_bitfield, {});
+	require(table.recordMemberAt(EntityId{13}, 0).flags == CanonicalRecordMemberFlags::Bitfield);
+	require(table.recordMemberAt(EntityId{13}, 0).bit_width == 0);
 	CanonicalTypeTransaction schema_transaction(table);
 	table.publishRecordLayout({
 		.entity = EntityId{12},
