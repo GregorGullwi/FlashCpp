@@ -210,10 +210,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's dependent-`noexcept`, template, and dependent families and adapters
-  before expanding boundary-1 shadow coverage (default arguments, exception
-  specifications, friends, templates) or removing `SymbolTable` merge /
-  `matches_signature` authority.
+- Finish 3A's template and dependent-type families and adapters before expanding
+  boundary-1 shadow coverage (default arguments, exception specifications,
+  friends, templates) or removing `SymbolTable` merge / `matches_signature`
+  authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in
