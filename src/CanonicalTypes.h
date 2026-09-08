@@ -38,6 +38,7 @@ enum class CanonicalTypeNodeFlags : uint8_t {
 	FunctionRValueRef = 1 << 4,
 	FunctionDllImport = 1 << 5,
 	FunctionDllExport = 1 << 6,
+	DependentNoexceptFunction = 1 << 7,
 };
 
 // Stored in CanonicalTypeNode::builtin for Function nodes only.
@@ -68,11 +69,26 @@ inline bool hasCanonicalTypeNodeFlag(CanonicalTypeNodeFlags flags, CanonicalType
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
 }
 
+inline uint64_t packFunctionArrayExtent(TypeId param_link, ExprId dependent_noexcept) {
+	return static_cast<uint64_t>(param_link.value) |
+		(static_cast<uint64_t>(dependent_noexcept.value) << 32);
+}
+
+inline TypeId unpackFunctionParamLink(uint64_t array_extent) {
+	return TypeId{static_cast<uint32_t>(array_extent)};
+}
+
+inline ExprId unpackFunctionDependentNoexcept(uint64_t array_extent) {
+	return ExprId{static_cast<uint32_t>(array_extent >> 32)};
+}
+
 // An immutable structural node. A child is a canonical identity in this table,
 // never an AST pointer, spelling, legacy TypeIndex, or telemetry key.
 // FunctionParam links store the parameter TypeId in array_extent and the next
 // link in child. Member pointers store the owner TypeId in array_extent and the
 // pointee in child. Opaque Record and Enum nodes store EntityId in array_extent.
+// Function nodes pack parameter-list TypeId in the low 32 bits of array_extent
+// and optional dependent-noexcept ExprId in the high 32 bits.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -358,10 +374,12 @@ public:
 
 	// Free-function and cv/ref-qualified function types. Calling convention is
 	// stored in the unused builtin byte for Function nodes; dllimport/dllexport
-	// use dedicated flag bits. Dependent noexcept stays outside this family.
+	// use dedicated flag bits. Dependent noexcept(expr) identity is an opaque
+	// ExprId packed beside the parameter-list link; plain noexcept remains a flag.
 	TypeId function(TypeId return_type, std::span<const TypeId> parameters, bool is_variadic,
 		CVQualifier function_cv, ReferenceQualifier function_ref, bool is_noexcept,
-		CanonicalCallingConvention calling_convention, CanonicalDllLinkage dll_linkage) {
+		CanonicalCallingConvention calling_convention, CanonicalDllLinkage dll_linkage,
+		ExprId dependent_noexcept) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		if (static_cast<uint8_t>(function_cv) > static_cast<uint8_t>(CVQualifier::ConstVolatile)) {
@@ -375,6 +393,9 @@ public:
 		if (calling_convention >= CanonicalCallingConvention::Count) {
 			throw InternalError("canonical type: invalid calling convention");
 		}
+		if (is_noexcept && dependent_noexcept) {
+			throw InternalError("canonical type: plain noexcept cannot combine with dependent noexcept");
+		}
 		const CanonicalTypeNode return_node = nodeUnlocked(return_type);
 		if (return_node.kind == CanonicalTypeKind::Function ||
 			return_node.kind == CanonicalTypeKind::FunctionParam ||
@@ -387,6 +408,9 @@ public:
 		}
 		if (is_noexcept) {
 			flags |= CanonicalTypeNodeFlags::NoexceptFunction;
+		}
+		if (dependent_noexcept) {
+			flags |= CanonicalTypeNodeFlags::DependentNoexceptFunction;
 		}
 		if (function_ref == ReferenceQualifier::LValueReference) {
 			flags |= CanonicalTypeNodeFlags::FunctionLValueRef;
@@ -422,7 +446,7 @@ public:
 			.builtin = static_cast<CanonicalBuiltinKind>(calling_convention),
 			.qualifiers = function_cv,
 			.flags = flags,
-			.array_extent = param_link.value,
+			.array_extent = packFunctionArrayExtent(param_link, dependent_noexcept),
 		});
 	}
 
@@ -544,13 +568,30 @@ public:
 		if (input.kind != CanonicalTypeKind::Function) {
 			throw InternalError("canonical type: TypeId is not a function type");
 		}
-		if (input.array_extent == 0) {
+		const TypeId param_link = unpackFunctionParamLink(input.array_extent);
+		if (!param_link) {
 			return {};
 		}
-		if (input.array_extent > live_count_) {
+		if (param_link.value > live_count_) {
 			throw InternalError("canonical type: function parameter list is outside this table");
 		}
-		return TypeId{static_cast<uint32_t>(input.array_extent)};
+		return param_link;
+	}
+
+	ExprId functionDependentNoexcept(TypeId function) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(function);
+		if (input.kind != CanonicalTypeKind::Function) {
+			throw InternalError("canonical type: TypeId is not a function type");
+		}
+		const ExprId dependent = unpackFunctionDependentNoexcept(input.array_extent);
+		const bool flagged = hasCanonicalTypeNodeFlag(
+			input.flags, CanonicalTypeNodeFlags::DependentNoexceptFunction);
+		if (flagged != static_cast<bool>(dependent)) {
+			throw InternalError("canonical type: dependent noexcept flag/extent mismatch");
+		}
+		return dependent;
 	}
 
 	TypeId memberPointerOwner(TypeId member_pointer) const {
@@ -1043,16 +1084,20 @@ private:
 		CanonicalTypeNode current = nodeUnlocked(id);
 		for (;;) {
 			if (current.kind == CanonicalTypeKind::Function) {
-				appendNodeTraceFields(shape, current, current.array_extent == 0 ? 0ull : 1ull);
-				TypeId param_link = current.array_extent == 0
-					? TypeId{} : TypeId{static_cast<uint32_t>(current.array_extent)};
-				while (param_link) {
-					const CanonicalTypeNode param = nodeUnlocked(param_link);
+				const TypeId param_link = unpackFunctionParamLink(current.array_extent);
+				const ExprId dependent = unpackFunctionDependentNoexcept(current.array_extent);
+				appendNodeTraceFields(
+					shape,
+					current,
+					(param_link ? 1ull : 0ull) | (static_cast<uint64_t>(dependent.value) << 1));
+				TypeId cursor = param_link;
+				while (cursor) {
+					const CanonicalTypeNode param = nodeUnlocked(cursor);
 					shape.append('/');
 					appendNodeTraceFields(shape, param, 0);
 					shape.append('/');
 					appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(param.array_extent)});
-					param_link = param.child;
+					cursor = param.child;
 				}
 				shape.append('/');
 				current = nodeUnlocked(current.child);
@@ -1080,16 +1125,20 @@ private:
 
 	void appendNodeTrace(StringBuilder& shape, CanonicalTypeNode node) const {
 		if (node.kind == CanonicalTypeKind::Function) {
-			appendNodeTraceFields(shape, node, node.array_extent == 0 ? 0ull : 1ull);
-			TypeId param_link = node.array_extent == 0
-				? TypeId{} : TypeId{static_cast<uint32_t>(node.array_extent)};
-			while (param_link) {
-				const CanonicalTypeNode param = nodeUnlocked(param_link);
+			const TypeId param_link = unpackFunctionParamLink(node.array_extent);
+			const ExprId dependent = unpackFunctionDependentNoexcept(node.array_extent);
+			appendNodeTraceFields(
+				shape,
+				node,
+				(param_link ? 1ull : 0ull) | (static_cast<uint64_t>(dependent.value) << 1));
+			TypeId cursor = param_link;
+			while (cursor) {
+				const CanonicalTypeNode param = nodeUnlocked(cursor);
 				shape.append('/');
 				appendNodeTraceFields(shape, param, 0);
 				shape.append('/');
 				appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(param.array_extent)});
-				param_link = param.child;
+				cursor = param.child;
 			}
 			shape.append('/');
 			appendTypeIdTrace(shape, node.child);

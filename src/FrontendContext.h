@@ -5,6 +5,7 @@
 #include "CanonicalTypes.h"
 #include "CompileError.h"
 #include "DeclarationBuilder.h"
+#include "DependentExpressionTable.h"
 #include "FrontendIds.h"
 #include "InlineVector.h"
 #include "Log.h"
@@ -219,6 +220,14 @@ public:
 
 	const CanonicalTypeTable& canonicalTypes() const {
 		return canonical_types_;
+	}
+
+	DependentExpressionTable& dependentExpressions() {
+		return dependent_expressions_;
+	}
+
+	const DependentExpressionTable& dependentExpressions() const {
+		return dependent_expressions_;
 	}
 
 	DeclarationBuilder& declarationBuilder() {
@@ -451,6 +460,7 @@ private:
 	ScratchProbeRegistry scratch_registry_;
 	SemanticArenaAccounting semantic_accounting_;
 	CanonicalTypeTable canonical_types_{semantic_accounting_};
+	DependentExpressionTable dependent_expressions_;
 	DeclarationBuilder declaration_builder_{canonical_types_, semantic_accounting_};
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
 	ScopeId current_scope_id_{1};

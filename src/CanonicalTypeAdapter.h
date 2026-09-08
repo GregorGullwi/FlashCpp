@@ -249,7 +249,11 @@ inline CanonicalTypeImport importCanonicalFunctionComponentFromProjection(
 inline CanonicalTypeImport importCanonicalFunctionSignature(
 	CanonicalTypeTable& table,
 	const FunctionSignature& signature) {
-	if (signature.noexcept_expression.has_value()) {
+	// Retained noexcept(expr) needs a published ExprId before canonical import.
+	if (signature.noexcept_expression.has_value() && !signature.dependent_noexcept) {
+		return {{}, CanonicalTypeImportStatus::Unresolved};
+	}
+	if (signature.is_noexcept && signature.dependent_noexcept) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
 	}
 
@@ -313,7 +317,8 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 			signature.function_reference_qualifier,
 			signature.is_noexcept,
 			toCanonicalCallingConvention(signature.calling_convention),
-			toCanonicalDllLinkage(signature.linkage)),
+			toCanonicalDllLinkage(signature.linkage),
+			signature.dependent_noexcept),
 		CanonicalTypeImportStatus::Supported};
 }
 

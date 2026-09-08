@@ -89,8 +89,15 @@ def main():
             "lost_array_cv": ("while (input.kind == CanonicalTypeKind::Array) {",
                               "while (false && input.kind == CanonicalTypeKind::Array) {"),
             "lost_function_param": (
-                ".array_extent = param_link.value,",
-                ".array_extent = 0,"),
+                ".array_extent = packFunctionArrayExtent(param_link, dependent_noexcept),",
+                ".array_extent = packFunctionArrayExtent(TypeId{}, dependent_noexcept),"),
+            "lost_dependent_noexcept": (
+                "if (dependent_noexcept) {\n"
+                "\t\t\tflags |= CanonicalTypeNodeFlags::DependentNoexceptFunction;\n"
+                "\t\t}",
+                "if (false && dependent_noexcept) {\n"
+                "\t\t\tflags |= CanonicalTypeNodeFlags::DependentNoexceptFunction;\n"
+                "\t\t}"),
             "lost_function_cv_merge": (
                 "// [dcl.fct]: cv-qualifiers on a function type are part of that type.\n"
                 "\t\tif (input.kind == CanonicalTypeKind::Function) {\n"
@@ -211,6 +218,13 @@ def main():
              "\t}\n"
              "\tconst CanonicalTypeImport imported_return = importCanonicalFunctionTypeComponent(\n"
              "\t\ttable, signature.return_type(), CanonicalTypeImportContext::Exact);"),
+            ("adapter_dependent_noexcept", "CanonicalTypeAdapter.h",
+             "if (signature.noexcept_expression.has_value() && !signature.dependent_noexcept) {\n"
+             "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
+             "\t}",
+             "if (signature.dependent_noexcept) {\n"
+             "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
+             "\t}"),
             ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",
              "stats_.peak_bytes += stats_.current_bytes;"),
         ):

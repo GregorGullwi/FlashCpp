@@ -5,28 +5,32 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-08 after unstructured FunctionSignature projection import
+Last updated: 2026-09-08 after dependent-noexcept Function ExprId import
 (local feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's unstructured-signature slice is on
-`codex/boundary-3a-unstructured-signatures` for local review. Calling-convention /
-dll-linkage callables, record member/base field schemas, complete-object
-Record/Enum layout, opaque Record/Enum import, member-pointer EntityId binding,
-and earlier families are on `main`. Gate 0 is closed. Architecture boundary 1
-remains incomplete; remaining dependent / template families still block
-expanding shadow/merge coverage.
+Architecture boundary 3A's dependent-`noexcept` slice is on
+`codex/boundary-3a-dependent-noexcept` for local review. Unstructured-signature
+import, calling-convention / dll-linkage callables, record member/base field
+schemas, complete-object Record/Enum layout, opaque Record/Enum import,
+member-pointer EntityId binding, and earlier families are on `main`. Gate 0 is
+closed. Architecture boundary 1 remains incomplete; remaining dependent /
+template families still block expanding shadow/merge coverage.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
   fundamental types, cv qualification, pointers, references, arrays of known or
   unknown bound, free-function / cv-ref-qualified function types (including
-  calling convention and dllimport/dllexport identity), opaque `Record(EntityId)`
-  and `Enum(EntityId)` nodes, member object/function pointers, EntityId-keyed
+  calling convention, dllimport/dllexport, plain noexcept, and dependent
+  `noexcept(expr)` via context-local `ExprId`), opaque `Record(EntityId)` and
+  `Enum(EntityId)` nodes, member object/function pointers, EntityId-keyed
   complete-object layout snapshots, and EntityId-keyed record member/base field
   schemas. Immutable 16-byte nodes use context-local `TypeId`; parameter lists
   and member-pointer owners are recursive links, not a second identity space.
   Construction accepts no spelling or legacy flat-type identity.
+  `FrontendContext` also owns a `DependentExpressionTable` that interns
+  dependent unevaluated expressions to `ExprId` using structural identity (not
+  `StringHandle`).
 - Published global/namespace structs and enums bind `type_entity` / injected-
   class metadata at declarator intern time so `Struct` and `Enum` declarators
   import as opaque `Record(EntityId)` and `Enum(EntityId)` nodes (with
@@ -40,24 +44,23 @@ expanding shadow/merge coverage.
   types import canonically; aliases, unpublished/incomplete nominal forms,
   unknown nominal bounds, anonymous-union groups, and unpublished-base schemas
   stay deferred. Function types carry `CanonicalCallingConvention` in the
-  Function node's builtin byte and dllimport/dllexport as flag bits. The adapter
-  imports structured callables and flat TypeIndex projections (return pointer /
-  reference depth plus `parameter_type_indices`, including hybrid signatures
-  with structured parameters but flat return storage) as Supported when every
-  component imports. Dependent `noexcept` expressions stay Unresolved; TypeIndex
-  projections whose category is Invalid stay UnmigratedCallable. The production
-  adapter fixture remains 25 supported / 0 deferred and emits Record/Enum array
-  and function traces.
-  `SymbolTable` retains lookup and merge authority.
+  Function node's builtin byte and dllimport/dllexport as flag bits. Dependent
+  `noexcept(expr)` packs an `ExprId` beside the parameter-list link and sets
+  `DependentNoexceptFunction`. The adapter imports structured callables, flat
+  TypeIndex projections, and dependent-noexcept signatures that already carry a
+  published `ExprId` as Supported when every component imports. Retained
+  `noexcept_expression` without `ExprId` stays Unresolved; TypeIndex projections
+  whose category is Invalid stay UnmigratedCallable. The production adapter
+  fixture remains 25 supported / 0 deferred and emits Record/Enum array and
+  function traces. `SymbolTable` retains lookup and merge authority.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
-  stable.
-- Remaining 3A work includes dependent `noexcept`, dependent types, templates,
-  complete declarator interleaving, and deletion of the flat semantic
-  representation. Stop here for review before starting another family, 3B, or
-  the parallel frontend experiment.
+  stable. Dependent-expression interning is not transactional this slice.
+- Remaining 3A work includes dependent types, templates, complete declarator
+  interleaving, and deletion of the flat semantic representation. Stop here for
+  review before starting another family, 3B, or the parallel frontend experiment.
 
-The shallow native probe measures 63 nodes. Nodes are 16 bytes; member and base
+The shallow native probe measures 65 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,048 bytes on
 Linux clang++. Its measured 64-element chunks reserve 1,024 node bytes at a
 time; hash-index heap storage is excluded. A 65,536-level mixed pointer/array
@@ -123,14 +126,14 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the unstructured-signature slice: native canonical tests and
-source-copy mutations pass; flat TypeIndex return/parameter projections and hybrid
-signatures (structured parameters with flat return storage) import as Supported
-when every component is Supported; Invalid-category TypeIndex projections stay
-UnmigratedCallable; dependent `noexcept` stays Unresolved. Production fixture
-remains 25 supported / 0 deferred. Fixed-corpus migration counters remain within
-the prior baselines below (one corpus entry improved `template_old_engine` 59→58
-without baseline file update).
+Latest validation for the dependent-noexcept slice: native canonical tests and
+source-copy mutations pass; Function nodes distinguish dependent-noexcept
+`ExprId` identity from plain noexcept; adapter imports published `ExprId`
+dependent-noexcept signatures as Supported and leaves expression-only forms
+Unresolved; Invalid-category TypeIndex projections stay UnmigratedCallable.
+Production fixture remains 25 supported / 0 deferred. Fixed-corpus migration
+counters remain within the prior baselines below (one corpus entry improved
+`template_old_engine` 59→58 without baseline file update).
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -185,10 +188,10 @@ Advanced, not completed:
   member-pointer owner binding, opaque Struct→Record and Enum→Enum adapter
   import, complete-object layout snapshots, fixed-bound array import for
   complete published nominal types, EntityId-keyed member/base field schemas,
-  cc/dll Function identity, and unstructured signature import are landed; alias,
-  unpublished/incomplete nominal, anonymous-union, unpublished-base, and
-  dependent-`noexcept` forms stay deferred. Remaining families and flat-field
-  deletion keep all three identity criteria open.
+  cc/dll Function identity, unstructured signature import, and dependent-
+  `noexcept` ExprId identity are landed; alias, unpublished/incomplete nominal,
+  anonymous-union, and unpublished-base forms stay deferred. Remaining families
+  and flat-field deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -207,10 +210,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's dependent-`noexcept`, template, and dependent families and adapters
-  before expanding boundary-1 shadow coverage (default arguments, exception
-  specifications, friends, templates) or removing `SymbolTable` merge /
-  `matches_signature` authority.
+- Finish 3A's template and dependent-type families and adapters before expanding
+  boundary-1 shadow coverage (default arguments, exception specifications,
+  friends, templates) or removing `SymbolTable` merge / `matches_signature`
+  authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in
