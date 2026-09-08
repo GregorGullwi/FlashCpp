@@ -446,13 +446,10 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	return {id, CanonicalTypeImportStatus::Supported};
 }
 
-// Opaque type-template-parameter import. Spelling-only bindings stay Unresolved
-// until TemplateDeclId + parameter index are published onto the specifier.
-inline CanonicalTypeImport importCanonicalTemplateParameter(CanonicalTypeTable& table,
-	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
-	if (!syntax.has_template_parameter_decl()) {
-		return {{}, CanonicalTypeImportStatus::Unresolved};
-	}
+// Shared validation and shaping for opaque canonical bases. Callers own the
+// surrounding transaction so a deferred declarator retains no new wrappers.
+inline CanonicalTypeImport importCanonicalShapedBase(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context, TypeId id) {
 	const auto reference = syntax.reference_qualifier();
 	if (static_cast<uint8_t>(syntax.cv_qualifier()) > 3 ||
 		(reference != ReferenceQualifier::None && reference != ReferenceQualifier::LValueReference &&
@@ -484,11 +481,21 @@ inline CanonicalTypeImport importCanonicalTemplateParameter(CanonicalTypeTable& 
 			}
 		}
 	}
-	auto id = table.templateParameter(syntax.template_decl_id(), syntax.template_parameter_index());
 	id = table.qualify(id, syntax.cv_qualifier());
 	id = applyCanonicalPointerArrayReference(
 		table, id, syntax, context, has_ordinary_array, has_pointee_array);
 	return {id, CanonicalTypeImportStatus::Supported};
+}
+
+// Opaque type-template-parameter import. Spelling-only bindings stay Unresolved
+// until TemplateDeclId + parameter index are published onto the specifier.
+inline CanonicalTypeImport importCanonicalTemplateParameter(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
+	if (!syntax.has_template_parameter_decl()) {
+		return {{}, CanonicalTypeImportStatus::Unresolved};
+	}
+	return importCanonicalShapedBase(table, syntax, context,
+		table.templateParameter(syntax.template_decl_id(), syntax.template_parameter_index()));
 }
 
 // Type-only class-template specialization import. Unstamped template-ids and
@@ -555,6 +562,18 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (syntax.is_pack_expansion() || syntax.has_concept_constraint()) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
+	}
+	if (syntax.has_dependent_name_type()) {
+		const auto base = syntax.dependent_name_type();
+		if (table.node(base).kind != CanonicalTypeKind::DependentName) {
+			throw InternalError("canonical type adapter: dependent-name binding has the wrong kind");
+		}
+		CanonicalTypeTransaction transaction(table);
+		const auto imported = importCanonicalShapedBase(table, syntax, context, base);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			transaction.commit();
+		}
+		return imported;
 	}
 	if (syntax.has_template_parameter_identity() || syntax.has_template_parameter_decl()) {
 		CanonicalTypeTransaction transaction(table);
