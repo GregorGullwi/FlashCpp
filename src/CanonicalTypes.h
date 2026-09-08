@@ -36,6 +36,26 @@ enum class CanonicalTypeNodeFlags : uint8_t {
 	NoexceptFunction = 1 << 2,
 	FunctionLValueRef = 1 << 3,
 	FunctionRValueRef = 1 << 4,
+	FunctionDllImport = 1 << 5,
+	FunctionDllExport = 1 << 6,
+};
+
+// Stored in CanonicalTypeNode::builtin for Function nodes only.
+enum class CanonicalCallingConvention : uint8_t {
+	Default = 0,
+	Cdecl,
+	Stdcall,
+	Fastcall,
+	Vectorcall,
+	Thiscall,
+	Clrcall,
+	Count,
+};
+
+enum class CanonicalDllLinkage : uint8_t {
+	None = 0,
+	Import,
+	Export,
 };
 
 inline CanonicalTypeNodeFlags operator|(CanonicalTypeNodeFlags a, CanonicalTypeNodeFlags b) {
@@ -336,9 +356,12 @@ public:
 		});
 	}
 
-	// Free-function and cv/ref-qualified function types.
+	// Free-function and cv/ref-qualified function types. Calling convention is
+	// stored in the unused builtin byte for Function nodes; dllimport/dllexport
+	// use dedicated flag bits. Dependent noexcept stays outside this family.
 	TypeId function(TypeId return_type, std::span<const TypeId> parameters, bool is_variadic,
-		CVQualifier function_cv, ReferenceQualifier function_ref, bool is_noexcept) {
+		CVQualifier function_cv, ReferenceQualifier function_ref, bool is_noexcept,
+		CanonicalCallingConvention calling_convention, CanonicalDllLinkage dll_linkage) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		if (static_cast<uint8_t>(function_cv) > static_cast<uint8_t>(CVQualifier::ConstVolatile)) {
@@ -348,6 +371,9 @@ public:
 			function_ref != ReferenceQualifier::LValueReference &&
 			function_ref != ReferenceQualifier::RValueReference) {
 			throw InternalError("canonical type: invalid function ref qualifier");
+		}
+		if (calling_convention >= CanonicalCallingConvention::Count) {
+			throw InternalError("canonical type: invalid calling convention");
 		}
 		const CanonicalTypeNode return_node = nodeUnlocked(return_type);
 		if (return_node.kind == CanonicalTypeKind::Function ||
@@ -366,6 +392,11 @@ public:
 			flags |= CanonicalTypeNodeFlags::FunctionLValueRef;
 		} else if (function_ref == ReferenceQualifier::RValueReference) {
 			flags |= CanonicalTypeNodeFlags::FunctionRValueRef;
+		}
+		if (dll_linkage == CanonicalDllLinkage::Import) {
+			flags |= CanonicalTypeNodeFlags::FunctionDllImport;
+		} else if (dll_linkage == CanonicalDllLinkage::Export) {
+			flags |= CanonicalTypeNodeFlags::FunctionDllExport;
 		}
 		TypeId param_link{};
 		for (size_t index = parameters.size(); index-- > 0;) {
@@ -388,7 +419,7 @@ public:
 		return internUnlocked({
 			.child = return_type,
 			.kind = CanonicalTypeKind::Function,
-			.builtin = CanonicalBuiltinKind::Void,
+			.builtin = static_cast<CanonicalBuiltinKind>(calling_convention),
 			.qualifiers = function_cv,
 			.flags = flags,
 			.array_extent = param_link.value,

@@ -107,6 +107,20 @@ def main():
             "lost_noexcept": (
                 "if (is_noexcept) {\n\t\t\tflags |= CanonicalTypeNodeFlags::NoexceptFunction;\n\t\t}",
                 "if (false && is_noexcept) {\n\t\t\tflags |= CanonicalTypeNodeFlags::NoexceptFunction;\n\t\t}"),
+            "lost_calling_convention": (
+                ".builtin = static_cast<CanonicalBuiltinKind>(calling_convention),",
+                ".builtin = static_cast<CanonicalBuiltinKind>(CanonicalCallingConvention::Default),"),
+            "lost_dll_linkage": (
+                "if (dll_linkage == CanonicalDllLinkage::Import) {\n"
+                "\t\t\tflags |= CanonicalTypeNodeFlags::FunctionDllImport;\n"
+                "\t\t} else if (dll_linkage == CanonicalDllLinkage::Export) {\n"
+                "\t\t\tflags |= CanonicalTypeNodeFlags::FunctionDllExport;\n"
+                "\t\t}",
+                "if (false && dll_linkage == CanonicalDllLinkage::Import) {\n"
+                "\t\t\tflags |= CanonicalTypeNodeFlags::FunctionDllImport;\n"
+                "\t\t} else if (false && dll_linkage == CanonicalDllLinkage::Export) {\n"
+                "\t\t\tflags |= CanonicalTypeNodeFlags::FunctionDllExport;\n"
+                "\t\t}"),
             "lost_member_owner": (
                 "TypeId memberObjectPointer(TypeId owner, TypeId pointee) {\n"
                 "\t\tstd::lock_guard lock(mutex_);\n"

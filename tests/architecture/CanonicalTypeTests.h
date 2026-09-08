@@ -202,7 +202,7 @@ inline void checkAdapter() {
 	const TypeId expected_params[] = {table.pointer(short_const)};
 	require(imported_function.type == table.pointer(table.function(
 		table.builtin(CanonicalBuiltinKind::Int), expected_params, false, CVQualifier::None,
-		ReferenceQualifier::None, false)));
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None)));
 
 	FunctionSignature member_signature = signature;
 	member_signature.is_const = true;
@@ -214,7 +214,7 @@ inline void checkAdapter() {
 	require(imported_member.status == CanonicalTypeImportStatus::Supported);
 	require(imported_member.type == table.function(
 		table.builtin(CanonicalBuiltinKind::Int), expected_params, false, CVQualifier::Const,
-		ReferenceQualifier::LValueReference, false));
+		ReferenceQualifier::LValueReference, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None));
 	require(imported_member.type != table.withoutTopLevelQualifiers(imported_function.type));
 	const auto imported_as_parameter = importCanonicalFunctionParameterType(table, member_function);
 	require(imported_as_parameter.status == CanonicalTypeImportStatus::Supported);
@@ -228,9 +228,34 @@ inline void checkAdapter() {
 	require(imported_noexcept.status == CanonicalTypeImportStatus::Supported);
 	require(imported_noexcept.type == table.pointer(table.function(
 		table.builtin(CanonicalBuiltinKind::Int), expected_params, false, CVQualifier::None,
-		ReferenceQualifier::None, true)));
+		ReferenceQualifier::None, true, CanonicalCallingConvention::Default,
+		CanonicalDllLinkage::None)));
 	require(imported_noexcept.type != imported_function.type);
 	signature.is_noexcept = false;
+	signature.calling_convention = CallingConvention::Stdcall;
+	TypeSpecifierNode stdcall_function_pointer(TypeCategory::FunctionPointer, TypeQualifier::None, 64,
+		Token{}, CVQualifier::None);
+	stdcall_function_pointer.set_function_signature(signature);
+	const auto imported_stdcall = importCanonicalType(table, stdcall_function_pointer);
+	require(imported_stdcall.status == CanonicalTypeImportStatus::Supported);
+	require(imported_stdcall.type == table.pointer(table.function(
+		table.builtin(CanonicalBuiltinKind::Int), expected_params, false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Stdcall,
+		CanonicalDllLinkage::None)));
+	require(imported_stdcall.type != imported_function.type);
+	signature.calling_convention = CallingConvention::Default;
+	signature.linkage = Linkage::DllImport;
+	TypeSpecifierNode dllimport_function_pointer(TypeCategory::FunctionPointer, TypeQualifier::None, 64,
+		Token{}, CVQualifier::None);
+	dllimport_function_pointer.set_function_signature(signature);
+	const auto imported_dllimport = importCanonicalType(table, dllimport_function_pointer);
+	require(imported_dllimport.status == CanonicalTypeImportStatus::Supported);
+	require(imported_dllimport.type == table.pointer(table.function(
+		table.builtin(CanonicalBuiltinKind::Int), expected_params, false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default,
+		CanonicalDllLinkage::Import)));
+	require(imported_dllimport.type != imported_function.type);
+	signature.linkage = Linkage::None;
 
 	TypeSpecifierNode member_pointer(TypeCategory::MemberFunctionPointer, TypeQualifier::None, 64,
 		Token{}, CVQualifier::None);
@@ -501,26 +526,37 @@ inline int run() {
 	require(table.reference(ci, ReferenceQualifier::LValueReference) != lref);
 	require(table.reference(array2, ReferenceQualifier::LValueReference) != array2);
 	const auto void_fn = table.function(table.builtin(CanonicalBuiltinKind::Void),
-		std::span<const TypeId>{}, false, CVQualifier::None, ReferenceQualifier::None, false);
+		std::span<const TypeId>{}, false, CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None);
 	const TypeId int_param[] = {integer};
 	const auto int_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
-		CVQualifier::None, ReferenceQualifier::None, false);
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None);
 	const auto variadic_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, true,
-		CVQualifier::None, ReferenceQualifier::None, false);
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None);
 	const auto const_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
-		CVQualifier::Const, ReferenceQualifier::None, false);
+		CVQualifier::Const, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None);
 	const auto ref_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
-		CVQualifier::None, ReferenceQualifier::LValueReference, false);
+		CVQualifier::None, ReferenceQualifier::LValueReference, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None);
 	const auto noexcept_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
-		CVQualifier::None, ReferenceQualifier::None, true);
+		CVQualifier::None, ReferenceQualifier::None, true, CanonicalCallingConvention::Default, CanonicalDllLinkage::None);
+	const auto stdcall_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Stdcall,
+		CanonicalDllLinkage::None);
+	const auto dllimport_fn = table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default,
+		CanonicalDllLinkage::Import);
 	require(void_fn != int_fn && int_fn != variadic_fn && int_fn != const_fn);
 	require(int_fn != ref_fn && int_fn != noexcept_fn && const_fn != ref_fn);
+	require(int_fn != stdcall_fn && int_fn != dllimport_fn && stdcall_fn != dllimport_fn);
+	require(table.node(stdcall_fn).builtin ==
+		static_cast<CanonicalBuiltinKind>(CanonicalCallingConvention::Stdcall));
+	require(hasCanonicalTypeNodeFlag(table.node(dllimport_fn).flags,
+		CanonicalTypeNodeFlags::FunctionDllImport));
 	require(table.qualify(int_fn, CVQualifier::Const) == const_fn);
 	require(table.pointer(int_fn) != int_fn);
 	require(table.functionParameters(void_fn).value == 0);
 	require(table.functionParameterType(table.functionParameters(int_fn)) == integer);
 	require(table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
-		CVQualifier::None, ReferenceQualifier::None, false) == int_fn);
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None) == int_fn);
 	const auto owner_a = table.record(EntityId{1});
 	const auto owner_b = table.record(EntityId{2});
 	const auto enum_a = table.enumeration(EntityId{3});
@@ -554,7 +590,7 @@ inline int run() {
 	}
 	require(table.pointer(integer) == pointer);
 	require(table.function(table.builtin(CanonicalBuiltinKind::Void), int_param, false,
-		CVQualifier::None, ReferenceQualifier::None, false) == int_fn);
+		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None) == int_fn);
 	require(table.record(EntityId{1}) == owner_a);
 	require(table.enumeration(EntityId{3}) == enum_a);
 	require(table.memberObjectPointer(owner_a, integer) == mop_a);
@@ -574,7 +610,7 @@ inline int run() {
 	const TypeId reordered_params[] = {reordered_int};
 	require(sameStructure(table, table.pointer(int_fn), reordered,
 		reordered.pointer(reordered.function(reordered.builtin(CanonicalBuiltinKind::Void),
-			reordered_params, false, CVQualifier::None, ReferenceQualifier::None, false))));
+			reordered_params, false, CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None))));
 	const auto reordered_owner = reordered.record(EntityId{1});
 	const auto reordered_enum = reordered.enumeration(EntityId{3});
 	require(sameStructure(table, enum_a, reordered, reordered_enum));
@@ -583,7 +619,7 @@ inline int run() {
 	require(sameStructure(table, mfp_a, reordered,
 		reordered.memberFunctionPointer(reordered_owner,
 			reordered.function(reordered.builtin(CanonicalBuiltinKind::Void), reordered_params, false,
-				CVQualifier::None, ReferenceQualifier::None, false))));
+				CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None))));
 	require(!sameStructure(table, mop_a, reordered,
 		reordered.memberObjectPointer(reordered.record(EntityId{2}), reordered_int)));
 	rejects([&] { table.node(TypeId{}); });
@@ -599,12 +635,12 @@ inline int run() {
 	rejects([&] { table.builtin(CanonicalBuiltinKind::Count); });
 	rejects([&] {
 		table.function(int_fn, std::span<const TypeId>{}, false, CVQualifier::None,
-			ReferenceQualifier::None, false);
+			ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None);
 	});
 	rejects([&] {
 		const TypeId bad_param[] = {int_fn};
 		table.function(table.builtin(CanonicalBuiltinKind::Void), bad_param, false, CVQualifier::None,
-			ReferenceQualifier::None, false);
+			ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None);
 	});
 	rejects([&] { table.record(EntityId{}); });
 	rejects([&] { table.enumeration(EntityId{}); });

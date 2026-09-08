@@ -17,6 +17,9 @@ int readRecordArray(const Sample (&value)[2]);
 int readAccessArray(const Access (&value)[2]);
 int readArray(int (&value)[2]) { return value[1]; }
 int invoke(int (*callback)(const short*), const short* value) { return callback(value); }
+int __stdcall scale(int value) { return value * 2; }
+using StdcallCallback = int(__stdcall*)(int);
+int invokeStdcall(StdcallCallback callback, int value) { return callback(value); }
 
 template<typename T>
 T identity(T value) { return value; }
@@ -29,5 +32,6 @@ int main() {
 	Access permissions[2];
 	int values[2] = {11, 13};
 	return readShort(&narrow) + readLong(wide) + readRecord(record) +
-		readAccess(Access::Write) + readArray(values) + invoke(readShort, &narrow) + identity(17) - 53;
+		readAccess(Access::Write) + readArray(values) + invoke(readShort, &narrow) +
+		invokeStdcall(scale, 3) + identity(17) - 59;
 }
