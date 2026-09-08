@@ -5,54 +5,59 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-07 after complete-object canonical Record/Enum layout
-publication for published nominal types
+Last updated: 2026-09-08 after canonical record member/base field-schema
+publication for published complete nominal types
 (local feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's complete-object Record/Enum layout slice is on
-`codex/boundary-3a-record-enum-layout-import` for local review. Opaque
-Record/Enum import, member-pointer EntityId binding, and earlier families are
-on `main`. Gate 0 is closed. Architecture boundary 1 remains incomplete;
-record/enum field/base schemas and remaining nominal families still block
-expanding shadow/merge coverage.
+Architecture boundary 3A's record member/base field-schema slice is on
+`codex/boundary-3a-record-field-schemas` for local review. Complete-object
+Record/Enum layout, opaque Record/Enum import, member-pointer EntityId binding,
+and earlier families are on `main`. Gate 0 is closed. Architecture boundary 1
+remains incomplete; remaining nominal / callable / dependent families still
+block expanding shadow/merge coverage.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
   fundamental types, cv qualification, pointers, references, arrays of known or
   unknown bound, free-function / cv-ref-qualified function types, opaque
   `Record(EntityId)` and `Enum(EntityId)` nodes, member object/function
-  pointers, and EntityId-keyed complete-object layout snapshots. Immutable
-  16-byte nodes use context-local `TypeId`; parameter lists and member-pointer
-  owners are recursive links, not a second identity space. Construction accepts
-  no spelling or legacy flat-type identity.
+  pointers, EntityId-keyed complete-object layout snapshots, and EntityId-keyed
+  record member/base field schemas. Immutable 16-byte nodes use context-local
+  `TypeId`; parameter lists and member-pointer owners are recursive links, not a
+  second identity space. Construction accepts no spelling or legacy flat-type
+  identity.
 - Published global/namespace structs and enums bind `type_entity` / injected-
   class metadata at declarator intern time so `Struct` and `Enum` declarators
   import as opaque `Record(EntityId)` and `Enum(EntityId)` nodes (with
   cv/ref/pointer wrappers). Complete definitions publish record object size,
   dsize-like cursor, non-virtual size, alignment, member/base counts, union
   flag, enum underlying `TypeId`, enumerator count, and scoped flag through the
-  same table. Fixed-bound arrays of those complete published nominal types now
-  import canonically; aliases, unpublished/incomplete nominal forms, unknown
-  nominal bounds, and record member/base schemas stay deferred. The production
-  adapter fixture is now 20 supported / 0 deferred and emits Record/Enum array
-  traces.
+  same table. When every data member and direct base imports as Supported, the
+  parser also publishes ordered member schemas (`TypeId`, offset, size, access,
+  bitfield / `no_unique_address` flags) and base schemas (`EntityId`, offset,
+  access, virtual flag). Fixed-bound arrays of those complete published nominal
+  types import canonically; aliases, unpublished/incomplete nominal forms,
+  unknown nominal bounds, anonymous-union groups, and unpublished-base schemas
+  stay deferred. The production adapter fixture remains 20 supported / 0
+  deferred and emits Record/Enum array traces.
   `SymbolTable` retains lookup and merge authority.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable.
-- Remaining 3A work includes record member/base schemas, calling-convention and
-  dll-linkage callables, unstructured signatures,
-  dependent `noexcept`, dependent types, templates, complete declarator
-  interleaving, and deletion of the flat semantic representation. Stop here for
-  review before starting another family, 3B, or the parallel frontend experiment.
+- Remaining 3A work includes calling-convention and dll-linkage callables,
+  unstructured signatures, dependent `noexcept`, dependent types, templates,
+  complete declarator interleaving, and deletion of the flat semantic
+  representation. Stop here for review before starting another family, 3B, or
+  the parallel frontend experiment.
 
-The shallow native probe measures 61 nodes. Nodes are 16 bytes; the table is 912
-bytes on Linux clang++. Its measured 64-element chunks reserve 1,024 node bytes
-at a time; hash-index heap storage is excluded. A 65,536-level mixed
-pointer/array probe passes under the host stack used by the native harness.
-Table construction, cv propagation, function-parameter linking, member-pointer
-owner linking, and rollback are iterative.
+The shallow native probe measures 61 nodes. Nodes are 16 bytes; member and base
+schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,048 bytes on
+Linux clang++. Its measured 64-element chunks reserve 1,024 node bytes at a
+time; hash-index heap storage is excluded. A 65,536-level mixed pointer/array
+probe passes under the host stack used by the native harness. Table
+construction, cv propagation, function-parameter linking, member-pointer owner
+linking, layout/schema publication, and rollback are iterative.
 
 ## Established foundation
 
@@ -112,14 +117,16 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the complete-object Record/Enum layout slice: native
-canonical tests and source-copy mutations pass; EntityId-backed complete record
-and enum layouts publish only after definition, survive identical publication,
-and roll back with enclosing canonical transactions. Fixed-bound arrays of
-complete published nominal types are Supported; unpublished, incomplete, alias,
-and unknown-bound nominal forms stay UnmigratedNominal. Production fixture
-advanced to 20 supported / 0 deferred with Record/Enum array traces.
-Fixed-corpus migration counters remain within the prior baselines below.
+Latest validation for the record member/base field-schema slice: native
+canonical tests and source-copy mutations pass; EntityId-backed member and base
+schemas publish only after complete layout, survive identical publication, and
+roll back with enclosing canonical transactions. Production publishes schemas
+when every member/base imports as Supported; anonymous-union groups and
+unpublished bases stay deferred while layout publication continues. Fixed-bound
+arrays of complete published nominal types remain Supported. Production fixture
+remains 20 supported / 0 deferred with Record/Enum array traces. Fixed-corpus
+migration counters remain within the prior baselines below (one corpus entry
+improved `template_old_engine` 59→58 without baseline file update).
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -128,7 +135,7 @@ iterations with a 1 MiB stack. The variable-merge probe covers 8,192 redeclarati
 its largest reviewed parser frame was 31,848 bytes versus baseline 31,864
 (Clang 18, `-O0`). These bounded paths do not close broader template stack work.
 
-All 64 fixed-corpus entries remain unchanged. Aggregate values:
+All 64 fixed-corpus entries remain within baseline. Aggregate values:
 
 | Counter | Baseline / current |
 |---------|--------------------|
@@ -138,7 +145,7 @@ All 64 fixed-corpus entries remain unchanged. Aggregate values:
 | `dollar_identity` | 0 / 0 |
 | `outside_engine` | 0 / 0 |
 | `post_parse_typing` | 0 / 0 |
-| `template_old_engine` | 59 / 59 |
+| `template_old_engine` | 59 / 58 |
 | `token_replay` | 382 / 382 |
 | Static dollar inventory | 17 / 17 |
 
@@ -171,10 +178,11 @@ Advanced, not completed:
   pointer owner/pointee distinction are mutation-validated. Class and enum
   EntityId publication, EntityId-backed adapter MOP/MFP import, parse-time
   member-pointer owner binding, opaque Struct→Record and Enum→Enum adapter
-  import, complete-object layout snapshots, and fixed-bound array import for
-  complete published nominal types are landed; alias, unpublished/incomplete
-  nominal, and member/base-schema forms stay deferred. Remaining families and
-  flat-field deletion keep all three identity criteria open.
+  import, complete-object layout snapshots, fixed-bound array import for
+  complete published nominal types, and EntityId-keyed member/base field schemas
+  are landed; alias, unpublished/incomplete nominal, anonymous-union, and
+  unpublished-base forms stay deferred. Remaining families and flat-field
+  deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -193,10 +201,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's record member/base schemas, calling-convention / dll-linkage callable,
-  unstructured-signature, dependent-`noexcept`, template, and dependent families
-  and adapters before expanding boundary-1 shadow coverage (default arguments,
-  exception specifications, friends, templates) or removing `SymbolTable` merge /
+- Finish 3A's calling-convention / dll-linkage callable, unstructured-signature,
+  dependent-`noexcept`, template, and dependent families and adapters before
+  expanding boundary-1 shadow coverage (default arguments, exception
+  specifications, friends, templates) or removing `SymbolTable` merge /
   `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.

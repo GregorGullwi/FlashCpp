@@ -83,9 +83,9 @@ enum class CanonicalEnumLayoutFlags : uint8_t {
 
 // Complete-object layout is separate from immutable canonical type identity.
 // It is keyed by the published EntityId and contains no spelling, TypeIndex,
-// AST pointer, or parser-owned state. Member and base schemas remain later 3A
-// families; this snapshot proves only that a nominal type has a complete object
-// representation suitable for fixed-bound array formation.
+// AST pointer, or parser-owned state. This snapshot proves that a nominal type
+// has a complete object representation suitable for fixed-bound array formation.
+// Member and base field schemas are published separately against the same EntityId.
 struct CanonicalRecordLayout {
 	EntityId entity;
 	uint32_t size_bytes;
@@ -109,10 +109,79 @@ struct CanonicalEnumLayout {
 	friend bool operator==(CanonicalEnumLayout, CanonicalEnumLayout) = default;
 };
 
+enum class CanonicalAccess : uint8_t {
+	Public = 0,
+	Protected = 1,
+	Private = 2,
+};
+
+enum class CanonicalRecordMemberFlags : uint8_t {
+	None = 0,
+	Bitfield = 1 << 0,
+	NoUniqueAddress = 1 << 1,
+};
+
+enum class CanonicalRecordBaseFlags : uint8_t {
+	None = 0,
+	Virtual = 1 << 0,
+};
+
+// Data-member schema entry. Spelling is deliberately absent: identity is the
+// owning EntityId, declaration order, TypeId, and layout facts.
+struct CanonicalRecordMember {
+	TypeId type;
+	uint32_t offset_bytes;
+	uint32_t size_bytes;
+	uint8_t bit_width;
+	uint8_t bit_offset;
+	CanonicalAccess access;
+	CanonicalRecordMemberFlags flags;
+	friend bool operator==(CanonicalRecordMember, CanonicalRecordMember) = default;
+};
+
+struct CanonicalRecordBase {
+	EntityId entity;
+	uint32_t offset_bytes;
+	CanonicalAccess access;
+	CanonicalRecordBaseFlags flags;
+	uint16_t reserved = 0;
+	uint32_t reserved2 = 0;
+	friend bool operator==(CanonicalRecordBase, CanonicalRecordBase) = default;
+};
+
+inline CanonicalRecordMemberFlags operator|(CanonicalRecordMemberFlags a,
+	CanonicalRecordMemberFlags b) {
+	return static_cast<CanonicalRecordMemberFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline CanonicalRecordMemberFlags& operator|=(CanonicalRecordMemberFlags& a,
+	CanonicalRecordMemberFlags b) {
+	return a = a | b;
+}
+inline bool hasCanonicalRecordMemberFlag(CanonicalRecordMemberFlags flags,
+	CanonicalRecordMemberFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
+inline CanonicalRecordBaseFlags operator|(CanonicalRecordBaseFlags a, CanonicalRecordBaseFlags b) {
+	return static_cast<CanonicalRecordBaseFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline CanonicalRecordBaseFlags& operator|=(CanonicalRecordBaseFlags& a,
+	CanonicalRecordBaseFlags b) {
+	return a = a | b;
+}
+inline bool hasCanonicalRecordBaseFlag(CanonicalRecordBaseFlags flags,
+	CanonicalRecordBaseFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
 static_assert(std::is_trivially_copyable_v<CanonicalRecordLayout>);
 static_assert(std::is_trivially_copyable_v<CanonicalEnumLayout>);
+static_assert(std::is_trivially_copyable_v<CanonicalRecordMember>);
+static_assert(std::is_trivially_copyable_v<CanonicalRecordBase>);
 static_assert(sizeof(CanonicalRecordLayout) == 24);
 static_assert(sizeof(CanonicalEnumLayout) == 16);
+static_assert(sizeof(CanonicalRecordMember) == 16);
+static_assert(sizeof(CanonicalRecordBase) == 16);
 
 class CanonicalTypeTransaction;
 
@@ -326,9 +395,9 @@ public:
 		});
 	}
 
-	// Opaque class identity for member-pointer owners. Complete-object layout is
-	// published separately by EntityId; member and base schemas remain later 3A
-	// families, so EntityId remains this node's only key.
+	// Opaque class identity for member-pointer owners. Complete-object layout and
+	// field schemas are published separately by EntityId; EntityId remains this
+	// node's only key.
 	TypeId record(EntityId entity) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -564,6 +633,109 @@ public:
 		return enum_layouts_[found->second];
 	}
 
+	void publishRecordFieldSchema(EntityId entity,
+		std::span<const CanonicalRecordMember> members,
+		std::span<const CanonicalRecordBase> bases) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!entity) {
+			throw InternalError("canonical type: invalid record field schema entity");
+		}
+		const auto layout_found = record_layout_ids_.find(entity.value);
+		if (layout_found == record_layout_ids_.end()) {
+			throw InternalError("canonical type: record field schema requires complete layout");
+		}
+		const CanonicalRecordLayout layout = record_layouts_[layout_found->second];
+		if (members.size() != layout.member_count || bases.size() != layout.direct_base_count) {
+			throw InternalError("canonical type: record field schema count mismatch");
+		}
+		for (const CanonicalRecordMember& member : members) {
+			validateRecordMemberUnlocked(member);
+		}
+		for (const CanonicalRecordBase& base : bases) {
+			validateRecordBaseUnlocked(base);
+		}
+		const auto existing = record_field_schema_ids_.find(entity.value);
+		if (existing != record_field_schema_ids_.end()) {
+			const CanonicalRecordFieldSchemaHeader header =
+				record_field_schema_headers_[existing->second];
+			if (header.member_count != members.size() || header.base_count != bases.size()) {
+				throw InternalError("canonical type: conflicting record field schema publication");
+			}
+			for (size_t index = 0; index < members.size(); ++index) {
+				if (record_members_[header.member_begin + index] != members[index]) {
+					throw InternalError("canonical type: conflicting record field schema publication");
+				}
+			}
+			for (size_t index = 0; index < bases.size(); ++index) {
+				if (record_bases_[header.base_begin + index] != bases[index]) {
+					throw InternalError("canonical type: conflicting record field schema publication");
+				}
+			}
+			return;
+		}
+		const uint32_t member_begin = static_cast<uint32_t>(live_record_member_count_);
+		const uint32_t base_begin = static_cast<uint32_t>(live_record_base_count_);
+		if (static_cast<uint64_t>(member_begin) + members.size() >
+				std::numeric_limits<uint32_t>::max() ||
+			static_cast<uint64_t>(base_begin) + bases.size() >
+				std::numeric_limits<uint32_t>::max()) {
+			throw InternalError("canonical type: record field schema arena exhausted");
+		}
+		for (const CanonicalRecordMember& member : members) {
+			appendSchemaEntryUnlocked(record_members_, live_record_member_count_, member);
+		}
+		for (const CanonicalRecordBase& base : bases) {
+			appendSchemaEntryUnlocked(record_bases_, live_record_base_count_, base);
+		}
+		const CanonicalRecordFieldSchemaHeader header{
+			.entity = entity,
+			.member_begin = member_begin,
+			.base_begin = base_begin,
+			.member_count = static_cast<uint16_t>(members.size()),
+			.base_count = static_cast<uint16_t>(bases.size()),
+		};
+		const size_t header_index = live_record_field_schema_count_;
+		appendSchemaEntryUnlocked(record_field_schema_headers_, live_record_field_schema_count_,
+			header);
+		try {
+			record_field_schema_ids_.emplace(entity.value, header_index);
+		} catch (...) {
+			live_record_field_schema_count_ = header_index;
+			live_record_member_count_ = member_begin;
+			live_record_base_count_ = base_begin;
+			noteArenaBytes();
+			throw;
+		}
+		noteArenaBytes();
+	}
+
+	bool hasRecordFieldSchema(EntityId entity) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return entity && record_field_schema_ids_.contains(entity.value);
+	}
+
+	CanonicalRecordMember recordMemberAt(EntityId entity, size_t index) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(entity);
+		if (index >= header.member_count) {
+			throw InternalError("canonical type: record member index out of range");
+		}
+		return record_members_[header.member_begin + index];
+	}
+
+	CanonicalRecordBase recordBaseAt(EntityId entity, size_t index) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const CanonicalRecordFieldSchemaHeader header = fieldSchemaHeaderUnlocked(entity);
+		if (index >= header.base_count) {
+			throw InternalError("canonical type: record base index out of range");
+		}
+		return record_bases_[header.base_begin + index];
+	}
+
 	size_t size() const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -577,10 +749,24 @@ public:
 	}
 
 private:
+	struct CanonicalRecordFieldSchemaHeader {
+		EntityId entity;
+		uint32_t member_begin;
+		uint32_t base_begin;
+		uint16_t member_count;
+		uint16_t base_count;
+		friend bool operator==(CanonicalRecordFieldSchemaHeader,
+			CanonicalRecordFieldSchemaHeader) = default;
+	};
+	static_assert(sizeof(CanonicalRecordFieldSchemaHeader) == 16);
+
 	struct TransactionMark {
 		size_t node_count;
 		size_t record_layout_count;
 		size_t enum_layout_count;
+		size_t record_field_schema_count;
+		size_t record_member_count;
+		size_t record_base_count;
 	};
 
 	struct NodeHash {
@@ -703,14 +889,70 @@ private:
 		++live_count;
 	}
 
+	template<typename Entry, uint32_t ChunkSize>
+	void appendSchemaEntryUnlocked(ChunkedVector<Entry, ChunkSize>& entries, size_t& live_count,
+		Entry entry) {
+		if (live_count == entries.size()) {
+			entries.push_back(entry);
+		} else {
+			entries[live_count] = entry;
+		}
+		++live_count;
+	}
+
+	void validateRecordMemberUnlocked(const CanonicalRecordMember& member) const {
+		nodeUnlocked(member.type);
+		if (member.access != CanonicalAccess::Public &&
+			member.access != CanonicalAccess::Protected &&
+			member.access != CanonicalAccess::Private) {
+			throw InternalError("canonical type: invalid record member access");
+		}
+		const bool is_bitfield =
+			hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield);
+		if (is_bitfield != (member.bit_width != 0)) {
+			throw InternalError("canonical type: invalid record member bitfield encoding");
+		}
+		if (!is_bitfield && member.bit_offset != 0) {
+			throw InternalError("canonical type: non-bitfield member has bit offset");
+		}
+	}
+
+	void validateRecordBaseUnlocked(const CanonicalRecordBase& base) const {
+		if (!base.entity) {
+			throw InternalError("canonical type: record base requires EntityId");
+		}
+		if (base.access != CanonicalAccess::Public &&
+			base.access != CanonicalAccess::Protected &&
+			base.access != CanonicalAccess::Private) {
+			throw InternalError("canonical type: invalid record base access");
+		}
+		if (base.reserved != 0 || base.reserved2 != 0) {
+			throw InternalError("canonical type: record base reserved fields must be zero");
+		}
+	}
+
+	CanonicalRecordFieldSchemaHeader fieldSchemaHeaderUnlocked(EntityId entity) const {
+		const auto found = record_field_schema_ids_.find(entity.value);
+		if (!entity || found == record_field_schema_ids_.end()) {
+			throw InternalError("canonical type: record has no field schema");
+		}
+		return record_field_schema_headers_[found->second];
+	}
+
 	uint64_t usedBytesUnlocked() const {
 		return static_cast<uint64_t>(live_count_) * sizeof(CanonicalTypeNode) +
 			static_cast<uint64_t>(live_record_layout_count_) * sizeof(CanonicalRecordLayout) +
-			static_cast<uint64_t>(live_enum_layout_count_) * sizeof(CanonicalEnumLayout);
+			static_cast<uint64_t>(live_enum_layout_count_) * sizeof(CanonicalEnumLayout) +
+			static_cast<uint64_t>(live_record_field_schema_count_) *
+				sizeof(CanonicalRecordFieldSchemaHeader) +
+			static_cast<uint64_t>(live_record_member_count_) * sizeof(CanonicalRecordMember) +
+			static_cast<uint64_t>(live_record_base_count_) * sizeof(CanonicalRecordBase);
 	}
 
 	uint64_t reservedBytesUnlocked() const {
-		return nodes_.reservedBytes() + record_layouts_.reservedBytes() + enum_layouts_.reservedBytes();
+		return nodes_.reservedBytes() + record_layouts_.reservedBytes() +
+			enum_layouts_.reservedBytes() + record_field_schema_headers_.reservedBytes() +
+			record_members_.reservedBytes() + record_bases_.reservedBytes();
 	}
 
 	void noteArenaBytes() {
@@ -728,7 +970,14 @@ private:
 	size_t beginTransaction() {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
-		transaction_marks_.push_back({live_count_, live_record_layout_count_, live_enum_layout_count_});
+		transaction_marks_.push_back({
+			live_count_,
+			live_record_layout_count_,
+			live_enum_layout_count_,
+			live_record_field_schema_count_,
+			live_record_member_count_,
+			live_record_base_count_,
+		});
 		transaction_owner_ = std::this_thread::get_id();
 		return transaction_marks_.size();
 	}
@@ -753,6 +1002,13 @@ private:
 				enum_layout_ids_.erase(enum_layouts_[live_enum_layout_count_ - 1].entity.value);
 				--live_enum_layout_count_;
 			}
+			while (live_record_field_schema_count_ > mark.record_field_schema_count) {
+				record_field_schema_ids_.erase(
+					record_field_schema_headers_[live_record_field_schema_count_ - 1].entity.value);
+				--live_record_field_schema_count_;
+			}
+			live_record_member_count_ = mark.record_member_count;
+			live_record_base_count_ = mark.record_base_count;
 			noteArenaBytes();
 		}
 		transaction_marks_.pop_back();
@@ -865,6 +1121,9 @@ private:
 	size_t live_count_ = 0;
 	size_t live_record_layout_count_ = 0;
 	size_t live_enum_layout_count_ = 0;
+	size_t live_record_field_schema_count_ = 0;
+	size_t live_record_member_count_ = 0;
+	size_t live_record_base_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
 	std::vector<TransactionMark> transaction_marks_;
 	std::thread::id transaction_owner_;
@@ -877,6 +1136,12 @@ private:
 	ChunkedVector<CanonicalEnumLayout, 16> enum_layouts_;
 	std::unordered_map<uint32_t, size_t> record_layout_ids_;
 	std::unordered_map<uint32_t, size_t> enum_layout_ids_;
+	// Field-schema samples: 16 headers, 32 members, 16 bases per chunk until a
+	// production corpus measures a larger peak.
+	ChunkedVector<CanonicalRecordFieldSchemaHeader, 16> record_field_schema_headers_;
+	ChunkedVector<CanonicalRecordMember, 32> record_members_;
+	ChunkedVector<CanonicalRecordBase, 16> record_bases_;
+	std::unordered_map<uint32_t, size_t> record_field_schema_ids_;
 };
 
 // Checkpoints publish only when the surrounding transaction commits. Nested
