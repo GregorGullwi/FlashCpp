@@ -1622,6 +1622,7 @@ ParseResult Parser::parse_type_specifier() {
 
 		// Check for template arguments: Container<int>
 		std::optional<TemplateArgumentVector> template_args;
+		std::vector<ASTNode> template_arg_syntax_nodes;
 		if (peek() == "<"_tok) {
 			// Before parsing < as template arguments, check if the type name is actually a template
 			// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
@@ -1680,7 +1681,6 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (should_parse_as_template) {
-				std::vector<ASTNode> template_arg_syntax_nodes;
 				if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(type_name);
 					alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
 					template_args = parse_explicit_template_arguments(
@@ -3537,6 +3537,8 @@ ParseResult Parser::parse_type_specifier() {
 				}
 
 				auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+				const StringHandle primary_template_handle =
+					StringTable::getOrInternStringHandle(type_name);
 				if (inst_type_it != getTypesByNameMap().end()) {
 					const TypeInfo* existing_type = inst_type_it->second;
 					if (existing_type->isStruct()) {
@@ -3557,11 +3559,26 @@ ParseResult Parser::parse_type_specifier() {
 						// simple-template-id such as Wrapper<long long> names that
 						// specialization; it is not the bare injected-class-name of
 						// the surrounding class template.
+						tryStampTypeOnlyClassTemplateSpecialization(
+							type_spec.as<TypeSpecifierNode>(),
+							primary_template_handle,
+							filled_template_args,
+							template_arg_syntax_nodes);
 						return ParseResult::success(type_spec);
 					} else {
 						// Return existing placeholder (UserDefined) - don't create duplicates
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							existing_type->registeredTypeIndex().withCategory(existing_type->typeEnum()), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						auto type_spec = emplace_node<TypeSpecifierNode>(
+							existing_type->registeredTypeIndex().withCategory(existing_type->typeEnum()),
+							0,
+							type_name_token,
+							cv_qualifier,
+							ReferenceQualifier::None);
+						tryStampTypeOnlyClassTemplateSpecialization(
+							type_spec.as<TypeSpecifierNode>(),
+							primary_template_handle,
+							filled_template_args,
+							template_arg_syntax_nodes);
+						return ParseResult::success(type_spec);
 					}
 				}
 
@@ -3600,8 +3617,18 @@ ParseResult Parser::parse_type_specifier() {
 					FLASH_LOG_FORMAT(Templates, Trace, "Set template instantiation metadata for dependent placeholder: base='{}', args={}",
 									 type_name, template_args_info.size());
 
-					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+					auto type_spec = emplace_node<TypeSpecifierNode>(
+						type_info.type_index_.withCategory(TypeCategory::UserDefined),
+						0,
+						type_name_token,
+						cv_qualifier,
+						ReferenceQualifier::None);
+					tryStampTypeOnlyClassTemplateSpecialization(
+						type_spec.as<TypeSpecifierNode>(),
+						primary_template_handle,
+						filled_template_args,
+						template_arg_syntax_nodes);
+					return ParseResult::success(type_spec);
 				}
 				// If type not found, fall through to error handling below
 			}
@@ -4436,4 +4463,55 @@ void Parser::bindInjectedClassIdentity(
 			return;
 		}
 	}
+}
+
+void Parser::tryStampTypeOnlyClassTemplateSpecialization(
+	TypeSpecifierNode& type_spec,
+	StringHandle primary_template_name,
+	std::span<const TemplateTypeArg> filled_args,
+	std::span<const ASTNode> argument_syntax_nodes) {
+	if (!primary_template_name.isValid()) {
+		throw InternalError("stamp template specialization: invalid primary template name");
+	}
+	// Spelling may not name a published class-template primary (aliases, dependent
+	// names, unregistered forms). Leave unstamped.
+	auto template_opt = gTemplateRegistry.lookupTemplate(primary_template_name);
+	if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+		return;
+	}
+	const TemplateClassDeclarationNode& primary =
+		template_opt->as<TemplateClassDeclarationNode>();
+	// Nested/member templates and other unpublished primaries stay out of scope.
+	if (!primary.has_template_decl_id()) {
+		return;
+	}
+	const TemplateParameterVector& template_params = primary.template_parameters();
+	// Defaults may be incomplete; packs also mismatch arity. Bail early either way.
+	if (filled_args.size() != template_params.size()) {
+		return;
+	}
+	// NTTP, template-template, and packs are deferred; type-only fixed arity only.
+	for (const TemplateParameterNode& param : template_params) {
+		if (param.kind() != TemplateParameterKind::Type || param.is_variadic()) {
+			return;
+		}
+	}
+	std::vector<TypeSpecifierNode> type_args;
+	type_args.reserve(filled_args.size());
+	for (size_t index = 0; index < filled_args.size(); ++index) {
+		const TemplateTypeArg& arg = filled_args[index];
+		// Fixed Type parameters must receive type arguments; packs were rejected above.
+		if (!arg.isTypeArgument() || arg.is_pack) {
+			throw InternalError("stamp template specialization: non-type or pack arg for fixed type parameter");
+		}
+		if (index < argument_syntax_nodes.size()) {
+			if (!argument_syntax_nodes[index].is<TypeSpecifierNode>()) {
+				throw InternalError("stamp template specialization: type-arg syntax is not a TypeSpecifierNode");
+			}
+			type_args.push_back(argument_syntax_nodes[index].as<TypeSpecifierNode>());
+			continue;
+		}
+		type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, type_spec.token()));
+	}
+	type_spec.set_template_specialization(primary.template_decl_id(), std::move(type_args));
 }
