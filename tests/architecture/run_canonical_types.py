@@ -70,6 +70,17 @@ def main():
     if options.mutations:
         original = HEADER.read_text()
         mutations = {
+            "lost_dependent_qualifier": (
+                ".child = qualifier,\n\t\t\t.kind = CanonicalTypeKind::DependentName,",
+                ".child = TypeId{1},\n\t\t\t.kind = CanonicalTypeKind::DependentName,"),
+            "lost_dependent_identifier": (
+                ".array_extent = bytes,", ".array_extent = bytes & 0xff,"),
+            "lost_dependent_name_tail": (
+                ".child = name_link,\n\t\t\t\t.kind = CanonicalTypeKind::NameBytes,",
+                ".child = TypeId{},\n\t\t\t\t.kind = CanonicalTypeKind::NameBytes,"),
+            "name_bytes_as_type": (
+                "kind == CanonicalTypeKind::NameBytes;",
+                "false;"),
             "duplicate_identity": ("if (existing != ids_.end()) {", "if (false) {"),
             "lost_pointee": (
                 ".child = pointee,\n"
@@ -196,6 +207,9 @@ def main():
             (directory / HEADER.name).write_text(original.replace(before, after))
             build_and_run(name, directory, 1)
         for name, header, before, after in (
+            ("adapter_dependent_name", "CanonicalTypeAdapter.h",
+             "if (syntax.has_dependent_name_type()) {",
+             "if (false && syntax.has_dependent_name_type()) {"),
             ("adapter_cv", "CanonicalTypeAdapter.h",
              "auto id = table.builtin(builtin);\n\tid = table.qualify(id, syntax.cv_qualifier());",
              "auto id = table.builtin(builtin);\n\tid = table.qualify(id, CVQualifier::None);"),

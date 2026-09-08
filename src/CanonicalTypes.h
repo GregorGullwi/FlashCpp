@@ -4,6 +4,8 @@
 #include <limits>
 #include <mutex>
 #include <span>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <thread>
 #include <vector>
@@ -27,6 +29,7 @@ enum class CanonicalTypeKind : uint8_t {
 	Builtin, Qualified, Pointer, LValueReference, RValueReference, Array,
 	Function, FunctionParam, Record, MemberObjectPointer, MemberFunctionPointer,
 	Enum, TemplateParameter, TemplateSpecialization, TemplateArg,
+	DependentName, NameBytes,
 };
 
 enum class CanonicalTypeNodeFlags : uint8_t {
@@ -106,6 +109,10 @@ inline uint32_t unpackTemplateParameterIndex(uint64_t array_extent) {
 // 32 bits. TemplateSpecialization stores TemplateDeclId in array_extent and the
 // first TemplateArg link in child. TemplateArg links store the argument TypeId
 // in array_extent and the next TemplateArg link in child (type-only this slice).
+// DependentName stores its qualifier in child and a NameBytes link in array_extent.
+// NameBytes is an internal content link: child is the next link, builtin holds
+// the byte count (1..8), and array_extent packs identifier bytes little-endian.
+// It is not a type or a spelling-handle identity. All links share node rollback.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -280,8 +287,7 @@ public:
 		if (static_cast<uint8_t>(qualifiers) > static_cast<uint8_t>(CVQualifier::ConstVolatile)) {
 			throw InternalError("canonical type: invalid cv qualifiers");
 		}
-		if (input.kind == CanonicalTypeKind::FunctionParam ||
-			input.kind == CanonicalTypeKind::TemplateArg) {
+		if (isInternalLink(input.kind)) {
 			throw InternalError("canonical type: qualify function parameter link");
 		}
 		// [dcl.ref]: cv-qualification introduced through a reference typedef is
@@ -328,8 +334,7 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		const auto kind = nodeUnlocked(pointee).kind;
-		if (isReference(kind) || kind == CanonicalTypeKind::FunctionParam ||
-			kind == CanonicalTypeKind::TemplateArg) {
+		if (isReference(kind) || isInternalLink(kind)) {
 			throw InternalError("canonical type: invalid pointer pointee");
 		}
 		return internUnlocked({
@@ -361,8 +366,7 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		CanonicalTypeNode input = nodeUnlocked(referent);
-		if (input.kind == CanonicalTypeKind::FunctionParam ||
-			input.kind == CanonicalTypeKind::TemplateArg) {
+		if (isInternalLink(input.kind)) {
 			throw InternalError("canonical type: reference to function parameter link");
 		}
 		if (qualifier != ReferenceQualifier::LValueReference && qualifier != ReferenceQualifier::RValueReference) {
@@ -418,8 +422,7 @@ public:
 		}
 		const CanonicalTypeNode return_node = nodeUnlocked(return_type);
 		if (return_node.kind == CanonicalTypeKind::Function ||
-			return_node.kind == CanonicalTypeKind::FunctionParam ||
-			return_node.kind == CanonicalTypeKind::TemplateArg ||
+			isInternalLink(return_node.kind) ||
 			return_node.kind == CanonicalTypeKind::Array) {
 			throw InternalError("canonical type: invalid function return type");
 		}
@@ -448,8 +451,7 @@ public:
 			const TypeId parameter = parameters[index];
 			const CanonicalTypeNode parameter_node = nodeUnlocked(parameter);
 			if (parameter_node.kind == CanonicalTypeKind::Function ||
-				parameter_node.kind == CanonicalTypeKind::FunctionParam ||
-				parameter_node.kind == CanonicalTypeKind::TemplateArg ||
+				isInternalLink(parameter_node.kind) ||
 				parameter_node.kind == CanonicalTypeKind::Array) {
 				throw InternalError("canonical type: undecayed function parameter type");
 			}
@@ -541,8 +543,7 @@ public:
 		for (size_t index = arguments.size(); index-- > 0;) {
 			const TypeId argument = arguments[index];
 			const CanonicalTypeNode argument_node = nodeUnlocked(argument);
-			if (argument_node.kind == CanonicalTypeKind::FunctionParam ||
-				argument_node.kind == CanonicalTypeKind::TemplateArg ||
+			if (isInternalLink(argument_node.kind) ||
 				argument_node.kind == CanonicalTypeKind::Array) {
 				throw InternalError("canonical type: invalid template specialization argument");
 			}
@@ -565,14 +566,82 @@ public:
 		});
 	}
 
+	// Plain identifier members of unknown specializations rooted in a published
+	// type parameter. The caller supplies one normalized identifier token, not a
+	// qualified spelling to recover or a lookup result ([temp.dep.type]).
+	TypeId dependentName(TypeId qualifier, std::string_view identifier) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto kind = nodeUnlocked(qualifier).kind;
+		if (kind != CanonicalTypeKind::TemplateParameter && kind != CanonicalTypeKind::DependentName) {
+			throw InternalError("canonical type: unsupported dependent-name qualifier");
+		}
+		if (identifier.empty() || identifier.find('\0') != std::string_view::npos) {
+			throw InternalError("canonical type: invalid dependent identifier");
+		}
+		TypeId name_link{};
+		for (size_t end = identifier.size(); end != 0;) {
+			const size_t begin = ((end - 1) / 8) * 8;
+			uint64_t bytes = 0;
+			for (size_t index = begin; index < end; ++index) {
+				bytes |= static_cast<uint64_t>(static_cast<unsigned char>(identifier[index])) << ((index - begin) * 8);
+			}
+			name_link = internUnlocked({
+				.child = name_link,
+				.kind = CanonicalTypeKind::NameBytes,
+				.builtin = static_cast<CanonicalBuiltinKind>(end - begin),
+				.qualifiers = CVQualifier::None,
+				.flags = CanonicalTypeNodeFlags::None,
+				.array_extent = bytes,
+			});
+			end = begin;
+		}
+		return internUnlocked({
+			.child = qualifier,
+			.kind = CanonicalTypeKind::DependentName,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = name_link.value,
+		});
+	}
+
+	TypeId dependentNameQualifier(TypeId type) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(type);
+		if (input.kind != CanonicalTypeKind::DependentName) {
+			throw InternalError("canonical type: expected dependent name");
+		}
+		return input.child;
+	}
+
+	std::string dependentNameIdentifier(TypeId type) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(type);
+		if (input.kind != CanonicalTypeKind::DependentName) {
+			throw InternalError("canonical type: expected dependent name");
+		}
+		std::string identifier;
+		TypeId cursor{static_cast<uint32_t>(input.array_extent)};
+		while (cursor) {
+			const auto bytes = nodeUnlocked(cursor);
+			for (uint8_t index = 0; index < static_cast<uint8_t>(bytes.builtin); ++index) {
+				identifier.push_back(static_cast<char>((bytes.array_extent >> (index * 8)) & 0xff));
+			}
+			cursor = bytes.child;
+		}
+		return identifier;
+	}
+
 	TypeId memberObjectPointer(TypeId owner, TypeId pointee) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		const TypeId record_owner = recordOwnerUnlocked(owner);
 		const CanonicalTypeNode pointee_node = nodeUnlocked(pointee);
 		if (pointee_node.kind == CanonicalTypeKind::Function ||
-			pointee_node.kind == CanonicalTypeKind::FunctionParam ||
-			pointee_node.kind == CanonicalTypeKind::TemplateArg ||
+			isInternalLink(pointee_node.kind) ||
 			(pointee_node.kind == CanonicalTypeKind::Builtin &&
 				pointee_node.builtin == CanonicalBuiltinKind::Void)) {
 			throw InternalError("canonical type: invalid member object pointee");
@@ -1003,6 +1072,11 @@ private:
 		return kind == CanonicalTypeKind::LValueReference || kind == CanonicalTypeKind::RValueReference;
 	}
 
+	static bool isInternalLink(CanonicalTypeKind kind) {
+		return kind == CanonicalTypeKind::FunctionParam || kind == CanonicalTypeKind::TemplateArg ||
+			kind == CanonicalTypeKind::NameBytes;
+	}
+
 	static bool isMemberPointer(CanonicalTypeKind kind) {
 		return kind == CanonicalTypeKind::MemberObjectPointer ||
 			kind == CanonicalTypeKind::MemberFunctionPointer;
@@ -1027,8 +1101,7 @@ private:
 		}
 		if (isReference(element_node.kind) ||
 			element_node.kind == CanonicalTypeKind::Function ||
-			element_node.kind == CanonicalTypeKind::FunctionParam ||
-			element_node.kind == CanonicalTypeKind::TemplateArg ||
+			isInternalLink(element_node.kind) ||
 			(element_node.kind == CanonicalTypeKind::Builtin && element_node.builtin == CanonicalBuiltinKind::Void) ||
 			(element_node.kind == CanonicalTypeKind::Array && element_node.flags != CanonicalTypeNodeFlags::KnownArrayBound)) {
 			throw InternalError("canonical type: invalid array element type");
@@ -1119,7 +1192,9 @@ private:
 	}
 
 	void validateRecordMemberUnlocked(const CanonicalRecordMember& member) const {
-		nodeUnlocked(member.type);
+		if (isInternalLink(nodeUnlocked(member.type).kind)) {
+			throw InternalError("canonical type: internal link is not a record member type");
+		}
 		const bool is_bitfield =
 			hasCanonicalRecordMemberFlag(member.flags, CanonicalRecordMemberFlags::Bitfield);
 		// Zero-width bitfields (C++ layout alignment directives) keep the Bitfield
@@ -1229,6 +1304,12 @@ private:
 	void appendTypeIdTrace(StringBuilder& shape, TypeId id) const {
 		CanonicalTypeNode current = nodeUnlocked(id);
 		for (;;) {
+			if (current.kind == CanonicalTypeKind::DependentName) {
+				appendDependentNameTrace(shape, current);
+				shape.append('/');
+				current = nodeUnlocked(current.child);
+				continue;
+			}
 			if (current.kind == CanonicalTypeKind::Function) {
 				const TypeId param_link = unpackFunctionParamLink(current.array_extent);
 				const ExprId dependent = unpackFunctionDependentNoexcept(current.array_extent);
@@ -1287,7 +1368,24 @@ private:
 		}
 	}
 
+	void appendDependentNameTrace(StringBuilder& shape, CanonicalTypeNode node) const {
+		appendNodeTraceFields(shape, node, 0);
+		TypeId cursor{static_cast<uint32_t>(node.array_extent)};
+		while (cursor) {
+			const auto bytes = nodeUnlocked(cursor);
+			shape.append('/');
+			appendNodeTraceFields(shape, bytes, bytes.array_extent);
+			cursor = bytes.child;
+		}
+	}
+
 	void appendNodeTrace(StringBuilder& shape, CanonicalTypeNode node) const {
+		if (node.kind == CanonicalTypeKind::DependentName) {
+			appendDependentNameTrace(shape, node);
+			shape.append('/');
+			appendTypeIdTrace(shape, node.child);
+			return;
+		}
 		if (node.kind == CanonicalTypeKind::Function) {
 			const TypeId param_link = unpackFunctionParamLink(node.array_extent);
 			const ExprId dependent = unpackFunctionDependentNoexcept(node.array_extent);

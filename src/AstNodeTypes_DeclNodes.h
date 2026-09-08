@@ -1956,7 +1956,10 @@ public:
 	// the StringHandle remains a lookup key only.
 	bool has_template_parameter_identity() const { return template_parameter_name_.isValid(); }
 	StringHandle template_parameter_name() const { return template_parameter_name_; }
-	void set_template_parameter_identity(StringHandle name) { template_parameter_name_ = name; }
+	void set_template_parameter_identity(StringHandle name) {
+		clear_dependent_name_type();
+		template_parameter_name_ = name;
+	}
 	void clear_template_parameter_identity() {
 		template_parameter_name_ = {};
 		clear_template_parameter_decl();
@@ -1965,6 +1968,7 @@ public:
 	TemplateDeclId template_decl_id() const { return template_decl_id_; }
 	uint32_t template_parameter_index() const { return template_parameter_index_; }
 	void set_template_parameter_decl(TemplateDeclId template_decl, uint32_t parameter_index) {
+		clear_dependent_name_type();
 		clear_template_specialization();
 		template_decl_id_ = template_decl;
 		template_parameter_index_ = parameter_index;
@@ -1993,6 +1997,7 @@ public:
 			throw InternalError("type specifier: invalid specialization TemplateDeclId");
 		}
 		clear_template_parameter_identity();
+		clear_dependent_name_type();
 		specialization_template_decl_ = primary;
 		specialization_type_args_ = std::move(type_args);
 	}
@@ -2000,6 +2005,20 @@ public:
 		specialization_template_decl_ = {};
 		specialization_type_args_.clear();
 	}
+
+	// Opaque bridge for a canonical dependent-name base in the owning context.
+	// Production parser publication is a separate 3A slice; no spelling recovery.
+	bool has_dependent_name_type() const { return static_cast<bool>(dependent_name_type_); }
+	TypeId dependent_name_type() const { return dependent_name_type_; }
+	void set_dependent_name_type(TypeId type) {
+		if (!type) {
+			throw InternalError("type specifier: invalid dependent-name TypeId");
+		}
+		clear_template_parameter_identity();
+		clear_template_specialization();
+		dependent_name_type_ = type;
+	}
+	void clear_dependent_name_type() { dependent_name_type_ = {}; }
 
 	bool has_injected_class_declaration() const {
 		return injected_class_declaration_ != nullptr;
@@ -2014,6 +2033,7 @@ public:
 		injected_class_declaration_ = nullptr;
 	}
 	void copy_binding_identity_from(const TypeSpecifierNode& other) {
+		dependent_name_type_ = other.dependent_name_type_;
 		template_parameter_name_ = other.template_parameter_name_;
 		template_decl_id_ = other.template_decl_id_;
 		template_parameter_index_ = other.template_parameter_index_;
@@ -2097,6 +2117,7 @@ private:
 	TemplateDeclId template_decl_id_; // Published template owner; never StringHandle identity
 	uint32_t template_parameter_index_ = 0; // Index within that template's parameter list
 	TemplateDeclId specialization_template_decl_; // Primary for stamped type-only specializations
+	TypeId dependent_name_type_; // Canonical base; declarator wrappers remain syntax
 	std::vector<TypeSpecifierNode> specialization_type_args_;
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)

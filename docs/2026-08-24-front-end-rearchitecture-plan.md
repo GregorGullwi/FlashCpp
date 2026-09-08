@@ -62,8 +62,11 @@ The target ownership model is:
 2. `DeclId` identifies one source declaration. `EntityId` identifies the
    canonical C++ entity across redeclarations and definitions.
 3. Canonical types are recursive structural nodes. Identity is independent of
-   parse order, spelling, parser stacks, arena addresses, and translation-unit
-   layout.
+   parse order, incidental spelling (including parameter renaming and aliases),
+   parser stacks, arena addresses, and translation-unit layout. Unresolved
+   dependent member identifiers are structural content: `T::first` and
+   `T::second` must remain distinguishable before substitution. Compare that
+   content, never numeric string handles or the result of premature lookup.
 4. Template parameters use depth and index. Names remain only for diagnostics
    and source printing.
 5. One semantic fact has one authority. Temporary shadow comparison is
@@ -753,6 +756,20 @@ canonicalization.
 Store canonical type nodes in a typed arena owned by `FrontendContext`. `TypeId`
 is the external identity. Interned spellings may assist lookup and diagnostics,
 but `StringHandle` does not participate in canonical type equality.
+
+For unresolved dependent names, retain the canonical qualifier and each member
+identifier's normalized content. C++20 [temp.dep.type] treats members of unknown
+specializations as dependent, and [temp.over.link] compares dependent names
+without using the result of lookup in the template context. This is structural
+name content, not spelling-based recovery of a resolved type. After substitution,
+lookup and alias resolution determine the resulting canonical type. See the
+[C++20 draft, temp.over.link](https://timsong-cpp.github.io/cppwp/n4861/temp.over.link)
+and [temp.dep.type](https://timsong-cpp.github.io/cppwp/n4861/temp.dep.type).
+
+The first dependent-name slice provides opaque plain-identifier chains rooted
+in published type parameters and an explicit adapter binding. Production parser
+publication is the next slice; do not infer a binding from flat type names.
+Template-id members, other qualifier families, and substitution remain deferred.
 
 Exit criteria:
 

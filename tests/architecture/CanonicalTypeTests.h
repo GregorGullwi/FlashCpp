@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdio>
 #include <source_location>
+#include <sstream>
 #include <type_traits>
 #include <vector>
 
@@ -31,6 +32,10 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 			return false;
 		}
 		if (a.kind == CanonicalTypeKind::Array && a.array_extent != b.array_extent) {
+			return false;
+		}
+		if (a.kind == CanonicalTypeKind::DependentName &&
+			left.dependentNameIdentifier(left_id) != right.dependentNameIdentifier(right_id)) {
 			return false;
 		}
 		if (a.kind == CanonicalTypeKind::Record || a.kind == CanonicalTypeKind::Enum ||
@@ -644,7 +649,132 @@ inline void checkTemplateDeclPublication() {
 	rejects([&] { decls.publishPrimaryClassTemplate(OwnerId{}, name_a); });
 }
 
+inline void checkDependentNames() {
+	CanonicalTypeTable table;
+	const auto owner = table.templateParameter(TemplateDeclId{7}, 0);
+	const auto other = table.templateParameter(TemplateDeclId{7}, 1);
+	const auto member = table.dependentName(owner, "first");
+	std::string same_name = "first";
+	require(table.dependentName(owner, same_name) == member);
+	require(table.dependentName(other, "first") != member);
+	require(table.dependentName(owner, "second") != member);
+	require(table.dependentNameQualifier(member) == owner);
+	require(table.dependentNameIdentifier(member) == "first");
+	const auto nested = table.dependentName(member, "second");
+	require(nested != table.dependentName(table.dependentName(owner, "second"), "first"));
+	for (const auto name : {"a", "abcdefgh", "abcdefghi", "abcdefghijklmnop", "abcdefghijklmnopq"}) {
+		const auto id = table.dependentName(owner, name);
+		require(table.dependentNameIdentifier(id) == name);
+		require(table.dependentName(owner, std::string(name)) == id);
+	}
+	rejects([&] { table.dependentName(owner, ""); });
+	rejects([&] { table.dependentName(owner, std::string_view("a\0b", 3)); });
+	rejects([&] { table.dependentName(table.builtin(CanonicalBuiltinKind::Int), "first"); });
+	rejects([&] { table.dependentNameIdentifier(owner); });
+	const TypeId bytes{static_cast<uint32_t>(table.node(member).array_extent)};
+	rejects([&] { table.pointer(bytes); });
+	rejects([&] { table.qualify(bytes, CVQualifier::Const); });
+	rejects([&] { table.reference(bytes, ReferenceQualifier::LValueReference); });
+	rejects([&] { table.array(bytes, 2); });
+	rejects([&] { table.templateSpecialization(TemplateDeclId{1}, std::span<const TypeId>(&bytes, 1)); });
+	rejects([&] { table.memberObjectPointer(table.record(EntityId{1}), bytes); });
+	rejects([&] { table.function(bytes, {}, false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}); });
+	rejects([&] { table.function(table.builtin(CanonicalBuiltinKind::Int), std::span<const TypeId>(&bytes, 1),
+		false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}); });
+	table.publishRecordLayout({EntityId{1}, 1, 1, 1, 1, 1, 0, CanonicalRecordLayoutFlags::None});
+	const CanonicalRecordMember invalid_member{bytes, 0, 1, 0, 0, CanonicalAccess::Public,
+		CanonicalRecordMemberFlags::None};
+	rejects([&] { table.publishRecordFieldSchema(EntityId{1},
+		std::span<const CanonicalRecordMember>(&invalid_member, 1), {}); });
+	const auto count = table.size();
+	TypeId discarded;
+	{
+		CanonicalTypeTransaction transaction(table);
+		discarded = table.dependentName(member, "discarded_identifier");
+		{
+			CanonicalTypeTransaction inner(table);
+			table.dependentName(discarded, "inner");
+			inner.commit();
+		}
+	}
+	require(table.size() == count);
+	require(table.dependentName(member, "discarded_identifier") == discarded);
+	require(table.dependentName(owner, "first") == member);
+
+	CanonicalTypeTable reordered;
+	const auto reordered_owner = reordered.templateParameter(TemplateDeclId{7}, 0);
+	reordered.dependentName(reordered_owner, "second");
+	reordered.dependentName(reordered_owner, "unrelated");
+	const auto reordered_member = reordered.dependentName(reordered_owner, "first");
+	require(sameStructure(table, nested, reordered, reordered.dependentName(reordered_member, "second")));
+	require(!sameStructure(table, member, reordered, reordered.dependentName(reordered_owner, "second")));
+
+	TypeSpecifierNode syntax(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{}, CVQualifier::Const);
+	require(importCanonicalType(table, syntax).status != CanonicalTypeImportStatus::Supported);
+	syntax.set_dependent_name_type(member);
+	syntax.add_pointer_level(CVQualifier::Volatile);
+	syntax.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const auto expected = table.reference(table.qualify(table.pointer(table.qualify(member, CVQualifier::Const)),
+		CVQualifier::Volatile), ReferenceQualifier::LValueReference);
+	require(importCanonicalType(table, syntax).type == expected);
+	TypeSpecifierNode copy(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	copy.copy_binding_identity_from(syntax);
+	require(importCanonicalType(table, copy).type == member);
+	copy.set_array(true);
+	const size_t dimensions[] = {2, 3};
+	copy.set_array_dimensions(dimensions);
+	require(importCanonicalType(table, copy).type == table.array(table.array(member, 3), 2));
+	require(importCanonicalFunctionParameterType(table, copy).type == table.pointer(table.array(member, 3)));
+	copy.set_pack_expansion(true);
+	require(importCanonicalType(table, copy).status == CanonicalTypeImportStatus::Unresolved);
+	copy.set_pack_expansion(false);
+	const size_t invalid_dimensions[] = {0};
+	copy.set_array_dimensions(invalid_dimensions);
+	const auto before_invalid = table.size();
+	require(importCanonicalType(table, copy).status == CanonicalTypeImportStatus::UnmigratedArray);
+	require(table.size() == before_invalid);
+	syntax.set_template_parameter_decl(TemplateDeclId{7}, 0);
+	require(!syntax.has_dependent_name_type());
+	copy.set_dependent_name_type(owner);
+	copy.set_pack_expansion(false);
+	rejects([&] { importCanonicalType(table, copy); });
+
+	const auto shallow = table.size();
+	auto deep = owner;
+	auto reordered_deep = reordered_owner;
+	for (size_t level = 0; level < 65536; ++level) {
+		deep = table.dependentName(deep, "next");
+		reordered_deep = reordered.dependentName(reordered_deep, "next");
+	}
+	require(sameStructure(table, deep, reordered, reordered_deep));
+	// Trace one completed deep request, not every prefix. Tracing must expand
+	// name content, not arena slots, and must not recurse along the qualifier.
+	std::ostringstream trace;
+	auto* previous_output = FlashCpp::LogConfig::output_stream;
+	const auto previous_level = FlashCpp::LogConfig::getLevelForCategory(FlashCpp::LogCategory::Types);
+	FlashCpp::LogConfig::setOutputStream(&trace);
+	FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, FlashCpp::LogLevel::Trace);
+	table.pointer(deep);
+	const auto first_trace = trace.str();
+	trace.str("");
+	reordered.pointer(reordered_deep);
+	FlashCpp::LogConfig::setOutputStream(previous_output);
+	FlashCpp::LogConfig::setLevel(FlashCpp::LogCategory::Types, previous_level);
+	require(!first_trace.empty());
+	require(trace.str() == first_trace);
+	for (size_t level = 0; level < 65536; ++level) {
+		require(table.dependentNameIdentifier(deep) == "next");
+		deep = table.dependentNameQualifier(deep);
+	}
+	require(deep == owner);
+	std::printf("dependent names: shallow=%zu node=%zu syntax=%zu deep=65536\n",
+		shallow, sizeof(CanonicalTypeNode), sizeof(TypeSpecifierNode));
+}
+
 inline int run() {
+	checkDependentNames();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();
