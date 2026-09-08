@@ -4388,6 +4388,16 @@ private:	 // Resume private methods
 		std::span<const TemplateTypeArg> filled_args,
 		std::span<const ASTNode> argument_syntax_nodes);
 
+	// Stamp plain dependent-member chains rooted in a published type parameter
+	// (T::first, T::Nested::item). No-op for unpublished templates, non-type
+	// owners, DependentInstantiation / other qualifier families, or any segment
+	// with ::template / template arguments. Does not recover identity from flat
+	// TypeIndex spellings.
+	void tryStampPlainDependentMemberChain(
+		TypeSpecifierNode& type_spec,
+		StringHandle owner_param_name,
+		const TypeInfo::DependentQualifiedNameRecord& record);
+
 	void pushCurrentTemplateParamName(StringHandle param_name) {
 		current_template_params_.pushName(param_name);
 	}

@@ -2007,7 +2007,9 @@ public:
 	}
 
 	// Opaque bridge for a canonical dependent-name base in the owning context.
-	// Production parser publication is a separate 3A slice; no spelling recovery.
+	// Production stamps plain TemplateParameter-rooted identifier chains; no
+	// spelling recovery from flat TypeIndex names. Template-id members and other
+	// qualifier families stay unbound until later 3A slices.
 	bool has_dependent_name_type() const { return static_cast<bool>(dependent_name_type_); }
 	TypeId dependent_name_type() const { return dependent_name_type_; }
 	void set_dependent_name_type(TypeId type) {

@@ -741,6 +741,26 @@ inline void checkDependentNames() {
 	copy.set_pack_expansion(false);
 	rejects([&] { importCanonicalType(table, copy); });
 
+	// Production publication shape: TemplateDeclId + parameter index + plain
+	// identifier segments, without StringHandle identity or flat TypeIndex recovery.
+	const auto published_owner = table.templateParameter(TemplateDeclId{11}, 0);
+	const auto published_nested = table.dependentName(published_owner, "Nested");
+	const auto published_item = table.dependentName(published_nested, "item");
+	TypeSpecifierNode published(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	require(!published.has_dependent_name_type());
+	require(importCanonicalType(table, published).status != CanonicalTypeImportStatus::Supported);
+	published.set_dependent_name_type(published_item);
+	require(importCanonicalType(table, published).type == published_item);
+	require(table.dependentNameQualifier(published_item) == published_nested);
+	require(table.dependentNameIdentifier(published_nested) == "Nested");
+	require(table.dependentNameIdentifier(published_item) == "item");
+	require(table.templateParameterDecl(published_owner) == TemplateDeclId{11});
+	require(table.templateParameterIndex(published_owner) == 0);
+	TypeSpecifierNode rebound(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{}, CVQualifier::Volatile);
+	rebound.copy_binding_identity_from(published);
+	require(importCanonicalType(table, rebound).type ==
+		table.qualify(published_item, CVQualifier::Volatile));
+
 	const auto shallow = table.size();
 	auto deep = owner;
 	auto reordered_deep = reordered_owner;
