@@ -32,7 +32,8 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 		if (a.kind == CanonicalTypeKind::Array && a.array_extent != b.array_extent) {
 			return false;
 		}
-		if (a.kind == CanonicalTypeKind::Record || a.kind == CanonicalTypeKind::Enum) {
+		if (a.kind == CanonicalTypeKind::Record || a.kind == CanonicalTypeKind::Enum ||
+			a.kind == CanonicalTypeKind::TemplateParameter) {
 			return a.array_extent == b.array_extent;
 		}
 		if (a.kind == CanonicalTypeKind::Function) {
@@ -376,6 +377,31 @@ inline void checkAdapter() {
 	require(imported_enum.status == CanonicalTypeImportStatus::Supported);
 	require(imported_enum.type == table.qualify(table.enumeration(EntityId{5}), CVQualifier::Volatile));
 	require(imported_enum.type != table.qualify(table.enumeration(EntityId{6}), CVQualifier::Volatile));
+
+	TypeSpecifierNode spelling_only_param(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{},
+		CVQualifier::None);
+	spelling_only_param.set_template_parameter_identity(StringTable::getOrInternStringHandle("T"));
+	require(importCanonicalType(table, spelling_only_param).status ==
+		CanonicalTypeImportStatus::Unresolved);
+	spelling_only_param.set_template_parameter_decl(TemplateDeclId{4}, 0);
+	spelling_only_param.set_reference_qualifier(ReferenceQualifier::RValueReference);
+	const auto imported_template_param = importCanonicalType(table, spelling_only_param);
+	require(imported_template_param.status == CanonicalTypeImportStatus::Supported);
+	require(imported_template_param.type == table.reference(
+		table.templateParameter(TemplateDeclId{4}, 0), ReferenceQualifier::RValueReference));
+	require(imported_template_param.type != table.reference(
+		table.templateParameter(TemplateDeclId{4}, 1), ReferenceQualifier::RValueReference));
+	require(imported_template_param.type != table.reference(
+		table.templateParameter(TemplateDeclId{5}, 0), ReferenceQualifier::RValueReference));
+	TypeSpecifierNode decl_only_param(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{},
+		CVQualifier::Const);
+	decl_only_param.set_template_parameter_decl(TemplateDeclId{4}, 0);
+	decl_only_param.add_pointer_level(CVQualifier::None);
+	const auto imported_decl_only = importCanonicalType(table, decl_only_param);
+	require(imported_decl_only.status == CanonicalTypeImportStatus::Supported);
+	require(imported_decl_only.type == table.pointer(
+		table.qualify(table.templateParameter(TemplateDeclId{4}, 0), CVQualifier::Const)));
+
 	TypeSpecifierNode published_enum_array(TypeCategory::Enum, TypeQualifier::None, 16, Token{},
 		CVQualifier::None);
 	published_enum_array.set_type_entity(EntityId{5});
@@ -656,6 +682,18 @@ inline int run() {
 	require(table.enumeration(EntityId{3}) == enum_a);
 	require(table.recordEntity(owner_a).value == 1);
 	require(table.enumEntity(enum_a).value == 3);
+	const auto tmpl_a = table.templateParameter(TemplateDeclId{8}, 0);
+	const auto tmpl_b = table.templateParameter(TemplateDeclId{8}, 1);
+	const auto tmpl_other = table.templateParameter(TemplateDeclId{9}, 0);
+	require(tmpl_a != tmpl_b && tmpl_a != tmpl_other && tmpl_a != owner_a && tmpl_a != enum_a);
+	require(table.templateParameter(TemplateDeclId{8}, 0) == tmpl_a);
+	require(table.templateParameterDecl(tmpl_a).value == 8);
+	require(table.templateParameterIndex(tmpl_a) == 0);
+	require(table.templateParameterIndex(tmpl_b) == 1);
+	require(table.pointer(tmpl_a) != tmpl_a);
+	require(table.array(tmpl_a, 2) != table.array(tmpl_b, 2));
+	rejects([&] { table.templateParameter(TemplateDeclId{}, 0); });
+	rejects([&] { table.templateParameterDecl(owner_a); });
 	const auto mop_a = table.memberObjectPointer(owner_a, integer);
 	const auto mop_b = table.memberObjectPointer(owner_b, integer);
 	const auto mop_float = table.memberObjectPointer(owner_a, floating);
@@ -682,6 +720,7 @@ inline int run() {
 		CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}) == int_fn);
 	require(table.record(EntityId{1}) == owner_a);
 	require(table.enumeration(EntityId{3}) == enum_a);
+	require(table.templateParameter(TemplateDeclId{8}, 0) == tmpl_a);
 	require(table.memberObjectPointer(owner_a, integer) == mop_a);
 	require(table.memberFunctionPointer(owner_a, int_fn) == mfp_a);
 	require(table.size() == count);
@@ -702,7 +741,10 @@ inline int run() {
 			reordered_params, false, CVQualifier::None, ReferenceQualifier::None, false, CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{}))));
 	const auto reordered_owner = reordered.record(EntityId{1});
 	const auto reordered_enum = reordered.enumeration(EntityId{3});
+	const auto reordered_tmpl = reordered.templateParameter(TemplateDeclId{8}, 0);
 	require(sameStructure(table, enum_a, reordered, reordered_enum));
+	require(sameStructure(table, tmpl_a, reordered, reordered_tmpl));
+	require(!sameStructure(table, tmpl_a, reordered, reordered.templateParameter(TemplateDeclId{8}, 1)));
 	require(sameStructure(table, mop_a, reordered,
 		reordered.memberObjectPointer(reordered_owner, reordered_int)));
 	require(sameStructure(table, mfp_a, reordered,

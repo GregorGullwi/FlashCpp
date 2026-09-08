@@ -160,6 +160,9 @@ def main():
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = 1,"),
+            "lost_template_parameter": (
+                ".array_extent = packTemplateParameterExtent(template_decl, parameter_index),",
+                ".array_extent = packTemplateParameterExtent(TemplateDeclId{1}, parameter_index),"),
             "lost_record_layout": (
                 "return entity && record_layout_ids_.contains(entity.value);",
                 "return entity && false;"),
@@ -223,6 +226,13 @@ def main():
              "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
              "\t}",
              "if (signature.dependent_noexcept) {\n"
+             "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
+             "\t}"),
+            ("adapter_template_parameter", "CanonicalTypeAdapter.h",
+             "if (!syntax.has_template_parameter_decl()) {\n"
+             "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
+             "\t}",
+             "if (false && !syntax.has_template_parameter_decl()) {\n"
              "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
              "\t}"),
             ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",

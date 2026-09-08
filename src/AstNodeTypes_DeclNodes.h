@@ -1950,10 +1950,26 @@ public:
 	// Scoped binding identity for a type template parameter such as T in T&&.
 	// Consumers resolve this handle against the active template parameter list,
 	// so replay does not depend on token spelling or a transient TypeInfo entry.
+	// Canonical type identity uses TemplateDeclId + parameter index when published;
+	// the StringHandle remains a lookup key only.
 	bool has_template_parameter_identity() const { return template_parameter_name_.isValid(); }
 	StringHandle template_parameter_name() const { return template_parameter_name_; }
 	void set_template_parameter_identity(StringHandle name) { template_parameter_name_ = name; }
-	void clear_template_parameter_identity() { template_parameter_name_ = {}; }
+	void clear_template_parameter_identity() {
+		template_parameter_name_ = {};
+		clear_template_parameter_decl();
+	}
+	bool has_template_parameter_decl() const { return static_cast<bool>(template_decl_id_); }
+	TemplateDeclId template_decl_id() const { return template_decl_id_; }
+	uint32_t template_parameter_index() const { return template_parameter_index_; }
+	void set_template_parameter_decl(TemplateDeclId template_decl, uint32_t parameter_index) {
+		template_decl_id_ = template_decl;
+		template_parameter_index_ = parameter_index;
+	}
+	void clear_template_parameter_decl() {
+		template_decl_id_ = {};
+		template_parameter_index_ = 0;
+	}
 
 	bool has_injected_class_declaration() const {
 		return injected_class_declaration_ != nullptr;
@@ -1969,6 +1985,8 @@ public:
 	}
 	void copy_binding_identity_from(const TypeSpecifierNode& other) {
 		template_parameter_name_ = other.template_parameter_name_;
+		template_decl_id_ = other.template_decl_id_;
+		template_parameter_index_ = other.template_parameter_index_;
 		injected_class_declaration_ = other.injected_class_declaration_;
 		member_class_entity_ = other.member_class_entity_;
 		type_entity_ = other.type_entity_;
@@ -2044,6 +2062,8 @@ private:
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;	 // True if this type is followed by ... (pack expansion)
 	StringHandle template_parameter_name_; // Scoped type-template parameter binding
+	TemplateDeclId template_decl_id_; // Published template owner; never StringHandle identity
+	uint32_t template_parameter_index_ = 0; // Index within that template's parameter list
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	EntityId member_class_entity_; // Published class owner; never StringHandle identity

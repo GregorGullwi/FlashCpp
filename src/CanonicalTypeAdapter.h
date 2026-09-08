@@ -413,13 +413,88 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	return {id, CanonicalTypeImportStatus::Supported};
 }
 
+// Opaque type-template-parameter import. Spelling-only bindings stay Unresolved
+// until TemplateDeclId + parameter index are published onto the specifier.
+inline CanonicalTypeImport importCanonicalTemplateParameter(CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
+	if (!syntax.has_template_parameter_decl()) {
+		return {{}, CanonicalTypeImportStatus::Unresolved};
+	}
+	const auto reference = syntax.reference_qualifier();
+	if (static_cast<uint8_t>(syntax.cv_qualifier()) > 3 ||
+		(reference != ReferenceQualifier::None && reference != ReferenceQualifier::LValueReference &&
+			reference != ReferenceQualifier::RValueReference)) {
+		return {{}, CanonicalTypeImportStatus::Invalid};
+	}
+	for (const auto& pointer : syntax.pointer_levels()) {
+		if (static_cast<uint8_t>(pointer.cv_qualifier) > 3) {
+			return {{}, CanonicalTypeImportStatus::Invalid};
+		}
+	}
+	const bool has_ordinary_array = syntax.is_array() && !syntax.has_pointee_array_declarator();
+	const bool has_pointee_array = syntax.has_pointee_array_declarator();
+	const bool has_array_shape = has_ordinary_array || has_pointee_array ||
+		!syntax.array_dimensions().empty() || syntax.has_unsized_outer_array_dimension();
+	if (has_array_shape) {
+		if ((!has_ordinary_array && !has_pointee_array) ||
+			(syntax.has_unsized_outer_array_dimension() && !has_ordinary_array) ||
+			(has_pointee_array && syntax.pointer_levels().empty())) {
+			return {{}, CanonicalTypeImportStatus::Invalid};
+		}
+		if (has_ordinary_array && syntax.array_dimensions().empty() &&
+			!syntax.has_unsized_outer_array_dimension()) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedArray};
+		}
+		for (const size_t extent : syntax.array_dimensions()) {
+			if (extent == 0) {
+				return {{}, CanonicalTypeImportStatus::UnmigratedArray};
+			}
+		}
+	}
+	auto id = table.templateParameter(syntax.template_decl_id(), syntax.template_parameter_index());
+	id = table.qualify(id, syntax.cv_qualifier());
+	if (has_pointee_array) {
+		if (syntax.array_dimensions().empty()) {
+			id = table.arrayOfUnknownBound(id);
+		} else {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+		}
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+	} else {
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+		if (has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&
+			reference == ReferenceQualifier::None) {
+			const size_t first_inner_dimension = syntax.has_unsized_outer_array_dimension() ? 0 : 1;
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), first_inner_dimension);
+			id = table.pointer(id);
+		} else if (has_ordinary_array) {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+			if (syntax.has_unsized_outer_array_dimension()) {
+				id = table.arrayOfUnknownBound(id);
+			}
+		}
+	}
+	if (reference != ReferenceQualifier::None) {
+		id = table.reference(id, reference);
+	}
+	return {id, CanonicalTypeImportStatus::Supported};
+}
+
 // Boundary-3A adapter: inspect only resolved declarator structure. Unsupported
 // families stay explicit; never flatten a dependent type into a supported
 // pointee. Spelling, parser state and gTypeInfo are not identity.
 inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
-	if (syntax.is_pack_expansion() || syntax.has_template_parameter_identity() || syntax.has_concept_constraint()) {
+	if (syntax.is_pack_expansion() || syntax.has_concept_constraint()) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
+	}
+	if (syntax.has_template_parameter_identity() || syntax.has_template_parameter_decl()) {
+		CanonicalTypeTransaction transaction(table);
+		const auto imported = importCanonicalTemplateParameter(table, syntax, context);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			transaction.commit();
+		}
+		return imported;
 	}
 	if (syntax.has_member_class() ||
 		syntax.category() == TypeCategory::MemberFunctionPointer ||
