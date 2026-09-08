@@ -34,6 +34,39 @@ inline TypeId addCanonicalArrayDimensions(CanonicalTypeTable& table, TypeId id,
 	return id;
 }
 
+// Shared pointer/array/reference shaping after a base TypeId and top-level cv
+// have been formed. Keeps parameter-array decay in one mutation-tested place.
+inline TypeId applyCanonicalPointerArrayReference(CanonicalTypeTable& table, TypeId id,
+	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context,
+	bool has_ordinary_array, bool has_pointee_array) {
+	const auto reference = syntax.reference_qualifier();
+	if (has_pointee_array) {
+		if (syntax.array_dimensions().empty()) {
+			id = table.arrayOfUnknownBound(id);
+		} else {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+		}
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+	} else {
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+		if (has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&
+			reference == ReferenceQualifier::None) {
+			const size_t first_inner_dimension = syntax.has_unsized_outer_array_dimension() ? 0 : 1;
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), first_inner_dimension);
+			id = table.pointer(id);
+		} else if (has_ordinary_array) {
+			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
+			if (syntax.has_unsized_outer_array_dimension()) {
+				id = table.arrayOfUnknownBound(id);
+			}
+		}
+	}
+	if (reference != ReferenceQualifier::None) {
+		id = table.reference(id, reference);
+	}
+	return id;
+}
+
 inline TypeSpecifierNode typeSpecifierFromFunctionType(const FunctionType& type) {
 	TypeSpecifierNode spec(type.type_index, TypeQualifier::None, 0, Token{}, type.cv_qualifier);
 	spec.set_reference_qualifier(type.reference_qualifier);
@@ -453,30 +486,8 @@ inline CanonicalTypeImport importCanonicalTemplateParameter(CanonicalTypeTable& 
 	}
 	auto id = table.templateParameter(syntax.template_decl_id(), syntax.template_parameter_index());
 	id = table.qualify(id, syntax.cv_qualifier());
-	if (has_pointee_array) {
-		if (syntax.array_dimensions().empty()) {
-			id = table.arrayOfUnknownBound(id);
-		} else {
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
-		}
-		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-	} else {
-		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-		if (has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&
-			reference == ReferenceQualifier::None) {
-			const size_t first_inner_dimension = syntax.has_unsized_outer_array_dimension() ? 0 : 1;
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), first_inner_dimension);
-			id = table.pointer(id);
-		} else if (has_ordinary_array) {
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
-			if (syntax.has_unsized_outer_array_dimension()) {
-				id = table.arrayOfUnknownBound(id);
-			}
-		}
-	}
-	if (reference != ReferenceQualifier::None) {
-		id = table.reference(id, reference);
-	}
+	id = applyCanonicalPointerArrayReference(
+		table, id, syntax, context, has_ordinary_array, has_pointee_array);
 	return {id, CanonicalTypeImportStatus::Supported};
 }
 
@@ -610,30 +621,8 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	CanonicalTypeTransaction transaction(table);
 	auto id = table.builtin(builtin);
 	id = table.qualify(id, syntax.cv_qualifier());
-	if (has_pointee_array) {
-		if (syntax.array_dimensions().empty()) {
-			id = table.arrayOfUnknownBound(id);
-		} else {
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
-		}
-		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-	} else {
-		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-		if (has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&
-			reference == ReferenceQualifier::None) {
-			const size_t first_inner_dimension = syntax.has_unsized_outer_array_dimension() ? 0 : 1;
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), first_inner_dimension);
-			id = table.pointer(id);
-		} else if (has_ordinary_array) {
-			id = addCanonicalArrayDimensions(table, id, syntax.array_dimensions(), 0);
-			if (syntax.has_unsized_outer_array_dimension()) {
-				id = table.arrayOfUnknownBound(id);
-			}
-		}
-	}
-	if (reference != ReferenceQualifier::None) {
-		id = table.reference(id, reference);
-	}
+	id = applyCanonicalPointerArrayReference(
+		table, id, syntax, context, has_ordinary_array, has_pointee_array);
 	transaction.commit();
 	return {id, CanonicalTypeImportStatus::Supported};
 }
