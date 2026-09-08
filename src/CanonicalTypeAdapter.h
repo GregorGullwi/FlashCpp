@@ -565,7 +565,9 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	}
 	if (syntax.has_dependent_name_type()) {
 		const auto base = syntax.dependent_name_type();
-		if (table.node(base).kind != CanonicalTypeKind::DependentName) {
+		const auto base_kind = table.node(base).kind;
+		if (base_kind != CanonicalTypeKind::DependentName &&
+			base_kind != CanonicalTypeKind::DependentTemplateMember) {
 			throw InternalError("canonical type adapter: dependent-name binding has the wrong kind");
 		}
 		CanonicalTypeTransaction transaction(table);

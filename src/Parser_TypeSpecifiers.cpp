@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CanonicalTypeAdapter.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
 #include "FrontendContext.h"
@@ -1619,8 +1620,11 @@ ParseResult Parser::parse_type_specifier() {
 					last_qualified_token,
 					cv_qualifier,
 					ReferenceQualifier::None);
-				tryStampPlainDependentMemberChain(
-					type_spec, dependent_record.owner_name, dependent_record);
+				tryStampDependentMemberChain(
+					type_spec,
+					dependent_record.owner_name,
+					dependent_record,
+					{});
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(type_spec));
 			}
 		}
@@ -3762,6 +3766,7 @@ ParseResult Parser::parse_type_specifier() {
 							owner_it->second != nullptr) {
 							dependent_name_record.owner_type = owner_it->second->registeredTypeIndex();
 						}
+						std::vector<std::vector<TypeSpecifierNode>> member_template_arg_syntax;
 
 						while (peek() == "::"_tok) {
 							advance();
@@ -3780,20 +3785,32 @@ ParseResult Parser::parse_type_specifier() {
 							TypeInfo::DependentQualifiedNameRecord::Member member_record;
 							member_record.name = nested_token.handle();
 							member_record.has_template_keyword = has_template_keyword;
+							std::vector<TypeSpecifierNode> stamped_type_args;
 
 							if (peek() == "<"_tok) {
-								auto nested_template_args = parse_explicit_template_arguments();
+								std::vector<ASTNode> argument_syntax_nodes;
+								auto nested_template_args =
+									parse_explicit_template_arguments(&argument_syntax_nodes);
 								if (!nested_template_args.has_value()) {
 									return ParseResult::error("Failed to parse template arguments for dependent nested type", nested_token);
 								}
 								member_record.template_arguments =
 									convertToTemplateArgInfo(*nested_template_args);
 								member_record.has_template_arguments = true;
+								stamped_type_args.reserve(argument_syntax_nodes.size());
+								for (const ASTNode& argument_node : argument_syntax_nodes) {
+									if (!argument_node.is<TypeSpecifierNode>()) {
+										throw InternalError(
+											"dependent member template-id: type-arg syntax is not a TypeSpecifierNode");
+									}
+									stamped_type_args.push_back(argument_node.as<TypeSpecifierNode>());
+								}
 								dependent_type_builder.append("<")
 									.append(nested_template_args->size())
 									.append(" args>");
 							}
 							dependent_name_record.member_chain.push_back(std::move(member_record));
+							member_template_arg_syntax.push_back(std::move(stamped_type_args));
 						}
 
 						std::string_view dependent_type_name = dependent_type_builder.commit();
@@ -3825,8 +3842,11 @@ ParseResult Parser::parse_type_specifier() {
 							nested_token,
 							cv_qualifier,
 							ReferenceQualifier::None);
-						tryStampPlainDependentMemberChain(
-							dependent_type_spec, type_name_handle, dependent_name_record);
+						tryStampDependentMemberChain(
+							dependent_type_spec,
+							type_name_handle,
+							dependent_name_record,
+							member_template_arg_syntax);
 						return ParseResult::success(
 							emplace_node<TypeSpecifierNode>(dependent_type_spec));
 					}
@@ -4525,10 +4545,11 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 	type_spec.set_template_specialization(primary.template_decl_id(), std::move(type_args));
 }
 
-void Parser::tryStampPlainDependentMemberChain(
+void Parser::tryStampDependentMemberChain(
 	TypeSpecifierNode& type_spec,
 	StringHandle owner_param_name,
-	const TypeInfo::DependentQualifiedNameRecord& record) {
+	const TypeInfo::DependentQualifiedNameRecord& record,
+	std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax) {
 	// No published primary class template yet (parameter-list parse, function
 	// templates, nested/member templates). Stamping is a no-op there.
 	if (!active_template_decl_id_) {
@@ -4542,10 +4563,6 @@ void Parser::tryStampPlainDependentMemberChain(
 		return;
 	}
 	for (const TypeInfo::DependentQualifiedNameRecord::Member& member : record.member_chain) {
-		// Template-id members and ::template disambiguators stay deferred.
-		if (member.has_template_arguments || member.has_template_keyword) {
-			return;
-		}
 		if (!member.name.isValid()) {
 			throw InternalError("stamp dependent name: invalid member identifier");
 		}
@@ -4569,8 +4586,61 @@ void Parser::tryStampPlainDependentMemberChain(
 	}
 	CanonicalTypeTable& table = front_end->canonicalTypes();
 	TypeId qualifier = table.templateParameter(active_template_decl_id_, *index);
-	for (const TypeInfo::DependentQualifiedNameRecord::Member& member : record.member_chain) {
-		qualifier = table.dependentName(qualifier, StringTable::getStringView(member.name));
+	for (size_t member_index = 0; member_index < record.member_chain.size(); ++member_index) {
+		const TypeInfo::DependentQualifiedNameRecord::Member& member =
+			record.member_chain[member_index];
+		const std::string_view member_name = StringTable::getStringView(member.name);
+		const std::vector<TypeSpecifierNode>* syntax_args =
+			member_index < member_template_arg_syntax.size()
+				? &member_template_arg_syntax[member_index]
+				: nullptr;
+		const bool has_syntax_args = syntax_args != nullptr && !syntax_args->empty();
+		if (!member.has_template_arguments && !has_syntax_args) {
+			// ::template without <> is only a parse disambiguator.
+			qualifier = table.dependentName(qualifier, member_name);
+			continue;
+		}
+		std::vector<TypeSpecifierNode> rebuilt_args;
+		std::span<const TypeSpecifierNode> arg_specs;
+		if (has_syntax_args) {
+			arg_specs = *syntax_args;
+		} else {
+			rebuilt_args.reserve(member.template_arguments.size());
+			for (const TypeInfo::TemplateArgInfo& arg_info : member.template_arguments) {
+				if (arg_info.is_value || arg_info.is_pack || arg_info.is_template_template_arg) {
+					return;
+				}
+				auto rebuilt = makeTypeSpecifierFromTemplateArgInfo(arg_info, type_spec.token());
+				if (!rebuilt.has_value()) {
+					return;
+				}
+				StringHandle arg_param_name = arg_info.dependent_name;
+				if (!arg_param_name.isValid()) {
+					if (const TypeInfo* arg_type = tryGetTypeInfo(arg_info.type_index);
+						arg_type != nullptr) {
+						arg_param_name = arg_type->name_;
+					}
+				}
+				if (arg_param_name.isValid()) {
+					stampActiveTemplateParameterDecl(*rebuilt, arg_param_name);
+				}
+				rebuilt_args.push_back(std::move(*rebuilt));
+			}
+			arg_specs = rebuilt_args;
+		}
+		std::vector<TypeId> argument_ids;
+		argument_ids.reserve(arg_specs.size());
+		for (const TypeSpecifierNode& arg_spec : arg_specs) {
+			if (arg_spec.is_pack_expansion()) {
+				return;
+			}
+			const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
+			if (imported.status != CanonicalTypeImportStatus::Supported) {
+				return;
+			}
+			argument_ids.push_back(imported.type);
+		}
+		qualifier = table.dependentTemplateMember(qualifier, member_name, argument_ids);
 	}
 	type_spec.set_dependent_name_type(qualifier);
 }

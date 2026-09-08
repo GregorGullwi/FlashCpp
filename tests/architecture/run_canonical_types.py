@@ -74,7 +74,13 @@ def main():
                 ".child = qualifier,\n\t\t\t.kind = CanonicalTypeKind::DependentName,",
                 ".child = TypeId{1},\n\t\t\t.kind = CanonicalTypeKind::DependentName,"),
             "lost_dependent_identifier": (
-                ".array_extent = bytes,", ".array_extent = bytes & 0xff,"),
+                "return name_link;",
+                "return TypeId{1};"),
+            "lost_dependent_template_member_args": (
+                "packDependentTemplateMemberExtent(\n"
+                "\t\t\t\tpackIdentifierBytesUnlocked(identifier), arg_link),",
+                "packDependentTemplateMemberExtent(\n"
+                "\t\t\t\tpackIdentifierBytesUnlocked(identifier), TypeId{}),"),
             "lost_dependent_name_tail": (
                 ".child = name_link,\n\t\t\t\t.kind = CanonicalTypeKind::NameBytes,",
                 ".child = TypeId{},\n\t\t\t\t.kind = CanonicalTypeKind::NameBytes,"),
@@ -211,8 +217,10 @@ def main():
              "if (syntax.has_dependent_name_type()) {",
              "if (false && syntax.has_dependent_name_type()) {"),
             ("adapter_dependent_name_kind", "CanonicalTypeAdapter.h",
-             "if (table.node(base).kind != CanonicalTypeKind::DependentName) {",
-             "if (table.node(base).kind == CanonicalTypeKind::DependentName) {"),
+             "if (base_kind != CanonicalTypeKind::DependentName &&\n"
+             "\t\t\tbase_kind != CanonicalTypeKind::DependentTemplateMember) {",
+             "if (base_kind == CanonicalTypeKind::DependentName ||\n"
+             "\t\t\tbase_kind == CanonicalTypeKind::DependentTemplateMember) {"),
             ("adapter_cv", "CanonicalTypeAdapter.h",
              "auto id = table.builtin(builtin);\n\tid = table.qualify(id, syntax.cv_qualifier());",
              "auto id = table.builtin(builtin);\n\tid = table.qualify(id, CVQualifier::None);"),

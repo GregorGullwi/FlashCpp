@@ -38,6 +38,27 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 			left.dependentNameIdentifier(left_id) != right.dependentNameIdentifier(right_id)) {
 			return false;
 		}
+		if (a.kind == CanonicalTypeKind::DependentTemplateMember) {
+			if (left.dependentNameIdentifier(left_id) != right.dependentNameIdentifier(right_id)) {
+				return false;
+			}
+			TypeId left_arg = left.dependentTemplateMemberArguments(left_id);
+			TypeId right_arg = right.dependentTemplateMemberArguments(right_id);
+			while (left_arg || right_arg) {
+				if (!left_arg || !right_arg) {
+					return false;
+				}
+				if (!sameStructure(left, left.templateArgumentType(left_arg),
+					right, right.templateArgumentType(right_arg))) {
+					return false;
+				}
+				left_arg = left.templateArgumentNext(left_arg);
+				right_arg = right.templateArgumentNext(right_arg);
+			}
+			left_id = a.child;
+			right_id = b.child;
+			continue;
+		}
 		if (a.kind == CanonicalTypeKind::Record || a.kind == CanonicalTypeKind::Enum ||
 			a.kind == CanonicalTypeKind::TemplateParameter) {
 			return a.array_extent == b.array_extent;
@@ -760,6 +781,42 @@ inline void checkDependentNames() {
 	rebound.copy_binding_identity_from(published);
 	require(importCanonicalType(table, rebound).type ==
 		table.qualify(published_item, CVQualifier::Volatile));
+
+	const TypeId int_arg = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId double_arg = table.builtin(CanonicalBuiltinKind::Double);
+	const TypeId foo_int = table.dependentTemplateMember(published_owner, "Foo", std::span<const TypeId>(&int_arg, 1));
+	const TypeId foo_double = table.dependentTemplateMember(published_owner, "Foo", std::span<const TypeId>(&double_arg, 1));
+	const TypeId bar_int = table.dependentTemplateMember(published_owner, "Bar", std::span<const TypeId>(&int_arg, 1));
+	require(foo_int != foo_double);
+	require(foo_int != bar_int);
+	require(table.dependentNameQualifier(foo_int) == published_owner);
+	require(table.dependentNameIdentifier(foo_int) == "Foo");
+	require(table.templateArgumentType(table.dependentTemplateMemberArguments(foo_int)) == int_arg);
+	const TypeId nested_type = table.dependentName(foo_int, "type");
+	require(nested_type != table.dependentName(foo_double, "type"));
+	require(nested_type != table.dependentName(bar_int, "type"));
+	TypeSpecifierNode template_member_syntax(
+		TypeCategory::UserDefined, TypeQualifier::None, 0, Token{}, CVQualifier::Const);
+	template_member_syntax.set_dependent_name_type(foo_int);
+	require(importCanonicalType(table, template_member_syntax).type ==
+		table.qualify(foo_int, CVQualifier::Const));
+	template_member_syntax.set_dependent_name_type(nested_type);
+	require(importCanonicalType(table, template_member_syntax).type ==
+		table.qualify(nested_type, CVQualifier::Const));
+	rejects([&] {
+		table.dependentTemplateMember(table.builtin(CanonicalBuiltinKind::Int), "Foo",
+			std::span<const TypeId>(&int_arg, 1));
+	});
+	rejects([&] { table.dependentTemplateMemberArguments(published_item); });
+	CanonicalTypeTable reordered_members;
+	const auto reordered_param = reordered_members.templateParameter(TemplateDeclId{11}, 0);
+	const TypeId reordered_int = reordered_members.builtin(CanonicalBuiltinKind::Int);
+	reordered_members.dependentTemplateMember(reordered_param, "Bar",
+		std::span<const TypeId>(&reordered_int, 1));
+	const TypeId reordered_foo = reordered_members.dependentTemplateMember(
+		reordered_param, "Foo", std::span<const TypeId>(&reordered_int, 1));
+	require(sameStructure(table, nested_type, reordered_members,
+		reordered_members.dependentName(reordered_foo, "type")));
 
 	const auto shallow = table.size();
 	auto deep = owner;
