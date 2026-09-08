@@ -160,6 +160,9 @@ def main():
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = 1,"),
+            "lost_template_parameter": (
+                ".array_extent = packTemplateParameterExtent(template_decl, parameter_index),",
+                ".array_extent = packTemplateParameterExtent(TemplateDeclId{1}, parameter_index),"),
             "lost_record_layout": (
                 "return entity && record_layout_ids_.contains(entity.value);",
                 "return entity && false;"),
@@ -187,8 +190,14 @@ def main():
              "for (size_t index = dimensions.size(); index-- > first_dimension;)",
              "for (size_t index = first_dimension; index < dimensions.size(); ++index)"),
             ("adapter_array_binding", "CanonicalTypeAdapter.h",
-             "auto id = table.builtin(builtin);\n\tid = table.qualify(id, syntax.cv_qualifier());\n\tif (has_pointee_array) {",
-             "auto id = table.builtin(builtin);\n\tid = table.qualify(id, syntax.cv_qualifier());\n\tif (false && has_pointee_array) {"),
+             "auto id = table.builtin(builtin);\n"
+             "\tid = table.qualify(id, syntax.cv_qualifier());\n"
+             "\tid = applyCanonicalPointerArrayReference(\n"
+             "\t\ttable, id, syntax, context, has_ordinary_array, has_pointee_array);",
+             "auto id = table.builtin(builtin);\n"
+             "\tid = table.qualify(id, syntax.cv_qualifier());\n"
+             "\tid = applyCanonicalPointerArrayReference(\n"
+             "\t\ttable, id, syntax, context, has_ordinary_array, false);"),
             ("adapter_parameter_decay", "CanonicalTypeAdapter.h",
              "has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&",
              "has_ordinary_array && context == CanonicalTypeImportContext::Exact &&"),
@@ -223,6 +232,13 @@ def main():
              "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
              "\t}",
              "if (signature.dependent_noexcept) {\n"
+             "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
+             "\t}"),
+            ("adapter_template_parameter", "CanonicalTypeAdapter.h",
+             "if (!syntax.has_template_parameter_decl()) {\n"
+             "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
+             "\t}",
+             "if (false && !syntax.has_template_parameter_decl()) {\n"
              "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
              "\t}"),
             ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",

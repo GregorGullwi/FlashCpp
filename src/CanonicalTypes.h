@@ -26,7 +26,7 @@ enum class CanonicalBuiltinKind : uint8_t {
 enum class CanonicalTypeKind : uint8_t {
 	Builtin, Qualified, Pointer, LValueReference, RValueReference, Array,
 	Function, FunctionParam, Record, MemberObjectPointer, MemberFunctionPointer,
-	Enum,
+	Enum, TemplateParameter,
 };
 
 enum class CanonicalTypeNodeFlags : uint8_t {
@@ -82,13 +82,28 @@ inline ExprId unpackFunctionDependentNoexcept(uint64_t array_extent) {
 	return ExprId{static_cast<uint32_t>(array_extent >> 32)};
 }
 
+inline uint64_t packTemplateParameterExtent(TemplateDeclId template_decl, uint32_t parameter_index) {
+	return static_cast<uint64_t>(template_decl.value) |
+		(static_cast<uint64_t>(parameter_index) << 32);
+}
+
+inline TemplateDeclId unpackTemplateParameterDecl(uint64_t array_extent) {
+	return TemplateDeclId{static_cast<uint32_t>(array_extent)};
+}
+
+inline uint32_t unpackTemplateParameterIndex(uint64_t array_extent) {
+	return static_cast<uint32_t>(array_extent >> 32);
+}
+
 // An immutable structural node. A child is a canonical identity in this table,
 // never an AST pointer, spelling, legacy TypeIndex, or telemetry key.
 // FunctionParam links store the parameter TypeId in array_extent and the next
 // link in child. Member pointers store the owner TypeId in array_extent and the
 // pointee in child. Opaque Record and Enum nodes store EntityId in array_extent.
 // Function nodes pack parameter-list TypeId in the low 32 bits of array_extent
-// and optional dependent-noexcept ExprId in the high 32 bits.
+// and optional dependent-noexcept ExprId in the high 32 bits. TemplateParameter
+// nodes pack TemplateDeclId in the low 32 bits and parameter index in the high
+// 32 bits.
 struct CanonicalTypeNode {
 	TypeId child;
 	CanonicalTypeKind kind;
@@ -487,6 +502,25 @@ public:
 		});
 	}
 
+	// Opaque type-template-parameter identity. Spelling is never part of this
+	// key; callers publish TemplateDeclId + parameter index separately from the
+	// legacy StringHandle binding used for lookup.
+	TypeId templateParameter(TemplateDeclId template_decl, uint32_t parameter_index) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!template_decl) {
+			throw InternalError("canonical type: invalid template-parameter TemplateDeclId");
+		}
+		return internUnlocked({
+			.child = TypeId{},
+			.kind = CanonicalTypeKind::TemplateParameter,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = packTemplateParameterExtent(template_decl, parameter_index),
+		});
+	}
+
 	TypeId memberObjectPointer(TypeId owner, TypeId pointee) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -637,6 +671,26 @@ public:
 			throw InternalError("canonical type: TypeId is not an enum");
 		}
 		return EntityId{static_cast<uint32_t>(input.array_extent)};
+	}
+
+	TemplateDeclId templateParameterDecl(TypeId parameter) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(parameter);
+		if (input.kind != CanonicalTypeKind::TemplateParameter) {
+			throw InternalError("canonical type: TypeId is not a template parameter");
+		}
+		return unpackTemplateParameterDecl(input.array_extent);
+	}
+
+	uint32_t templateParameterIndex(TypeId parameter) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(parameter);
+		if (input.kind != CanonicalTypeKind::TemplateParameter) {
+			throw InternalError("canonical type: TypeId is not a template parameter");
+		}
+		return unpackTemplateParameterIndex(input.array_extent);
 	}
 
 	void publishRecordLayout(CanonicalRecordLayout layout) {
@@ -1115,7 +1169,8 @@ private:
 				current.kind == CanonicalTypeKind::FunctionParam ? 0 : current.array_extent);
 			if (!current.child || current.kind == CanonicalTypeKind::Builtin ||
 				current.kind == CanonicalTypeKind::FunctionParam ||
-				current.kind == CanonicalTypeKind::Record) {
+				current.kind == CanonicalTypeKind::Record ||
+				current.kind == CanonicalTypeKind::TemplateParameter) {
 				break;
 			}
 			shape.append('/');
@@ -1160,7 +1215,8 @@ private:
 		}
 		appendNodeTraceFields(shape, node, node.array_extent);
 		if (!node.child || node.kind == CanonicalTypeKind::Builtin ||
-			node.kind == CanonicalTypeKind::Record) {
+			node.kind == CanonicalTypeKind::Record ||
+			node.kind == CanonicalTypeKind::TemplateParameter) {
 			return;
 		}
 		shape.append('/');
