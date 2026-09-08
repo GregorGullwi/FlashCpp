@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
+#include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
@@ -1570,6 +1571,8 @@ ParseResult Parser::parse_type_specifier() {
 						type_name.substr(type_name.find("::") + 2),
 						{});
 				};
+				TypeInfo::DependentQualifiedNameRecord dependent_record =
+					make_simple_dependent_record();
 				auto type_it = getTypesByNameMap().find(type_handle);
 				TypeIndex type_idx;
 				if (type_it == getTypesByNameMap().end()) {
@@ -1578,8 +1581,7 @@ ParseResult Parser::parse_type_specifier() {
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
 					placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
-					placeholder_type.setDependentQualifiedName(
-						make_simple_dependent_record());
+					placeholder_type.setDependentQualifiedName(dependent_record);
 					if (owner_type_info != nullptr &&
 						owner_type_info->hasInstantiationContext()) {
 						const TypeInfo::InstantiationContext* owner_context =
@@ -1595,8 +1597,7 @@ ParseResult Parser::parse_type_specifier() {
 					if (type_it->second != nullptr &&
 						type_it->second->isDependentMemberType() &&
 						!type_it->second->hasDependentQualifiedName()) {
-						type_it->second->setDependentQualifiedName(
-							make_simple_dependent_record());
+						type_it->second->setDependentQualifiedName(dependent_record);
 					}
 					if (type_it->second != nullptr &&
 						owner_type_info != nullptr &&
@@ -1612,11 +1613,15 @@ ParseResult Parser::parse_type_specifier() {
 					type_idx = type_it->second->type_index_;
 				}
 
-				return ParseResult::success(emplace_node<TypeSpecifierNode>(
+				TypeSpecifierNode type_spec(
 					type_idx.withCategory(TypeCategory::UserDefined),
 					0,
 					last_qualified_token,
-					cv_qualifier, ReferenceQualifier::None));
+					cv_qualifier,
+					ReferenceQualifier::None);
+				tryStampPlainDependentMemberChain(
+					type_spec, dependent_record.owner_name, dependent_record);
+				return ParseResult::success(emplace_node<TypeSpecifierNode>(type_spec));
 			}
 		}
 
@@ -3814,12 +3819,16 @@ ParseResult Parser::parse_type_specifier() {
 							}
 						}
 
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+						TypeSpecifierNode dependent_type_spec(
 							dependent_type_idx.withCategory(TypeCategory::UserDefined),
 							0,
 							nested_token,
 							cv_qualifier,
-							ReferenceQualifier::None));
+							ReferenceQualifier::None);
+						tryStampPlainDependentMemberChain(
+							dependent_type_spec, type_name_handle, dependent_name_record);
+						return ParseResult::success(
+							emplace_node<TypeSpecifierNode>(dependent_type_spec));
 					}
 					// This is a template parameter - create a dependent type placeholder
 					// Look up the TypeInfo for this parameter (it should have been registered when
@@ -4514,4 +4523,54 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 		type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, type_spec.token()));
 	}
 	type_spec.set_template_specialization(primary.template_decl_id(), std::move(type_args));
+}
+
+void Parser::tryStampPlainDependentMemberChain(
+	TypeSpecifierNode& type_spec,
+	StringHandle owner_param_name,
+	const TypeInfo::DependentQualifiedNameRecord& record) {
+	// No published primary class template yet (parameter-list parse, function
+	// templates, nested/member templates). Stamping is a no-op there.
+	if (!active_template_decl_id_) {
+		return;
+	}
+	if (record.owner_kind !=
+		TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter) {
+		return;
+	}
+	if (record.member_chain.empty()) {
+		return;
+	}
+	for (const TypeInfo::DependentQualifiedNameRecord::Member& member : record.member_chain) {
+		// Template-id members and ::template disambiguators stay deferred.
+		if (member.has_template_arguments || member.has_template_keyword) {
+			return;
+		}
+		if (!member.name.isValid()) {
+			throw InternalError("stamp dependent name: invalid member identifier");
+		}
+	}
+	FrontendContext* front_end = frontendContext();
+	if (front_end == nullptr) {
+		return;
+	}
+	if (!owner_param_name.isValid()) {
+		throw InternalError("stamp dependent name: invalid owner parameter name");
+	}
+	const auto index = current_template_params_.indexOf(owner_param_name);
+	if (!index.has_value()) {
+		return;
+	}
+	// Names-only tracking leaves kinds empty and historically means Type.
+	// When kinds are present, only type parameters root DependentName chains.
+	const auto kind = currentTemplateParamKind(owner_param_name);
+	if (kind.has_value() && *kind != TemplateParameterKind::Type) {
+		return;
+	}
+	CanonicalTypeTable& table = front_end->canonicalTypes();
+	TypeId qualifier = table.templateParameter(active_template_decl_id_, *index);
+	for (const TypeInfo::DependentQualifiedNameRecord::Member& member : record.member_chain) {
+		qualifier = table.dependentName(qualifier, StringTable::getStringView(member.name));
+	}
+	type_spec.set_dependent_name_type(qualifier);
 }

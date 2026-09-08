@@ -767,9 +767,9 @@ lookup and alias resolution determine the resulting canonical type. See the
 and [temp.dep.type](https://timsong-cpp.github.io/cppwp/n4861/temp.dep.type).
 
 The first dependent-name slice provides opaque plain-identifier chains rooted
-in published type parameters and an explicit adapter binding. Production parser
-publication is the next slice; do not infer a binding from flat type names.
-Template-id members, other qualifier families, and substitution remain deferred.
+in published type parameters. Production parser publication of those plain
+chains is landed; template-id members, other qualifier families, and
+substitution remain deferred.
 
 Exit criteria:
 
