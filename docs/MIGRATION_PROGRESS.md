@@ -5,18 +5,18 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-08 after canonical calling-convention and dll-linkage
-function identity
+Last updated: 2026-09-08 after unstructured FunctionSignature projection import
 (local feature branch)
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's calling-convention / dll-linkage callable slice is on
-`codex/boundary-3a-callable-cc-dll` for local review. Record member/base field
-schemas, complete-object Record/Enum layout, opaque Record/Enum import,
-member-pointer EntityId binding, and earlier families are on `main`. Gate 0 is
-closed. Architecture boundary 1 remains incomplete; remaining unstructured /
-dependent / template families still block expanding shadow/merge coverage.
+Architecture boundary 3A's unstructured-signature slice is on
+`codex/boundary-3a-unstructured-signatures` for local review. Calling-convention /
+dll-linkage callables, record member/base field schemas, complete-object
+Record/Enum layout, opaque Record/Enum import, member-pointer EntityId binding,
+and earlier families are on `main`. Gate 0 is closed. Architecture boundary 1
+remains incomplete; remaining dependent / template families still block
+expanding shadow/merge coverage.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
   fundamental types, cv qualification, pointers, references, arrays of known or
@@ -40,18 +40,22 @@ dependent / template families still block expanding shadow/merge coverage.
   types import canonically; aliases, unpublished/incomplete nominal forms,
   unknown nominal bounds, anonymous-union groups, and unpublished-base schemas
   stay deferred. Function types carry `CanonicalCallingConvention` in the
-  Function node's builtin byte and dllimport/dllexport as flag bits; the adapter
-  imports those callables as Supported. Unstructured signatures and dependent
-  `noexcept` expressions stay deferred. The production adapter fixture is now
-  25 supported / 0 deferred and emits Record/Enum array and function traces.
+  Function node's builtin byte and dllimport/dllexport as flag bits. The adapter
+  imports structured callables and flat TypeIndex projections (return pointer /
+  reference depth plus `parameter_type_indices`, including hybrid signatures
+  with structured parameters but flat return storage) as Supported when every
+  component imports. Dependent `noexcept` expressions stay Unresolved; TypeIndex
+  projections whose category is Invalid stay UnmigratedCallable. The production
+  adapter fixture remains 25 supported / 0 deferred and emits Record/Enum array
+  and function traces.
   `SymbolTable` retains lookup and merge authority.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable.
-- Remaining 3A work includes unstructured signatures, dependent `noexcept`,
-  dependent types, templates, complete declarator interleaving, and deletion of
-  the flat semantic representation. Stop here for review before starting another
-  family, 3B, or the parallel frontend experiment.
+- Remaining 3A work includes dependent `noexcept`, dependent types, templates,
+  complete declarator interleaving, and deletion of the flat semantic
+  representation. Stop here for review before starting another family, 3B, or
+  the parallel frontend experiment.
 
 The shallow native probe measures 63 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,048 bytes on
@@ -119,13 +123,13 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the calling-convention / dll-linkage callable slice: native
-canonical tests and source-copy mutations pass; stdcall/cdecl/default conventions
-and dllimport/dllexport distinguish Function identity; the adapter imports those
-signatures as Supported. Unstructured signatures and dependent `noexcept`
-expressions stay UnmigratedCallable / Unresolved. Production fixture advanced to
-25 supported / 0 deferred. Fixed-corpus migration counters remain within the
-prior baselines below (one corpus entry improved `template_old_engine` 59→58
+Latest validation for the unstructured-signature slice: native canonical tests and
+source-copy mutations pass; flat TypeIndex return/parameter projections and hybrid
+signatures (structured parameters with flat return storage) import as Supported
+when every component is Supported; Invalid-category TypeIndex projections stay
+UnmigratedCallable; dependent `noexcept` stays Unresolved. Production fixture
+remains 25 supported / 0 deferred. Fixed-corpus migration counters remain within
+the prior baselines below (one corpus entry improved `template_old_engine` 59→58
 without baseline file update).
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
@@ -174,16 +178,17 @@ Advanced, not completed:
   array/function/record/member-pointer nodes only. Array bounds, unknown bounds,
   dimension order, cv propagation, pointer binding, parameter adjustment, function
   parameter lists, function cv/ref, variadic, noexcept, calling convention,
-  dllimport/dllexport, FunctionPointer wrapping, Function-as-parameter decay,
-  Record and Enum EntityId identity, and member-pointer owner/pointee distinction
-  are mutation-validated. Class and enum EntityId publication, EntityId-backed
-  adapter MOP/MFP import, parse-time member-pointer owner binding, opaque
-  Struct→Record and Enum→Enum adapter import, complete-object layout snapshots,
-  fixed-bound array import for complete published nominal types, EntityId-keyed
-  member/base field schemas, and cc/dll Function identity are landed; alias,
-  unpublished/incomplete nominal, anonymous-union, unpublished-base,
-  unstructured-signature, and dependent-`noexcept` forms stay deferred. Remaining
-  families and flat-field deletion keep all three identity criteria open.
+  dllimport/dllexport, unstructured TypeIndex projections, FunctionPointer
+  wrapping, Function-as-parameter decay, Record and Enum EntityId identity, and
+  member-pointer owner/pointee distinction are mutation-validated. Class and enum
+  EntityId publication, EntityId-backed adapter MOP/MFP import, parse-time
+  member-pointer owner binding, opaque Struct→Record and Enum→Enum adapter
+  import, complete-object layout snapshots, fixed-bound array import for
+  complete published nominal types, EntityId-keyed member/base field schemas,
+  cc/dll Function identity, and unstructured signature import are landed; alias,
+  unpublished/incomplete nominal, anonymous-union, unpublished-base, and
+  dependent-`noexcept` forms stay deferred. Remaining families and flat-field
+  deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -202,10 +207,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's unstructured-signature, dependent-`noexcept`, template, and
-  dependent families and adapters before expanding boundary-1 shadow coverage
-  (default arguments, exception specifications, friends, templates) or removing
-  `SymbolTable` merge / `matches_signature` authority.
+- Finish 3A's dependent-`noexcept`, template, and dependent families and adapters
+  before expanding boundary-1 shadow coverage (default arguments, exception
+  specifications, friends, templates) or removing `SymbolTable` merge /
+  `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in
