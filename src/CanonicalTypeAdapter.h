@@ -219,34 +219,89 @@ inline CanonicalDllLinkage toCanonicalDllLinkage(Linkage linkage) {
 	throw InternalError("canonical type adapter: unknown linkage");
 }
 
+inline TypeSpecifierNode typeSpecifierFromTypeIndexProjection(
+	TypeIndex type_index,
+	int pointer_depth,
+	ReferenceQualifier reference_qualifier) {
+	TypeSpecifierNode spec(type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	spec.set_reference_qualifier(reference_qualifier);
+	if (pointer_depth > 0) {
+		spec.add_pointer_levels(pointer_depth);
+	}
+	return spec;
+}
+
+inline CanonicalTypeImport importCanonicalFunctionComponentFromProjection(
+	CanonicalTypeTable& table,
+	TypeIndex type_index,
+	int pointer_depth,
+	ReferenceQualifier reference_qualifier,
+	CanonicalTypeImportContext context) {
+	if (type_index.category() == TypeCategory::Invalid) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+	}
+	return importCanonicalTypeImpl(
+		table,
+		typeSpecifierFromTypeIndexProjection(type_index, pointer_depth, reference_qualifier),
+		context);
+}
+
 inline CanonicalTypeImport importCanonicalFunctionSignature(
 	CanonicalTypeTable& table,
 	const FunctionSignature& signature) {
 	if (signature.noexcept_expression.has_value()) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
 	}
-	if (!signature.hasStructuredTypes()) {
-		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
-	}
 
-	const auto imported_return = importCanonicalFunctionTypeComponent(
-		table, signature.return_type(), CanonicalTypeImportContext::Exact);
+	// Structured return uses FunctionType; otherwise recover from the flat
+	// TypeIndex projection that older signature writers still publish.
+	const CanonicalTypeImport imported_return = signature.hasStructuredTypes()
+		? importCanonicalFunctionTypeComponent(
+			table, signature.return_type(), CanonicalTypeImportContext::Exact)
+		: importCanonicalFunctionComponentFromProjection(
+			table,
+			signature.return_type_index,
+			signature.return_pointer_depth,
+			signature.return_reference_qualifier,
+			CanonicalTypeImportContext::Exact);
 	if (imported_return.status != CanonicalTypeImportStatus::Supported) {
 		return imported_return;
 	}
+
 	std::vector<TypeId> parameters;
-	parameters.reserve(signature.parameter_types().size());
-	for (const FunctionType& parameter : signature.parameter_types()) {
-		const auto imported_parameter = importCanonicalFunctionTypeComponent(
-			table, parameter, CanonicalTypeImportContext::FunctionParameter);
-		if (imported_parameter.status != CanonicalTypeImportStatus::Supported) {
-			return imported_parameter;
+	const std::span<const FunctionType> structured_parameters = signature.parameter_types();
+	if (!structured_parameters.empty()) {
+		parameters.reserve(structured_parameters.size());
+		for (const FunctionType& parameter : structured_parameters) {
+			const auto imported_parameter = importCanonicalFunctionTypeComponent(
+				table, parameter, CanonicalTypeImportContext::FunctionParameter);
+			if (imported_parameter.status != CanonicalTypeImportStatus::Supported) {
+				return imported_parameter;
+			}
+			TypeId parameter_type = imported_parameter.type;
+			if (table.node(parameter_type).kind == CanonicalTypeKind::Function) {
+				parameter_type = table.pointer(parameter_type);
+			}
+			parameters.push_back(parameter_type);
 		}
-		TypeId parameter_type = imported_parameter.type;
-		if (table.node(parameter_type).kind == CanonicalTypeKind::Function) {
-			parameter_type = table.pointer(parameter_type);
+	} else {
+		parameters.reserve(signature.parameter_type_indices.size());
+		for (const TypeIndex parameter_type_index : signature.parameter_type_indices) {
+			const auto imported_parameter = importCanonicalFunctionComponentFromProjection(
+				table,
+				parameter_type_index,
+				0,
+				ReferenceQualifier::None,
+				CanonicalTypeImportContext::FunctionParameter);
+			if (imported_parameter.status != CanonicalTypeImportStatus::Supported) {
+				return imported_parameter;
+			}
+			TypeId parameter_type = imported_parameter.type;
+			if (table.node(parameter_type).kind == CanonicalTypeKind::Function) {
+				parameter_type = table.pointer(parameter_type);
+			}
+			parameters.push_back(parameter_type);
 		}
-		parameters.push_back(parameter_type);
 	}
 
 	return {

@@ -257,6 +257,49 @@ inline void checkAdapter() {
 	require(imported_dllimport.type != imported_function.type);
 	signature.linkage = Linkage::None;
 
+	FunctionSignature unstructured_signature;
+	unstructured_signature.return_type_index = TypeIndex{0, TypeCategory::Int};
+	unstructured_signature.return_pointer_depth = 1;
+	unstructured_signature.parameter_type_indices.push_back(TypeIndex{0, TypeCategory::Short});
+	unstructured_signature.parameter_type_indices.push_back(TypeIndex{0, TypeCategory::Double});
+	unstructured_signature.is_noexcept = true;
+	unstructured_signature.calling_convention = CallingConvention::Cdecl;
+	require(!unstructured_signature.hasStructuredTypes());
+	TypeSpecifierNode unstructured_function_pointer(TypeCategory::FunctionPointer, TypeQualifier::None, 64,
+		Token{}, CVQualifier::None);
+	unstructured_function_pointer.set_function_signature(unstructured_signature);
+	const auto imported_unstructured = importCanonicalType(table, unstructured_function_pointer);
+	require(imported_unstructured.status == CanonicalTypeImportStatus::Supported);
+	const TypeId unstructured_params[] = {
+		table.builtin(CanonicalBuiltinKind::Short),
+		table.builtin(CanonicalBuiltinKind::Double),
+	};
+	require(imported_unstructured.type == table.pointer(table.function(
+		table.pointer(table.builtin(CanonicalBuiltinKind::Int)), unstructured_params, false,
+		CVQualifier::None, ReferenceQualifier::None, true, CanonicalCallingConvention::Cdecl,
+		CanonicalDllLinkage::None)));
+	require(imported_unstructured.type != imported_function.type);
+
+	FunctionSignature hybrid_signature;
+	hybrid_signature.return_type_index = TypeIndex{0, TypeCategory::Long};
+	hybrid_signature.return_reference_qualifier = ReferenceQualifier::LValueReference;
+	FunctionCallableTypes hybrid_storage;
+	hybrid_storage.parameter_types.push_back(makeFunctionTypeFromSpecifier(
+		TypeSpecifierNode(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None)));
+	hybrid_signature.callable_types = &hybrid_storage;
+	require(!hybrid_signature.hasStructuredTypes());
+	require(!hybrid_signature.parameter_types().empty());
+	TypeSpecifierNode hybrid_function(TypeCategory::Function, TypeQualifier::None, 64, Token{},
+		CVQualifier::None);
+	hybrid_function.set_function_signature(hybrid_signature);
+	const auto imported_hybrid = importCanonicalType(table, hybrid_function);
+	require(imported_hybrid.status == CanonicalTypeImportStatus::Supported);
+	const TypeId hybrid_params[] = {table.builtin(CanonicalBuiltinKind::Char)};
+	require(imported_hybrid.type == table.function(
+		table.reference(table.builtin(CanonicalBuiltinKind::Long), ReferenceQualifier::LValueReference),
+		hybrid_params, false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None));
+
 	TypeSpecifierNode member_pointer(TypeCategory::MemberFunctionPointer, TypeQualifier::None, 64,
 		Token{}, CVQualifier::None);
 	member_pointer.set_function_signature(member_signature);
