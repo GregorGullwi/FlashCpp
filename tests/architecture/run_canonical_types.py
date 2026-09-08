@@ -163,6 +163,19 @@ def main():
             "lost_template_parameter": (
                 ".array_extent = packTemplateParameterExtent(template_decl, parameter_index),",
                 ".array_extent = packTemplateParameterExtent(TemplateDeclId{1}, parameter_index),"),
+            "lost_template_specialization": (
+                ".child = arg_link,\n"
+                "\t\t\t.kind = CanonicalTypeKind::TemplateSpecialization,\n"
+                "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t.array_extent = primary.value,",
+                ".child = arg_link,\n"
+                "\t\t\t.kind = CanonicalTypeKind::TemplateSpecialization,\n"
+                "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t.array_extent = 1,"),
             "lost_record_layout": (
                 "return entity && record_layout_ids_.contains(entity.value);",
                 "return entity && false;"),
@@ -241,6 +254,13 @@ def main():
              "if (false && !syntax.has_template_parameter_decl()) {\n"
              "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
              "\t}"),
+            ("adapter_template_specialization", "CanonicalTypeAdapter.h",
+             "if (syntax.has_template_specialization()) {\n"
+             "\t\tCanonicalTypeTransaction transaction(table);\n"
+             "\t\tconst auto imported = importCanonicalTemplateSpecialization(table, syntax, context);",
+             "if (false && syntax.has_template_specialization()) {\n"
+             "\t\tCanonicalTypeTransaction transaction(table);\n"
+             "\t\tconst auto imported = importCanonicalTemplateSpecialization(table, syntax, context);"),
             ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",
              "stats_.peak_bytes += stats_.current_bytes;"),
         ):

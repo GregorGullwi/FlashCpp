@@ -2,7 +2,9 @@
 #include <cassert>
 #include <memory>
 #include <span>
+#include <vector>
 #include "AstNodeTypes_TypeSystem.h"
+#include "CompileError.h"
 #include "FrontendIds.h"
 #include "SizeTypes.h"
 #include "VariantUtils.h"
@@ -1963,12 +1965,40 @@ public:
 	TemplateDeclId template_decl_id() const { return template_decl_id_; }
 	uint32_t template_parameter_index() const { return template_parameter_index_; }
 	void set_template_parameter_decl(TemplateDeclId template_decl, uint32_t parameter_index) {
+		clear_template_specialization();
 		template_decl_id_ = template_decl;
 		template_parameter_index_ = parameter_index;
 	}
 	void clear_template_parameter_decl() {
 		template_decl_id_ = {};
 		template_parameter_index_ = 0;
+	}
+
+	// Type-only class-template specialization stamp. Primary TemplateDeclId is
+	// never StringHandle identity; argument TypeSpecifierNodes are imported
+	// recursively by the adapter.
+	bool has_template_specialization() const {
+		return static_cast<bool>(specialization_template_decl_);
+	}
+	TemplateDeclId specialization_template_decl() const {
+		return specialization_template_decl_;
+	}
+	std::span<const TypeSpecifierNode> specialization_type_args() const {
+		return specialization_type_args_;
+	}
+	void set_template_specialization(
+		TemplateDeclId primary,
+		std::vector<TypeSpecifierNode> type_args) {
+		if (!primary) {
+			throw InternalError("type specifier: invalid specialization TemplateDeclId");
+		}
+		clear_template_parameter_identity();
+		specialization_template_decl_ = primary;
+		specialization_type_args_ = std::move(type_args);
+	}
+	void clear_template_specialization() {
+		specialization_template_decl_ = {};
+		specialization_type_args_.clear();
 	}
 
 	bool has_injected_class_declaration() const {
@@ -1987,6 +2017,8 @@ public:
 		template_parameter_name_ = other.template_parameter_name_;
 		template_decl_id_ = other.template_decl_id_;
 		template_parameter_index_ = other.template_parameter_index_;
+		specialization_template_decl_ = other.specialization_template_decl_;
+		specialization_type_args_ = other.specialization_type_args_;
 		injected_class_declaration_ = other.injected_class_declaration_;
 		member_class_entity_ = other.member_class_entity_;
 		type_entity_ = other.type_entity_;
@@ -2064,6 +2096,8 @@ private:
 	StringHandle template_parameter_name_; // Scoped type-template parameter binding
 	TemplateDeclId template_decl_id_; // Published template owner; never StringHandle identity
 	uint32_t template_parameter_index_ = 0; // Index within that template's parameter list
+	TemplateDeclId specialization_template_decl_; // Primary for stamped type-only specializations
+	std::vector<TypeSpecifierNode> specialization_type_args_;
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	EntityId member_class_entity_; // Published class owner; never StringHandle identity

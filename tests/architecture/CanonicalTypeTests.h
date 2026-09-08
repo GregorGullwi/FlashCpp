@@ -37,6 +37,25 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 			a.kind == CanonicalTypeKind::TemplateParameter) {
 			return a.array_extent == b.array_extent;
 		}
+		if (a.kind == CanonicalTypeKind::TemplateSpecialization) {
+			if (a.array_extent != b.array_extent) {
+				return false;
+			}
+			TypeId left_arg = left.templateSpecializationArguments(left_id);
+			TypeId right_arg = right.templateSpecializationArguments(right_id);
+			while (left_arg || right_arg) {
+				if (!left_arg || !right_arg) {
+					return false;
+				}
+				if (!sameStructure(left, left.templateArgumentType(left_arg),
+					right, right.templateArgumentType(right_arg))) {
+					return false;
+				}
+				left_arg = left.templateArgumentNext(left_arg);
+				right_arg = right.templateArgumentNext(right_arg);
+			}
+			return true;
+		}
 		if (a.kind == CanonicalTypeKind::Function) {
 			if ((a.array_extent >> 32) != (b.array_extent >> 32)) {
 				return false;
@@ -403,6 +422,46 @@ inline void checkAdapter() {
 	require(imported_decl_only.type == table.pointer(
 		table.qualify(table.templateParameter(TemplateDeclId{4}, 0), CVQualifier::Const)));
 
+	TypeSpecifierNode unstamped_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
+		CVQualifier::None);
+	require(importCanonicalType(table, unstamped_specialization).status ==
+		CanonicalTypeImportStatus::Unresolved);
+	TypeSpecifierNode int_arg(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode float_arg(TypeCategory::Float, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	std::vector<TypeSpecifierNode> pair_args{int_arg, float_arg};
+	TypeSpecifierNode stamped_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
+		CVQualifier::None);
+	stamped_specialization.set_template_specialization(TemplateDeclId{11}, pair_args);
+	stamped_specialization.add_pointer_level(CVQualifier::None);
+	const auto imported_specialization = importCanonicalType(table, stamped_specialization);
+	require(imported_specialization.status == CanonicalTypeImportStatus::Supported);
+	const TypeId expected_args[] = {
+		table.builtin(CanonicalBuiltinKind::Int),
+		table.builtin(CanonicalBuiltinKind::Float),
+	};
+	require(imported_specialization.type == table.pointer(
+		table.templateSpecialization(TemplateDeclId{11}, expected_args)));
+	require(imported_specialization.type != table.pointer(
+		table.templateSpecialization(TemplateDeclId{12}, expected_args)));
+	const TypeId swapped_args[] = {
+		table.builtin(CanonicalBuiltinKind::Float),
+		table.builtin(CanonicalBuiltinKind::Int),
+	};
+	require(imported_specialization.type != table.pointer(
+		table.templateSpecialization(TemplateDeclId{11}, swapped_args)));
+	TypeSpecifierNode param_arg(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{},
+		CVQualifier::None);
+	param_arg.set_template_parameter_decl(TemplateDeclId{4}, 0);
+	std::vector<TypeSpecifierNode> dependent_args{param_arg};
+	TypeSpecifierNode dependent_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
+		CVQualifier::Const);
+	dependent_specialization.set_template_specialization(TemplateDeclId{11}, dependent_args);
+	const auto imported_dependent_spec = importCanonicalType(table, dependent_specialization);
+	require(imported_dependent_spec.status == CanonicalTypeImportStatus::Supported);
+	const TypeId dependent_arg_ids[] = {table.templateParameter(TemplateDeclId{4}, 0)};
+	require(imported_dependent_spec.type == table.qualify(
+		table.templateSpecialization(TemplateDeclId{11}, dependent_arg_ids), CVQualifier::Const));
+
 	TypeSpecifierNode published_enum_array(TypeCategory::Enum, TypeQualifier::None, 16, Token{},
 		CVQualifier::None);
 	published_enum_array.set_type_entity(EntityId{5});
@@ -576,8 +635,11 @@ inline void checkTemplateDeclPublication() {
 	const auto first = decls.publishPrimaryClassTemplate(OwnerId{1}, name_a);
 	require(first.value != 0);
 	require(decls.publishPrimaryClassTemplate(OwnerId{1}, name_a) == first);
+	require(decls.findPrimaryClassTemplate(OwnerId{1}, name_a) == first);
+	require(!decls.findPrimaryClassTemplate(OwnerId{1}, name_b).has_value());
 	require(decls.publishPrimaryClassTemplate(OwnerId{1}, name_b) != first);
 	require(decls.publishPrimaryClassTemplate(OwnerId{2}, name_a) != first);
+	require(decls.findPrimaryClassTemplate(OwnerId{1}, name_b).has_value());
 	require(decls.size() == 3);
 	rejects([&] { decls.publishPrimaryClassTemplate(OwnerId{}, name_a); });
 }
@@ -709,6 +771,22 @@ inline int run() {
 	require(table.array(tmpl_a, 2) != table.array(tmpl_b, 2));
 	rejects([&] { table.templateParameter(TemplateDeclId{}, 0); });
 	rejects([&] { table.templateParameterDecl(owner_a); });
+	const TypeId pair_int_float[] = {integer, floating};
+	const TypeId pair_float_int[] = {floating, integer};
+	const auto spec_a = table.templateSpecialization(TemplateDeclId{11}, pair_int_float);
+	const auto spec_b = table.templateSpecialization(TemplateDeclId{11}, pair_float_int);
+	const auto spec_other = table.templateSpecialization(TemplateDeclId{12}, pair_int_float);
+	const auto spec_empty = table.templateSpecialization(TemplateDeclId{11}, std::span<const TypeId>{});
+	require(spec_a != spec_b && spec_a != spec_other && spec_a != spec_empty && spec_a != tmpl_a);
+	require(table.templateSpecialization(TemplateDeclId{11}, pair_int_float) == spec_a);
+	require(table.templateSpecializationDecl(spec_a).value == 11);
+	require(table.templateArgumentType(table.templateSpecializationArguments(spec_a)) == integer);
+	require(table.templateArgumentType(table.templateArgumentNext(
+		table.templateSpecializationArguments(spec_a))) == floating);
+	require(!table.templateSpecializationArguments(spec_empty));
+	require(table.pointer(spec_a) != spec_a);
+	rejects([&] { table.templateSpecialization(TemplateDeclId{}, pair_int_float); });
+	rejects([&] { table.templateSpecializationDecl(tmpl_a); });
 	const auto mop_a = table.memberObjectPointer(owner_a, integer);
 	const auto mop_b = table.memberObjectPointer(owner_b, integer);
 	const auto mop_float = table.memberObjectPointer(owner_a, floating);
@@ -736,6 +814,7 @@ inline int run() {
 	require(table.record(EntityId{1}) == owner_a);
 	require(table.enumeration(EntityId{3}) == enum_a);
 	require(table.templateParameter(TemplateDeclId{8}, 0) == tmpl_a);
+	require(table.templateSpecialization(TemplateDeclId{11}, pair_int_float) == spec_a);
 	require(table.memberObjectPointer(owner_a, integer) == mop_a);
 	require(table.memberFunctionPointer(owner_a, int_fn) == mfp_a);
 	require(table.size() == count);
@@ -760,6 +839,14 @@ inline int run() {
 	require(sameStructure(table, enum_a, reordered, reordered_enum));
 	require(sameStructure(table, tmpl_a, reordered, reordered_tmpl));
 	require(!sameStructure(table, tmpl_a, reordered, reordered.templateParameter(TemplateDeclId{8}, 1)));
+	const TypeId reordered_pair[] = {
+		reordered_int,
+		reordered.builtin(CanonicalBuiltinKind::Double),
+	};
+	const auto reordered_spec = reordered.templateSpecialization(TemplateDeclId{11}, reordered_pair);
+	require(sameStructure(table, spec_a, reordered, reordered_spec));
+	require(!sameStructure(table, spec_a, reordered,
+		reordered.templateSpecialization(TemplateDeclId{12}, reordered_pair)));
 	require(sameStructure(table, mop_a, reordered,
 		reordered.memberObjectPointer(reordered_owner, reordered_int)));
 	require(sameStructure(table, mfp_a, reordered,
