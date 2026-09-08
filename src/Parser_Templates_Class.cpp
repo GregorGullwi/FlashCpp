@@ -4956,10 +4956,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			template_param_nodes,
 			std::move(param_names),
 			decl_node);
-		if (decl_node.as<StructDeclarationNode>().has_template_decl_id()) {
-			template_class_node.as<TemplateClassDeclarationNode>().set_template_decl_id(
-				decl_node.as<StructDeclarationNode>().template_decl_id());
+		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
+		if (!struct_decl.has_template_decl_id()) {
+			throw InternalError("primary class template missing TemplateDeclId after parse");
 		}
+		template_class_node.as<TemplateClassDeclarationNode>().set_template_decl_id(
+			struct_decl.template_decl_id());
 
 		// Attach deferred member function bodies for two-phase lookup
 		// These will be parsed during template instantiation when TypeInfo is available
@@ -4971,7 +4973,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 		// Register the template in the template registry
 		// If we're in a namespace, register with both simple and qualified names
-		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
 		std::string_view simple_name = StringTable::getStringView(struct_decl.name());
 
 		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
