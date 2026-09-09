@@ -5065,21 +5065,29 @@ ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {
 TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNode& type) {
 	// Fail-closed overlay: structurally rewrite dependent_name_type_ when the
 	// stamp survives legacy TypeIndex substitution. Never skip the legacy body.
-	const std::optional<TypeId> restamped = tryRestampDependentNameType(type);
+	// Tip collapse after substitute+resolve clears the stamp (concrete TypeIds
+	// cannot occupy dependent_name_type_ — the adapter requires DependentName-
+	// family kinds); unresolved DependentName-family tips are restamped.
+	const DependentNameRestampResult restamp = tryRestampDependentNameType(type);
 	TypeSpecifierNode result = substituteInTypeCore(type);
-	if (restamped.has_value() && result.has_dependent_name_type()) {
-		result.set_dependent_name_type(*restamped);
+	if (!result.has_dependent_name_type()) {
+		return result;
+	}
+	if (restamp.action == DependentNameRestampAction::Set) {
+		result.set_dependent_name_type(restamp.type);
+	} else if (restamp.action == DependentNameRestampAction::Clear) {
+		result.clear_dependent_name_type();
 	}
 	return result;
 }
 
-std::optional<TypeId> ExpressionSubstitutor::tryRestampDependentNameType(
-	const TypeSpecifierNode& type) const {
+ExpressionSubstitutor::DependentNameRestampResult
+ExpressionSubstitutor::tryRestampDependentNameType(const TypeSpecifierNode& type) const {
 	if (!type.has_dependent_name_type()) {
-		return std::nullopt;
+		return {};
 	}
 	if (!pack_map_.empty()) {
-		return std::nullopt;
+		return {};
 	}
 	FrontendContext& front_end = requireFrontendContext();
 	CanonicalTypeTable& table = front_end.canonicalTypes();
@@ -5107,7 +5115,7 @@ std::optional<TypeId> ExpressionSubstitutor::tryRestampDependentNameType(
 					max_index = index;
 					saw_parameter = true;
 				} else if (decl != env) {
-					return std::nullopt;
+					return {};
 				} else if (index > max_index) {
 					max_index = index;
 				}
@@ -5143,12 +5151,12 @@ std::optional<TypeId> ExpressionSubstitutor::tryRestampDependentNameType(
 			case CanonicalTypeKind::Enum:
 				break;
 			default:
-				return std::nullopt;
+				return {};
 			}
 		}
 	}
 	if (!saw_parameter || !env) {
-		return std::nullopt;
+		return {};
 	}
 
 	std::vector<TemplateTypeArg> bound_args;
@@ -5163,43 +5171,46 @@ std::optional<TypeId> ExpressionSubstitutor::tryRestampDependentNameType(
 			}
 			const auto scalar_it = param_map_.find(param_name);
 			if (scalar_it == param_map_.end()) {
-				return std::nullopt;
+				return {};
 			}
 			bound_args.push_back(scalar_it->second);
 		}
 	} else if (param_map_.size() == 1) {
 		bound_args.push_back(param_map_.begin()->second);
 	} else {
-		return std::nullopt;
+		return {};
 	}
 	if (bound_args.size() <= max_index) {
-		return std::nullopt;
+		return {};
 	}
 
 	std::vector<TypeId> argument_ids;
 	argument_ids.reserve(bound_args.size());
 	for (const TemplateTypeArg& arg : bound_args) {
 		if (arg.is_value || arg.is_pack || arg.is_template_template_arg) {
-			return std::nullopt;
+			return {};
 		}
 		TypeSpecifierNode arg_spec = makeTypeSpecifierFromTemplateTypeArg(arg, type.token());
 		if (arg_spec.is_pack_expansion()) {
-			return std::nullopt;
+			return {};
 		}
 		const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
 		if (imported.status != CanonicalTypeImportStatus::Supported) {
-			return std::nullopt;
+			return {};
 		}
 		argument_ids.push_back(imported.type);
 	}
 
 	TypeId substituted = table.substitute(stamp, env, argument_ids);
+	substituted = table.tryResolveDependentTip(substituted);
 	const CanonicalTypeKind tip_kind = table.node(substituted).kind;
-	if (tip_kind != CanonicalTypeKind::DependentName &&
-		tip_kind != CanonicalTypeKind::DependentTemplateMember) {
-		return std::nullopt;
+	if (tip_kind == CanonicalTypeKind::DependentName ||
+		tip_kind == CanonicalTypeKind::DependentTemplateMember) {
+		return {DependentNameRestampAction::Set, substituted};
 	}
-	return substituted;
+	// Tip collapsed to a concrete/canonical type. Clear the stamp rather than
+	// storing a non-DependentName-family TypeId in dependent_name_type_.
+	return {DependentNameRestampAction::Clear, {}};
 }
 
 TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifierNode& type) {

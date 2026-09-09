@@ -2010,8 +2010,9 @@ public:
 	// Production stamps plain chains and type-only member template-ids rooted in
 	// published type parameters; tip may be DependentName or DependentTemplateMember.
 	// No spelling recovery from flat TypeIndex names. ExpressionSubstitutor may
-	// restamp this TypeId through CanonicalTypeTable::substitute when the stamp
-	// survives legacy TypeIndex substitution; tip lookup remains a later slice.
+	// restamp through CanonicalTypeTable::substitute and tryResolveDependentTip
+	// when the stamp survives legacy TypeIndex substitution. Collapsed concrete
+	// tips clear this binding (adapter requires DependentName-family kinds).
 	bool has_dependent_name_type() const { return static_cast<bool>(dependent_name_type_); }
 	TypeId dependent_name_type() const { return dependent_name_type_; }
 	void set_dependent_name_type(TypeId type) {
