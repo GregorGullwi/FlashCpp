@@ -94,9 +94,8 @@ std::optional<std::vector<TypeSpecifierNode>> collectTypeOnlyArgSpecifiers(
 
 struct ClassTemplateArgSpecs {
 	TemplateDeclId primary;
-	std::vector<SpecTemplateArgKind> arg_kinds;
-	std::vector<TypeSpecifierNode> type_args;
-	std::vector<ASTNode> nttp_expr_nodes;
+	// Type args are TypeSpecifierNode; literal NTTP args are ExpressionNode ASTNodes.
+	std::vector<std::variant<TypeSpecifierNode, ASTNode>> args;
 };
 
 bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
@@ -107,6 +106,49 @@ bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
 		return isIntegralType(lit->type()) && std::holds_alternative<unsigned long long>(lit->value());
 	}
 	return false;
+}
+
+void applyCollectedClassTemplateArgSpecs(
+	TypeSpecifierNode& type_spec,
+	ClassTemplateArgSpecs collected) {
+	bool has_nttp = false;
+	for (const auto& arg : collected.args) {
+		if (std::holds_alternative<ASTNode>(arg)) {
+			has_nttp = true;
+			break;
+		}
+	}
+	if (!has_nttp) {
+		std::vector<TypeSpecifierNode> type_args;
+		type_args.reserve(collected.args.size());
+		for (auto& arg : collected.args) {
+			type_args.push_back(std::get<TypeSpecifierNode>(std::move(arg)));
+		}
+		type_spec.set_template_specialization(collected.primary, std::move(type_args));
+		return;
+	}
+	std::vector<SpecTemplateArgKind> arg_kinds;
+	std::vector<TypeSpecifierNode> type_args;
+	std::vector<ExprId> nttp_ids;
+	arg_kinds.reserve(collected.args.size());
+	type_args.reserve(collected.args.size());
+	nttp_ids.reserve(collected.args.size());
+	DependentExpressionTable& exprs =
+		requireFrontendContext().dependentExpressions();
+	for (auto& arg : collected.args) {
+		if (TypeSpecifierNode* type_arg = std::get_if<TypeSpecifierNode>(&arg)) {
+			arg_kinds.push_back(SpecTemplateArgKind::Type);
+			type_args.push_back(std::move(*type_arg));
+			continue;
+		}
+		arg_kinds.push_back(SpecTemplateArgKind::NonType);
+		nttp_ids.push_back(exprs.intern(std::get<ASTNode>(std::move(arg))));
+	}
+	type_spec.set_template_specialization_mixed(
+		collected.primary,
+		std::move(arg_kinds),
+		std::move(type_args),
+		std::move(nttp_ids));
 }
 
 // Shared gates for class-template specialization stamping: published primary
@@ -143,9 +185,7 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	}
 	ClassTemplateArgSpecs collected;
 	collected.primary = primary.template_decl_id();
-	collected.arg_kinds.reserve(filled_args.size());
-	collected.type_args.reserve(filled_args.size());
-	collected.nttp_expr_nodes.reserve(filled_args.size());
+	collected.args.reserve(filled_args.size());
 	for (size_t index = 0; index < filled_args.size(); ++index) {
 		const TemplateParameterNode& param = template_params[index];
 		const TemplateTypeArg& arg = filled_args[index];
@@ -156,14 +196,13 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 			if (!arg.isTypeArgument()) {
 				throw InternalError("stamp template specialization: non-type arg for fixed type parameter");
 			}
-			collected.arg_kinds.push_back(SpecTemplateArgKind::Type);
 			if (index < argument_syntax_nodes.size()) {
 				if (!argument_syntax_nodes[index].is<TypeSpecifierNode>()) {
 					throw InternalError("stamp template specialization: type-arg syntax is not a TypeSpecifierNode");
 				}
-				collected.type_args.push_back(argument_syntax_nodes[index].as<TypeSpecifierNode>());
+				collected.args.push_back(argument_syntax_nodes[index].as<TypeSpecifierNode>());
 			} else {
-				collected.type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, token));
+				collected.args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, token));
 			}
 			continue;
 		}
@@ -179,8 +218,7 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 		if (!isStampableNttpLiteralExpression(expr) || !arg.is_value) {
 			return std::nullopt;
 		}
-		collected.arg_kinds.push_back(SpecTemplateArgKind::NonType);
-		collected.nttp_expr_nodes.push_back(syntax);
+		collected.args.push_back(syntax);
 	}
 	return collected;
 }
@@ -4693,23 +4731,7 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 	if (!collected.has_value()) {
 		return;
 	}
-	std::vector<ExprId> nttp_ids;
-	nttp_ids.reserve(collected->nttp_expr_nodes.size());
-	if (collected->nttp_expr_nodes.empty()) {
-		type_spec.set_template_specialization(
-			collected->primary, std::move(collected->type_args));
-		return;
-	}
-	DependentExpressionTable& exprs =
-		requireFrontendContext().dependentExpressions();
-	for (const ASTNode& expr_node : collected->nttp_expr_nodes) {
-		nttp_ids.push_back(exprs.intern(expr_node));
-	}
-	type_spec.set_template_specialization_mixed(
-		collected->primary,
-		std::move(collected->arg_kinds),
-		std::move(collected->type_args),
-		std::move(nttp_ids));
+	applyCollectedClassTemplateArgSpecs(type_spec, std::move(*collected));
 }
 
 void Parser::stampDependentMemberChainFromQualifier(
@@ -4820,23 +4842,20 @@ void Parser::tryStampDependentInstantiationMemberChain(
 	CanonicalTypeTable& table = front_end.canonicalTypes();
 	DependentExpressionTable& exprs = front_end.dependentExpressions();
 	std::vector<CanonicalTemplateArgument> argument_ids;
-	argument_ids.reserve(collected->arg_kinds.size());
-	size_t type_index = 0;
-	size_t nttp_index = 0;
-	for (const SpecTemplateArgKind kind : collected->arg_kinds) {
-		if (kind == SpecTemplateArgKind::Type) {
-			const TypeSpecifierNode& arg_spec = collected->type_args[type_index++];
-			if (arg_spec.is_pack_expansion()) {
+	argument_ids.reserve(collected->args.size());
+	for (const auto& arg : collected->args) {
+		if (const TypeSpecifierNode* type_arg = std::get_if<TypeSpecifierNode>(&arg)) {
+			if (type_arg->is_pack_expansion()) {
 				return;
 			}
-			const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
+			const CanonicalTypeImport imported = importCanonicalType(table, *type_arg);
 			if (imported.status != CanonicalTypeImportStatus::Supported) {
 				return;
 			}
 			argument_ids.push_back(CanonicalTemplateArgument::makeType(imported.type));
 			continue;
 		}
-		const ExprId expr_id = exprs.intern(collected->nttp_expr_nodes[nttp_index++]);
+		const ExprId expr_id = exprs.intern(std::get<ASTNode>(arg));
 		if (!expr_id) {
 			return;
 		}
