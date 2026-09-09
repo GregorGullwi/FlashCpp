@@ -216,6 +216,17 @@ def main():
             "lost_record_field_schema": (
                 "return entity && record_field_schema_ids_.contains(entity.value);",
                 "return entity && false;"),
+            "lost_named_type_member_schema": (
+                "return entity && named_type_member_schema_ids_.contains(entity.value);",
+                "return entity && false;"),
+            "lost_dependent_tip_resolve": (
+                "if (nodeUnlocked(type).kind != CanonicalTypeKind::DependentName) {\n"
+                "\t\t\treturn type;\n"
+                "\t\t}",
+                "if (nodeUnlocked(type).kind != CanonicalTypeKind::DependentName) {\n"
+                "\t\t\treturn type;\n"
+                "\t\t}\n"
+                "\t\treturn type;"),
         }
         for name, (before, after) in mutations.items():
             if original.count(before) != 1:
