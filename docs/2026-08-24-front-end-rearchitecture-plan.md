@@ -770,16 +770,22 @@ The first dependent-name slice provides opaque plain-identifier chains rooted
 in published type parameters. Production parser publication of those plain
 chains and of type-only member template-ids (`DependentTemplateMember`) is
 landed. Opaque DependentName / DependentTemplateMember chains may also root in a
-type-only `TemplateSpecialization` qualifier (`Primary<Args>::…`). Production
-parser publication of plain DependentInstantiation members on the live
-template-id-then-`::` path is landed, as is production stamping of type-only
-member template-ids on that same Spec-rooted path when member-arg syntax is
-captured. CurrentInstantiation and UnknownSpecialization owners share that
-Spec-rooted stamp path; TemplateParameter-only chains remain on the type-
-parameter stamp helpers. Non-type member-arg syntax remains deferred.
+`TemplateSpecialization` qualifier (`Primary<Args>::…`). Spec identity is
+type-argument based in production today; the canonical table also accepts
+opaque NTTP `ExprId` arguments on Spec (mixed with type args). Production
+stamping of NTTP / template-template / pack Spec arguments, and NTTP args on
+DependentTemplateMember, remain deferred. Production parser publication of
+plain DependentInstantiation members on the live template-id-then-`::` path is
+landed, as is production stamping of type-only member template-ids on that same
+Spec-rooted path when member-arg syntax is captured. CurrentInstantiation and
+UnknownSpecialization owners share that Spec-rooted stamp path;
+TemplateParameter-only chains remain on the type-parameter stamp helpers.
 Structural `CanonicalTypeTable::substitute` rewrites type-parameter environments
 inside Spec / DependentName / DependentTemplateMember graphs without member
-lookup; production ExpressionSubstitutor wiring stays deferred.
+lookup and preserves opaque Spec NTTP `ExprId` arguments. Production
+ExpressionSubstitutor restamp overlays surviving `dependent_name_type_` tips
+after substitute (Set DependentName-family / Clear on collapse with
+Builtin/Record/Enum TypeId→TypeIndex projection).
 
 Exit criteria:
 

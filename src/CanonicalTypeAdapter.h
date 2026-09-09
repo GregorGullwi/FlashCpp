@@ -498,8 +498,9 @@ inline CanonicalTypeImport importCanonicalTemplateParameter(CanonicalTypeTable& 
 		table.templateParameter(syntax.template_decl_id(), syntax.template_parameter_index()));
 }
 
-// Type-only class-template specialization import. Unstamped template-ids and
-// arguments that do not import as Supported stay Unresolved.
+// Production Spec import is still type-argument only. The canonical table can
+// hold opaque NTTP ExprId args, but syntax without Supported type-only args
+// (including NTTP / pack / template-template) stays Unresolved.
 inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (!syntax.has_template_specialization()) {
