@@ -523,21 +523,31 @@ PreparedClassPublication DeclarationBuilder::prepareClassPublication(
 			PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
 	}
 
-	const std::optional<PublicationTarget> target =
-		resolvePublicationTarget(symbol_table, request.lexical_scope_id);
-	if (!target.has_value()) {
-		return PreparedClassPublication(
-			PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
+	OwnerId owner_id{};
+	if (request.owner_id) {
+		if (!isClassOwnedOwnerId(request.owner_id)) {
+			return PreparedClassPublication(
+				PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
+		}
+		owner_id = request.owner_id;
+	} else {
+		const std::optional<PublicationTarget> target =
+			resolvePublicationTarget(symbol_table, request.lexical_scope_id);
+		if (!target.has_value()) {
+			return PreparedClassPublication(
+				PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
+		}
+		owner_id = target->owner_id;
 	}
 
-	const EntityLookupKey key{target->owner_id.value, request.name.handle, 0};
+	const EntityLookupKey key{owner_id.value, request.name.handle, 0};
 	const auto existing = entity_by_key_.find(key);
 	if (existing == entity_by_key_.end()) {
 		return PreparedClassPublication(
 			PublishStatus::Created,
 			EntityId{},
 			request.lexical_scope_id,
-			target->owner_id,
+			owner_id,
 			request.name,
 			request.kind,
 			requestFlags(request));
@@ -560,7 +570,7 @@ PreparedClassPublication DeclarationBuilder::prepareClassPublication(
 		PublishStatus::MergedRedeclaration,
 		entity_id,
 		request.lexical_scope_id,
-		target->owner_id,
+		owner_id,
 		request.name,
 		request.kind,
 		requestFlags(request));
@@ -962,6 +972,44 @@ PublishResult commitParserClassPublication(
 	request.name = struct_decl.name();
 	request.is_definition = is_definition;
 	request.kind = DeclKind::Class;
+
+	PublicationTransaction transaction(builder);
+	PreparedClassPublication prepared = builder.prepareClassPublication(request, symbol_table);
+	if (prepared.isRejected()) {
+		transaction.rollback();
+		return prepared.rejection();
+	}
+
+	const PublishResult result = builder.commitClassPublication(prepared, transaction);
+	transaction.commit();
+	if (result.status == PublishStatus::Created || result.status == PublishStatus::MergedRedeclaration) {
+		struct_decl.set_entity_id(result.entity_id);
+	}
+	return result;
+}
+
+PublishResult commitParserNestedClassPublication(
+	DeclarationBuilder& builder,
+	StructDeclarationNode& struct_decl,
+	OwnerId enclosing_owner_id,
+	bool is_definition,
+	const SymbolTable& symbol_table) {
+	if (!isClassOwnedOwnerId(enclosing_owner_id)) {
+		return PublishResult{PublishStatus::Rejected, DeclId{}, EntityId{}};
+	}
+	if (!struct_decl.has_lexical_scope_id() || !struct_decl.name().isValid()) {
+		return PublishResult{PublishStatus::Rejected, DeclId{}, EntityId{}};
+	}
+	if (struct_decl.is_local_class()) {
+		return PublishResult{PublishStatus::Rejected, DeclId{}, EntityId{}};
+	}
+
+	ClassDeclRequest request{};
+	request.lexical_scope_id = struct_decl.lexical_scope_id();
+	request.name = struct_decl.name();
+	request.is_definition = is_definition;
+	request.kind = DeclKind::Class;
+	request.owner_id = enclosing_owner_id;
 
 	PublicationTransaction transaction(builder);
 	PreparedClassPublication prepared = builder.prepareClassPublication(request, symbol_table);
