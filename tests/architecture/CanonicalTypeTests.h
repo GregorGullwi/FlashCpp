@@ -730,6 +730,12 @@ inline void checkDependentNames() {
 	require(table.node(table.dependentNameQualifier(spec_member)).kind ==
 		CanonicalTypeKind::TemplateSpecialization);
 	require(table.templateSpecializationDecl(spec_pair) == TemplateDeclId{11});
+	require(table.node(spec_foo).kind == CanonicalTypeKind::DependentTemplateMember);
+	require(table.node(table.dependentNameQualifier(spec_foo)).kind ==
+		CanonicalTypeKind::TemplateSpecialization);
+	require(table.dependentNameIdentifier(spec_foo) == "Foo");
+	require(table.templateArgumentType(table.dependentTemplateMemberArguments(spec_foo)) ==
+		pair_int);
 	CanonicalTypeTable reordered_specs;
 	const TypeId reordered_spec_int = reordered_specs.builtin(CanonicalBuiltinKind::Int);
 	const TypeId reordered_spec_float = reordered_specs.builtin(CanonicalBuiltinKind::Float);
