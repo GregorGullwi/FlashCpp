@@ -1992,10 +1992,13 @@ public:
 	// Class-template specialization stamp: published primary TemplateDeclId plus
 	// ordered Type / literal-NTTP (ExprId) / published-primary-template arguments.
 	// Adapter imports these into CanonicalTemplateArgument lists. Packs stay unstamped.
-	// Storage is parallel kind / TypeSpecifierNode / ExprId vectors because a
-	// joint struct cannot contain TypeSpecifierNode. After type args import as
-	// TypeId, collapse to CanonicalTemplateArgument; do not heap-indirect
-	// TypeSpecifierNode or add a third payload vector for pack / template-template.
+	// Persistent storage is an ordered kind vector plus dense TypeSpecifierNode,
+	// ExprId, and TemplateDeclId payload vectors. A joint variant would reserve a
+	// TypeSpecifierNode-sized slot for every opaque ExprId/TemplateDeclId argument;
+	// deriving each payload offset from the preceding kinds is cheaper than that
+	// footprint. Keep TypeSpecifierNode values inline rather than heap-indirect.
+	// After type args import as TypeIds, collapse this representation to
+	// CanonicalTemplateArgument. Transient parser collection may use a variant.
 	bool has_template_specialization() const {
 		return static_cast<bool>(specialization_template_decl_);
 	}
