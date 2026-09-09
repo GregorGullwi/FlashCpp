@@ -185,6 +185,8 @@ private:
 
 	// Helper: substitute in a type specifier with template args
 	TypeSpecifierNode substituteInType(const TypeSpecifierNode& type);
+	TypeSpecifierNode substituteInTypeCore(const TypeSpecifierNode& type);
+	std::optional<TypeId> tryRestampDependentNameType(const TypeSpecifierNode& type) const;
 	TypeSpecifierNode makeSubstitutedTypeFromResolvedTypeInfo(
 		const TypeInfo& resolved_type_info,
 		const TypeSpecifierNode& source);

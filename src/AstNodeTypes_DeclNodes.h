@@ -2009,8 +2009,9 @@ public:
 	// Opaque bridge for a canonical dependent-name base in the owning context.
 	// Production stamps plain chains and type-only member template-ids rooted in
 	// published type parameters; tip may be DependentName or DependentTemplateMember.
-	// No spelling recovery from flat TypeIndex names. Other qualifier families and
-	// substitution stay unbound until later 3A slices.
+	// No spelling recovery from flat TypeIndex names. ExpressionSubstitutor may
+	// restamp this TypeId through CanonicalTypeTable::substitute when the stamp
+	// survives legacy TypeIndex substitution; tip lookup remains a later slice.
 	bool has_dependent_name_type() const { return static_cast<bool>(dependent_name_type_); }
 	TypeId dependent_name_type() const { return dependent_name_type_; }
 	void set_dependent_name_type(TypeId type) {

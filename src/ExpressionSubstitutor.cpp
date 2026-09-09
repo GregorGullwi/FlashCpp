@@ -3,6 +3,8 @@
 
 #include "ExpressionSubstitutor.h"
 #include "CallNodeHelpers.h"
+#include "CanonicalTypeAdapter.h"
+#include "FrontendContext.h"
 #include "MemberFunctionLookupShared.h"
 #include "OverloadResolution.h"
 #include "Parser.h"
@@ -5061,6 +5063,146 @@ ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {
 }
 
 TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNode& type) {
+	// Fail-closed overlay: structurally rewrite dependent_name_type_ when the
+	// stamp survives legacy TypeIndex substitution. Never skip the legacy body.
+	const std::optional<TypeId> restamped = tryRestampDependentNameType(type);
+	TypeSpecifierNode result = substituteInTypeCore(type);
+	if (restamped.has_value() && result.has_dependent_name_type()) {
+		result.set_dependent_name_type(*restamped);
+	}
+	return result;
+}
+
+std::optional<TypeId> ExpressionSubstitutor::tryRestampDependentNameType(
+	const TypeSpecifierNode& type) const {
+	if (!type.has_dependent_name_type()) {
+		return std::nullopt;
+	}
+	if (!pack_map_.empty()) {
+		return std::nullopt;
+	}
+	FrontendContext& front_end = requireFrontendContext();
+	CanonicalTypeTable& table = front_end.canonicalTypes();
+	const TypeId stamp = type.dependent_name_type();
+	TemplateDeclId env{};
+	uint32_t max_index = 0;
+	bool saw_parameter = false;
+	{
+		std::vector<TypeId> stack;
+		std::unordered_set<uint32_t> visited;
+		stack.push_back(stamp);
+		while (!stack.empty()) {
+			const TypeId current = stack.back();
+			stack.pop_back();
+			if (!current || !visited.insert(current.value).second) {
+				continue;
+			}
+			const CanonicalTypeNode node = table.node(current);
+			switch (node.kind) {
+			case CanonicalTypeKind::TemplateParameter: {
+				const TemplateDeclId decl = table.templateParameterDecl(current);
+				const uint32_t index = table.templateParameterIndex(current);
+				if (!saw_parameter) {
+					env = decl;
+					max_index = index;
+					saw_parameter = true;
+				} else if (decl != env) {
+					return std::nullopt;
+				} else if (index > max_index) {
+					max_index = index;
+				}
+				break;
+			}
+			case CanonicalTypeKind::Qualified:
+			case CanonicalTypeKind::Pointer:
+			case CanonicalTypeKind::LValueReference:
+			case CanonicalTypeKind::RValueReference:
+			case CanonicalTypeKind::Array:
+			case CanonicalTypeKind::DependentName:
+				stack.push_back(node.child);
+				break;
+			case CanonicalTypeKind::TemplateSpecialization: {
+				TypeId arg_link = table.templateSpecializationArguments(current);
+				while (arg_link) {
+					stack.push_back(table.templateArgumentType(arg_link));
+					arg_link = table.templateArgumentNext(arg_link);
+				}
+				break;
+			}
+			case CanonicalTypeKind::DependentTemplateMember: {
+				stack.push_back(node.child);
+				TypeId arg_link = table.dependentTemplateMemberArguments(current);
+				while (arg_link) {
+					stack.push_back(table.templateArgumentType(arg_link));
+					arg_link = table.templateArgumentNext(arg_link);
+				}
+				break;
+			}
+			case CanonicalTypeKind::Builtin:
+			case CanonicalTypeKind::Record:
+			case CanonicalTypeKind::Enum:
+				break;
+			default:
+				return std::nullopt;
+			}
+		}
+	}
+	if (!saw_parameter || !env) {
+		return std::nullopt;
+	}
+
+	std::vector<TemplateTypeArg> bound_args;
+	if (!template_args_.empty()) {
+		bound_args.assign(template_args_.begin(), template_args_.end());
+	} else if (!template_param_order_.empty()) {
+		bound_args.reserve(template_param_order_.size());
+		std::unordered_set<std::string_view> consumed;
+		for (std::string_view param_name : template_param_order_) {
+			if (!consumed.insert(param_name).second) {
+				continue;
+			}
+			const auto scalar_it = param_map_.find(param_name);
+			if (scalar_it == param_map_.end()) {
+				return std::nullopt;
+			}
+			bound_args.push_back(scalar_it->second);
+		}
+	} else if (param_map_.size() == 1) {
+		bound_args.push_back(param_map_.begin()->second);
+	} else {
+		return std::nullopt;
+	}
+	if (bound_args.size() <= max_index) {
+		return std::nullopt;
+	}
+
+	std::vector<TypeId> argument_ids;
+	argument_ids.reserve(bound_args.size());
+	for (const TemplateTypeArg& arg : bound_args) {
+		if (arg.is_value || arg.is_pack || arg.is_template_template_arg) {
+			return std::nullopt;
+		}
+		TypeSpecifierNode arg_spec = makeTypeSpecifierFromTemplateTypeArg(arg, type.token());
+		if (arg_spec.is_pack_expansion()) {
+			return std::nullopt;
+		}
+		const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return std::nullopt;
+		}
+		argument_ids.push_back(imported.type);
+	}
+
+	TypeId substituted = table.substitute(stamp, env, argument_ids);
+	const CanonicalTypeKind tip_kind = table.node(substituted).kind;
+	if (tip_kind != CanonicalTypeKind::DependentName &&
+		tip_kind != CanonicalTypeKind::DependentTemplateMember) {
+		return std::nullopt;
+	}
+	return substituted;
+}
+
+TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifierNode& type) {
 	FLASH_LOG(Templates, Trace, "ExpressionSubstitutor: Substituting in type");
 	FLASH_LOG_FORMAT(Templates, Trace, "  Input type: base_type={}, type_index={}", (int)type.type(), type.type_index());
 
