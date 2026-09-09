@@ -813,11 +813,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				parsing_template_class_)) {
 			return;
 		}
-		FrontendContext* front_end_ptr = frontendContext();
-		if (front_end_ptr == nullptr) {
-			return;
-		}
-		FrontendContext& front_end = *front_end_ptr;
+		FrontendContext& front_end = requireFrontendContext();
 		const PublishResult published = commitParserClassPublication(
 			front_end.declarationBuilder(),
 			stamped,
@@ -4569,11 +4565,7 @@ ParseResult Parser::parse_enum_declaration() {
 				is_anonymous_enum)) {
 			return;
 		}
-		FrontendContext* front_end_ptr = frontendContext();
-		if (front_end_ptr == nullptr) {
-			return;
-		}
-		FrontendContext& front_end = *front_end_ptr;
+		FrontendContext& front_end = requireFrontendContext();
 		const PublishResult published = commitParserEnumPublication(
 			front_end.declarationBuilder(),
 			stamped,

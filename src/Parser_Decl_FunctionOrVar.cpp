@@ -933,9 +933,8 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// Insert the FunctionDeclarationNode (which contains parameter info for overload resolution)
 		// instead of just the DeclarationNode
 		if (auto func_node = function_definition_result.node()) {
-			FrontendContext* front_end_ptr = frontendContext();
+			FrontendContext& front_end = requireFrontendContext();
 			const bool wired_free_function =
-				front_end_ptr != nullptr &&
 				shouldPublishParserFreeFunction(
 					func_node->as<FunctionDeclarationNode>(),
 					gSymbolTable.get_current_scope_type());
@@ -946,7 +945,6 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			}
 
 			if (wired_free_function) {
-				FrontendContext& front_end = *front_end_ptr;
 				FunctionDeclarationNode& func_decl = func_node->as<FunctionDeclarationNode>();
 				const bool is_definition = peek() != ";"_tok;
 				const PublishResult publish_result = commitParserFreeFunctionPublication(

@@ -53,11 +53,8 @@ inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const F
 	if (func_decl.has_noexcept_expression()) {
 		sig.noexcept_expression = *func_decl.noexcept_expression();
 		sig.is_noexcept = false;
-		if (FrontendContext* front_end_ptr = frontendContext()) {
-			FrontendContext& front_end = *front_end_ptr;
-			sig.dependent_noexcept = front_end.dependentExpressions().intern(
-				sig.noexcept_expression->node());
-		}
+		sig.dependent_noexcept = requireFrontendContext().dependentExpressions().intern(
+			sig.noexcept_expression->node());
 	}
 
 	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, func_decl.decl_node().identifier_token(), CVQualifier::None);
@@ -75,11 +72,8 @@ inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(c
 	if (func_decl.has_noexcept_expression()) {
 		sig.noexcept_expression = *func_decl.noexcept_expression();
 		sig.is_noexcept = false;
-		if (FrontendContext* front_end_ptr = frontendContext()) {
-			FrontendContext& front_end = *front_end_ptr;
-			sig.dependent_noexcept = front_end.dependentExpressions().intern(
-				sig.noexcept_expression->node());
-		}
+		sig.dependent_noexcept = requireFrontendContext().dependentExpressions().intern(
+			sig.noexcept_expression->node());
 	}
 	std::vector<FunctionType> parameter_types;
 	for (const auto& param_node : func_decl.parameter_nodes()) {
