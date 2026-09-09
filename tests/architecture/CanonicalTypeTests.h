@@ -1240,11 +1240,41 @@ inline void checkNttpSpecArgs() {
 	std::printf("nttp spec args: node=%zu\n", sizeof(CanonicalTypeNode));
 }
 
+inline void checkConcretePackSpecArgs() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId character = table.builtin(CanonicalBuiltinKind::Char);
+	const TypeId floating = table.builtin(CanonicalBuiltinKind::Double);
+	const CanonicalTemplateArgument concrete_pack[] = {
+		CanonicalTemplateArgument::makeType(integer),
+		CanonicalTemplateArgument::makeType(character),
+		CanonicalTemplateArgument::makeType(floating),
+	};
+	const TypeId spec = table.templateSpecialization(TemplateDeclId{29}, concrete_pack);
+	const TypeId first = table.templateSpecializationArguments(spec);
+	require(table.templateArgumentKind(first) == CanonicalTemplateArgKind::Type);
+	require(table.templateArgumentType(first) == integer);
+	const TypeId second = table.templateArgumentNext(first);
+	require(table.templateArgumentKind(second) == CanonicalTemplateArgKind::Type);
+	require(table.templateArgumentType(second) == character);
+	const TypeId third = table.templateArgumentNext(second);
+	require(table.templateArgumentKind(third) == CanonicalTemplateArgKind::Type);
+	require(table.templateArgumentType(third) == floating);
+	require(!table.templateArgumentNext(third));
+	require(spec != table.templateSpecialization(TemplateDeclId{29},
+		std::array<CanonicalTemplateArgument, 3>{
+			CanonicalTemplateArgument::makeType(integer),
+			CanonicalTemplateArgument::makeType(floating),
+			CanonicalTemplateArgument::makeType(character),
+		}));
+}
+
 inline int run() {
 	checkDependentNames();
 	checkSubstitution();
 	checkDependentTipResolve();
 	checkNttpSpecArgs();
+	checkConcretePackSpecArgs();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();

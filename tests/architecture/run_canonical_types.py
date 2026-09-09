@@ -207,6 +207,13 @@ def main():
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = 1,"),
+            "lost_specialization_argument_order": (
+                "TypeId rebuildMixedTemplateArgListUnlocked(std::span<const CanonicalTemplateArgument> arguments) {\n"
+                "\t\tTypeId arg_link{};\n"
+                "\t\tfor (size_t index = arguments.size(); index-- > 0;) {",
+                "TypeId rebuildMixedTemplateArgListUnlocked(std::span<const CanonicalTemplateArgument> arguments) {\n"
+                "\t\tTypeId arg_link{};\n"
+                "\t\tfor (size_t index = 0; index < arguments.size(); ++index) {"),
             "lost_nttp_spec_arg": (
                 ".kind = CanonicalTypeKind::NonTypeTemplateArg,\n"
                 "\t\t\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
