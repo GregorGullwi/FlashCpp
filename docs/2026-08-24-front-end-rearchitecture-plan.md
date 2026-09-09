@@ -776,8 +776,10 @@ template-id-then-`::` path is landed, as is production stamping of type-only
 member template-ids on that same Spec-rooted path when member-arg syntax is
 captured. CurrentInstantiation and UnknownSpecialization owners share that
 Spec-rooted stamp path; TemplateParameter-only chains remain on the type-
-parameter stamp helpers. Non-type member-arg syntax and substitution remain
-deferred.
+parameter stamp helpers. Non-type member-arg syntax remains deferred.
+Structural `CanonicalTypeTable::substitute` rewrites type-parameter environments
+inside Spec / DependentName / DependentTemplateMember graphs without member
+lookup; production ExpressionSubstitutor wiring stays deferred.
 
 Exit criteria:
 

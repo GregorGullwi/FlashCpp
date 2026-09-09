@@ -908,8 +908,104 @@ inline void checkDependentNames() {
 		shallow, sizeof(CanonicalTypeNode), sizeof(TypeSpecifierNode));
 }
 
+inline void checkSubstitution() {
+	CanonicalTypeTable table;
+	const TemplateDeclId env{7};
+	const TemplateDeclId other{8};
+	const TypeId param0 = table.templateParameter(env, 0);
+	const TypeId param1 = table.templateParameter(env, 1);
+	const TypeId foreign = table.templateParameter(other, 0);
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId floating = table.builtin(CanonicalBuiltinKind::Double);
+	const TypeId args[] = {integer, floating};
+	require(table.substitute(param0, env, args) == integer);
+	require(table.substitute(param1, env, args) == floating);
+	require(table.substitute(foreign, env, args) == foreign);
+	require(table.substitute(integer, env, args) == integer);
+
+	const TypeId spec = table.templateSpecialization(TemplateDeclId{11},
+		std::array<TypeId, 2>{param0, param1});
+	const TypeId subst_spec = table.substitute(spec, env, args);
+	require(subst_spec == table.templateSpecialization(TemplateDeclId{11}, args));
+	require(table.templateSpecializationDecl(subst_spec) == TemplateDeclId{11});
+
+	const TypeId member = table.dependentName(param0, "first");
+	const TypeId subst_member = table.substitute(member, env, args);
+	require(table.node(subst_member).kind == CanonicalTypeKind::DependentName);
+	require(table.dependentNameQualifier(subst_member) == integer);
+	require(table.dependentNameIdentifier(subst_member) == "first");
+	rejects([&] { table.dependentName(integer, "first"); });
+
+	const TypeId nested = table.dependentName(table.dependentName(param0, "Nested"), "item");
+	const TypeId subst_nested = table.substitute(nested, env, args);
+	require(table.dependentNameIdentifier(subst_nested) == "item");
+	require(table.dependentNameIdentifier(table.dependentNameQualifier(subst_nested)) == "Nested");
+	require(table.dependentNameQualifier(table.dependentNameQualifier(subst_nested)) == integer);
+
+	const TypeId spec_root = table.dependentName(
+		table.templateSpecialization(TemplateDeclId{11}, std::span<const TypeId>(&param0, 1)),
+		"value_type");
+	const TypeId subst_spec_root = table.substitute(spec_root, env, args);
+	require(table.dependentNameIdentifier(subst_spec_root) == "value_type");
+	require(table.node(table.dependentNameQualifier(subst_spec_root)).kind ==
+		CanonicalTypeKind::TemplateSpecialization);
+	require(table.templateArgumentType(table.templateSpecializationArguments(
+		table.dependentNameQualifier(subst_spec_root))) == integer);
+
+	const TypeId foo = table.dependentTemplateMember(param0, "Foo",
+		std::span<const TypeId>(&param1, 1));
+	const TypeId subst_foo = table.substitute(foo, env, args);
+	require(table.node(subst_foo).kind == CanonicalTypeKind::DependentTemplateMember);
+	require(table.dependentNameQualifier(subst_foo) == integer);
+	require(table.dependentNameIdentifier(subst_foo) == "Foo");
+	require(table.templateArgumentType(table.dependentTemplateMemberArguments(subst_foo)) ==
+		floating);
+
+	const TypeId wrapped = table.reference(
+		table.array(table.pointer(table.qualify(param0, CVQualifier::Const)), 2),
+		ReferenceQualifier::LValueReference);
+	const TypeId subst_wrapped = table.substitute(wrapped, env, args);
+	require(subst_wrapped == table.reference(
+		table.array(table.pointer(table.qualify(integer, CVQualifier::Const)), 2),
+		ReferenceQualifier::LValueReference));
+
+	rejects([&] { table.substitute(TypeId{}, env, args); });
+	rejects([&] { table.substitute(param0, TemplateDeclId{}, args); });
+	rejects([&] { table.substitute(param0, env, {}); });
+	const TypeId bytes{static_cast<uint32_t>(table.node(member).array_extent)};
+	rejects([&] { table.substitute(bytes, env, args); });
+	rejects([&] {
+		table.substitute(table.function(integer, {}, false, CVQualifier::None,
+			ReferenceQualifier::None, false, CanonicalCallingConvention::Default,
+			CanonicalDllLinkage::None, ExprId{}), env, args);
+	});
+
+	CanonicalTypeTable reordered;
+	const TypeId reordered_param = reordered.templateParameter(env, 0);
+	const TypeId reordered_int = reordered.builtin(CanonicalBuiltinKind::Int);
+	reordered.dependentName(reordered_param, "unrelated");
+	const TypeId reordered_member = reordered.dependentName(reordered_param, "first");
+	const TypeId reordered_args[] = {reordered_int};
+	require(sameStructure(table, subst_member, reordered,
+		reordered.substitute(reordered_member, env, reordered_args)));
+
+	auto deep = param0;
+	for (size_t level = 0; level < 65536; ++level) {
+		deep = table.dependentName(deep, "next");
+	}
+	const TypeId subst_deep = table.substitute(deep, env, args);
+	TypeId cursor = subst_deep;
+	for (size_t level = 0; level < 65536; ++level) {
+		require(table.dependentNameIdentifier(cursor) == "next");
+		cursor = table.dependentNameQualifier(cursor);
+	}
+	require(cursor == integer);
+	std::printf("substitution: node=%zu deep=65536\n", sizeof(CanonicalTypeNode));
+}
+
 inline int run() {
 	checkDependentNames();
+	checkSubstitution();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();
