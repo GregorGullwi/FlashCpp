@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -225,6 +226,22 @@ struct CanonicalRecordBase {
 	friend bool operator==(CanonicalRecordBase, CanonicalRecordBase) = default;
 };
 
+// Nested type-member schema entry for tip lookup after substitution.
+// Identifier content is a NameBytes link (structural content), never StringHandle.
+struct CanonicalNamedTypeMember {
+	TypeId type;
+	TypeId name;
+	uint32_t reserved = 0;
+	uint32_t reserved2 = 0;
+	friend bool operator==(CanonicalNamedTypeMember, CanonicalNamedTypeMember) = default;
+};
+
+// Publication input: spelling is lookup content only; stored as NameBytes.
+struct CanonicalNamedTypeMemberSpec {
+	std::string_view name;
+	TypeId type;
+};
+
 inline CanonicalRecordMemberFlags operator|(CanonicalRecordMemberFlags a,
 	CanonicalRecordMemberFlags b) {
 	return static_cast<CanonicalRecordMemberFlags>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
@@ -254,10 +271,12 @@ static_assert(std::is_trivially_copyable_v<CanonicalRecordLayout>);
 static_assert(std::is_trivially_copyable_v<CanonicalEnumLayout>);
 static_assert(std::is_trivially_copyable_v<CanonicalRecordMember>);
 static_assert(std::is_trivially_copyable_v<CanonicalRecordBase>);
+static_assert(std::is_trivially_copyable_v<CanonicalNamedTypeMember>);
 static_assert(sizeof(CanonicalRecordLayout) == 24);
 static_assert(sizeof(CanonicalEnumLayout) == 16);
 static_assert(sizeof(CanonicalRecordMember) == 16);
 static_assert(sizeof(CanonicalRecordBase) == 16);
+static_assert(sizeof(CanonicalNamedTypeMember) == 16);
 
 class CanonicalTypeTransaction;
 
@@ -1089,6 +1108,98 @@ public:
 		return record_bases_[header.base_begin + index];
 	}
 
+	// Publish nested type members (typedef / using / nested class targets) keyed by
+	// EntityId. Identifier content is NameBytes; StringHandle is never stored.
+	// Equal republish is idempotent; conflicting content throws. Layout is not
+	// required — this schema is independent of CanonicalRecordMember field layout.
+	void publishRecordNamedTypeMembers(EntityId entity,
+		std::span<const CanonicalNamedTypeMemberSpec> members) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!entity) {
+			throw InternalError("canonical type: invalid named type-member schema entity");
+		}
+		std::vector<CanonicalNamedTypeMember> packed;
+		packed.reserve(members.size());
+		for (const CanonicalNamedTypeMemberSpec& member : members) {
+			if (isInternalLink(nodeUnlocked(member.type).kind)) {
+				throw InternalError("canonical type: internal link is not a named type-member type");
+			}
+			const TypeId name_link = packIdentifierBytesUnlocked(member.name);
+			for (const CanonicalNamedTypeMember& prior : packed) {
+				if (prior.name == name_link) {
+					throw InternalError("canonical type: duplicate named type-member identifier");
+				}
+			}
+			packed.push_back({
+				.type = member.type,
+				.name = name_link,
+			});
+		}
+		const auto existing = named_type_member_schema_ids_.find(entity.value);
+		if (existing != named_type_member_schema_ids_.end()) {
+			const CanonicalNamedTypeMemberSchemaHeader header =
+				named_type_member_schema_headers_[existing->second];
+			if (header.member_count != packed.size()) {
+				throw InternalError("canonical type: conflicting named type-member schema");
+			}
+			for (size_t index = 0; index < packed.size(); ++index) {
+				if (named_type_members_[header.member_begin + index] != packed[index]) {
+					throw InternalError("canonical type: conflicting named type-member schema");
+				}
+			}
+			return;
+		}
+		const uint32_t member_begin = static_cast<uint32_t>(live_named_type_member_count_);
+		if (static_cast<uint64_t>(member_begin) + packed.size() >
+			std::numeric_limits<uint32_t>::max()) {
+			throw InternalError("canonical type: named type-member schema arena exhausted");
+		}
+		for (const CanonicalNamedTypeMember& member : packed) {
+			appendSchemaEntryUnlocked(named_type_members_, live_named_type_member_count_, member);
+		}
+		const CanonicalNamedTypeMemberSchemaHeader header{
+			.entity = entity,
+			.member_begin = member_begin,
+			.member_count = static_cast<uint16_t>(packed.size()),
+			.reserved = 0,
+			.reserved2 = 0,
+		};
+		const size_t header_index = live_named_type_member_schema_count_;
+		appendSchemaEntryUnlocked(named_type_member_schema_headers_,
+			live_named_type_member_schema_count_, header);
+		try {
+			named_type_member_schema_ids_.emplace(entity.value, header_index);
+		} catch (...) {
+			live_named_type_member_schema_count_ = header_index;
+			live_named_type_member_count_ = member_begin;
+			noteArenaBytes();
+			throw;
+		}
+		noteArenaBytes();
+	}
+
+	bool hasRecordNamedTypeMembers(EntityId entity) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return entity && named_type_member_schema_ids_.contains(entity.value);
+	}
+
+	std::optional<TypeId> tryLookupNamedTypeMember(EntityId entity, std::string_view name) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return tryLookupNamedTypeMemberUnlocked(entity, name);
+	}
+
+	// Collapse plain DependentName chains when every step is Record + published
+	// named type-member. Miss / DependentTemplateMember / non-Record qualifier
+	// leaves the tip unchanged. No StringHandle identity and no SymbolTable.
+	TypeId tryResolveDependentTip(TypeId type) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return tryResolveDependentTipUnlocked(type);
+	}
+
 	size_t size() const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -1113,6 +1224,17 @@ private:
 	};
 	static_assert(sizeof(CanonicalRecordFieldSchemaHeader) == 16);
 
+	struct CanonicalNamedTypeMemberSchemaHeader {
+		EntityId entity;
+		uint32_t member_begin;
+		uint16_t member_count;
+		uint16_t reserved;
+		uint32_t reserved2;
+		friend bool operator==(CanonicalNamedTypeMemberSchemaHeader,
+			CanonicalNamedTypeMemberSchemaHeader) = default;
+	};
+	static_assert(sizeof(CanonicalNamedTypeMemberSchemaHeader) == 16);
+
 	struct TransactionMark {
 		size_t node_count;
 		size_t record_layout_count;
@@ -1120,6 +1242,8 @@ private:
 		size_t record_field_schema_count;
 		size_t record_member_count;
 		size_t record_base_count;
+		size_t named_type_member_schema_count;
+		size_t named_type_member_count;
 	};
 
 	struct NodeHash {
@@ -1599,6 +1723,99 @@ private:
 		return record_field_schema_headers_[found->second];
 	}
 
+	bool nameBytesEqualUnlocked(TypeId name_link, std::string_view identifier) const {
+		size_t offset = 0;
+		TypeId cursor = name_link;
+		while (cursor) {
+			const CanonicalTypeNode bytes = nodeUnlocked(cursor);
+			if (bytes.kind != CanonicalTypeKind::NameBytes) {
+				throw InternalError("canonical type: expected NameBytes link");
+			}
+			const uint8_t count = static_cast<uint8_t>(bytes.builtin);
+			if (offset + count > identifier.size()) {
+				return false;
+			}
+			for (uint8_t index = 0; index < count; ++index) {
+				const unsigned char stored =
+					static_cast<unsigned char>((bytes.array_extent >> (index * 8)) & 0xff);
+				if (stored != static_cast<unsigned char>(identifier[offset + index])) {
+					return false;
+				}
+			}
+			offset += count;
+			cursor = bytes.child;
+		}
+		return offset == identifier.size();
+	}
+
+	std::optional<TypeId> tryLookupNamedTypeMemberUnlocked(EntityId entity,
+		std::string_view name) const {
+		if (!entity || name.empty() || name.find('\0') != std::string_view::npos) {
+			return std::nullopt;
+		}
+		const auto found = named_type_member_schema_ids_.find(entity.value);
+		if (found == named_type_member_schema_ids_.end()) {
+			return std::nullopt;
+		}
+		const CanonicalNamedTypeMemberSchemaHeader header =
+			named_type_member_schema_headers_[found->second];
+		for (uint16_t index = 0; index < header.member_count; ++index) {
+			const CanonicalNamedTypeMember& member =
+				named_type_members_[header.member_begin + index];
+			if (nameBytesEqualUnlocked(member.name, name)) {
+				return member.type;
+			}
+		}
+		return std::nullopt;
+	}
+
+	TypeId tryResolveDependentTipUnlocked(TypeId type) {
+		if (!type) {
+			throw InternalError("canonical type: invalid dependent tip TypeId");
+		}
+		if (nodeUnlocked(type).kind != CanonicalTypeKind::DependentName) {
+			return type;
+		}
+		std::vector<TypeId> name_links;
+		TypeId cursor = type;
+		while (nodeUnlocked(cursor).kind == CanonicalTypeKind::DependentName) {
+			const CanonicalTypeNode node = nodeUnlocked(cursor);
+			name_links.push_back(TypeId{static_cast<uint32_t>(node.array_extent)});
+			cursor = node.child;
+		}
+		if (nodeUnlocked(cursor).kind != CanonicalTypeKind::Record) {
+			return type;
+		}
+		TypeId current = cursor;
+		for (size_t index = name_links.size(); index-- > 0;) {
+			if (nodeUnlocked(current).kind != CanonicalTypeKind::Record) {
+				return type;
+			}
+			const EntityId entity = EntityId{static_cast<uint32_t>(
+				nodeUnlocked(current).array_extent)};
+			const auto found = named_type_member_schema_ids_.find(entity.value);
+			if (found == named_type_member_schema_ids_.end()) {
+				return type;
+			}
+			const CanonicalNamedTypeMemberSchemaHeader header =
+				named_type_member_schema_headers_[found->second];
+			std::optional<TypeId> matched;
+			for (uint16_t member_index = 0; member_index < header.member_count; ++member_index) {
+				const CanonicalNamedTypeMember& member =
+					named_type_members_[header.member_begin + member_index];
+				if (member.name == name_links[index]) {
+					matched = member.type;
+					break;
+				}
+			}
+			if (!matched.has_value()) {
+				return type;
+			}
+			current = *matched;
+		}
+		return current;
+	}
+
 	uint64_t usedBytesUnlocked() const {
 		return static_cast<uint64_t>(live_count_) * sizeof(CanonicalTypeNode) +
 			static_cast<uint64_t>(live_record_layout_count_) * sizeof(CanonicalRecordLayout) +
@@ -1606,13 +1823,18 @@ private:
 			static_cast<uint64_t>(live_record_field_schema_count_) *
 				sizeof(CanonicalRecordFieldSchemaHeader) +
 			static_cast<uint64_t>(live_record_member_count_) * sizeof(CanonicalRecordMember) +
-			static_cast<uint64_t>(live_record_base_count_) * sizeof(CanonicalRecordBase);
+			static_cast<uint64_t>(live_record_base_count_) * sizeof(CanonicalRecordBase) +
+			static_cast<uint64_t>(live_named_type_member_schema_count_) *
+				sizeof(CanonicalNamedTypeMemberSchemaHeader) +
+			static_cast<uint64_t>(live_named_type_member_count_) * sizeof(CanonicalNamedTypeMember);
 	}
 
 	uint64_t reservedBytesUnlocked() const {
 		return nodes_.reservedBytes() + record_layouts_.reservedBytes() +
 			enum_layouts_.reservedBytes() + record_field_schema_headers_.reservedBytes() +
-			record_members_.reservedBytes() + record_bases_.reservedBytes();
+			record_members_.reservedBytes() + record_bases_.reservedBytes() +
+			named_type_member_schema_headers_.reservedBytes() +
+			named_type_members_.reservedBytes();
 	}
 
 	void noteArenaBytes() {
@@ -1637,6 +1859,8 @@ private:
 			live_record_field_schema_count_,
 			live_record_member_count_,
 			live_record_base_count_,
+			live_named_type_member_schema_count_,
+			live_named_type_member_count_,
 		});
 		transaction_owner_ = std::this_thread::get_id();
 		return transaction_marks_.size();
@@ -1669,6 +1893,13 @@ private:
 			}
 			live_record_member_count_ = mark.record_member_count;
 			live_record_base_count_ = mark.record_base_count;
+			while (live_named_type_member_schema_count_ > mark.named_type_member_schema_count) {
+				named_type_member_schema_ids_.erase(
+					named_type_member_schema_headers_[live_named_type_member_schema_count_ - 1]
+						.entity.value);
+				--live_named_type_member_schema_count_;
+			}
+			live_named_type_member_count_ = mark.named_type_member_count;
 			noteArenaBytes();
 		}
 		transaction_marks_.pop_back();
@@ -1862,6 +2093,8 @@ private:
 	size_t live_record_field_schema_count_ = 0;
 	size_t live_record_member_count_ = 0;
 	size_t live_record_base_count_ = 0;
+	size_t live_named_type_member_schema_count_ = 0;
+	size_t live_named_type_member_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
 	std::vector<TransactionMark> transaction_marks_;
 	std::thread::id transaction_owner_;
@@ -1880,6 +2113,11 @@ private:
 	ChunkedVector<CanonicalRecordMember, 32> record_members_;
 	ChunkedVector<CanonicalRecordBase, 16> record_bases_;
 	std::unordered_map<uint32_t, size_t> record_field_schema_ids_;
+	// Named type-member schema samples: 16 headers / 32 members per chunk until a
+	// production nested-type corpus measures a larger peak.
+	ChunkedVector<CanonicalNamedTypeMemberSchemaHeader, 16> named_type_member_schema_headers_;
+	ChunkedVector<CanonicalNamedTypeMember, 32> named_type_members_;
+	std::unordered_map<uint32_t, size_t> named_type_member_schema_ids_;
 };
 
 // Checkpoints publish only when the surrounding transaction commits. Nested

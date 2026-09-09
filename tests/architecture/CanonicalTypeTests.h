@@ -1005,9 +1005,95 @@ inline void checkSubstitution() {
 	std::printf("substitution: node=%zu deep=65536\n", sizeof(CanonicalTypeNode));
 }
 
+inline void checkDependentTipResolve() {
+	CanonicalTypeTable table;
+	const TemplateDeclId env{7};
+	const TypeId param0 = table.templateParameter(env, 0);
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId floating = table.builtin(CanonicalBuiltinKind::Double);
+	const TypeId owner = table.record(EntityId{21});
+	const TypeId nested_record = table.record(EntityId{22});
+	const TypeId args[] = {owner};
+
+	const CanonicalNamedTypeMemberSpec owner_members[] = {
+		{.name = "type", .type = integer},
+		{.name = "Nested", .type = nested_record},
+	};
+	table.publishRecordNamedTypeMembers(EntityId{21}, owner_members);
+	require(table.hasRecordNamedTypeMembers(EntityId{21}));
+	table.publishRecordNamedTypeMembers(EntityId{21}, owner_members);
+	require(table.tryLookupNamedTypeMember(EntityId{21}, "type") == integer);
+	require(table.tryLookupNamedTypeMember(EntityId{21}, "missing") == std::nullopt);
+
+	const CanonicalNamedTypeMemberSpec nested_members[] = {
+		{.name = "item", .type = floating},
+	};
+	table.publishRecordNamedTypeMembers(EntityId{22}, nested_members);
+
+	const CanonicalNamedTypeMemberSpec conflict[] = {
+		{.name = "type", .type = floating},
+	};
+	rejects([&] { table.publishRecordNamedTypeMembers(EntityId{21}, conflict); });
+	rejects([&] {
+		const CanonicalNamedTypeMemberSpec duplicate[] = {
+			{.name = "a", .type = integer},
+			{.name = "a", .type = floating},
+		};
+		table.publishRecordNamedTypeMembers(EntityId{23}, duplicate);
+	});
+	rejects([&] { table.publishRecordNamedTypeMembers(EntityId{}, owner_members); });
+
+	const TypeId subst_type = table.substitute(table.dependentName(param0, "type"), env, args);
+	require(table.node(subst_type).kind == CanonicalTypeKind::DependentName);
+	require(table.tryResolveDependentTip(subst_type) == integer);
+
+	const TypeId subst_nested = table.substitute(
+		table.dependentName(table.dependentName(param0, "Nested"), "item"), env, args);
+	require(table.tryResolveDependentTip(subst_nested) == floating);
+
+	const TypeId miss = table.substitute(table.dependentName(param0, "absent"), env, args);
+	require(table.tryResolveDependentTip(miss) == miss);
+
+	const TypeId builtin_tip = table.substitute(
+		table.dependentName(table.templateParameter(env, 0), "type"), env,
+		std::span<const TypeId>(&integer, 1));
+	require(table.node(builtin_tip).kind == CanonicalTypeKind::DependentName);
+	require(table.tryResolveDependentTip(builtin_tip) == builtin_tip);
+
+	const TypeId template_member = table.substitute(
+		table.dependentTemplateMember(param0, "Foo", std::span<const TypeId>(&integer, 1)),
+		env, args);
+	require(table.tryResolveDependentTip(template_member) == template_member);
+
+	CanonicalTypeTable reordered;
+	const TypeId reordered_owner = reordered.record(EntityId{21});
+	const TypeId reordered_int = reordered.builtin(CanonicalBuiltinKind::Int);
+	reordered.dependentName(reordered.templateParameter(env, 0), "unrelated");
+	const CanonicalNamedTypeMemberSpec reordered_members[] = {
+		{.name = "type", .type = reordered_int},
+	};
+	reordered.publishRecordNamedTypeMembers(EntityId{21}, reordered_members);
+	const TypeId reordered_tip = reordered.substitute(
+		reordered.dependentName(reordered.templateParameter(env, 0), "type"), env,
+		std::span<const TypeId>(&reordered_owner, 1));
+	require(reordered.tryResolveDependentTip(reordered_tip) == reordered_int);
+
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalNamedTypeMemberSpec rolled[] = {
+		{.name = "rolled", .type = integer},
+	};
+	table.publishRecordNamedTypeMembers(EntityId{24}, rolled);
+	require(table.hasRecordNamedTypeMembers(EntityId{24}));
+	transaction.rollback();
+	require(!table.hasRecordNamedTypeMembers(EntityId{24}));
+
+	std::printf("dependent tip resolve: member=%zu\n", sizeof(CanonicalNamedTypeMember));
+}
+
 inline int run() {
 	checkDependentNames();
 	checkSubstitution();
+	checkDependentTipResolve();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();

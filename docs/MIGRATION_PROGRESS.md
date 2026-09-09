@@ -5,14 +5,14 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-09 after ExpressionSubstitutor dependent_name_type restamp
-on `codex/boundary-3a-substitute-dependent-name-restamp`
+Last updated: 2026-09-09 after opaque named type-member tip schema on
+`codex/boundary-3a-nested-type-tip-schema`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's production dependent_name_type restamp overlay is on
-`codex/boundary-3a-substitute-dependent-name-restamp` for review. Opaque
-`CanonicalTypeTable::substitute`, CurrentInstantiation / UnknownSpecialization
+Architecture boundary 3A's opaque named type-member tip-resolve substrate is on
+`codex/boundary-3a-nested-type-tip-schema` for review. Production dependent_name_type
+restamp, opaque `CanonicalTypeTable::substitute`, CurrentInstantiation / UnknownSpecialization
 Spec-rooted stamping, Spec-rooted member template-ids, plain DependentInstantiation
 members, opaque Spec-as-qualifier identity, type-only member template-id stamping
 on type parameters, DependentTemplateMember identity, plain dependent-member
@@ -124,18 +124,27 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   arguments, and a tip that remains DependentName or DependentTemplateMember.
   Pack / NTTP / template-template bindings leave the stamp unchanged. Overlay
   never re-attaches a DependentName tip onto a concrete resolved TypeIndex.
-  Tip lookup after restamp is deferred.
+  Production tip collapse after restamp remains deferred.
+- EntityId-keyed named type-member schemas store NameBytes identifier content plus
+  target `TypeId` (independent of spelling-free layout `CanonicalRecordMember`
+  schemas). `tryLookupNamedTypeMember` and `tryResolveDependentTip` collapse plain
+  DependentName chains only when every step is `Record` with a published name hit;
+  DependentTemplateMember, misses, and non-Record qualifiers leave the tip
+  unchanged. No StringHandle identity, SymbolTable, or ExpressionSubstitutor
+  wiring in this slice. Nodes remain 16 bytes; `sizeof(CanonicalTypeTable)` is
+  2,680 bytes on Linux clang++.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes tip lookup after restamp, NTTP / template-template /
-  pack specialization arguments, function/nested/member TemplateDeclId
-  publication, complete declarator interleaving, and deletion of the flat
-  semantic representation. Stop here for review before starting another family,
-  3B, or the parallel frontend experiment.
+- Remaining 3A work includes production publication of named type-member schemas,
+  wiring `tryResolveDependentTip` into ExpressionSubstitutor restamp overlays,
+  NTTP / template-template / pack specialization arguments, function/nested/member
+  TemplateDeclId publication, complete declarator interleaving, and deletion of
+  the flat semantic representation. Stop here for review before starting another
+  family, 3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
-schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,048 bytes on
+schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
 Linux clang++. Its measured 64-element chunks reserve 1,024 node bytes at a
 time; hash-index heap storage is excluded. A 65,536-level mixed pointer/array
 probe and a 65,536-level dependent-name chain pass under the host stack used by
@@ -202,14 +211,16 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for production dependent_name_type restamp: native canonical
-tests and source-copy mutations pass, including `lost_substitute_parameter`;
-`ExpressionSubstitutor` overlays restamped DependentName-family tips only when
-the legacy stamp survives TypeIndex substitution; Spec-rooted and plain
-dependent-name `_ret0` corpus cases stay green. Tip lookup after substitute
-remains deferred. Adjacent architecture coverage remains the DependentName /
-Spec-rooted / substitute probes. The Windows suite is 2,984 single-file cases,
-264 negative tests, and 12 multi-TU cases. Fixed-corpus migration counters remain
+Latest validation for opaque named type-member tip resolve: native canonical
+tests and source-copy mutations pass, including `lost_named_type_member_schema`
+and `lost_dependent_tip_resolve`; substitute still leaves DependentName tips;
+`tryResolveDependentTip` collapses published Record-rooted plain chains to the
+member TypeId and leaves misses / DependentTemplateMember / builtin qualifiers
+unchanged; equal NameBytes republication is order-stable; schema rollback clears
+publication. Production ExpressionSubstitutor tip collapse remains deferred.
+Adjacent architecture coverage remains the DependentName / Spec-rooted /
+substitute / restamp probes. The Windows suite is 2,984 single-file cases, 264
+negative tests, and 12 multi-TU cases. Fixed-corpus migration counters remain
 within the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
@@ -277,13 +288,14 @@ Advanced, not completed:
   TemplateSpecialization qualifiers, production stamping of Spec-rooted chains
   for DependentInstantiation / CurrentInstantiation / UnknownSpecialization
   owners (plain members and type-only member template-ids), and opaque
-  structural `CanonicalTypeTable::substitute` for type-parameter environments and
+  structural `CanonicalTypeTable::substitute` for type-parameter environments,
   production fail-closed `dependent_name_type_` restamp through
-  ExpressionSubstitutor are landed; tip lookup after substitute,
-  function/nested/member template publication, NTTP / template-template / pack
-  specialization arguments, alias, unpublished/incomplete nominal,
-  anonymous-union, and unpublished-base forms stay deferred. Remaining families
-  and flat-field deletion keep all three identity criteria open.
+  ExpressionSubstitutor, and opaque named type-member schemas with
+  `tryResolveDependentTip` are landed; production schema publication and tip
+  collapse after restamp, function/nested/member template publication, NTTP /
+  template-template / pack specialization arguments, alias, unpublished/incomplete
+  nominal, anonymous-union, and unpublished-base forms stay deferred. Remaining
+  families and flat-field deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -302,11 +314,12 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Tip lookup after `CanonicalTypeTable::substitute` /
-  `dependent_name_type_` restamp, then richer specialization arguments and
-  adapters before expanding boundary-1 shadow coverage (default arguments,
-  exception specifications, fields, templates) or removing `SymbolTable` merge /
-  `matches_signature` authority.
+- Publish named type-member schemas from production nested typedef/using/class
+  members and wire `tryResolveDependentTip` into ExpressionSubstitutor restamp
+  overlays, then richer specialization arguments and adapters before expanding
+  boundary-1 shadow coverage (default arguments, exception specifications,
+  fields, templates) or removing `SymbolTable` merge / `matches_signature`
+  authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in
