@@ -95,10 +95,10 @@ std::optional<std::vector<TypeSpecifierNode>> collectTypeOnlyArgSpecifiers(
 struct ClassTemplateArgSpecs {
 	TemplateDeclId primary;
 	// Joint syntax list (TypeSpecifierNode vs ExpressionNode ASTNode vs published
-	// primary class TemplateDeclId). Stamp
-	// storage on TypeSpecifierNode stays parallel until type args are TypeIds;
+	// primary class TemplateDeclId vs active template-template parameter identity).
+	// Stamp storage on TypeSpecifierNode stays parallel until type args are TypeIds;
 	// then collapse it to CanonicalTemplateArgument.
-	std::vector<std::variant<TypeSpecifierNode, ASTNode, TemplateDeclId>> args;
+	std::vector<std::variant<TypeSpecifierNode, ASTNode, TemplateDeclId, SpecDependentTemplateArg>> args;
 };
 
 bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
@@ -134,10 +134,12 @@ void applyCollectedClassTemplateArgSpecs(
 	std::vector<TypeSpecifierNode> type_args;
 	std::vector<ExprId> nttp_ids;
 	std::vector<TemplateDeclId> template_ids;
+	std::vector<SpecDependentTemplateArg> dependent_template_ids;
 	arg_kinds.reserve(collected.args.size());
 	type_args.reserve(collected.args.size());
 	nttp_ids.reserve(collected.args.size());
 	template_ids.reserve(collected.args.size());
+	dependent_template_ids.reserve(collected.args.size());
 	DependentExpressionTable& exprs =
 		requireFrontendContext().dependentExpressions();
 	for (auto& arg : collected.args) {
@@ -151,6 +153,12 @@ void applyCollectedClassTemplateArgSpecs(
 			template_ids.push_back(*template_arg);
 			continue;
 		}
+		if (SpecDependentTemplateArg* template_arg =
+				std::get_if<SpecDependentTemplateArg>(&arg)) {
+			arg_kinds.push_back(SpecTemplateArgKind::DependentTemplate);
+			dependent_template_ids.push_back(*template_arg);
+			continue;
+		}
 		arg_kinds.push_back(SpecTemplateArgKind::NonType);
 		nttp_ids.push_back(exprs.intern(std::get<ASTNode>(std::move(arg))));
 	}
@@ -159,7 +167,8 @@ void applyCollectedClassTemplateArgSpecs(
 		std::move(arg_kinds),
 		std::move(type_args),
 		std::move(nttp_ids),
-		std::move(template_ids));
+		std::move(template_ids),
+		std::move(dependent_template_ids));
 }
 
 // Shared gates for class-template specialization stamping: published primary
@@ -171,7 +180,10 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	StringHandle primary_template_name,
 	std::span<const TemplateTypeArg> filled_args,
 	std::span<const ASTNode> argument_syntax_nodes,
-	Token token) {
+	Token token,
+	TemplateDeclId active_template_decl,
+	std::span<const StringHandle> active_template_param_names,
+	std::span<const TemplateParameterKind> active_template_param_kinds) {
 	if (!primary_template_name.isValid()) {
 		throw InternalError("stamp template specialization: invalid primary template name");
 	}
@@ -242,6 +254,34 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 		if (param.kind() == TemplateParameterKind::Template) {
 			if (!arg.is_template_template_arg || !arg.template_name_handle.isValid()) {
 				throw InternalError("stamp template specialization: non-template arg for fixed template parameter");
+			}
+			bool collected_dependent_template_arg = false;
+			if (active_template_decl) {
+				if (active_template_param_names.size() != active_template_param_kinds.size()) {
+					throw InternalError("stamp template specialization: active template parameter shape mismatch");
+				}
+				for (size_t parameter_index = 0;
+					 parameter_index < active_template_param_names.size();
+					 ++parameter_index) {
+					if (active_template_param_names[parameter_index] != arg.template_name_handle) {
+						continue;
+					}
+					if (active_template_param_kinds[parameter_index] != TemplateParameterKind::Template) {
+						return std::nullopt;
+					}
+					if (arg.dependent_name.isValid() &&
+						arg.dependent_name != arg.template_name_handle) {
+						return std::nullopt;
+					}
+					collected.args.push_back(SpecDependentTemplateArg{
+						active_template_decl,
+						static_cast<uint32_t>(parameter_index)});
+					collected_dependent_template_arg = true;
+					break;
+				}
+			}
+			if (collected_dependent_template_arg) {
+				continue;
 			}
 			auto template_argument_opt = gTemplateRegistry.lookupTemplate(arg.template_name_handle);
 			if (!template_argument_opt.has_value() ||
@@ -4777,7 +4817,12 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 		primary_template_name,
 		filled_args,
 		argument_syntax_nodes,
-		type_spec.token());
+		type_spec.token(),
+		active_template_decl_id_,
+		std::span<const StringHandle>(
+			current_template_params_.names.data(), current_template_params_.names.size()),
+		std::span<const TemplateParameterKind>(
+			current_template_params_.kinds.data(), current_template_params_.kinds.size()));
 	if (!collected.has_value()) {
 		return;
 	}
@@ -4884,7 +4929,12 @@ void Parser::tryStampDependentInstantiationMemberChain(
 		primary_template_name,
 		filled_args,
 		argument_syntax_nodes,
-		type_spec.token());
+		type_spec.token(),
+		active_template_decl_id_,
+		std::span<const StringHandle>(
+			current_template_params_.names.data(), current_template_params_.names.size()),
+		std::span<const TemplateParameterKind>(
+			current_template_params_.kinds.data(), current_template_params_.kinds.size()));
 	if (!collected.has_value()) {
 		return;
 	}
@@ -4907,6 +4957,13 @@ void Parser::tryStampDependentInstantiationMemberChain(
 		}
 		if (const TemplateDeclId* template_arg = std::get_if<TemplateDeclId>(&arg)) {
 			argument_ids.push_back(CanonicalTemplateArgument::makeTemplate(*template_arg));
+			continue;
+		}
+		if (const SpecDependentTemplateArg* template_arg =
+				std::get_if<SpecDependentTemplateArg>(&arg)) {
+			argument_ids.push_back(CanonicalTemplateArgument::makeDependentTemplate(
+				template_arg->template_decl,
+				template_arg->parameter_index));
 			continue;
 		}
 		const ExprId expr_id = exprs.intern(std::get<ASTNode>(arg));

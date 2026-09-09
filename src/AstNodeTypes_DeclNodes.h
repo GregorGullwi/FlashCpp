@@ -36,7 +36,19 @@ enum class SpecTemplateArgKind : uint8_t {
 	Type = 0,
 	NonType = 1,
 	Template = 2,
+	DependentTemplate = 3,
 };
+
+// Dependent template-template argument identity for a stamped class-template
+// specialization. The StringHandle used while parsing remains lookup-only;
+// semantic identity is the active published owner plus parameter index.
+struct SpecDependentTemplateArg {
+	TemplateDeclId template_decl;
+	uint32_t parameter_index;
+	friend bool operator==(SpecDependentTemplateArg, SpecDependentTemplateArg) = default;
+};
+
+static_assert(sizeof(SpecDependentTemplateArg) == 8);
 
 enum class StructSemanticReadiness : uint8_t {
 	AwaitingSema,
@@ -1990,7 +2002,8 @@ public:
 	}
 
 	// Class-template specialization stamp: published primary TemplateDeclId plus
-	// ordered Type / literal-NTTP (ExprId) / published-primary-template arguments.
+	// ordered Type / literal-NTTP (ExprId) / published-primary-template / active
+	// template-template-parameter arguments.
 	// Adapter imports these into CanonicalTemplateArgument lists. Packs stay unstamped.
 	// Persistent storage is an ordered kind vector plus dense TypeSpecifierNode,
 	// ExprId, and TemplateDeclId payload vectors. A joint variant would reserve a
@@ -2020,6 +2033,12 @@ public:
 		}
 		return specialization_arg_kinds_[index] == SpecTemplateArgKind::Template;
 	}
+	bool specialization_arg_is_dependent_template(size_t index) const {
+		if (index >= specialization_arg_kinds_.size()) {
+			throw InternalError("type specifier: specialization arg index out of range");
+		}
+		return specialization_arg_kinds_[index] == SpecTemplateArgKind::DependentTemplate;
+	}
 	const TypeSpecifierNode& specialization_arg_type(size_t index) const {
 		if (!specialization_arg_is_type(index)) {
 			throw InternalError("type specifier: expected type specialization argument");
@@ -2033,7 +2052,8 @@ public:
 		return specialization_type_args_[type_index];
 	}
 	ExprId specialization_arg_expr(size_t index) const {
-		if (specialization_arg_is_type(index)) {
+		if (index >= specialization_arg_kinds_.size() ||
+			specialization_arg_kinds_[index] != SpecTemplateArgKind::NonType) {
 			throw InternalError("type specifier: expected non-type specialization argument");
 		}
 		size_t nttp_index = 0;
@@ -2056,6 +2076,18 @@ public:
 		}
 		return specialization_template_args_[template_index];
 	}
+	SpecDependentTemplateArg specialization_arg_dependent_template(size_t index) const {
+		if (!specialization_arg_is_dependent_template(index)) {
+			throw InternalError("type specifier: expected dependent template specialization argument");
+		}
+		size_t template_index = 0;
+		for (size_t i = 0; i < index; ++i) {
+			if (specialization_arg_kinds_[i] == SpecTemplateArgKind::DependentTemplate) {
+				++template_index;
+			}
+		}
+		return specialization_dependent_template_args_[template_index];
+	}
 	// Type-payload view (type slots only, in left-to-right type order). Prefer
 	// specialization_arg_* for mixed Spec walks.
 	std::span<const TypeSpecifierNode> specialization_type_args() const {
@@ -2074,19 +2106,22 @@ public:
 		specialization_type_args_ = std::move(type_args);
 		specialization_nttp_args_.clear();
 		specialization_template_args_.clear();
+		specialization_dependent_template_args_.clear();
 	}
 	void set_template_specialization_mixed(
 		TemplateDeclId primary,
 		std::vector<SpecTemplateArgKind> arg_kinds,
 		std::vector<TypeSpecifierNode> type_args,
 		std::vector<ExprId> nttp_args,
-		std::vector<TemplateDeclId> template_args) {
+		std::vector<TemplateDeclId> template_args,
+		std::vector<SpecDependentTemplateArg> dependent_template_args) {
 		if (!primary) {
 			throw InternalError("type specifier: invalid specialization TemplateDeclId");
 		}
 		size_t type_count = 0;
 		size_t nttp_count = 0;
 		size_t template_count = 0;
+		size_t dependent_template_count = 0;
 		for (const SpecTemplateArgKind kind : arg_kinds) {
 			if (kind == SpecTemplateArgKind::Type) {
 				++type_count;
@@ -2094,12 +2129,15 @@ public:
 				++nttp_count;
 			} else if (kind == SpecTemplateArgKind::Template) {
 				++template_count;
+			} else if (kind == SpecTemplateArgKind::DependentTemplate) {
+				++dependent_template_count;
 			} else {
 				throw InternalError("type specifier: invalid specialization arg kind");
 			}
 		}
 		if (type_count != type_args.size() || nttp_count != nttp_args.size() ||
-			template_count != template_args.size()) {
+			template_count != template_args.size() ||
+			dependent_template_count != dependent_template_args.size()) {
 			throw InternalError("type specifier: specialization arg payload mismatch");
 		}
 		for (const ExprId expr : nttp_args) {
@@ -2112,6 +2150,11 @@ public:
 				throw InternalError("type specifier: empty specialization TemplateDeclId");
 			}
 		}
+		for (const SpecDependentTemplateArg dependent_template_arg : dependent_template_args) {
+			if (!dependent_template_arg.template_decl) {
+				throw InternalError("type specifier: empty dependent specialization TemplateDeclId");
+			}
+		}
 		clear_template_parameter_identity();
 		clear_dependent_name_type();
 		specialization_template_decl_ = primary;
@@ -2119,6 +2162,7 @@ public:
 		specialization_type_args_ = std::move(type_args);
 		specialization_nttp_args_ = std::move(nttp_args);
 		specialization_template_args_ = std::move(template_args);
+		specialization_dependent_template_args_ = std::move(dependent_template_args);
 	}
 	void clear_template_specialization() {
 		specialization_template_decl_ = {};
@@ -2126,6 +2170,7 @@ public:
 		specialization_type_args_.clear();
 		specialization_nttp_args_.clear();
 		specialization_template_args_.clear();
+		specialization_dependent_template_args_.clear();
 	}
 
 	// Opaque bridge for a canonical dependent-name base in the owning context.
@@ -2252,6 +2297,7 @@ private:
 	std::vector<TypeSpecifierNode> specialization_type_args_; // Type payloads only
 	std::vector<ExprId> specialization_nttp_args_; // NonType ExprId payloads only
 	std::vector<TemplateDeclId> specialization_template_args_; // Template payloads only
+	std::vector<SpecDependentTemplateArg> specialization_dependent_template_args_; // Dependent template payloads only
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	EntityId member_class_entity_; // Published class owner; never StringHandle identity

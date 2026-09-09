@@ -777,9 +777,12 @@ stamping accepts bool / integral literal NTTP ExpressionNodes (interned as
 opaque `ExprId`s) alongside type args on published class-template Specs.
 Concrete non-pack namespace/global primary class templates used for fixed
 template-template parameters also stamp their published `TemplateDeclId` as an
+opaque Spec argument. While a published namespace/global primary class template
+body is parsed, a non-pack template-template argument that names its active
+template parameter stamps the owning `TemplateDeclId` plus parameter index as an
 opaque Spec argument. Explicit concrete type arguments for a final
 namespace/global primary-class type pack also stamp as ordered TypeId Spec
-arguments. Dependent pack expansions, non-type/template packs, dependent
+arguments. Dependent pack expansions, non-type/template packs, other dependent
 template-template arguments, dependent NTTP, aliases, and NTTP args on
 DependentTemplateMember remain deferred. Production parser publication of
 plain DependentInstantiation members on the live template-id-then-`::` path is
@@ -790,8 +793,9 @@ UnknownSpecialization owners share that Spec-rooted stamp path;
 TemplateParameter-only chains remain on the type-parameter stamp helpers.
 Structural `CanonicalTypeTable::substitute` rewrites type-parameter environments
 inside Spec / DependentName / DependentTemplateMember graphs without member
-lookup and preserves opaque Spec NTTP `ExprId` and concrete template-template
-`TemplateDeclId` arguments. Production
+lookup and preserves opaque Spec NTTP `ExprId`, concrete template-template
+`TemplateDeclId`, and active template-template parameter owner/index arguments.
+Production
 ExpressionSubstitutor restamp overlays surviving `dependent_name_type_` tips
 after substitute (Set DependentName-family / Clear on collapse with
 Builtin/Record/Enum TypeId→TypeIndex projection) and skips NonType Spec links
