@@ -711,9 +711,10 @@ void Parser::apply_parsed_function_type_qualifiers(
 			signature.noexcept_expression->node(), currentTemplateParamNames());
 	if (dependent_noexcept_expression) {
 		signature.is_noexcept = false;
+		DependentExpressionTable& exprs =
+			requireFrontendContext().dependentExpressions();
 		signature.dependent_noexcept =
-			requireFrontendContext().dependentExpressions().intern(
-				signature.noexcept_expression->node());
+			exprs.intern(signature.noexcept_expression->node());
 		return;
 	}
 
@@ -729,9 +730,10 @@ void Parser::apply_parsed_function_type_qualifiers(
 		throw CompileError("noexcept specification is not a constant expression");
 	}
 	signature.is_noexcept = false;
+	DependentExpressionTable& exprs =
+		requireFrontendContext().dependentExpressions();
 	signature.dependent_noexcept =
-		requireFrontendContext().dependentExpressions().intern(
-			signature.noexcept_expression->node());
+		exprs.intern(signature.noexcept_expression->node());
 }
 
 void Parser::apply_parsed_function_noexcept(
