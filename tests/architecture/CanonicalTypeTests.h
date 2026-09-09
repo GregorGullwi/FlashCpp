@@ -934,6 +934,8 @@ inline void checkSubstitution() {
 	require(table.node(subst_member).kind == CanonicalTypeKind::DependentName);
 	require(table.dependentNameQualifier(subst_member) == integer);
 	require(table.dependentNameIdentifier(subst_member) == "first");
+	// Production ExpressionSubstitutor restamp overlays only when the tip stays
+	// DependentName / DependentTemplateMember after structural substitute.
 	rejects([&] { table.dependentName(integer, "first"); });
 
 	const TypeId nested = table.dependentName(table.dependentName(param0, "Nested"), "item");
