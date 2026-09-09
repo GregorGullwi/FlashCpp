@@ -4754,7 +4754,11 @@ void Parser::tryStampDependentInstantiationMemberChain(
 	const TypeInfo::DependentQualifiedNameRecord& record,
 	std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax) {
 	if (record.owner_kind !=
-		TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation) {
+			TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation &&
+		record.owner_kind !=
+			TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation &&
+		record.owner_kind !=
+			TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization) {
 		return;
 	}
 	auto collected = collectTypeOnlyClassTemplateArgSpecs(

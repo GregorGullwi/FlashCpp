@@ -5,19 +5,19 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-09 after production Spec-rooted member template-id
-stamping on
-`codex/boundary-3a-dependent-instantiation-member-template-ids`
+Last updated: 2026-09-09 after Spec-rooted stamping of CurrentInstantiation and
+UnknownSpecialization owners on
+`codex/boundary-3a-current-unknown-specialization-stamp`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's Spec-rooted member template-id stamp slice is on
-`codex/boundary-3a-dependent-instantiation-member-template-ids` for review.
-Opaque Spec-as-qualifier identity, production plain DependentInstantiation
-members, type-only member template-id stamping on type parameters,
-DependentTemplateMember identity, plain dependent-member publication, opaque
-DependentName identity, production type-only template-id stamping, type-only
-TemplateSpecialization TypeIds, primary class-template TemplateDeclId
+Architecture boundary 3A's CurrentInstantiation / UnknownSpecialization stamp
+slice is on `codex/boundary-3a-current-unknown-specialization-stamp` for review.
+Spec-rooted member template-ids, plain DependentInstantiation members, opaque
+Spec-as-qualifier identity, type-only member template-id stamping on type
+parameters, DependentTemplateMember identity, plain dependent-member publication,
+opaque DependentName identity, production type-only template-id stamping,
+type-only TemplateSpecialization TypeIds, primary class-template TemplateDeclId
 publication, opaque TemplateParameter TypeId import, dependent-`noexcept`
 ExprId Functions, unstructured signatures, calling-convention / dll-linkage
 callables, record member/base field schemas, complete-object Record/Enum
@@ -94,32 +94,30 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   expression arguments leave the specifier unstamped instead of throwing.
   Binding is never recovered from flat TypeIndex names or `TemplateArgInfo`
   spellings. `::template` is a parse disambiguator and is not stored. Stamping
-  is a no-op for unpublished templates, non-type parameters,
-  CurrentInstantiation / UnknownSpecialization owners, and NTTP / pack /
-  template-template specialization or member arguments. Plain
-  DependentInstantiation members (`Primary<Args>::member`, nested plain tails)
-  and type-only member template-ids on that Spec root
-  (`Primary<Args>::Foo<U>::type`) are stamped on the live template-id-then-`::`
-  placeholder path when every template-id segment has captured type-only
-  TypeSpecifierNode syntax: the owner Spec is built from the published
-  primary's TemplateDeclId plus type-only argument TypeIds, then the member
-  chain walks with DependentName / DependentTemplateMember. Missing or non-type
-  member-arg syntax leaves the specifier unstamped instead of rebuilding from
-  TypeIndex names. The adapter also imports structured callables, flat TypeIndex
-  projections, and dependent-noexcept signatures with published `ExprId` as
-  Supported when every component imports. Invalid-category TypeIndex projections
-  stay UnmigratedCallable. The production adapter fixture remains 25 supported /
-  0 deferred and emits Record/Enum array and function traces. `SymbolTable`
-  retains lookup and merge authority.
+  is a no-op for unpublished templates, non-type parameters, and NTTP / pack /
+  template-template specialization or member arguments. Spec-rooted chains under
+  DependentInstantiation, CurrentInstantiation, or UnknownSpecialization
+  (`Primary<Args>::member`, nested plain tails, and type-only member
+  template-ids when member-arg syntax is captured) are stamped on the live
+  template-id-then-`::` placeholder path: the owner Spec is built from the
+  published primary's TemplateDeclId plus type-only argument TypeIds, then the
+  member chain walks with DependentName / DependentTemplateMember. Legacy
+  `owner_kind` remains parse/materialization metadata and is not a TypeId
+  discriminant. Missing or non-type member-arg syntax leaves the specifier
+  unstamped instead of rebuilding from TypeIndex names. The adapter also imports
+  structured callables, flat TypeIndex projections, and dependent-noexcept
+  signatures with published `ExprId` as Supported when every component imports.
+  Invalid-category TypeIndex projections stay UnmigratedCallable. The production
+  adapter fixture remains 25 supported / 0 deferred and emits Record/Enum array
+  and function traces. `SymbolTable` retains lookup and merge authority.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes other unresolved owner families
-  (CurrentInstantiation / UnknownSpecialization), substitution, NTTP /
-  template-template / pack specialization arguments, function/nested/member
-  TemplateDeclId publication, complete declarator interleaving, and deletion of
-  the flat semantic representation. Stop here for review before starting another
-  family, 3B, or the parallel frontend experiment.
+- Remaining 3A work includes substitution, NTTP / template-template / pack
+  specialization arguments, function/nested/member TemplateDeclId publication,
+  complete declarator interleaving, and deletion of the flat semantic
+  representation. Stop here for review before starting another family, 3B, or
+  the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,048 bytes on
@@ -189,19 +187,19 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the Spec-rooted member template-id stamp slice: native
-canonical tests and source-copy mutations pass; Spec-rooted tips remain
-DependentName / DependentTemplateMember whose qualifier is TemplateSpecialization;
-production stamping runs on the live template-id-then-`::` placeholder path for
-plain members and type-only member template-ids of published type-only primaries
-when member-arg syntax is captured, fail-closes on NTTP/pack/non-type member
-syntax instead of TypeIndex recovery, and leaves CurrentInstantiation /
-UnknownSpecialization owners unstamped. Adjacent `_ret0` coverage includes
-`test_canonical_dependent_instantiation_member_template_ret0.cpp`
-(`Holder<T,U>::Box<int>` versus swapped primary args / different member args)
-plus prior DependentInstantiation / dependent-name / template-id ret0s. The
-Windows suite is 2,984 single-file cases, 264 negative tests, and 12 multi-TU
-cases. Fixed-corpus migration counters remain within the prior baselines below.
+Latest validation for the CurrentInstantiation / UnknownSpecialization stamp
+slice: Spec-rooted tips remain DependentName / DependentTemplateMember whose
+qualifier is TemplateSpecialization; production stamping on the live
+template-id-then-`::` path now accepts DependentInstantiation,
+CurrentInstantiation, and UnknownSpecialization when the published primary and
+type-only args import Supported, keeps `owner_kind` as parse metadata only, and
+fail-closes on NTTP/pack/non-type member syntax. Adjacent `_ret0` coverage
+includes `test_canonical_current_unknown_specialization_ret0.cpp` (OOL
+`Box<T,U>::first` CurrentInstantiation plus in-class `Pair<…>::first`
+UnknownSpecialization) and prior DependentInstantiation / dependent-name /
+template-id ret0s. The Windows suite is 2,984 single-file cases, 264 negative
+tests, and 12 multi-TU cases. Fixed-corpus migration counters remain within the
+prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -265,10 +263,9 @@ Advanced, not completed:
   chains rooted in published type parameters, opaque DependentTemplateMember
   identity with production stamping of type-only member template-ids, opaque
   DependentName / DependentTemplateMember chains rooted in type-only
-  TemplateSpecialization qualifiers, production stamping of plain
-  DependentInstantiation members (`Primary<Args>::member`), and production
-  stamping of Spec-rooted type-only member template-ids
-  (`Primary<Args>::Foo<U>`) are landed; other unresolved owner families,
+  TemplateSpecialization qualifiers, production stamping of Spec-rooted chains
+  for DependentInstantiation / CurrentInstantiation / UnknownSpecialization
+  owners (plain members and type-only member template-ids) are landed;
   substitution, function/nested/member template publication, NTTP /
   template-template / pack specialization arguments, alias,
   unpublished/incomplete nominal, anonymous-union, and unpublished-base forms
@@ -292,11 +289,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's other unresolved owner families (CurrentInstantiation /
-  UnknownSpecialization), then substitution, richer specialization arguments,
-  and adapters before expanding boundary-1 shadow coverage (default arguments,
-  exception specifications, friends, templates) or removing `SymbolTable` merge /
-  `matches_signature` authority.
+- Finish 3A's substitution of Spec-rooted dependent types, then richer
+  specialization arguments and adapters before expanding boundary-1 shadow
+  coverage (default arguments, exception specifications, friends, templates) or
+  removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

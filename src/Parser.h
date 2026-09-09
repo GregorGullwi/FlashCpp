@@ -4400,10 +4400,12 @@ private:	 // Resume private methods
 		const TypeInfo::DependentQualifiedNameRecord& record,
 		std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax);
 
-	// Stamp Primary<Args>::member chains whose owner is a DependentInstantiation
-	// of a published type-only class-template primary. Builds the Spec qualifier
-	// from captured type-arg syntax (or filled type args), then walks plain and
-	// type-only member template-id segments. No-op for other owner kinds,
+	// Stamp Primary<Args>::member chains whose owner is a published type-only
+	// class-template primary under DependentInstantiation, CurrentInstantiation,
+	// or UnknownSpecialization classification. Builds the Spec qualifier from
+	// captured type-arg syntax (or filled type args), then walks plain and
+	// type-only member template-id segments. owner_kind stays parse metadata;
+	// structural identity is Spec-rooted. No-op for TemplateParameter owners,
 	// unpublished primaries, NTTP/pack args, or member template-ids without
 	// captured type-only syntax.
 	void tryStampDependentInstantiationMemberChain(
