@@ -1457,6 +1457,26 @@ inline TemplateTypeArg materializeTemplateArg(
 		}
 	}
 	if (!substituted_dependent_name &&
+		arg_info.is_template_template_arg &&
+		arg_info.template_name.isValid()) {
+		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			const TemplateParameterNode* template_param =
+				tryGetTemplateParameterNode(template_params[i]);
+			if (template_param == nullptr ||
+				template_param->kind() != TemplateParameterKind::Template ||
+				template_param->nameHandle() != arg_info.template_name) {
+				continue;
+			}
+			const TemplateTypeArg& substituted_arg = template_args[i];
+			if (!substituted_arg.is_template_template_arg) {
+				break;
+			}
+			concrete_arg = substituted_arg;
+			substituted_dependent_name = true;
+			break;
+		}
+	}
+	if (!substituted_dependent_name &&
 		!arg_info.is_value &&
 		arg_info.type_index.is_valid()) {
 		if (const TypeInfo* dependent_type_info = tryGetTypeInfo(arg_info.type_index);

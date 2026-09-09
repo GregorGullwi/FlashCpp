@@ -5,7 +5,8 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-09 after concrete type-pack Spec arguments on
+Last updated: 2026-09-09 after concrete type-pack Spec arguments and the
+dependent template-template alias-materialization fix on
 `codex/boundary-3a-pack-specialization-arguments`
 
 ## Current boundary and handoff
@@ -29,6 +30,11 @@ Record/Enum layout, opaque Record/Enum import, member-pointer EntityId binding,
 and earlier families are on `main`. Gate 0 is closed.
 Architecture boundary 1 remains incomplete; remaining dependent-name families
 and richer specialization arguments still block expanding shadow/merge coverage.
+The legacy materialization path now defers an unbound template-template argument
+instead of eagerly instantiating its parameter spelling, then rebinds that stored
+argument by its owning template parameter during concrete alias materialization.
+This fixes forwarded aliases such as `Forward<Box>::result::result::value`; it
+does not publish dependent template-template Spec identity.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
   fundamental types, cv qualification, pointers, references, arrays of known or

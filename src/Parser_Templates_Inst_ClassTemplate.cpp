@@ -279,6 +279,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (arg.is_dependent || arg.dependent_name.isValid()) {
 			return true;
 		}
+		if (arg.is_template_template_arg) {
+			if (!arg.template_name_handle.isValid()) {
+				return true;
+			}
+			return !gTemplateRegistry.lookupTemplate(arg.template_name_handle).has_value();
+		}
 		if (arg.is_value || !arg.type_index.is_valid()) {
 			return false;
 		}
