@@ -582,9 +582,11 @@ public:
 		});
 	}
 
-	// Plain identifier members of unknown specializations rooted in a published
-	// type parameter. The caller supplies one normalized identifier token, not a
-	// qualified spelling to recover or a lookup result ([temp.dep.type]).
+	// Plain identifier members of unknown specializations. Qualifiers may be a
+	// published type parameter, a type-only TemplateSpecialization (Primary<Args>),
+	// or a prior dependent-name-family node. The caller supplies one normalized
+	// identifier token, not a qualified spelling to recover or a lookup result
+	// ([temp.dep.type]).
 	TypeId dependentName(TypeId qualifier, std::string_view identifier) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -601,9 +603,11 @@ public:
 		});
 	}
 
-	// Unresolved member template-id (T::Foo<Args>) without a published member
-	// TemplateDeclId. Identity is qualifier + identifier content + type-only
-	// argument TypeIds. ::template is a parse disambiguator and is not stored.
+	// Unresolved member template-id (T::Foo<Args> or Primary<Args>::Foo<U>)
+	// without a published member TemplateDeclId. Identity is qualifier +
+	// identifier content + type-only argument TypeIds. Qualifiers may include a
+	// type-only TemplateSpecialization. ::template is a parse disambiguator and
+	// is not stored.
 	TypeId dependentTemplateMember(
 		TypeId qualifier,
 		std::string_view identifier,
@@ -1130,6 +1134,7 @@ private:
 
 	static bool isDependentQualifierKind(CanonicalTypeKind kind) {
 		return kind == CanonicalTypeKind::TemplateParameter ||
+			kind == CanonicalTypeKind::TemplateSpecialization ||
 			kind == CanonicalTypeKind::DependentName ||
 			kind == CanonicalTypeKind::DependentTemplateMember;
 	}
