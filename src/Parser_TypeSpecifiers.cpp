@@ -223,12 +223,13 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 			if (!arg.is_template_template_arg || !arg.template_name_handle.isValid()) {
 				throw InternalError("stamp template specialization: non-template arg for fixed template parameter");
 			}
-			auto template_opt = gTemplateRegistry.lookupTemplate(arg.template_name_handle);
-			if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+			auto template_argument_opt = gTemplateRegistry.lookupTemplate(arg.template_name_handle);
+			if (!template_argument_opt.has_value() ||
+				!template_argument_opt->is<TemplateClassDeclarationNode>()) {
 				return std::nullopt;
 			}
 			const TemplateClassDeclarationNode& template_arg =
-				template_opt->as<TemplateClassDeclarationNode>();
+				template_argument_opt->as<TemplateClassDeclarationNode>();
 			if (!template_arg.has_template_decl_id()) {
 				return std::nullopt;
 			}
