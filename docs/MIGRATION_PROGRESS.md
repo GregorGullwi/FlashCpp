@@ -5,14 +5,15 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-09 after concrete template-template Spec arguments on
-`codex/boundary-3a-template-template-pack-spec-args`
+Last updated: 2026-09-09 after concrete type-pack Spec arguments on
+`codex/boundary-3a-pack-specialization-arguments`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's concrete primary-class template-template Spec
-arguments are on `codex/boundary-3a-template-template-pack-spec-args` for
-review. Nested class EntityId ownership, ExpressionSubstitutor
+Architecture boundary 3A's concrete type-pack Spec arguments are on
+`codex/boundary-3a-pack-specialization-arguments` for review. Concrete
+primary-class template-template Spec arguments, nested class EntityId ownership,
+ExpressionSubstitutor
 tip-resolve restamp wire, production named type-member schema publication,
 opaque tip-resolve substrate, production dependent_name_type restamp, opaque
 `CanonicalTypeTable::substitute`, CurrentInstantiation / UnknownSpecialization
@@ -89,8 +90,10 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   Spec-rooted DependentInstantiation / CurrentInstantiation /
   UnknownSpecialization owners). Concrete non-pack namespace/global primary
   class templates used for fixed template-template parameters stamp their
-  published `TemplateDeclId`; packs, dependent template-template arguments,
-  nested/member templates, alias expansions, dependent NTTP,
+  published `TemplateDeclId`. Explicit concrete type arguments for a final
+  namespace/global primary-class type pack stamp as ordered TypeId arguments;
+  dependent pack expansions, non-type/template packs, dependent template-template
+  arguments, nested/member templates, alias expansions, dependent NTTP,
   `Template<args>::member` results beyond that Spec-rooted path, and
   defaults-without-`<>` stay unstamped; completed instantiations may still
   appear as Record via EntityId.
@@ -162,8 +165,8 @@ and richer specialization arguments still block expanding shadow/merge coverage.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes pack specialization arguments, dependent NTTP Spec
-  stamping, function/nested/member TemplateDeclId
+- Remaining 3A work includes dependent template-template arguments, dependent
+  NTTP Spec stamping, function/nested/member TemplateDeclId
   publication, complete declarator interleaving, and deletion of the flat
   semantic representation. Stop here for review before starting another family,
   3B, or the parallel frontend experiment.
@@ -236,16 +239,16 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for concrete template-template Spec stamping: sharded rebuild;
-`test_canonical_template_template_spec_stamp_ret0`, the existing
-template-template round-trip, type-only Spec / tip-projection `_ret0` cases,
-and native canonical-types architecture coverage (including mixed Spec import)
-stay green. Dependent NTTP and pack Spec args, aliases, and unpublished
-template-template parameters stay unstamped. Adjacent architecture coverage
-remains the DependentName / Spec-rooted / substitute / restamp / tip-schema /
-tip-projection / opaque-NTTP probes. The Windows suite is 2,984 single-file
-cases, 264 negative tests, and 12 multi-TU cases. Fixed-corpus migration
-counters remain within the prior baselines below.
+Latest validation for concrete type-pack Spec stamping: sharded rebuild;
+`test_canonical_pack_spec_stamp_ret0`, the adjacent template-template and NTTP
+Spec-stamp `_ret0` cases, and native canonical-types architecture coverage
+(including ordered pack links and mutation mode) stay green. Dependent pack
+expansions, non-type/template packs, dependent template-template arguments,
+dependent NTTP, aliases, and unpublished template-template parameters stay
+unstamped. Adjacent architecture coverage remains the DependentName / Spec-rooted
+/ substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes. The
+Windows suite is 2,985 single-file cases, 264 negative tests, and 12 multi-TU
+cases. Fixed-corpus migration counters remain within the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -323,8 +326,9 @@ Advanced, not completed:
   Spec NTTP `ExprId` arguments (with substitute preserving them), production
   stamping of bool / integral literal NTTP Spec args (opaque ExprId intern), and
   concrete published primary-class template-template Spec args (with substitute
-  preserving them) are landed; dependent NTTP Spec stamping, function/nested/member
-  template publication, pack specialization arguments, alias,
+  preserving them), and explicit concrete final type-pack Spec args with ordered
+  links are landed; dependent template-template arguments, dependent NTTP Spec
+  stamping, function/nested/member template publication, alias,
   unpublished/incomplete nominal, anonymous-union, and unpublished-base forms
   stay deferred. Remaining families and flat-field deletion keep all three
   identity criteria open.
@@ -346,8 +350,8 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Pack specialization arguments and dependent NTTP Spec stamping, then richer
-  adapters before expanding boundary-1 shadow
+- Dependent template-template arguments and dependent NTTP Spec stamping, then
+  richer adapters before expanding boundary-1 shadow
   coverage (default arguments, exception specifications, fields, templates) or
   removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single

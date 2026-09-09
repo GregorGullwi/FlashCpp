@@ -163,10 +163,10 @@ void applyCollectedClassTemplateArgSpecs(
 }
 
 // Shared gates for class-template specialization stamping: published primary
-// TemplateDeclId, fixed Type/NonType/Template arity (no packs), and
-// TypeSpecifierNode, stampable literal NTTP ExpressionNode, or a published
-// primary-class TemplateDeclId argument. Deferred cases return nullopt; broken
-// parameter/argument shape throws.
+// TemplateDeclId, fixed Type/NonType/Template arity or one final concrete type
+// pack, and TypeSpecifierNode, stampable literal NTTP ExpressionNode, or a
+// published primary-class TemplateDeclId argument. Deferred cases return
+// nullopt; broken parameter/argument shape throws.
 std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	StringHandle primary_template_name,
 	std::span<const TemplateTypeArg> filled_args,
@@ -185,22 +185,42 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 		return std::nullopt;
 	}
 	const TemplateParameterVector& template_params = primary.template_parameters();
-	if (filled_args.size() != template_params.size()) {
-		return std::nullopt;
-	}
-	for (const TemplateParameterNode& param : template_params) {
-		if (param.is_variadic() ||
-			(param.kind() != TemplateParameterKind::Type &&
-				param.kind() != TemplateParameterKind::NonType &&
-				param.kind() != TemplateParameterKind::Template)) {
+	std::optional<size_t> type_pack_index;
+	for (size_t index = 0; index < template_params.size(); ++index) {
+		const TemplateParameterNode& param = template_params[index];
+		if (param.kind() != TemplateParameterKind::Type &&
+			param.kind() != TemplateParameterKind::NonType &&
+			param.kind() != TemplateParameterKind::Template) {
 			return std::nullopt;
 		}
+		if (!param.is_variadic()) {
+			continue;
+		}
+		if (param.kind() != TemplateParameterKind::Type ||
+			index + 1 != template_params.size() || type_pack_index.has_value()) {
+			return std::nullopt;
+		}
+		type_pack_index = index;
+	}
+	if (!type_pack_index.has_value() && filled_args.size() != template_params.size()) {
+		return std::nullopt;
+	}
+	if (type_pack_index.has_value() &&
+		(filled_args.size() < *type_pack_index ||
+			filled_args.size() != argument_syntax_nodes.size())) {
+		// Do not synthesize defaults or recover pack elements from flat TypeIndex
+		// data. A concrete pack stamp requires one explicit type syntax node per
+		// collected argument.
+		return std::nullopt;
 	}
 	ClassTemplateArgSpecs collected;
 	collected.primary = primary.template_decl_id();
 	collected.args.reserve(filled_args.size());
 	for (size_t index = 0; index < filled_args.size(); ++index) {
-		const TemplateParameterNode& param = template_params[index];
+		const TemplateParameterNode& param =
+			template_params[type_pack_index.has_value() && index >= *type_pack_index
+				? *type_pack_index
+				: index];
 		const TemplateTypeArg& arg = filled_args[index];
 		if (arg.is_pack) {
 			return std::nullopt;

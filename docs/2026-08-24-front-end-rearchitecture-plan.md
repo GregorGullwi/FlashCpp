@@ -777,9 +777,11 @@ stamping accepts bool / integral literal NTTP ExpressionNodes (interned as
 opaque `ExprId`s) alongside type args on published class-template Specs.
 Concrete non-pack namespace/global primary class templates used for fixed
 template-template parameters also stamp their published `TemplateDeclId` as an
-opaque Spec argument. Pack Spec arguments, dependent template-template
-arguments, dependent NTTP, aliases, and NTTP args on DependentTemplateMember
-remain deferred. Production parser publication of
+opaque Spec argument. Explicit concrete type arguments for a final
+namespace/global primary-class type pack also stamp as ordered TypeId Spec
+arguments. Dependent pack expansions, non-type/template packs, dependent
+template-template arguments, dependent NTTP, aliases, and NTTP args on
+DependentTemplateMember remain deferred. Production parser publication of
 plain DependentInstantiation members on the live template-id-then-`::` path is
 landed, as is production stamping of type-only member template-ids on that same
 Spec-rooted path when member-arg syntax is captured. Spec-rooted owner Specs
