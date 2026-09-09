@@ -4381,9 +4381,11 @@ private:	 // Resume private methods
 	// Stamp class-template specializations when the primary already published a
 	// TemplateDeclId. Type arguments, stampable literal NTTP ExpressionNodes
 	// (bool / integral NumericLiteral), concrete published primary-class
-	// template-template arguments, and explicit concrete final type packs are
-	// accepted; dependent packs / template-template arguments / NTTP, unpublished
-	// nested/member templates, and incomplete default fill remain no-ops. Broken
+	// template-template arguments, active dependent template-template parameters
+	// of published namespace/global class templates, and explicit concrete final
+	// type packs are accepted; dependent packs / other template-template arguments
+	// / NTTP, unpublished nested/member templates, and incomplete default fill
+	// remain no-ops. Broken
 	// parameter shape ICEs.
 	void tryStampTypeOnlyClassTemplateSpecialization(
 		TypeSpecifierNode& type_spec,

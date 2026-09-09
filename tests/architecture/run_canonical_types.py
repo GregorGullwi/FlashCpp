@@ -236,6 +236,19 @@ def main():
                 "\t\t\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t\t\t.array_extent = 1,"),
+            "lost_dependent_template_template_spec_arg": (
+                ".kind = CanonicalTypeKind::DependentTemplateTemplateArg,\n"
+                "\t\t\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t\t\t.array_extent = packTemplateParameterExtent(\n"
+                "\t\t\t\t\t\targument.template_decl,\n"
+                "\t\t\t\t\t\targument.template_parameter_index),",
+                ".kind = CanonicalTypeKind::DependentTemplateTemplateArg,\n"
+                "\t\t\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t\t\t.array_extent = 0,"),
             "lost_record_layout": (
                 "return entity && record_layout_ids_.contains(entity.value);",
                 "return entity && false;"),

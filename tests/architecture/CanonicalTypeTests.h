@@ -91,6 +91,12 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 					left.templateArgumentTemplate(left_arg) !=
 					right.templateArgumentTemplate(right_arg)) {
 					return false;
+				} else if (left_kind == CanonicalTemplateArgKind::DependentTemplate &&
+					(left.templateArgumentDependentTemplateDecl(left_arg) !=
+						right.templateArgumentDependentTemplateDecl(right_arg) ||
+					 left.templateArgumentDependentTemplateIndex(left_arg) !=
+						right.templateArgumentDependentTemplateIndex(right_arg))) {
+					return false;
 				}
 				left_arg = left.templateArgumentNext(left_arg);
 				right_arg = right.templateArgumentNext(right_arg);
@@ -509,7 +515,8 @@ inline void checkAdapter() {
 		std::vector<SpecTemplateArgKind>{SpecTemplateArgKind::Type, SpecTemplateArgKind::NonType},
 		std::vector<TypeSpecifierNode>{int_arg},
 		std::vector<ExprId>{ExprId{21}},
-		std::vector<TemplateDeclId>{});
+		std::vector<TemplateDeclId>{},
+		std::vector<SpecDependentTemplateArg>{});
 	const auto imported_nttp_spec = importCanonicalType(table, nttp_specialization);
 	require(imported_nttp_spec.status == CanonicalTypeImportStatus::Supported);
 	const CanonicalTemplateArgument expected_nttp_args[] = {
@@ -525,7 +532,8 @@ inline void checkAdapter() {
 		std::vector<SpecTemplateArgKind>{SpecTemplateArgKind::Template, SpecTemplateArgKind::Type},
 		std::vector<TypeSpecifierNode>{int_arg},
 		std::vector<ExprId>{},
-		std::vector<TemplateDeclId>{TemplateDeclId{12}});
+		std::vector<TemplateDeclId>{TemplateDeclId{12}},
+		std::vector<SpecDependentTemplateArg>{});
 	const auto imported_template_spec = importCanonicalType(table, template_specialization);
 	require(imported_template_spec.status == CanonicalTypeImportStatus::Supported);
 	const CanonicalTemplateArgument expected_template_args[] = {
@@ -539,6 +547,41 @@ inline void checkAdapter() {
 			CanonicalTemplateArgument::makeTemplate(TemplateDeclId{13}),
 			CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int)),
 		}));
+	TypeSpecifierNode dependent_template_specialization(
+		TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	dependent_template_specialization.set_template_specialization_mixed(
+		TemplateDeclId{11},
+		std::vector<SpecTemplateArgKind>{
+			SpecTemplateArgKind::DependentTemplate,
+			SpecTemplateArgKind::Type},
+		std::vector<TypeSpecifierNode>{int_arg},
+		std::vector<ExprId>{},
+		std::vector<TemplateDeclId>{},
+		std::vector<SpecDependentTemplateArg>{{TemplateDeclId{4}, 1}});
+	const auto imported_dependent_template_spec =
+		importCanonicalType(table, dependent_template_specialization);
+	require(imported_dependent_template_spec.status == CanonicalTypeImportStatus::Supported);
+	const CanonicalTemplateArgument expected_dependent_template_args[] = {
+		CanonicalTemplateArgument::makeDependentTemplate(TemplateDeclId{4}, 1),
+		CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int)),
+	};
+	const TypeId dependent_template_spec_id = table.templateSpecialization(
+		TemplateDeclId{11}, expected_dependent_template_args);
+	require(imported_dependent_template_spec.type == dependent_template_spec_id);
+	require(imported_dependent_template_spec.type != table.templateSpecialization(
+		TemplateDeclId{11}, std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeDependentTemplate(TemplateDeclId{4}, 0),
+			CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int)),
+		}));
+	const TypeId dependent_template_arg_link =
+		table.templateSpecializationArguments(dependent_template_spec_id);
+	require(table.templateArgumentKind(dependent_template_arg_link) ==
+		CanonicalTemplateArgKind::DependentTemplate);
+	require(table.templateArgumentDependentTemplateDecl(dependent_template_arg_link) ==
+		TemplateDeclId{4});
+	require(table.templateArgumentDependentTemplateIndex(dependent_template_arg_link) == 1);
+	require(table.templateArgumentKind(table.templateArgumentNext(dependent_template_arg_link)) ==
+		CanonicalTemplateArgKind::Type);
 	TypeSpecifierNode empty_nttp(TypeCategory::Template, TypeQualifier::None, 0, Token{},
 		CVQualifier::None);
 	rejects([&] {
@@ -547,7 +590,8 @@ inline void checkAdapter() {
 			std::vector<SpecTemplateArgKind>{SpecTemplateArgKind::NonType},
 			std::vector<TypeSpecifierNode>{},
 			std::vector<ExprId>{ExprId{}},
-			std::vector<TemplateDeclId>{});
+			std::vector<TemplateDeclId>{},
+			std::vector<SpecDependentTemplateArg>{});
 	});
 
 	TypeSpecifierNode published_enum_array(TypeCategory::Enum, TypeQualifier::None, 16, Token{},
@@ -990,6 +1034,18 @@ inline void checkSubstitution() {
 	const TypeId subst_spec = table.substitute(spec, env, args);
 	require(subst_spec == table.templateSpecialization(TemplateDeclId{11}, args));
 	require(table.templateSpecializationDecl(subst_spec) == TemplateDeclId{11});
+	const TypeId dependent_template_spec = table.templateSpecialization(
+		TemplateDeclId{11}, std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeType(param0),
+			CanonicalTemplateArgument::makeDependentTemplate(TemplateDeclId{17}, 2),
+		});
+	const TypeId subst_dependent_template_spec =
+		table.substitute(dependent_template_spec, env, args);
+	require(subst_dependent_template_spec == table.templateSpecialization(
+		TemplateDeclId{11}, std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeType(integer),
+			CanonicalTemplateArgument::makeDependentTemplate(TemplateDeclId{17}, 2),
+		}));
 
 	const TypeId member = table.dependentName(param0, "first");
 	const TypeId subst_member = table.substitute(member, env, args);
