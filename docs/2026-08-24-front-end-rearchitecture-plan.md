@@ -774,8 +774,10 @@ type-only `TemplateSpecialization` qualifier (`Primary<Args>::…`). Production
 parser publication of plain DependentInstantiation members on the live
 template-id-then-`::` path is landed, as is production stamping of type-only
 member template-ids on that same Spec-rooted path when member-arg syntax is
-captured. Non-type member-arg syntax, other unresolved owner families, and
-substitution remain deferred.
+captured. CurrentInstantiation and UnknownSpecialization owners share that
+Spec-rooted stamp path; TemplateParameter-only chains remain on the type-
+parameter stamp helpers. Non-type member-arg syntax and substitution remain
+deferred.
 
 Exit criteria:
 
