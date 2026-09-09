@@ -141,6 +141,66 @@ bool tryPublishCanonicalRecordFieldSchema(CanonicalTypeTable& table, EntityId en
 	return true;
 }
 
+bool tryPublishCanonicalNamedTypeMembers(CanonicalTypeTable& table, EntityId entity,
+	const StructDeclarationNode& struct_decl) {
+	std::vector<CanonicalNamedTypeMemberSpec> named_members;
+	named_members.reserve(struct_decl.type_aliases().size() + struct_decl.nested_classes().size());
+	std::unordered_set<std::string_view> seen_names;
+
+	for (const TypeAliasDecl& alias : struct_decl.type_aliases()) {
+		if (!alias.alias_name.isValid()) {
+			return false;
+		}
+		if (!alias.type_node.is<TypeSpecifierNode>()) {
+			return false;
+		}
+		const std::string_view alias_name = StringTable::getStringView(alias.alias_name);
+		if (alias_name.empty() || !seen_names.insert(alias_name).second) {
+			return false;
+		}
+		TypeSpecifierNode alias_syntax = alias.type_node.as<TypeSpecifierNode>();
+		tryBindPublishedTypeEntity(alias_syntax);
+		tryBindPublishedMemberClassEntity(alias_syntax);
+		const CanonicalTypeImport imported = importCanonicalType(table, alias_syntax);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return false;
+		}
+		named_members.push_back({
+			.name = alias_name,
+			.type = imported.type,
+		});
+	}
+
+	for (const ASTNode& nested_node : struct_decl.nested_classes()) {
+		if (!nested_node.is<StructDeclarationNode>()) {
+			return false;
+		}
+		const StructDeclarationNode& nested = nested_node.as<StructDeclarationNode>();
+		if (!nested.has_entity_id()) {
+			// Nested EntityId publication is still deferred; omit rather than
+			// blocking Supported typedef/using publish for the enclosing class.
+			continue;
+		}
+		if (!nested.name().isValid()) {
+			return false;
+		}
+		const std::string_view nested_name = StringTable::getStringView(nested.name());
+		if (nested_name.empty() || !seen_names.insert(nested_name).second) {
+			return false;
+		}
+		named_members.push_back({
+			.name = nested_name,
+			.type = table.record(nested.entity_id()),
+		});
+	}
+
+	if (named_members.empty()) {
+		return true;
+	}
+	table.publishRecordNamedTypeMembers(entity, named_members);
+	return true;
+}
+
 TemplateArgumentVector materializeClassFriendTemplateArguments(
 	std::span<const TemplateTypeArg> pattern_arguments,
 	std::span<const TemplateParameterNode> template_params,
@@ -4349,6 +4409,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		});
 		(void)tryPublishCanonicalRecordFieldSchema(
 			front_end.canonicalTypes(), struct_ref.entity_id(), *struct_info);
+		(void)tryPublishCanonicalNamedTypeMembers(
+			front_end.canonicalTypes(), struct_ref.entity_id(), struct_ref);
 	}
 	return saved_position.success(struct_node);
 }
