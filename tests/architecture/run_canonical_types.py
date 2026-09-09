@@ -100,8 +100,13 @@ def main():
                 ".child = TypeId{1},\n"
                 "\t\t\t.kind = CanonicalTypeKind::Pointer,"),
             "lost_cv_union": ("qualifiers |= input.qualifiers;", "qualifiers = input.qualifiers;"),
-            "lost_reference_collapse": ("kind = CanonicalTypeKind::LValueReference;",
-                                        "kind = CanonicalTypeKind::RValueReference;"),
+            "lost_reference_collapse": (
+                "// [dcl.ref] reference collapsing: only && combined with && stays &&.\n"
+                "\t\t\tif (input.kind == CanonicalTypeKind::LValueReference) {\n"
+                "\t\t\t\tkind = CanonicalTypeKind::LValueReference;",
+                "// [dcl.ref] reference collapsing: only && combined with && stays &&.\n"
+                "\t\t\tif (input.kind == CanonicalTypeKind::LValueReference) {\n"
+                "\t\t\t\tkind = CanonicalTypeKind::RValueReference;"),
             "lost_rollback": ("if (!commit) {", "if (!commit && false) {"),
             "cv_on_reference": ("qualifiers == CVQualifier::None || isReference(input.kind)",
                                 "qualifiers == CVQualifier::None"),
@@ -186,6 +191,9 @@ def main():
             "lost_template_parameter": (
                 ".array_extent = packTemplateParameterExtent(template_decl, parameter_index),",
                 ".array_extent = packTemplateParameterExtent(TemplateDeclId{1}, parameter_index),"),
+            "lost_substitute_parameter": (
+                "memo.emplace(frame.id.value, args[index]);",
+                "memo.emplace(frame.id.value, frame.id);"),
             "lost_template_specialization": (
                 ".child = arg_link,\n"
                 "\t\t\t.kind = CanonicalTypeKind::TemplateSpecialization,\n"

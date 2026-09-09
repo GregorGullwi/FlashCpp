@@ -690,6 +690,18 @@ public:
 		return unpackDependentTemplateMemberArgs(input.array_extent);
 	}
 
+	// Structural substitution for one published primary's type parameters.
+	// Replaces TemplateParameter(env, i) with args[i], rebuilds Spec / DependentName
+	// / DependentTemplateMember / cv / pointer / array / reference wrappers, and
+	// leaves unresolved member tips as DependentName-family nodes (no lookup).
+	// Function and member-pointer walks, NTTP/pack args, and production wiring
+	// stay deferred. Iterative: logical depth does not map to native call depth.
+	TypeId substitute(TypeId type, TemplateDeclId env, std::span<const TypeId> args) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return substituteUnlocked(type, env, args);
+	}
+
 	TypeId memberObjectPointer(TypeId owner, TypeId pointee) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -1166,6 +1178,284 @@ private:
 			end = begin;
 		}
 		return name_link;
+	}
+
+	TypeId rebuildTemplateArgListUnlocked(std::span<const TypeId> arguments) {
+		TypeId arg_link{};
+		for (size_t index = arguments.size(); index-- > 0;) {
+			const TypeId argument = arguments[index];
+			const CanonicalTypeNode argument_node = nodeUnlocked(argument);
+			if (isInternalLink(argument_node.kind) ||
+				argument_node.kind == CanonicalTypeKind::Array) {
+				throw InternalError("canonical type: invalid substituted template argument");
+			}
+			arg_link = internUnlocked({
+				.child = arg_link,
+				.kind = CanonicalTypeKind::TemplateArg,
+				.builtin = CanonicalBuiltinKind::Void,
+				.qualifiers = CVQualifier::None,
+				.flags = CanonicalTypeNodeFlags::None,
+				.array_extent = argument.value,
+			});
+		}
+		return arg_link;
+	}
+
+	TypeId substituteUnlocked(TypeId type, TemplateDeclId env, std::span<const TypeId> args) {
+		if (!type) {
+			throw InternalError("canonical type: invalid substitute TypeId");
+		}
+		if (!env) {
+			throw InternalError("canonical type: invalid substitute TemplateDeclId");
+		}
+		for (const TypeId argument : args) {
+			if (!argument) {
+				throw InternalError("canonical type: invalid substitute argument TypeId");
+			}
+			const CanonicalTypeKind argument_kind = nodeUnlocked(argument).kind;
+			if (isInternalLink(argument_kind)) {
+				throw InternalError("canonical type: substitute argument is an internal link");
+			}
+		}
+
+		struct Frame {
+			TypeId id;
+			bool building;
+		};
+		std::vector<Frame> stack;
+		std::unordered_map<uint32_t, TypeId> memo;
+		stack.push_back({type, false});
+		std::vector<TypeId> rebuilt_args;
+
+		while (!stack.empty()) {
+			Frame frame = stack.back();
+			if (const auto existing = memo.find(frame.id.value); existing != memo.end()) {
+				stack.pop_back();
+				continue;
+			}
+			const CanonicalTypeNode node = nodeUnlocked(frame.id);
+			if (!frame.building) {
+				switch (node.kind) {
+				case CanonicalTypeKind::Builtin:
+				case CanonicalTypeKind::Record:
+				case CanonicalTypeKind::Enum:
+					memo.emplace(frame.id.value, frame.id);
+					stack.pop_back();
+					continue;
+				case CanonicalTypeKind::TemplateParameter: {
+					const TemplateDeclId decl = unpackTemplateParameterDecl(node.array_extent);
+					if (decl != env) {
+						memo.emplace(frame.id.value, frame.id);
+						stack.pop_back();
+						continue;
+					}
+					const uint32_t index = unpackTemplateParameterIndex(node.array_extent);
+					if (index >= args.size()) {
+						throw InternalError("canonical type: substitute argument index out of range");
+					}
+					memo.emplace(frame.id.value, args[index]);
+					stack.pop_back();
+					continue;
+				}
+				case CanonicalTypeKind::Function:
+				case CanonicalTypeKind::MemberObjectPointer:
+				case CanonicalTypeKind::MemberFunctionPointer:
+					throw InternalError("canonical type: substitute does not walk function or member-pointer types");
+				case CanonicalTypeKind::FunctionParam:
+				case CanonicalTypeKind::TemplateArg:
+				case CanonicalTypeKind::NameBytes:
+					throw InternalError("canonical type: substitute root cannot be an internal link");
+				case CanonicalTypeKind::Qualified:
+				case CanonicalTypeKind::Pointer:
+				case CanonicalTypeKind::LValueReference:
+				case CanonicalTypeKind::RValueReference:
+				case CanonicalTypeKind::Array:
+				case CanonicalTypeKind::DependentName:
+					stack.back().building = true;
+					stack.push_back({node.child, false});
+					continue;
+				case CanonicalTypeKind::TemplateSpecialization:
+				case CanonicalTypeKind::DependentTemplateMember: {
+					stack.back().building = true;
+					TypeId arg_link = node.kind == CanonicalTypeKind::TemplateSpecialization
+						? node.child
+						: unpackDependentTemplateMemberArgs(node.array_extent);
+					while (arg_link) {
+						const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
+						if (arg_node.kind != CanonicalTypeKind::TemplateArg) {
+							throw InternalError("canonical type: corrupt template argument link");
+						}
+						stack.push_back({TypeId{static_cast<uint32_t>(arg_node.array_extent)}, false});
+						arg_link = arg_node.child;
+					}
+					if (node.kind == CanonicalTypeKind::DependentTemplateMember) {
+						stack.push_back({node.child, false});
+					}
+					continue;
+				}
+				}
+				throw InternalError("canonical type: unsupported substitute node kind");
+			}
+
+			stack.pop_back();
+			TypeId rebuilt = frame.id;
+			switch (node.kind) {
+			case CanonicalTypeKind::Qualified: {
+				const TypeId child = memo.at(node.child.value);
+				if (child == node.child) {
+					rebuilt = frame.id;
+				} else {
+					rebuilt = internUnlocked({
+						.child = child,
+						.kind = CanonicalTypeKind::Qualified,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = node.qualifiers,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = 0,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::Pointer: {
+				const TypeId child = memo.at(node.child.value);
+				if (child == node.child) {
+					rebuilt = frame.id;
+				} else {
+					rebuilt = internUnlocked({
+						.child = child,
+						.kind = CanonicalTypeKind::Pointer,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = 0,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::LValueReference:
+			case CanonicalTypeKind::RValueReference: {
+				TypeId referent = memo.at(node.child.value);
+				CanonicalTypeKind kind = node.kind;
+				CanonicalTypeNode referent_node = nodeUnlocked(referent);
+				if (isReference(referent_node.kind)) {
+					if (referent_node.kind == CanonicalTypeKind::LValueReference) {
+						kind = CanonicalTypeKind::LValueReference;
+					}
+					referent = referent_node.child;
+					referent_node = nodeUnlocked(referent);
+				}
+				if (referent == node.child && kind == node.kind) {
+					rebuilt = frame.id;
+				} else {
+					rebuilt = internUnlocked({
+						.child = referent,
+						.kind = kind,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = 0,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::Array: {
+				const TypeId child = memo.at(node.child.value);
+				if (child == node.child) {
+					rebuilt = frame.id;
+				} else {
+					rebuilt = internUnlocked({
+						.child = child,
+						.kind = CanonicalTypeKind::Array,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = node.flags,
+						.array_extent = node.array_extent,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::DependentName: {
+				const TypeId qualifier = memo.at(node.child.value);
+				if (qualifier == node.child) {
+					rebuilt = frame.id;
+				} else if (isInternalLink(nodeUnlocked(qualifier).kind)) {
+					throw InternalError("canonical type: substituted dependent-name qualifier is an internal link");
+				} else {
+					// Concrete qualifiers remain DependentName tips until lookup.
+					rebuilt = internUnlocked({
+						.child = qualifier,
+						.kind = CanonicalTypeKind::DependentName,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = node.array_extent,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::TemplateSpecialization: {
+				rebuilt_args.clear();
+				TypeId arg_link = node.child;
+				bool unchanged = true;
+				while (arg_link) {
+					const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
+					const TypeId original = TypeId{static_cast<uint32_t>(arg_node.array_extent)};
+					const TypeId substituted = memo.at(original.value);
+					unchanged = unchanged && substituted == original;
+					rebuilt_args.push_back(substituted);
+					arg_link = arg_node.child;
+				}
+				if (unchanged) {
+					rebuilt = frame.id;
+				} else {
+					rebuilt = internUnlocked({
+						.child = rebuildTemplateArgListUnlocked(rebuilt_args),
+						.kind = CanonicalTypeKind::TemplateSpecialization,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = node.array_extent,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::DependentTemplateMember: {
+				const TypeId qualifier = memo.at(node.child.value);
+				rebuilt_args.clear();
+				TypeId arg_link = unpackDependentTemplateMemberArgs(node.array_extent);
+				bool unchanged = qualifier == node.child;
+				while (arg_link) {
+					const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
+					const TypeId original = TypeId{static_cast<uint32_t>(arg_node.array_extent)};
+					const TypeId substituted = memo.at(original.value);
+					unchanged = unchanged && substituted == original;
+					rebuilt_args.push_back(substituted);
+					arg_link = arg_node.child;
+				}
+				if (unchanged) {
+					rebuilt = frame.id;
+				} else if (isInternalLink(nodeUnlocked(qualifier).kind)) {
+					throw InternalError("canonical type: substituted dependent template-member qualifier is an internal link");
+				} else {
+					rebuilt = internUnlocked({
+						.child = qualifier,
+						.kind = CanonicalTypeKind::DependentTemplateMember,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = packDependentTemplateMemberExtent(
+							unpackDependentTemplateMemberName(node.array_extent),
+							rebuildTemplateArgListUnlocked(rebuilt_args)),
+					});
+				}
+				break;
+			}
+			default:
+				throw InternalError("canonical type: unexpected substitute build kind");
+			}
+			memo.emplace(frame.id.value, rebuilt);
+		}
+		return memo.at(type.value);
 	}
 
 	static bool isMemberPointer(CanonicalTypeKind kind) {
