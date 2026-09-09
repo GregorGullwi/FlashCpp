@@ -138,8 +138,9 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   unchanged. No StringHandle identity or SymbolTable. Complete published
   namespace/global records also fail-closed publish Supported nested typedef/using
   RHS TypeIds (and nested classes only when they already carry EntityId; nested
-  EntityId ownership remains deferred). ExpressionSubstitutor tip collapse after
-  restamp remains deferred. Nodes remain 16 bytes; `sizeof(CanonicalTypeTable)` is
+  EntityId ownership remains deferred). ExpressionSubstitutor restamp now runs
+  `tryResolveDependentTip` (Set DependentName-family / Clear on collapse). Nodes
+  remain 16 bytes; `sizeof(CanonicalTypeTable)` is
   2,680 bytes on Linux clang++.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
