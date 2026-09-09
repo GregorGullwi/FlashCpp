@@ -936,7 +936,7 @@ inline void checkSubstitution() {
 	require(table.dependentNameIdentifier(subst_member) == "first");
 	// Production ExpressionSubstitutor restamp overlays DependentName-family
 	// tips after substitute+tryResolveDependentTip; collapsed concrete tips
-	// clear the stamp instead of storing a non-DependentName-family TypeId.
+	// project Builtin/Record/Enum onto TypeIndex then clear the stamp.
 	rejects([&] { table.dependentName(integer, "first"); });
 
 	const TypeId nested = table.dependentName(table.dependentName(param0, "Nested"), "item");

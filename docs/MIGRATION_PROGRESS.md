@@ -127,9 +127,11 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   Pack / NTTP / template-template bindings leave the stamp unchanged. Overlay
   never re-attaches a DependentName tip onto a concrete resolved TypeIndex.
   After substitute, `tryResolveDependentTip` runs: DependentName-family tips are
-  restamped; collapsed concrete tips clear `dependent_name_type_` (adapter
-  forbids non-DependentName-family stamps; no TypeId→TypeIndex projection yet).
-  Nested EntityId ownership and base-walk tip lookup remain deferred.
+  restamped; collapsed concrete tips project Builtin/Record/Enum onto legacy
+  TypeIndex / category / EntityId (Qualified peel applies tip CV), then clear
+  `dependent_name_type_` (adapter forbids non-DependentName-family stamps).
+  Pointer/ref/array/function tips Clear without projection. Base-walk tip
+  lookup remains deferred.
 - EntityId-keyed named type-member schemas store NameBytes identifier content plus
   target `TypeId` (independent of spelling-free layout `CanonicalRecordMember`
   schemas). `tryLookupNamedTypeMember` and `tryResolveDependentTip` collapse plain
@@ -142,16 +144,16 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   epoch, then nested and enclosing named type-member schemas are published.
   Local/anonymous/template-nested classes remain omitted. ExpressionSubstitutor
   restamp runs `tryResolveDependentTip` (Set DependentName-family / Clear on
-  collapse). Nodes remain 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes
-  on Linux clang++.
+  collapse with Builtin/Record/Enum TypeId→TypeIndex projection). Nodes remain
+  16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on Linux clang++.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes TypeId→TypeIndex projection for collapsed tips,
-  NTTP / template-template / pack specialization arguments, function/nested/member
-  TemplateDeclId publication, complete declarator interleaving, and deletion of
-  the flat semantic representation. Stop here for review before starting another
-  family, 3B, or the parallel frontend experiment.
+- Remaining 3A work includes NTTP / template-template / pack specialization
+  arguments, function/nested/member TemplateDeclId publication, complete
+  declarator interleaving, and deletion of the flat semantic representation.
+  Stop here for review before starting another family, 3B, or the parallel
+  frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -221,14 +223,15 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for nested class EntityId ownership: sharded rebuild;
-`test_canonical_nested_class_entity_ret0` plus named-type / dependent-name /
-field-schema `_ret0` cases stay green; native tip-resolve architecture coverage
-remains green. Class-owned OwnerIds are tagged distinct from namespace owners.
-Adjacent architecture coverage remains the DependentName / Spec-rooted /
-substitute / restamp / tip-schema probes. The Windows suite is 2,984 single-file
-cases, 264 negative tests, and 12 multi-TU cases. Fixed-corpus migration
-counters remain within the prior baselines below.
+Latest validation for collapsed tip TypeId→TypeIndex projection: sharded rebuild;
+`test_canonical_collapsed_tip_projection_ret0` plus nested-class / named-type /
+dependent-name `_ret0` cases stay green; native tip-resolve architecture coverage
+remains green. Clear projects Builtin/Record/Enum (Qualified peel) then drops the
+stamp; unsupported tips Clear without rewriting TypeIndex. Adjacent architecture
+coverage remains the DependentName / Spec-rooted / substitute / restamp /
+tip-schema probes. The Windows suite is 2,984 single-file cases, 264 negative
+tests, and 12 multi-TU cases. Fixed-corpus migration counters remain within the
+prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -300,12 +303,13 @@ Advanced, not completed:
   ExpressionSubstitutor, opaque named type-member schemas with
   `tryResolveDependentTip`, production fail-closed publish of Supported nested
   typedef/using schemas on complete published records, and ExpressionSubstitutor
-  tip-resolve restamp (Set DependentName-family / Clear on collapse), and nested
-  class EntityId ownership under class-owned OwnerIds are landed; TypeId→TypeIndex
-  projection for collapsed tips, function/nested/member template publication, NTTP /
-  template-template / pack specialization arguments, alias, unpublished/incomplete
-  nominal, anonymous-union, and unpublished-base forms stay deferred. Remaining
-  families and flat-field deletion keep all three identity criteria open.
+  tip-resolve restamp (Set DependentName-family / Clear on collapse), nested
+  class EntityId ownership under class-owned OwnerIds, and TypeId→TypeIndex
+  projection for collapsed Builtin/Record/Enum tips on restamp Clear are landed;
+  function/nested/member template publication, NTTP / template-template / pack
+  specialization arguments, alias, unpublished/incomplete nominal,
+  anonymous-union, and unpublished-base forms stay deferred. Remaining families
+  and flat-field deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -324,8 +328,7 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- TypeId→TypeIndex projection for collapsed restamp tips, then richer
-  specialization arguments and adapters before expanding boundary-1 shadow
+- Richer specialization arguments and adapters before expanding boundary-1 shadow
   coverage (default arguments, exception specifications, fields, templates) or
   removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single

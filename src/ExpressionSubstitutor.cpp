@@ -5062,11 +5062,127 @@ ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {
 	return literal;
 }
 
+namespace {
+
+enum class CanonicalTipProjectionStatus : uint8_t {
+	Unsupported = 0,
+	Applied = 1,
+};
+
+// Project a collapsed canonical tip onto legacy TypeSpecifierNode identity for
+// restamp Clear. Lives outside CanonicalTypeAdapter so the native architecture
+// harness stays free of TypeInfo / native TypeIndex link deps. Supports Builtin
+// (+ Qualified peel) and Record/Enum via EntityId. Pointer/ref/array/function
+// tips return Unsupported (caller clears stamp only). Record/Enum with EntityId
+// but no published TypeInfo throws InternalError.
+CanonicalTipProjectionStatus tryProjectCanonicalTipOntoTypeSpecifier(
+	CanonicalTypeTable& table,
+	TypeId tip,
+	TypeSpecifierNode& syntax) {
+	if (!tip) {
+		return CanonicalTipProjectionStatus::Unsupported;
+	}
+	CVQualifier tip_cv = CVQualifier::None;
+	TypeId cursor = tip;
+	while (table.node(cursor).kind == CanonicalTypeKind::Qualified) {
+		tip_cv = tip_cv | table.node(cursor).qualifiers;
+		cursor = table.node(cursor).child;
+		if (!cursor) {
+			throw InternalError("canonical tip projection: corrupt Qualified chain");
+		}
+	}
+	const CanonicalTypeNode node = table.node(cursor);
+	switch (node.kind) {
+	case CanonicalTypeKind::Builtin: {
+		TypeCategory category = TypeCategory::Invalid;
+		switch (node.builtin) {
+		case CanonicalBuiltinKind::Void: category = TypeCategory::Void; break;
+		case CanonicalBuiltinKind::Bool: category = TypeCategory::Bool; break;
+		case CanonicalBuiltinKind::Char: category = TypeCategory::Char; break;
+		case CanonicalBuiltinKind::SignedChar: category = TypeCategory::Char; break;
+		case CanonicalBuiltinKind::UnsignedChar: category = TypeCategory::UnsignedChar; break;
+		case CanonicalBuiltinKind::WChar: category = TypeCategory::WChar; break;
+		case CanonicalBuiltinKind::Char8: category = TypeCategory::Char8; break;
+		case CanonicalBuiltinKind::Char16: category = TypeCategory::Char16; break;
+		case CanonicalBuiltinKind::Char32: category = TypeCategory::Char32; break;
+		case CanonicalBuiltinKind::Short: category = TypeCategory::Short; break;
+		case CanonicalBuiltinKind::UnsignedShort: category = TypeCategory::UnsignedShort; break;
+		case CanonicalBuiltinKind::Int: category = TypeCategory::Int; break;
+		case CanonicalBuiltinKind::UnsignedInt: category = TypeCategory::UnsignedInt; break;
+		case CanonicalBuiltinKind::Long: category = TypeCategory::Long; break;
+		case CanonicalBuiltinKind::UnsignedLong: category = TypeCategory::UnsignedLong; break;
+		case CanonicalBuiltinKind::LongLong: category = TypeCategory::LongLong; break;
+		case CanonicalBuiltinKind::UnsignedLongLong: category = TypeCategory::UnsignedLongLong; break;
+		case CanonicalBuiltinKind::Float: category = TypeCategory::Float; break;
+		case CanonicalBuiltinKind::Double: category = TypeCategory::Double; break;
+		case CanonicalBuiltinKind::LongDouble: category = TypeCategory::LongDouble; break;
+		case CanonicalBuiltinKind::Nullptr: category = TypeCategory::Nullptr; break;
+		case CanonicalBuiltinKind::Count:
+			throw InternalError("canonical tip projection: invalid builtin kind");
+		}
+		const TypeIndex index = nativeTypeIndex(category);
+		if (!index.is_valid()) {
+			throw InternalError("canonical tip projection: missing native TypeIndex");
+		}
+		syntax.set_type_index(index.withCategory(category));
+		syntax.set_category(category);
+		syntax.clear_type_entity();
+		syntax.set_injected_class_declaration(nullptr);
+		syntax.set_cv_qualifier(tip_cv);
+		syntax.set_size_in_bits(static_cast<int>(get_type_size_bits(category)));
+		return CanonicalTipProjectionStatus::Applied;
+	}
+	case CanonicalTypeKind::Record: {
+		const EntityId entity = table.recordEntity(cursor);
+		const TypeInfo* info = tryFindTypeInfoByEntityId(entity);
+		if (info == nullptr || !info->isStruct()) {
+			throw InternalError("canonical tip projection: Record EntityId has no published TypeInfo");
+		}
+		const StructTypeInfo* struct_info = info->getStructInfo();
+		if (struct_info == nullptr || !struct_info->own_type_index_.has_value()) {
+			throw InternalError("canonical tip projection: Record missing own_type_index_");
+		}
+		syntax.set_type_index(
+			struct_info->own_type_index_->withCategory(TypeCategory::Struct));
+		syntax.set_category(TypeCategory::Struct);
+		syntax.set_type_entity(entity);
+		if (struct_info->declaration_node != nullptr) {
+			syntax.set_injected_class_declaration(struct_info->declaration_node);
+		}
+		syntax.set_cv_qualifier(tip_cv);
+		syntax.set_size_in_bits(info->sizeInBits());
+		return CanonicalTipProjectionStatus::Applied;
+	}
+	case CanonicalTypeKind::Enum: {
+		const EntityId entity = table.enumEntity(cursor);
+		const TypeInfo* info = tryFindTypeInfoByEntityId(entity);
+		if (info == nullptr || info->category() != TypeCategory::Enum) {
+			throw InternalError("canonical tip projection: Enum EntityId has no published TypeInfo");
+		}
+		const EnumTypeInfo* enum_info = info->getEnumInfo();
+		if (enum_info == nullptr) {
+			throw InternalError("canonical tip projection: Enum missing EnumTypeInfo");
+		}
+		syntax.set_type_index(info->registeredTypeIndex().withCategory(TypeCategory::Enum));
+		syntax.set_category(TypeCategory::Enum);
+		syntax.set_type_entity(entity);
+		syntax.set_injected_class_declaration(nullptr);
+		syntax.set_cv_qualifier(tip_cv);
+		syntax.set_size_in_bits(enum_info->sizeInBits());
+		return CanonicalTipProjectionStatus::Applied;
+	}
+	default:
+		return CanonicalTipProjectionStatus::Unsupported;
+	}
+}
+
+} // namespace
+
 TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNode& type) {
 	// Fail-closed overlay: structurally rewrite dependent_name_type_ when the
 	// stamp survives legacy TypeIndex substitution. Never skip the legacy body.
-	// Tip collapse after substitute+resolve clears the stamp (concrete TypeIds
-	// cannot occupy dependent_name_type_ — the adapter requires DependentName-
+	// Tip collapse after substitute+resolve projects Builtin/Record/Enum onto the
+	// TypeSpecifierNode then clears the stamp (adapter requires DependentName-
 	// family kinds); unresolved DependentName-family tips are restamped.
 	const DependentNameRestampResult restamp = tryRestampDependentNameType(type);
 	TypeSpecifierNode result = substituteInTypeCore(type);
@@ -5076,6 +5192,11 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	if (restamp.action == DependentNameRestampAction::Set) {
 		result.set_dependent_name_type(restamp.type);
 	} else if (restamp.action == DependentNameRestampAction::Clear) {
+		if (restamp.type) {
+			FrontendContext& front_end = requireFrontendContext();
+			(void)tryProjectCanonicalTipOntoTypeSpecifier(
+				front_end.canonicalTypes(), restamp.type, result);
+		}
 		result.clear_dependent_name_type();
 	}
 	return result;
@@ -5208,9 +5329,9 @@ ExpressionSubstitutor::tryRestampDependentNameType(const TypeSpecifierNode& type
 		tip_kind == CanonicalTypeKind::DependentTemplateMember) {
 		return {DependentNameRestampAction::Set, substituted};
 	}
-	// Tip collapsed to a concrete/canonical type. Clear the stamp rather than
-	// storing a non-DependentName-family TypeId in dependent_name_type_.
-	return {DependentNameRestampAction::Clear, {}};
+	// Tip collapsed to a concrete/canonical type. Carry the tip for TypeIndex
+	// projection; do not store a non-DependentName-family TypeId as the stamp.
+	return {DependentNameRestampAction::Clear, substituted};
 }
 
 TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifierNode& type) {

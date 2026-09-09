@@ -1579,6 +1579,10 @@ void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec);
 // Uses type_index / injected-class metadata only as a temporary bridge.
 void tryBindPublishedTypeEntity(TypeSpecifierNode& type_spec);
 
+// Find a published Struct/Enum TypeInfo by EntityId (declaration binding only;
+// spelling is never used as identity).
+const TypeInfo* tryFindTypeInfoByEntityId(EntityId entity);
+
 // Print allocation stats for gTypeInfo, gTypesByName, and gNativeTypes to the General/Info log
 void setTypeTableStatsEnabled(bool enabled);
 void printTypeTableStats();
@@ -2012,7 +2016,7 @@ public:
 	// No spelling recovery from flat TypeIndex names. ExpressionSubstitutor may
 	// restamp through CanonicalTypeTable::substitute and tryResolveDependentTip
 	// when the stamp survives legacy TypeIndex substitution. Collapsed concrete
-	// tips clear this binding (adapter requires DependentName-family kinds).
+	// tips project Builtin/Record/Enum onto TypeIndex then clear this binding.
 	bool has_dependent_name_type() const { return static_cast<bool>(dependent_name_type_); }
 	TypeId dependent_name_type() const { return dependent_name_type_; }
 	void set_dependent_name_type(TypeId type) {
