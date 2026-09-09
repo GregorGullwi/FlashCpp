@@ -813,12 +813,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				parsing_template_class_)) {
 			return;
 		}
-		FrontendContext* front_end = frontendContext();
-		if (front_end == nullptr) {
+		FrontendContext* front_end_ptr = frontendContext();
+		if (front_end_ptr == nullptr) {
 			return;
 		}
+		FrontendContext& front_end = *front_end_ptr;
 		const PublishResult published = commitParserClassPublication(
-			front_end->declarationBuilder(),
+			front_end.declarationBuilder(),
 			stamped,
 			gSymbolTable.currentScopeId(),
 			!stamped.is_forward_declaration(),
@@ -4568,12 +4569,13 @@ ParseResult Parser::parse_enum_declaration() {
 				is_anonymous_enum)) {
 			return;
 		}
-		FrontendContext* front_end = frontendContext();
-		if (front_end == nullptr) {
+		FrontendContext* front_end_ptr = frontendContext();
+		if (front_end_ptr == nullptr) {
 			return;
 		}
+		FrontendContext& front_end = *front_end_ptr;
 		const PublishResult published = commitParserEnumPublication(
-			front_end->declarationBuilder(),
+			front_end.declarationBuilder(),
 			stamped,
 			gSymbolTable.currentScopeId(),
 			!stamped.is_forward_declaration(),

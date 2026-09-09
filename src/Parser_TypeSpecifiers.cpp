@@ -4695,16 +4695,15 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 	}
 	std::vector<ExprId> nttp_ids;
 	nttp_ids.reserve(collected->nttp_expr_nodes.size());
-	if (!collected->nttp_expr_nodes.empty()) {
-		FrontendContext& front_end = requireFrontendContext();
-		for (const ASTNode& expr_node : collected->nttp_expr_nodes) {
-			nttp_ids.push_back(front_end.dependentExpressions().intern(expr_node));
-		}
-	}
 	if (collected->nttp_expr_nodes.empty()) {
 		type_spec.set_template_specialization(
 			collected->primary, std::move(collected->type_args));
 		return;
+	}
+	DependentExpressionTable& exprs =
+		requireFrontendContext().dependentExpressions();
+	for (const ASTNode& expr_node : collected->nttp_expr_nodes) {
+		nttp_ids.push_back(exprs.intern(expr_node));
 	}
 	type_spec.set_template_specialization_mixed(
 		collected->primary,
@@ -4726,11 +4725,12 @@ void Parser::stampDependentMemberChainFromQualifier(
 			throw InternalError("stamp dependent name: invalid member identifier");
 		}
 	}
-	FrontendContext* front_end = frontendContext();
-	if (front_end == nullptr) {
+	FrontendContext* front_end_ptr = frontendContext();
+	if (front_end_ptr == nullptr) {
 		return;
 	}
-	CanonicalTypeTable& table = front_end->canonicalTypes();
+	FrontendContext& front_end = *front_end_ptr;
+	CanonicalTypeTable& table = front_end.canonicalTypes();
 	for (size_t member_index = 0; member_index < record.member_chain.size(); ++member_index) {
 		const TypeInfo::DependentQualifiedNameRecord::Member& member =
 			record.member_chain[member_index];
@@ -4789,13 +4789,14 @@ void Parser::tryStampDependentMemberChain(
 	if (kind.has_value() && *kind != TemplateParameterKind::Type) {
 		return;
 	}
-	FrontendContext* front_end = frontendContext();
-	if (front_end == nullptr) {
+	FrontendContext* front_end_ptr = frontendContext();
+	if (front_end_ptr == nullptr) {
 		return;
 	}
+	FrontendContext& front_end = *front_end_ptr;
 	stampDependentMemberChainFromQualifier(
 		type_spec,
-		front_end->canonicalTypes().templateParameter(active_template_decl_id_, *index),
+		front_end.canonicalTypes().templateParameter(active_template_decl_id_, *index),
 		record,
 		member_template_arg_syntax);
 }
@@ -4823,11 +4824,13 @@ void Parser::tryStampDependentInstantiationMemberChain(
 	if (!collected.has_value()) {
 		return;
 	}
-	FrontendContext* front_end = frontendContext();
-	if (front_end == nullptr) {
+	FrontendContext* front_end_ptr = frontendContext();
+	if (front_end_ptr == nullptr) {
 		return;
 	}
-	CanonicalTypeTable& table = front_end->canonicalTypes();
+	FrontendContext& front_end = *front_end_ptr;
+	CanonicalTypeTable& table = front_end.canonicalTypes();
+	DependentExpressionTable& exprs = front_end.dependentExpressions();
 	std::vector<CanonicalTemplateArgument> argument_ids;
 	argument_ids.reserve(collected->arg_kinds.size());
 	size_t type_index = 0;
@@ -4845,8 +4848,7 @@ void Parser::tryStampDependentInstantiationMemberChain(
 			argument_ids.push_back(CanonicalTemplateArgument::makeType(imported.type));
 			continue;
 		}
-		const ExprId expr_id =
-			front_end->dependentExpressions().intern(collected->nttp_expr_nodes[nttp_index++]);
+		const ExprId expr_id = exprs.intern(collected->nttp_expr_nodes[nttp_index++]);
 		if (!expr_id) {
 			return;
 		}
