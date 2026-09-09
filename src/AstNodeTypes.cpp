@@ -1045,6 +1045,37 @@ void tryBindPublishedTypeEntity(TypeSpecifierNode& type_spec) {
 	}
 }
 
+const TypeInfo* tryFindTypeInfoByEntityId(EntityId entity) {
+	if (!entity) {
+		return nullptr;
+	}
+	const size_t count = getTypeInfoCount();
+	for (size_t slot = 1; slot < count; ++slot) {
+		const TypeInfo* info = tryGetTypeInfo(TypeIndex{slot});
+		if (info == nullptr) {
+			continue;
+		}
+		if (info->isStruct()) {
+			const StructTypeInfo* struct_info = info->getStructInfo();
+			if (struct_info != nullptr && struct_info->declaration_node != nullptr &&
+				struct_info->declaration_node->has_entity_id() &&
+				struct_info->declaration_node->entity_id() == entity) {
+				return info;
+			}
+			continue;
+		}
+		if (info->category() == TypeCategory::Enum) {
+			const EnumTypeInfo* enum_info = info->getEnumInfo();
+			if (enum_info != nullptr && enum_info->declaration_node != nullptr &&
+				enum_info->declaration_node->has_entity_id() &&
+				enum_info->declaration_node->entity_id() == entity) {
+				return info;
+			}
+		}
+	}
+	return nullptr;
+}
+
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap() {
 	return gNativeTypes;
 }
