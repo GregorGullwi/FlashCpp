@@ -28,8 +28,8 @@ struct NamespaceHandle {
 	static constexpr uint16_t INVALID_HANDLE = UINT16_MAX;
 	uint16_t index = INVALID_HANDLE;
 
-	bool isValid() const { return index != INVALID_HANDLE; }
-	bool isGlobal() const { return index == 0; }
+	constexpr bool isValid() const { return index != INVALID_HANDLE; }
+	constexpr bool isGlobal() const { return index == 0; }
 
 	bool operator==(NamespaceHandle other) const { return index == other.index; }
 	bool operator!=(NamespaceHandle other) const { return index != other.index; }

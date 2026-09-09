@@ -1415,6 +1415,9 @@ public:
 	std::span<const ASTNode> nested_classes() const {
 		return nested_classes_;
 	}
+	std::span<ASTNode> nested_classes() {
+		return nested_classes_;
+	}
 
 	// Type alias support
 	void add_type_alias(StringHandle alias_name, ASTNode type_node, AccessSpecifier access) {

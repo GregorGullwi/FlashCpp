@@ -201,6 +201,53 @@ bool tryPublishCanonicalNamedTypeMembers(CanonicalTypeTable& table, EntityId ent
 	return true;
 }
 
+// Assign EntityIds to nested classes under an enclosing published class, then
+// publish their Supported named type-member schemas. Enclosing EntityId is not
+// available when the nested parse completes, so this runs at the enclosing
+// complete-definition epoch. Fail-closed: omit local/anonymous/unpublished
+// nested classes without blocking the enclosing typedef/using schema.
+void tryPublishNestedClassEntities(
+	DeclarationBuilder& builder,
+	CanonicalTypeTable& table,
+	StructDeclarationNode& enclosing,
+	const SymbolTable& symbol_table) {
+	if (!enclosing.has_entity_id()) {
+		return;
+	}
+	const OwnerId enclosing_owner = ownerIdFromClassEntity(enclosing.entity_id());
+	if (!enclosing_owner) {
+		return;
+	}
+	for (ASTNode& nested_node : enclosing.nested_classes()) {
+		if (!nested_node.is<StructDeclarationNode>()) {
+			continue;
+		}
+		StructDeclarationNode& nested = nested_node.as<StructDeclarationNode>();
+		if (nested.has_entity_id()) {
+			(void)tryPublishCanonicalNamedTypeMembers(table, nested.entity_id(), nested);
+			tryPublishNestedClassEntities(builder, table, nested, symbol_table);
+			continue;
+		}
+		if (nested.is_local_class() || !nested.name().isValid() ||
+			!nested.has_lexical_scope_id()) {
+			continue;
+		}
+		const PublishResult published = commitParserNestedClassPublication(
+			builder,
+			nested,
+			enclosing_owner,
+			!nested.is_forward_declaration(),
+			symbol_table);
+		if (published.status != PublishStatus::Created &&
+			published.status != PublishStatus::MergedRedeclaration) {
+			continue;
+		}
+		recordDeclarationBuilderPublish();
+		(void)tryPublishCanonicalNamedTypeMembers(table, nested.entity_id(), nested);
+		tryPublishNestedClassEntities(builder, table, nested, symbol_table);
+	}
+}
+
 TemplateArgumentVector materializeClassFriendTemplateArguments(
 	std::span<const TemplateTypeArg> pattern_arguments,
 	std::span<const TemplateParameterNode> template_params,
@@ -4409,6 +4456,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		});
 		(void)tryPublishCanonicalRecordFieldSchema(
 			front_end.canonicalTypes(), struct_ref.entity_id(), *struct_info);
+		tryPublishNestedClassEntities(
+			front_end.declarationBuilder(),
+			front_end.canonicalTypes(),
+			struct_ref,
+			gSymbolTable);
 		(void)tryPublishCanonicalNamedTypeMembers(
 			front_end.canonicalTypes(), struct_ref.entity_id(), struct_ref);
 	}

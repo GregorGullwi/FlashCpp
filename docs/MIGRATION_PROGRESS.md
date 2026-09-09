@@ -5,16 +5,16 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-09 after ExpressionSubstitutor tip-resolve restamp wire on
-`codex/boundary-3a-restamp-tip-resolve`
+Last updated: 2026-09-09 after nested class EntityId ownership on
+`codex/boundary-3a-nested-class-entity`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's ExpressionSubstitutor tip-resolve restamp wire is on
-`codex/boundary-3a-restamp-tip-resolve` for review. Production named type-member
-schema publication, opaque tip-resolve substrate, production dependent_name_type
-restamp, opaque `CanonicalTypeTable::substitute`, CurrentInstantiation /
-UnknownSpecialization
+Architecture boundary 3A's nested class EntityId ownership is on
+`codex/boundary-3a-nested-class-entity` for review. ExpressionSubstitutor
+tip-resolve restamp wire, production named type-member schema publication,
+opaque tip-resolve substrate, production dependent_name_type restamp, opaque
+`CanonicalTypeTable::substitute`, CurrentInstantiation / UnknownSpecialization
 Spec-rooted stamping, Spec-rooted member template-ids, plain DependentInstantiation
 members, opaque Spec-as-qualifier identity, type-only member template-id stamping
 on type parameters, DependentTemplateMember identity, plain dependent-member
@@ -135,22 +135,23 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   schemas). `tryLookupNamedTypeMember` and `tryResolveDependentTip` collapse plain
   DependentName chains only when every step is `Record` with a published name hit;
   DependentTemplateMember, misses, and non-Record qualifiers leave the tip
-  unchanged. No StringHandle identity or SymbolTable. Complete published
-  namespace/global records also fail-closed publish Supported nested typedef/using
-  RHS TypeIds (and nested classes only when they already carry EntityId; nested
-  EntityId ownership remains deferred). ExpressionSubstitutor restamp now runs
-  `tryResolveDependentTip` (Set DependentName-family / Clear on collapse). Nodes
-  remain 16 bytes; `sizeof(CanonicalTypeTable)` is
-  2,680 bytes on Linux clang++.
+  unchanged. No StringHandle identity or SymbolTable. Complete published namespace/global records fail-closed publish Supported nested
+  typedef/using RHS TypeIds and nested classes under class-owned OwnerIds
+  (`ownerIdFromClassEntity`, tagged so they cannot collide with namespace-mapped
+  owners). Nested EntityIds are assigned at the enclosing complete-definition
+  epoch, then nested and enclosing named type-member schemas are published.
+  Local/anonymous/template-nested classes remain omitted. ExpressionSubstitutor
+  restamp runs `tryResolveDependentTip` (Set DependentName-family / Clear on
+  collapse). Nodes remain 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes
+  on Linux clang++.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes nested EntityId ownership for nested-class tips,
-  TypeId→TypeIndex projection for collapsed tips, NTTP / template-template /
-  pack specialization arguments, function/nested/member TemplateDeclId
-  publication, complete declarator interleaving, and deletion of the flat
-  semantic representation. Stop here for review before starting another family,
-  3B, or the parallel frontend experiment.
+- Remaining 3A work includes TypeId→TypeIndex projection for collapsed tips,
+  NTTP / template-template / pack specialization arguments, function/nested/member
+  TemplateDeclId publication, complete declarator interleaving, and deletion of
+  the flat semantic representation. Stop here for review before starting another
+  family, 3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -220,14 +221,14 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for tip-resolve restamp wire: sharded rebuild; named-type
-member, dependent-name, and field-schema `_ret0` cases stay green; native
-tip-resolve architecture coverage remains green. Collapsed tips clear the stamp
-rather than storing concrete TypeIds in `dependent_name_type_`. Adjacent
-architecture coverage remains the DependentName / Spec-rooted / substitute /
-restamp / tip-schema probes. The Windows suite is 2,984 single-file cases, 264
-negative tests, and 12 multi-TU cases. Fixed-corpus migration counters remain
-within the prior baselines below.
+Latest validation for nested class EntityId ownership: sharded rebuild;
+`test_canonical_nested_class_entity_ret0` plus named-type / dependent-name /
+field-schema `_ret0` cases stay green; native tip-resolve architecture coverage
+remains green. Class-owned OwnerIds are tagged distinct from namespace owners.
+Adjacent architecture coverage remains the DependentName / Spec-rooted /
+substitute / restamp / tip-schema probes. The Windows suite is 2,984 single-file
+cases, 264 negative tests, and 12 multi-TU cases. Fixed-corpus migration
+counters remain within the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -299,12 +300,12 @@ Advanced, not completed:
   ExpressionSubstitutor, opaque named type-member schemas with
   `tryResolveDependentTip`, production fail-closed publish of Supported nested
   typedef/using schemas on complete published records, and ExpressionSubstitutor
-  tip-resolve restamp (Set DependentName-family / Clear on collapse) are landed;
-  TypeId→TypeIndex projection for collapsed tips, nested EntityId ownership,
-  function/nested/member template publication, NTTP / template-template / pack
-  specialization arguments, alias, unpublished/incomplete nominal, anonymous-union,
-  and unpublished-base forms stay deferred. Remaining families and flat-field
-  deletion keep all three identity criteria open.
+  tip-resolve restamp (Set DependentName-family / Clear on collapse), and nested
+  class EntityId ownership under class-owned OwnerIds are landed; TypeId→TypeIndex
+  projection for collapsed tips, function/nested/member template publication, NTTP /
+  template-template / pack specialization arguments, alias, unpublished/incomplete
+  nominal, anonymous-union, and unpublished-base forms stay deferred. Remaining
+  families and flat-field deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -323,11 +324,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Nested EntityId ownership for nested-class tips and TypeId→TypeIndex
-  projection for collapsed restamp tips, then richer specialization arguments
-  and adapters before expanding boundary-1 shadow coverage (default arguments,
-  exception specifications, fields, templates) or removing `SymbolTable` merge /
-  `matches_signature` authority.
+- TypeId→TypeIndex projection for collapsed restamp tips, then richer
+  specialization arguments and adapters before expanding boundary-1 shadow
+  coverage (default arguments, exception specifications, fields, templates) or
+  removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

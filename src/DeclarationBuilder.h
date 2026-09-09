@@ -28,19 +28,47 @@ class TypeSpecifierNode;
 
 // Map NamespaceRegistry identity onto OwnerId. Index 0 (global) becomes OwnerId{1};
 // invalid handles remain OwnerId{}. Spelling is never part of this identity.
-inline OwnerId ownerIdFromNamespaceHandle(NamespaceHandle handle) {
+// Namespace-mapped owners stay below 0x80000000 (NamespaceHandle is uint16_t).
+inline constexpr uint32_t kClassOwnerIdTag = 0x80000000u;
+
+inline constexpr OwnerId ownerIdFromNamespaceHandle(NamespaceHandle handle) {
 	if (!handle.isValid()) {
 		return OwnerId{};
 	}
 	return OwnerId{static_cast<uint32_t>(handle.index) + 1u};
 }
 
-inline NamespaceHandle namespaceHandleFromOwnerId(OwnerId owner_id) {
-	if (!owner_id) {
+inline constexpr NamespaceHandle namespaceHandleFromOwnerId(OwnerId owner_id) {
+	if (!owner_id || (owner_id.value & kClassOwnerIdTag) != 0u) {
 		return NamespaceHandle{NamespaceHandle::INVALID_HANDLE};
 	}
 	return NamespaceHandle{static_cast<uint16_t>(owner_id.value - 1u)};
 }
+
+// Class-owned OwnerId for nested class publication. Tagged so it cannot collide
+// with namespace-mapped OwnerIds. Spelling is never part of this identity.
+inline constexpr OwnerId ownerIdFromClassEntity(EntityId enclosing) {
+	if (!enclosing || (enclosing.value & kClassOwnerIdTag) != 0u) {
+		return OwnerId{};
+	}
+	return OwnerId{enclosing.value | kClassOwnerIdTag};
+}
+
+inline constexpr bool isClassOwnedOwnerId(OwnerId owner_id) {
+	return owner_id && (owner_id.value & kClassOwnerIdTag) != 0u;
+}
+
+inline constexpr EntityId classEntityFromOwnerId(OwnerId owner_id) {
+	if (!isClassOwnedOwnerId(owner_id)) {
+		return EntityId{};
+	}
+	return EntityId{owner_id.value & ~kClassOwnerIdTag};
+}
+
+static_assert((ownerIdFromNamespaceHandle(NamespaceHandle{0}).value & kClassOwnerIdTag) == 0u);
+static_assert(isClassOwnedOwnerId(ownerIdFromClassEntity(EntityId{1})));
+static_assert(classEntityFromOwnerId(ownerIdFromClassEntity(EntityId{7})) == EntityId{7});
+static_assert(ownerIdFromClassEntity(EntityId{1}) != ownerIdFromNamespaceHandle(NamespaceHandle{0}));
 
 // Front-end declaration/entity publisher for architecture boundary 1.
 // Domain for this slice: namespace-targeted free functions with C++ language
@@ -139,6 +167,9 @@ struct ClassDeclRequest {
 	StringHandle name;
 	bool is_definition;
 	DeclKind kind = DeclKind::Class;
+	// When set, publish under this owner instead of resolving a namespace owner
+	// from lexical_scope_id (nested classes owned by enclosing EntityId).
+	OwnerId owner_id{};
 };
 
 struct PublishResult {
@@ -513,6 +544,16 @@ PublishResult commitParserClassPublication(
 	DeclarationBuilder& builder,
 	StructDeclarationNode& struct_decl,
 	ScopeId lexical_scope_id,
+	bool is_definition,
+	const SymbolTable& symbol_table);
+
+// Nested class publication under an enclosing class EntityId. owner_id must be
+// class-owned (ownerIdFromClassEntity). Lexical ScopeId comes from the nested
+// declaration node (already stamped during parse).
+PublishResult commitParserNestedClassPublication(
+	DeclarationBuilder& builder,
+	StructDeclarationNode& struct_decl,
+	OwnerId enclosing_owner_id,
 	bool is_definition,
 	const SymbolTable& symbol_table);
 
