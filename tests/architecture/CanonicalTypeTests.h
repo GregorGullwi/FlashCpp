@@ -691,7 +691,52 @@ inline void checkDependentNames() {
 	rejects([&] { table.dependentName(owner, ""); });
 	rejects([&] { table.dependentName(owner, std::string_view("a\0b", 3)); });
 	rejects([&] { table.dependentName(table.builtin(CanonicalBuiltinKind::Int), "first"); });
+	rejects([&] { table.dependentName(table.record(EntityId{1}), "first"); });
 	rejects([&] { table.dependentNameIdentifier(owner); });
+	const TypeId pair_int = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId pair_float = table.builtin(CanonicalBuiltinKind::Float);
+	const TypeId pair_args[] = {pair_int, pair_float};
+	const TypeId pair_swapped_args[] = {pair_float, pair_int};
+	const TypeId spec_pair = table.templateSpecialization(TemplateDeclId{11}, pair_args);
+	const TypeId spec_swapped = table.templateSpecialization(TemplateDeclId{11}, pair_swapped_args);
+	const TypeId spec_other = table.templateSpecialization(TemplateDeclId{12}, pair_args);
+	const TypeId spec_member = table.dependentName(spec_pair, "value_type");
+	require(table.dependentName(spec_pair, "value_type") == spec_member);
+	require(table.dependentName(spec_swapped, "value_type") != spec_member);
+	require(table.dependentName(spec_other, "value_type") != spec_member);
+	require(table.dependentName(spec_pair, "pointer") != spec_member);
+	require(table.dependentNameQualifier(spec_member) == spec_pair);
+	require(table.dependentNameIdentifier(spec_member) == "value_type");
+	const TypeId spec_nested = table.dependentName(spec_member, "type");
+	require(spec_nested != table.dependentName(table.dependentName(spec_pair, "type"), "value_type"));
+	const TypeId spec_foo = table.dependentTemplateMember(
+		spec_pair, "Foo", std::span<const TypeId>(&pair_int, 1));
+	require(spec_foo != table.dependentTemplateMember(
+		spec_swapped, "Foo", std::span<const TypeId>(&pair_int, 1)));
+	require(table.dependentName(spec_foo, "type") !=
+		table.dependentName(table.dependentTemplateMember(
+			spec_pair, "Bar", std::span<const TypeId>(&pair_int, 1)), "type"));
+	TypeSpecifierNode spec_syntax(TypeCategory::UserDefined, TypeQualifier::None, 0, Token{}, CVQualifier::Const);
+	spec_syntax.set_dependent_name_type(spec_member);
+	require(importCanonicalType(table, spec_syntax).type ==
+		table.qualify(spec_member, CVQualifier::Const));
+	spec_syntax.set_dependent_name_type(table.dependentName(spec_foo, "type"));
+	require(importCanonicalType(table, spec_syntax).type ==
+		table.qualify(table.dependentName(spec_foo, "type"), CVQualifier::Const));
+	CanonicalTypeTable reordered_specs;
+	const TypeId reordered_spec_int = reordered_specs.builtin(CanonicalBuiltinKind::Int);
+	const TypeId reordered_spec_float = reordered_specs.builtin(CanonicalBuiltinKind::Float);
+	const TypeId reordered_pair_args[] = {reordered_spec_int, reordered_spec_float};
+	reordered_specs.dependentName(
+		reordered_specs.templateSpecialization(TemplateDeclId{11}, reordered_pair_args),
+		"pointer");
+	const TypeId reordered_spec = reordered_specs.templateSpecialization(
+		TemplateDeclId{11}, reordered_pair_args);
+	const TypeId reordered_spec_member = reordered_specs.dependentName(reordered_spec, "value_type");
+	require(sameStructure(table, spec_nested, reordered_specs,
+		reordered_specs.dependentName(reordered_spec_member, "type")));
+	require(!sameStructure(table, spec_member, reordered_specs,
+		reordered_specs.dependentName(reordered_spec, "pointer")));
 	const TypeId bytes{static_cast<uint32_t>(table.node(member).array_extent)};
 	rejects([&] { table.pointer(bytes); });
 	rejects([&] { table.qualify(bytes, CVQualifier::Const); });

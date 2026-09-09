@@ -73,6 +73,12 @@ def main():
             "lost_dependent_qualifier": (
                 ".child = qualifier,\n\t\t\t.kind = CanonicalTypeKind::DependentName,",
                 ".child = TypeId{1},\n\t\t\t.kind = CanonicalTypeKind::DependentName,"),
+            "lost_specialization_dependent_qualifier": (
+                "kind == CanonicalTypeKind::TemplateParameter ||\n"
+                "\t\t\tkind == CanonicalTypeKind::TemplateSpecialization ||\n"
+                "\t\t\tkind == CanonicalTypeKind::DependentName ||",
+                "kind == CanonicalTypeKind::TemplateParameter ||\n"
+                "\t\t\tkind == CanonicalTypeKind::DependentName ||"),
             "lost_dependent_identifier": (
                 "return name_link;",
                 "return TypeId{1};"),

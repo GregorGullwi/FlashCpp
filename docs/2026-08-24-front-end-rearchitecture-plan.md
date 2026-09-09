@@ -769,7 +769,10 @@ and [temp.dep.type](https://timsong-cpp.github.io/cppwp/n4861/temp.dep.type).
 The first dependent-name slice provides opaque plain-identifier chains rooted
 in published type parameters. Production parser publication of those plain
 chains and of type-only member template-ids (`DependentTemplateMember`) is
-landed; other qualifier families and substitution remain deferred.
+landed. Opaque DependentName / DependentTemplateMember chains may also root in a
+type-only `TemplateSpecialization` qualifier (`Primary<Args>::…`) without
+parser publication yet; production DependentInstantiation stamping and
+substitution remain deferred.
 
 Exit criteria:
 
