@@ -80,7 +80,9 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   type-only class template-ids for published primaries are stamped during
   `parse_type_specifier` (preferring syntax-node args so nested stamps survive)
   and import as `TemplateSpecialization` when every argument imports Supported.
-  NTTP / template-template / pack arguments, nested/member templates, alias
+  Opaque Spec identity also accepts mixed type / NTTP `ExprId` arguments in the
+  canonical table; production stamping still requires type-only Supported args,
+  so NTTP / template-template / pack arguments, nested/member templates, alias
   expansions, `Template<args>::member` results, and defaults-without-`<>` stay
   unstamped; completed instantiations may still appear as Record via EntityId.
   Spelling-only bindings (function templates, nested/member templates, NTTP /
@@ -115,10 +117,11 @@ and richer specialization arguments still block expanding shadow/merge coverage.
 - `CanonicalTypeTable::substitute(TypeId, TemplateDeclId, arg TypeIds)`
   structurally replaces matching `TemplateParameter` nodes, rebuilds Spec /
   DependentName / DependentTemplateMember / cv / pointer / array / reference
-  wrappers iteratively, and leaves unresolved member tips as DependentName-
-  family nodes (concrete qualifiers allowed only as substitute results; public
-  `dependentName` still requires a dependent qualifier kind). Function and
-  member-pointer walks throw. Nodes remain 16 bytes.
+  wrappers iteratively, preserves opaque Spec NTTP `ExprId` arguments, and
+  leaves unresolved member tips as DependentName-family nodes (concrete
+  qualifiers allowed only as substitute results; public `dependentName` still
+  requires a dependent qualifier kind). Function and member-pointer walks throw.
+  Nodes remain 16 bytes.
 - `ExpressionSubstitutor::substituteInType` runs the legacy TypeIndex body
   unchanged, then fail-closed overlays `dependent_name_type_` when
   `CanonicalTypeTable::substitute` succeeds with a unique TemplateDeclId
@@ -149,11 +152,11 @@ and richer specialization arguments still block expanding shadow/merge coverage.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes NTTP / template-template / pack specialization
-  arguments, function/nested/member TemplateDeclId publication, complete
-  declarator interleaving, and deletion of the flat semantic representation.
-  Stop here for review before starting another family, 3B, or the parallel
-  frontend experiment.
+- Remaining 3A work includes template-template / pack specialization arguments,
+  production NTTP Spec stamping, function/nested/member TemplateDeclId
+  publication, complete declarator interleaving, and deletion of the flat
+  semantic representation. Stop here for review before starting another family,
+  3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -223,15 +226,14 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for collapsed tip TypeId→TypeIndex projection: sharded rebuild;
-`test_canonical_collapsed_tip_projection_ret0` plus nested-class / named-type /
-dependent-name `_ret0` cases stay green; native tip-resolve architecture coverage
-remains green. Clear projects Builtin/Record/Enum (Qualified peel) then drops the
-stamp; unsupported tips Clear without rewriting TypeIndex. Adjacent architecture
-coverage remains the DependentName / Spec-rooted / substitute / restamp /
-tip-schema probes. The Windows suite is 2,984 single-file cases, 264 negative
-tests, and 12 multi-TU cases. Fixed-corpus migration counters remain within the
-prior baselines below.
+Latest validation for opaque Spec NTTP ExprId arguments: native canonical-types
+architecture coverage (including `lost_nttp_spec_arg` mutation) stays green;
+sharded rebuild remains warning-clean. Production type-only Spec stamping is
+unchanged (NTTP syntax still leaves template-ids unstamped / Unresolved).
+Adjacent architecture coverage remains the DependentName / Spec-rooted /
+substitute / restamp / tip-schema / tip-projection probes. The Windows suite is
+2,984 single-file cases, 264 negative tests, and 12 multi-TU cases. Fixed-corpus
+migration counters remain within the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -305,11 +307,12 @@ Advanced, not completed:
   typedef/using schemas on complete published records, and ExpressionSubstitutor
   tip-resolve restamp (Set DependentName-family / Clear on collapse), nested
   class EntityId ownership under class-owned OwnerIds, and TypeId→TypeIndex
-  projection for collapsed Builtin/Record/Enum tips on restamp Clear are landed;
-  function/nested/member template publication, NTTP / template-template / pack
-  specialization arguments, alias, unpublished/incomplete nominal,
-  anonymous-union, and unpublished-base forms stay deferred. Remaining families
-  and flat-field deletion keep all three identity criteria open.
+  projection for collapsed Builtin/Record/Enum tips on restamp Clear, and opaque
+  Spec NTTP `ExprId` arguments (with substitute preserving them) are landed;
+  production NTTP Spec stamping, function/nested/member template publication,
+  template-template / pack specialization arguments, alias, unpublished/incomplete
+  nominal, anonymous-union, and unpublished-base forms stay deferred. Remaining
+  families and flat-field deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -328,7 +331,8 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Richer specialization arguments and adapters before expanding boundary-1 shadow
+- Template-template / pack specialization arguments and production NTTP Spec
+  stamping, then richer adapters before expanding boundary-1 shadow
   coverage (default arguments, exception specifications, fields, templates) or
   removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single

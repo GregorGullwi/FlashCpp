@@ -195,18 +195,29 @@ def main():
                 "memo.emplace(frame.id.value, args[index]);",
                 "memo.emplace(frame.id.value, frame.id);"),
             "lost_template_specialization": (
-                ".child = arg_link,\n"
+                ".child = rebuildMixedTemplateArgListUnlocked(arguments),\n"
                 "\t\t\t.kind = CanonicalTypeKind::TemplateSpecialization,\n"
                 "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = primary.value,",
-                ".child = arg_link,\n"
+                ".child = rebuildMixedTemplateArgListUnlocked(arguments),\n"
                 "\t\t\t.kind = CanonicalTypeKind::TemplateSpecialization,\n"
                 "\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
                 "\t\t\t.qualifiers = CVQualifier::None,\n"
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = 1,"),
+            "lost_nttp_spec_arg": (
+                ".kind = CanonicalTypeKind::NonTypeTemplateArg,\n"
+                "\t\t\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t\t\t.array_extent = argument.expr.value,",
+                ".kind = CanonicalTypeKind::NonTypeTemplateArg,\n"
+                "\t\t\t\t\t.builtin = CanonicalBuiltinKind::Void,\n"
+                "\t\t\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
+                "\t\t\t\t\t.array_extent = 1,"),
             "lost_record_layout": (
                 "return entity && record_layout_ids_.contains(entity.value);",
                 "return entity && false;"),
