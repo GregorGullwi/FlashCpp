@@ -4378,10 +4378,11 @@ private:	 // Resume private methods
 		type_spec.set_template_parameter_decl(active_template_decl_id_, *index);
 	}
 
-	// Stamp type-only class-template specializations when the primary already
-	// published a TemplateDeclId. No-op for NTTP/template-template/packs,
-	// unpublished nested/member templates, incomplete default fill, or names that
-	// are not class-template primaries. Broken Type-only arg shape ICEs.
+	// Stamp class-template specializations when the primary already published a
+	// TemplateDeclId. Type arguments and stampable literal NTTP ExpressionNodes
+	// (bool / integral NumericLiteral) are accepted; packs, template-template,
+	// dependent NTTP, unpublished nested/member templates, and incomplete default
+	// fill remain no-ops. Broken Type-parameter shape ICEs.
 	void tryStampTypeOnlyClassTemplateSpecialization(
 		TypeSpecifierNode& type_spec,
 		StringHandle primary_template_name,
@@ -4400,14 +4401,14 @@ private:	 // Resume private methods
 		const TypeInfo::DependentQualifiedNameRecord& record,
 		std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax);
 
-	// Stamp Primary<Args>::member chains whose owner is a published type-only
+	// Stamp Primary<Args>::member chains whose owner is a published
 	// class-template primary under DependentInstantiation, CurrentInstantiation,
 	// or UnknownSpecialization classification. Builds the Spec qualifier from
-	// captured type-arg syntax (or filled type args), then walks plain and
-	// type-only member template-id segments. owner_kind stays parse metadata;
-	// structural identity is Spec-rooted. No-op for TemplateParameter owners,
-	// unpublished primaries, NTTP/pack args, or member template-ids without
-	// captured type-only syntax.
+	// captured type / literal-NTTP arg syntax (or filled type args), then walks
+	// plain and type-only member template-id segments. owner_kind stays parse
+	// metadata; structural identity is Spec-rooted. No-op for TemplateParameter
+	// owners, unpublished primaries, pack/template-template args, dependent NTTP,
+	// or member template-ids without captured type-only syntax.
 	void tryStampDependentInstantiationMemberChain(
 		TypeSpecifierNode& type_spec,
 		StringHandle primary_template_name,

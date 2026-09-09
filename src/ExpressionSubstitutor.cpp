@@ -5253,7 +5253,9 @@ ExpressionSubstitutor::tryRestampDependentNameType(const TypeSpecifierNode& type
 			case CanonicalTypeKind::TemplateSpecialization: {
 				TypeId arg_link = table.templateSpecializationArguments(current);
 				while (arg_link) {
-					stack.push_back(table.templateArgumentType(arg_link));
+					if (table.templateArgumentIsType(arg_link)) {
+						stack.push_back(table.templateArgumentType(arg_link));
+					}
 					arg_link = table.templateArgumentNext(arg_link);
 				}
 				break;

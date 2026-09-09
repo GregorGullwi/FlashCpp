@@ -497,6 +497,30 @@ inline void checkAdapter() {
 	const TypeId dependent_arg_ids[] = {table.templateParameter(TemplateDeclId{4}, 0)};
 	require(imported_dependent_spec.type == table.qualify(
 		table.templateSpecialization(TemplateDeclId{11}, dependent_arg_ids), CVQualifier::Const));
+	TypeSpecifierNode nttp_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
+		CVQualifier::None);
+	nttp_specialization.set_template_specialization_mixed(
+		TemplateDeclId{11},
+		std::vector<uint8_t>{0, 1},
+		std::vector<TypeSpecifierNode>{int_arg},
+		std::vector<ExprId>{ExprId{21}});
+	const auto imported_nttp_spec = importCanonicalType(table, nttp_specialization);
+	require(imported_nttp_spec.status == CanonicalTypeImportStatus::Supported);
+	const CanonicalTemplateArgument expected_nttp_args[] = {
+		CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int)),
+		CanonicalTemplateArgument::makeNonType(ExprId{21}),
+	};
+	require(imported_nttp_spec.type ==
+		table.templateSpecialization(TemplateDeclId{11}, expected_nttp_args));
+	TypeSpecifierNode empty_nttp(TypeCategory::Template, TypeQualifier::None, 0, Token{},
+		CVQualifier::None);
+	rejects([&] {
+		empty_nttp.set_template_specialization_mixed(
+			TemplateDeclId{11},
+			std::vector<uint8_t>{1},
+			std::vector<TypeSpecifierNode>{},
+			std::vector<ExprId>{ExprId{}});
+	});
 
 	TypeSpecifierNode published_enum_array(TypeCategory::Enum, TypeQualifier::None, 16, Token{},
 		CVQualifier::None);
