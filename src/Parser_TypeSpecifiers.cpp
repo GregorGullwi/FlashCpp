@@ -89,6 +89,61 @@ std::optional<std::vector<TypeSpecifierNode>> collectTypeOnlyArgSpecifiers(
 	return specifiers;
 }
 
+struct TypeOnlyClassTemplateArgSpecs {
+	TemplateDeclId primary;
+	std::vector<TypeSpecifierNode> type_args;
+};
+
+// Shared gates for type-only class-template specialization stamping: published
+// primary TemplateDeclId, fixed type-parameter arity, and TypeSpecifierNode args
+// from syntax when present. Deferred cases return nullopt; broken Type-only
+// shape throws.
+std::optional<TypeOnlyClassTemplateArgSpecs> collectTypeOnlyClassTemplateArgSpecs(
+	StringHandle primary_template_name,
+	std::span<const TemplateTypeArg> filled_args,
+	std::span<const ASTNode> argument_syntax_nodes,
+	Token token) {
+	if (!primary_template_name.isValid()) {
+		throw InternalError("stamp template specialization: invalid primary template name");
+	}
+	auto template_opt = gTemplateRegistry.lookupTemplate(primary_template_name);
+	if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+		return std::nullopt;
+	}
+	const TemplateClassDeclarationNode& primary =
+		template_opt->as<TemplateClassDeclarationNode>();
+	if (!primary.has_template_decl_id()) {
+		return std::nullopt;
+	}
+	const TemplateParameterVector& template_params = primary.template_parameters();
+	if (filled_args.size() != template_params.size()) {
+		return std::nullopt;
+	}
+	for (const TemplateParameterNode& param : template_params) {
+		if (param.kind() != TemplateParameterKind::Type || param.is_variadic()) {
+			return std::nullopt;
+		}
+	}
+	TypeOnlyClassTemplateArgSpecs collected;
+	collected.primary = primary.template_decl_id();
+	collected.type_args.reserve(filled_args.size());
+	for (size_t index = 0; index < filled_args.size(); ++index) {
+		const TemplateTypeArg& arg = filled_args[index];
+		if (!arg.isTypeArgument() || arg.is_pack) {
+			throw InternalError("stamp template specialization: non-type or pack arg for fixed type parameter");
+		}
+		if (index < argument_syntax_nodes.size()) {
+			if (!argument_syntax_nodes[index].is<TypeSpecifierNode>()) {
+				throw InternalError("stamp template specialization: type-arg syntax is not a TypeSpecifierNode");
+			}
+			collected.type_args.push_back(argument_syntax_nodes[index].as<TypeSpecifierNode>());
+			continue;
+		}
+		collected.type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, token));
+	}
+	return collected;
+}
+
 TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
@@ -3025,11 +3080,16 @@ ParseResult Parser::parse_type_specifier() {
 							type_name_token,
 							cv_qualifier,
 							ReferenceQualifier::None);
-						tryStampTypeParamOwnedMemberTemplateId(
-							type_spec,
-							type_name,
-							template_arg_syntax_nodes,
-							type_info.dependentQualifiedName());
+						if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
+								type_info.dependentQualifiedName();
+							dependent_name != nullptr) {
+							tryStampDependentInstantiationMemberChain(
+								type_spec,
+								StringTable::getOrInternStringHandle(type_name),
+								filled_template_args,
+								template_arg_syntax_nodes,
+								*dependent_name);
+						}
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(type_spec));
 					};
 
@@ -4538,66 +4598,23 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 	StringHandle primary_template_name,
 	std::span<const TemplateTypeArg> filled_args,
 	std::span<const ASTNode> argument_syntax_nodes) {
-	if (!primary_template_name.isValid()) {
-		throw InternalError("stamp template specialization: invalid primary template name");
-	}
-	// Spelling may not name a published class-template primary (aliases, dependent
-	// names, unregistered forms). Leave unstamped.
-	auto template_opt = gTemplateRegistry.lookupTemplate(primary_template_name);
-	if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+	auto collected = collectTypeOnlyClassTemplateArgSpecs(
+		primary_template_name,
+		filled_args,
+		argument_syntax_nodes,
+		type_spec.token());
+	if (!collected.has_value()) {
 		return;
 	}
-	const TemplateClassDeclarationNode& primary =
-		template_opt->as<TemplateClassDeclarationNode>();
-	// Nested/member templates and other unpublished primaries stay out of scope.
-	if (!primary.has_template_decl_id()) {
-		return;
-	}
-	const TemplateParameterVector& template_params = primary.template_parameters();
-	// Defaults may be incomplete; packs also mismatch arity. Bail early either way.
-	if (filled_args.size() != template_params.size()) {
-		return;
-	}
-	// NTTP, template-template, and packs are deferred; type-only fixed arity only.
-	for (const TemplateParameterNode& param : template_params) {
-		if (param.kind() != TemplateParameterKind::Type || param.is_variadic()) {
-			return;
-		}
-	}
-	std::vector<TypeSpecifierNode> type_args;
-	type_args.reserve(filled_args.size());
-	for (size_t index = 0; index < filled_args.size(); ++index) {
-		const TemplateTypeArg& arg = filled_args[index];
-		// Fixed Type parameters must receive type arguments; packs were rejected above.
-		if (!arg.isTypeArgument() || arg.is_pack) {
-			throw InternalError("stamp template specialization: non-type or pack arg for fixed type parameter");
-		}
-		if (index < argument_syntax_nodes.size()) {
-			if (!argument_syntax_nodes[index].is<TypeSpecifierNode>()) {
-				throw InternalError("stamp template specialization: type-arg syntax is not a TypeSpecifierNode");
-			}
-			type_args.push_back(argument_syntax_nodes[index].as<TypeSpecifierNode>());
-			continue;
-		}
-		type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, type_spec.token()));
-	}
-	type_spec.set_template_specialization(primary.template_decl_id(), std::move(type_args));
+	type_spec.set_template_specialization(
+		collected->primary, std::move(collected->type_args));
 }
 
-void Parser::tryStampDependentMemberChain(
+void Parser::stampDependentMemberChainFromQualifier(
 	TypeSpecifierNode& type_spec,
-	StringHandle owner_param_name,
+	TypeId qualifier,
 	const TypeInfo::DependentQualifiedNameRecord& record,
 	std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax) {
-	// No published primary class template yet (parameter-list parse, function
-	// templates, nested/member templates). Stamping is a no-op there.
-	if (!active_template_decl_id_) {
-		return;
-	}
-	if (record.owner_kind !=
-		TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter) {
-		return;
-	}
 	if (record.member_chain.empty()) {
 		return;
 	}
@@ -4610,21 +4627,7 @@ void Parser::tryStampDependentMemberChain(
 	if (front_end == nullptr) {
 		return;
 	}
-	if (!owner_param_name.isValid()) {
-		throw InternalError("stamp dependent name: invalid owner parameter name");
-	}
-	const auto index = current_template_params_.indexOf(owner_param_name);
-	if (!index.has_value()) {
-		return;
-	}
-	// Names-only tracking leaves kinds empty and historically means Type.
-	// When kinds are present, only type parameters root DependentName chains.
-	const auto kind = currentTemplateParamKind(owner_param_name);
-	if (kind.has_value() && *kind != TemplateParameterKind::Type) {
-		return;
-	}
 	CanonicalTypeTable& table = front_end->canonicalTypes();
-	TypeId qualifier = table.templateParameter(active_template_decl_id_, *index);
 	for (size_t member_index = 0; member_index < record.member_chain.size(); ++member_index) {
 		const TypeInfo::DependentQualifiedNameRecord::Member& member =
 			record.member_chain[member_index];
@@ -4654,6 +4657,86 @@ void Parser::tryStampDependentMemberChain(
 		qualifier = table.dependentTemplateMember(qualifier, member_name, argument_ids);
 	}
 	type_spec.set_dependent_name_type(qualifier);
+}
+
+void Parser::tryStampDependentMemberChain(
+	TypeSpecifierNode& type_spec,
+	StringHandle owner_param_name,
+	const TypeInfo::DependentQualifiedNameRecord& record,
+	std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax) {
+	// No published primary class template yet (parameter-list parse, function
+	// templates, nested/member templates). Stamping is a no-op there.
+	if (!active_template_decl_id_) {
+		return;
+	}
+	if (record.owner_kind !=
+		TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter) {
+		return;
+	}
+	if (!owner_param_name.isValid()) {
+		throw InternalError("stamp dependent name: invalid owner parameter name");
+	}
+	const auto index = current_template_params_.indexOf(owner_param_name);
+	if (!index.has_value()) {
+		return;
+	}
+	// Names-only tracking leaves kinds empty and historically means Type.
+	// When kinds are present, only type parameters root DependentName chains.
+	const auto kind = currentTemplateParamKind(owner_param_name);
+	if (kind.has_value() && *kind != TemplateParameterKind::Type) {
+		return;
+	}
+	FrontendContext* front_end = frontendContext();
+	if (front_end == nullptr) {
+		return;
+	}
+	stampDependentMemberChainFromQualifier(
+		type_spec,
+		front_end->canonicalTypes().templateParameter(active_template_decl_id_, *index),
+		record,
+		member_template_arg_syntax);
+}
+
+void Parser::tryStampDependentInstantiationMemberChain(
+	TypeSpecifierNode& type_spec,
+	StringHandle primary_template_name,
+	std::span<const TemplateTypeArg> filled_args,
+	std::span<const ASTNode> argument_syntax_nodes,
+	const TypeInfo::DependentQualifiedNameRecord& record) {
+	if (record.owner_kind !=
+		TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation) {
+		return;
+	}
+	auto collected = collectTypeOnlyClassTemplateArgSpecs(
+		primary_template_name,
+		filled_args,
+		argument_syntax_nodes,
+		type_spec.token());
+	if (!collected.has_value()) {
+		return;
+	}
+	FrontendContext* front_end = frontendContext();
+	if (front_end == nullptr) {
+		return;
+	}
+	CanonicalTypeTable& table = front_end->canonicalTypes();
+	std::vector<TypeId> argument_ids;
+	argument_ids.reserve(collected->type_args.size());
+	for (const TypeSpecifierNode& arg_spec : collected->type_args) {
+		if (arg_spec.is_pack_expansion()) {
+			return;
+		}
+		const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return;
+		}
+		argument_ids.push_back(imported.type);
+	}
+	stampDependentMemberChainFromQualifier(
+		type_spec,
+		table.templateSpecialization(collected->primary, argument_ids),
+		record,
+		{});
 }
 
 void Parser::tryStampTypeParamOwnedMemberTemplateId(

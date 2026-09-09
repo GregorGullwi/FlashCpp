@@ -723,6 +723,13 @@ inline void checkDependentNames() {
 	spec_syntax.set_dependent_name_type(table.dependentName(spec_foo, "type"));
 	require(importCanonicalType(table, spec_syntax).type ==
 		table.qualify(table.dependentName(spec_foo, "type"), CVQualifier::Const));
+	// Production publication shape for DependentInstantiation owners: tip is a
+	// DependentName (or DependentTemplateMember) whose qualifier is Spec, never a
+	// bare TemplateSpecialization binding on the member type specifier.
+	require(table.node(spec_member).kind == CanonicalTypeKind::DependentName);
+	require(table.node(table.dependentNameQualifier(spec_member)).kind ==
+		CanonicalTypeKind::TemplateSpecialization);
+	require(table.templateSpecializationDecl(spec_pair) == TemplateDeclId{11});
 	CanonicalTypeTable reordered_specs;
 	const TypeId reordered_spec_int = reordered_specs.builtin(CanonicalBuiltinKind::Int);
 	const TypeId reordered_spec_float = reordered_specs.builtin(CanonicalBuiltinKind::Float);
