@@ -501,7 +501,7 @@ inline void checkAdapter() {
 		CVQualifier::None);
 	nttp_specialization.set_template_specialization_mixed(
 		TemplateDeclId{11},
-		std::vector<uint8_t>{0, 1},
+		std::vector<SpecTemplateArgKind>{SpecTemplateArgKind::Type, SpecTemplateArgKind::NonType},
 		std::vector<TypeSpecifierNode>{int_arg},
 		std::vector<ExprId>{ExprId{21}});
 	const auto imported_nttp_spec = importCanonicalType(table, nttp_specialization);
@@ -517,7 +517,7 @@ inline void checkAdapter() {
 	rejects([&] {
 		empty_nttp.set_template_specialization_mixed(
 			TemplateDeclId{11},
-			std::vector<uint8_t>{1},
+			std::vector<SpecTemplateArgKind>{SpecTemplateArgKind::NonType},
 			std::vector<TypeSpecifierNode>{},
 			std::vector<ExprId>{ExprId{}});
 	});

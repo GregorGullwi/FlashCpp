@@ -31,6 +31,12 @@ enum class StructEntityParticipation : uint8_t {
 	ShapeOnly,
 };
 
+// Ordered Spec stamp argument discriminant (parallel to type / NTTP payloads).
+enum class SpecTemplateArgKind : uint8_t {
+	Type = 0,
+	NonType = 1,
+};
+
 enum class StructSemanticReadiness : uint8_t {
 	AwaitingSema,
 	SemaReady,
@@ -1998,7 +2004,7 @@ public:
 		if (index >= specialization_arg_kinds_.size()) {
 			throw InternalError("type specifier: specialization arg index out of range");
 		}
-		return specialization_arg_kinds_[index] == 0;
+		return specialization_arg_kinds_[index] == SpecTemplateArgKind::Type;
 	}
 	const TypeSpecifierNode& specialization_arg_type(size_t index) const {
 		if (!specialization_arg_is_type(index)) {
@@ -2006,7 +2012,7 @@ public:
 		}
 		size_t type_index = 0;
 		for (size_t i = 0; i < index; ++i) {
-			if (specialization_arg_kinds_[i] == 0) {
+			if (specialization_arg_kinds_[i] == SpecTemplateArgKind::Type) {
 				++type_index;
 			}
 		}
@@ -2018,7 +2024,7 @@ public:
 		}
 		size_t nttp_index = 0;
 		for (size_t i = 0; i < index; ++i) {
-			if (specialization_arg_kinds_[i] != 0) {
+			if (specialization_arg_kinds_[i] == SpecTemplateArgKind::NonType) {
 				++nttp_index;
 			}
 		}
@@ -2038,13 +2044,13 @@ public:
 		clear_template_parameter_identity();
 		clear_dependent_name_type();
 		specialization_template_decl_ = primary;
-		specialization_arg_kinds_.assign(type_args.size(), 0);
+		specialization_arg_kinds_.assign(type_args.size(), SpecTemplateArgKind::Type);
 		specialization_type_args_ = std::move(type_args);
 		specialization_nttp_args_.clear();
 	}
 	void set_template_specialization_mixed(
 		TemplateDeclId primary,
-		std::vector<uint8_t> arg_kinds,
+		std::vector<SpecTemplateArgKind> arg_kinds,
 		std::vector<TypeSpecifierNode> type_args,
 		std::vector<ExprId> nttp_args) {
 		if (!primary) {
@@ -2052,10 +2058,10 @@ public:
 		}
 		size_t type_count = 0;
 		size_t nttp_count = 0;
-		for (const uint8_t kind : arg_kinds) {
-			if (kind == 0) {
+		for (const SpecTemplateArgKind kind : arg_kinds) {
+			if (kind == SpecTemplateArgKind::Type) {
 				++type_count;
-			} else if (kind == 1) {
+			} else if (kind == SpecTemplateArgKind::NonType) {
 				++nttp_count;
 			} else {
 				throw InternalError("type specifier: invalid specialization arg kind");
@@ -2202,7 +2208,7 @@ private:
 	uint32_t template_parameter_index_ = 0; // Index within that template's parameter list
 	TemplateDeclId specialization_template_decl_; // Primary for stamped specializations
 	TypeId dependent_name_type_; // Canonical base; declarator wrappers remain syntax
-	std::vector<uint8_t> specialization_arg_kinds_; // 0=Type, 1=NonType; parallel to arg order
+	std::vector<SpecTemplateArgKind> specialization_arg_kinds_; // parallel to arg order
 	std::vector<TypeSpecifierNode> specialization_type_args_; // Type payloads only
 	std::vector<ExprId> specialization_nttp_args_; // NonType ExprId payloads only
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;

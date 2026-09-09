@@ -94,7 +94,7 @@ std::optional<std::vector<TypeSpecifierNode>> collectTypeOnlyArgSpecifiers(
 
 struct ClassTemplateArgSpecs {
 	TemplateDeclId primary;
-	std::vector<uint8_t> arg_kinds; // 0=Type, 1=NonType
+	std::vector<SpecTemplateArgKind> arg_kinds;
 	std::vector<TypeSpecifierNode> type_args;
 	std::vector<ASTNode> nttp_expr_nodes;
 };
@@ -156,7 +156,7 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 			if (!arg.isTypeArgument()) {
 				throw InternalError("stamp template specialization: non-type arg for fixed type parameter");
 			}
-			collected.arg_kinds.push_back(0);
+			collected.arg_kinds.push_back(SpecTemplateArgKind::Type);
 			if (index < argument_syntax_nodes.size()) {
 				if (!argument_syntax_nodes[index].is<TypeSpecifierNode>()) {
 					throw InternalError("stamp template specialization: type-arg syntax is not a TypeSpecifierNode");
@@ -179,7 +179,7 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 		if (!isStampableNttpLiteralExpression(expr) || !arg.is_value) {
 			return std::nullopt;
 		}
-		collected.arg_kinds.push_back(1);
+		collected.arg_kinds.push_back(SpecTemplateArgKind::NonType);
 		collected.nttp_expr_nodes.push_back(syntax);
 	}
 	return collected;
@@ -4835,8 +4835,8 @@ void Parser::tryStampDependentInstantiationMemberChain(
 	argument_ids.reserve(collected->arg_kinds.size());
 	size_t type_index = 0;
 	size_t nttp_index = 0;
-	for (const uint8_t kind : collected->arg_kinds) {
-		if (kind == 0) {
+	for (const SpecTemplateArgKind kind : collected->arg_kinds) {
+		if (kind == SpecTemplateArgKind::Type) {
 			const TypeSpecifierNode& arg_spec = collected->type_args[type_index++];
 			if (arg_spec.is_pack_expansion()) {
 				return;
