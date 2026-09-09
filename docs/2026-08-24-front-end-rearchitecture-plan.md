@@ -772,8 +772,10 @@ chains and of type-only member template-ids (`DependentTemplateMember`) is
 landed. Opaque DependentName / DependentTemplateMember chains may also root in a
 type-only `TemplateSpecialization` qualifier (`Primary<Args>::…`). Production
 parser publication of plain DependentInstantiation members on the live
-template-id-then-`::` path is landed; member template-ids on Spec roots,
-other unresolved owner families, and substitution remain deferred.
+template-id-then-`::` path is landed, as is production stamping of type-only
+member template-ids on that same Spec-rooted path when member-arg syntax is
+captured. Non-type member-arg syntax, other unresolved owner families, and
+substitution remain deferred.
 
 Exit criteria:
 

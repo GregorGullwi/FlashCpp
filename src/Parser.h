@@ -4402,15 +4402,17 @@ private:	 // Resume private methods
 
 	// Stamp Primary<Args>::member chains whose owner is a DependentInstantiation
 	// of a published type-only class-template primary. Builds the Spec qualifier
-	// from captured type-arg syntax (or filled type args), then walks plain
-	// members. No-op for other owner kinds, unpublished primaries, NTTP/pack
-	// args, or member template-ids without captured type-only syntax.
+	// from captured type-arg syntax (or filled type args), then walks plain and
+	// type-only member template-id segments. No-op for other owner kinds,
+	// unpublished primaries, NTTP/pack args, or member template-ids without
+	// captured type-only syntax.
 	void tryStampDependentInstantiationMemberChain(
 		TypeSpecifierNode& type_spec,
 		StringHandle primary_template_name,
 		std::span<const TemplateTypeArg> filled_args,
 		std::span<const ASTNode> argument_syntax_nodes,
-		const TypeInfo::DependentQualifiedNameRecord& record);
+		const TypeInfo::DependentQualifiedNameRecord& record,
+		std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax);
 
 	// Walk member_chain from an already-built qualifier TypeId.
 	void stampDependentMemberChainFromQualifier(
