@@ -73,8 +73,18 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 				if (!left_arg || !right_arg) {
 					return false;
 				}
-				if (!sameStructure(left, left.templateArgumentType(left_arg),
-					right, right.templateArgumentType(right_arg))) {
+				const bool left_is_type = left.templateArgumentIsType(left_arg);
+				const bool right_is_type = right.templateArgumentIsType(right_arg);
+				if (left_is_type != right_is_type) {
+					return false;
+				}
+				if (left_is_type) {
+					if (!sameStructure(left, left.templateArgumentType(left_arg),
+						right, right.templateArgumentType(right_arg))) {
+						return false;
+					}
+				} else if (left.templateArgumentExpr(left_arg) !=
+					right.templateArgumentExpr(right_arg)) {
 					return false;
 				}
 				left_arg = left.templateArgumentNext(left_arg);
@@ -1091,10 +1101,81 @@ inline void checkDependentTipResolve() {
 	std::printf("dependent tip resolve: member=%zu\n", sizeof(CanonicalNamedTypeMember));
 }
 
+inline void checkNttpSpecArgs() {
+	CanonicalTypeTable table;
+	const TemplateDeclId env{7};
+	const TypeId param0 = table.templateParameter(env, 0);
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId floating = table.builtin(CanonicalBuiltinKind::Double);
+	const ExprId nttp_a{21};
+	const ExprId nttp_b{22};
+	const CanonicalTemplateArgument mixed_a[] = {
+		CanonicalTemplateArgument::makeType(integer),
+		CanonicalTemplateArgument::makeNonType(nttp_a),
+	};
+	const CanonicalTemplateArgument mixed_b[] = {
+		CanonicalTemplateArgument::makeType(integer),
+		CanonicalTemplateArgument::makeNonType(nttp_b),
+	};
+	const CanonicalTemplateArgument mixed_float[] = {
+		CanonicalTemplateArgument::makeType(floating),
+		CanonicalTemplateArgument::makeNonType(nttp_a),
+	};
+	const CanonicalTemplateArgument nttp_only[] = {
+		CanonicalTemplateArgument::makeNonType(nttp_a),
+	};
+	const TypeId spec_a = table.templateSpecialization(TemplateDeclId{11}, mixed_a);
+	const TypeId spec_b = table.templateSpecialization(TemplateDeclId{11}, mixed_b);
+	const TypeId spec_float = table.templateSpecialization(TemplateDeclId{11}, mixed_float);
+	const TypeId spec_nttp = table.templateSpecialization(TemplateDeclId{11}, nttp_only);
+	require(spec_a != spec_b && spec_a != spec_float && spec_a != spec_nttp);
+	require(table.templateSpecialization(TemplateDeclId{11}, mixed_a) == spec_a);
+	require(table.templateSpecializationDecl(spec_a) == TemplateDeclId{11});
+	const TypeId first = table.templateSpecializationArguments(spec_a);
+	require(table.templateArgumentIsType(first));
+	require(table.templateArgumentType(first) == integer);
+	const TypeId second = table.templateArgumentNext(first);
+	require(!table.templateArgumentIsType(second));
+	require(table.templateArgumentExpr(second) == nttp_a);
+	require(!table.templateArgumentNext(second));
+	rejects([&] { (void)table.templateArgumentType(second); });
+	rejects([&] { (void)table.templateArgumentExpr(first); });
+	rejects([&] {
+		const CanonicalTemplateArgument empty_nttp[] = {
+			CanonicalTemplateArgument::makeNonType(ExprId{}),
+		};
+		(void)table.templateSpecialization(TemplateDeclId{11}, empty_nttp);
+	});
+
+	const TypeId dependent = table.templateSpecialization(TemplateDeclId{11},
+		std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeType(param0),
+			CanonicalTemplateArgument::makeNonType(nttp_a),
+		});
+	const TypeId args[] = {integer};
+	const TypeId subst = table.substitute(dependent, env, args);
+	require(subst == spec_a);
+	require(sameStructure(table, subst, table, spec_a));
+
+	CanonicalTypeTable reordered;
+	const TypeId reordered_int = reordered.builtin(CanonicalBuiltinKind::Int);
+	reordered.dependentName(reordered.templateParameter(env, 0), "unrelated");
+	const CanonicalTemplateArgument reordered_mixed[] = {
+		CanonicalTemplateArgument::makeType(reordered_int),
+		CanonicalTemplateArgument::makeNonType(nttp_a),
+	};
+	const TypeId reordered_spec =
+		reordered.templateSpecialization(TemplateDeclId{11}, reordered_mixed);
+	require(sameStructure(table, spec_a, reordered, reordered_spec));
+
+	std::printf("nttp spec args: node=%zu\n", sizeof(CanonicalTypeNode));
+}
+
 inline int run() {
 	checkDependentNames();
 	checkSubstitution();
 	checkDependentTipResolve();
+	checkNttpSpecArgs();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();
