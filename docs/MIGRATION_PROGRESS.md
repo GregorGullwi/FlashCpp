@@ -5,13 +5,15 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-09 after opaque TemplateSpecialization-as-dependent-qualifier
-identity on `codex/boundary-3a-dependent-instantiation-qualifier`
+Last updated: 2026-09-09 after production DependentInstantiation stamping of
+plain `Primary<Args>::member` chains on
+`codex/boundary-3a-dependent-instantiation-qualifier`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's Spec-as-dependent-qualifier opaque slice is on
-`codex/boundary-3a-dependent-instantiation-qualifier` for review. Production
+Architecture boundary 3A's DependentInstantiation production-stamp slice is on
+`codex/boundary-3a-dependent-instantiation-qualifier` for review (opaque
+Spec-as-qualifier identity plus production plain-member publication). Production
 type-only member template-id stamping, DependentTemplateMember identity,
 plain dependent-member publication, opaque DependentName identity, production
 type-only template-id stamping, type-only TemplateSpecialization TypeIds,
@@ -92,11 +94,14 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   Binding is never recovered from flat TypeIndex names or `TemplateArgInfo`
   spellings. `::template` is a parse disambiguator and is not stored. Stamping
   is a no-op for unpublished templates, non-type parameters,
-  `DependentInstantiation` / other qualifier families (`T<Args>::…`), and
-  later template-id segments whose type-only syntax was not captured. Table
-  identity already accepts Spec-rooted dependent chains; production publication
-  of those DependentInstantiation owners stays deferred. The adapter also
-  imports structured callables, flat TypeIndex projections, and dependent-
+  CurrentInstantiation / UnknownSpecialization owners, NTTP / pack /
+  template-template specialization arguments, and member template-ids on Spec
+  roots without captured type-only member-arg syntax. Plain
+  DependentInstantiation members (`Primary<Args>::member`, nested plain tails)
+  are stamped on the live template-id-then-`::` placeholder path: the owner
+  Spec is built from the published primary's TemplateDeclId plus type-only
+  argument TypeIds, then the member chain walks with DependentName. The adapter
+  also imports structured callables, flat TypeIndex projections, and dependent-
   noexcept signatures with published `ExprId` as Supported when every component
   imports. Invalid-category TypeIndex projections stay UnmigratedCallable. The
   production adapter fixture remains 25 supported / 0 deferred and emits
@@ -105,8 +110,8 @@ and richer specialization arguments still block expanding shadow/merge coverage.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes production DependentInstantiation stamping
-  (`T<Args>::…`), substitution, NTTP / template-template / pack specialization
+- Remaining 3A work includes Spec-rooted member template-ids, other unresolved
+  owner families, substitution, NTTP / template-template / pack specialization
   arguments, function/nested/member TemplateDeclId publication, complete
   declarator interleaving, and deletion of the flat semantic representation.
   Stop here for review before starting another family, 3B, or the parallel
@@ -180,15 +185,15 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the Spec-as-dependent-qualifier opaque slice: native
-canonical tests and source-copy mutations pass, including
-`lost_specialization_dependent_qualifier`; `Primary<int,float>::value_type`
-differs from a swapped-arg or other-primary root; Spec-rooted
-`DependentTemplateMember` nests plain DependentName tails; builtins and Record
-owners remain rejected as qualifiers; adapter import of Spec-rooted tip bindings
-works through existing DependentName / DependentTemplateMember shaping.
-Production DependentInstantiation stamping stays deferred. Adjacent `_ret0`
-coverage includes `test_canonical_dependent_instantiation_ret0.cpp`
+Latest validation for the DependentInstantiation production-stamp slice: native
+canonical tests and source-copy mutations pass; Spec-rooted tip bindings remain
+DependentName / DependentTemplateMember whose qualifier is TemplateSpecialization;
+production stamping runs on the live template-id-then-`::` placeholder path for
+plain members of published type-only primaries, fail-closes on NTTP/pack/member
+template-id segments without captured type-only syntax, and does not rebuild
+identity from TypeIndex names. CurrentInstantiation / UnknownSpecialization
+owners stay unstamped. Adjacent `_ret0` coverage includes
+`test_canonical_dependent_instantiation_ret0.cpp`
 (`Pair<T,U>::first` versus `Pair<U,T>::first` plus nested struct member) and
 prior dependent-name / template-id / specialization ret0s. The Windows suite is
 2,984 single-file cases, 264 negative tests, and 12 multi-TU cases. Fixed-corpus
@@ -254,10 +259,11 @@ Advanced, not completed:
   identity, production type-only template-id stamping for published primaries,
   opaque DependentName identity with production publication of plain-identifier
   chains rooted in published type parameters, opaque DependentTemplateMember
-  identity with production stamping of type-only member template-ids, and opaque
+  identity with production stamping of type-only member template-ids, opaque
   DependentName / DependentTemplateMember chains rooted in type-only
-  TemplateSpecialization qualifiers (`Primary<Args>::…`) are landed; production
-  DependentInstantiation stamping, other unresolved owner families, substitution,
+  TemplateSpecialization qualifiers, and production stamping of plain
+  DependentInstantiation members (`Primary<Args>::member`) are landed;
+  Spec-rooted member template-ids, other unresolved owner families, substitution,
   function/nested/member template publication, NTTP / template-template / pack
   specialization arguments, alias, unpublished/incomplete nominal, anonymous-union,
   and unpublished-base forms stay deferred. Remaining families and flat-field
@@ -280,11 +286,11 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Finish 3A's production DependentInstantiation stamping (`T<Args>::…` on the
-  live template-id-then-`::` path), then substitution, richer specialization
-  arguments, and adapters before expanding boundary-1 shadow coverage (default
-  arguments, exception specifications, friends, templates) or removing
-  `SymbolTable` merge / `matches_signature` authority.
+- Finish 3A's Spec-rooted member template-ids and other unresolved owner
+  families, then substitution, richer specialization arguments, and adapters
+  before expanding boundary-1 shadow coverage (default arguments, exception
+  specifications, friends, templates) or removing `SymbolTable` merge /
+  `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

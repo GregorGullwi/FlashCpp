@@ -770,9 +770,10 @@ The first dependent-name slice provides opaque plain-identifier chains rooted
 in published type parameters. Production parser publication of those plain
 chains and of type-only member template-ids (`DependentTemplateMember`) is
 landed. Opaque DependentName / DependentTemplateMember chains may also root in a
-type-only `TemplateSpecialization` qualifier (`Primary<Args>::…`) without
-parser publication yet; production DependentInstantiation stamping and
-substitution remain deferred.
+type-only `TemplateSpecialization` qualifier (`Primary<Args>::…`). Production
+parser publication of plain DependentInstantiation members on the live
+template-id-then-`::` path is landed; member template-ids on Spec roots,
+other unresolved owner families, and substitution remain deferred.
 
 Exit criteria:
 

@@ -1,5 +1,6 @@
 // Dependent members of type-only specializations remain distinct by primary and
 // argument identity until substitution; Pair<T,U>::first is not Pair<U,T>::first.
+// Production parse stamps Spec-rooted DependentName on that DependentInstantiation path.
 struct Payload {
 	short value;
 };
