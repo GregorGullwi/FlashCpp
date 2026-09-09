@@ -1991,6 +1991,10 @@ public:
 	// Class-template specialization stamp: published primary TemplateDeclId plus
 	// ordered Type / literal-NTTP (ExprId) arguments. Adapter imports these into
 	// CanonicalTemplateArgument lists. Pack / template-template stay unstamped.
+	// Storage is parallel kind / TypeSpecifierNode / ExprId vectors because a
+	// joint struct cannot contain TypeSpecifierNode. After type args import as
+	// TypeId, collapse to CanonicalTemplateArgument; do not heap-indirect
+	// TypeSpecifierNode or add a third payload vector for pack / template-template.
 	bool has_template_specialization() const {
 		return static_cast<bool>(specialization_template_decl_);
 	}

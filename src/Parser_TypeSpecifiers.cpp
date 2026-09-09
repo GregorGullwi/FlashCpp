@@ -94,7 +94,9 @@ std::optional<std::vector<TypeSpecifierNode>> collectTypeOnlyArgSpecifiers(
 
 struct ClassTemplateArgSpecs {
 	TemplateDeclId primary;
-	// Type args are TypeSpecifierNode; literal NTTP args are ExpressionNode ASTNodes.
+	// Joint syntax list (TypeSpecifierNode vs ExpressionNode ASTNode). Stamp
+	// storage on TypeSpecifierNode stays parallel until type args are TypeIds;
+	// then collapse it to CanonicalTemplateArgument.
 	std::vector<std::variant<TypeSpecifierNode, ASTNode>> args;
 };
 
