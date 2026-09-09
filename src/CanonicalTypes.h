@@ -31,30 +31,36 @@ enum class CanonicalTypeKind : uint8_t {
 	Function, FunctionParam, Record, MemberObjectPointer, MemberFunctionPointer,
 	Enum, TemplateParameter, TemplateSpecialization, TemplateArg,
 	DependentName, DependentTemplateMember, NameBytes,
-	// Internal Spec/DTM argument-list link carrying an opaque ExprId NTTP value.
-	NonTypeTemplateArg,
+	// Internal Spec/DTM argument-list links carrying opaque payload identities.
+	NonTypeTemplateArg, TemplateTemplateArg,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
 	Type = 0,
 	NonType = 1,
+	Template = 2,
 };
 
-// Mixed type / NTTP specialization argument. Type uses TypeId; NonType uses
-// opaque ExprId identity (no constant folding here). Pack / template-template
-// arguments remain out of scope.
+// Mixed specialization argument. Type uses TypeId, NonType uses opaque ExprId
+// identity (no constant folding here), and Template uses a published primary
+// class TemplateDeclId. Concrete packs expand into this ordered list.
 struct CanonicalTemplateArgument {
 	CanonicalTemplateArgKind kind;
 	TypeId type;
 	ExprId expr;
+	TemplateDeclId template_decl;
 
 	static CanonicalTemplateArgument makeType(TypeId type_id) {
 		return CanonicalTemplateArgument{
-			CanonicalTemplateArgKind::Type, type_id, ExprId{}};
+			CanonicalTemplateArgKind::Type, type_id, ExprId{}, TemplateDeclId{}};
 	}
 	static CanonicalTemplateArgument makeNonType(ExprId expr_id) {
 		return CanonicalTemplateArgument{
-			CanonicalTemplateArgKind::NonType, TypeId{}, expr_id};
+			CanonicalTemplateArgKind::NonType, TypeId{}, expr_id, TemplateDeclId{}};
+	}
+	static CanonicalTemplateArgument makeTemplate(TemplateDeclId template_decl_id) {
+		return CanonicalTemplateArgument{
+			CanonicalTemplateArgKind::Template, TypeId{}, ExprId{}, template_decl_id};
 	}
 };
 
@@ -146,9 +152,10 @@ inline TypeId unpackDependentTemplateMemberArgs(uint64_t array_extent) {
 // and optional dependent-noexcept ExprId in the high 32 bits. TemplateParameter
 // nodes pack TemplateDeclId in the low 32 bits and parameter index in the high
 // 32 bits. TemplateSpecialization stores TemplateDeclId in array_extent and the
-// first TemplateArg / NonTypeTemplateArg link in child. TemplateArg links store
-// a type TypeId in array_extent; NonTypeTemplateArg links store an opaque NTTP
-// ExprId there. DependentName stores its qualifier in child and a NameBytes link
+// first TemplateArg / NonTypeTemplateArg / TemplateTemplateArg link in child.
+// TemplateArg links store a type TypeId in array_extent; NonTypeTemplateArg links
+// store an opaque NTTP ExprId; TemplateTemplateArg links store a published primary
+// class TemplateDeclId. DependentName stores its qualifier in child and a NameBytes link
 // in array_extent. DependentTemplateMember stores its qualifier in child and
 // packs a NameBytes link (low 32) with a type-only TemplateArg chain head
 // (high 32) in array_extent — the unresolved member template-id form without a
@@ -592,8 +599,9 @@ public:
 	}
 
 	// Class-template specialization identity: primary TemplateDeclId plus a
-	// linked list of type TypeIds and/or opaque NTTP ExprIds. Template-template
-	// and pack arguments are out of scope; callers must not invent TemplateDeclIds.
+	// linked list of type TypeIds, opaque NTTP ExprIds, and/or published primary
+	// class TemplateDeclIds. Concrete packs expand into the ordered link list;
+	// callers must not invent TemplateDeclIds.
 	TypeId templateSpecialization(TemplateDeclId primary,
 		std::span<const CanonicalTemplateArgument> arguments) {
 		std::lock_guard lock(mutex_);
@@ -973,6 +981,32 @@ public:
 		return ExprId{static_cast<uint32_t>(input.array_extent)};
 	}
 
+	TemplateDeclId templateArgumentTemplate(TypeId arg_link) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(arg_link);
+		if (input.kind != CanonicalTypeKind::TemplateTemplateArg) {
+			throw InternalError("canonical type: TypeId is not a template-template argument link");
+		}
+		return TemplateDeclId{static_cast<uint32_t>(input.array_extent)};
+	}
+
+	CanonicalTemplateArgKind templateArgumentKind(TypeId arg_link) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(arg_link);
+		if (input.kind == CanonicalTypeKind::TemplateArg) {
+			return CanonicalTemplateArgKind::Type;
+		}
+		if (input.kind == CanonicalTypeKind::NonTypeTemplateArg) {
+			return CanonicalTemplateArgKind::NonType;
+		}
+		if (input.kind == CanonicalTypeKind::TemplateTemplateArg) {
+			return CanonicalTemplateArgKind::Template;
+		}
+		throw InternalError("canonical type: TypeId is not a template argument link");
+	}
+
 	bool templateArgumentIsType(TypeId arg_link) const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -983,6 +1017,9 @@ public:
 		if (input.kind == CanonicalTypeKind::NonTypeTemplateArg) {
 			return false;
 		}
+		if (input.kind == CanonicalTypeKind::TemplateTemplateArg) {
+			return false;
+		}
 		throw InternalError("canonical type: TypeId is not a template argument link");
 	}
 
@@ -991,7 +1028,8 @@ public:
 		checkTransactionThread();
 		const auto input = nodeUnlocked(arg_link);
 		if (input.kind != CanonicalTypeKind::TemplateArg &&
-			input.kind != CanonicalTypeKind::NonTypeTemplateArg) {
+			input.kind != CanonicalTypeKind::NonTypeTemplateArg &&
+			input.kind != CanonicalTypeKind::TemplateTemplateArg) {
 			throw InternalError("canonical type: TypeId is not a template argument link");
 		}
 		return input.child;
@@ -1324,6 +1362,7 @@ private:
 	static bool isInternalLink(CanonicalTypeKind kind) {
 		return kind == CanonicalTypeKind::FunctionParam || kind == CanonicalTypeKind::TemplateArg ||
 			kind == CanonicalTypeKind::NonTypeTemplateArg ||
+			kind == CanonicalTypeKind::TemplateTemplateArg ||
 			kind == CanonicalTypeKind::NameBytes;
 	}
 
@@ -1409,6 +1448,20 @@ private:
 				});
 				continue;
 			}
+			if (argument.kind == CanonicalTemplateArgKind::Template) {
+				if (!argument.template_decl) {
+					throw InternalError("canonical type: invalid template specialization template argument");
+				}
+				arg_link = internUnlocked({
+					.child = arg_link,
+					.kind = CanonicalTypeKind::TemplateTemplateArg,
+					.builtin = CanonicalBuiltinKind::Void,
+					.qualifiers = CVQualifier::None,
+					.flags = CanonicalTypeNodeFlags::None,
+					.array_extent = argument.template_decl.value,
+				});
+				continue;
+			}
 			throw InternalError("canonical type: invalid template argument kind");
 		}
 		return arg_link;
@@ -1478,6 +1531,7 @@ private:
 				case CanonicalTypeKind::FunctionParam:
 				case CanonicalTypeKind::TemplateArg:
 				case CanonicalTypeKind::NonTypeTemplateArg:
+				case CanonicalTypeKind::TemplateTemplateArg:
 				case CanonicalTypeKind::NameBytes:
 					throw InternalError("canonical type: substitute root cannot be an internal link");
 				case CanonicalTypeKind::Qualified:
@@ -1499,11 +1553,12 @@ private:
 						const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
 						if (arg_node.kind == CanonicalTypeKind::TemplateArg) {
 							stack.push_back({TypeId{static_cast<uint32_t>(arg_node.array_extent)}, false});
-						} else if (arg_node.kind == CanonicalTypeKind::NonTypeTemplateArg) {
+						} else if (arg_node.kind == CanonicalTypeKind::NonTypeTemplateArg ||
+							arg_node.kind == CanonicalTypeKind::TemplateTemplateArg) {
 							if (node.kind == CanonicalTypeKind::DependentTemplateMember) {
-								throw InternalError("canonical type: dependent template-member NTTP args are deferred");
+								throw InternalError("canonical type: dependent template-member non-type/template args are deferred");
 							}
-							// Spec NTTP ExprIds are opaque and do not enter the substitute graph.
+							// Opaque Spec non-type/template arguments do not enter the substitute graph.
 						} else {
 							throw InternalError("canonical type: corrupt template argument link");
 						}
@@ -1628,6 +1683,9 @@ private:
 					} else if (arg_node.kind == CanonicalTypeKind::NonTypeTemplateArg) {
 						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeNonType(
 							ExprId{static_cast<uint32_t>(arg_node.array_extent)}));
+					} else if (arg_node.kind == CanonicalTypeKind::TemplateTemplateArg) {
+						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeTemplate(
+							TemplateDeclId{static_cast<uint32_t>(arg_node.array_extent)}));
 					} else {
 						throw InternalError("canonical type: corrupt template argument link");
 					}
@@ -2052,7 +2110,8 @@ private:
 				while (cursor) {
 					const CanonicalTypeNode arg = nodeUnlocked(cursor);
 					shape.append('/');
-					if (arg.kind == CanonicalTypeKind::NonTypeTemplateArg) {
+					if (arg.kind == CanonicalTypeKind::NonTypeTemplateArg ||
+						arg.kind == CanonicalTypeKind::TemplateTemplateArg) {
 						appendNodeTraceFields(shape, arg, arg.array_extent);
 					} else {
 						appendNodeTraceFields(shape, arg, 0);
@@ -2074,13 +2133,16 @@ private:
 			appendNodeTraceFields(shape, current,
 				current.kind == CanonicalTypeKind::FunctionParam ||
 					current.kind == CanonicalTypeKind::TemplateArg ||
-					current.kind == CanonicalTypeKind::NonTypeTemplateArg
-					? (current.kind == CanonicalTypeKind::NonTypeTemplateArg ? current.array_extent : 0)
+					current.kind == CanonicalTypeKind::NonTypeTemplateArg ||
+					current.kind == CanonicalTypeKind::TemplateTemplateArg
+					? ((current.kind == CanonicalTypeKind::NonTypeTemplateArg ||
+						current.kind == CanonicalTypeKind::TemplateTemplateArg) ? current.array_extent : 0)
 					: current.array_extent);
 			if (!current.child || current.kind == CanonicalTypeKind::Builtin ||
 				current.kind == CanonicalTypeKind::FunctionParam ||
 				current.kind == CanonicalTypeKind::TemplateArg ||
 				current.kind == CanonicalTypeKind::NonTypeTemplateArg ||
+				current.kind == CanonicalTypeKind::TemplateTemplateArg ||
 				current.kind == CanonicalTypeKind::Record ||
 				current.kind == CanonicalTypeKind::TemplateParameter) {
 				break;
@@ -2148,7 +2210,8 @@ private:
 			while (cursor) {
 				const CanonicalTypeNode arg = nodeUnlocked(cursor);
 				shape.append('/');
-				if (arg.kind == CanonicalTypeKind::NonTypeTemplateArg) {
+				if (arg.kind == CanonicalTypeKind::NonTypeTemplateArg ||
+					arg.kind == CanonicalTypeKind::TemplateTemplateArg) {
 					appendNodeTraceFields(shape, arg, arg.array_extent);
 				} else {
 					appendNodeTraceFields(shape, arg, 0);
@@ -2166,7 +2229,8 @@ private:
 			appendTypeIdTrace(shape, TypeId{static_cast<uint32_t>(node.array_extent)});
 			return;
 		}
-		if (node.kind == CanonicalTypeKind::NonTypeTemplateArg) {
+		if (node.kind == CanonicalTypeKind::NonTypeTemplateArg ||
+			node.kind == CanonicalTypeKind::TemplateTemplateArg) {
 			appendNodeTraceFields(shape, node, node.array_extent);
 			return;
 		}

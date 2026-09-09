@@ -4379,10 +4379,11 @@ private:	 // Resume private methods
 	}
 
 	// Stamp class-template specializations when the primary already published a
-	// TemplateDeclId. Type arguments and stampable literal NTTP ExpressionNodes
-	// (bool / integral NumericLiteral) are accepted; packs, template-template,
-	// dependent NTTP, unpublished nested/member templates, and incomplete default
-	// fill remain no-ops. Broken Type-parameter shape ICEs.
+	// TemplateDeclId. Type arguments, stampable literal NTTP ExpressionNodes
+	// (bool / integral NumericLiteral), and concrete published primary-class
+	// template-template arguments are accepted; packs, dependent NTTP,
+	// unpublished nested/member templates, and incomplete default fill remain
+	// no-ops. Broken parameter shape ICEs.
 	void tryStampTypeOnlyClassTemplateSpecialization(
 		TypeSpecifierNode& type_spec,
 		StringHandle primary_template_name,
@@ -4407,8 +4408,8 @@ private:	 // Resume private methods
 	// captured type / literal-NTTP arg syntax (or filled type args), then walks
 	// plain and type-only member template-id segments. owner_kind stays parse
 	// metadata; structural identity is Spec-rooted. No-op for TemplateParameter
-	// owners, unpublished primaries, pack/template-template args, dependent NTTP,
-	// or member template-ids without captured type-only syntax.
+	// owners, unpublished primaries, packs, dependent NTTP, or member template-ids
+	// without captured type-only syntax.
 	void tryStampDependentInstantiationMemberChain(
 		TypeSpecifierNode& type_spec,
 		StringHandle primary_template_name,

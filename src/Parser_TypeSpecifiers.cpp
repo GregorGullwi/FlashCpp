@@ -94,10 +94,11 @@ std::optional<std::vector<TypeSpecifierNode>> collectTypeOnlyArgSpecifiers(
 
 struct ClassTemplateArgSpecs {
 	TemplateDeclId primary;
-	// Joint syntax list (TypeSpecifierNode vs ExpressionNode ASTNode). Stamp
+	// Joint syntax list (TypeSpecifierNode vs ExpressionNode ASTNode vs published
+	// primary class TemplateDeclId). Stamp
 	// storage on TypeSpecifierNode stays parallel until type args are TypeIds;
 	// then collapse it to CanonicalTemplateArgument.
-	std::vector<std::variant<TypeSpecifierNode, ASTNode>> args;
+	std::vector<std::variant<TypeSpecifierNode, ASTNode, TemplateDeclId>> args;
 };
 
 bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
@@ -113,14 +114,14 @@ bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
 void applyCollectedClassTemplateArgSpecs(
 	TypeSpecifierNode& type_spec,
 	ClassTemplateArgSpecs collected) {
-	bool has_nttp = false;
+	bool has_non_type_or_template = false;
 	for (const auto& arg : collected.args) {
-		if (std::holds_alternative<ASTNode>(arg)) {
-			has_nttp = true;
+		if (!std::holds_alternative<TypeSpecifierNode>(arg)) {
+			has_non_type_or_template = true;
 			break;
 		}
 	}
-	if (!has_nttp) {
+	if (!has_non_type_or_template) {
 		std::vector<TypeSpecifierNode> type_args;
 		type_args.reserve(collected.args.size());
 		for (auto& arg : collected.args) {
@@ -132,15 +133,22 @@ void applyCollectedClassTemplateArgSpecs(
 	std::vector<SpecTemplateArgKind> arg_kinds;
 	std::vector<TypeSpecifierNode> type_args;
 	std::vector<ExprId> nttp_ids;
+	std::vector<TemplateDeclId> template_ids;
 	arg_kinds.reserve(collected.args.size());
 	type_args.reserve(collected.args.size());
 	nttp_ids.reserve(collected.args.size());
+	template_ids.reserve(collected.args.size());
 	DependentExpressionTable& exprs =
 		requireFrontendContext().dependentExpressions();
 	for (auto& arg : collected.args) {
 		if (TypeSpecifierNode* type_arg = std::get_if<TypeSpecifierNode>(&arg)) {
 			arg_kinds.push_back(SpecTemplateArgKind::Type);
 			type_args.push_back(std::move(*type_arg));
+			continue;
+		}
+		if (TemplateDeclId* template_arg = std::get_if<TemplateDeclId>(&arg)) {
+			arg_kinds.push_back(SpecTemplateArgKind::Template);
+			template_ids.push_back(*template_arg);
 			continue;
 		}
 		arg_kinds.push_back(SpecTemplateArgKind::NonType);
@@ -150,13 +158,15 @@ void applyCollectedClassTemplateArgSpecs(
 		collected.primary,
 		std::move(arg_kinds),
 		std::move(type_args),
-		std::move(nttp_ids));
+		std::move(nttp_ids),
+		std::move(template_ids));
 }
 
 // Shared gates for class-template specialization stamping: published primary
-// TemplateDeclId, fixed Type/NonType arity (no packs / template-template), and
-// TypeSpecifierNode or stampable literal NTTP ExpressionNode args. Deferred
-// cases return nullopt; broken Type/NonType shape throws.
+// TemplateDeclId, fixed Type/NonType/Template arity (no packs), and
+// TypeSpecifierNode, stampable literal NTTP ExpressionNode, or a published
+// primary-class TemplateDeclId argument. Deferred cases return nullopt; broken
+// parameter/argument shape throws.
 std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	StringHandle primary_template_name,
 	std::span<const TemplateTypeArg> filled_args,
@@ -181,7 +191,8 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	for (const TemplateParameterNode& param : template_params) {
 		if (param.is_variadic() ||
 			(param.kind() != TemplateParameterKind::Type &&
-				param.kind() != TemplateParameterKind::NonType)) {
+				param.kind() != TemplateParameterKind::NonType &&
+				param.kind() != TemplateParameterKind::Template)) {
 			return std::nullopt;
 		}
 	}
@@ -191,7 +202,7 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	for (size_t index = 0; index < filled_args.size(); ++index) {
 		const TemplateParameterNode& param = template_params[index];
 		const TemplateTypeArg& arg = filled_args[index];
-		if (arg.is_pack || arg.is_template_template_arg) {
+		if (arg.is_pack) {
 			return std::nullopt;
 		}
 		if (param.kind() == TemplateParameterKind::Type) {
@@ -206,6 +217,22 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 			} else {
 				collected.args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, token));
 			}
+			continue;
+		}
+		if (param.kind() == TemplateParameterKind::Template) {
+			if (!arg.is_template_template_arg || !arg.template_name_handle.isValid()) {
+				throw InternalError("stamp template specialization: non-template arg for fixed template parameter");
+			}
+			auto template_opt = gTemplateRegistry.lookupTemplate(arg.template_name_handle);
+			if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+				return std::nullopt;
+			}
+			const TemplateClassDeclarationNode& template_arg =
+				template_opt->as<TemplateClassDeclarationNode>();
+			if (!template_arg.has_template_decl_id()) {
+				return std::nullopt;
+			}
+			collected.args.push_back(template_arg.template_decl_id());
 			continue;
 		}
 		// NonType: only stamp when explicit syntax is a bool/integral literal.
@@ -4855,6 +4882,10 @@ void Parser::tryStampDependentInstantiationMemberChain(
 				return;
 			}
 			argument_ids.push_back(CanonicalTemplateArgument::makeType(imported.type));
+			continue;
+		}
+		if (const TemplateDeclId* template_arg = std::get_if<TemplateDeclId>(&arg)) {
+			argument_ids.push_back(CanonicalTemplateArgument::makeTemplate(*template_arg));
 			continue;
 		}
 		const ExprId expr_id = exprs.intern(std::get<ASTNode>(arg));

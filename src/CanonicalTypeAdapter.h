@@ -550,6 +550,14 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 			argument_ids.push_back(CanonicalTemplateArgument::makeType(imported_argument.type));
 			continue;
 		}
+		if (syntax.specialization_arg_is_template(index)) {
+			const TemplateDeclId template_decl = syntax.specialization_arg_template(index);
+			if (!template_decl) {
+				return {{}, CanonicalTypeImportStatus::Unresolved};
+			}
+			argument_ids.push_back(CanonicalTemplateArgument::makeTemplate(template_decl));
+			continue;
+		}
 		const ExprId expr = syntax.specialization_arg_expr(index);
 		if (!expr) {
 			return {{}, CanonicalTypeImportStatus::Unresolved};

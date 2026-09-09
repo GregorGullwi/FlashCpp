@@ -35,6 +35,7 @@ enum class StructEntityParticipation : uint8_t {
 enum class SpecTemplateArgKind : uint8_t {
 	Type = 0,
 	NonType = 1,
+	Template = 2,
 };
 
 enum class StructSemanticReadiness : uint8_t {
@@ -1989,8 +1990,8 @@ public:
 	}
 
 	// Class-template specialization stamp: published primary TemplateDeclId plus
-	// ordered Type / literal-NTTP (ExprId) arguments. Adapter imports these into
-	// CanonicalTemplateArgument lists. Pack / template-template stay unstamped.
+	// ordered Type / literal-NTTP (ExprId) / published-primary-template arguments.
+	// Adapter imports these into CanonicalTemplateArgument lists. Packs stay unstamped.
 	// Storage is parallel kind / TypeSpecifierNode / ExprId vectors because a
 	// joint struct cannot contain TypeSpecifierNode. After type args import as
 	// TypeId, collapse to CanonicalTemplateArgument; do not heap-indirect
@@ -2009,6 +2010,12 @@ public:
 			throw InternalError("type specifier: specialization arg index out of range");
 		}
 		return specialization_arg_kinds_[index] == SpecTemplateArgKind::Type;
+	}
+	bool specialization_arg_is_template(size_t index) const {
+		if (index >= specialization_arg_kinds_.size()) {
+			throw InternalError("type specifier: specialization arg index out of range");
+		}
+		return specialization_arg_kinds_[index] == SpecTemplateArgKind::Template;
 	}
 	const TypeSpecifierNode& specialization_arg_type(size_t index) const {
 		if (!specialization_arg_is_type(index)) {
@@ -2034,6 +2041,18 @@ public:
 		}
 		return specialization_nttp_args_[nttp_index];
 	}
+	TemplateDeclId specialization_arg_template(size_t index) const {
+		if (!specialization_arg_is_template(index)) {
+			throw InternalError("type specifier: expected template specialization argument");
+		}
+		size_t template_index = 0;
+		for (size_t i = 0; i < index; ++i) {
+			if (specialization_arg_kinds_[i] == SpecTemplateArgKind::Template) {
+				++template_index;
+			}
+		}
+		return specialization_template_args_[template_index];
+	}
 	// Type-payload view (type slots only, in left-to-right type order). Prefer
 	// specialization_arg_* for mixed Spec walks.
 	std::span<const TypeSpecifierNode> specialization_type_args() const {
@@ -2051,32 +2070,43 @@ public:
 		specialization_arg_kinds_.assign(type_args.size(), SpecTemplateArgKind::Type);
 		specialization_type_args_ = std::move(type_args);
 		specialization_nttp_args_.clear();
+		specialization_template_args_.clear();
 	}
 	void set_template_specialization_mixed(
 		TemplateDeclId primary,
 		std::vector<SpecTemplateArgKind> arg_kinds,
 		std::vector<TypeSpecifierNode> type_args,
-		std::vector<ExprId> nttp_args) {
+		std::vector<ExprId> nttp_args,
+		std::vector<TemplateDeclId> template_args) {
 		if (!primary) {
 			throw InternalError("type specifier: invalid specialization TemplateDeclId");
 		}
 		size_t type_count = 0;
 		size_t nttp_count = 0;
+		size_t template_count = 0;
 		for (const SpecTemplateArgKind kind : arg_kinds) {
 			if (kind == SpecTemplateArgKind::Type) {
 				++type_count;
 			} else if (kind == SpecTemplateArgKind::NonType) {
 				++nttp_count;
+			} else if (kind == SpecTemplateArgKind::Template) {
+				++template_count;
 			} else {
 				throw InternalError("type specifier: invalid specialization arg kind");
 			}
 		}
-		if (type_count != type_args.size() || nttp_count != nttp_args.size()) {
+		if (type_count != type_args.size() || nttp_count != nttp_args.size() ||
+			template_count != template_args.size()) {
 			throw InternalError("type specifier: specialization arg payload mismatch");
 		}
 		for (const ExprId expr : nttp_args) {
 			if (!expr) {
 				throw InternalError("type specifier: empty specialization NTTP ExprId");
+			}
+		}
+		for (const TemplateDeclId template_decl : template_args) {
+			if (!template_decl) {
+				throw InternalError("type specifier: empty specialization TemplateDeclId");
 			}
 		}
 		clear_template_parameter_identity();
@@ -2085,12 +2115,14 @@ public:
 		specialization_arg_kinds_ = std::move(arg_kinds);
 		specialization_type_args_ = std::move(type_args);
 		specialization_nttp_args_ = std::move(nttp_args);
+		specialization_template_args_ = std::move(template_args);
 	}
 	void clear_template_specialization() {
 		specialization_template_decl_ = {};
 		specialization_arg_kinds_.clear();
 		specialization_type_args_.clear();
 		specialization_nttp_args_.clear();
+		specialization_template_args_.clear();
 	}
 
 	// Opaque bridge for a canonical dependent-name base in the owning context.
@@ -2133,6 +2165,7 @@ public:
 		specialization_arg_kinds_ = other.specialization_arg_kinds_;
 		specialization_type_args_ = other.specialization_type_args_;
 		specialization_nttp_args_ = other.specialization_nttp_args_;
+		specialization_template_args_ = other.specialization_template_args_;
 		injected_class_declaration_ = other.injected_class_declaration_;
 		member_class_entity_ = other.member_class_entity_;
 		type_entity_ = other.type_entity_;
@@ -2215,6 +2248,7 @@ private:
 	std::vector<SpecTemplateArgKind> specialization_arg_kinds_; // parallel to arg order
 	std::vector<TypeSpecifierNode> specialization_type_args_; // Type payloads only
 	std::vector<ExprId> specialization_nttp_args_; // NonType ExprId payloads only
+	std::vector<TemplateDeclId> specialization_template_args_; // Template payloads only
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	EntityId member_class_entity_; // Published class owner; never StringHandle identity
