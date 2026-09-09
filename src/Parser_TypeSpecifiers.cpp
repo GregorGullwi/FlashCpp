@@ -92,16 +92,28 @@ std::optional<std::vector<TypeSpecifierNode>> collectTypeOnlyArgSpecifiers(
 	return specifiers;
 }
 
-struct TypeOnlyClassTemplateArgSpecs {
+struct ClassTemplateArgSpecs {
 	TemplateDeclId primary;
+	std::vector<uint8_t> arg_kinds; // 0=Type, 1=NonType
 	std::vector<TypeSpecifierNode> type_args;
+	std::vector<ASTNode> nttp_expr_nodes;
 };
 
-// Shared gates for type-only class-template specialization stamping: published
-// primary TemplateDeclId, fixed type-parameter arity, and TypeSpecifierNode args
-// from syntax when present. Deferred cases return nullopt; broken Type-only
-// shape throws.
-std::optional<TypeOnlyClassTemplateArgSpecs> collectTypeOnlyClassTemplateArgSpecs(
+bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
+	if (std::holds_alternative<BoolLiteralNode>(expr)) {
+		return true;
+	}
+	if (const NumericLiteralNode* lit = std::get_if<NumericLiteralNode>(&expr)) {
+		return isIntegralType(lit->type()) && std::holds_alternative<unsigned long long>(lit->value());
+	}
+	return false;
+}
+
+// Shared gates for class-template specialization stamping: published primary
+// TemplateDeclId, fixed Type/NonType arity (no packs / template-template), and
+// TypeSpecifierNode or stampable literal NTTP ExpressionNode args. Deferred
+// cases return nullopt; broken Type/NonType shape throws.
+std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	StringHandle primary_template_name,
 	std::span<const TemplateTypeArg> filled_args,
 	std::span<const ASTNode> argument_syntax_nodes,
@@ -123,26 +135,52 @@ std::optional<TypeOnlyClassTemplateArgSpecs> collectTypeOnlyClassTemplateArgSpec
 		return std::nullopt;
 	}
 	for (const TemplateParameterNode& param : template_params) {
-		if (param.kind() != TemplateParameterKind::Type || param.is_variadic()) {
+		if (param.is_variadic() ||
+			(param.kind() != TemplateParameterKind::Type &&
+				param.kind() != TemplateParameterKind::NonType)) {
 			return std::nullopt;
 		}
 	}
-	TypeOnlyClassTemplateArgSpecs collected;
+	ClassTemplateArgSpecs collected;
 	collected.primary = primary.template_decl_id();
+	collected.arg_kinds.reserve(filled_args.size());
 	collected.type_args.reserve(filled_args.size());
+	collected.nttp_expr_nodes.reserve(filled_args.size());
 	for (size_t index = 0; index < filled_args.size(); ++index) {
+		const TemplateParameterNode& param = template_params[index];
 		const TemplateTypeArg& arg = filled_args[index];
-		if (!arg.isTypeArgument() || arg.is_pack) {
-			throw InternalError("stamp template specialization: non-type or pack arg for fixed type parameter");
+		if (arg.is_pack || arg.is_template_template_arg) {
+			return std::nullopt;
 		}
-		if (index < argument_syntax_nodes.size()) {
-			if (!argument_syntax_nodes[index].is<TypeSpecifierNode>()) {
-				throw InternalError("stamp template specialization: type-arg syntax is not a TypeSpecifierNode");
+		if (param.kind() == TemplateParameterKind::Type) {
+			if (!arg.isTypeArgument()) {
+				throw InternalError("stamp template specialization: non-type arg for fixed type parameter");
 			}
-			collected.type_args.push_back(argument_syntax_nodes[index].as<TypeSpecifierNode>());
+			collected.arg_kinds.push_back(0);
+			if (index < argument_syntax_nodes.size()) {
+				if (!argument_syntax_nodes[index].is<TypeSpecifierNode>()) {
+					throw InternalError("stamp template specialization: type-arg syntax is not a TypeSpecifierNode");
+				}
+				collected.type_args.push_back(argument_syntax_nodes[index].as<TypeSpecifierNode>());
+			} else {
+				collected.type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, token));
+			}
 			continue;
 		}
-		collected.type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, token));
+		// NonType: only stamp when explicit syntax is a bool/integral literal.
+		if (index >= argument_syntax_nodes.size()) {
+			return std::nullopt;
+		}
+		const ASTNode& syntax = argument_syntax_nodes[index];
+		if (!syntax.is<ExpressionNode>()) {
+			return std::nullopt;
+		}
+		const ExpressionNode& expr = syntax.as<ExpressionNode>();
+		if (!isStampableNttpLiteralExpression(expr) || !arg.is_value) {
+			return std::nullopt;
+		}
+		collected.arg_kinds.push_back(1);
+		collected.nttp_expr_nodes.push_back(syntax);
 	}
 	return collected;
 }
@@ -4647,7 +4685,7 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 	StringHandle primary_template_name,
 	std::span<const TemplateTypeArg> filled_args,
 	std::span<const ASTNode> argument_syntax_nodes) {
-	auto collected = collectTypeOnlyClassTemplateArgSpecs(
+	auto collected = collectClassTemplateArgSpecs(
 		primary_template_name,
 		filled_args,
 		argument_syntax_nodes,
@@ -4655,8 +4693,24 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 	if (!collected.has_value()) {
 		return;
 	}
-	type_spec.set_template_specialization(
-		collected->primary, std::move(collected->type_args));
+	std::vector<ExprId> nttp_ids;
+	nttp_ids.reserve(collected->nttp_expr_nodes.size());
+	if (!collected->nttp_expr_nodes.empty()) {
+		FrontendContext& front_end = requireFrontendContext();
+		for (const ASTNode& expr_node : collected->nttp_expr_nodes) {
+			nttp_ids.push_back(front_end.dependentExpressions().intern(expr_node));
+		}
+	}
+	if (collected->nttp_expr_nodes.empty()) {
+		type_spec.set_template_specialization(
+			collected->primary, std::move(collected->type_args));
+		return;
+	}
+	type_spec.set_template_specialization_mixed(
+		collected->primary,
+		std::move(collected->arg_kinds),
+		std::move(collected->type_args),
+		std::move(nttp_ids));
 }
 
 void Parser::stampDependentMemberChainFromQualifier(
@@ -4761,7 +4815,7 @@ void Parser::tryStampDependentInstantiationMemberChain(
 			TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization) {
 		return;
 	}
-	auto collected = collectTypeOnlyClassTemplateArgSpecs(
+	auto collected = collectClassTemplateArgSpecs(
 		primary_template_name,
 		filled_args,
 		argument_syntax_nodes,
@@ -4774,17 +4828,29 @@ void Parser::tryStampDependentInstantiationMemberChain(
 		return;
 	}
 	CanonicalTypeTable& table = front_end->canonicalTypes();
-	std::vector<TypeId> argument_ids;
-	argument_ids.reserve(collected->type_args.size());
-	for (const TypeSpecifierNode& arg_spec : collected->type_args) {
-		if (arg_spec.is_pack_expansion()) {
+	std::vector<CanonicalTemplateArgument> argument_ids;
+	argument_ids.reserve(collected->arg_kinds.size());
+	size_t type_index = 0;
+	size_t nttp_index = 0;
+	for (const uint8_t kind : collected->arg_kinds) {
+		if (kind == 0) {
+			const TypeSpecifierNode& arg_spec = collected->type_args[type_index++];
+			if (arg_spec.is_pack_expansion()) {
+				return;
+			}
+			const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
+			if (imported.status != CanonicalTypeImportStatus::Supported) {
+				return;
+			}
+			argument_ids.push_back(CanonicalTemplateArgument::makeType(imported.type));
+			continue;
+		}
+		const ExprId expr_id =
+			front_end->dependentExpressions().intern(collected->nttp_expr_nodes[nttp_index++]);
+		if (!expr_id) {
 			return;
 		}
-		const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
-			return;
-		}
-		argument_ids.push_back(imported.type);
+		argument_ids.push_back(CanonicalTemplateArgument::makeNonType(expr_id));
 	}
 	stampDependentMemberChainFromQualifier(
 		type_spec,

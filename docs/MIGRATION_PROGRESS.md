@@ -81,9 +81,12 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   `parse_type_specifier` (preferring syntax-node args so nested stamps survive)
   and import as `TemplateSpecialization` when every argument imports Supported.
   Opaque Spec identity also accepts mixed type / NTTP `ExprId` arguments in the
-  canonical table; production stamping still requires type-only Supported args,
-  so NTTP / template-template / pack arguments, nested/member templates, alias
-  expansions, `Template<args>::member` results, and defaults-without-`<>` stay
+  canonical table. Production stamping interns bool / integral literal NTTP
+  ExpressionNodes as opaque ExprIds on published class-template Specs (including
+  Spec-rooted DependentInstantiation / CurrentInstantiation /
+  UnknownSpecialization owners); template-template / pack arguments, dependent
+  NTTP, nested/member templates, alias expansions, `Template<args>::member`
+  results beyond that Spec-rooted path, and defaults-without-`<>` stay
   unstamped; completed instantiations may still appear as Record via EntityId.
   Spelling-only bindings (function templates, nested/member templates, NTTP /
   template-template parameters, and uses before publication) stay Unresolved.
@@ -153,7 +156,7 @@ and richer specialization arguments still block expanding shadow/merge coverage.
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
 - Remaining 3A work includes template-template / pack specialization arguments,
-  production NTTP Spec stamping, function/nested/member TemplateDeclId
+  dependent NTTP Spec stamping, function/nested/member TemplateDeclId
   publication, complete declarator interleaving, and deletion of the flat
   semantic representation. Stop here for review before starting another family,
   3B, or the parallel frontend experiment.
@@ -226,14 +229,15 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for opaque Spec NTTP ExprId arguments: native canonical-types
-architecture coverage (including `lost_nttp_spec_arg` mutation) stays green;
-sharded rebuild remains warning-clean. Production type-only Spec stamping is
-unchanged (NTTP syntax still leaves template-ids unstamped / Unresolved).
-Adjacent architecture coverage remains the DependentName / Spec-rooted /
-substitute / restamp / tip-schema / tip-projection probes. The Windows suite is
-2,984 single-file cases, 264 negative tests, and 12 multi-TU cases. Fixed-corpus
-migration counters remain within the prior baselines below.
+Latest validation for literal NTTP Spec stamping: sharded rebuild;
+`test_canonical_nttp_spec_stamp_ret0` plus type-only Spec / tip-projection
+`_ret0` cases stay green; native canonical-types architecture coverage
+(including mixed Spec import) remains green. Dependent NTTP / pack /
+template-template Spec args stay unstamped. Adjacent architecture coverage
+remains the DependentName / Spec-rooted / substitute / restamp / tip-schema /
+tip-projection / opaque-NTTP probes. The Windows suite is 2,984 single-file
+cases, 264 negative tests, and 12 multi-TU cases. Fixed-corpus migration
+counters remain within the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -308,11 +312,13 @@ Advanced, not completed:
   tip-resolve restamp (Set DependentName-family / Clear on collapse), nested
   class EntityId ownership under class-owned OwnerIds, and TypeId→TypeIndex
   projection for collapsed Builtin/Record/Enum tips on restamp Clear, and opaque
-  Spec NTTP `ExprId` arguments (with substitute preserving them) are landed;
-  production NTTP Spec stamping, function/nested/member template publication,
-  template-template / pack specialization arguments, alias, unpublished/incomplete
-  nominal, anonymous-union, and unpublished-base forms stay deferred. Remaining
-  families and flat-field deletion keep all three identity criteria open.
+  Spec NTTP `ExprId` arguments (with substitute preserving them), and production
+  stamping of bool / integral literal NTTP Spec args (opaque ExprId intern) are
+  landed; dependent NTTP Spec stamping, function/nested/member template
+  publication, template-template / pack specialization arguments, alias,
+  unpublished/incomplete nominal, anonymous-union, and unpublished-base forms
+  stay deferred. Remaining families and flat-field deletion keep all three
+  identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -331,7 +337,7 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Template-template / pack specialization arguments and production NTTP Spec
+- Template-template / pack specialization arguments and dependent NTTP Spec
   stamping, then richer adapters before expanding boundary-1 shadow
   coverage (default arguments, exception specifications, fields, templates) or
   removing `SymbolTable` merge / `matches_signature` authority.

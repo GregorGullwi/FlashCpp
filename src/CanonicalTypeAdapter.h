@@ -498,9 +498,8 @@ inline CanonicalTypeImport importCanonicalTemplateParameter(CanonicalTypeTable& 
 		table.templateParameter(syntax.template_decl_id(), syntax.template_parameter_index()));
 }
 
-// Production Spec import is still type-argument only. The canonical table can
-// hold opaque NTTP ExprId args, but syntax without Supported type-only args
-// (including NTTP / pack / template-template) stays Unresolved.
+// Spec import accepts stamped Type and literal-NTTP ExprId args. Unstamped
+// template-ids and args that do not import as Supported stay Unresolved.
 inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (!syntax.has_template_specialization()) {
@@ -537,17 +536,25 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 			}
 		}
 	}
-	std::vector<TypeId> argument_ids;
-	argument_ids.reserve(syntax.specialization_type_args().size());
-	for (const TypeSpecifierNode& argument : syntax.specialization_type_args()) {
-		const CanonicalTypeImport imported_argument =
-			importCanonicalTypeImpl(table, argument, CanonicalTypeImportContext::Exact);
-		if (imported_argument.status != CanonicalTypeImportStatus::Supported) {
-			return {{}, imported_argument.status == CanonicalTypeImportStatus::Invalid
-				? CanonicalTypeImportStatus::Invalid
-				: CanonicalTypeImportStatus::Unresolved};
+	std::vector<CanonicalTemplateArgument> argument_ids;
+	argument_ids.reserve(syntax.specialization_arg_count());
+	for (size_t index = 0; index < syntax.specialization_arg_count(); ++index) {
+		if (syntax.specialization_arg_is_type(index)) {
+			const CanonicalTypeImport imported_argument = importCanonicalTypeImpl(
+				table, syntax.specialization_arg_type(index), CanonicalTypeImportContext::Exact);
+			if (imported_argument.status != CanonicalTypeImportStatus::Supported) {
+				return {{}, imported_argument.status == CanonicalTypeImportStatus::Invalid
+					? CanonicalTypeImportStatus::Invalid
+					: CanonicalTypeImportStatus::Unresolved};
+			}
+			argument_ids.push_back(CanonicalTemplateArgument::makeType(imported_argument.type));
+			continue;
 		}
-		argument_ids.push_back(imported_argument.type);
+		const ExprId expr = syntax.specialization_arg_expr(index);
+		if (!expr) {
+			return {{}, CanonicalTypeImportStatus::Unresolved};
+		}
+		argument_ids.push_back(CanonicalTemplateArgument::makeNonType(expr));
 	}
 	auto id = table.templateSpecialization(syntax.specialization_template_decl(), argument_ids);
 	id = table.qualify(id, syntax.cv_qualifier());
