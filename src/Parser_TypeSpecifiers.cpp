@@ -111,6 +111,11 @@ bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
 	return false;
 }
 
+bool isStampableDependentNttpArgument(const TemplateTypeArg& arg) {
+	return arg.is_value &&
+		(arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value());
+}
+
 void applyCollectedClassTemplateArgSpecs(
 	TypeSpecifierNode& type_spec,
 	ClassTemplateArgSpecs collected) {
@@ -173,8 +178,9 @@ void applyCollectedClassTemplateArgSpecs(
 
 // Shared gates for class-template specialization stamping: published primary
 // TemplateDeclId, fixed Type/NonType/Template arity or one final concrete type
-// pack, and TypeSpecifierNode, stampable literal NTTP ExpressionNode, or a
-// published primary-class TemplateDeclId argument. Deferred cases return
+// pack, and TypeSpecifierNode, explicit literal/dependent NTTP ExpressionNode,
+// or a published primary-class TemplateDeclId argument. Dependent NTTPs retain
+// their existing FrontendContext-owned ExprId identity. Deferred cases return
 // nullopt; broken parameter/argument shape throws.
 std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	StringHandle primary_template_name,
@@ -296,7 +302,9 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 			collected.args.push_back(template_arg.template_decl_id());
 			continue;
 		}
-		// NonType: only stamp when explicit syntax is a bool/integral literal.
+		// NonType: explicit literal syntax and explicit dependent expressions are
+		// representable as opaque ExprIds. Other values stay deferred because their
+		// semantic identity cannot be recovered from TemplateTypeArg alone.
 		if (index >= argument_syntax_nodes.size()) {
 			return std::nullopt;
 		}
@@ -305,7 +313,9 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 			return std::nullopt;
 		}
 		const ExpressionNode& expr = syntax.as<ExpressionNode>();
-		if (!isStampableNttpLiteralExpression(expr) || !arg.is_value) {
+		if (!arg.is_value ||
+			(!isStampableNttpLiteralExpression(expr) &&
+			 !isStampableDependentNttpArgument(arg))) {
 			return std::nullopt;
 		}
 		collected.args.push_back(syntax);

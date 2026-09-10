@@ -5,15 +5,15 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-09 after dependent template-template Spec arguments and
-the dependent template-template alias-materialization fix on
-`codex/boundary-3a-pack-specialization-arguments`
+Last updated: 2026-09-10 after dependent NTTP Spec stamping on
+`codex/boundary-3a-dependent-nttp-specialization-args`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's dependent template-template Spec arguments are on
-`codex/boundary-3a-pack-specialization-arguments` for review. Concrete and
-active-dependent primary-class template-template Spec arguments, nested class EntityId ownership,
+Architecture boundary 3A's dependent NTTP Spec stamping is on
+`codex/boundary-3a-dependent-nttp-specialization-args` for review. Concrete and
+active-dependent primary-class template-template Spec arguments, explicit dependent
+NTTP Spec arguments, nested class EntityId ownership,
 ExpressionSubstitutor
 tip-resolve restamp wire, production named type-member schema publication,
 opaque tip-resolve substrate, production dependent_name_type restamp, opaque
@@ -91,7 +91,7 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
   and import as `TemplateSpecialization` when every argument imports Supported.
   Opaque Spec identity also accepts mixed type / NTTP `ExprId` / published
   primary-class `TemplateDeclId` arguments in the canonical table. Production
-  stamping interns bool / integral literal NTTP
+  stamping interns bool / integral literal and explicit dependent NTTP
   ExpressionNodes as opaque ExprIds on published class-template Specs (including
   Spec-rooted DependentInstantiation / CurrentInstantiation /
   UnknownSpecialization owners). Concrete non-pack namespace/global primary
@@ -102,7 +102,7 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
   plus parameter index. Explicit concrete type arguments for a final
   namespace/global primary-class type pack stamp as ordered TypeId arguments;
   dependent pack expansions, non-type/template packs, other dependent
-  template-template arguments, nested/member templates, alias expansions, dependent NTTP,
+  template-template arguments, nested/member templates, alias expansions,
   `Template<args>::member` results beyond that Spec-rooted path, and
   defaults-without-`<>` stay unstamped; completed instantiations may still
   appear as Record via EntityId.
@@ -175,8 +175,7 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes dependent NTTP Spec stamping,
-  function/nested/member TemplateDeclId
+- Remaining 3A work includes function/nested/member TemplateDeclId
   publication, complete declarator interleaving, and deletion of the flat
   semantic representation. Stop here for review before starting another family,
   3B, or the parallel frontend experiment.
@@ -249,16 +248,15 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for dependent template-template Spec stamping: sharded rebuild;
-`test_canonical_dependent_template_template_spec_stamp_ret0` verifies that an
-active template-template parameter is retained structurally through a forwarded
-specialization, while native canonical-types coverage verifies owner/index
-identity, substitution preservation, and a mutation that removes the canonical
-link. Dependent pack expansions, non-type/template packs, other dependent
-template-template arguments, dependent NTTP, aliases, and unpublished
-template-template parameters stay unstamped. Adjacent architecture coverage remains the DependentName / Spec-rooted
+Latest validation for dependent NTTP Spec stamping: sharded rebuild;
+`test_canonical_dependent_nttp_spec_stamp_ret0` verifies parsed direct and
+compound dependent value expressions in a class-template specialization, while
+native canonical-types coverage distinguishes opaque ExprIds and rejects a
+mutated NTTP link. Dependent pack expansions, non-type/template packs, other
+dependent template-template arguments, aliases, and unpublished template-template
+parameters stay unstamped. Adjacent architecture coverage remains the DependentName / Spec-rooted
 / substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes. The
-Windows suite is 2,985 single-file cases, 264 negative tests, and 12 multi-TU
+Windows suite is 2,986 single-file cases, 264 negative tests, and 12 multi-TU
 cases. Fixed-corpus migration counters remain within the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
@@ -338,10 +336,10 @@ Advanced, not completed:
   stamping of bool / integral literal NTTP Spec args (opaque ExprId intern), and
   concrete published primary-class template-template Spec args (with substitute
   preserving them), explicit concrete final type-pack Spec args with ordered
-  links, and active dependent template-template Spec args represented by owning
-  TemplateDeclId plus parameter index (with substitute preserving them) are landed;
-  other dependent template-template arguments, dependent NTTP Spec
-  stamping, function/nested/member template publication, alias,
+  links, active dependent template-template Spec args represented by owning
+  TemplateDeclId plus parameter index (with substitute preserving them), and
+  explicit dependent NTTP Spec args represented by opaque ExprIds are landed;
+  other dependent template-template arguments, function/nested/member template publication, alias,
   unpublished/incomplete nominal, anonymous-union, and unpublished-base forms
   stay deferred. Remaining families and flat-field deletion keep all three
   identity criteria open.
@@ -363,8 +361,8 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Dependent NTTP Spec stamping, then richer adapters before expanding boundary-1 shadow
-  coverage (default arguments, exception specifications, fields, templates) or
+- Function/nested/member TemplateDeclId publication, then richer adapters before
+  expanding boundary-1 shadow coverage (default arguments, exception specifications, fields, templates) or
   removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
