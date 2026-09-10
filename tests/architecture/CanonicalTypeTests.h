@@ -525,6 +525,12 @@ inline void checkAdapter() {
 	};
 	require(imported_nttp_spec.type ==
 		table.templateSpecialization(TemplateDeclId{11}, expected_nttp_args));
+	const CanonicalTemplateArgument other_nttp_args[] = {
+		CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int)),
+		CanonicalTemplateArgument::makeNonType(ExprId{22}),
+	};
+	require(imported_nttp_spec.type !=
+		table.templateSpecialization(TemplateDeclId{11}, other_nttp_args));
 	TypeSpecifierNode template_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
 		CVQualifier::None);
 	template_specialization.set_template_specialization_mixed(
