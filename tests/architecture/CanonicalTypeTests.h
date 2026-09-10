@@ -771,15 +771,21 @@ inline void checkTemplateDeclPublication() {
 	const auto name_a = StringTable::getOrInternStringHandle("AlphaTemplate");
 	const auto name_b = StringTable::getOrInternStringHandle("BetaTemplate");
 	const auto first = decls.publishPrimaryClassTemplate(OwnerId{1}, name_a);
+	const auto function = decls.publishFunctionTemplate(OwnerId{1}, name_a);
 	require(first.value != 0);
+	require(function.value != 0 && function != first);
 	require(decls.publishPrimaryClassTemplate(OwnerId{1}, name_a) == first);
+	require(decls.publishFunctionTemplate(OwnerId{1}, name_a) == function);
 	require(decls.findPrimaryClassTemplate(OwnerId{1}, name_a) == first);
+	require(decls.findFunctionTemplate(OwnerId{1}, name_a) == function);
 	require(!decls.findPrimaryClassTemplate(OwnerId{1}, name_b).has_value());
+	require(!decls.findFunctionTemplate(OwnerId{1}, name_b).has_value());
 	require(decls.publishPrimaryClassTemplate(OwnerId{1}, name_b) != first);
 	require(decls.publishPrimaryClassTemplate(OwnerId{2}, name_a) != first);
 	require(decls.findPrimaryClassTemplate(OwnerId{1}, name_b).has_value());
-	require(decls.size() == 3);
+	require(decls.size() == 4);
 	rejects([&] { decls.publishPrimaryClassTemplate(OwnerId{}, name_a); });
+	rejects([&] { decls.publishFunctionTemplate(OwnerId{}, name_a); });
 }
 
 inline void checkDependentNames() {

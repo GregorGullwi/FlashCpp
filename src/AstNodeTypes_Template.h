@@ -122,6 +122,9 @@ public:
 	const ASTNode& function_declaration() const { return function_declaration_; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
+	TemplateDeclId template_decl_id() const { return template_decl_id_; }
+	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
+	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
 
 	// Get the underlying FunctionDeclarationNode
 	FunctionDeclarationNode& function_decl_node() {
@@ -135,6 +138,7 @@ private:
 	TemplateParameterVector template_parameters_;
 	ASTNode function_declaration_;  // FunctionDeclarationNode
 	std::optional<ASTNode> requires_clause_;	 // Optional RequiresClauseNode
+	TemplateDeclId template_decl_id_;
 };
 
 // Helper functions to safely extract FunctionDeclarationNode from either

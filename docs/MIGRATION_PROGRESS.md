@@ -5,8 +5,9 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-10 after dependent NTTP Spec stamping on
-`codex/boundary-3a-dependent-nttp-specialization-args`
+Last updated: 2026-09-10 after namespace/global function-template
+`TemplateDeclId` publication on
+`codex/boundary-3a-function-template-decl-publication`
 
 ## Current boundary and handoff
 
@@ -22,8 +23,9 @@ Spec-rooted stamping, Spec-rooted member template-ids, plain DependentInstantiat
 members, opaque Spec-as-qualifier identity, type-only member template-id stamping
 on type parameters, DependentTemplateMember identity, plain dependent-member
 publication, opaque DependentName identity, production type-only template-id
-stamping, type-only TemplateSpecialization TypeIds, primary class-template
-TemplateDeclId publication, opaque TemplateParameter TypeId import, dependent-
+stamping, type-only TemplateSpecialization TypeIds, primary class-template and
+namespace/global function-template TemplateDeclId publication, opaque
+TemplateParameter TypeId import, dependent-
 `noexcept` ExprId Functions, unstructured signatures, calling-convention /
 dll-linkage callables, record member/base field schemas, complete-object
 Record/Enum layout, opaque Record/Enum import, member-pointer EntityId binding,
@@ -62,9 +64,12 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
   `TemplateSpecialization`, or a prior dependent-name-family node. `FrontendContext`
   also owns a `DependentExpressionTable` that interns dependent unevaluated
   expressions to `ExprId` using structural identity (not `StringHandle`), and a
-  `TemplateDeclTable` that publishes and looks up primary class-template
-  `TemplateDeclId`s keyed by `OwnerId` + template name (redeclaration merge;
-  spelling is a lookup key only).
+  `TemplateDeclTable` that publishes and looks up primary class-template and
+  namespace/global function-template `TemplateDeclId`s keyed by `OwnerId`,
+  declaration family, and template name (redeclaration merge; spelling is a
+  lookup key only). Function-template publication currently retains the link on
+  `TemplateFunctionDeclarationNode`; its parameter stamping and adapters remain
+  deferred.
 - Published global/namespace structs and enums bind `type_entity` / injected-
   class metadata at declarator intern time so `Struct` and `Enum` declarators
   import as opaque `Record(EntityId)` and `Enum(EntityId)` nodes (with
@@ -175,8 +180,8 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes function/nested/member TemplateDeclId
-  publication, complete declarator interleaving, and deletion of the flat
+- Remaining 3A work includes nested/member TemplateDeclId publication, complete
+  declarator interleaving, and deletion of the flat
   semantic representation. Stop here for review before starting another family,
   3B, or the parallel frontend experiment.
 
@@ -248,16 +253,18 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for dependent NTTP Spec stamping: sharded rebuild;
-`test_canonical_dependent_nttp_spec_stamp_ret0` verifies parsed direct and
-compound dependent value expressions in a class-template specialization, while
-native canonical-types coverage distinguishes opaque ExprIds and rejects a
-mutated NTTP link. Dependent pack expansions, non-type/template packs, other
-dependent template-template arguments, aliases, and unpublished template-template
-parameters stay unstamped. Adjacent architecture coverage remains the DependentName / Spec-rooted
-/ substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes. The
-Windows suite is 2,986 single-file cases, 264 negative tests, and 12 multi-TU
-cases. Fixed-corpus migration counters remain within the prior baselines below.
+Latest validation for namespace/global function-template `TemplateDeclId`
+publication: sharded rebuild; `test_canonical_function_template_decl_publication_ret42`
+exercises parser publication and invocation, while native canonical-types
+coverage keeps class and function declaration families distinct and rejects a
+mutated function-family link. Function-template parameter stamping and adapters,
+dependent pack expansions, non-type/template packs, other dependent
+template-template arguments, aliases, and unpublished template-template
+parameters stay deferred. Adjacent architecture coverage remains the
+DependentName / Spec-rooted / substitute / restamp / tip-schema / tip-projection
+/ opaque-NTTP probes. The Windows suite is 2,987 single-file cases, 264 negative
+tests, and 12 multi-TU cases. Fixed-corpus migration counters remain within the
+prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -315,7 +322,9 @@ Advanced, not completed:
   cc/dll Function identity, unstructured signature import, dependent-`noexcept`
   ExprId identity, opaque TemplateParameter(TemplateDeclId, index) identity,
   primary class-template TemplateDeclId publication (with type-parameter
-  stamping), type-only TemplateSpecialization(TemplateDeclId, arg list)
+  stamping), namespace/global function-template TemplateDeclId publication
+  retained on `TemplateFunctionDeclarationNode`, type-only
+  TemplateSpecialization(TemplateDeclId, arg list)
   identity, production type-only template-id stamping for published primaries,
   opaque DependentName identity with production publication of plain-identifier
   chains rooted in published type parameters, opaque DependentTemplateMember
@@ -339,7 +348,7 @@ Advanced, not completed:
   links, active dependent template-template Spec args represented by owning
   TemplateDeclId plus parameter index (with substitute preserving them), and
   explicit dependent NTTP Spec args represented by opaque ExprIds are landed;
-  other dependent template-template arguments, function/nested/member template publication, alias,
+  other dependent template-template arguments, nested/member template publication, alias,
   unpublished/incomplete nominal, anonymous-union, and unpublished-base forms
   stay deferred. Remaining families and flat-field deletion keep all three
   identity criteria open.
@@ -361,7 +370,7 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Function/nested/member TemplateDeclId publication, then richer adapters before
+- Nested/member TemplateDeclId publication, then richer adapters before
   expanding boundary-1 shadow coverage (default arguments, exception specifications, fields, templates) or
   removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single

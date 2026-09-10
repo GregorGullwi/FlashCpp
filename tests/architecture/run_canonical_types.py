@@ -279,6 +279,19 @@ def main():
                 (directory / header).write_text((ROOT / "src" / header).read_text())
             (directory / HEADER.name).write_text(original.replace(before, after))
             build_and_run(name, directory, 1)
+        template_decl_header = ROOT / "src" / "TemplateDeclTable.h"
+        template_decl_text = template_decl_header.read_text()
+        template_decl_before = "return publishTemplate(TemplateDeclKind::Function, owner, name);"
+        template_decl_after = "return publishTemplate(TemplateDeclKind::PrimaryClass, owner, name);"
+        if template_decl_text.count(template_decl_before) != 1:
+            raise RuntimeError("mutation anchor changed: function_template_kind")
+        directory = OUTPUT / "function_template_kind"
+        directory.mkdir(parents=True, exist_ok=True)
+        for header in ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
+            (directory / header).write_text((ROOT / "src" / header).read_text())
+        (directory / "TemplateDeclTable.h").write_text(
+            template_decl_text.replace(template_decl_before, template_decl_after))
+        build_and_run("function_template_kind", directory, 1)
         for name, header, before, after in (
             ("adapter_dependent_name", "CanonicalTypeAdapter.h",
              "if (syntax.has_dependent_name_type()) {",

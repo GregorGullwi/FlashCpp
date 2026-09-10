@@ -277,6 +277,14 @@ ParseResult Parser::parse_template_function_declaration_body(
 		template_params,
 		*func_result_node,
 		final_requires_clause);
+	if (struct_parsing_context_stack_.empty()) {
+		FrontendContext& front_end = requireFrontendContext();
+		const OwnerId owner = ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
+		const TemplateDeclId template_decl = front_end.templateDecls().publishFunctionTemplate(
+			owner,
+			func_decl.decl_node().identifier_token().handle());
+		template_func_node.as<TemplateFunctionDeclarationNode>().set_template_decl_id(template_decl);
+	}
 
 	out_template_node = template_func_node;
 	return ParseResult::success(template_func_node);
