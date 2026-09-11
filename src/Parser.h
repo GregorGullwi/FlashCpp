@@ -4381,6 +4381,15 @@ private:	 // Resume private methods
 		type_spec.set_template_parameter_decl(active_template_decl_id_, *index);
 	}
 
+	// Retroactive type-parameter stamping for published free function templates.
+	// The function name parses after the return type, so active_template_decl_id_
+	// is empty while the declaration parses; publication then happens after the
+	// declaration. This pass stamps return-type and parameter specifiers that
+	// carry the template-parameter identity with the published TemplateDeclId and
+	// the matching Type-kind parameter index. No-op for non-type parameters,
+	// already-stamped specifiers, and anything without the identity key.
+	void stampPublishedFunctionTemplateParameters(TemplateFunctionDeclarationNode& template_decl);
+
 	// Stamp class-template specializations when the primary already published a
 	// TemplateDeclId. Type arguments, stampable literal NTTP ExpressionNodes
 	// (bool / integral NumericLiteral), concrete published primary-class

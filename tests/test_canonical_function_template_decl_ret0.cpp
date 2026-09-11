@@ -1,7 +1,8 @@
 // Free function templates publish signature-aware TemplateDeclIds so distinct
 // overloads (value vs pointer) keep separate identities while a single
 // non-overloaded template still runs. Mixed widths and a struct exercise the
-// published path; type-parameter stamping stays deferred.
+// published path; declared type parameters stamp onto return and parameter
+// specifiers, while function body replay stamping stays deferred.
 template <typename T>
 T identityValue(T value) {
 	return value;

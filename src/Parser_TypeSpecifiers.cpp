@@ -4885,6 +4885,40 @@ void Parser::stampDependentMemberChainFromQualifier(
 	type_spec.set_dependent_name_type(qualifier);
 }
 
+void Parser::stampPublishedFunctionTemplateParameters(
+	TemplateFunctionDeclarationNode& template_decl) {
+	const TemplateDeclId template_decl_id = template_decl.template_decl_id();
+	if (!template_decl_id) {
+		return;
+	}
+	const TemplateParameterVector& template_parameters =
+		template_decl.template_parameters();
+	const auto stampTypeSpecifier = [&](TypeSpecifierNode& type_spec) {
+		if (!type_spec.has_template_parameter_identity() ||
+			type_spec.has_template_parameter_decl()) {
+			return;
+		}
+		const StringHandle param_name = type_spec.template_parameter_name();
+		for (size_t index = 0; index < template_parameters.size(); ++index) {
+			const TemplateParameterNode& parameter = template_parameters[index];
+			if (parameter.kind() != TemplateParameterKind::Type) {
+				continue;
+			}
+			if (parameter.nameHandle() == param_name) {
+				type_spec.set_template_parameter_decl(template_decl_id, static_cast<uint32_t>(index));
+				return;
+			}
+		}
+	};
+	FunctionDeclarationNode& function_decl = template_decl.function_decl_node();
+	stampTypeSpecifier(function_decl.decl_node().type_specifier_node());
+	for (ASTNode& parameter_node : function_decl.parameter_nodes()) {
+		if (parameter_node.is<DeclarationNode>()) {
+			stampTypeSpecifier(parameter_node.as<DeclarationNode>().type_specifier_node());
+		}
+	}
+}
+
 void Parser::tryStampDependentMemberChain(
 	TypeSpecifierNode& type_spec,
 	StringHandle owner_param_name,
