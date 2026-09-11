@@ -1493,7 +1493,9 @@ ParseResult Parser::parse_type_specifier() {
 		// TypeSpecifier syntax is used only for the type-only canonical stamp;
 		// the dependent record remains the source representation for replay.
 		const size_t dependent_member_first_scope_pos = type_name.find("::");
-		if (dependent_member_first_scope_pos != std::string_view::npos && peek() == "<"_tok) {
+		if (is_replaying_free_function_template_body_ &&
+			dependent_member_first_scope_pos != std::string_view::npos &&
+			peek() == "<"_tok) {
 			const StringHandle owner_param_name =
 				StringTable::getOrInternStringHandle(
 					type_name.substr(0, dependent_member_first_scope_pos));
