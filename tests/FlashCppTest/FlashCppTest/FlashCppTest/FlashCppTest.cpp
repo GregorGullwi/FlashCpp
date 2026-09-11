@@ -2726,7 +2726,7 @@ TEST_SUITE("FrontendContext") {
 		CHECK(ptr_param_import.type == table.pointer(table.templateParameter(ptr_decl_id, 0u)));
 	}
 
-	TEST_CASE("Free function template body replay stamps local typedef type parameters") {
+	TEST_CASE("Free function body replay stamps dependent member template chains") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();
 		gTypesByName.clear();
@@ -2735,27 +2735,42 @@ TEST_SUITE("FrontendContext") {
 		gSymbolTable.clear();
 
 		const std::string code = R"(
+struct ReplayMemberSource {
+	using value_type = short;
+
+	template <typename U>
+	struct Rebind {
+		using type = U*;
+	};
+
+	value_type value;
+};
+
 template<typename T>
-T replay_stamp(T value) {
-	typedef T ReplayLocal;
-	ReplayLocal local = value;
-	return local;
+int replay_member_chain(T source) {
+	typedef typename T::value_type ReplayValue;
+	typedef typename T::template Rebind<int>::type ReplayPointer;
+	ReplayValue copied = source.value;
+	ReplayPointer pointer = nullptr;
+	return static_cast<int>(copied) + (pointer == nullptr ? 0 : 1);
 }
 
 int main() {
-	return replay_stamp(9) - 9;
+	return replay_member_chain(ReplayMemberSource{9}) - 9;
 }
 )";
 		FrontendContext context;
 		CompileContext test_context;
-		test_context.setInputFile("canonical_function_body_replay_stamp.cpp");
+		test_context.setInputFile("canonical_function_member_chain_replay.cpp");
 		Lexer lexer(code);
 		SemanticAnalysis sema(test_context, gSymbolTable);
 		Parser parser(lexer, test_context, sema);
+		TemplateEngine template_engine;
+		parser.attachTemplateEngine(template_engine);
 		REQUIRE(!parser.parse().is_error());
 
 		const StringHandle function_name =
-			StringTable::getOrInternStringHandle("replay_stamp");
+			StringTable::getOrInternStringHandle("replay_member_chain");
 		const auto template_opt = gTemplateRegistry.lookupTemplate(function_name);
 		REQUIRE(template_opt.has_value());
 		REQUIRE(template_opt->is<TemplateFunctionDeclarationNode>());
@@ -2779,24 +2794,29 @@ int main() {
 		REQUIRE(replayed_function != nullptr);
 		REQUIRE(replayed_function->get_definition().has_value());
 		const BlockNode& body = replayed_function->get_definition()->as<BlockNode>();
-		const TypedefDeclarationNode* replayed_alias = nullptr;
+		const TypedefDeclarationNode* replayed_pointer_alias = nullptr;
 		for (const ASTNode& statement : body.get_statements()) {
 			if (statement.is<TypedefDeclarationNode>() &&
-				statement.as<TypedefDeclarationNode>().alias_name() == "ReplayLocal"sv) {
-				replayed_alias = &statement.as<TypedefDeclarationNode>();
+				statement.as<TypedefDeclarationNode>().alias_name() == "ReplayPointer"sv) {
+				replayed_pointer_alias = &statement.as<TypedefDeclarationNode>();
 				break;
 			}
 		}
-		REQUIRE(replayed_alias != nullptr);
-		const TypeSpecifierNode& aliased_type = replayed_alias->type_specifier_node();
-		REQUIRE(aliased_type.has_template_parameter_decl());
-		CHECK(aliased_type.template_decl_id() == template_decl_id);
-		CHECK(aliased_type.template_parameter_index() == 0u);
-		const CanonicalTypeImport imported =
-			importCanonicalType(context.canonicalTypes(), aliased_type);
-		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
-		CHECK(imported.type ==
-			context.canonicalTypes().templateParameter(template_decl_id, 0u));
+		REQUIRE(replayed_pointer_alias != nullptr);
+		const TypeSpecifierNode& replayed_pointer_type =
+			replayed_pointer_alias->type_specifier_node();
+		REQUIRE(replayed_pointer_type.has_dependent_name_type());
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const TypeId owner = table.templateParameter(template_decl_id, 0u);
+		const TypeId int_arg = table.builtin(CanonicalBuiltinKind::Int);
+		const std::array<TypeId, 1> rebind_args = {int_arg};
+		const TypeId rebind = table.dependentTemplateMember(
+			owner,
+			"Rebind",
+			std::span<const TypeId>(rebind_args));
+		CHECK(replayed_pointer_type.dependent_name_type() ==
+			table.dependentName(rebind, "type"));
 	}
 
 	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed VariableDeclarationNode") {

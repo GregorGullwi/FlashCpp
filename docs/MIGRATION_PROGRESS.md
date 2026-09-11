@@ -25,8 +25,10 @@ also stamp declared type parameters retroactively: return-type and parameter
 `TypeSpecifierNode`s carrying `template_parameter_identity` bind to the
 published `TemplateDeclId` plus the matching Type-kind parameter index, and
 the canonical adapter imports those specifiers as `TemplateParameter` nodes.
-Dependent chains and member template-ids rooted in function template type
-parameters, and member function templates stay deferred. Signature-aware free
+Replayed free function-template bodies now also stamp dependent plain-member
+chains and type-only member template-ids rooted in their published Type-kind
+parameters, including `typename T::template Rebind<int>::type`; member function
+templates stay deferred. Signature-aware free
 function TemplateDeclId publication is keyed by OwnerId +
 name + structural signature index: matching shapes merge (including
 forward→definition replace preserving an earlier stamp), distinct overloads
@@ -219,8 +221,7 @@ during concrete alias materialization. This fixes forwarded aliases such as
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes dependent chains and member template-ids rooted in
-  function template type parameters, member function templates, member templates under class
+- Remaining 3A work includes member function templates, member templates under class
   templates / nested classes lacking EntityId at parse time, complete
   declarator interleaving, and deletion of the flat semantic
   representation. Stop here for review before starting another family, 3B, or
@@ -398,9 +399,9 @@ Advanced, not completed:
   retroactive stamping of free function-template declared type parameters
   (return/parameter specifiers bind to the published TemplateDeclId + Type-kind
   parameter index, adapter-imported as TemplateParameter), and scoped published
-  TemplateDeclId activation while those free function-template bodies replay
-  are landed; dependent chains rooted in function template type parameters,
-  member function templates,
+  TemplateDeclId activation while those free function-template bodies replay,
+  including structural plain-member chains and type-only member template-ids
+  rooted in their published Type-kind parameters, are landed; member function templates,
   member templates under class templates / nested classes without EntityId at
   parse time, alias, unpublished/incomplete nominal, anonymous-union, and
   unpublished-base forms stay deferred. Remaining families and flat-field
@@ -423,9 +424,8 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Dependent chains / member template-ids rooted in function template type
-  parameters, then member function templates,
-  then member templates under class templates / nested classes lacking EntityId
+- Member function templates, then member templates under class templates /
+  nested classes lacking EntityId
   at parse time, then richer adapters before
   expanding boundary-1 shadow coverage (default arguments, exception
   specifications, fields, templates) or removing `SymbolTable` merge /

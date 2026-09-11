@@ -791,9 +791,13 @@ opaque Spec argument. Explicit concrete type arguments for a final
 namespace/global primary-class type pack also stamp as ordered TypeId Spec
 arguments. Dependent pack expansions, non-type/template packs, other dependent
 template-template arguments, aliases, NTTP args on
-DependentTemplateMember, function type-parameter stamping, nested-in-template /
-nested-class-nested member templates, and member-template partials remain
-deferred. A replayed namespace/global function template containing a local class
+DependentTemplateMember, nested-in-template / nested-class-nested member
+templates, and member-template partials remain deferred. Replayed
+namespace/global function-template bodies now also stamp dependent plain-member
+chains and type-only member template-ids rooted in their published Type-kind
+parameters; this uses the same structural TemplateParameter / DependentName /
+DependentTemplateMember identities as the live path, not spelling recovery. A
+replayed namespace/global function template containing a local class
 can currently reach codegen without coherent `TypeInfo` ownership; this is a
 local-class entity-ownership defect tracked in [known issues](KNOWN_ISSUES.md),
 not a reason to recover identity through parser state or spelling.
