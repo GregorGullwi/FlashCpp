@@ -479,6 +479,7 @@
     <ClInclude Include="src\CanonicalTypes.h" />
     <ClInclude Include="src\DependentExpressionTable.h" />
     <ClInclude Include="src\TemplateDeclTable.h" />
+    <ClInclude Include="src\TemplateFunctionSignatureShape.h" />
     <ClInclude Include="src\CanonicalTypeAdapter.h" />
     <ClInclude Include="src\ArenaAccounting.h" />
     <ClInclude Include="src\TypeQualifiers.h" />

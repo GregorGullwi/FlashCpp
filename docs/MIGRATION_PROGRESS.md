@@ -5,26 +5,26 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-11 after non-overloaded free function TemplateDeclId
+Last updated: 2026-09-11 after signature-aware free function TemplateDeclId
 publication on `codex/boundary-3a-member-class-template-decl`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's non-overloaded free function TemplateDeclId
+Architecture boundary 3A's signature-aware free function TemplateDeclId
 publication is stacked on `codex/boundary-3a-member-class-template-decl` for
 review (after member class-template TemplateDeclId). Namespace/global free
-function templates publish a kind-tagged `TemplateDeclId` (OwnerId + name) when
-the registry still has a single function-template overload for that name;
-redeclarations merge, a second overload blocks the key and clears prior stamps,
-and type-parameter stamping via `active_template_decl_id_` stays deferred.
-Primary member class templates nested directly in published non-template
-namespace/global classes publish `TemplateDeclId` under class-owned `OwnerId`
-(enclosing EntityId) plus simple member name; enclosing EntityId is published as
-a non-definition before body parse so member templates can stamp during the body,
-then merged as a definition at the complete-definition epoch. Early EntityId
-publication skips nested classes via the struct-parsing context stack
-(`enclosing_class()` is not set until after the nested parse returns, and class
-bodies do not enter a Class ScopeType). Dependent NTTP Spec stamping,
+function templates publish a kind-tagged `TemplateDeclId` keyed by OwnerId +
+name + structural signature index: matching shapes merge (including
+forward→definition replace preserving an earlier stamp), distinct overloads
+get distinct ids, and type-parameter stamping via `active_template_decl_id_`
+stays deferred. Primary member class templates nested directly in published
+non-template namespace/global classes publish `TemplateDeclId` under class-owned
+`OwnerId` (enclosing EntityId) plus simple member name; enclosing EntityId is
+published as a non-definition before body parse so member templates can stamp
+during the body, then merged as a definition at the complete-definition epoch.
+Early EntityId publication skips nested classes via the struct-parsing context
+stack (`enclosing_class()` is not set until after the nested parse returns, and
+class bodies do not enter a Class ScopeType). Dependent NTTP Spec stamping,
 concrete and active-dependent primary-class template-template Spec arguments,
 explicit dependent NTTP Spec arguments, nested class EntityId ownership,
 ExpressionSubstitutor tip-resolve restamp wire, production named type-member
@@ -76,12 +76,12 @@ during concrete alias materialization. This fixes forwarded aliases such as
   also owns a `DependentExpressionTable` that interns dependent unevaluated
   expressions to `ExprId` using structural identity (not `StringHandle`), and a
   `TemplateDeclTable` that publishes and looks up primary class-template and
-  non-overloaded free function-template `TemplateDeclId`s keyed by `OwnerId` +
-  template name + primary kind (redeclaration merge; spelling is a lookup key
-  only). OwnerId may be namespace-mapped or class-owned
+  free function-template `TemplateDeclId`s keyed by `OwnerId` + template name +
+  primary kind (+ signature index for function overloads; redeclaration merge;
+  spelling is a lookup key only). OwnerId may be namespace-mapped or class-owned
   (`ownerIdFromClassEntity`) for member class primaries under published
-  enclosing classes. Overloaded free function templates are blocked rather than
-  merged under OwnerId+name alone.
+  enclosing classes. Distinct free function-template overloads publish distinct
+  signature indices rather than sharing OwnerId+name.
 - Published global/namespace structs and enums bind `type_entity` / injected-
   class metadata at declarator intern time so `Struct` and `Enum` declarators
   import as opaque `Record(EntityId)` and `Enum(EntityId)` nodes (with
@@ -132,11 +132,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `Template<args>::member` results beyond that Spec-rooted path, and
   defaults-without-`<>` stay unstamped; completed instantiations may still
   appear as Record via EntityId.
-  Spelling-only bindings (overloaded free function templates, nested/member
-  templates under unpublished enclosing classes, NTTP / template-template
-  parameters, and uses before publication) stay Unresolved; non-overloaded free
-  function templates publish TemplateDeclId but their type parameters are not
-  stamped yet.
+  Spelling-only bindings (nested/member templates under unpublished enclosing
+  classes, NTTP / template-template parameters, and uses before publication)
+  stay Unresolved; free function templates publish signature-aware TemplateDeclId
+  but their type parameters are not stamped yet.
   Plain dependent-member chains rooted in a published type parameter
   (`T::first`, `T::Nested::item`) and type-only member template-ids
   (`T::Foo<int>`, `T::template Nested<U>::type`) are stamped during
@@ -204,11 +203,11 @@ during concrete alias materialization. This fixes forwarded aliases such as
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes signature-aware function TemplateDeclId keys (and
-  then function type-parameter stamping), member templates under class templates
-  / nested classes lacking EntityId at parse time, complete declarator
-  interleaving, and deletion of the flat semantic representation. Stop here for
-  review before starting another family, 3B, or the parallel frontend experiment.
+- Remaining 3A work includes function type-parameter stamping, member templates
+  under class templates / nested classes lacking EntityId at parse time,
+  complete declarator interleaving, and deletion of the flat semantic
+  representation. Stop here for review before starting another family, 3B, or
+  the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -278,12 +277,13 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for non-overloaded free function TemplateDeclId publication:
+Latest validation for signature-aware free function TemplateDeclId publication:
 sharded rebuild; FlashCppTest asserts identity_fn forward+definition publish a
-TemplateDeclId distinct from IdentityClass, while overloaded_fn clears stamps and
-blocks OwnerId+name merges; architecture `checkTemplateDeclPublication` covers
-function primary kind vs class keys and overload blocking;
-`test_canonical_function_template_decl_ret0` smoke-exercises the path. Member
+TemplateDeclId distinct from IdentityClass, while overloaded_fn(T) and
+overloaded_fn(T*) publish distinct TemplateDeclIds; architecture
+`checkTemplateDeclPublication` covers function primary kind vs class keys and
+signature-index discrimination; `test_canonical_function_template_decl_ret0`
+smoke-exercises value and pointer overloads on the published path. Member
 class-template publication tests remain green. Migration counters remain within
 baseline; one corpus entry still reports `template_old_engine` 59→58 (aggregate
 baseline unchanged). Adjacent architecture coverage remains the DependentName /
@@ -374,9 +374,9 @@ Advanced, not completed:
   explicit dependent NTTP Spec args represented by opaque ExprIds, primary
   member class-template TemplateDeclId publication under published non-template
   enclosing classes (class-owned OwnerId + early enclosing EntityId before body),
-  and non-overloaded free function TemplateDeclId publication (kind-tagged
-  OwnerId+name with fail-closed overload blocking) are landed;
-  signature-aware function TemplateDeclId keys, function type-parameter stamping,
+  and signature-aware free function TemplateDeclId publication (kind-tagged
+  OwnerId+name+signature index with shape-matched redeclaration merge) are landed;
+  function type-parameter stamping,
   member templates under class templates / nested classes without EntityId at
   parse time, alias, unpublished/incomplete nominal, anonymous-union, and
   unpublished-base forms stay deferred. Remaining families and flat-field
@@ -399,12 +399,11 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Signature-aware function TemplateDeclId keys (then function type-parameter
-  stamping), then member templates under class templates / nested classes
-  lacking EntityId at parse time, then richer adapters before expanding
-  boundary-1 shadow coverage (default arguments, exception specifications,
-  fields, templates) or removing `SymbolTable` merge / `matches_signature`
-  authority.
+- Function type-parameter stamping, then member templates under class templates /
+  nested classes lacking EntityId at parse time, then richer adapters before
+  expanding boundary-1 shadow coverage (default arguments, exception
+  specifications, fields, templates) or removing `SymbolTable` merge /
+  `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

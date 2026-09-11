@@ -791,11 +791,12 @@ opaque Spec argument. Explicit concrete type arguments for a final
 namespace/global primary-class type pack also stamp as ordered TypeId Spec
 arguments. Dependent pack expansions, non-type/template packs, other dependent
 template-template arguments, aliases, NTTP args on
-DependentTemplateMember, overloaded free function templates (OwnerId+name is
-insufficient), function type-parameter stamping, nested-in-template /
+DependentTemplateMember, function type-parameter stamping, nested-in-template /
 nested-class-nested member templates, and member-template partials remain
-deferred. Non-overloaded namespace/global free function templates publish a
-kind-tagged `TemplateDeclId`. Production parser publication of
+deferred. Namespace/global free function templates publish a kind-tagged
+`TemplateDeclId` keyed by OwnerId + name + structural signature index so
+distinct overloads stay distinct and matching shapes merge. Production parser
+publication of
 plain DependentInstantiation members on the live template-id-then-`::` path is
 landed, as is production stamping of type-only member template-ids on that same
 Spec-rooted path when member-arg syntax is captured. Spec-rooted owner Specs

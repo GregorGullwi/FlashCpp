@@ -437,6 +437,9 @@
     <ClInclude Include="src\TemplateEnvironment.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\TemplateFunctionSignatureShape.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\TemplateTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>

@@ -449,6 +449,9 @@
     <ClInclude Include="src\TemplateExpressionEquivalence.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\TemplateFunctionSignatureShape.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\TemplateArgumentMaterialization.h">
       <Filter>Header Files</Filter>
     </ClInclude>
