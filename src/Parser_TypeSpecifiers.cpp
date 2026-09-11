@@ -1492,10 +1492,11 @@ ParseResult Parser::parse_type_specifier() {
 		// than trying to instantiate the spelling `T::Member`. The retained
 		// TypeSpecifier syntax is used only for the type-only canonical stamp;
 		// the dependent record remains the source representation for replay.
-		const size_t first_scope_pos = type_name.find("::");
-		if (first_scope_pos != std::string_view::npos && peek() == "<"_tok) {
+		const size_t dependent_member_first_scope_pos = type_name.find("::");
+		if (dependent_member_first_scope_pos != std::string_view::npos && peek() == "<"_tok) {
 			const StringHandle owner_param_name =
-				StringTable::getOrInternStringHandle(type_name.substr(0, first_scope_pos));
+				StringTable::getOrInternStringHandle(
+					type_name.substr(0, dependent_member_first_scope_pos));
 			const auto owner_index = current_template_params_.indexOf(owner_param_name);
 			const auto owner_kind = currentTemplateParamKind(owner_param_name);
 			if (owner_index.has_value() &&
@@ -1510,7 +1511,8 @@ ParseResult Parser::parse_type_specifier() {
 				}
 
 				TemplateParamNameViewVector member_components =
-					splitDependentMemberPathComponents(type_name.substr(first_scope_pos + 2));
+					splitDependentMemberPathComponents(
+						type_name.substr(dependent_member_first_scope_pos + 2));
 				if (member_components.empty()) {
 					return ParseResult::error("Expected dependent member template name", last_qualified_token);
 				}
