@@ -2740,7 +2740,10 @@ struct ReplayMemberSource {
 
 	template <typename U>
 	struct Rebind {
-		using type = U*;
+		template <typename V>
+		struct Again {
+			using type = V*;
+		};
 	};
 
 	value_type value;
@@ -2749,7 +2752,7 @@ struct ReplayMemberSource {
 template<typename T>
 int replay_member_chain(T source) {
 	typedef typename T::value_type ReplayValue;
-	typedef typename T::template Rebind<int>::type ReplayPointer;
+	typedef typename T::template Rebind<int>::template Again<long>::type ReplayPointer;
 	ReplayValue copied = source.value;
 	ReplayPointer pointer = nullptr;
 	return static_cast<int>(copied) + (pointer == nullptr ? 0 : 1);
@@ -2810,13 +2813,19 @@ int main() {
 		CanonicalTypeTable& table = context.canonicalTypes();
 		const TypeId owner = table.templateParameter(template_decl_id, 0u);
 		const TypeId int_arg = table.builtin(CanonicalBuiltinKind::Int);
+		const TypeId long_arg = table.builtin(CanonicalBuiltinKind::Long);
 		const std::array<TypeId, 1> rebind_args = {int_arg};
+		const std::array<TypeId, 1> again_args = {long_arg};
 		const TypeId rebind = table.dependentTemplateMember(
 			owner,
 			"Rebind",
 			std::span<const TypeId>(rebind_args));
+		const TypeId again = table.dependentTemplateMember(
+			rebind,
+			"Again",
+			std::span<const TypeId>(again_args));
 		CHECK(replayed_pointer_type.dependent_name_type() ==
-			table.dependentName(rebind, "type"));
+			table.dependentName(again, "type"));
 	}
 
 	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed VariableDeclarationNode") {

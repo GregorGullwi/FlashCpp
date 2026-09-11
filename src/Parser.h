@@ -4416,7 +4416,7 @@ private:	 // Resume private methods
 		TypeSpecifierNode& type_spec,
 		StringHandle owner_param_name,
 		const TypeInfo::DependentQualifiedNameRecord& record,
-		std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax);
+		std::span<const TypeSpecifierNode> member_template_arg_syntax);
 
 	// Stamp Primary<Args>::member chains whose owner is a published
 	// class-template primary under DependentInstantiation, CurrentInstantiation,
@@ -4432,14 +4432,16 @@ private:	 // Resume private methods
 		std::span<const TemplateTypeArg> filled_args,
 		std::span<const ASTNode> argument_syntax_nodes,
 		const TypeInfo::DependentQualifiedNameRecord& record,
-		std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax);
+		std::span<const TypeSpecifierNode> member_template_arg_syntax);
 
-	// Walk member_chain from an already-built qualifier TypeId.
+	// Walk member_chain from an already-built qualifier TypeId. The syntax span is
+	// flattened in member-template-id order; each member consumes its recorded
+	// TemplateArgInfoVector size.
 	void stampDependentMemberChainFromQualifier(
 		TypeSpecifierNode& type_spec,
 		TypeId qualifier,
 		const TypeInfo::DependentQualifiedNameRecord& record,
-		std::span<const std::vector<TypeSpecifierNode>> member_template_arg_syntax);
+		std::span<const TypeSpecifierNode> member_template_arg_syntax);
 
 	// Reconstruct T::Foo<Args>::tail from a qualified name whose last identifier
 	// carried the explicit argument list. Trailing members must be plain; any
