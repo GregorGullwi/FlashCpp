@@ -1230,7 +1230,8 @@ void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
 	std::span<const TemplateParameterNode> template_params,
-	std::span<const TemplateTypeArg> template_args) {
+	std::span<const TemplateTypeArg> template_args,
+	TemplateDeclId template_decl_id) {
 	// Depth guard: function-template body replay can recursively re-enter via
 	// expressions inside the body that instantiate further templates.  libstdc++
 	// headers like <string_view>, <vector>, and <iterator> reach dozens of nested
@@ -1266,6 +1267,14 @@ void Parser::reparse_template_function_body(
 
 	// Collect parameter names and register TypeInfo entries for type params.
 	FlashCpp::TemplateParameterScope template_scope;
+	// Free function templates publish their identity after parsing the
+	// declaration, but their bodies are parsed only during replay. Keep the
+	// published owner active for this body window so replayed type parameters
+	// receive the same canonical TemplateParameter stamp as the declaration.
+	// Empty IDs deliberately clear an enclosing context for deferred member
+	// function-template families.
+	FlashCpp::ScopedStateCopy guard_active_template_decl(active_template_decl_id_);
+	active_template_decl_id_ = template_decl_id;
 	TemplateParamNameVector param_names;
 	param_names.reserve(template_params.size());
 	for (const TemplateParameterNode& template_param : template_params) {
@@ -3164,7 +3173,12 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			if (!pack_param_info_.empty()) {
 				has_parameter_packs_ = true;
 			}
-			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args);
+			reparse_template_function_body(
+				new_func_ref,
+				func_decl,
+				template_params,
+				template_args,
+				instantiation_context.template_func.template_decl_id());
 		} else {
 			if (templateCycleStackContains(g_body_reparse_in_progress, mangled_name_handle)) {
 				return ASTNode(&new_func_ref);
@@ -3179,9 +3193,19 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			}
 			if (template_instantiation_mode_ == TemplateInstantiationMode::HardUseCandidateProbe) {
 				ScopedParserInstantiationContext body_instantiation_mode(*this, TemplateInstantiationMode::HardUse, StringHandle{});
-				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args);
+				reparse_template_function_body(
+					new_func_ref,
+					func_decl,
+					template_params,
+					template_args,
+					instantiation_context.template_func.template_decl_id());
 			} else {
-				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args);
+				reparse_template_function_body(
+					new_func_ref,
+					func_decl,
+					template_params,
+					template_args,
+					instantiation_context.template_func.template_decl_id());
 			}
 			if (!new_func_ref.is_materialized()) {
 				StringBuilder reason_builder;

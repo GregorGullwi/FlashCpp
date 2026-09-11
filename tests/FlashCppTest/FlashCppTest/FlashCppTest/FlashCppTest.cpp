@@ -2726,6 +2726,79 @@ TEST_SUITE("FrontendContext") {
 		CHECK(ptr_param_import.type == table.pointer(table.templateParameter(ptr_decl_id, 0u)));
 	}
 
+	TEST_CASE("Free function template body replay stamps local typedef type parameters") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = R"(
+template<typename T>
+T replay_stamp(T value) {
+	typedef T ReplayLocal;
+	ReplayLocal local = value;
+	return local;
+}
+
+int main() {
+	return replay_stamp(9) - 9;
+}
+)";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("canonical_function_body_replay_stamp.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const StringHandle function_name =
+			StringTable::getOrInternStringHandle("replay_stamp");
+		const auto template_opt = gTemplateRegistry.lookupTemplate(function_name);
+		REQUIRE(template_opt.has_value());
+		REQUIRE(template_opt->is<TemplateFunctionDeclarationNode>());
+		const TemplateFunctionDeclarationNode& template_function =
+			template_opt->as<TemplateFunctionDeclarationNode>();
+		REQUIRE(template_function.has_template_decl_id());
+		const TemplateDeclId template_decl_id = template_function.template_decl_id();
+
+		const FunctionDeclarationNode* replayed_function = nullptr;
+		for (size_t index = 0; index < parser.get_nodes().size(); ++index) {
+			const ASTNode& node = parser.get_nodes()[index];
+			if (!parser.isInstantiatedNode(index) || !node.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const FunctionDeclarationNode& candidate = node.as<FunctionDeclarationNode>();
+			if (candidate.decl_node().identifier_token().handle() == function_name) {
+				replayed_function = &candidate;
+				break;
+			}
+		}
+		REQUIRE(replayed_function != nullptr);
+		REQUIRE(replayed_function->get_definition().has_value());
+		const BlockNode& body = replayed_function->get_definition()->as<BlockNode>();
+		const TypedefDeclarationNode* replayed_alias = nullptr;
+		for (const ASTNode& statement : body.get_statements()) {
+			if (statement.is<TypedefDeclarationNode>() &&
+				statement.as<TypedefDeclarationNode>().alias_name() == "ReplayLocal"sv) {
+				replayed_alias = &statement.as<TypedefDeclarationNode>();
+				break;
+			}
+		}
+		REQUIRE(replayed_alias != nullptr);
+		const TypeSpecifierNode& aliased_type = replayed_alias->type_specifier_node();
+		REQUIRE(aliased_type.has_template_parameter_decl());
+		CHECK(aliased_type.template_decl_id() == template_decl_id);
+		CHECK(aliased_type.template_parameter_index() == 0u);
+		const CanonicalTypeImport imported =
+			importCanonicalType(context.canonicalTypes(), aliased_type);
+		REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+		CHECK(imported.type ==
+			context.canonicalTypes().templateParameter(template_decl_id, 0u));
+	}
+
 	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed VariableDeclarationNode") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();
