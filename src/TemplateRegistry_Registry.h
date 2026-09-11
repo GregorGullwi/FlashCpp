@@ -458,6 +458,21 @@ public:
 		return nullptr;
 	}
 
+	// Fail-closed support for OwnerId+name function TemplateDeclId publication:
+	// when a second overload appears, drop any stamps that were applied while the
+	// set still looked unique.
+	void clearPrimaryFunctionTemplateDeclIds(StringHandle name) {
+		auto it = templates_.find(name);
+		if (it == templates_.end()) {
+			return;
+		}
+		for (ASTNode& entry : it->second) {
+			if (entry.is<TemplateFunctionDeclarationNode>()) {
+				entry.as<TemplateFunctionDeclarationNode>().clear_template_decl_id();
+			}
+		}
+	}
+
 	// Get all registered template names (for smart re-instantiation)
 	std::vector<std::string_view> getAllTemplateNames() const {
 		std::vector<std::string_view> result;

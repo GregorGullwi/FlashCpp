@@ -2568,6 +2568,66 @@ TEST_SUITE("FrontendContext") {
 		CHECK(free_box_tmpl.template_decl_id() != member.template_decl_id());
 	}
 
+	TEST_CASE("Non-overloaded free function template publishes TemplateDeclId") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename T> T identity_fn(T value);\n"
+			"template<typename T> T identity_fn(T value) { return value; }\n"
+			"template<typename T> void overloaded_fn(T);\n"
+			"template<typename T> void overloaded_fn(T*);\n"
+			"template<typename T> struct IdentityClass { T value; };\n";
+		CompileContext test_context;
+		test_context.setInputFile("function_template_decl_publication_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle identity_name =
+			StringTable::getOrInternStringHandle("identity_fn");
+		const auto identity_opt = gTemplateRegistry.lookupTemplate(identity_name);
+		REQUIRE(identity_opt.has_value());
+		REQUIRE(identity_opt->is<TemplateFunctionDeclarationNode>());
+		const TemplateFunctionDeclarationNode& identity =
+			identity_opt->as<TemplateFunctionDeclarationNode>();
+		REQUIRE(identity.has_template_decl_id());
+
+		const StringHandle class_name =
+			StringTable::getOrInternStringHandle("IdentityClass");
+		const auto class_opt = gTemplateRegistry.lookupTemplate(class_name);
+		REQUIRE(class_opt.has_value());
+		REQUIRE(class_opt->is<TemplateClassDeclarationNode>());
+		REQUIRE(class_opt->as<TemplateClassDeclarationNode>().has_template_decl_id());
+		CHECK(class_opt->as<TemplateClassDeclarationNode>().template_decl_id() !=
+			  identity.template_decl_id());
+
+		const StringHandle overloaded_name =
+			StringTable::getOrInternStringHandle("overloaded_fn");
+		const std::vector<ASTNode>* overloaded =
+			gTemplateRegistry.lookupAllTemplates(overloaded_name);
+		REQUIRE(overloaded != nullptr);
+		size_t function_count = 0;
+		for (const ASTNode& entry : *overloaded) {
+			if (!entry.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+			++function_count;
+			CHECK(!entry.as<TemplateFunctionDeclarationNode>().has_template_decl_id());
+		}
+		REQUIRE(function_count == 2u);
+		REQUIRE(FrontendContext::active() != nullptr);
+		CHECK(FrontendContext::active()->templateDecls().isPrimaryFunctionTemplateBlocked(
+			ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE),
+			overloaded_name));
+	}
+
 	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed VariableDeclarationNode") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();

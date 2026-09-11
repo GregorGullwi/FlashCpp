@@ -796,6 +796,21 @@ inline void checkTemplateDeclPublication() {
 	require(decls.findPrimaryClassTemplate(OwnerId{1}, name_a) == first);
 	require(decls.publishPrimaryClassTemplate(class_owner, name_b) != member);
 	require(decls.size() == 5);
+
+	// Free function templates use a distinct primary kind so they cannot share
+	// slots with class templates of the same spelling. Overloads are blocked.
+	const auto fn_name = StringTable::getOrInternStringHandle("AlphaFn");
+	const auto fn_first = decls.tryPublishPrimaryFunctionTemplate(OwnerId{1}, fn_name);
+	require(fn_first.has_value());
+	require(*fn_first != first);
+	require(decls.tryPublishPrimaryFunctionTemplate(OwnerId{1}, fn_name) == fn_first);
+	require(decls.findPrimaryFunctionTemplate(OwnerId{1}, fn_name) == fn_first);
+	require(!decls.findPrimaryClassTemplate(OwnerId{1}, fn_name).has_value());
+	decls.noteOverloadedPrimaryFunctionTemplate(OwnerId{1}, fn_name);
+	require(decls.isPrimaryFunctionTemplateBlocked(OwnerId{1}, fn_name));
+	require(!decls.findPrimaryFunctionTemplate(OwnerId{1}, fn_name).has_value());
+	require(!decls.tryPublishPrimaryFunctionTemplate(OwnerId{1}, fn_name).has_value());
+	rejects([&] { (void)decls.tryPublishPrimaryFunctionTemplate(OwnerId{}, fn_name); });
 }
 
 inline void checkDependentNames() {
