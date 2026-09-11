@@ -1,5 +1,14 @@
 # Known Issues
 
+## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
+
+A namespace/global function-template body that declares a local class and is
+then instantiated can reach IR collection with the internal error
+`Sema-ready class entity has inconsistent TypeInfo ownership`. The same replay
+path works for local typedefs. This is a local-class entity/TypeInfo ownership
+defect, not a canonical template-parameter stamping fallback; defer it until
+the member/local-class ownership work has a bounded authoritative owner.
+
 ## Declaration-parse errors are masked by the expression-statement fallback
 
 When `parse_function_declaration` returns a `ParseResult` error, the top-level

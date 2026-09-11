@@ -793,7 +793,11 @@ arguments. Dependent pack expansions, non-type/template packs, other dependent
 template-template arguments, aliases, NTTP args on
 DependentTemplateMember, function type-parameter stamping, nested-in-template /
 nested-class-nested member templates, and member-template partials remain
-deferred. Namespace/global free function templates publish a kind-tagged
+deferred. A replayed namespace/global function template containing a local class
+can currently reach codegen without coherent `TypeInfo` ownership; this is a
+local-class entity-ownership defect tracked in [known issues](KNOWN_ISSUES.md),
+not a reason to recover identity through parser state or spelling.
+Namespace/global free function templates publish a kind-tagged
 `TemplateDeclId` keyed by OwnerId + name + structural signature index so
 distinct overloads stay distinct and matching shapes merge. Production parser
 publication of

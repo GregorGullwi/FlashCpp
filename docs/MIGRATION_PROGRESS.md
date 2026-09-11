@@ -5,25 +5,29 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-11 after free function-template type-parameter stamping
-on `codex/boundary-3a-function-type-param-stamp`
+Last updated: 2026-09-11 after free function-template body replay stamping
+on `codex/boundary-3a-function-body-replay-stamp`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's free function-template type-parameter stamping is
-stacked on `codex/boundary-3a-function-type-param-stamp` for review (after
-signature-aware free function TemplateDeclId publication and member
-class-template TemplateDeclId). Because a function name parses after its
-return type, published namespace/global free function templates stamp their
-declared type parameters retroactively: return-type and parameter
+Architecture boundary 3A's free function-template body replay stamping is on
+`codex/boundary-3a-function-body-replay-stamp` for review (after free
+function-template declared type-parameter stamping, signature-aware free
+function TemplateDeclId publication, and member class-template TemplateDeclId).
+`reparse_template_function_body` now receives the instantiation context's
+published `TemplateDeclId` explicitly and keeps it in a scoped
+`active_template_decl_id_` window while parsing the body. Replayed local type
+parameter specifiers therefore use the existing type-parameter stamping path;
+the scope restores any enclosing context, and an empty ID fail-closed clears it
+for the deferred member-function-template families. Because a function name
+parses after its return type, published namespace/global free function templates
+also stamp declared type parameters retroactively: return-type and parameter
 `TypeSpecifierNode`s carrying `template_parameter_identity` bind to the
 published `TemplateDeclId` plus the matching Type-kind parameter index, and
 the canonical adapter imports those specifiers as `TemplateParameter` nodes.
-Function body replay stamping (setting `active_template_decl_id_` during
-`reparse_template_function_body`), dependent chains and member template-ids
-rooted in function template type parameters, and member function templates
-stay deferred. Signature-aware free function TemplateDeclId publication is
-keyed by OwnerId +
+Dependent chains and member template-ids rooted in function template type
+parameters, and member function templates stay deferred. Signature-aware free
+function TemplateDeclId publication is keyed by OwnerId +
 name + structural signature index: matching shapes merge (including
 forward→definition replace preserving an earlier stamp), distinct overloads
 get distinct ids, and type-parameter stamping via `active_template_decl_id_`
@@ -146,8 +150,8 @@ during concrete alias materialization. This fixes forwarded aliases such as
   Spelling-only bindings (nested/member templates under unpublished enclosing
   classes, NTTP / template-template parameters, and uses before publication)
    stay Unresolved; free function templates publish signature-aware TemplateDeclId
-   and stamp their declared type parameters retroactively (function body replay
-   stamping is deferred).
+   and stamp their declared type parameters retroactively, including while a
+   published free function-template body is replayed).
   Plain dependent-member chains rooted in a published type parameter
   (`T::first`, `T::Nested::item`) and type-only member template-ids
   (`T::Foo<int>`, `T::template Nested<U>::type`) are stamped during
@@ -215,10 +219,8 @@ during concrete alias materialization. This fixes forwarded aliases such as
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes function body replay stamping (the
-  `active_template_decl_id_` window during `reparse_template_function_body`),
-  dependent chains and member template-ids rooted in function template type
-  parameters, member function templates, member templates under class
+- Remaining 3A work includes dependent chains and member template-ids rooted in
+  function template type parameters, member function templates, member templates under class
   templates / nested classes lacking EntityId at parse time, complete
   declarator interleaving, and deletion of the flat semantic
   representation. Stop here for review before starting another family, 3B, or
@@ -395,9 +397,10 @@ Advanced, not completed:
   OwnerId+name+signature index with shape-matched redeclaration merge), and
   retroactive stamping of free function-template declared type parameters
   (return/parameter specifiers bind to the published TemplateDeclId + Type-kind
-  parameter index, adapter-imported as TemplateParameter) are landed;
-  function body replay stamping, dependent chains rooted in function template
-  type parameters, member function templates,
+  parameter index, adapter-imported as TemplateParameter), and scoped published
+  TemplateDeclId activation while those free function-template bodies replay
+  are landed; dependent chains rooted in function template type parameters,
+  member function templates,
   member templates under class templates / nested classes without EntityId at
   parse time, alias, unpublished/incomplete nominal, anonymous-union, and
   unpublished-base forms stay deferred. Remaining families and flat-field
@@ -420,9 +423,8 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Function body replay stamping (the `active_template_decl_id_` window during
-  `reparse_template_function_body`), then dependent chains / member template-ids
-  rooted in function template type parameters and member function templates,
+- Dependent chains / member template-ids rooted in function template type
+  parameters, then member function templates,
   then member templates under class templates / nested classes lacking EntityId
   at parse time, then richer adapters before
   expanding boundary-1 shadow coverage (default arguments, exception

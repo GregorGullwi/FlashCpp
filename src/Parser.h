@@ -2203,7 +2203,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		FunctionDeclarationNode& new_func_ref,
 		const FunctionDeclarationNode& func_decl,
 		std::span<const TemplateParameterNode> template_params,
-		std::span<const TemplateTypeArg> template_args);
+		std::span<const TemplateTypeArg> template_args,
+		TemplateDeclId template_decl_id);
 	struct FunctionTemplateInstantiationContext {
 		std::string_view template_name;
 		const TemplateFunctionDeclarationNode& template_func;
