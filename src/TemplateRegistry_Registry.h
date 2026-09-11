@@ -42,7 +42,7 @@ public:
 		}
 		if (template_node.is<TemplateFunctionDeclarationNode>()) {
 			auto& entries = templates_[name];
-			const auto& new_template = template_node.as<TemplateFunctionDeclarationNode>();
+			auto& new_template = template_node.as<TemplateFunctionDeclarationNode>();
 			const FunctionDeclarationNode& new_function = new_template.function_decl_node();
 			if (new_function.has_any_body_source()) {
 				for (ASTNode& entry : entries) {
@@ -57,6 +57,12 @@ public:
 					if (old_template.template_parameters().size() != new_template.template_parameters().size() ||
 						old_function.parameter_nodes().size() != new_function.parameter_nodes().size()) {
 						continue;
+					}
+					// Preserve TemplateDeclId across forward→definition replace so
+					// signature-aware publication does not allocate a second id when
+					// parameter spellings differ but arity matches.
+					if (old_template.has_template_decl_id() && !new_template.has_template_decl_id()) {
+						new_template.set_template_decl_id(old_template.template_decl_id());
 					}
 					mergeFunctionDefaultTemplateArgs(entry, template_node);
 					entry = template_node;
@@ -456,21 +462,6 @@ public:
 			return &it->second;
 		}
 		return nullptr;
-	}
-
-	// Fail-closed support for OwnerId+name function TemplateDeclId publication:
-	// when a second overload appears, drop any stamps that were applied while the
-	// set still looked unique.
-	void clearPrimaryFunctionTemplateDeclIds(StringHandle name) {
-		auto it = templates_.find(name);
-		if (it == templates_.end()) {
-			return;
-		}
-		for (ASTNode& entry : it->second) {
-			if (entry.is<TemplateFunctionDeclarationNode>()) {
-				entry.as<TemplateFunctionDeclarationNode>().clear_template_decl_id();
-			}
-		}
 	}
 
 	// Get all registered template names (for smart re-instantiation)

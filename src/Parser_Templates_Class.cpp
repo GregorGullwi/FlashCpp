@@ -4,6 +4,7 @@
 #include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "TemplateFunctionSignatureShape.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -4956,36 +4957,45 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		// Add the template function to the symbol table so it can be found during overload resolution
 		gSymbolTable.insert(simple_name, template_func_node);
 
-		// Publish TemplateDeclId for non-overloaded namespace/global free function
-		// templates only. OwnerId+name is insufficient for overloads; those stay
-		// unpublished until a signature-aware key lands. Type-parameter stamping
-		// via active_template_decl_id_ remains deferred (return type is parsed
-		// before the name).
+		// Publish signature-aware TemplateDeclId for namespace/global free
+		// function templates. Matching structural signatures reuse an id;
+		// distinct overloads get distinct signature indices. Type-parameter
+		// stamping via active_template_decl_id_ remains deferred (return type
+		// is parsed before the name).
 		const ScopeType publish_scope = gSymbolTable.get_current_scope_type();
 		if (publish_scope == ScopeType::Global || publish_scope == ScopeType::Namespace) {
 			const StringHandle function_name = func_decl_node.identifier_token().handle();
 			const OwnerId owner =
 				ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
 			FrontendContext& front_end = requireFrontendContext();
-			size_t function_overload_count = 0;
-			if (const std::vector<ASTNode>* entries =
-					gTemplateRegistry.lookupAllTemplates(function_name)) {
-				for (const ASTNode& entry : *entries) {
-					if (entry.is<TemplateFunctionDeclarationNode>()) {
-						++function_overload_count;
+			TemplateFunctionDeclarationNode& published_template =
+				template_func_node.as<TemplateFunctionDeclarationNode>();
+			if (!published_template.has_template_decl_id()) {
+				if (const std::vector<ASTNode>* entries =
+						gTemplateRegistry.lookupAllTemplates(function_name)) {
+					for (const ASTNode& entry : *entries) {
+						if (!entry.is<TemplateFunctionDeclarationNode>()) {
+							continue;
+						}
+						const TemplateFunctionDeclarationNode& sibling =
+							entry.as<TemplateFunctionDeclarationNode>();
+						if (&sibling == &published_template || !sibling.has_template_decl_id()) {
+							continue;
+						}
+						if (primaryFunctionTemplatesHaveMatchingSignature(
+								published_template, sibling)) {
+							published_template.set_template_decl_id(sibling.template_decl_id());
+							break;
+						}
 					}
 				}
 			}
-			TemplateFunctionDeclarationNode& published_template =
-				template_func_node.as<TemplateFunctionDeclarationNode>();
-			if (function_overload_count > 1u) {
-				front_end.templateDecls().noteOverloadedPrimaryFunctionTemplate(
-					owner, function_name);
-				gTemplateRegistry.clearPrimaryFunctionTemplateDeclIds(function_name);
-			} else if (const std::optional<TemplateDeclId> published_id =
-						   front_end.templateDecls().tryPublishPrimaryFunctionTemplate(
-							   owner, function_name)) {
-				published_template.set_template_decl_id(*published_id);
+			if (!published_template.has_template_decl_id()) {
+				const uint32_t signature_index =
+					front_end.templateDecls().nextFunctionSignatureIndex(owner, function_name);
+				published_template.set_template_decl_id(
+					front_end.templateDecls().publishPrimaryFunctionTemplate(
+						owner, function_name, signature_index));
 			}
 		}
 

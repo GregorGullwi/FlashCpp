@@ -2568,7 +2568,7 @@ TEST_SUITE("FrontendContext") {
 		CHECK(free_box_tmpl.template_decl_id() != member.template_decl_id());
 	}
 
-	TEST_CASE("Non-overloaded free function template publishes TemplateDeclId") {
+	TEST_CASE("Free function template overloads publish distinct TemplateDeclIds") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();
 		gTypesByName.clear();
@@ -2613,19 +2613,29 @@ TEST_SUITE("FrontendContext") {
 		const std::vector<ASTNode>* overloaded =
 			gTemplateRegistry.lookupAllTemplates(overloaded_name);
 		REQUIRE(overloaded != nullptr);
+		std::optional<TemplateDeclId> first_overload_id;
+		std::optional<TemplateDeclId> second_overload_id;
 		size_t function_count = 0;
 		for (const ASTNode& entry : *overloaded) {
 			if (!entry.is<TemplateFunctionDeclarationNode>()) {
 				continue;
 			}
 			++function_count;
-			CHECK(!entry.as<TemplateFunctionDeclarationNode>().has_template_decl_id());
+			const TemplateFunctionDeclarationNode& overload =
+				entry.as<TemplateFunctionDeclarationNode>();
+			REQUIRE(overload.has_template_decl_id());
+			if (!first_overload_id.has_value()) {
+				first_overload_id = overload.template_decl_id();
+			} else {
+				second_overload_id = overload.template_decl_id();
+			}
 		}
 		REQUIRE(function_count == 2u);
-		REQUIRE(FrontendContext::active() != nullptr);
-		CHECK(FrontendContext::active()->templateDecls().isPrimaryFunctionTemplateBlocked(
-			ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE),
-			overloaded_name));
+		REQUIRE(first_overload_id.has_value());
+		REQUIRE(second_overload_id.has_value());
+		CHECK(*first_overload_id != *second_overload_id);
+		CHECK(*first_overload_id != identity.template_decl_id());
+		CHECK(*second_overload_id != identity.template_decl_id());
 	}
 
 	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed VariableDeclarationNode") {

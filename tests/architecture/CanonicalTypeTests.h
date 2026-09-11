@@ -797,20 +797,21 @@ inline void checkTemplateDeclPublication() {
 	require(decls.publishPrimaryClassTemplate(class_owner, name_b) != member);
 	require(decls.size() == 5);
 
-	// Free function templates use a distinct primary kind so they cannot share
-	// slots with class templates of the same spelling. Overloads are blocked.
+	// Free function templates use a distinct primary kind and a signature
+	// index so overloads under the same OwnerId + name publish distinct ids
+	// while matching shapes merge.
 	const auto fn_name = StringTable::getOrInternStringHandle("AlphaFn");
-	const auto fn_first = decls.tryPublishPrimaryFunctionTemplate(OwnerId{1}, fn_name);
-	require(fn_first.has_value());
-	require(*fn_first != first);
-	require(decls.tryPublishPrimaryFunctionTemplate(OwnerId{1}, fn_name) == fn_first);
-	require(decls.findPrimaryFunctionTemplate(OwnerId{1}, fn_name) == fn_first);
+	const auto fn_first = decls.publishPrimaryFunctionTemplate(OwnerId{1}, fn_name, 0u);
+	require(fn_first != first);
+	require(decls.publishPrimaryFunctionTemplate(OwnerId{1}, fn_name, 0u) == fn_first);
+	require(decls.findPrimaryFunctionTemplate(OwnerId{1}, fn_name, 0u) == fn_first);
 	require(!decls.findPrimaryClassTemplate(OwnerId{1}, fn_name).has_value());
-	decls.noteOverloadedPrimaryFunctionTemplate(OwnerId{1}, fn_name);
-	require(decls.isPrimaryFunctionTemplateBlocked(OwnerId{1}, fn_name));
-	require(!decls.findPrimaryFunctionTemplate(OwnerId{1}, fn_name).has_value());
-	require(!decls.tryPublishPrimaryFunctionTemplate(OwnerId{1}, fn_name).has_value());
-	rejects([&] { (void)decls.tryPublishPrimaryFunctionTemplate(OwnerId{}, fn_name); });
+	require(decls.nextFunctionSignatureIndex(OwnerId{1}, fn_name) == 1u);
+	const auto fn_overload = decls.publishPrimaryFunctionTemplate(OwnerId{1}, fn_name, 1u);
+	require(fn_overload != fn_first);
+	require(decls.findPrimaryFunctionTemplate(OwnerId{1}, fn_name, 1u) == fn_overload);
+	require(decls.nextFunctionSignatureIndex(OwnerId{1}, fn_name) == 2u);
+	rejects([&] { (void)decls.publishPrimaryFunctionTemplate(OwnerId{}, fn_name, 0u); });
 }
 
 inline void checkDependentNames() {
