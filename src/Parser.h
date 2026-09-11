@@ -4361,7 +4361,10 @@ private:	 // Resume private methods
 
 	void stampActiveTemplateParameterDecl(TypeSpecifierNode& type_spec, StringHandle param_name) {
 		// No published primary class template yet (parameter-list parse, function
-		// templates, nested/member templates). Stamping is a no-op there.
+		// templates, member templates under unpublished enclosing classes, and
+		// nested-class-nested member templates). Member primaries under published
+		// non-template classes set active_template_decl_id_ while their body is
+		// parsed. Stamping is a no-op when that id is empty.
 		if (!active_template_decl_id_) {
 			return;
 		}

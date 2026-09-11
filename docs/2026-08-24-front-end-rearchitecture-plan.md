@@ -778,14 +778,21 @@ ExpressionNodes (interned as opaque `ExprId`s) alongside type args on published
 class-template Specs.
 Concrete non-pack namespace/global primary class templates used for fixed
 template-template parameters also stamp their published `TemplateDeclId` as an
-opaque Spec argument. While a published namespace/global primary class template
+opaque Spec argument. Primary member class templates nested directly in
+published non-template namespace/global classes publish a `TemplateDeclId` keyed
+by class-owned `OwnerId` (from the enclosing `EntityId`) plus simple member
+name; that enclosing `EntityId` is published as a non-definition before body
+parse so member templates can stamp during the body, then merged as a
+definition at the complete-definition epoch. While a published namespace/global
+primary class template
 body is parsed, a non-pack template-template argument that names its active
 template parameter stamps the owning `TemplateDeclId` plus parameter index as an
 opaque Spec argument. Explicit concrete type arguments for a final
 namespace/global primary-class type pack also stamp as ordered TypeId Spec
 arguments. Dependent pack expansions, non-type/template packs, other dependent
-template-template arguments, aliases, and NTTP args on
-DependentTemplateMember remain deferred. Production parser publication of
+template-template arguments, aliases, NTTP args on
+DependentTemplateMember, function/nested-in-template/nested-class-nested member
+templates, and member-template partials remain deferred. Production parser publication of
 plain DependentInstantiation members on the live template-id-then-`::` path is
 landed, as is production stamping of type-only member template-ids on that same
 Spec-rooted path when member-arg syntax is captured. Spec-rooted owner Specs

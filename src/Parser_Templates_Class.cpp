@@ -1,10 +1,36 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "DeclarationBuilder.h"
+#include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
+
+// Publish TemplateDeclId for a primary member class template when the enclosing
+// class already carries a published EntityId (namespace/global non-template
+// classes during body parse). Nested non-template classes assign EntityIds at
+// the enclosing complete-definition epoch, so member templates inside them stay
+// deferred here. Class-template enclosing forms also stay deferred. Spelling is
+// a lookup key only and is never TypeId identity.
+std::optional<TemplateDeclId> tryPublishMemberPrimaryClassTemplate(
+	StructDeclarationNode& enclosing,
+	StructDeclarationNode& member,
+	StringHandle simple_name) {
+	if (!enclosing.has_entity_id() || !simple_name.isValid()) {
+		return std::nullopt;
+	}
+	const OwnerId owner = ownerIdFromClassEntity(enclosing.entity_id());
+	if (!owner) {
+		return std::nullopt;
+	}
+	FrontendContext& front_end = requireFrontendContext();
+	const TemplateDeclId template_decl =
+		front_end.templateDecls().publishPrimaryClassTemplate(owner, simple_name);
+	member.set_template_decl_id(template_decl);
+	return template_decl;
+}
 
 // Mirror unscoped enum enumerators declared in a class template into the same
 // member stores used by static data members. C++ makes those enumerators visible
@@ -5314,13 +5340,21 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			qualified_name,
 			is_class,
 			is_union);
-		forward_struct_node.as<StructDeclarationNode>().set_is_forward_declaration(true);
+		StructDeclarationNode& forward_struct_ref =
+			forward_struct_node.as<StructDeclarationNode>();
+		forward_struct_ref.set_is_forward_declaration(true);
+		(void)tryPublishMemberPrimaryClassTemplate(
+			struct_node, forward_struct_ref, struct_name_token.handle());
 
 		// Create template struct node for the forward declaration
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
 			template_param_nodes,
 			std::move(template_param_names),
 			forward_struct_node);
+		if (forward_struct_ref.has_template_decl_id()) {
+			template_struct_node.as<TemplateClassDeclarationNode>().set_template_decl_id(
+				forward_struct_ref.template_decl_id());
+		}
 
 		// Register the template
 		gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
@@ -6071,6 +6105,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		qualified_name,
 		is_class,
 		is_union);
+	const std::optional<TemplateDeclId> member_template_decl =
+		tryPublishMemberPrimaryClassTemplate(
+			struct_node, member_struct_ref, struct_name_token.handle());
 	FlashCpp::ScopedStateCopy member_struct_context_guard(
 		struct_parsing_context_stack_);
 	struct_parsing_context_stack_.push_back({
@@ -6083,6 +6120,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	// Set template context before base parsing so dependent bases such as
 	// _Category_base<_Const> see non-type and template-template parameter kinds.
 	FlashCpp::ScopedState guard_tpn_body(currentTemplateParamState());
+	FlashCpp::ScopedStateCopy guard_active_template_decl(active_template_decl_id_);
+	// Fail closed: member-template parameter stamps must use this primary's
+	// TemplateDeclId, never an enclosing class template's active id.
+	if (member_template_decl.has_value()) {
+		active_template_decl_id_ = *member_template_decl;
+	} else {
+		active_template_decl_id_ = {};
+	}
 	pushMemberStructTemplateParameters();
 	FlashCpp::TemplateDepthGuard guard_ptb_body(parsing_template_depth_);
 
@@ -6563,6 +6608,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		template_param_nodes,
 		std::move(template_param_names),
 		member_struct_node);
+	if (member_struct_ref.has_template_decl_id()) {
+		template_struct_node.as<TemplateClassDeclarationNode>().set_template_decl_id(
+			member_struct_ref.template_decl_id());
+	}
 
 	// Register the template in the global registry with qualified name
 	gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);

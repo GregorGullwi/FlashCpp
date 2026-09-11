@@ -1375,6 +1375,36 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		return ParseResult::error("Expected '{' or ';' after struct/class name or base class list", peek_info());
 	}
 
+	// Publish EntityId before body parse so member primary class templates can
+	// use class-owned OwnerIds during the body. Stamp as a non-definition first;
+	// stampStructLexicalScope at the complete-definition epoch merges the
+	// definition flag. Template / local / nested forms stay unpublished here.
+	// Nested classes must use is_nested_class (context stack): enclosing_class()
+	// is not set until after the nested parse returns, and class bodies do not
+	// enter a Class ScopeType, so shouldPublishParserClass alone would wrongly
+	// publish nested "Inner" as a namespace-level entity and collide across
+	// outers that share the nested spelling.
+	SymbolTableDetail::stampLexicalScopeOnDeclaration(
+		struct_node, gSymbolTable.currentScopeId());
+	if (!is_nested_class &&
+		!struct_ref.has_entity_id() &&
+		shouldPublishParserClass(
+			struct_ref,
+			gSymbolTable.get_current_scope_type(),
+			parsing_template_class_)) {
+		FrontendContext& front_end = requireFrontendContext();
+		const PublishResult published = commitParserClassPublication(
+			front_end.declarationBuilder(),
+			struct_ref,
+			gSymbolTable.currentScopeId(),
+			false,
+			gSymbolTable);
+		if (published.status == PublishStatus::Created ||
+			published.status == PublishStatus::MergedRedeclaration) {
+			recordDeclarationBuilderPublish();
+		}
+	}
+
 	// Default access specifier (public for struct, private for class)
 	AccessSpecifier current_access = struct_ref.default_access();
 

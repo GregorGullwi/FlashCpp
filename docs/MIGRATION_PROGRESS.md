@@ -5,35 +5,43 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-10 after dependent NTTP Spec stamping on
-`codex/boundary-3a-dependent-nttp-specialization-args`
+Last updated: 2026-09-11 after member class-template TemplateDeclId publication on
+`codex/boundary-3a-member-class-template-decl`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's dependent NTTP Spec stamping is on
-`codex/boundary-3a-dependent-nttp-specialization-args` for review. Concrete and
-active-dependent primary-class template-template Spec arguments, explicit dependent
-NTTP Spec arguments, nested class EntityId ownership,
-ExpressionSubstitutor
-tip-resolve restamp wire, production named type-member schema publication,
-opaque tip-resolve substrate, production dependent_name_type restamp, opaque
-`CanonicalTypeTable::substitute`, CurrentInstantiation / UnknownSpecialization
-Spec-rooted stamping, Spec-rooted member template-ids, plain DependentInstantiation
-members, opaque Spec-as-qualifier identity, type-only member template-id stamping
-on type parameters, DependentTemplateMember identity, plain dependent-member
-publication, opaque DependentName identity, production type-only template-id
-stamping, type-only TemplateSpecialization TypeIds, primary class-template
-TemplateDeclId publication, opaque TemplateParameter TypeId import, dependent-
-`noexcept` ExprId Functions, unstructured signatures, calling-convention /
-dll-linkage callables, record member/base field schemas, complete-object
-Record/Enum layout, opaque Record/Enum import, member-pointer EntityId binding,
-and earlier families are on `main`. Gate 0 is closed.
-Architecture boundary 1 remains incomplete; remaining dependent-name families
-and richer specialization arguments still block expanding shadow/merge coverage.
-The legacy materialization path now defers an unbound template-template argument
-instead of eagerly instantiating its parameter spelling, then rebinds that stored
-argument by its owning template parameter during concrete alias materialization.
-This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
+Architecture boundary 3A's member class-template TemplateDeclId publication is on
+`codex/boundary-3a-member-class-template-decl` for review. Primary member class
+templates nested directly in published non-template namespace/global classes
+publish `TemplateDeclId` under class-owned `OwnerId` (enclosing EntityId) plus
+simple member name; enclosing EntityId is published as a non-definition before
+body parse so member templates can stamp during the body, then merged as a
+definition at the complete-definition epoch. Early EntityId publication skips
+nested classes via the struct-parsing context stack (`enclosing_class()` is not
+set until after the nested parse returns, and class bodies do not enter a Class
+ScopeType). Dependent NTTP Spec stamping,
+concrete and active-dependent primary-class template-template Spec arguments,
+explicit dependent NTTP Spec arguments, nested class EntityId ownership,
+ExpressionSubstitutor tip-resolve restamp wire, production named type-member
+schema publication, opaque tip-resolve substrate, production dependent_name_type
+restamp, opaque `CanonicalTypeTable::substitute`, CurrentInstantiation /
+UnknownSpecialization Spec-rooted stamping, Spec-rooted member template-ids,
+plain DependentInstantiation members, opaque Spec-as-qualifier identity,
+type-only member template-id stamping on type parameters, DependentTemplateMember
+identity, plain dependent-member publication, opaque DependentName identity,
+production type-only template-id stamping, type-only TemplateSpecialization
+TypeIds, primary class-template TemplateDeclId publication, opaque
+TemplateParameter TypeId import, dependent-`noexcept` ExprId Functions,
+unstructured signatures, calling-convention / dll-linkage callables, record
+member/base field schemas, complete-object Record/Enum layout, opaque Record/Enum
+import, member-pointer EntityId binding, and earlier families are on `main`.
+Gate 0 is closed. Architecture boundary 1 remains incomplete; remaining
+dependent-name families and richer specialization arguments still block expanding
+shadow/merge coverage. The legacy materialization path now defers an unbound
+template-template argument instead of eagerly instantiating its parameter
+spelling, then rebinds that stored argument by its owning template parameter
+during concrete alias materialization. This fixes forwarded aliases such as
+`Forward<Box>::result::result::value`.
 
 - `FrontendContext` owns a pinned, single-mutex `CanonicalTypeTable` for C++20
   fundamental types, cv qualification, pointers, references, arrays of known or
@@ -64,7 +72,9 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
   expressions to `ExprId` using structural identity (not `StringHandle`), and a
   `TemplateDeclTable` that publishes and looks up primary class-template
   `TemplateDeclId`s keyed by `OwnerId` + template name (redeclaration merge;
-  spelling is a lookup key only).
+  spelling is a lookup key only). OwnerId may be namespace-mapped or class-owned
+  (`ownerIdFromClassEntity`) for member primaries under published enclosing
+  classes.
 - Published global/namespace structs and enums bind `type_entity` / injected-
   class metadata at declarator intern time so `Struct` and `Enum` declarators
   import as opaque `Record(EntityId)` and `Enum(EntityId)` nodes (with
@@ -85,7 +95,14 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
   `TemplateClassDeclarationNode` when the class name is known; while that
   template's body is parsed, type-parameter `TypeSpecifierNode`s are stamped with
   `TemplateDeclId` + parameter index so the adapter imports them as
-  `TemplateParameter` (cv/pointer/array/ref wrappers included). Explicit
+  `TemplateParameter` (cv/pointer/array/ref wrappers included). Publishable
+  non-template namespace/global classes also receive an EntityId as a
+  non-definition before body parse so in-body member primary class templates can
+  publish under class-owned OwnerId; the complete-definition epoch merges the
+  definition flag. Member primary forward declarations and definitions under
+  those enclosing classes stamp `TemplateDeclId` onto Struct /
+  TemplateClassDeclarationNode and set `active_template_decl_id_` for the member
+  body window (fail-closed clear when the enclosing EntityId is absent). Explicit
   type-only class template-ids for published primaries are stamped during
   `parse_type_specifier` (preferring syntax-node args so nested stamps survive)
   and import as `TemplateSpecialization` when every argument imports Supported.
@@ -102,12 +119,15 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
   plus parameter index. Explicit concrete type arguments for a final
   namespace/global primary-class type pack stamp as ordered TypeId arguments;
   dependent pack expansions, non-type/template packs, other dependent
-  template-template arguments, nested/member templates, alias expansions,
+  template-template arguments, nested/member templates under unpublished
+  enclosing forms (class templates, nested classes before their EntityId epoch,
+  local/anonymous), member-template partials, alias expansions,
   `Template<args>::member` results beyond that Spec-rooted path, and
   defaults-without-`<>` stay unstamped; completed instantiations may still
   appear as Record via EntityId.
-  Spelling-only bindings (function templates, nested/member templates, NTTP /
-  template-template parameters, and uses before publication) stay Unresolved.
+  Spelling-only bindings (function templates, nested/member templates under
+  unpublished enclosing classes, NTTP / template-template parameters, and uses
+  before publication) stay Unresolved.
   Plain dependent-member chains rooted in a published type parameter
   (`T::first`, `T::Nested::item`) and type-only member template-ids
   (`T::Foo<int>`, `T::template Nested<U>::type`) are stamped during
@@ -175,8 +195,9 @@ This fixes forwarded aliases such as `Forward<Box>::result::result::value`.
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes function/nested/member TemplateDeclId
-  publication, complete declarator interleaving, and deletion of the flat
+- Remaining 3A work includes function TemplateDeclId publication (overload-aware
+  keys), member templates under class templates / nested classes lacking EntityId
+  at parse time, complete declarator interleaving, and deletion of the flat
   semantic representation. Stop here for review before starting another family,
   3B, or the parallel frontend experiment.
 
@@ -248,14 +269,16 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for dependent NTTP Spec stamping: sharded rebuild;
-`test_canonical_dependent_nttp_spec_stamp_ret0` verifies parsed direct and
-compound dependent value expressions in a class-template specialization, while
-native canonical-types coverage distinguishes opaque ExprIds and rejects a
-mutated NTTP link. Dependent pack expansions, non-type/template packs, other
-dependent template-template arguments, aliases, and unpublished template-template
-parameters stay unstamped. Adjacent architecture coverage remains the DependentName / Spec-rooted
-/ substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes. The
+Latest validation for member class-template TemplateDeclId publication: sharded
+rebuild; FlashCppTest asserts Outer::Box forward+definition share a TemplateDeclId,
+type-parameter stamps use that id, and FreeBox stays distinct; architecture
+`checkTemplateDeclPublication` covers class-owned OwnerId vs namespace OwnerId{1};
+`test_canonical_member_class_template_decl_ret0` exercises mixed-width member
+templates. Adjacent nested-class EntityId / template-decl / named-member /
+empty-record regressions pass. Migration counters remain within baseline; one
+corpus entry improved `template_old_engine` 59→58 (aggregate baseline unchanged).
+Adjacent architecture coverage remains the DependentName / Spec-rooted /
+substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes. The
 Windows suite is 2,986 single-file cases, 264 negative tests, and 12 multi-TU
 cases. Fixed-corpus migration counters remain within the prior baselines below.
 
@@ -337,12 +360,16 @@ Advanced, not completed:
   concrete published primary-class template-template Spec args (with substitute
   preserving them), explicit concrete final type-pack Spec args with ordered
   links, active dependent template-template Spec args represented by owning
-  TemplateDeclId plus parameter index (with substitute preserving them), and
-  explicit dependent NTTP Spec args represented by opaque ExprIds are landed;
-  other dependent template-template arguments, function/nested/member template publication, alias,
-  unpublished/incomplete nominal, anonymous-union, and unpublished-base forms
-  stay deferred. Remaining families and flat-field deletion keep all three
-  identity criteria open.
+  TemplateDeclId plus parameter index (with substitute preserving them),
+  explicit dependent NTTP Spec args represented by opaque ExprIds, and primary
+  member class-template TemplateDeclId publication under published non-template
+  enclosing classes (class-owned OwnerId + early enclosing EntityId before body)
+  are landed;
+  other dependent template-template arguments, function TemplateDeclId
+  publication, member templates under class templates / nested classes without
+  EntityId at parse time, alias, unpublished/incomplete nominal, anonymous-union,
+  and unpublished-base forms stay deferred. Remaining families and flat-field
+  deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
@@ -361,8 +388,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Function/nested/member TemplateDeclId publication, then richer adapters before
-  expanding boundary-1 shadow coverage (default arguments, exception specifications, fields, templates) or
+- Function TemplateDeclId publication (overload-aware keys), then member
+  templates under class templates / nested classes lacking EntityId at parse
+  time, then richer adapters before expanding boundary-1 shadow coverage
+  (default arguments, exception specifications, fields, templates) or
   removing `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
