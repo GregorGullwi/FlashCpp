@@ -131,10 +131,16 @@ public:
 		return function_declaration_.as<FunctionDeclarationNode>();
 	}
 
+	TemplateDeclId template_decl_id() const { return template_decl_id_; }
+	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
+	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
+	void clear_template_decl_id() { template_decl_id_ = {}; }
+
 private:
 	TemplateParameterVector template_parameters_;
 	ASTNode function_declaration_;  // FunctionDeclarationNode
 	std::optional<ASTNode> requires_clause_;	 // Optional RequiresClauseNode
+	TemplateDeclId template_decl_id_;
 };
 
 // Helper functions to safely extract FunctionDeclarationNode from either
