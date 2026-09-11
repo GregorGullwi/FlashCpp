@@ -1275,6 +1275,9 @@ void Parser::reparse_template_function_body(
 	// function-template families.
 	FlashCpp::ScopedStateCopy guard_active_template_decl(active_template_decl_id_);
 	active_template_decl_id_ = template_decl_id;
+	FlashCpp::ScopedStateCopy guard_free_function_body_replay(
+		is_replaying_free_function_template_body_);
+	is_replaying_free_function_template_body_ = true;
 	TemplateParamNameVector param_names;
 	param_names.reserve(template_params.size());
 	for (const TemplateParameterNode& template_param : template_params) {

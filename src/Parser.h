@@ -1194,6 +1194,10 @@ private:
 	// Published primary class-template identity while parsing that template's
 	// body. Cleared with clearCurrentTemplateParameters().
 	TemplateDeclId active_template_decl_id_{};
+	// True only while reparsing a published namespace/global free
+	// function-template body. This keeps its replay-only dependent member
+	// template-id path out of class and out-of-line signature parsing.
+	bool is_replaying_free_function_template_body_ = false;
 
 	// Template parameter substitution for deferred template body parsing
 	// Maps template parameter names to their substituted values (for non-type AND type parameters)
