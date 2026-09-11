@@ -780,6 +780,22 @@ inline void checkTemplateDeclPublication() {
 	require(decls.findPrimaryClassTemplate(OwnerId{1}, name_b).has_value());
 	require(decls.size() == 3);
 	rejects([&] { decls.publishPrimaryClassTemplate(OwnerId{}, name_a); });
+
+	// Class-owned OwnerIds (member class templates under published enclosing
+	// classes) share the same table API but must not collide with namespace
+	// OwnerId{1} even when the EntityId raw value is 1. Matches
+	// ownerIdFromClassEntity(EntityId{1}) without pulling DeclarationBuilder
+	// into this mutation harness include graph.
+	constexpr uint32_t kClassOwnerIdTag = 0x80000000u;
+	const OwnerId class_owner{EntityId{1}.value | kClassOwnerIdTag};
+	require(class_owner != OwnerId{1});
+	const auto member = decls.publishPrimaryClassTemplate(class_owner, name_a);
+	require(member != first);
+	require(decls.publishPrimaryClassTemplate(class_owner, name_a) == member);
+	require(decls.findPrimaryClassTemplate(class_owner, name_a) == member);
+	require(decls.findPrimaryClassTemplate(OwnerId{1}, name_a) == first);
+	require(decls.publishPrimaryClassTemplate(class_owner, name_b) != member);
+	require(decls.size() == 5);
 }
 
 inline void checkDependentNames() {

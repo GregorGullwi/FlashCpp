@@ -12,7 +12,10 @@
 // Context-local publication of primary class-template identity for boundary 3A.
 // TemplateDeclId is keyed by OwnerId + spelling for redeclaration merge; the
 // spelling is a lookup key only and does not participate in canonical TypeId
-// equality (that uses TemplateDeclId + parameter index).
+// equality (that uses TemplateDeclId + parameter index). OwnerId may be a
+// namespace-mapped owner (namespace/global primaries) or a class-owned owner
+// from ownerIdFromClassEntity (member primaries under published enclosing
+// classes).
 class TemplateDeclTable {
 public:
 	TemplateDeclId publishPrimaryClassTemplate(OwnerId owner, StringHandle name) {

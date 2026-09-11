@@ -2516,6 +2516,58 @@ TEST_SUITE("FrontendContext") {
 				  .value != 0u);
 	}
 
+	TEST_CASE("Member class template under published class publishes TemplateDeclId") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"struct Outer {\n"
+			"  template<typename T> struct Box;\n"
+			"  template<typename T> struct Box { T value; };\n"
+			"};\n"
+			"template<typename T> struct FreeBox { T value; };\n";
+		CompileContext test_context;
+		test_context.setInputFile("member_class_template_decl_publication_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle qualified_box =
+			StringTable::getOrInternStringHandle("Outer::Box");
+		const auto member_opt = gTemplateRegistry.lookupTemplate(qualified_box);
+		REQUIRE(member_opt.has_value());
+		REQUIRE(member_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& member =
+			member_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(member.has_template_decl_id());
+		REQUIRE(member.class_decl_node().has_template_decl_id());
+		CHECK(member.template_decl_id() == member.class_decl_node().template_decl_id());
+
+		const auto& box_members = member.class_decl_node().members();
+		REQUIRE(box_members.size() == 1u);
+		REQUIRE(box_members[0].declaration.is<DeclarationNode>());
+		const TypeSpecifierNode& value_type =
+			box_members[0].declaration.as<DeclarationNode>().type_specifier_node();
+		REQUIRE(value_type.has_template_parameter_decl());
+		CHECK(value_type.template_decl_id() == member.template_decl_id());
+		CHECK(value_type.template_parameter_index() == 0u);
+
+		const StringHandle free_box = StringTable::getOrInternStringHandle("FreeBox");
+		const auto free_opt = gTemplateRegistry.lookupTemplate(free_box);
+		REQUIRE(free_opt.has_value());
+		REQUIRE(free_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& free_box_tmpl =
+			free_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(free_box_tmpl.has_template_decl_id());
+		CHECK(free_box_tmpl.template_decl_id() != member.template_decl_id());
+	}
+
 	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed VariableDeclarationNode") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();
