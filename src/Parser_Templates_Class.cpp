@@ -4959,9 +4959,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 		// Publish signature-aware TemplateDeclId for namespace/global free
 		// function templates. Matching structural signatures reuse an id;
-		// distinct overloads get distinct signature indices. Type-parameter
-		// stamping via active_template_decl_id_ remains deferred (return type
-		// is parsed before the name).
+		// distinct overloads get distinct signature indices. The function name
+		// parses after the return type, so declared type parameters stamp
+		// retroactively once the id is known.
 		const ScopeType publish_scope = gSymbolTable.get_current_scope_type();
 		if (publish_scope == ScopeType::Global || publish_scope == ScopeType::Namespace) {
 			const StringHandle function_name = func_decl_node.identifier_token().handle();
@@ -4997,6 +4997,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					front_end.templateDecls().publishPrimaryFunctionTemplate(
 						owner, function_name, signature_index));
 			}
+			stampPublishedFunctionTemplateParameters(published_template);
 		}
 
 		return saved_position.success(template_func_node);

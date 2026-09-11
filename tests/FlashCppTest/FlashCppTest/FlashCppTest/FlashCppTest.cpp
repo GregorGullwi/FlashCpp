@@ -2638,6 +2638,94 @@ TEST_SUITE("FrontendContext") {
 		CHECK(*second_overload_id != identity.template_decl_id());
 	}
 
+	TEST_CASE("Free function template stamps its declared type parameters") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename T, typename U> U pick_pair(T left, U right);\n"
+			"template<typename T> T* take_ptr(T* value) { return value; }\n";
+		CompileContext test_context;
+		test_context.setInputFile("function_template_param_stamp_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis parser_sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, parser_sema);
+		const ParseResult parse_result = parser.parse();
+		REQUIRE(!parse_result.is_error());
+
+		const StringHandle pair_name =
+			StringTable::getOrInternStringHandle("pick_pair");
+		const auto pair_opt = gTemplateRegistry.lookupTemplate(pair_name);
+		REQUIRE(pair_opt.has_value());
+		REQUIRE(pair_opt->is<TemplateFunctionDeclarationNode>());
+		const TemplateFunctionDeclarationNode& pair_template =
+			pair_opt->as<TemplateFunctionDeclarationNode>();
+		REQUIRE(pair_template.has_template_decl_id());
+		const TemplateDeclId pair_decl_id = pair_template.template_decl_id();
+
+		const FunctionDeclarationNode& pair_function =
+			pair_template.function_decl_node();
+		const TypeSpecifierNode& pair_return =
+			pair_function.decl_node().type_specifier_node();
+		REQUIRE(pair_return.has_template_parameter_identity());
+		REQUIRE(pair_return.has_template_parameter_decl());
+		CHECK(pair_return.template_decl_id() == pair_decl_id);
+		CHECK(pair_return.template_parameter_index() == 1u);
+		REQUIRE(pair_function.parameter_nodes().size() == 2u);
+		const TypeSpecifierNode& left_param =
+			pair_function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(left_param.has_template_parameter_decl());
+		CHECK(left_param.template_decl_id() == pair_decl_id);
+		CHECK(left_param.template_parameter_index() == 0u);
+		const TypeSpecifierNode& right_param =
+			pair_function.parameter_nodes()[1].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(right_param.has_template_parameter_decl());
+		CHECK(right_param.template_decl_id() == pair_decl_id);
+		CHECK(right_param.template_parameter_index() == 1u);
+
+		const StringHandle ptr_name =
+			StringTable::getOrInternStringHandle("take_ptr");
+		const auto ptr_opt = gTemplateRegistry.lookupTemplate(ptr_name);
+		REQUIRE(ptr_opt.has_value());
+		REQUIRE(ptr_opt->is<TemplateFunctionDeclarationNode>());
+		const TemplateFunctionDeclarationNode& ptr_template =
+			ptr_opt->as<TemplateFunctionDeclarationNode>();
+		REQUIRE(ptr_template.has_template_decl_id());
+		const TemplateDeclId ptr_decl_id = ptr_template.template_decl_id();
+		CHECK(ptr_decl_id != pair_decl_id);
+
+		const FunctionDeclarationNode& ptr_function =
+			ptr_template.function_decl_node();
+		const TypeSpecifierNode& ptr_return =
+			ptr_function.decl_node().type_specifier_node();
+		REQUIRE(ptr_return.has_template_parameter_decl());
+		CHECK(ptr_return.template_decl_id() == ptr_decl_id);
+		CHECK(ptr_return.template_parameter_index() == 0u);
+		REQUIRE(ptr_function.parameter_nodes().size() == 1u);
+		const TypeSpecifierNode& ptr_param =
+			ptr_function.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(ptr_param.has_template_parameter_decl());
+		CHECK(ptr_param.template_decl_id() == ptr_decl_id);
+		CHECK(ptr_param.template_parameter_index() == 0u);
+
+		FrontendContext* front_end = FrontendContext::active();
+		REQUIRE(front_end != nullptr);
+		CanonicalTypeTable& table = front_end->canonicalTypes();
+		const CanonicalTypeImport return_import = importCanonicalType(table, pair_return);
+		REQUIRE(return_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(return_import.type == table.templateParameter(pair_decl_id, 1u));
+		const CanonicalTypeImport left_import = importCanonicalType(table, left_param);
+		REQUIRE(left_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(left_import.type == table.templateParameter(pair_decl_id, 0u));
+		const CanonicalTypeImport ptr_param_import = importCanonicalType(table, ptr_param);
+		REQUIRE(ptr_param_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(ptr_param_import.type == table.pointer(table.templateParameter(ptr_decl_id, 0u)));
+	}
+
 	TEST_CASE("SymbolTable insert stamps lexical ScopeId on parsed VariableDeclarationNode") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();
