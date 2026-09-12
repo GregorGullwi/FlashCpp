@@ -1582,6 +1582,10 @@ const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not fou
 TypeIndex nativeTypeIndex(TypeCategory cat);	 // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native
 size_t getTypeInfoCount();				   // replaces gTypeInfo.size()
 
+// Native-test reset for the legacy type-table storage. Production code uses
+// the accessor API above rather than manipulating the backing containers.
+void clearLegacyTypeTablesForTesting();
+
 bool isExactComparisonCategoryType(TypeIndex type_index);
 
 // Map accessors — use these instead of the extern globals

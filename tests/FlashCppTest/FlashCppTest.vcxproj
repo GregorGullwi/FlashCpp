@@ -135,6 +135,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="FlashCppTest\FlashCppTest\FlashCppTest.cpp" />
+    <ClCompile Include="FlashCppTest\FlashCppTest\FlashCppTestUnitySupport.cpp" />
+    <ClCompile Include="FlashCppTest\FlashCppTest\FlashCppTestUnityParserCore.cpp" />
+    <ClCompile Include="FlashCppTest\FlashCppTest\FlashCppTestUnityParserTemplates.cpp" />
+    <ClCompile Include="FlashCppTest\FlashCppTest\FlashCppTestUnityBackend.cpp" />
+    <ClCompile Include="FlashCppTest\CanonicalTypeTests.cpp" />
+    <ClCompile Include="FlashCppTest\FrontendContextTests.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

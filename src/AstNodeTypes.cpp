@@ -246,6 +246,12 @@ std::deque<TypeInfo, TypeInfoTrackingAllocator<TypeInfo>> gTypeInfo;
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 
+void clearLegacyTypeTablesForTesting() {
+	gTypeInfo.clear();
+	gTypesByName.clear();
+	gNativeTypes.clear();
+}
+
 // Explicit chunk size: default ChunkSize=sizeof(T)*4 would reserve ~25k *huge* elements.
 ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedNameRecords;
 ChunkedVector<TemplateArgInfoVector, 8> gTypeInfoTemplateArgLists;
