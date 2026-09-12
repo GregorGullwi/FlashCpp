@@ -1,7 +1,10 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "DeclarationBuilder.h"
+#include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "TemplateFunctionSignatureShape.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -20,6 +23,46 @@ TypeIndex makeConstantValueTypeIndex(TypeCategory category, TypeIndex type_index
 		return native_index.withCategory(resolved_category);
 	}
 	return TypeIndex{0, resolved_category};
+}
+
+// Publish a member function-template only when its immediately enclosing class
+// already has namespace/global EntityId ownership. Class-template and nested
+// class owners do not have that identity at this parse point and deliberately
+// remain unstamped. Structural signatures merge redeclarations while distinct
+// overloads get separate function signature indices.
+std::optional<TemplateDeclId> tryPublishMemberFunctionTemplate(
+	StructDeclarationNode& enclosing,
+	TemplateFunctionDeclarationNode& member,
+	StringHandle simple_name) {
+	if (!enclosing.has_entity_id() || !simple_name.isValid()) {
+		return std::nullopt;
+	}
+	const OwnerId owner = ownerIdFromClassEntity(enclosing.entity_id());
+	if (!owner) {
+		return std::nullopt;
+	}
+	for (const StructMemberFunctionDecl& candidate : enclosing.member_functions()) {
+		if (!candidate.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+			continue;
+		}
+		const TemplateFunctionDeclarationNode& sibling =
+			candidate.function_declaration.as<TemplateFunctionDeclarationNode>();
+		if (!sibling.has_template_decl_id() ||
+			sibling.function_decl_node().decl_node().identifier_token().handle() != simple_name) {
+			continue;
+		}
+		if (primaryFunctionTemplatesHaveMatchingSignature(member, sibling)) {
+			member.set_template_decl_id(sibling.template_decl_id());
+			return member.template_decl_id();
+		}
+	}
+	FrontendContext& front_end = requireFrontendContext();
+	const uint32_t signature_index =
+		front_end.templateDecls().nextFunctionSignatureIndex(owner, simple_name);
+	member.set_template_decl_id(
+		front_end.templateDecls().publishPrimaryFunctionTemplate(
+			owner, simple_name, signature_index));
+	return member.template_decl_id();
 }
 
 }
@@ -328,6 +371,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				? template_param_metadata.non_type_categories[i]
 				: TypeCategory::Invalid);
 	}
+	FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
 
 	// Check for requires clause after template parameters
 	// Pattern: template<typename T> requires Constraint<T> ReturnType func();
@@ -831,6 +875,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	TemplateFunctionDeclarationNode& template_decl = template_func_node.as<TemplateFunctionDeclarationNode>();
 	FunctionDeclarationNode& func_decl = template_decl.function_decl_node();
 	const DeclarationNode& decl_node = func_decl.decl_node();
+	(void)tryPublishMemberFunctionTemplate(
+		struct_node, template_decl, decl_node.identifier_token().handle());
+	stampPublishedFunctionTemplateParameters(template_decl);
 	StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
 	func_decl.set_semantic_owner_name(owner_qualified_name);
 

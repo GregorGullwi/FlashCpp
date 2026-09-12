@@ -1267,17 +1267,16 @@ void Parser::reparse_template_function_body(
 
 	// Collect parameter names and register TypeInfo entries for type params.
 	FlashCpp::TemplateParameterScope template_scope;
-	// Free function templates publish their identity after parsing the
-	// declaration, but their bodies are parsed only during replay. Keep the
-	// published owner active for this body window so replayed type parameters
-	// receive the same canonical TemplateParameter stamp as the declaration.
-	// Empty IDs deliberately clear an enclosing context for deferred member
-	// function-template families.
+	// Published function templates parse their bodies only during replay. Keep
+	// the published owner active for this body window so replayed type
+	// parameters receive the same canonical TemplateParameter stamp as the
+	// declaration. Empty IDs deliberately clear an enclosing context for the
+	// still-deferred member-template families.
 	FlashCpp::ScopedStateCopy guard_active_template_decl(active_template_decl_id_);
 	active_template_decl_id_ = template_decl_id;
-	FlashCpp::ScopedStateCopy guard_free_function_body_replay(
-		is_replaying_free_function_template_body_);
-	is_replaying_free_function_template_body_ = true;
+	FlashCpp::ScopedStateCopy guard_published_function_body_replay(
+		is_replaying_published_function_template_body_);
+	is_replaying_published_function_template_body_ = true;
 	TemplateParamNameVector param_names;
 	param_names.reserve(template_params.size());
 	for (const TemplateParameterNode& template_param : template_params) {
