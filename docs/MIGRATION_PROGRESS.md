@@ -5,15 +5,16 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-11 after free function-template body replay stamping
-on `codex/boundary-3a-function-body-replay-stamp`
+Last updated: 2026-09-12 after direct member function-template stamping
+on `codex/boundary-3a-member-function-template-stamping`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's free function-template body replay stamping is on
-`codex/boundary-3a-function-body-replay-stamp` for review (after free
-function-template declared type-parameter stamping, signature-aware free
-function TemplateDeclId publication, and member class-template TemplateDeclId).
+Architecture boundary 3A's direct member function-template stamping is on
+`codex/boundary-3a-member-function-template-stamping` for review (after free
+function-template body replay stamping, free function-template declared
+type-parameter stamping, signature-aware free function TemplateDeclId
+publication, and member class-template TemplateDeclId).
 `reparse_template_function_body` now receives the instantiation context's
 published `TemplateDeclId` explicitly and keeps it in a scoped
 `active_template_decl_id_` window while parsing the body. Replayed local type
@@ -27,8 +28,17 @@ published `TemplateDeclId` plus the matching Type-kind parameter index, and
 the canonical adapter imports those specifiers as `TemplateParameter` nodes.
 Replayed free function-template bodies now also stamp dependent plain-member
 chains and type-only member template-ids rooted in their published Type-kind
-parameters, including `typename T::template Rebind<int>::type`; member function
-templates stay deferred. Signature-aware free
+parameters, including `typename T::template Rebind<int>::type`. Member function
+templates nested directly in published non-template namespace/global classes
+now enter a `TemplateDepthGuard` while their declaration syntax parses, so their
+Type-kind parameter specifiers retain the existing identity key. They publish a
+signature-aware `TemplateDeclId` under the enclosing class-owned `OwnerId` plus
+simple member name, merge structural redeclarations, and distinguish overloads;
+the existing retroactive stamp imports their return and parameter specifiers as
+`TemplateParameter` nodes. Their replay window uses the same published-function
+activation as free templates. Member templates under class templates or nested
+classes still fail closed because they do not yet have a published enclosing
+`EntityId`. Signature-aware free
 function TemplateDeclId publication is keyed by OwnerId +
 name + structural signature index: matching shapes merge (including
 forward→definition replace preserving an earlier stamp), distinct overloads
@@ -93,8 +103,9 @@ during concrete alias materialization. This fixes forwarded aliases such as
   also owns a `DependentExpressionTable` that interns dependent unevaluated
   expressions to `ExprId` using structural identity (not `StringHandle`), and a
   `TemplateDeclTable` that publishes and looks up primary class-template and
-  free function-template `TemplateDeclId`s keyed by `OwnerId` + template name +
-  primary kind (+ signature index for function overloads; redeclaration merge;
+  free and eligible direct-member function-template `TemplateDeclId`s keyed by
+  `OwnerId` + template name + primary kind (+ signature index for function
+  overloads; redeclaration merge;
   spelling is a lookup key only). OwnerId may be namespace-mapped or class-owned
   (`ownerIdFromClassEntity`) for member class primaries under published
   enclosing classes. Distinct free function-template overloads publish distinct
@@ -149,11 +160,12 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `Template<args>::member` results beyond that Spec-rooted path, and
   defaults-without-`<>` stay unstamped; completed instantiations may still
   appear as Record via EntityId.
-  Spelling-only bindings (nested/member templates under unpublished enclosing
-  classes, NTTP / template-template parameters, and uses before publication)
-   stay Unresolved; free function templates publish signature-aware TemplateDeclId
-   and stamp their declared type parameters retroactively, including while a
-   published free function-template body is replayed).
+  Spelling-only bindings (member templates under unpublished enclosing classes,
+  NTTP / template-template parameters, and uses before publication) stay
+  Unresolved; free and eligible direct-member function templates publish
+  signature-aware TemplateDeclIds and stamp their declared type parameters
+  retroactively, including while their published function-template bodies
+  replay).
   Plain dependent-member chains rooted in a published type parameter
   (`T::first`, `T::Nested::item`) and type-only member template-ids
   (`T::Foo<int>`, `T::template Nested<U>::type`) are stamped during
@@ -221,8 +233,8 @@ during concrete alias materialization. This fixes forwarded aliases such as
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes member function templates, member templates under class
-  templates / nested classes lacking EntityId at parse time, complete
+- Remaining 3A work includes member templates under class templates / nested
+  classes lacking EntityId at parse time, complete
   declarator interleaving, and deletion of the flat semantic
   representation. Stop here for review before starting another family, 3B, or
   the parallel frontend experiment.
@@ -295,20 +307,17 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for free function-template type-parameter stamping:
-sharded rebuild; FlashCppTest asserts a two-parameter `pick_pair(T, U)`
-template stamps its `U` return type and `T`/`U` parameters with the published
-TemplateDeclId and parameter indices, a `T*` overload stamps its own id
-(distinct from pick_pair's), and the adapter imports stamped specifiers as
-Supported `templateParameter(decl, index)` / pointer-wrapped nodes. The stamp
-pass is mutation-validated (disabling the publication call site fails the
-test). Publication tests and the member class-template tests remain green.
-The full Linux suite is 2,981 compile / 2,966 runtime / 264 negative, all
-passing; migration counters remain within
-baseline; one corpus entry still reports `template_old_engine` 59→58 (aggregate
-baseline unchanged). Adjacent architecture coverage remains the DependentName /
-Spec-rooted / substitute / restamp / tip-schema / tip-projection / opaque-NTTP
-probes. The
+Latest validation for direct member function-template stamping: sharded rebuild;
+FlashCppTest verifies a published non-template class's two-parameter member
+template stamps its return and parameters, merges a forward declaration with its
+definition, keeps a pointer overload distinct, and imports the stamped
+specifiers as supported `templateParameter(decl, index)` nodes. Mutating away
+the member TemplateDeclId attachment fails that native test. The focused source
+test compiles, and adjacent `test_template_member_addition_ret15.cpp` returns
+15. `run_canonical_types.py --mutations` and its baseline harness completed;
+fixed-corpus migration counters and the dollar inventory remain at baseline.
+Adjacent architecture coverage remains the DependentName / Spec-rooted /
+substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes. The
 Windows suite is 2,986 single-file cases, 264 negative tests, and 12 multi-TU
 cases. Fixed-corpus migration counters remain within the prior baselines below.
 
@@ -401,9 +410,12 @@ Advanced, not completed:
   parameter index, adapter-imported as TemplateParameter), and scoped published
   TemplateDeclId activation while those free function-template bodies replay,
   including structural plain-member chains and type-only member template-ids
-  rooted in their published Type-kind parameters, are landed; member function templates,
-  member templates under class templates / nested classes without EntityId at
-  parse time, alias, unpublished/incomplete nominal, anonymous-union, and
+  rooted in their published Type-kind parameters, and direct member function
+  templates under published non-template namespace/global classes (class-owned
+  OwnerId + signature-aware publication, retroactive Type-kind parameter stamp,
+  and published replay activation) are landed; member templates under class
+  templates / nested classes without EntityId at parse time, alias,
+  unpublished/incomplete nominal, anonymous-union, and
   unpublished-base forms stay deferred. Remaining families and flat-field
   deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for

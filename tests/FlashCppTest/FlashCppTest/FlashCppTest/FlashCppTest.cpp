@@ -2726,6 +2726,96 @@ TEST_SUITE("FrontendContext") {
 		CHECK(ptr_param_import.type == table.pointer(table.templateParameter(ptr_decl_id, 0u)));
 	}
 
+	TEST_CASE("Published member function templates stamp their declared type parameters") {
+		gTypeInfo.clear();
+		gNativeTypes.clear();
+		gTypesByName.clear();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"struct MemberTemplateOwner {\n"
+			"  template<typename T, typename U> U select(T left, U value);\n"
+			"  template<typename T, typename U> U select(T left, U value) { return value; }\n"
+			"  template<typename T> T* address(T* value) { return value; }\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_function_template_decl_publication_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const StructDeclarationNode* owner = nullptr;
+		for (const ASTNode& node : parser.get_nodes()) {
+			if (node.is<StructDeclarationNode>() &&
+				node.as<StructDeclarationNode>().name() ==
+					StringTable::getOrInternStringHandle("MemberTemplateOwner")) {
+				owner = &node.as<StructDeclarationNode>();
+				break;
+			}
+		}
+		REQUIRE(owner != nullptr);
+		REQUIRE(owner->has_entity_id());
+
+		const TemplateFunctionDeclarationNode* declaration = nullptr;
+		const TemplateFunctionDeclarationNode* definition = nullptr;
+		const TemplateFunctionDeclarationNode* address = nullptr;
+		for (const StructMemberFunctionDecl& member : owner->member_functions()) {
+			if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& candidate =
+				member.function_declaration.as<TemplateFunctionDeclarationNode>();
+			const StringHandle name =
+				candidate.function_decl_node().decl_node().identifier_token().handle();
+			if (StringTable::getStringView(name) == "select"sv) {
+				if (candidate.function_decl_node().has_template_body_position()) {
+					definition = &candidate;
+				} else {
+					declaration = &candidate;
+				}
+			} else if (StringTable::getStringView(name) == "address"sv) {
+				address = &candidate;
+			}
+		}
+		REQUIRE(declaration != nullptr);
+		REQUIRE(definition != nullptr);
+		REQUIRE(address != nullptr);
+		REQUIRE(declaration->has_template_decl_id());
+		REQUIRE(definition->has_template_decl_id());
+		REQUIRE(address->has_template_decl_id());
+		CHECK(declaration->template_decl_id() == definition->template_decl_id());
+		CHECK(address->template_decl_id() != definition->template_decl_id());
+
+		const FunctionDeclarationNode& selected = definition->function_decl_node();
+		const TypeSpecifierNode& return_type = selected.decl_node().type_specifier_node();
+		REQUIRE(return_type.has_template_parameter_decl());
+		CHECK(return_type.template_decl_id() == definition->template_decl_id());
+		CHECK(return_type.template_parameter_index() == 1u);
+		REQUIRE(selected.parameter_nodes().size() == 2u);
+		const TypeSpecifierNode& first_param =
+			selected.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+		const TypeSpecifierNode& second_param =
+			selected.parameter_nodes()[1].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(first_param.has_template_parameter_decl());
+		REQUIRE(second_param.has_template_parameter_decl());
+		CHECK(first_param.template_decl_id() == definition->template_decl_id());
+		CHECK(first_param.template_parameter_index() == 0u);
+		CHECK(second_param.template_decl_id() == definition->template_decl_id());
+		CHECK(second_param.template_parameter_index() == 1u);
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const CanonicalTypeImport return_import = importCanonicalType(table, return_type);
+		REQUIRE(return_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(return_import.type == table.templateParameter(definition->template_decl_id(), 1u));
+		const CanonicalTypeImport first_import = importCanonicalType(table, first_param);
+		REQUIRE(first_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(first_import.type == table.templateParameter(definition->template_decl_id(), 0u));
+	}
+
 	TEST_CASE("Free function body replay stamps dependent member template chains") {
 		gTypeInfo.clear();
 		gNativeTypes.clear();
