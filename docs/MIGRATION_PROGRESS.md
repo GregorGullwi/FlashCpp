@@ -5,16 +5,19 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-12 after direct member function-template stamping
-on `codex/boundary-3a-member-function-template-stamping`
+Last updated: 2026-09-13 after direct primary member class-template and member
+function-template stamping under published class templates on
+`codex/boundary-3a-class-template-member-primary-stamping`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's direct member function-template stamping is on
-`codex/boundary-3a-member-function-template-stamping` for review (after free
-function-template body replay stamping, free function-template declared
-type-parameter stamping, signature-aware free function TemplateDeclId
-publication, and member class-template TemplateDeclId).
+Architecture boundary 3A's direct primary member class-template and member
+function-template stamping under published namespace/global class templates is on
+`codex/boundary-3a-class-template-member-primary-stamping` for review (after
+direct member function-template stamping, free function-template body replay
+stamping, free function-template declared type-parameter stamping,
+signature-aware free function TemplateDeclId publication, and member
+class-template TemplateDeclId).
 `reparse_template_function_body` now receives the instantiation context's
 published `TemplateDeclId` explicitly and keeps it in a scoped
 `active_template_decl_id_` window while parsing the body. Replayed local type
@@ -36,9 +39,13 @@ signature-aware `TemplateDeclId` under the enclosing class-owned `OwnerId` plus
 simple member name, merge structural redeclarations, and distinguish overloads;
 the existing retroactive stamp imports their return and parameter specifiers as
 `TemplateParameter` nodes. Their replay window uses the same published-function
-activation as free templates. Member templates under class templates or nested
-classes still fail closed because they do not yet have a published enclosing
-`EntityId`. Signature-aware free
+activation as free templates. Direct member function templates inside a
+published namespace/global primary class template use its template-owned
+`OwnerId`, merge matching declarations with definitions, distinguish overloads,
+retroactively stamp their declared Type-kind parameters, and activate their
+published child ID during replay. Nested member templates and member function
+templates without either a published enclosing `EntityId` or this direct
+class-template owner still fail closed. Signature-aware free
 function TemplateDeclId publication is keyed by OwnerId +
 name + structural signature index: matching shapes merge (including
 forward→definition replace preserving an earlier stamp), distinct overloads
@@ -49,6 +56,14 @@ non-template namespace/global classes publish `TemplateDeclId` under class-owned
 `OwnerId` (enclosing EntityId) plus simple member name; enclosing EntityId is
 published as a non-definition before body parse so member templates can stamp
 during the body, then merged as a definition at the complete-definition epoch.
+Direct primary member class templates inside a published namespace/global
+primary class template publish under a disjoint template-owned `OwnerId` derived
+from that enclosing `TemplateDeclId`; forward declarations merge with
+definitions, and their Type-kind parameter specifiers stamp with the child
+primary's ID. Direct member function templates in those class-template bodies
+use the same template-owned owner with a structural signature key; their
+forward declarations merge with definitions, overloads remain distinct, and
+their declared Type-kind parameter specifiers stamp with the child function ID.
 Early EntityId publication skips nested classes via the struct-parsing context
 stack (`enclosing_class()` is not set until after the nested parse returns, and
 class bodies do not enter a Class ScopeType). Dependent NTTP Spec stamping,
@@ -106,9 +121,11 @@ during concrete alias materialization. This fixes forwarded aliases such as
   free and eligible direct-member function-template `TemplateDeclId`s keyed by
   `OwnerId` + template name + primary kind (+ signature index for function
   overloads; redeclaration merge;
-  spelling is a lookup key only). OwnerId may be namespace-mapped or class-owned
+  spelling is a lookup key only). OwnerId may be namespace-mapped, class-owned
   (`ownerIdFromClassEntity`) for member class primaries under published
-  enclosing classes. Distinct free function-template overloads publish distinct
+  non-template enclosing classes, or template-owned
+  (`ownerIdFromTemplateDecl`) for direct member primaries under published class
+  templates. Distinct free function-template overloads publish distinct
   signature indices rather than sharing OwnerId+name.
 - Published global/namespace structs and enums bind `type_entity` / injected-
   class metadata at declarator intern time so `Struct` and `Enum` declarators
@@ -154,15 +171,16 @@ during concrete alias materialization. This fixes forwarded aliases such as
   plus parameter index. Explicit concrete type arguments for a final
   namespace/global primary-class type pack stamp as ordered TypeId arguments;
   dependent pack expansions, non-type/template packs, other dependent
-  template-template arguments, nested/member templates under unpublished
-  enclosing forms (class templates, nested classes before their EntityId epoch,
-  local/anonymous), member-template partials, alias expansions,
+  template-template arguments, member function templates or nested member
+  templates under unpublished enclosing forms (nested classes before their
+  EntityId epoch, local/anonymous), member-template partials, alias expansions,
   `Template<args>::member` results beyond that Spec-rooted path, and
   defaults-without-`<>` stay unstamped; completed instantiations may still
   appear as Record via EntityId.
   Spelling-only bindings (member templates under unpublished enclosing classes,
   NTTP / template-template parameters, and uses before publication) stay
-  Unresolved; free and eligible direct-member function templates publish
+  Unresolved; free and eligible direct-member function templates, including
+  direct members of published class templates, publish
   signature-aware TemplateDeclIds and stamp their declared type parameters
   retroactively, including while their published function-template bodies
   replay).
@@ -307,15 +325,18 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for direct member function-template stamping: sharded rebuild;
-FlashCppTest verifies a published non-template class's two-parameter member
-template stamps its return and parameters, merges a forward declaration with its
-definition, keeps a pointer overload distinct, and imports the stamped
-specifiers as supported `templateParameter(decl, index)` nodes. Mutating away
-the member TemplateDeclId attachment fails that native test. The focused source
-test compiles, and adjacent `test_template_member_addition_ret15.cpp` returns
-15. `run_canonical_types.py --mutations` and its baseline harness completed;
-fixed-corpus migration counters and the dollar inventory remain at baseline.
+Latest validation for direct primary member templates under a published class
+template: sharded rebuild; FlashCppTest verifies class-template
+forward-to-definition merge, identity separation, and child parameter import,
+plus function-template forward-to-definition merge, overload separation,
+declared parameter import, and replay activation. The native
+`template_owner_tag` mutation collapses template ownership onto class ownership
+and fails the identity test; removing the direct template-owned function
+publication path likewise fails its focused native test. Focused class-template
+and member-function-template source regressions compile and return 0, while
+adjacent member-function-template coverage returns 42 and the static-member
+case returns 0. The canonical baseline harness completed; fixed-corpus migration
+counters and the dollar inventory remain at baseline.
 Adjacent architecture coverage remains the DependentName / Spec-rooted /
 substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes. The
 Windows suite is 2,986 single-file cases, 264 negative tests, and 12 multi-TU
@@ -413,8 +434,14 @@ Advanced, not completed:
   rooted in their published Type-kind parameters, and direct member function
   templates under published non-template namespace/global classes (class-owned
   OwnerId + signature-aware publication, retroactive Type-kind parameter stamp,
-  and published replay activation) are landed; member templates under class
-  templates / nested classes without EntityId at parse time, alias,
+  and published replay activation), and direct primary member class templates
+  under published namespace/global class templates (template-owned OwnerId,
+  forward-to-definition merge, and child Type-kind parameter stamps), and
+  direct member function templates under those class templates (template-owned
+  OwnerId + signature-aware publication, redeclaration merge, overload
+  separation, retroactive Type-kind parameter stamp, and replay activation) are
+  landed; nested member templates and member function templates under nested
+  classes without EntityId at parse time, alias,
   unpublished/incomplete nominal, anonymous-union, and
   unpublished-base forms stay deferred. Remaining families and flat-field
   deletion keep all three identity criteria open.
@@ -436,9 +463,8 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Member function templates, then member templates under class templates /
-  nested classes lacking EntityId
-  at parse time, then richer adapters before
+- Nested member templates and member function templates under nested classes
+  lacking EntityId at parse time, then richer adapters before
   expanding boundary-1 shadow coverage (default arguments, exception
   specifications, fields, templates) or removing `SymbolTable` merge /
   `matches_signature` authority.

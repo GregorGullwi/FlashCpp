@@ -61,12 +61,37 @@ def build_and_run(name, include, expected):
     print(name + ": " + (result.stdout.strip() or result.stderr.strip()))
 
 
+def run_template_owner_tag_mutation():
+    name = "template_owner_tag"
+    before = "const Key key{owner.value, name, kind, signature_index};"
+    after = ("const Key key{isTemplateOwnedOwnerId(owner) ?\n"
+             "\t\t\t(owner.value & kOwnerIdPayloadMask) | kClassOwnerIdTag : owner.value,\n"
+             "\t\t\tname, kind, signature_index};")
+    original_template_decls = (ROOT / "src" / "TemplateDeclTable.h").read_text()
+    if original_template_decls.count(before) != 1:
+        raise RuntimeError("mutation anchor changed: " + name)
+    directory = OUTPUT / name
+    directory.mkdir(parents=True, exist_ok=True)
+    for sibling in (
+        "CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h",
+        "TemplateDeclTable.h"):
+        text = (ROOT / "src" / sibling).read_text()
+        if sibling == "TemplateDeclTable.h":
+            text = text.replace(before, after)
+        (directory / sibling).write_text(text)
+    build_and_run(name, directory, 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mutations", action="store_true")
+    parser.add_argument("--template-owner-tag-mutation", action="store_true")
     options = parser.parse_args()
     check_guards()
     build_and_run("baseline", ROOT / "src", 0)
+    if options.template_owner_tag_mutation:
+        run_template_owner_tag_mutation()
+        return
     if options.mutations:
         original = HEADER.read_text()
         mutations = {
@@ -366,6 +391,8 @@ def main():
                     text = text.replace(before, after)
                 (directory / sibling).write_text(text)
             build_and_run(name, directory, 1)
+
+        run_template_owner_tag_mutation()
 
 
 if __name__ == "__main__":

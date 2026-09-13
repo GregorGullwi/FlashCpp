@@ -81,6 +81,50 @@ struct TemplateDeclId {
 	friend constexpr bool operator==(TemplateDeclId, TemplateDeclId) = default;
 };
 
+// OwnerId carries a compact tagged semantic owner. Namespace owners occupy the
+// untagged range; class entities and primary class templates use disjoint tags.
+// The payload is an EntityId or TemplateDeclId, never a spelling or address.
+inline constexpr uint32_t kOwnerIdKindMask = 0xC0000000u;
+inline constexpr uint32_t kClassOwnerIdTag = 0x80000000u;
+inline constexpr uint32_t kTemplateOwnerIdTag = 0xC0000000u;
+inline constexpr uint32_t kOwnerIdPayloadMask = 0x3FFFFFFFu;
+
+inline constexpr OwnerId ownerIdFromClassEntity(EntityId enclosing) {
+	if (!enclosing || (enclosing.value & ~kOwnerIdPayloadMask) != 0u) {
+		return OwnerId{};
+	}
+	return OwnerId{enclosing.value | kClassOwnerIdTag};
+}
+
+inline constexpr OwnerId ownerIdFromTemplateDecl(TemplateDeclId enclosing) {
+	if (!enclosing || (enclosing.value & ~kOwnerIdPayloadMask) != 0u) {
+		return OwnerId{};
+	}
+	return OwnerId{enclosing.value | kTemplateOwnerIdTag};
+}
+
+inline constexpr bool isClassOwnedOwnerId(OwnerId owner_id) {
+	return owner_id && (owner_id.value & kOwnerIdKindMask) == kClassOwnerIdTag;
+}
+
+inline constexpr bool isTemplateOwnedOwnerId(OwnerId owner_id) {
+	return owner_id && (owner_id.value & kOwnerIdKindMask) == kTemplateOwnerIdTag;
+}
+
+inline constexpr EntityId classEntityFromOwnerId(OwnerId owner_id) {
+	if (!isClassOwnedOwnerId(owner_id)) {
+		return EntityId{};
+	}
+	return EntityId{owner_id.value & kOwnerIdPayloadMask};
+}
+
+inline constexpr TemplateDeclId templateDeclFromOwnerId(OwnerId owner_id) {
+	if (!isTemplateOwnedOwnerId(owner_id)) {
+		return TemplateDeclId{};
+	}
+	return TemplateDeclId{owner_id.value & kOwnerIdPayloadMask};
+}
+
 static_assert(sizeof(ScopeId) == 4);
 static_assert(sizeof(OwnerId) == 4);
 static_assert(sizeof(DeclId) == 4);
@@ -89,3 +133,8 @@ static_assert(sizeof(ExprId) == 4);
 static_assert(sizeof(TypeId) == 4);
 static_assert(sizeof(TelemetryTypeId) == 4);
 static_assert(sizeof(TemplateDeclId) == 4);
+static_assert(isClassOwnedOwnerId(ownerIdFromClassEntity(EntityId{1})));
+static_assert(isTemplateOwnedOwnerId(ownerIdFromTemplateDecl(TemplateDeclId{1})));
+static_assert(classEntityFromOwnerId(ownerIdFromClassEntity(EntityId{7})) == EntityId{7});
+static_assert(templateDeclFromOwnerId(ownerIdFromTemplateDecl(TemplateDeclId{7})) == TemplateDeclId{7});
+static_assert(ownerIdFromClassEntity(EntityId{1}) != ownerIdFromTemplateDecl(TemplateDeclId{1}));

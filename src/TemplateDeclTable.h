@@ -14,11 +14,12 @@
 // (+ signature index for function primaries) for redeclaration merge; the
 // spelling is a lookup key only and does not participate in canonical TypeId
 // equality (that uses TemplateDeclId + parameter index). OwnerId may be a
-// namespace-mapped owner (namespace/global primaries) or a class-owned owner
-// from ownerIdFromClassEntity (member class primaries under published enclosing
-// classes). Function primaries use a distinct kind so they cannot share slots
-// with class primaries. Distinct free function-template overloads use distinct
-// signature indices; matching shapes reuse the same index / TemplateDeclId.
+// namespace-mapped owner (namespace/global primaries), a class-owned owner
+// from ownerIdFromClassEntity, or a template-owned owner from
+// ownerIdFromTemplateDecl (direct member class primaries under a published
+// class template). Function primaries use a distinct kind so they cannot share
+// slots with class primaries. Distinct free function-template overloads use
+// distinct signature indices; matching shapes reuse the same TemplateDeclId.
 class TemplateDeclTable {
 public:
 	enum class PrimaryKind : uint8_t {
@@ -114,10 +115,10 @@ private:
 		if (existing != ids_by_key_.end()) {
 			return existing->second;
 		}
-		const uint32_t raw = static_cast<uint32_t>(ids_by_key_.size() + 1u);
-		if (raw == 0) {
+		if (ids_by_key_.size() >= kOwnerIdPayloadMask) {
 			throw InternalError("template decl: TemplateDeclId overflow");
 		}
+		const uint32_t raw = static_cast<uint32_t>(ids_by_key_.size() + 1u);
 		const TemplateDeclId id{raw};
 		ids_by_key_.emplace(key, id);
 		return id;

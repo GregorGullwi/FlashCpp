@@ -675,6 +675,151 @@ TEST_SUITE("FrontendContext") {
 		CHECK(free_box_tmpl.template_decl_id() != member.template_decl_id());
 	}
 
+	TEST_CASE("Member class template under published class template publishes TemplateDeclId") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename Outer> struct TemplateOwner {\n"
+			"  template<typename Inner> struct Box;\n"
+			"  template<typename Inner> struct Box { Inner value; };\n"
+			"  template<typename Left, typename Right> struct Pair { Right value; };\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("class_template_member_primary_decl_publication_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto owner_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("TemplateOwner"));
+		REQUIRE(owner_opt.has_value());
+		REQUIRE(owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& owner = owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(owner.has_template_decl_id());
+
+		const auto box_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("TemplateOwner::Box"));
+		REQUIRE(box_opt.has_value());
+		REQUIRE(box_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& box = box_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(box.has_template_decl_id());
+		REQUIRE(box.class_decl_node().has_template_decl_id());
+		CHECK(box.template_decl_id() == box.class_decl_node().template_decl_id());
+		CHECK(box.template_decl_id() != owner.template_decl_id());
+
+		const auto& box_members = box.class_decl_node().members();
+		REQUIRE(box_members.size() == 1u);
+		REQUIRE(box_members[0].declaration.is<DeclarationNode>());
+		const TypeSpecifierNode& value_type =
+			box_members[0].declaration.as<DeclarationNode>().type_specifier_node();
+		REQUIRE(value_type.has_template_parameter_decl());
+		CHECK(value_type.template_decl_id() == box.template_decl_id());
+		CHECK(value_type.template_parameter_index() == 0u);
+
+		const auto pair_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("TemplateOwner::Pair"));
+		REQUIRE(pair_opt.has_value());
+		REQUIRE(pair_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& pair = pair_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(pair.has_template_decl_id());
+		CHECK(pair.template_decl_id() != box.template_decl_id());
+		CHECK(pair.template_decl_id() != owner.template_decl_id());
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const CanonicalTypeImport value_import = importCanonicalType(table, value_type);
+		REQUIRE(value_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(value_import.type == table.templateParameter(box.template_decl_id(), 0u));
+	}
+
+	TEST_CASE("Member function template under published class template publishes TemplateDeclId") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename Outer> struct TemplateFunctionOwner {\n"
+			"  template<typename Left, typename Right> Right select(Left left, Right right);\n"
+			"  template<typename Left, typename Right> Right select(Left left, Right right) { return right; }\n"
+			"  template<typename T> T* address(T* value) { return value; }\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("class_template_member_function_decl_publication_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto owner_opt = gTemplateRegistry.lookupTemplate(
+			StringTable::getOrInternStringHandle("TemplateFunctionOwner"));
+		REQUIRE(owner_opt.has_value());
+		REQUIRE(owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& owner = owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(owner.has_template_decl_id());
+
+		const TemplateFunctionDeclarationNode* declaration = nullptr;
+		const TemplateFunctionDeclarationNode* definition = nullptr;
+		const TemplateFunctionDeclarationNode* address = nullptr;
+		for (const StructMemberFunctionDecl& member : owner.class_decl_node().member_functions()) {
+			if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& candidate =
+				member.function_declaration.as<TemplateFunctionDeclarationNode>();
+			const StringHandle name =
+				candidate.function_decl_node().decl_node().identifier_token().handle();
+			if (StringTable::getStringView(name) == "select"sv) {
+				if (candidate.function_decl_node().has_template_body_position()) {
+					definition = &candidate;
+				} else {
+					declaration = &candidate;
+				}
+			} else if (StringTable::getStringView(name) == "address"sv) {
+				address = &candidate;
+			}
+		}
+		REQUIRE(declaration != nullptr);
+		REQUIRE(definition != nullptr);
+		REQUIRE(address != nullptr);
+		REQUIRE(declaration->has_template_decl_id());
+		REQUIRE(definition->has_template_decl_id());
+		REQUIRE(address->has_template_decl_id());
+		CHECK(declaration->template_decl_id() == definition->template_decl_id());
+		CHECK(address->template_decl_id() != definition->template_decl_id());
+		CHECK(definition->template_decl_id() != owner.template_decl_id());
+
+		const FunctionDeclarationNode& selected = definition->function_decl_node();
+		const TypeSpecifierNode& return_type = selected.decl_node().type_specifier_node();
+		REQUIRE(return_type.has_template_parameter_decl());
+		CHECK(return_type.template_decl_id() == definition->template_decl_id());
+		CHECK(return_type.template_parameter_index() == 1u);
+		REQUIRE(selected.parameter_nodes().size() == 2u);
+		const TypeSpecifierNode& first_param =
+			selected.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+		const TypeSpecifierNode& second_param =
+			selected.parameter_nodes()[1].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(first_param.has_template_parameter_decl());
+		REQUIRE(second_param.has_template_parameter_decl());
+		CHECK(first_param.template_decl_id() == definition->template_decl_id());
+		CHECK(first_param.template_parameter_index() == 0u);
+		CHECK(second_param.template_decl_id() == definition->template_decl_id());
+		CHECK(second_param.template_parameter_index() == 1u);
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const CanonicalTypeImport return_import = importCanonicalType(table, return_type);
+		REQUIRE(return_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(return_import.type == table.templateParameter(definition->template_decl_id(), 1u));
+		const CanonicalTypeImport first_import = importCanonicalType(table, first_param);
+		REQUIRE(first_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(first_import.type == table.templateParameter(definition->template_decl_id(), 0u));
+	}
+
 	TEST_CASE("Free function template overloads publish distinct TemplateDeclIds") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
@@ -946,6 +1091,7 @@ int replay_member_chain(T source) {
 	ReplayPointer pointer = nullptr;
 	return static_cast<int>(copied) + (pointer == nullptr ? 0 : 1);
 }
+
 
 int main() {
 	return replay_member_chain(ReplayMemberSource{9}) - 9;
@@ -3285,4 +3431,3 @@ TEST_SUITE("Diagnostics") {
 		CHECK(true);
 	}
 }
-

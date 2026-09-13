@@ -783,9 +783,19 @@ published non-template namespace/global classes publish a `TemplateDeclId` keyed
 by class-owned `OwnerId` (from the enclosing `EntityId`) plus simple member
 name; that enclosing `EntityId` is published as a non-definition before body
 parse so member templates can stamp during the body, then merged as a
-definition at the complete-definition epoch. While a published namespace/global
-primary class template
-body is parsed, a non-pack template-template argument that names its active
+definition at the complete-definition epoch. Direct primary member class
+templates inside a published namespace/global primary class template publish
+under a disjoint template-owned `OwnerId` derived from the enclosing
+`TemplateDeclId`; matching forward declarations and definitions reuse the child
+ID, and child Type-kind parameter specifiers stamp with that child ID. Direct
+member function templates in those published class-template bodies likewise
+publish a signature-aware child `TemplateDeclId` under that template-owned
+`OwnerId`; matching declarations and definitions merge, overloads remain
+distinct, declared Type-kind parameter specifiers stamp retroactively with the
+child ID, and replay activates that published child ID. Nested member templates
+in those class-template bodies remain deferred. While a published
+namespace/global primary class template body is parsed, a non-pack
+template-template argument that names its active
 template parameter stamps the owning `TemplateDeclId` plus parameter index as an
 opaque Spec argument. Explicit concrete type arguments for a final
 namespace/global primary-class type pack also stamp as ordered TypeId Spec

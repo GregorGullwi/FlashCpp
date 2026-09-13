@@ -25,19 +25,28 @@ TypeIndex makeConstantValueTypeIndex(TypeCategory category, TypeIndex type_index
 	return TypeIndex{0, resolved_category};
 }
 
-// Publish a member function-template only when its immediately enclosing class
-// already has namespace/global EntityId ownership. Class-template and nested
-// class owners do not have that identity at this parse point and deliberately
-// remain unstamped. Structural signatures merge redeclarations while distinct
-// overloads get separate function signature indices.
+// Publish a member function-template when its immediately enclosing class has
+// namespace/global EntityId ownership or is a direct published class template.
+// Nested-class owners deliberately remain unstamped because they have neither
+// identity at this parse point. Structural signatures merge redeclarations while
+// distinct overloads get separate function signature indices.
 std::optional<TemplateDeclId> tryPublishMemberFunctionTemplate(
 	StructDeclarationNode& enclosing,
 	TemplateFunctionDeclarationNode& member,
-	StringHandle simple_name) {
-	if (!enclosing.has_entity_id() || !simple_name.isValid()) {
+	StringHandle simple_name,
+	TemplateDeclId enclosing_template_decl,
+	bool is_direct_member_of_top_level_class_template) {
+	if (!simple_name.isValid()) {
 		return std::nullopt;
 	}
-	const OwnerId owner = ownerIdFromClassEntity(enclosing.entity_id());
+	OwnerId owner{};
+	if (enclosing.has_entity_id()) {
+		owner = ownerIdFromClassEntity(enclosing.entity_id());
+	} else if (is_direct_member_of_top_level_class_template &&
+		enclosing.has_template_decl_id() &&
+		enclosing.template_decl_id() == enclosing_template_decl) {
+		owner = ownerIdFromTemplateDecl(enclosing_template_decl);
+	}
 	if (!owner) {
 		return std::nullopt;
 	}
@@ -876,7 +885,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	FunctionDeclarationNode& func_decl = template_decl.function_decl_node();
 	const DeclarationNode& decl_node = func_decl.decl_node();
 	(void)tryPublishMemberFunctionTemplate(
-		struct_node, template_decl, decl_node.identifier_token().handle());
+		struct_node,
+		template_decl,
+		decl_node.identifier_token().handle(),
+		active_template_decl_id_,
+		struct_parsing_context_stack_.size() == 1u);
 	stampPublishedFunctionTemplateParameters(template_decl);
 	StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
 	func_decl.set_semantic_owner_name(owner_qualified_name);
