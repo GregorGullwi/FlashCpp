@@ -781,21 +781,29 @@ inline void checkTemplateDeclPublication() {
 	require(decls.size() == 3);
 	rejects([&] { decls.publishPrimaryClassTemplate(OwnerId{}, name_a); });
 
-	// Class-owned OwnerIds (member class templates under published enclosing
-	// classes) share the same table API but must not collide with namespace
-	// OwnerId{1} even when the EntityId raw value is 1. Matches
-	// ownerIdFromClassEntity(EntityId{1}) without pulling DeclarationBuilder
-	// into this mutation harness include graph.
-	constexpr uint32_t kClassOwnerIdTag = 0x80000000u;
-	const OwnerId class_owner{EntityId{1}.value | kClassOwnerIdTag};
+	// Class- and template-owned OwnerIds share the same table API but cannot
+	// collide with each other or namespace OwnerId{1}, even with raw value 1.
+	const OwnerId class_owner = ownerIdFromClassEntity(EntityId{1});
 	require(class_owner != OwnerId{1});
+	const OwnerId template_owner = ownerIdFromTemplateDecl(TemplateDeclId{1});
+	require(template_owner != OwnerId{1});
+	require(template_owner != class_owner);
+	require(isClassOwnedOwnerId(class_owner));
+	require(isTemplateOwnedOwnerId(template_owner));
+	require(classEntityFromOwnerId(class_owner) == EntityId{1});
+	require(templateDeclFromOwnerId(template_owner) == TemplateDeclId{1});
 	const auto member = decls.publishPrimaryClassTemplate(class_owner, name_a);
 	require(member != first);
 	require(decls.publishPrimaryClassTemplate(class_owner, name_a) == member);
 	require(decls.findPrimaryClassTemplate(class_owner, name_a) == member);
 	require(decls.findPrimaryClassTemplate(OwnerId{1}, name_a) == first);
 	require(decls.publishPrimaryClassTemplate(class_owner, name_b) != member);
-	require(decls.size() == 5);
+	const auto template_member = decls.publishPrimaryClassTemplate(template_owner, name_a);
+	require(template_member != first);
+	require(template_member != member);
+	require(decls.publishPrimaryClassTemplate(template_owner, name_a) == template_member);
+	require(decls.findPrimaryClassTemplate(template_owner, name_a) == template_member);
+	require(decls.size() == 6);
 
 	// Free function templates use a distinct primary kind and a signature
 	// index so overloads under the same OwnerId + name publish distinct ids

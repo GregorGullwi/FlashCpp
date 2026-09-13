@@ -9,20 +9,29 @@
 
 namespace {
 
-// Publish TemplateDeclId for a primary member class template when the enclosing
-// class already carries a published EntityId (namespace/global non-template
-// classes during body parse). Nested non-template classes assign EntityIds at
-// the enclosing complete-definition epoch, so member templates inside them stay
-// deferred here. Class-template enclosing forms also stay deferred. Spelling is
-// a lookup key only and is never TypeId identity.
+// Publish TemplateDeclId for a primary member class template when its immediate
+// enclosing class has either a published EntityId (namespace/global
+// non-template classes) or a published primary TemplateDeclId (direct members
+// of namespace/global class templates). Nested classes assign EntityIds at the
+// enclosing complete-definition epoch, and nested member templates remain
+// deferred. Spelling is a lookup key only and is never TypeId identity.
 std::optional<TemplateDeclId> tryPublishMemberPrimaryClassTemplate(
 	StructDeclarationNode& enclosing,
 	StructDeclarationNode& member,
-	StringHandle simple_name) {
-	if (!enclosing.has_entity_id() || !simple_name.isValid()) {
+	StringHandle simple_name,
+	TemplateDeclId enclosing_template_decl,
+	bool is_direct_member_of_top_level_class_template) {
+	if (!simple_name.isValid()) {
 		return std::nullopt;
 	}
-	const OwnerId owner = ownerIdFromClassEntity(enclosing.entity_id());
+	OwnerId owner{};
+	if (enclosing.has_entity_id()) {
+		owner = ownerIdFromClassEntity(enclosing.entity_id());
+	} else if (is_direct_member_of_top_level_class_template &&
+		enclosing.has_template_decl_id() &&
+		enclosing.template_decl_id() == enclosing_template_decl) {
+		owner = ownerIdFromTemplateDecl(enclosing_template_decl);
+	}
 	if (!owner) {
 		return std::nullopt;
 	}
@@ -5388,7 +5397,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			forward_struct_node.as<StructDeclarationNode>();
 		forward_struct_ref.set_is_forward_declaration(true);
 		(void)tryPublishMemberPrimaryClassTemplate(
-			struct_node, forward_struct_ref, struct_name_token.handle());
+			struct_node,
+			forward_struct_ref,
+			struct_name_token.handle(),
+			active_template_decl_id_,
+			struct_parsing_context_stack_.size() == 1u);
 
 		// Create template struct node for the forward declaration
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
@@ -6151,7 +6164,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		is_union);
 	const std::optional<TemplateDeclId> member_template_decl =
 		tryPublishMemberPrimaryClassTemplate(
-			struct_node, member_struct_ref, struct_name_token.handle());
+			struct_node,
+			member_struct_ref,
+			struct_name_token.handle(),
+			active_template_decl_id_,
+			struct_parsing_context_stack_.size() == 1u);
 	FlashCpp::ScopedStateCopy member_struct_context_guard(
 		struct_parsing_context_stack_);
 	struct_parsing_context_stack_.push_back({

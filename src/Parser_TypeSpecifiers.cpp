@@ -5053,8 +5053,7 @@ void Parser::stampPublishedFunctionTemplateParameters(
 	const TemplateParameterVector& template_parameters =
 		template_decl.template_parameters();
 	const auto stampTypeSpecifier = [&](TypeSpecifierNode& type_spec) {
-		if (!type_spec.has_template_parameter_identity() ||
-			type_spec.has_template_parameter_decl()) {
+		if (!type_spec.has_template_parameter_identity()) {
 			return;
 		}
 		const StringHandle param_name = type_spec.template_parameter_name();
@@ -5064,6 +5063,10 @@ void Parser::stampPublishedFunctionTemplateParameters(
 				continue;
 			}
 			if (parameter.nameHandle() == param_name) {
+				// A member function template parsed inside a class-template body can
+				// carry the enclosing active-template stamp provisionally. The
+				// function parameter list owns this matching binding, so replace it
+				// with the published child identity.
 				type_spec.set_template_parameter_decl(template_decl_id, static_cast<uint32_t>(index));
 				return;
 			}
