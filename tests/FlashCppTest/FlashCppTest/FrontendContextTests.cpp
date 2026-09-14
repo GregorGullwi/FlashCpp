@@ -1348,6 +1348,44 @@ TEST_SUITE("FrontendContext") {
 		CHECK(return_import.type == table.templateParameter(definition->template_decl_id(), 1u));
 	}
 
+	TEST_CASE("Member class template registers qualified owner-chain keys") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"namespace ns {\n"
+			"struct Outer {\n"
+			"  struct Inner {\n"
+			"    template<typename T> struct Box { T value; };\n"
+			"  };\n"
+			"};\n"
+			"}\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_class_template_owner_chain_keys_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		// All legal spellings of the same declaration resolve to one node.
+		const auto legacy_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("Inner::Box"));
+		REQUIRE(legacy_opt.has_value());
+		const auto chain_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("ns::Outer::Inner::Box"));
+		REQUIRE(chain_opt.has_value());
+		REQUIRE(chain_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& chain =
+			chain_opt->as<TemplateClassDeclarationNode>();
+		CHECK(chain.class_decl_node().has_template_decl_id());
+		REQUIRE(legacy_opt->is<TemplateClassDeclarationNode>());
+		CHECK(legacy_opt->as<TemplateClassDeclarationNode>().class_decl_node().template_decl_id() ==
+			  chain.class_decl_node().template_decl_id());
+	}
+
 	TEST_CASE("Free function body replay stamps dependent member template chains") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

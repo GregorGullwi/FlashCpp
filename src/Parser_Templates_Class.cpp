@@ -5381,6 +5381,27 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	std::string_view struct_name = struct_name_token.value();
 	advance(); // consume struct name
 
+	// Owner-chain registry keys for type-ids spelled through nested enclosing
+	// classes or a namespace prefix (Outer::Inner::Box<int>, ns::Outer::Box<int>).
+	// The enclosing-struct chain and the namespace-qualified chain mirror the
+	// alias registrations the nested type system already publishes.
+	StringHandle owner_chain_name = getStructQualifiedNameForRegistration(struct_node);
+	StringHandle owner_chain_qualified_name = StringTable::getOrInternStringHandle(
+		StringBuilder().append(owner_chain_name).append("::"sv).append(struct_name));
+	StringHandle namespace_chain_qualified_name;
+	if (!struct_parsing_context_stack_.empty()) {
+		std::string_view owner_chain_namespace = gNamespaceRegistry.getQualifiedName(
+			struct_parsing_context_stack_.front().namespace_handle);
+		if (!owner_chain_namespace.empty() &&
+			owner_chain_namespace != StringTable::getStringView(owner_chain_name)) {
+			namespace_chain_qualified_name = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(owner_chain_namespace)
+					.append("::"sv)
+					.append(struct_name));
+		}
+	}
+
 	// Check if this is a forward declaration (template<...> struct Name;)
 	if (peek() == ";"_tok) {
 		advance(); // consume ';'
@@ -5416,6 +5437,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Register the template
 		gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
 		gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
+		if (owner_chain_qualified_name.isValid() &&
+			owner_chain_qualified_name != qualified_name) {
+			gTemplateRegistry.registerTemplate(owner_chain_qualified_name, template_struct_node);
+		}
+		if (namespace_chain_qualified_name.isValid() &&
+			namespace_chain_qualified_name != owner_chain_qualified_name &&
+			namespace_chain_qualified_name != qualified_name) {
+			gTemplateRegistry.registerTemplate(namespace_chain_qualified_name, template_struct_node);
+		}
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template forward declaration: {}",
 						 StringTable::getStringView(qualified_name));
@@ -6679,6 +6709,18 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Also register with simple name for lookups within the parent struct
 	gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
+
+	// Register the owner-chain keys so type-ids spelled through nested
+	// enclosing classes or a namespace prefix find the primary. Skip keys
+	// identical to the legacy prefix registration.
+	if (owner_chain_qualified_name != qualified_name) {
+		gTemplateRegistry.registerTemplate(owner_chain_qualified_name, template_struct_node);
+	}
+	if (namespace_chain_qualified_name.isValid() &&
+		namespace_chain_qualified_name != owner_chain_qualified_name &&
+		namespace_chain_qualified_name != qualified_name) {
+		gTemplateRegistry.registerTemplate(namespace_chain_qualified_name, template_struct_node);
+	}
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template: {}", StringTable::getStringView(qualified_name));
 
