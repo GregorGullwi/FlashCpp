@@ -127,10 +127,23 @@ $(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 	@echo "Built: $@"
 
 # Build test executable
-$(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(UNITY_SOURCES)
+# Mirrors tests/FlashCppTest/FlashCppTest.vcxproj: the native doctest binary
+# compiles the unity shard wrappers, the canonical native regression, and the
+# frontend-context suite as separate translation units.
+FLASHCPPTEST_DIR := $(TESTDIR)/FlashCppTest/FlashCppTest
+FLASHCPPTEST_SOURCES := \
+	$(FLASHCPPTEST_DIR)/FlashCppTest/FlashCppTest.cpp \
+	$(FLASHCPPTEST_DIR)/FlashCppTest/FlashCppTestUnitySupport.cpp \
+	$(FLASHCPPTEST_DIR)/FlashCppTest/FlashCppTestUnityParserCore.cpp \
+	$(FLASHCPPTEST_DIR)/FlashCppTest/FlashCppTestUnityParserTemplates.cpp \
+	$(FLASHCPPTEST_DIR)/FlashCppTest/FlashCppTestUnityBackend.cpp \
+	$(FLASHCPPTEST_DIR)/CanonicalTypeTests.cpp \
+	$(FLASHCPPTEST_DIR)/FrontendContextTests.cpp
+
+$(TEST_TARGET): $(FLASHCPPTEST_SOURCES) $(UNITY_SOURCES)
 	@echo "Building test executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(TEST_DIR) 2>nul || $(MKDIR) $(TEST_DIR) || true
-	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -Wno-shadow -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-but-set-variable -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
+	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -Wno-shadow -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-but-set-variable -o $@ $(FLASHCPPTEST_SOURCES)
 	@echo "Built: $@"
 
 $(MODULAR_DIR)/%.o: $(SRCDIR)/%.cpp $(HEADER_SOURCES) | $(MODULAR_DIR)
