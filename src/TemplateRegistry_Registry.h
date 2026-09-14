@@ -73,6 +73,30 @@ public:
 		templates_[name].push_back(template_node);
 	}
 
+	// Register one template node under several lookup aliases. Spelling is a
+	// lookup key only and never semantic identity; an alias equal to an
+	// earlier candidate or an invalid handle is skipped. Alias families that
+	// answer the same declaration under different spellings (owner chains,
+	// namespace prefixes) register through this shared choke point so the
+	// forward-to-definition replace above applies per key.
+	void registerTemplateAliases(std::span<const StringHandle> names, ASTNode template_node) {
+		for (size_t index = 0; index < names.size(); ++index) {
+			if (!names[index].isValid()) {
+				continue;
+			}
+			bool duplicate = false;
+			for (size_t prior = 0; prior < index; ++prior) {
+				if (names[prior] == names[index]) {
+					duplicate = true;
+					break;
+				}
+			}
+			if (!duplicate) {
+				registerTemplate(names[index], template_node);
+			}
+		}
+	}
+
 	// Returns true if the given node is a TemplateClassDeclarationNode whose
 	// underlying StructDeclarationNode was parsed from a forward declaration
 	// like `template<typename T> struct Foo;` (semicolon instead of body).
