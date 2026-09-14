@@ -1859,19 +1859,6 @@ private:
 	ParseResult parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access);  // Helper: Detect and parse member template alias or function
 	StringHandle getStructQualifiedNameForRegistration(const StructDeclarationNode& struct_node) const;
 
-	// Lookup-key aliases under which a member class template must answer:
-	// legacy owner-prefix key, simple member name, bare enclosing-struct chain,
-	// namespace-qualified chain, and each partial namespace chain from
-	// NamespaceRegistry parent links. Derived from the struct-parsing context
-	// stack so every spelling that can name the declaration
-	// (Outer::Inner::Box<int>, ns::Outer::Inner::Box<int>,
-	// inner::Outer::Inner::Box<int>) resolves to one registered node. The
-	// template registry stays a spelling-keyed map; this owns the alias
-	// policy because the legal spellings are parser context.
-	std::vector<StringHandle> buildMemberClassTemplateAliasKeys(
-		const StructDeclarationNode& enclosing,
-		StringHandle member_name) const;
-
 	ParseResult parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr = nullptr);	// Helper: Parse ': <const-expr>' for bitfields
 	// Shared helper for template function declaration parsing
 	// Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
@@ -3193,6 +3180,21 @@ public:
 	// and the caller falls back to the registry lookup.
 	std::optional<ASTNode> findClassTemplatePatternByIdentityChain(
 		std::string_view template_name);
+
+	// Resolve a spelled class-template name to its primary pattern node for
+	// type-id parsing and Spec stamping. Qualified member class-template
+	// spellings resolve through identity first (published EntityId chain to
+	// TemplateDeclId), so no owner-chain registry alias key is consulted; the
+	// registry lookup remains the fail-closed fallback for namespace/global
+	// primaries and forms identity cannot answer yet.
+	std::optional<ASTNode> findClassTemplatePatternBySpelling(
+		std::string_view template_name);
+
+	// Shared Spec-stamping choke point: resolve the spelled primary template
+	// name to its published pattern node, or null when the name is invalid,
+	// unresolvable, or not a published class template (fail-closed).
+	const TemplateClassDeclarationNode* findPrimaryClassTemplateForStamping(
+		StringHandle primary_template_name);
 
 	// ====================================================================
 

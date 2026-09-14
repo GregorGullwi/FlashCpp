@@ -5169,60 +5169,6 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 	return ParseResult::success();
 }
 
-// Lookup-key aliases under which a member class template must answer: the
-// legacy owner-prefix key, the simple member name, the bare enclosing-struct
-// chain, the namespace-qualified chain, and each partial namespace chain from
-// NamespaceRegistry parent links. Derived from the struct-parsing context
-// stack so every spelling that can name the declaration
-// (Outer::Inner::Box<int>, ns::Outer::Inner::Box<int>,
-// inner::Outer::Inner::Box<int>) resolves to one registered node. The
-// template registry stays a spelling-keyed map; this owns the alias policy
-// because the legal spellings are parser context.
-std::vector<StringHandle> Parser::buildMemberClassTemplateAliasKeys(
-	const StructDeclarationNode& enclosing,
-	StringHandle member_name) const {
-	std::string_view struct_name = StringTable::getStringView(member_name);
-	StringBuilder owner_chain_builder;
-	bool found_owner_in_context = false;
-	for (const auto& ctx : struct_parsing_context_stack_) {
-		owner_chain_builder.append(ctx.struct_name);
-		if (ctx.struct_node == &enclosing) {
-			found_owner_in_context = true;
-			break;
-		}
-		owner_chain_builder.append("::"sv);
-	}
-	StringHandle bare_owner_chain;
-	if (found_owner_in_context) {
-		owner_chain_builder.append("::"sv).append(struct_name);
-		bare_owner_chain = StringTable::getOrInternStringHandle(
-			owner_chain_builder.commit());
-	}
-	owner_chain_builder.reset();
-	StringHandle owner_chain_namespace_name = getStructQualifiedNameForRegistration(enclosing);
-	StringHandle namespace_chain_qualified_name = StringTable::getOrInternStringHandle(
-		StringBuilder().append(owner_chain_namespace_name).append("::"sv).append(struct_name));
-
-	// Alias key list for every legal spelling of the same declaration.
-	// registerTemplateAliases skips duplicates and invalid handles.
-	std::vector<StringHandle> alias_keys;
-	alias_keys.push_back(StringTable::getOrInternStringHandle(
-		StringBuilder().append(enclosing.name()).append("::"sv).append(struct_name)));
-	alias_keys.push_back(member_name);
-	alias_keys.push_back(bare_owner_chain);
-	alias_keys.push_back(namespace_chain_qualified_name);
-	if (bare_owner_chain.isValid() && !struct_parsing_context_stack_.empty()) {
-		gNamespaceRegistry.forEachPartialQualifiedNameSuffix(
-			struct_parsing_context_stack_.front().namespace_handle,
-			[&](StringHandle namespace_suffix) {
-				alias_keys.push_back(
-					gNamespaceRegistry.buildQualifiedIdentifier(
-						{namespace_suffix, bare_owner_chain}));
-			});
-	}
-	return alias_keys;
-}
-
 // Resolve a qualified member class-template-id to its published pattern by
 // identity: the owner chain resolves to a class EntityId (the owner spelling
 // is a type-system lookup key only), the member name plus the class-owned
@@ -5279,6 +5225,31 @@ std::optional<ASTNode> Parser::findClassTemplatePatternByIdentityChain(
 		return std::nullopt;
 	}
 	return pattern;
+}
+
+std::optional<ASTNode> Parser::findClassTemplatePatternBySpelling(
+	std::string_view template_name) {
+	if (template_name.find("::"sv) != std::string_view::npos) {
+		if (auto identity_pattern =
+				findClassTemplatePatternByIdentityChain(template_name);
+			identity_pattern.has_value()) {
+			return identity_pattern;
+		}
+	}
+	return gTemplateRegistry.lookupTemplate(template_name);
+}
+
+const TemplateClassDeclarationNode* Parser::findPrimaryClassTemplateForStamping(
+	StringHandle primary_template_name) {
+	if (!primary_template_name.isValid()) {
+		return nullptr;
+	}
+	const std::optional<ASTNode> pattern = findClassTemplatePatternBySpelling(
+		StringTable::getStringView(primary_template_name));
+	if (!pattern.has_value() || !pattern->is<TemplateClassDeclarationNode>()) {
+		return nullptr;
+	}
+	return &pattern->as<TemplateClassDeclarationNode>();
 }
 
 // Parse a C++20 concept declaration
@@ -5499,9 +5470,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	std::string_view struct_name = struct_name_token.value();
 	advance(); // consume struct name
 
-	const std::vector<StringHandle> member_template_alias_keys =
-		buildMemberClassTemplateAliasKeys(struct_node, struct_name_token.handle());
-
 	// Check if this is a forward declaration (template<...> struct Name;)
 	if (peek() == ";"_tok) {
 		advance(); // consume ';'
@@ -5537,8 +5505,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				template_struct_node);
 		}
 
-		// Register the template under every legal spelling of the declaration.
-		gTemplateRegistry.registerTemplateAliases(member_template_alias_keys, template_struct_node);
+		// Register under the legacy owner-prefix key and the simple member
+		// name. Qualified owner-chain spellings resolve through published
+		// EntityId identity, not registry aliases.
+		gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
+		gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template forward declaration: {}",
 						 StringTable::getStringView(qualified_name));
@@ -6802,8 +6773,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			template_struct_node);
 	}
 
-	// Register the template under every legal spelling of the declaration.
-	gTemplateRegistry.registerTemplateAliases(member_template_alias_keys, template_struct_node);
+	// Register under the legacy owner-prefix key and the simple member name.
+	// Qualified owner-chain spellings resolve through published EntityId
+	// identity, not registry aliases.
+	gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
+	gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template: {}", StringTable::getStringView(qualified_name));
 

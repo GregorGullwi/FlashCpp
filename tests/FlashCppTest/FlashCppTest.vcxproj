@@ -79,6 +79,7 @@
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <Link>
+      <StackReserveSize>33554432</StackReserveSize>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
@@ -93,6 +94,7 @@
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <Link>
+      <StackReserveSize>33554432</StackReserveSize>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
@@ -111,6 +113,7 @@
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
+      <StackReserveSize>33554432</StackReserveSize>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
@@ -127,6 +130,7 @@
       <AdditionalIncludeDirectories>C:\Program Files\LLVM\llvm\include;C:\Program Files\LLVM\clang\include;C:\Program Files\LLVM\build\include;..\external\doctest;..\..\external;..\..\src;C:\Program Files\LLVM\include;C:\Program Files\LLVM\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
+      <StackReserveSize>33554432</StackReserveSize>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>

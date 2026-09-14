@@ -385,11 +385,10 @@ regression therefore uses `__ELF__` as its target guard.
 
 ## Unity arithmetic test can overflow the native stack
 
-The direct LLVM clang-cl unity test executable crashes with `SIGSEGV - Stack
-overflow` in `Arithmetic operations and nested function calls`
-(`tests/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp:1344`). It was
-reproduced on 2026-09-07 with the direct LLVM driver required by the current
-unit-test setup:
+The unity test executable crashes with `SIGSEGV - Stack overflow` in `Arithmetic
+operations and nested function calls`
+(`tests/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp:1344`) when
+linked with the default 1 MiB stack; it was reproduced on 2026-09-07:
 
 ```text
 C:\Program Files\LLVM\bin\clang-cl.exe /nologo /std:c++20 /EHsc /W3 /I src /I tests\external\doctest /I external /I tests\FlashCppTest\FlashCppTest\FlashCppTest tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp /Fe:x64\enum-publication-unit\FlashCppTest.exe
@@ -398,12 +397,14 @@ x64\enum-publication-unit\FlashCppTest.exe --test-case="Arithmetic operations an
 
 The selected test alone crashes before assertions; exact enum-publication tests
 pass. This is unrelated to canonical enum publication. Owner: arithmetic
-expression / nested-call test path. Re-linking the unity executable with a
-32 MiB stack reserve (`/link /STACK:33554432`, versus its default 1 MiB)
-allows the selected test to pass on 2026-09-07. This is a test-harness
-workaround, not a compiler fix: it masks the current native-stack pressure and
-must not be used to declare the path safe or to raise the shipping compiler's
-stack limit.
+expression / nested-call test path. The unit-test harness now links the same
+32 MiB stack reserve the shipping Windows binary uses
+(`FlashCppTest.vcxproj` `StackReserveSize`, and `/link /STACK:33554432` for
+direct-driver builds), so both harness paths pass on 2026-09-14. This is a
+test-harness parity fix, not a compiler fix: the production compiler's own
+stack limit stays what the shipping build already linked, and the underlying
+native-stack pressure is masked, not fixed — it must not be used to declare the
+path safe or to raise the shipping compiler's stack limit.
 
 This aligns with the authoritative rearchitecture plan's stack and recursion
 policy: source-controlled parser, expression, substitution, template, and
