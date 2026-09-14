@@ -1463,6 +1463,26 @@ TEST_SUITE("FrontendContext") {
 		CHECK(pattern_a->as<TemplateClassDeclarationNode>().has_template_decl_id());
 		CHECK(pattern_b->as<TemplateClassDeclarationNode>().has_template_decl_id());
 
+		// The legacy instance-name and cache bridge must incorporate the same
+		// published IDs. Mutation of either ID to the other would make the second
+		// call hit the first owner's cache entry instead of materializing its own
+		// pattern.
+		TemplateArgumentVector short_args;
+		short_args.push_back(TemplateTypeArg::makeType(
+			nativeTypeIndex(TypeCategory::Short)));
+		const std::optional<ASTNode> instance_a =
+			parser.instantiateClassTemplateForSignatureReplay(
+				"OuterA::Inner::Box", short_args, false);
+		REQUIRE(instance_a.has_value());
+		REQUIRE(instance_a->is<StructDeclarationNode>());
+		const std::optional<ASTNode> instance_b =
+			parser.instantiateClassTemplateForSignatureReplay(
+				"OuterB::Inner::Box", short_args, false);
+		REQUIRE(instance_b.has_value());
+		REQUIRE(instance_b->is<StructDeclarationNode>());
+		CHECK(instance_a->as<StructDeclarationNode>().name() !=
+			  instance_b->as<StructDeclarationNode>().name());
+
 		// Fail-closed: an unresolvable owner chain yields no pattern.
 		CHECK_FALSE(parser.findClassTemplatePatternByIdentityChain("Missing::Box").has_value());
 	}
