@@ -325,21 +325,16 @@ void registerTypeLookupAliases(
 		}
 	}
 
-	if (!qualified_namespace.empty() &&
-		register_partial_namespace_aliases &&
-		!is_nested_type) {
-		for (size_t pos = qualified_namespace.find("::");
-			 pos != std::string_view::npos;
-			 pos = qualified_namespace.find("::", pos + 2)) {
-			std::string_view suffix = qualified_namespace.substr(pos + 2);
-			StringBuilder partial_qualified;
-			partial_qualified.append(suffix).append("::").append(simple_name);
-			StringHandle partial_handle =
-				StringTable::getOrInternStringHandle(partial_qualified.commit());
-			if (types_by_name.find(partial_handle) == types_by_name.end()) {
-				types_by_name.emplace(partial_handle, &type_info);
-			}
-		}
+	if (register_partial_namespace_aliases && !is_nested_type) {
+		gNamespaceRegistry.forEachPartialQualifiedNameSuffix(
+			current_namespace_handle,
+			[&](StringHandle suffix) {
+				StringHandle partial_handle =
+					gNamespaceRegistry.buildQualifiedIdentifier({suffix, simple_name});
+				if (types_by_name.find(partial_handle) == types_by_name.end()) {
+					types_by_name.emplace(partial_handle, &type_info);
+				}
+			});
 	}
 }
 

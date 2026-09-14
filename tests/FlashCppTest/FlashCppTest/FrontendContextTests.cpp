@@ -1386,6 +1386,49 @@ TEST_SUITE("FrontendContext") {
 			  chain.class_decl_node().template_decl_id());
 	}
 
+	TEST_CASE("NamespaceRegistry partial qualified-name suffixes follow parent chain") {
+		const StringHandle name_a =
+			StringTable::getOrInternStringHandle("partial_suffix_ns_a");
+		const StringHandle name_b =
+			StringTable::getOrInternStringHandle("partial_suffix_ns_b");
+		const StringHandle name_c =
+			StringTable::getOrInternStringHandle("partial_suffix_ns_c");
+		const NamespaceHandle ns_a = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, name_a);
+		const NamespaceHandle ns_b = gNamespaceRegistry.getOrCreateNamespace(ns_a, name_b);
+		const NamespaceHandle ns_c = gNamespaceRegistry.getOrCreateNamespace(ns_b, name_c);
+
+		std::vector<StringHandle> global_suffixes;
+		gNamespaceRegistry.forEachPartialQualifiedNameSuffix(
+			NamespaceRegistry::GLOBAL_NAMESPACE, [&](StringHandle suffix) {
+				global_suffixes.push_back(suffix);
+			});
+		REQUIRE(global_suffixes.empty());
+
+		std::vector<StringHandle> top_level;
+		gNamespaceRegistry.forEachPartialQualifiedNameSuffix(ns_a, [&](StringHandle suffix) {
+			top_level.push_back(suffix);
+		});
+		REQUIRE(top_level.empty());
+
+		std::vector<StringHandle> depth_two;
+		gNamespaceRegistry.forEachPartialQualifiedNameSuffix(ns_b, [&](StringHandle suffix) {
+			depth_two.push_back(suffix);
+		});
+		REQUIRE(depth_two.size() == 1u);
+		CHECK(depth_two[0] == name_b);
+
+		std::vector<StringHandle> depth_three;
+		gNamespaceRegistry.forEachPartialQualifiedNameSuffix(ns_c, [&](StringHandle suffix) {
+			depth_three.push_back(suffix);
+		});
+		REQUIRE(depth_three.size() == 2u);
+		CHECK(depth_three[0] == name_c);
+		CHECK(depth_three[1] ==
+			  gNamespaceRegistry.buildQualifiedIdentifier({name_b, name_c}));
+		CHECK(depth_three[1] != gNamespaceRegistry.getQualifiedNameHandle(ns_c));
+	}
+
 	TEST_CASE("Free function body replay stamps dependent member template chains") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

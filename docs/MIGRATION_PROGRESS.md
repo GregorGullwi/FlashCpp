@@ -5,21 +5,24 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-14 after member class-template qualified owner-chain
-registry keys, including nested-namespace and partial-namespace spellings, on
-`boundary-3a-nested-class-entity-early`
+Last updated: 2026-09-14 after parse-time nested class EntityId publication
+under class-owned OwnerIds on `boundary-3a-nested-class-entity-early` (legacy
+`TemplateRegistry` owner-chain alias keys on the same branch are a
+compatibility shim, not 3A identity).
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's member class-template qualified owner-chain
-registration is on `boundary-3a-nested-class-entity-early` for review (after
-parse-time nested class EntityId publication under class-owned OwnerIds,
-direct primary member class-template and member function-template stamping
-under published namespace/global class templates, direct member
-function-template stamping, free function-template body replay stamping, free
-function-template declared type-parameter stamping, signature-aware free
-function TemplateDeclId publication, and member class-template
-TemplateDeclId).
+Architecture boundary 3A's parse-time nested class EntityId publication is on
+`boundary-3a-nested-class-entity-early` for review (after direct primary
+member class-template and member function-template stamping under published
+namespace/global class templates, direct member function-template stamping,
+free function-template body replay stamping, free function-template declared
+type-parameter stamping, signature-aware free function TemplateDeclId
+publication, and member class-template TemplateDeclId). The same branch also
+registers extra `TemplateRegistry` owner-chain spellings so the legacy
+instantiator can find nested member class templates; that is a compatibility
+shim until qualified type-ids resolve through `TemplateDeclId`, not a closed
+3A lookup path.
 `reparse_template_function_body` now receives the instantiation context's
 published `TemplateDeclId` explicitly and keeps it in a scoped
 `active_template_decl_id_` window while parsing the body. Replayed local type
@@ -84,18 +87,17 @@ publish `TemplateDeclId`s during the nested body and retroactively stamp their
 declared Type-kind parameters through the existing publication helpers; the
 lazy enclosing-epoch path stays as fallback for nested classes whose enclosing
 lacked an EntityId at parse time (template-nested, local, and anonymous forms
-still fail closed there). Member class templates additionally register
-qualified owner-chain registry keys: type-ids spelled through nested enclosing
-classes (`Outer::Inner::Box<int>`) or a namespace prefix
-(`ns::Outer::Box<int>`) now instantiate the same declaration the simple
-member spelling registers, instead of failing with "No primary class template
-found" for the missing chain key. The alias key set is built by
-`Parser::buildMemberClassTemplateAliasKeys` (bare enclosing chain,
-namespace-qualified chain, and partial namespace chains through using-directive
-visibility) and registered through `TemplateRegistry::registerTemplateAliases`,
-a shared dedup choke point; nested-namespace spellings
-(`ns::inner::Outer::Inner::Box<int>`, `inner::Outer::Inner::Box<int>`, and the
-bare in-namespace form) resolve to the same declaration. Dependent NTTP Spec
+still fail closed there). Member class templates also register extra
+`TemplateRegistry` owner-chain spellings (`Outer::Inner::Box`,
+`ns::Outer::Box`, and parent-chain namespace suffixes such as
+`inner::Outer::Inner::Box`) so the legacy instantiator no longer reports
+"No primary class template found" for those type-ids. That alias set is a
+compatibility shim: canonical identity remains `TemplateDeclId` under the
+nested class-owned `OwnerId`, but instantiation still concatenates spellings
+instead of walking EntityId → `findPrimaryClassTemplate`.
+`Parser::buildMemberClassTemplateAliasKeys` and
+`TemplateRegistry::registerTemplateAliases` own the shim; they do not close
+the 3A lookup gap. Dependent NTTP Spec
 stamping,
 concrete and active-dependent primary-class template-template Spec arguments,
 explicit dependent NTTP Spec arguments,
@@ -285,8 +287,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes nested member-template Spec-rooted dependent
-  stamping, complete declarator interleaving, and deletion of the
+- Remaining 3A work includes nested member class-template instantiation
+  through `TemplateDeclId` (qualified type-ids still go through the
+  `TemplateRegistry` spelling shim), nested member-template Spec-rooted
+  dependent stamping, complete declarator interleaving, and deletion of the
   flat semantic representation. Stop here for review before starting another
   family, 3B, or the parallel frontend experiment.
 
@@ -358,20 +362,24 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for member class-template qualified owner-chain keys:
-sharded rebuild; the
-`test_canonical_nested_member_template_qualified_id_ret0` (nested enclosing
-chain, member function template in the same nested class),
-`test_canonical_namespace_member_template_qualified_id_ret0` (namespace
-prefix, unqualified in-namespace use), and
-`test_canonical_nested_namespace_member_template_ret0` (fully qualified,
-partial namespace through a using-directive, and bare in-namespace spellings)
-source regressions compile and return 0 with mixed native widths and struct
-arguments; FlashCppTest verifies the legacy prefix key and the namespace
-chain key resolve to one declaration with one TemplateDeclId. Stashing the
-chain-key registration fails the qualified-id source regressions. The full
-Linux suite passes (2,978 single-file cases, 264 negative tests, 12 multi-TU
-cases, 0 crash / 0 mismatch). Fixed-corpus
+Latest validation for parse-time nested class EntityId publication: sharded
+rebuild; FlashCppTest verifies nested parse-time identity under class-owned
+OwnerIds (distinct from same-spelling namespace classes), nested
+forward-to-definition EntityId merge, and member class-template plus member
+function-template publication under a published nested class with declared
+Type-kind parameter import. The `test_canonical_nested_class_member_templates_ret0`
+source regression compiles and returns 0 across a two-level nesting chain
+with mixed native widths and a struct. The same branch's legacy
+`TemplateRegistry` owner-chain shim is covered by
+`test_canonical_nested_member_template_qualified_id_ret0`,
+`test_canonical_namespace_member_template_qualified_id_ret0`, and
+`test_canonical_nested_namespace_member_template_ret0` (nested enclosing
+chain, namespace prefix, and nested-namespace / using-directive spellings);
+FlashCppTest verifies the legacy prefix key and the namespace chain key
+resolve to one declaration with one TemplateDeclId. Those regressions prove
+the shim, not EntityId-based instantiation. The full Linux suite passes
+(2,978 single-file cases, 264 negative tests, 12 multi-TU cases, 0 crash /
+0 mismatch). Fixed-corpus
 migration counters remain within baseline; `template_old_engine` on
 `test_template_recursive_static_constexpr_member_ret0.cpp` measured 58 on
 Linux while MSVC still measures 59, so the shared baseline stays 59 and the
@@ -483,10 +491,11 @@ Advanced, not completed:
   nested complete-definition epoch, nested forward-to-definition merge, no
   namespace-level nested publication), and member class-template plus member
   function-template publication under those published nested classes (with
-  declared Type-kind parameter stamps), and member class-template qualified
-  owner-chain registry keys (nested enclosing chain and namespace prefix, so
-  qualified type-ids instantiate the same declaration) are
-  landed; nested member-template Spec-rooted dependent stamping, alias,
+  declared Type-kind parameter stamps) are landed. Extra `TemplateRegistry`
+  owner-chain spellings for nested member class templates are a legacy
+  instantiator shim on the same branch, not a 3A lookup path; nested
+  member-template Spec-rooted dependent stamping, qualified type-id
+  instantiation through `TemplateDeclId`, alias,
   unpublished/incomplete nominal, anonymous-union, and
   unpublished-base forms stay deferred. Remaining families and flat-field
   deletion keep all three identity criteria open.
@@ -508,8 +517,10 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Nested member-template Spec-rooted dependent stamping,
-  then richer adapters before expanding boundary-1 shadow coverage (default
+- Nested member class-template instantiation through `TemplateDeclId` /
+  enclosing `EntityId` (replace the `TemplateRegistry` owner-chain spelling
+  shim), then nested member-template Spec-rooted dependent stamping, then
+  richer adapters before expanding boundary-1 shadow coverage (default
   arguments, exception specifications, fields, templates) or removing
   `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
