@@ -5,24 +5,36 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-14 after parse-time nested class EntityId publication
-under class-owned OwnerIds on `boundary-3a-nested-class-entity-early` (legacy
-`TemplateRegistry` owner-chain alias keys on the same branch are a
+Last updated: 2026-09-14 after identity-based owner-chain primary resolution
+(TemplateDeclId pattern anchoring) on `boundary-3a-nested-class-entity-early`
+(legacy `TemplateRegistry` owner-chain alias keys on the same branch are a
 compatibility shim, not 3A identity).
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's parse-time nested class EntityId publication is on
-`boundary-3a-nested-class-entity-early` for review (after direct primary
-member class-template and member function-template stamping under published
-namespace/global class templates, direct member function-template stamping,
-free function-template body replay stamping, free function-template declared
-type-parameter stamping, signature-aware free function TemplateDeclId
-publication, and member class-template TemplateDeclId). The same branch also
-registers extra `TemplateRegistry` owner-chain spellings so the legacy
-instantiator can find nested member class templates; that is a compatibility
-shim until qualified type-ids resolve through `TemplateDeclId`, not a closed
-3A lookup path.
+Architecture boundary 3A's identity-based owner-chain resolution is on
+`boundary-3a-nested-class-entity-early` for review (after member class-template
+qualified owner-chain registry keys including nested-namespace and
+partial-namespace spellings, parse-time nested class EntityId publication
+under class-owned OwnerIds, direct primary member class-template and member
+function-template stamping under published namespace/global class templates,
+direct member function-template stamping, free function-template body replay
+stamping, free function-template declared type-parameter stamping,
+signature-aware free function TemplateDeclId publication, and member
+class-template TemplateDeclId). The same branch also registers extra
+`TemplateRegistry` owner-chain spellings so the legacy instantiator can find
+nested member class templates; that is a compatibility shim until qualified
+type-ids resolve through `TemplateDeclId`, not a closed 3A lookup path.
+Qualified member class-template ids now also resolve by identity:
+`Parser::findClassTemplatePatternByIdentityChain` walks the owner chain to a
+published class EntityId (the owner spelling is a type-system lookup key
+only), calls `TemplateDeclTable::findPrimaryClassTemplate` under the
+class-owned OwnerId, and returns the pattern node anchored under that
+TemplateDeclId by `attachPrimaryClassTemplatePattern` (attached at wrapper
+creation for namespace/global primaries and member primaries, with the
+definition attach replacing the forward-declaration anchor).
+`try_instantiate_class_template` runs that resolution first for names
+containing `::` and falls back to the registry lookup fail-closed.
 `reparse_template_function_body` now receives the instantiation context's
 published `TemplateDeclId` explicitly and keeps it in a scoped
 `active_template_decl_id_` window while parsing the body. Replayed local type
@@ -376,8 +388,12 @@ with mixed native widths and a struct. The same branch's legacy
 `test_canonical_nested_namespace_member_template_ret0` (nested enclosing
 chain, namespace prefix, and nested-namespace / using-directive spellings);
 FlashCppTest verifies the legacy prefix key and the namespace chain key
-resolve to one declaration with one TemplateDeclId. Those regressions prove
-the shim, not EntityId-based instantiation. The full Linux suite passes
+resolve to one declaration with one TemplateDeclId, and that
+`findClassTemplatePatternByIdentityChain` answers colliding same-spelling
+chains (`OuterA::Inner::Box` / `OuterB::Inner::Box`) with each owner's own
+distinct TemplateDeclId and anchored pattern. The shim regressions prove the
+legacy lookup, not EntityId-based instantiation; the identity test proves the
+TemplateDeclTable anchoring. The full Linux suite passes
 (2,978 single-file cases, 264 negative tests, 12 multi-TU cases, 0 crash /
 0 mismatch). Fixed-corpus
 migration counters remain within baseline; `template_old_engine` on
@@ -491,7 +507,11 @@ Advanced, not completed:
   nested complete-definition epoch, nested forward-to-definition merge, no
   namespace-level nested publication), and member class-template plus member
   function-template publication under those published nested classes (with
-  declared Type-kind parameter stamps) are landed. Extra `TemplateRegistry`
+  declared Type-kind parameter stamps), and identity-based owner-chain
+  primary resolution (owner chain → class EntityId → `findPrimaryClassTemplate`
+  → `TemplateDeclId`-anchored pattern node; `try_instantiate_class_template`
+  resolves qualified ids through it before the registry fallback) are landed.
+  Extra `TemplateRegistry`
   owner-chain spellings for nested member class templates are a legacy
   instantiator shim on the same branch, not a 3A lookup path; nested
   member-template Spec-rooted dependent stamping, qualified type-id
@@ -517,9 +537,13 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Nested member class-template instantiation through `TemplateDeclId` /
-  enclosing `EntityId` (replace the `TemplateRegistry` owner-chain spelling
-  shim), then nested member-template Spec-rooted dependent stamping, then
+- Owner-identity-derived instance names for same-spelling member templates
+  (see the first active finding: the legacy instance name derives from the
+  member name alone and the type map conflates instances across owners), then
+  deleting the `TemplateRegistry` owner-chain spelling shim once qualified
+  type-ids resolve through `TemplateDeclId` end to end (identity resolution
+  exists; parse_type_specifier's spelled lookups still consume the shim), then
+  nested member-template Spec-rooted dependent stamping, then
   richer adapters before expanding boundary-1 shadow coverage (default
   arguments, exception specifications, fields, templates) or removing
   `SymbolTable` merge / `matches_signature` authority.
@@ -535,6 +559,23 @@ must not increase an implementation percentage.
 
 ## Active findings
 
+- Same-spelling nested member class templates under different owners share one
+  legacy instance name: `get_instantiated_class_name` strips the owner chain
+  unconditionally (`Parser_Templates_Inst_Substitution.cpp`), so
+  `OuterA::Inner::Box<short>` and `OuterB::Inner::Box<short>` both generate
+  `Box$<args-hash>` and the type map conflates the two instances (the second
+  owner's member access resolves the first owner's struct). Identity
+  resolution (`findClassTemplatePatternByIdentityChain`) already separates the
+  patterns, but owner-aware instance names cannot be introduced piecemeal:
+  the legacy world equates instances BY NAME across spelling paths, so the
+  chain spelling and the simple member spelling must generate one name
+  (making the name chain-qualified in `get_instantiated_class_name` alone
+  fixes the collision but breaks every simple-name resolution path that
+  re-instantiates the same declaration under the bare member name, e.g.
+  `parse_template_brace_initialization` calls). Owner: 3A instance naming —
+  a coordinated owner-identity-derived instance-name family, or the 3A
+  type-map replacement. Until then, same-spelling chains under different
+  owners remain ambiguous and the alias-spelling shim must not be deleted.
 - Two FrontendContext doctests have identical failures on clean `36d1b33b` and
   this branch (two failures/five assertions; neither test disabled):
   `SymbolTable enablePersistentScopePublication requires an active FrontendContext`

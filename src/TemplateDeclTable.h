@@ -6,8 +6,13 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
+
+class ASTNode;
 
 // Context-local publication of primary class- and function-template identity for
 // boundary 3A. TemplateDeclId is keyed by OwnerId + spelling + primary kind
@@ -72,6 +77,27 @@ public:
 		return ids_by_key_.size();
 	}
 
+	// Anchor the syntax node of a published primary class template under its
+	// TemplateDeclId so identity-based resolution (owner EntityId + member
+	// name) can yield the instantiable pattern without a spelling lookup.
+	// A later attach replaces an earlier one, matching the registry's
+	// forward-to-definition replace. Attaching for an unpublished id is an
+	// internal error.
+	void attachPrimaryClassTemplatePattern(TemplateDeclId id, ASTNode pattern) {
+		if (!id || !hasPrimary(id)) {
+			throw InternalError("template decl: attach pattern for unpublished TemplateDeclId");
+		}
+		primary_class_patterns_.insert_or_assign(id.value, pattern);
+	}
+
+	std::optional<ASTNode> primaryClassTemplatePattern(TemplateDeclId id) const {
+		const auto found = primary_class_patterns_.find(id.value);
+		if (found == primary_class_patterns_.end()) {
+			return std::nullopt;
+		}
+		return found->second;
+	}
+
 private:
 	struct Key {
 		uint32_t owner_value = 0;
@@ -121,6 +147,9 @@ private:
 		const uint32_t raw = static_cast<uint32_t>(ids_by_key_.size() + 1u);
 		const TemplateDeclId id{raw};
 		ids_by_key_.emplace(key, id);
+		if (kind == PrimaryKind::Class) {
+			published_class_ids_.insert(raw);
+		}
 		return id;
 	}
 
@@ -140,5 +169,15 @@ private:
 		return existing->second;
 	}
 
+	bool hasPrimary(TemplateDeclId id) const {
+		if (!id) {
+			return false;
+		}
+		const auto found = published_class_ids_.find(id.value);
+		return found != published_class_ids_.end();
+	}
+
 	std::unordered_map<Key, TemplateDeclId, KeyHash> ids_by_key_;
+	std::unordered_set<uint32_t> published_class_ids_;
+	std::unordered_map<uint32_t, ASTNode> primary_class_patterns_;
 };

@@ -3184,6 +3184,16 @@ public:
 	// This contract ensures that late-materialized templates are normalized
 	// consistently, regardless of whether they were triggered by parser
 	// lookup, constexpr evaluation, or codegen-side lazy generation.
+
+	// Resolve a qualified member class-template-id to its published pattern by
+	// identity: the owner chain resolves to a class EntityId (the owner
+	// spelling is a type-system lookup key only), the member name plus the
+	// class-owned OwnerId find the TemplateDeclId, and the anchored pattern
+	// node under that id is returned. Fail-closed: every miss returns nullopt
+	// and the caller falls back to the registry lookup.
+	std::optional<ASTNode> findClassTemplatePatternByIdentityChain(
+		std::string_view template_name);
+
 	// ====================================================================
 
 	/// Append a user-written (non-instantiated) top-level AST node. Maintains
