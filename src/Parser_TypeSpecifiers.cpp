@@ -196,27 +196,21 @@ void applyCollectedClassTemplateArgSpecs(
 // pack, and TypeSpecifierNode, explicit literal/dependent NTTP ExpressionNode,
 // or a published primary-class TemplateDeclId argument. Dependent NTTPs retain
 // their existing FrontendContext-owned ExprId identity. Deferred cases return
-// nullopt; broken parameter/argument shape throws.
+// nullopt; broken parameter/argument shape throws. The caller resolves the
+// primary pattern node (identity-first for qualified member class-template
+// spellings, registry fallback) via Parser::findClassTemplatePatternBySpelling.
 std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
-	StringHandle primary_template_name,
+	const TemplateClassDeclarationNode* primary_pattern,
 	std::span<const TemplateTypeArg> filled_args,
 	std::span<const ASTNode> argument_syntax_nodes,
 	Token token,
 	TemplateDeclId active_template_decl,
 	std::span<const StringHandle> active_template_param_names,
 	std::span<const TemplateParameterKind> active_template_param_kinds) {
-	if (!primary_template_name.isValid()) {
-		throw InternalError("stamp template specialization: invalid primary template name");
-	}
-	auto template_opt = gTemplateRegistry.lookupTemplate(primary_template_name);
-	if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
+	if (primary_pattern == nullptr || !primary_pattern->has_template_decl_id()) {
 		return std::nullopt;
 	}
-	const TemplateClassDeclarationNode& primary =
-		template_opt->as<TemplateClassDeclarationNode>();
-	if (!primary.has_template_decl_id()) {
-		return std::nullopt;
-	}
+	const TemplateClassDeclarationNode& primary = *primary_pattern;
 	const TemplateParameterVector& template_params = primary.template_parameters();
 	std::optional<size_t> type_pack_index;
 	for (size_t index = 0; index < template_params.size(); ++index) {
@@ -2048,12 +2042,13 @@ ParseResult Parser::parse_type_specifier() {
 					// Extract the member name (part after the last ::)
 					std::string_view member_name = type_name.substr(last_colon_pos + 2);
 
-					// Check if the member is a known template
+					// Check if the member is a known template. Qualified member
+					// class-template spellings resolve through identity first.
 					auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 					auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
 
 					// Also check with the full qualified name
-					auto full_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+					auto full_template_opt = findClassTemplatePatternBySpelling(type_name);
 					auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(type_name);
 
 					bool member_is_template = member_template_opt.has_value() ||
@@ -2095,7 +2090,7 @@ ParseResult Parser::parse_type_specifier() {
 					template_args = parse_explicit_template_arguments(
 						alias_template_opt->as<TemplateAliasNode>().template_parameters(),
 						&template_arg_syntax_nodes);
-				} else if (auto class_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+				} else if (auto class_template_opt = findClassTemplatePatternBySpelling(type_name);
 						   class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
 					template_args = parse_explicit_template_arguments(
 						class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
@@ -2105,7 +2100,7 @@ ParseResult Parser::parse_type_specifier() {
 				}
 			}
 			if (template_args.has_value()) {
-				if (auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+				if (auto template_opt = findClassTemplatePatternBySpelling(type_name);
 					template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					normalizeDependentNonTypeTemplateArgs(
 						template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
@@ -2851,7 +2846,7 @@ ParseResult Parser::parse_type_specifier() {
 
 						auto template_args_info = convertToTemplateArgInfo(*template_args);
 						TemplateParamNameVector placeholder_param_names;
-						if (auto placeholder_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+						if (auto placeholder_template_opt = findClassTemplatePatternBySpelling(type_name);
 							placeholder_template_opt.has_value() && placeholder_template_opt->is<TemplateClassDeclarationNode>()) {
 							const auto& placeholder_params = placeholder_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
 							size_t count = std::min(placeholder_params.size(), template_args->size());
@@ -2925,7 +2920,7 @@ ParseResult Parser::parse_type_specifier() {
 				// Fill in default template arguments to get the actual instantiated name
 				// (try_instantiate_class_template fills them internally, we need to do the same here)
 				TemplateArgumentVector filled_template_args = *template_args;
-				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+				auto template_opt = findClassTemplatePatternBySpelling(type_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
 					const auto& template_params = template_class.template_parameters();
@@ -3041,7 +3036,7 @@ ParseResult Parser::parse_type_specifier() {
 				// If we're in a template body and the template wasn't found/instantiated,
 				// treat the type as dependent (e.g., self-referential templates)
 				if (!has_dependent_args && isTemplateParameterTrackingActive()) {
-					if (!instantiated_class.has_value() && !gTemplateRegistry.lookupTemplate(type_name).has_value()) {
+					if (!instantiated_class.has_value() && !findClassTemplatePatternBySpelling(type_name).has_value()) {
 						has_dependent_args = true;
 						FLASH_LOG_FORMAT(Templates, Trace, "Template '{}' not found in template body - treating as dependent", type_name);
 					}
@@ -4079,7 +4074,7 @@ ParseResult Parser::parse_type_specifier() {
 					// This is needed for deferred alias template detection
 					auto template_args_info = convertToTemplateArgInfo(template_args.value());
 					TemplateParamNameVector placeholder_param_names;
-					if (auto placeholder_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+					if (auto placeholder_template_opt = findClassTemplatePatternBySpelling(type_name);
 						placeholder_template_opt.has_value() && placeholder_template_opt->is<TemplateClassDeclarationNode>()) {
 						const auto& placeholder_params = placeholder_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
 						size_t count = std::min(placeholder_params.size(), template_args->size());
@@ -4122,7 +4117,7 @@ ParseResult Parser::parse_type_specifier() {
 		}
 
 		// Check if this is a template with all default parameters (e.g., Container instead of Container<>)
-		auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+		auto template_opt = findClassTemplatePatternBySpelling(type_name);
 		if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 			const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
 			const auto& template_params = template_class.template_parameters();
@@ -4974,7 +4969,7 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 	std::span<const TemplateTypeArg> filled_args,
 	std::span<const ASTNode> argument_syntax_nodes) {
 	auto collected = collectClassTemplateArgSpecs(
-		primary_template_name,
+		findPrimaryClassTemplateForStamping(primary_template_name),
 		filled_args,
 		argument_syntax_nodes,
 		type_spec.token(),
@@ -5133,7 +5128,7 @@ void Parser::tryStampDependentInstantiationMemberChain(
 		return;
 	}
 	auto collected = collectClassTemplateArgSpecs(
-		primary_template_name,
+		findPrimaryClassTemplateForStamping(primary_template_name),
 		filled_args,
 		argument_syntax_nodes,
 		type_spec.token(),

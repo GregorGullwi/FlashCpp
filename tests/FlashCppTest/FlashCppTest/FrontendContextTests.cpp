@@ -1348,7 +1348,7 @@ TEST_SUITE("FrontendContext") {
 		CHECK(return_import.type == table.templateParameter(definition->template_decl_id(), 1u));
 	}
 
-	TEST_CASE("Member class template registers qualified owner-chain keys") {
+	TEST_CASE("Member class template resolves qualified spellings by identity without registry chain keys") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
 		gConceptRegistry.clear();
@@ -1370,20 +1370,35 @@ TEST_SUITE("FrontendContext") {
 		Parser parser(lexer, test_context, sema);
 		REQUIRE(!parser.parse().is_error());
 
-		// All legal spellings of the same declaration resolve to one node.
+		// The legacy owner-prefix key and simple member name still answer.
 		const auto legacy_opt =
 			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("Inner::Box"));
 		REQUIRE(legacy_opt.has_value());
-		const auto chain_opt =
-			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("ns::Outer::Inner::Box"));
-		REQUIRE(chain_opt.has_value());
-		REQUIRE(chain_opt->is<TemplateClassDeclarationNode>());
-		const TemplateClassDeclarationNode& chain =
-			chain_opt->as<TemplateClassDeclarationNode>();
-		CHECK(chain.class_decl_node().has_template_decl_id());
 		REQUIRE(legacy_opt->is<TemplateClassDeclarationNode>());
+
+		// Owner-chain registry alias keys are deleted: qualified spellings
+		// must not resolve through spelling aliases.
+		CHECK_FALSE(gTemplateRegistry
+			.lookupTemplate(StringTable::getOrInternStringHandle("Outer::Inner::Box"))
+			.has_value());
+		CHECK_FALSE(gTemplateRegistry
+			.lookupTemplate(StringTable::getOrInternStringHandle("ns::Outer::Inner::Box"))
+			.has_value());
+
+		// The qualified spelling resolves through published identity to the
+		// same declaration the legacy key answers.
+		const std::optional<ASTNode> chain_pattern =
+			parser.findClassTemplatePatternBySpelling("ns::Outer::Inner::Box");
+		REQUIRE(chain_pattern.has_value());
+		REQUIRE(chain_pattern->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& chain =
+			chain_pattern->as<TemplateClassDeclarationNode>();
+		CHECK(chain.class_decl_node().has_template_decl_id());
 		CHECK(legacy_opt->as<TemplateClassDeclarationNode>().class_decl_node().template_decl_id() ==
 			  chain.class_decl_node().template_decl_id());
+
+		// Fail-closed: an unresolvable chain finds no pattern and no alias.
+		CHECK_FALSE(parser.findClassTemplatePatternBySpelling("ns::Missing::Box").has_value());
 	}
 
 	TEST_CASE("NamespaceRegistry partial qualified-name suffixes follow parent chain") {

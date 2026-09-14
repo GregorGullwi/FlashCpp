@@ -336,6 +336,23 @@ void registerTypeLookupAliases(
 				}
 			});
 	}
+
+	// Nested classes also answer partial namespace suffix spellings of their
+	// bare owner chain (inner::Outer::Inner). Identity resolution for member
+	// class templates reads these type-system lookup keys; the owner spelling
+	// stays a key, never semantic identity.
+	if (register_partial_namespace_aliases && is_nested_type &&
+		nested_type_chain.isValid()) {
+		gNamespaceRegistry.forEachPartialQualifiedNameSuffix(
+			current_namespace_handle,
+			[&](StringHandle suffix) {
+				StringHandle partial_handle =
+					gNamespaceRegistry.buildQualifiedIdentifier({suffix, nested_type_chain});
+				if (types_by_name.find(partial_handle) == types_by_name.end()) {
+					types_by_name.emplace(partial_handle, &type_info);
+				}
+			});
+	}
 }
 
 bool isPlainIntIncDecPostfixParameter(const ASTNode& param_node) {
