@@ -596,9 +596,6 @@ must not increase an implementation percentage.
   AST family counts classify legacy bridge objects` misclassifies
   `TemplateEnvironmentSnapshotNode` and `BlockNode` with clang-cl.
   Owner: unit fixture lifecycle / legacy AST telemetry classification.
-- `Parser_Templates_Params.cpp:2505` stores a dangling `owner_name` view from
-  `QualifiedIdentifierNode::full_name()`'s temporary string. Clean-base and
-  branch clang-cl builds both warn. Owner: legacy template-argument lifetime.
 - `SemanticAnalysis:*QueryTracksAnalysisState` fails on clean `main`; suspected
   shared-static cause is recorded in [known issues](KNOWN_ISSUES.md).
   Owner: sema query lifecycle.
