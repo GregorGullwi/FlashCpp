@@ -1858,6 +1858,19 @@ private:
 		StringHandle fallback_current_instantiation_name) const;
 	ParseResult parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access);  // Helper: Detect and parse member template alias or function
 	StringHandle getStructQualifiedNameForRegistration(const StructDeclarationNode& struct_node) const;
+
+	// Lookup-key aliases under which a member class template must answer:
+	// legacy owner-prefix key, simple member name, bare enclosing-struct chain,
+	// namespace-qualified chain, and each partial namespace chain. Derived
+	// from the struct-parsing context stack so every spelling that can name
+	// the declaration (Outer::Inner::Box<int>, ns::Outer::Inner::Box<int>,
+	// inner::Outer::Inner::Box<int>) resolves to one registered node. The
+	// template registry stays a spelling-keyed map; this owns the alias
+	// policy because the legal spellings are parser context.
+	std::vector<StringHandle> buildMemberClassTemplateAliasKeys(
+		const StructDeclarationNode& enclosing,
+		StringHandle member_name) const;
+
 	ParseResult parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr = nullptr);	// Helper: Parse ': <const-expr>' for bitfields
 	// Shared helper for template function declaration parsing
 	// Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)

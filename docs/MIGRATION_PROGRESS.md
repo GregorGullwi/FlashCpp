@@ -6,7 +6,7 @@ Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
 Last updated: 2026-09-14 after member class-template qualified owner-chain
-registry keys (nested enclosing chain and namespace prefix) on
+registry keys, including nested-namespace and partial-namespace spellings, on
 `boundary-3a-nested-class-entity-early`
 
 ## Current boundary and handoff
@@ -89,7 +89,14 @@ qualified owner-chain registry keys: type-ids spelled through nested enclosing
 classes (`Outer::Inner::Box<int>`) or a namespace prefix
 (`ns::Outer::Box<int>`) now instantiate the same declaration the simple
 member spelling registers, instead of failing with "No primary class template
-found" for the missing chain key. Dependent NTTP Spec stamping,
+found" for the missing chain key. The alias key set is built by
+`Parser::buildMemberClassTemplateAliasKeys` (bare enclosing chain,
+namespace-qualified chain, and partial namespace chains through using-directive
+visibility) and registered through `TemplateRegistry::registerTemplateAliases`,
+a shared dedup choke point; nested-namespace spellings
+(`ns::inner::Outer::Inner::Box<int>`, `inner::Outer::Inner::Box<int>`, and the
+bare in-namespace form) resolve to the same declaration. Dependent NTTP Spec
+stamping,
 concrete and active-dependent primary-class template-template Spec arguments,
 explicit dependent NTTP Spec arguments,
 ExpressionSubstitutor tip-resolve restamp wire, production named type-member
@@ -354,14 +361,17 @@ Preserve these ownership contracts during subsequent migration:
 Latest validation for member class-template qualified owner-chain keys:
 sharded rebuild; the
 `test_canonical_nested_member_template_qualified_id_ret0` (nested enclosing
-chain, member function template in the same nested class) and
+chain, member function template in the same nested class),
 `test_canonical_namespace_member_template_qualified_id_ret0` (namespace
-prefix, unqualified in-namespace use) source regressions compile and return 0
-with mixed native widths and struct arguments; FlashCppTest verifies the
-legacy prefix key and the namespace chain key resolve to one declaration with
-one TemplateDeclId. Stashing the chain-key registration fails both source
-regressions. The full Linux suite passes (2,977 single-file cases, 264
-negative tests, 12 multi-TU cases, 0 crash / 0 mismatch). Fixed-corpus
+prefix, unqualified in-namespace use), and
+`test_canonical_nested_namespace_member_template_ret0` (fully qualified,
+partial namespace through a using-directive, and bare in-namespace spellings)
+source regressions compile and return 0 with mixed native widths and struct
+arguments; FlashCppTest verifies the legacy prefix key and the namespace
+chain key resolve to one declaration with one TemplateDeclId. Stashing the
+chain-key registration fails the qualified-id source regressions. The full
+Linux suite passes (2,978 single-file cases, 264 negative tests, 12 multi-TU
+cases, 0 crash / 0 mismatch). Fixed-corpus
 migration counters remain within baseline; `template_old_engine` on
 `test_template_recursive_static_constexpr_member_ret0.cpp` measured 58 on
 Linux while MSVC still measures 59, so the shared baseline stays 59 and the
