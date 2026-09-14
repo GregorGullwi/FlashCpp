@@ -170,6 +170,39 @@ public:
 		return getEntry(handle).parent;
 	}
 
+	// Visit interned spellings of `handle` that omit one or more leading
+	// components of its full qualified name. `a::b::c` yields `b::c` then `c`.
+	// Depth-1 namespaces yield nothing. Spelling is a lookup key only; the
+	// 12-byte NamespaceEntry is unchanged (parent walk, no suffix cache).
+	template <typename Callback>
+	void forEachPartialQualifiedNameSuffix(NamespaceHandle handle, Callback&& callback) const {
+		if (!handle.isValid() || handle.isGlobal()) {
+			return;
+		}
+		NamespaceHandle parent = getParent(handle);
+		if (!parent.isValid() || parent.isGlobal()) {
+			return;
+		}
+
+		StringHandle suffix = getEntry(handle).name;
+		callback(suffix);
+
+		NamespaceHandle current = parent;
+		for (;;) {
+			NamespaceHandle next_parent = getParent(current);
+			if (!next_parent.isValid() || next_parent.isGlobal()) {
+				break;
+			}
+			StringBuilder joined;
+			joined.append(getEntry(current).name);
+			joined.append("::");
+			joined.append(suffix);
+			suffix = StringTable::getOrInternStringHandle(joined);
+			callback(suffix);
+			current = next_parent;
+		}
+	}
+
 	StringHandle buildQualifiedIdentifier(NamespaceHandle ns_handle, StringHandle identifier) const {
 		if (!ns_handle.isValid() || ns_handle.isGlobal()) {
 			return identifier;

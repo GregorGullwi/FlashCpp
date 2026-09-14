@@ -5165,9 +5165,10 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 
 // Lookup-key aliases under which a member class template must answer: the
 // legacy owner-prefix key, the simple member name, the bare enclosing-struct
-// chain, the namespace-qualified chain, and each partial namespace chain.
-// Derived from the struct-parsing context stack so every spelling that can
-// name the declaration (Outer::Inner::Box<int>, ns::Outer::Inner::Box<int>,
+// chain, the namespace-qualified chain, and each partial namespace chain from
+// NamespaceRegistry parent links. Derived from the struct-parsing context
+// stack so every spelling that can name the declaration
+// (Outer::Inner::Box<int>, ns::Outer::Inner::Box<int>,
 // inner::Outer::Inner::Box<int>) resolves to one registered node. The
 // template registry stays a spelling-keyed map; this owns the alias policy
 // because the legal spellings are parser context.
@@ -5205,22 +5206,13 @@ std::vector<StringHandle> Parser::buildMemberClassTemplateAliasKeys(
 	alias_keys.push_back(bare_owner_chain);
 	alias_keys.push_back(namespace_chain_qualified_name);
 	if (bare_owner_chain.isValid() && !struct_parsing_context_stack_.empty()) {
-		std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(
-			struct_parsing_context_stack_.front().namespace_handle);
-		for (size_t pos = qualified_namespace.find("::");
-			 pos != std::string_view::npos;
-			 pos = qualified_namespace.find("::", pos + 2)) {
-			std::string_view namespace_suffix = qualified_namespace.substr(pos + 2);
-			if (namespace_suffix.empty()) {
-				continue;
-			}
-			alias_keys.push_back(
-				StringTable::getOrInternStringHandle(
-					StringBuilder()
-						.append(namespace_suffix)
-						.append("::"sv)
-						.append(StringTable::getStringView(bare_owner_chain))));
-		}
+		gNamespaceRegistry.forEachPartialQualifiedNameSuffix(
+			struct_parsing_context_stack_.front().namespace_handle,
+			[&](StringHandle namespace_suffix) {
+				alias_keys.push_back(
+					gNamespaceRegistry.buildQualifiedIdentifier(
+						{namespace_suffix, bare_owner_chain}));
+			});
 	}
 	return alias_keys;
 }

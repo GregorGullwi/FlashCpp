@@ -1861,9 +1861,10 @@ private:
 
 	// Lookup-key aliases under which a member class template must answer:
 	// legacy owner-prefix key, simple member name, bare enclosing-struct chain,
-	// namespace-qualified chain, and each partial namespace chain. Derived
-	// from the struct-parsing context stack so every spelling that can name
-	// the declaration (Outer::Inner::Box<int>, ns::Outer::Inner::Box<int>,
+	// namespace-qualified chain, and each partial namespace chain from
+	// NamespaceRegistry parent links. Derived from the struct-parsing context
+	// stack so every spelling that can name the declaration
+	// (Outer::Inner::Box<int>, ns::Outer::Inner::Box<int>,
 	// inner::Outer::Inner::Box<int>) resolves to one registered node. The
 	// template registry stays a spelling-keyed map; this owns the alias
 	// policy because the legal spellings are parser context.

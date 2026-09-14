@@ -801,10 +801,12 @@ epoch, nested forward declarations merged into the definition EntityId), so
 direct member class templates and member function templates inside those
 nested classes publish during the nested body and stamp their declared
 Type-kind parameters; nested classes under class templates, local, and
-anonymous forms remain deferred. Member class templates additionally register
-qualified owner-chain registry keys, so type-ids spelled through nested
-enclosing classes, namespace prefixes, or partial namespace chains (including
-nested namespaces) instantiate the same declaration. While a published
+anonymous forms remain deferred. Member class templates currently also
+register extra `TemplateRegistry` owner-chain spellings so the legacy
+instantiator can find nested member class templates under those concatenated
+names; that is a compatibility shim, not canonical identity. Qualified
+type-ids should resolve through the published nested `EntityId` and
+`TemplateDeclId` rather than additional registry aliases. While a published
 namespace/global primary class template body is parsed, a non-pack
 template-template argument that names its active
 template parameter stamps the owning `TemplateDeclId` plus parameter index as an
