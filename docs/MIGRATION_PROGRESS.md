@@ -5,8 +5,8 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-14 after identity-based owner-chain primary resolution
-(TemplateDeclId pattern anchoring) on `boundary-3a-nested-class-entity-early`
+Last updated: 2026-09-14 after owner-identity-derived nested member
+class-template instance keys on `codex/boundary-3a-concrete-template-template-args`
 (legacy `TemplateRegistry` owner-chain alias keys on the same branch are a
 compatibility shim, not 3A identity).
 
@@ -109,7 +109,17 @@ nested class-owned `OwnerId`, but instantiation still concatenates spellings
 instead of walking EntityId → `findPrimaryClassTemplate`.
 `Parser::buildMemberClassTemplateAliasKeys` and
 `TemplateRegistry::registerTemplateAliases` own the shim; they do not close
-the 3A lookup gap. Dependent NTTP Spec
+the 3A lookup gap. The legacy type-map and instantiation-cache bridge now
+derives an owner-derived instance key only for an actual same-spelling collision
+between distinct class-owned primary templates.
+`Parser::getClassTemplateInstanceKeyStem` resolves a full owner chain by
+identity, or completes a lexical owner-chain suffix for a member spelling,
+before `get_instantiated_class_name` and both class-instantiation-cache probes
+consume the key. A collision adds `$td<TemplateDeclId>` before argument
+hashing, so same-argument `OuterA::Inner::Box` and `OuterB::Inner::Box` cannot
+share a type-map or cache entry; unambiguous and dependent spellings retain
+their legacy base key until qualified type-id lookup reaches `TemplateDeclId`
+end to end. Namespace/global templates keep their previous cache keys. Dependent NTTP Spec
 stamping,
 concrete and active-dependent primary-class template-template Spec arguments,
 explicit dependent NTTP Spec arguments,
@@ -537,10 +547,7 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Owner-identity-derived instance names for same-spelling member templates
-  (see the first active finding: the legacy instance name derives from the
-  member name alone and the type map conflates instances across owners), then
-  deleting the `TemplateRegistry` owner-chain spelling shim once qualified
+- Delete the `TemplateRegistry` owner-chain spelling shim once qualified
   type-ids resolve through `TemplateDeclId` end to end (identity resolution
   exists; parse_type_specifier's spelled lookups still consume the shim), then
   nested member-template Spec-rooted dependent stamping, then
@@ -559,23 +566,6 @@ must not increase an implementation percentage.
 
 ## Active findings
 
-- Same-spelling nested member class templates under different owners share one
-  legacy instance name: `get_instantiated_class_name` strips the owner chain
-  unconditionally (`Parser_Templates_Inst_Substitution.cpp`), so
-  `OuterA::Inner::Box<short>` and `OuterB::Inner::Box<short>` both generate
-  `Box$<args-hash>` and the type map conflates the two instances (the second
-  owner's member access resolves the first owner's struct). Identity
-  resolution (`findClassTemplatePatternByIdentityChain`) already separates the
-  patterns, but owner-aware instance names cannot be introduced piecemeal:
-  the legacy world equates instances BY NAME across spelling paths, so the
-  chain spelling and the simple member spelling must generate one name
-  (making the name chain-qualified in `get_instantiated_class_name` alone
-  fixes the collision but breaks every simple-name resolution path that
-  re-instantiates the same declaration under the bare member name, e.g.
-  `parse_template_brace_initialization` calls). Owner: 3A instance naming —
-  a coordinated owner-identity-derived instance-name family, or the 3A
-  type-map replacement. Until then, same-spelling chains under different
-  owners remain ambiguous and the alias-spelling shim must not be deleted.
 - Two FrontendContext doctests have identical failures on clean `36d1b33b` and
   this branch (two failures/five assertions; neither test disabled):
   `SymbolTable enablePersistentScopePublication requires an active FrontendContext`

@@ -33,8 +33,8 @@ static constexpr size_t kMaxTemplateInstantiationNestingDepth = 128;
 static bool canUseRawClassTemplateCacheKey(
 	std::string_view template_name,
 	size_t provided_arg_count,
-	bool is_nested_member_class_template) {
-	if (is_nested_member_class_template) {
+	bool has_templated_class_owner) {
+	if (has_templated_class_owner) {
 		return false;
 	}
 	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
@@ -349,22 +349,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Completed cache hits are not new instantiation work; return them before
 	// consuming parser instantiation depth.  The name is fully resolved above.
 	{
-		std::string_view normalized_template_name = template_name;
-		bool is_nested_member_class_template = false;
-		if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
-			normalized_template_name = template_name.substr(last_colon + 2);
-			std::string_view owner_name = template_name.substr(0, last_colon);
-			if (auto owner_template_opt = gTemplateRegistry.lookupTemplate(owner_name);
-				owner_template_opt.has_value() &&
-				owner_template_opt->is<TemplateClassDeclarationNode>()) {
-				is_nested_member_class_template = true;
-			}
-		}
+		std::string_view normalized_template_name = getClassTemplateInstanceKeyStem(template_name);
+		bool has_templated_class_owner = hasTemplatedClassOwner(template_name);
 		bool can_use_raw_cache_key = !template_args_are_unresolved() &&
 			canUseRawClassTemplateCacheKey(
 			template_name,
 			template_args.size(),
-			is_nested_member_class_template);
+			has_templated_class_owner);
 		if (can_use_raw_cache_key) {
 			StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
 			FlashCpp::TemplateInstantiationKey cache_key =
@@ -561,17 +552,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Check TypeIndex-based instantiation cache for O(1) lookup
 	// This uses TypeIndex instead of string keys to avoid ambiguity with type names containing underscores
-	std::string_view normalized_template_name = template_name;
-	bool is_nested_member_class_template = false;
-	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
-		normalized_template_name = template_name.substr(last_colon + 2);
-		std::string_view owner_name = template_name.substr(0, last_colon);
-		if (auto owner_template_opt = gTemplateRegistry.lookupTemplate(owner_name);
-			owner_template_opt.has_value() &&
-			owner_template_opt->is<TemplateClassDeclarationNode>()) {
-			is_nested_member_class_template = true;
-		}
-	}
+	std::string_view normalized_template_name = getClassTemplateInstanceKeyStem(template_name);
+	bool has_templated_class_owner = hasTemplatedClassOwner(template_name);
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
 	FlashCpp::TemplateInstantiationKey cache_key =
 		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
@@ -581,7 +563,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		canUseRawClassTemplateCacheKey(
 		template_name,
 		template_args.size(),
-		is_nested_member_class_template);
+		has_templated_class_owner);
 	if (can_use_raw_cache_key) {
 		auto cached = gTemplateRegistry.getInstantiation(cache_key);
 		if (cached.has_value()) {

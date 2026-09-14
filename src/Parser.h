@@ -3378,6 +3378,11 @@ private:
 			return StringHandle{};
 		}
 	};
+	// The legacy type-map and instantiation cache still need a spelling key.
+	// A class-template owner is relevant when deciding whether that key can use
+	// raw, unfilled arguments.
+	bool hasTemplatedClassOwner(std::string_view template_name);
+	std::string_view getClassTemplateInstanceKeyStem(std::string_view template_name);
 	std::string_view get_instantiated_class_name(std::string_view template_name, std::span<const TemplateTypeArg> template_args);	 // NEW: Get mangled name for instantiated class
 	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, std::span<const TemplateTypeArg> template_args);  // Helper: Instantiate base class template and add to AST
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(

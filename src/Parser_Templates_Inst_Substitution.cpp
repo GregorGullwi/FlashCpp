@@ -806,12 +806,114 @@ std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
 		});
 }
 
+bool Parser::hasTemplatedClassOwner(std::string_view template_name) {
+	const size_t last_colon = template_name.rfind("::");
+	if (last_colon == std::string_view::npos) {
+		return false;
+	}
+
+	const std::string_view owner_name = template_name.substr(0, last_colon);
+	auto owner_template_opt = gTemplateRegistry.lookupTemplate(owner_name);
+	return owner_template_opt.has_value() &&
+		owner_template_opt->is<TemplateClassDeclarationNode>();
+}
+
+std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view template_name) {
+	std::optional<ASTNode> identity_pattern;
+	bool resolved_by_identity = false;
+	const size_t separator = template_name.rfind("::");
+	const std::string_view legacy_key_stem = separator == std::string_view::npos
+		? template_name
+		: template_name.substr(separator + 2);
+	if (separator != std::string_view::npos) {
+		identity_pattern = findClassTemplatePatternByIdentityChain(template_name);
+		resolved_by_identity = identity_pattern.has_value();
+	}
+	if (!identity_pattern.has_value()) {
+		// A bare member-template spelling is valid only through ordinary lexical
+		// lookup. A partially qualified spelling may omit outer class owners.
+		// Prefer the innermost matching lexical owner so every accepted spelling
+		// reaches the same published TemplateDeclId.
+		const std::optional<ASTNode> registered_template =
+			gTemplateRegistry.lookupTemplate(template_name);
+		if (!registered_template.has_value() ||
+			!registered_template->is<TemplateClassDeclarationNode>() ||
+			!registered_template->as<TemplateClassDeclarationNode>()
+				.class_decl_node().is_nested()) {
+			return legacy_key_stem;
+		}
+		const std::string_view requested_owner = separator == std::string_view::npos
+			? std::string_view{}
+			: template_name.substr(0, separator);
+		const std::string_view member_name = separator == std::string_view::npos
+			? template_name
+			: template_name.substr(separator + 2);
+		for (auto context = struct_parsing_context_stack_.rbegin();
+			 context != struct_parsing_context_stack_.rend();
+			 ++context) {
+			StringBuilder owner_name;
+			bool has_owner_component = false;
+			for (auto outer = struct_parsing_context_stack_.begin();
+				 outer != context.base();
+				 ++outer) {
+				if (outer->struct_name.empty()) {
+					continue;
+				}
+				if (has_owner_component) {
+					owner_name.append("::"sv);
+				}
+				owner_name.append(outer->struct_name);
+				has_owner_component = true;
+			}
+			if (!has_owner_component) {
+				owner_name.reset();
+				continue;
+			}
+			const std::string_view owner_chain = owner_name.preview();
+			if (!requested_owner.empty() && !owner_chain.ends_with(requested_owner)) {
+				owner_name.reset();
+				continue;
+			}
+			const std::string_view candidate_name =
+				owner_name.append("::"sv).append(member_name).commit();
+			identity_pattern = findClassTemplatePatternByIdentityChain(candidate_name);
+			if (identity_pattern.has_value()) {
+				resolved_by_identity = true;
+				break;
+			}
+		}
+	}
+
+	if (identity_pattern.has_value() &&
+		identity_pattern->is<TemplateClassDeclarationNode>()) {
+		const TemplateClassDeclarationNode& primary =
+			identity_pattern->as<TemplateClassDeclarationNode>();
+		const std::string_view member_name = separator == std::string_view::npos
+			? template_name
+			: template_name.substr(separator + 2);
+		if (resolved_by_identity &&
+			primary.has_template_decl_id() &&
+			requireFrontendContext().templateDecls()
+				.hasConflictingClassOwnedPrimaryClassTemplate(
+					StringTable::getOrInternStringHandle(member_name),
+					primary.template_decl_id())) {
+			return StringBuilder()
+				.append(member_name)
+				.append("$td"sv)
+				.append(static_cast<uint64_t>(primary.template_decl_id().value))
+				.commit();
+		}
+	}
+
+	return legacy_key_stem;
+}
+
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, std::span<const TemplateTypeArg> template_args) {
 	std::span<const TemplateTypeArg> effective_template_args = template_args;
 	std::vector<TemplateTypeArg> effective_template_args_storage;
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		std::string_view owner_name = template_name.substr(0, last_colon);
-		bool is_nested_member_class_template = false;
+		bool has_templated_class_owner = false;
 		size_t raw_param_count = 0;
 		if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 			template_opt.has_value() &&
@@ -820,14 +922,10 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 				template_opt->as<TemplateClassDeclarationNode>()
 					.template_parameters()
 					.size();
-			if (auto owner_template_opt = gTemplateRegistry.lookupTemplate(owner_name);
-				owner_template_opt.has_value() &&
-				owner_template_opt->is<TemplateClassDeclarationNode>()) {
-				is_nested_member_class_template = true;
-			}
+			has_templated_class_owner = hasTemplatedClassOwner(template_name);
 		}
 
-		if (is_nested_member_class_template &&
+		if (has_templated_class_owner &&
 			template_args.size() <= raw_param_count) {
 			const OuterTemplateBinding* outer_binding =
 				gTemplateRegistry.getOuterTemplateBinding(template_name);
@@ -888,9 +986,7 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 		}
 	}
 
-	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
-		template_name = template_name.substr(last_colon + 2);
-	}
+	template_name = getClassTemplateInstanceKeyStem(template_name);
 	auto result = FlashCpp::generateInstantiatedNameFromArgs(
 		template_name,
 		effective_template_args);
