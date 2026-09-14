@@ -1429,6 +1429,44 @@ TEST_SUITE("FrontendContext") {
 		CHECK(depth_three[1] != gNamespaceRegistry.getQualifiedNameHandle(ns_c));
 	}
 
+	TEST_CASE("Identity-based owner-chain resolution distinguishes colliding spellings") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"struct OuterA { struct Inner { template<typename T> struct Box { T first; }; }; };\n"
+			"struct OuterB { struct Inner { template<typename T> struct Box { double second; }; }; };\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("owner_chain_identity_resolution_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		// Both chains share every legacy registry spelling; identity resolution
+		// must still answer with each owner's own published pattern.
+		const std::optional<ASTNode> pattern_a =
+			parser.findClassTemplatePatternByIdentityChain("OuterA::Inner::Box");
+		REQUIRE(pattern_a.has_value());
+		REQUIRE(pattern_a->is<TemplateClassDeclarationNode>());
+		const std::optional<ASTNode> pattern_b =
+			parser.findClassTemplatePatternByIdentityChain("OuterB::Inner::Box");
+		REQUIRE(pattern_b.has_value());
+		REQUIRE(pattern_b->is<TemplateClassDeclarationNode>());
+		CHECK(pattern_a->as<TemplateClassDeclarationNode>().class_decl_node().template_decl_id() !=
+			  pattern_b->as<TemplateClassDeclarationNode>().class_decl_node().template_decl_id());
+
+		// The anchored pattern carries its published id.
+		CHECK(pattern_a->as<TemplateClassDeclarationNode>().has_template_decl_id());
+		CHECK(pattern_b->as<TemplateClassDeclarationNode>().has_template_decl_id());
+
+		// Fail-closed: an unresolvable owner chain yields no pattern.
+		CHECK_FALSE(parser.findClassTemplatePatternByIdentityChain("Missing::Box").has_value());
+	}
+
 	TEST_CASE("Free function body replay stamps dependent member template chains") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

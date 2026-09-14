@@ -5112,8 +5112,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	ASTNode template_node;
 	{
 		PROFILE_TEMPLATE_LOOKUP();
-		auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-		if (!template_opt.has_value()) {
+		// Identity-based owner-chain resolution: a qualified member template-id
+		// resolves to the published primary under the owner EntityId, so
+		// same-spelling chains under different owners never share a spelling
+		// lookup key. The registry lookup remains the fallback for chains this
+		// path cannot resolve (instantiated owners, pattern-only forms).
+		if (template_name.find("::"sv) != std::string_view::npos) {
+			std::optional<ASTNode> identity_pattern =
+				findClassTemplatePatternByIdentityChain(template_name);
+			if (identity_pattern.has_value()) {
+				template_node = *identity_pattern;
+			}
+		}
+		std::optional<ASTNode> template_opt;
+		if (!template_node.is<TemplateClassDeclarationNode>()) {
+			template_opt = gTemplateRegistry.lookupTemplate(template_name);
+		}
+		if (!template_opt.has_value() && !template_node.is<TemplateClassDeclarationNode>()) {
 			// If we're inside a template body, the template might be referencing itself
 			// (self-referential templates like __ratio_add_impl). In this case, the template
 			// hasn't been registered yet because we're still parsing its body.
@@ -5231,7 +5246,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 		}
-		if (!template_opt.has_value()) {
+		if (!template_opt.has_value() && !template_node.is<TemplateClassDeclarationNode>()) {
 			std::string error_msg = std::string(StringBuilder()
 				.append("No primary class template found for '")
 				.append(template_name)
@@ -5250,7 +5265,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt; // No template with this name
 		}
 		}
-		template_node = *template_opt;
+		if (template_opt.has_value()) {
+			template_node = *template_opt;
+		}
 	}
 
 	if (!template_node.is<TemplateClassDeclarationNode>()) {

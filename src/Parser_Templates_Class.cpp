@@ -5041,6 +5041,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		}
 		template_class_node.as<TemplateClassDeclarationNode>().set_template_decl_id(
 			struct_decl.template_decl_id());
+		// Anchor the pattern node under its TemplateDeclId so identity-based
+		// owner-chain resolution (owner EntityId + member name) yields the
+		// instantiable pattern without a spelling lookup.
+		requireFrontendContext().templateDecls().attachPrimaryClassTemplatePattern(
+			struct_decl.template_decl_id(),
+			template_class_node);
 
 		// Attach deferred member function bodies for two-phase lookup
 		// These will be parsed during template instantiation when TypeInfo is available
@@ -5215,6 +5221,64 @@ std::vector<StringHandle> Parser::buildMemberClassTemplateAliasKeys(
 			});
 	}
 	return alias_keys;
+}
+
+// Resolve a qualified member class-template-id to its published pattern by
+// identity: the owner chain resolves to a class EntityId (the owner spelling
+// is a type-system lookup key only), the member name plus the class-owned
+// OwnerId find the TemplateDeclId, and the anchored pattern node under that
+// id is returned. Fail-closed: every miss returns nullopt and the caller
+// falls back to the registry lookup.
+std::optional<ASTNode> Parser::findClassTemplatePatternByIdentityChain(
+	std::string_view template_name) {
+	const size_t separator = template_name.rfind("::");
+	if (separator == std::string_view::npos ||
+		separator + 2 >= template_name.size()) {
+		return std::nullopt;
+	}
+	const std::string_view owner_chain = template_name.substr(0, separator);
+	const std::string_view member_name = template_name.substr(separator + 2);
+	if (owner_chain.empty() || member_name.empty()) {
+		return std::nullopt;
+	}
+	const TypeInfo* owner_type_info = findTypeByName(
+		StringTable::getOrInternStringHandle(owner_chain));
+	if (owner_type_info == nullptr || !owner_type_info->isStruct()) {
+		return std::nullopt;
+	}
+	const StructTypeInfo* owner_struct = owner_type_info->getStructInfo();
+	if (owner_struct == nullptr || owner_struct->declaration_node == nullptr ||
+		!owner_struct->declaration_node->has_entity_id()) {
+		return std::nullopt;
+	}
+	const OwnerId owner = ownerIdFromClassEntity(
+		owner_struct->declaration_node->entity_id());
+	if (!owner) {
+		return std::nullopt;
+	}
+	FrontendContext& front_end = requireFrontendContext();
+	const std::optional<TemplateDeclId> primary_decl =
+		front_end.templateDecls().findPrimaryClassTemplate(
+			owner, StringTable::getOrInternStringHandle(member_name));
+	FLASH_LOG_FORMAT(Templates, Trace,
+					 "identity chain resolution for '{}': owner='{}' member='{}' -> {}",
+					 template_name, owner_chain, member_name,
+					 primary_decl.has_value() ? "found" : "missing");
+	if (!primary_decl.has_value()) {
+		return std::nullopt;
+	}
+	const std::optional<ASTNode> pattern =
+		front_end.templateDecls().primaryClassTemplatePattern(*primary_decl);
+	if (!pattern.has_value() || !pattern->is<TemplateClassDeclarationNode>()) {
+		return std::nullopt;
+	}
+	const TemplateClassDeclarationNode& primary =
+		pattern->as<TemplateClassDeclarationNode>();
+	if (!primary.has_template_decl_id() ||
+		primary.template_decl_id() != *primary_decl) {
+		return std::nullopt;
+	}
+	return pattern;
 }
 
 // Parse a C++20 concept declaration
@@ -5468,6 +5532,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		if (forward_struct_ref.has_template_decl_id()) {
 			template_struct_node.as<TemplateClassDeclarationNode>().set_template_decl_id(
 				forward_struct_ref.template_decl_id());
+			requireFrontendContext().templateDecls().attachPrimaryClassTemplatePattern(
+				forward_struct_ref.template_decl_id(),
+				template_struct_node);
 		}
 
 		// Register the template under every legal spelling of the declaration.
@@ -6728,6 +6795,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	if (member_struct_ref.has_template_decl_id()) {
 		template_struct_node.as<TemplateClassDeclarationNode>().set_template_decl_id(
 			member_struct_ref.template_decl_id());
+		// Definition attach replaces the forward-declaration anchor, matching
+		// the registry's forward-to-definition replace.
+		requireFrontendContext().templateDecls().attachPrimaryClassTemplatePattern(
+			member_struct_ref.template_decl_id(),
+			template_struct_node);
 	}
 
 	// Register the template under every legal spelling of the declaration.
