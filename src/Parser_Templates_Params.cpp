@@ -2029,7 +2029,10 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 							const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
 							dependent_arg = makeDependentCompileTimeArg(
-								StringTable::getOrInternStringHandle(qual_id.full_name()), std::nullopt);
+								gNamespaceRegistry.buildQualifiedIdentifier(
+									qual_id.namespace_handle(),
+									qual_id.nameHandle()),
+								std::nullopt);
 						}
 
 						// Check for pack expansion (...)
@@ -2488,7 +2491,10 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 								}
 							} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 								const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
-								dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id.full_name());
+								dependent_arg.dependent_name =
+									gNamespaceRegistry.buildQualifiedIdentifier(
+										qual_id.namespace_handle(),
+										qual_id.nameHandle());
 							} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 								// `Trait<T>::value` often arrives as MemberAccess. Prefer a
 								// reconstructible Owner::member marker so later rematerialization
@@ -2504,7 +2510,13 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 										owner_name = object_id->name();
 									} else if (const auto* object_qual =
 												   std::get_if<QualifiedIdentifierNode>(&object_expr)) {
-										owner_name = object_qual->full_name();
+										// The qualified owner spelling is interned, so
+										// the owner view stays valid until the
+										// dependent name combines below.
+										owner_name = StringTable::getStringView(
+											gNamespaceRegistry.buildQualifiedIdentifier(
+												object_qual->namespace_handle(),
+												object_qual->nameHandle()));
 									}
 								}
 								if (owner_name.empty()) {
@@ -2668,7 +2680,9 @@ try_type_template_argument_parse:
 						dependent_name = StringTable::getOrInternStringHandle(id->name());
 					} else if (const auto* qual_id =
 								   std::get_if<QualifiedIdentifierNode>(&value_expr)) {
-						dependent_name = StringTable::getOrInternStringHandle(qual_id->full_name());
+						dependent_name = gNamespaceRegistry.buildQualifiedIdentifier(
+							qual_id->namespace_handle(),
+							qual_id->nameHandle());
 					}
 					TemplateTypeArg dependent_arg = TemplateTypeArg::makeDependentValue(
 						dependent_name,
@@ -3498,7 +3512,9 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 			return tparam_ref->param_name();
 		}
 		if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&expr)) {
-			return StringTable::getOrInternStringHandle(qual_id->full_name());
+			return gNamespaceRegistry.buildQualifiedIdentifier(
+				qual_id->namespace_handle(),
+				qual_id->nameHandle());
 		}
 		return StringHandle{};
 	};
