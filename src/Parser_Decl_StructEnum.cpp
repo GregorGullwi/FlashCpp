@@ -201,11 +201,13 @@ bool tryPublishCanonicalNamedTypeMembers(CanonicalTypeTable& table, EntityId ent
 	return true;
 }
 
-// Assign EntityIds to nested classes under an enclosing published class, then
-// publish their Supported named type-member schemas. Enclosing EntityId is not
-// available when the nested parse completes, so this runs at the enclosing
-// complete-definition epoch. Fail-closed: omit local/anonymous/unpublished
-// nested classes without blocking the enclosing typedef/using schema.
+// Assign EntityIds to nested classes under an enclosing published class when
+// parse-time publication was unavailable, then publish their Supported named
+// type-member schemas. Parse-time publication (tryPublishNestedClassIdentity)
+// runs before the nested body parse, so this is the fallback for nested
+// classes whose enclosing lacked an EntityId there. Fail-closed: omit
+// local/anonymous/unpublished nested classes without blocking the enclosing
+// typedef/using schema.
 void tryPublishNestedClassEntities(
 	DeclarationBuilder& builder,
 	CanonicalTypeTable& table,
@@ -423,6 +425,36 @@ bool mustBeMemberOperator(OverloadableOperator operator_kind) {
 		   operator_kind == OverloadableOperator::Arrow;
 }
 } // namespace
+
+// Publish a nested class EntityId under the enclosing class-owned OwnerId
+// derived from the struct-parsing context stack. Non-definition publication
+// runs before the nested body parse so in-body member class/function templates
+// can publish under this identity during the nested body; the nested
+// complete-definition epoch passes is_definition=true to merge the definition
+// flag. Fail-closed: without a published enclosing EntityId the node stays
+// unpublished and the lazy enclosing-epoch fallback remains the authority.
+void Parser::tryPublishNestedClassIdentity(StructDeclarationNode& nested, bool is_definition) {
+	if (struct_parsing_context_stack_.size() < 2u) {
+		return;
+	}
+	const StructParsingContext& enclosing_context =
+		struct_parsing_context_stack_[struct_parsing_context_stack_.size() - 2u];
+	const StructDeclarationNode* enclosing = enclosing_context.struct_node;
+	if (enclosing == nullptr || !enclosing->has_entity_id()) {
+		return;
+	}
+	FrontendContext& front_end = requireFrontendContext();
+	const PublishResult published = commitParserNestedClassPublication(
+		front_end.declarationBuilder(),
+		nested,
+		ownerIdFromClassEntity(enclosing->entity_id()),
+		is_definition,
+		gSymbolTable);
+	if (published.status == PublishStatus::Created ||
+		published.status == PublishStatus::MergedRedeclaration) {
+		recordDeclarationBuilderPublish();
+	}
+}
 
 ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
 	out_func_decl = nullptr;
@@ -803,10 +835,17 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		struct_ref.set_template_decl_id(template_decl);
 		active_template_decl_id_ = template_decl;
 	}
-	const auto stampStructLexicalScope = [&struct_node, this]() {
+	const auto stampStructLexicalScope = [&struct_node, this, is_nested_class]() {
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(
 			struct_node, gSymbolTable.currentScopeId());
 		StructDeclarationNode& stamped = struct_node.as<StructDeclarationNode>();
+		if (is_nested_class) {
+			// Nested classes must not publish at namespace level: the context
+			// stack supplies the enclosing class-owned OwnerId, and the
+			// definition flag merges through the same nested identity.
+			tryPublishNestedClassIdentity(stamped, !stamped.is_forward_declaration());
+			return;
+		}
 		if (!shouldPublishParserClass(
 				stamped,
 				gSymbolTable.get_current_scope_type(),
@@ -1375,33 +1414,36 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		return ParseResult::error("Expected '{' or ';' after struct/class name or base class list", peek_info());
 	}
 
-	// Publish EntityId before body parse so member primary class templates can
-	// use class-owned OwnerIds during the body. Stamp as a non-definition first;
-	// stampStructLexicalScope at the complete-definition epoch merges the
-	// definition flag. Template / local / nested forms stay unpublished here.
-	// Nested classes must use is_nested_class (context stack): enclosing_class()
-	// is not set until after the nested parse returns, and class bodies do not
-	// enter a Class ScopeType, so shouldPublishParserClass alone would wrongly
-	// publish nested "Inner" as a namespace-level entity and collide across
-	// outers that share the nested spelling.
+	// Publish EntityId before body parse so member primary class templates and
+	// member function templates can use class-owned OwnerIds during the body.
+	// Stamp as a non-definition first; stampStructLexicalScope at the
+	// complete-definition epoch merges the definition flag. Template / local
+	// forms stay unpublished here. Nested classes publish through the context
+	// stack (is_nested_class): enclosing_class() is not set until after the
+	// nested parse returns, and class bodies do not enter a Class ScopeType, so
+	// shouldPublishParserClass alone would wrongly publish nested "Inner" as a
+	// namespace-level entity and collide across outers that share the nested
+	// spelling.
 	SymbolTableDetail::stampLexicalScopeOnDeclaration(
 		struct_node, gSymbolTable.currentScopeId());
-	if (!is_nested_class &&
-		!struct_ref.has_entity_id() &&
-		shouldPublishParserClass(
-			struct_ref,
-			gSymbolTable.get_current_scope_type(),
-			parsing_template_class_)) {
-		FrontendContext& front_end = requireFrontendContext();
-		const PublishResult published = commitParserClassPublication(
-			front_end.declarationBuilder(),
-			struct_ref,
-			gSymbolTable.currentScopeId(),
-			false,
-			gSymbolTable);
-		if (published.status == PublishStatus::Created ||
-			published.status == PublishStatus::MergedRedeclaration) {
-			recordDeclarationBuilderPublish();
+	if (!struct_ref.has_entity_id()) {
+		if (is_nested_class) {
+			tryPublishNestedClassIdentity(struct_ref, false);
+		} else if (shouldPublishParserClass(
+					   struct_ref,
+					   gSymbolTable.get_current_scope_type(),
+					   parsing_template_class_)) {
+			FrontendContext& front_end = requireFrontendContext();
+			const PublishResult published = commitParserClassPublication(
+				front_end.declarationBuilder(),
+				struct_ref,
+				gSymbolTable.currentScopeId(),
+				false,
+				gSymbolTable);
+			if (published.status == PublishStatus::Created ||
+				published.status == PublishStatus::MergedRedeclaration) {
+				recordDeclarationBuilderPublish();
+			}
 		}
 	}
 

@@ -793,7 +793,15 @@ publish a signature-aware child `TemplateDeclId` under that template-owned
 `OwnerId`; matching declarations and definitions merge, overloads remain
 distinct, declared Type-kind parameter specifiers stamp retroactively with the
 child ID, and replay activates that published child ID. Nested member templates
-in those class-template bodies remain deferred. While a published
+in those class-template bodies remain deferred. Nested classes of
+published namespace/global non-template classes publish their EntityId at
+parse time under the enclosing class-owned `OwnerId` (non-definition before
+the nested body parse, definition merged at the nested complete-definition
+epoch, nested forward declarations merged into the definition EntityId), so
+direct member class templates and member function templates inside those
+nested classes publish during the nested body and stamp their declared
+Type-kind parameters; nested classes under class templates, local, and
+anonymous forms remain deferred. While a published
 namespace/global primary class template body is parsed, a non-pack
 template-template argument that names its active
 template parameter stamps the owning `TemplateDeclId` plus parameter index as an
@@ -801,8 +809,9 @@ opaque Spec argument. Explicit concrete type arguments for a final
 namespace/global primary-class type pack also stamp as ordered TypeId Spec
 arguments. Dependent pack expansions, non-type/template packs, other dependent
 template-template arguments, aliases, NTTP args on
-DependentTemplateMember, nested-in-template / nested-class-nested member
-templates, and member-template partials remain deferred. Replayed
+DependentTemplateMember, nested-in-template member templates,
+nested-class-nested member-template Spec-rooted dependent stamping, and
+member-template partials remain deferred. Replayed
 namespace/global function-template bodies now also stamp dependent plain-member
 chains and type-only member template-ids rooted in their published Type-kind
 parameters; this uses the same structural TemplateParameter / DependentName /

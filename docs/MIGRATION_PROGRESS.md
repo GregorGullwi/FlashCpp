@@ -5,19 +5,18 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-13 after direct primary member class-template and member
-function-template stamping under published class templates on
-`codex/boundary-3a-class-template-member-primary-stamping`
+Last updated: 2026-09-14 after parse-time nested class EntityId publication
+under class-owned OwnerIds on `boundary-3a-nested-class-entity-early`
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's direct primary member class-template and member
-function-template stamping under published namespace/global class templates is on
-`codex/boundary-3a-class-template-member-primary-stamping` for review (after
-direct member function-template stamping, free function-template body replay
-stamping, free function-template declared type-parameter stamping,
-signature-aware free function TemplateDeclId publication, and member
-class-template TemplateDeclId).
+Architecture boundary 3A's parse-time nested class EntityId publication is on
+`boundary-3a-nested-class-entity-early` for review (after direct primary
+member class-template and member function-template stamping under published
+namespace/global class templates, direct member function-template stamping,
+free function-template body replay stamping, free function-template declared
+type-parameter stamping, signature-aware free function TemplateDeclId
+publication, and member class-template TemplateDeclId).
 `reparse_template_function_body` now receives the instantiation context's
 published `TemplateDeclId` explicitly and keeps it in a scoped
 `active_template_decl_id_` window while parsing the body. Replayed local type
@@ -45,7 +44,9 @@ published namespace/global primary class template use its template-owned
 retroactively stamp their declared Type-kind parameters, and activate their
 published child ID during replay. Nested member templates and member function
 templates without either a published enclosing `EntityId` or this direct
-class-template owner still fail closed. Signature-aware free
+class-template owner still fail closed — except direct members of nested
+classes whose EntityId now publishes at parse time (see the nested-class
+paragraph below). Signature-aware free
 function TemplateDeclId publication is keyed by OwnerId +
 name + structural signature index: matching shapes merge (including
 forward→definition replace preserving an earlier stamp), distinct overloads
@@ -64,11 +65,25 @@ primary's ID. Direct member function templates in those class-template bodies
 use the same template-owned owner with a structural signature key; their
 forward declarations merge with definitions, overloads remain distinct, and
 their declared Type-kind parameter specifiers stamp with the child function ID.
-Early EntityId publication skips nested classes via the struct-parsing context
-stack (`enclosing_class()` is not set until after the nested parse returns, and
-class bodies do not enter a Class ScopeType). Dependent NTTP Spec stamping,
+Nested classes of published namespace/global non-template classes now publish
+their EntityId at parse time: `tryPublishNestedClassIdentity` resolves the
+immediate enclosing class from the struct-parsing context stack (back() is the
+current class, the owner candidate sits at size-2; `enclosing_class()` is not
+set until after the nested parse returns, and class bodies do not enter a Class
+ScopeType) and publishes the nested class as a non-definition under the
+enclosing class-owned `OwnerId` before the nested body parse, merging the
+definition flag at the nested complete-definition epoch. Nested forward
+declarations merge into the later definition's EntityId, and same-spelling
+nested classes no longer publish at namespace level, so
+`Outer::Inner` never conflates with a namespace `Inner` entity. Direct member
+class templates and member function templates inside those nested classes then
+publish `TemplateDeclId`s during the nested body and retroactively stamp their
+declared Type-kind parameters through the existing publication helpers; the
+lazy enclosing-epoch path stays as fallback for nested classes whose enclosing
+lacked an EntityId at parse time (template-nested, local, and anonymous forms
+still fail closed there). Dependent NTTP Spec stamping,
 concrete and active-dependent primary-class template-template Spec arguments,
-explicit dependent NTTP Spec arguments, nested class EntityId ownership,
+explicit dependent NTTP Spec arguments,
 ExpressionSubstitutor tip-resolve restamp wire, production named type-member
 schema publication, opaque tip-resolve substrate, production dependent_name_type
 restamp, opaque `CanonicalTypeTable::substitute`, CurrentInstantiation /
@@ -242,8 +257,12 @@ during concrete alias materialization. This fixes forwarded aliases such as
   unchanged. No StringHandle identity or SymbolTable. Complete published namespace/global records fail-closed publish Supported nested
   typedef/using RHS TypeIds and nested classes under class-owned OwnerIds
   (`ownerIdFromClassEntity`, tagged so they cannot collide with namespace-mapped
-  owners). Nested EntityIds are assigned at the enclosing complete-definition
-  epoch, then nested and enclosing named type-member schemas are published.
+  owners). Nested EntityIds now publish at nested parse time under the enclosing
+  class-owned OwnerId (non-definition before nested body parse; definition
+  merged at the nested complete-definition epoch; nested forward declarations
+  merge into the definition EntityId); the enclosing-epoch path publishes
+  nested and enclosing named type-member schemas and remains the fallback when
+  parse-time publication was unavailable.
   Local/anonymous/template-nested classes remain omitted. ExpressionSubstitutor
   restamp runs `tryResolveDependentTip` (Set DependentName-family / Clear on
   collapse with Builtin/Record/Enum TypeId→TypeIndex projection). Nodes remain
@@ -251,11 +270,12 @@ during concrete alias materialization. This fixes forwarded aliases such as
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes member templates under class templates / nested
-  classes lacking EntityId at parse time, complete
-  declarator interleaving, and deletion of the flat semantic
-  representation. Stop here for review before starting another family, 3B, or
-  the parallel frontend experiment.
+- Remaining 3A work includes nested member-template Spec-rooted dependent
+  stamping, richer template-id forms over nested member templates (nested
+  member class-template instantiation through qualified type-ids is still a
+  legacy-registry gap), complete declarator interleaving, and deletion of the
+  flat semantic representation. Stop here for review before starting another
+  family, 3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -325,22 +345,23 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for direct primary member templates under a published class
-template: sharded rebuild; FlashCppTest verifies class-template
-forward-to-definition merge, identity separation, and child parameter import,
-plus function-template forward-to-definition merge, overload separation,
-declared parameter import, and replay activation. The native
-`template_owner_tag` mutation collapses template ownership onto class ownership
-and fails the identity test; removing the direct template-owned function
-publication path likewise fails its focused native test. Focused class-template
-and member-function-template source regressions compile and return 0, while
-adjacent member-function-template coverage returns 42 and the static-member
-case returns 0. The canonical baseline harness completed; fixed-corpus migration
-counters and the dollar inventory remain at baseline.
+Latest validation for parse-time nested class EntityId publication: sharded
+rebuild; FlashCppTest verifies nested parse-time identity under class-owned
+OwnerIds (distinct from same-spelling namespace classes), nested
+forward-to-definition EntityId merge, and member class-template plus member
+function-template publication under a published nested class with declared
+Type-kind parameter import. Stashing the parse-time publication path fails the
+nested forward-merge and both nested member-template native tests. The
+`test_canonical_nested_class_member_templates_ret0` source regression compiles
+and returns 0 across a two-level nesting chain with mixed native widths and a
+struct; the full Linux suite passes (2,971 single-file cases, 264 negative
+tests, 12 multi-TU cases, 0 crash / 0 mismatch). Fixed-corpus migration
+counters remain within baseline; `template_old_engine` on
+`test_template_recursive_static_constexpr_member_ret0.cpp` improved 59 → 58 and
+the baseline was ratcheted down.
 Adjacent architecture coverage remains the DependentName / Spec-rooted /
-substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes. The
-Windows suite is 2,986 single-file cases, 264 negative tests, and 12 multi-TU
-cases. Fixed-corpus migration counters remain within the prior baselines below.
+substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes.
+Fixed-corpus migration counters remain within the prior baselines below.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -359,7 +380,7 @@ All 64 fixed-corpus entries remain within baseline. Aggregate values:
 | `dollar_identity` | 0 / 0 |
 | `outside_engine` | 0 / 0 |
 | `post_parse_typing` | 0 / 0 |
-| `template_old_engine` | 59 / 59 |
+| `template_old_engine` | 59 / 58 |
 | `token_replay` | 382 / 382 |
 | Static dollar inventory | 17 / 17 |
 
@@ -439,9 +460,15 @@ Advanced, not completed:
   forward-to-definition merge, and child Type-kind parameter stamps), and
   direct member function templates under those class templates (template-owned
   OwnerId + signature-aware publication, redeclaration merge, overload
-  separation, retroactive Type-kind parameter stamp, and replay activation) are
-  landed; nested member templates and member function templates under nested
-  classes without EntityId at parse time, alias,
+  separation, retroactive Type-kind parameter stamp, and replay activation), and
+  parse-time nested class EntityId publication under enclosing class-owned
+  OwnerIds (non-definition before nested body parse, definition merge at the
+  nested complete-definition epoch, nested forward-to-definition merge, no
+  namespace-level nested publication), and member class-template plus member
+  function-template publication under those published nested classes (with
+  declared Type-kind parameter stamps) are
+  landed; nested member-template Spec-rooted dependent stamping, richer
+  template-id forms over nested member templates, alias,
   unpublished/incomplete nominal, anonymous-union, and
   unpublished-base forms stay deferred. Remaining families and flat-field
   deletion keep all three identity criteria open.
@@ -463,11 +490,12 @@ must not increase an implementation percentage.
 
 ## Remaining work
 
-- Nested member templates and member function templates under nested classes
-  lacking EntityId at parse time, then richer adapters before
-  expanding boundary-1 shadow coverage (default arguments, exception
-  specifications, fields, templates) or removing `SymbolTable` merge /
-  `matches_signature` authority.
+- Nested member-template Spec-rooted dependent stamping and richer template-id
+  forms over nested member templates (nested member class-template
+  instantiation through qualified type-ids is still a legacy-registry gap),
+  then richer adapters before expanding boundary-1 shadow coverage (default
+  arguments, exception specifications, fields, templates) or removing
+  `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

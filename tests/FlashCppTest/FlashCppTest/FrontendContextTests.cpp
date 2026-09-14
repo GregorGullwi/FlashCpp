@@ -1062,6 +1062,292 @@ TEST_SUITE("FrontendContext") {
 		CHECK(first_import.type == table.templateParameter(definition->template_decl_id(), 0u));
 	}
 
+	TEST_CASE("Nested class publishes EntityId at parse time under class-owned OwnerId") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"struct Inner { int other; };\n"
+			"struct Outer { struct Inner { int tag; }; Inner value; };\n"
+			"struct Second { struct Inner { short flag; }; Inner item; };\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("nested_class_early_entity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const StructDeclarationNode* global_inner = nullptr;
+		const StructDeclarationNode* outer = nullptr;
+		const StructDeclarationNode* second = nullptr;
+		for (const ASTNode& node : parser.get_nodes()) {
+			if (!node.is<StructDeclarationNode>()) {
+				continue;
+			}
+			const StructDeclarationNode& struct_decl = node.as<StructDeclarationNode>();
+			const StringHandle name = struct_decl.name();
+			if (name == StringTable::getOrInternStringHandle("Inner")) {
+				global_inner = &struct_decl;
+			} else if (name == StringTable::getOrInternStringHandle("Outer")) {
+				outer = &struct_decl;
+			} else if (name == StringTable::getOrInternStringHandle("Second")) {
+				second = &struct_decl;
+			}
+		}
+		REQUIRE(global_inner != nullptr);
+		REQUIRE(outer != nullptr);
+		REQUIRE(second != nullptr);
+		REQUIRE(global_inner->has_entity_id());
+
+		REQUIRE(outer->nested_classes().size() == 1u);
+		REQUIRE(outer->nested_classes()[0].is<StructDeclarationNode>());
+		const StructDeclarationNode& outer_inner =
+			outer->nested_classes()[0].as<StructDeclarationNode>();
+		REQUIRE(second->nested_classes().size() == 1u);
+		REQUIRE(second->nested_classes()[0].is<StructDeclarationNode>());
+		const StructDeclarationNode& second_inner =
+			second->nested_classes()[0].as<StructDeclarationNode>();
+
+		// Parse-time identity: nested classes publish during their own body
+		// parse, and same-spelling nested classes never share the namespace-level
+		// entity that the global Inner definition owns.
+		REQUIRE(outer_inner.has_entity_id());
+		REQUIRE(second_inner.has_entity_id());
+		const EntityId outer_inner_entity = outer_inner.entity_id();
+		const EntityId second_inner_entity = second_inner.entity_id();
+		CHECK(outer_inner_entity != global_inner->entity_id());
+		CHECK(second_inner_entity != global_inner->entity_id());
+		CHECK(outer_inner_entity != second_inner_entity);
+
+		DeclarationBuilder& builder = context.declarationBuilder();
+		const EntityRecord& outer_inner_record = builder.entity(outer_inner_entity);
+		const EntityRecord& second_inner_record = builder.entity(second_inner_entity);
+		const EntityRecord& global_record = builder.entity(global_inner->entity_id());
+		CHECK(isClassOwnedOwnerId(outer_inner_record.owner_id));
+		CHECK(isClassOwnedOwnerId(second_inner_record.owner_id));
+		CHECK_FALSE(isClassOwnedOwnerId(global_record.owner_id));
+		CHECK(outer_inner_record.owner_id ==
+			  ownerIdFromClassEntity(outer->entity_id()));
+		CHECK(second_inner_record.owner_id ==
+			  ownerIdFromClassEntity(second->entity_id()));
+		CHECK((outer_inner_record.flags & DeclarationFlags::IsDefinition) != 0u);
+		CHECK((second_inner_record.flags & DeclarationFlags::IsDefinition) != 0u);
+	}
+
+	TEST_CASE("Nested forward declaration merges into the definition EntityId") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"struct Outer { struct Inner; struct Inner { int tag; }; Inner value; };\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("nested_class_forward_merge_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const StructDeclarationNode* outer = nullptr;
+		for (const ASTNode& node : parser.get_nodes()) {
+			if (node.is<StructDeclarationNode>() &&
+				node.as<StructDeclarationNode>().name() ==
+					StringTable::getOrInternStringHandle("Outer")) {
+				outer = &node.as<StructDeclarationNode>();
+				break;
+			}
+		}
+		REQUIRE(outer != nullptr);
+		REQUIRE(outer->nested_classes().size() == 2u);
+		REQUIRE(outer->nested_classes()[0].is<StructDeclarationNode>());
+		REQUIRE(outer->nested_classes()[1].is<StructDeclarationNode>());
+		const StructDeclarationNode& forward =
+			outer->nested_classes()[0].as<StructDeclarationNode>();
+		const StructDeclarationNode& definition =
+			outer->nested_classes()[1].as<StructDeclarationNode>();
+		REQUIRE(forward.has_entity_id());
+		REQUIRE(definition.has_entity_id());
+		CHECK(forward.entity_id() == definition.entity_id());
+
+		const EntityRecord& record =
+			context.declarationBuilder().entity(definition.entity_id());
+		CHECK(isClassOwnedOwnerId(record.owner_id));
+		CHECK((record.flags & DeclarationFlags::IsDefinition) != 0u);
+	}
+
+	TEST_CASE("Member class template under published nested class publishes TemplateDeclId") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"struct Outer {\n"
+			"  struct Inner {\n"
+			"    template<typename T> struct Box { T value; };\n"
+			"    template<typename T, typename U> struct Pair { T left; U right; };\n"
+			"  };\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("nested_member_class_template_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const StructDeclarationNode* outer = nullptr;
+		for (const ASTNode& node : parser.get_nodes()) {
+			if (node.is<StructDeclarationNode>() &&
+				node.as<StructDeclarationNode>().name() ==
+					StringTable::getOrInternStringHandle("Outer")) {
+				outer = &node.as<StructDeclarationNode>();
+				break;
+			}
+		}
+		REQUIRE(outer != nullptr);
+		REQUIRE(outer->nested_classes().size() == 1u);
+		REQUIRE(outer->nested_classes()[0].is<StructDeclarationNode>());
+		const StructDeclarationNode& inner =
+			outer->nested_classes()[0].as<StructDeclarationNode>();
+		REQUIRE(inner.has_entity_id());
+
+		const auto box_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("Inner::Box"));
+		REQUIRE(box_opt.has_value());
+		REQUIRE(box_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& box = box_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(box.has_template_decl_id());
+		REQUIRE(box.class_decl_node().has_template_decl_id());
+		CHECK(box.template_decl_id() == box.class_decl_node().template_decl_id());
+
+		const auto pair_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("Inner::Pair"));
+		REQUIRE(pair_opt.has_value());
+		REQUIRE(pair_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& pair = pair_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(pair.has_template_decl_id());
+		CHECK(pair.template_decl_id() != box.template_decl_id());
+
+		// Both member primaries live under the nested class-owned OwnerId.
+		TemplateDeclTable& template_decls = context.templateDecls();
+		const OwnerId inner_owner = ownerIdFromClassEntity(inner.entity_id());
+		CHECK(template_decls.findPrimaryClassTemplate(inner_owner,
+			StringTable::getOrInternStringHandle("Box")).has_value());
+		CHECK(template_decls.findPrimaryClassTemplate(inner_owner,
+			StringTable::getOrInternStringHandle("Pair")).has_value());
+
+		const auto& box_members = box.class_decl_node().members();
+		REQUIRE(box_members.size() == 1u);
+		REQUIRE(box_members[0].declaration.is<DeclarationNode>());
+		const TypeSpecifierNode& value_type =
+			box_members[0].declaration.as<DeclarationNode>().type_specifier_node();
+		REQUIRE(value_type.has_template_parameter_decl());
+		CHECK(value_type.template_decl_id() == box.template_decl_id());
+		CHECK(value_type.template_parameter_index() == 0u);
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const CanonicalTypeImport value_import = importCanonicalType(table, value_type);
+		REQUIRE(value_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(value_import.type == table.templateParameter(box.template_decl_id(), 0u));
+	}
+
+	TEST_CASE("Member function template under published nested class publishes TemplateDeclId") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"struct Outer {\n"
+			"  struct Inner {\n"
+			"    template<typename T, typename U> U select(T left, U right);\n"
+			"    template<typename T, typename U> U select(T left, U right) { return right; }\n"
+			"    template<typename T> T* address(T* value) { return value; }\n"
+			"  };\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("nested_member_function_template_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const StructDeclarationNode* outer = nullptr;
+		for (const ASTNode& node : parser.get_nodes()) {
+			if (node.is<StructDeclarationNode>() &&
+				node.as<StructDeclarationNode>().name() ==
+					StringTable::getOrInternStringHandle("Outer")) {
+				outer = &node.as<StructDeclarationNode>();
+				break;
+			}
+		}
+		REQUIRE(outer != nullptr);
+		REQUIRE(outer->nested_classes().size() == 1u);
+		REQUIRE(outer->nested_classes()[0].is<StructDeclarationNode>());
+		const StructDeclarationNode& inner =
+			outer->nested_classes()[0].as<StructDeclarationNode>();
+		REQUIRE(inner.has_entity_id());
+
+		const TemplateFunctionDeclarationNode* declaration = nullptr;
+		const TemplateFunctionDeclarationNode* definition = nullptr;
+		const TemplateFunctionDeclarationNode* address = nullptr;
+		for (const StructMemberFunctionDecl& member : inner.member_functions()) {
+			if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& candidate =
+				member.function_declaration.as<TemplateFunctionDeclarationNode>();
+			const StringHandle name =
+				candidate.function_decl_node().decl_node().identifier_token().handle();
+			if (StringTable::getStringView(name) == "select"sv) {
+				if (candidate.function_decl_node().has_template_body_position()) {
+					definition = &candidate;
+				} else {
+					declaration = &candidate;
+				}
+			} else if (StringTable::getStringView(name) == "address"sv) {
+				address = &candidate;
+			}
+		}
+		REQUIRE(declaration != nullptr);
+		REQUIRE(definition != nullptr);
+		REQUIRE(address != nullptr);
+		REQUIRE(declaration->has_template_decl_id());
+		REQUIRE(definition->has_template_decl_id());
+		REQUIRE(address->has_template_decl_id());
+		CHECK(declaration->template_decl_id() == definition->template_decl_id());
+		CHECK(address->template_decl_id() != definition->template_decl_id());
+
+		const FunctionDeclarationNode& selected = definition->function_decl_node();
+		const TypeSpecifierNode& return_type = selected.decl_node().type_specifier_node();
+		REQUIRE(return_type.has_template_parameter_decl());
+		CHECK(return_type.template_decl_id() == definition->template_decl_id());
+		CHECK(return_type.template_parameter_index() == 1u);
+		REQUIRE(selected.parameter_nodes().size() == 2u);
+		const TypeSpecifierNode& first_param =
+			selected.parameter_nodes()[0].as<DeclarationNode>().type_specifier_node();
+		const TypeSpecifierNode& second_param =
+			selected.parameter_nodes()[1].as<DeclarationNode>().type_specifier_node();
+		REQUIRE(first_param.has_template_parameter_decl());
+		REQUIRE(second_param.has_template_parameter_decl());
+		CHECK(first_param.template_decl_id() == definition->template_decl_id());
+		CHECK(first_param.template_parameter_index() == 0u);
+		CHECK(second_param.template_decl_id() == definition->template_decl_id());
+		CHECK(second_param.template_parameter_index() == 1u);
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const CanonicalTypeImport return_import = importCanonicalType(table, return_type);
+		REQUIRE(return_import.status == CanonicalTypeImportStatus::Supported);
+		CHECK(return_import.type == table.templateParameter(definition->template_decl_id(), 1u));
+	}
+
 	TEST_CASE("Free function body replay stamps dependent member template chains") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

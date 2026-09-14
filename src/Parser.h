@@ -4395,6 +4395,16 @@ private:	 // Resume private methods
 	// already-stamped specifiers, and anything without the identity key.
 	void stampPublishedFunctionTemplateParameters(TemplateFunctionDeclarationNode& template_decl);
 
+	// Publish a nested class EntityId under the enclosing class-owned OwnerId
+	// resolved from the struct-parsing context stack (back() is the current
+	// class; the owner candidate sits at size-2). Non-definition publication
+	// happens before the nested body parse so in-body member class/function
+	// templates can publish during it; the complete-definition epoch passes
+	// is_definition=true to merge the definition flag. Fail-closed: missing
+	// enclosing EntityId, local/anonymous classes, and rejected publication
+	// leave the node unpublished for the lazy enclosing-epoch fallback.
+	void tryPublishNestedClassIdentity(StructDeclarationNode& nested, bool is_definition);
+
 	// Stamp class-template specializations when the primary already published a
 	// TemplateDeclId. Type arguments, stampable literal NTTP ExpressionNodes
 	// (bool / integral NumericLiteral), concrete published primary-class
