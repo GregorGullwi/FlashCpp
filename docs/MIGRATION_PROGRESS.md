@@ -5,10 +5,11 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-14 after the TemplateRegistry owner-chain spelling shim was
-deleted on `boundary-3a-delete-owner-chain-shim`: qualified member class-template
-type-ids now resolve through published TemplateDeclId identity end to end in
-`parse_type_specifier`, with no owner-chain registry alias keys in play.
+Last updated: 2026-09-15 after member alias templates with class owners
+published `TemplateDeclId` identity on
+`boundary-3a-identity-qualified-alias-lookup`: qualified member alias type-ids
+now resolve through published identity end to end, with no owner-chain
+spelling dependence for member aliases.
 
 ## Current boundary and handoff
 
@@ -45,8 +46,8 @@ owner-chain alias shim is deleted: member class templates register only the
 legacy owner-prefix key (`Inner::Box`) and the simple member name (`Box`), and
 partial-namespace-suffix owner spellings (`inner::Outer::Inner`) now come from
 the nested type system's type-map aliases, which identity resolution reads.
-Member class templates under published class templates, alias/variable
-template lookups with class owners, friend-of-member-template lookups, and
+Member class templates under published class templates, member variable
+templates with class owners, friend-of-member-template lookups, and
 replay-cluster consumers still resolve through their legacy keys; routing
 those through identity belongs to their own families.
 `reparse_template_function_body` now receives the instantiation context's
@@ -113,7 +114,23 @@ publish `TemplateDeclId`s during the nested body and retroactively stamp their
 declared Type-kind parameters through the existing publication helpers; the
 lazy enclosing-epoch path stays as fallback for nested classes whose enclosing
 lacked an EntityId at parse time (template-nested, local, and anonymous forms
-still fail closed there). The `TemplateRegistry` owner-chain alias shim is
+still fail closed there). Primary member alias templates publish identity the
+same way: `parse_member_template_alias` publishes a `TemplateDeclId`
+(`TemplateDeclTable` `PrimaryKind::Alias`) under the class-owned OwnerId from
+the enclosing parse-time EntityId, or a template-owned OwnerId for direct
+members of published namespace/global primary class templates, anchoring the
+`TemplateAliasNode` under that id. Qualified member alias type-ids resolve
+through `Parser::findAliasTemplateBySpelling` (identity chain first via
+`findAliasTemplateByIdentityChain`, registry alias lookup fail-closed
+fallback) at the `parse_type_specifier` alias lookups and at the shared
+materialization choke point `materializeAliasTemplateInstantiation`, so
+partial-namespace-suffix spellings such as `m::Gauge::Meter<int>` (class
+`Gauge` in namespace `n::m`) that missed the registration-time owner-qualified
+registry key now resolve through the owner chain's type-system lookup. Member
+variable templates, instantiated-owner alias chains (`Outer<int>::Meter`),
+dependent alias families, the `<` gate alias arm (expression-side gating), and
+alias partial specializations still resolve through their legacy paths. The
+`TemplateRegistry` owner-chain alias shim is
 deleted: the extra `TemplateRegistry` owner-chain spellings (`Outer::Inner::Box`,
 `ns::Outer::Box`, and parent-chain namespace suffixes such as
 `inner::Outer::Inner::Box`) are no longer registered, and
@@ -321,9 +338,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
   stable. Dependent-expression and template-decl interning are not transactional.
 - Remaining 3A work includes nested member-template Spec-rooted dependent
   stamping, identity resolution for the remaining qualified member-template
-  chain consumers (member alias/variable templates with class owners,
+  chain consumers (member variable templates with class owners,
   friend-of-member-template, expression-side gating, and instantiated-owner
-  chains such as `Outer<int>::Box`), complete declarator interleaving, and
+  chains such as `Outer<int>::Box`; member alias templates now resolve through
+  identity), complete declarator interleaving, and
   deletion of the flat semantic representation. Stop here for review before
   starting another family, 3B, or the parallel frontend experiment.
 
@@ -395,28 +413,23 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for owner-chain alias shim deletion: sharded rebuild; the
-three former shim regressions —
-`test_canonical_nested_member_template_qualified_id_ret0`,
-`test_canonical_namespace_member_template_qualified_id_ret0`, and
-`test_canonical_nested_namespace_member_template_ret0` — now pass with no
-owner-chain registry keys in play (nested enclosing chain, namespace prefix,
-and nested-namespace / using-directive spellings all resolve through
-identity), alongside the new
-`test_canonical_member_template_qualified_type_spec_ret0` (two colliding
-same-spelling member templates stay distinct through parameter-type,
-return-type, and local-variable positions, with a namespace-qualified member
-template under a non-template owner). Mutation validation: disabling the
-identity resolution inside `try_instantiate_class_template` makes all four
-regressions fail with "No primary class template found". FlashCppTest verifies
-that the chain keys are absent from the registry, that
-`findClassTemplatePatternBySpelling("ns::Outer::Inner::Box")` resolves to the
-same TemplateDeclId as the legacy `Inner::Box` key, that
-`findClassTemplatePatternByIdentityChain` answers colliding same-spelling
-chains (`OuterA::Inner::Box` / `OuterB::Inner::Box`) with each owner's own
-distinct TemplateDeclId and anchored pattern, and fail-closed misses. The full
-Windows suite passes (3,010 single-file cases, 264 negative tests, 12
-multi-TU cases, 0 crash / 0 mismatch). Fixed-corpus
+Latest validation for member alias-template identity publication: sharded
+rebuild; the new `test_canonical_member_alias_identity_chain_ret0` proves a
+member alias template under a namespace-scope class resolves through both the
+fully qualified spelling and the partial namespace suffix with mixed native
+widths. Mutation validation: disabling the identity attempt inside
+`findAliasTemplateBySpelling` fails that regression with
+"No primary class template found". FlashCppTest verifies that
+`findAliasTemplateByIdentityChain("ns::Gauge::Meter")` and the partial-suffix
+wrapper call resolve to the same node the legacy `ns::Gauge::Meter` key
+answers, and fail-closed misses; the TemplateDeclTable native checks cover
+alias-kind slot separation from class/function primaries, anchor-map
+disjointness, and unpublished-id attach rejection. The full Linux suite passes
+(2,991 single-file cases, 12 multi-TU cases, 0 crash / 0 mismatch) and the
+doctest suite passes except the two pre-documented active findings
+(`SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState` and
+`SymbolTable enablePersistentScopePublication requires an active
+FrontendContext`). Fixed-corpus
 migration counters remain within baseline; `template_old_engine` on
 `test_template_recursive_static_constexpr_member_ret0.cpp` measured 58 on
 Linux while MSVC still measures 59, so the shared baseline stays 59 and the
@@ -539,12 +552,17 @@ Advanced, not completed:
    resolved primary pattern, and partial-namespace-suffix owner spellings
    served by nested-class type-map aliases) with the `TemplateRegistry`
    owner-chain alias shim deleted (registration reduced to the legacy
-   owner-prefix and simple member keys) are landed.
+   owner-prefix and simple member keys), and primary member alias-template
+   `TemplateDeclId` publication under class-owned / template-owned OwnerIds
+   with qualified alias type-ids resolving through
+   `findAliasTemplateBySpelling` (identity chain first, registry alias lookup
+   fail-closed fallback) at the `parse_type_specifier` alias lookups and the
+   `materializeAliasTemplateInstantiation` choke point are landed.
    Nested
-   member-template Spec-rooted dependent stamping, alias,
+   member-template Spec-rooted dependent stamping,
    unpublished/incomplete nominal, anonymous-union, and
    unpublished-base forms stay deferred, as do the remaining qualified
-   chain consumers (member alias/variable templates with class owners,
+   chain consumers (member variable templates with class owners,
    friend-of-member-template, expression-side gating, instantiated-owner
    chains). Remaining families and flat-field
    deletion keep all three identity criteria open.
@@ -568,9 +586,12 @@ must not increase an implementation percentage.
 
 - The `TemplateRegistry` owner-chain spelling shim is deleted; qualified
   member class-template type-ids resolve through `TemplateDeclId` in
-  `parse_type_specifier` and instantiation. Route the remaining qualified
+  `parse_type_specifier` and instantiation, and primary member alias
+  templates publish `TemplateDeclId` identity under class-owned /
+  template-owned OwnerIds with qualified alias type-ids resolving
+  identity-first. Route the remaining qualified
   member-template chain consumers through identity as their families migrate
-  (member alias/variable templates with class owners,
+  (member variable templates with class owners,
   friend-of-member-template, expression-side gating, instantiated-owner
   chains such as `Outer<int>::Box`), then nested member-template Spec-rooted
   dependent stamping, then

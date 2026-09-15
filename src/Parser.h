@@ -3190,6 +3190,24 @@ public:
 	std::optional<ASTNode> findClassTemplatePatternBySpelling(
 		std::string_view template_name);
 
+	// Resolve a qualified member alias-template-id to its published alias
+	// node by identity: the owner chain resolves to a class EntityId (the
+	// owner spelling is a type-system lookup key only), the member name plus
+	// the class-owned OwnerId find the TemplateDeclId, and the anchored alias
+	// node under that id is returned. Fail-closed: every miss returns nullopt
+	// and the caller falls back to the registry lookup.
+	std::optional<ASTNode> findAliasTemplateByIdentityChain(
+		std::string_view alias_template_name);
+
+	// Resolve a spelled alias-template name to its TemplateAliasNode for
+	// type-id parsing and materialization. Qualified member alias-template
+	// spellings resolve through identity first; the registry alias lookup
+	// remains the fail-closed fallback for namespace/global aliases and forms
+	// identity cannot answer yet (instantiated-owner chains, dependent
+	// families).
+	std::optional<ASTNode> findAliasTemplateBySpelling(
+		std::string_view alias_template_name);
+
 	// Shared Spec-stamping choke point: resolve the spelled primary template
 	// name to its published pattern node, or null when the name is invalid,
 	// unresolvable, or not a published class template (fail-closed).

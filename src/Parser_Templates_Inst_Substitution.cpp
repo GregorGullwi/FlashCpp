@@ -1865,7 +1865,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	AliasTemplateMaterializationResult result;
 	std::optional<TypeSpecifierNode> resolved_deferred_decltype_spec;
 	const TemplateAliasNode* alias_node = nullptr;
-	if (auto alias_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
+	if (auto alias_entry = findAliasTemplateBySpelling(alias_template_name);
 		alias_entry.has_value() && alias_entry->is<TemplateAliasNode>()) {
 		alias_node = &alias_entry->as<TemplateAliasNode>();
 	}

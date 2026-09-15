@@ -1401,6 +1401,51 @@ TEST_SUITE("FrontendContext") {
 		CHECK_FALSE(parser.findClassTemplatePatternBySpelling("ns::Missing::Box").has_value());
 	}
 
+	TEST_CASE("Member alias template resolves qualified spellings through published identity") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"namespace ns {\n"
+			"struct Gauge {\n"
+			"  template<typename T> using Meter = T;\n"
+			"};\n"
+			"}\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_alias_template_identity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		// The legacy owner-prefix key still answers at parse time.
+		const auto legacy_opt =
+			gTemplateRegistry.lookup_alias_template("ns::Gauge::Meter");
+		REQUIRE(legacy_opt.has_value());
+		REQUIRE(legacy_opt->is<TemplateAliasNode>());
+
+		// The partial namespace suffix spelling resolves through published
+		// identity to the same alias node the legacy key answers.
+		const std::optional<ASTNode> chain_alias =
+			parser.findAliasTemplateByIdentityChain("ns::Gauge::Meter");
+		REQUIRE(chain_alias.has_value());
+		REQUIRE(chain_alias->is<TemplateAliasNode>());
+		CHECK(&chain_alias->as<TemplateAliasNode>() == &legacy_opt->as<TemplateAliasNode>());
+		const std::optional<ASTNode> suffix_alias =
+			parser.findAliasTemplateBySpelling("Gauge::Meter");
+		REQUIRE(suffix_alias.has_value());
+		REQUIRE(suffix_alias->is<TemplateAliasNode>());
+		CHECK(&suffix_alias->as<TemplateAliasNode>() == &legacy_opt->as<TemplateAliasNode>());
+
+		// Fail-closed: an unresolvable owner chain and a missing member find
+		// no alias.
+		CHECK_FALSE(parser.findAliasTemplateByIdentityChain("Missing::Meter").has_value());
+		CHECK_FALSE(parser.findAliasTemplateByIdentityChain("ns::Gauge::NoMember").has_value());
+	}
+
 	TEST_CASE("NamespaceRegistry partial qualified-name suffixes follow parent chain") {
 		const StringHandle name_a =
 			StringTable::getOrInternStringHandle("partial_suffix_ns_a");

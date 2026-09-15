@@ -14,22 +14,24 @@
 
 class ASTNode;
 
-// Context-local publication of primary class- and function-template identity for
-// boundary 3A. TemplateDeclId is keyed by OwnerId + spelling + primary kind
-// (+ signature index for function primaries) for redeclaration merge; the
-// spelling is a lookup key only and does not participate in canonical TypeId
-// equality (that uses TemplateDeclId + parameter index). OwnerId may be a
-// namespace-mapped owner (namespace/global primaries), a class-owned owner
-// from ownerIdFromClassEntity, or a template-owned owner from
-// ownerIdFromTemplateDecl (direct member class primaries under a published
-// class template). Function primaries use a distinct kind so they cannot share
-// slots with class primaries. Distinct free function-template overloads use
-// distinct signature indices; matching shapes reuse the same TemplateDeclId.
+// Context-local publication of primary class-, function-, and alias-template
+// identity for boundary 3A. TemplateDeclId is keyed by OwnerId + spelling +
+// primary kind (+ signature index for function primaries) for redeclaration
+// merge; the spelling is a lookup key only and does not participate in
+// canonical TypeId equality (that uses TemplateDeclId + parameter index).
+// OwnerId may be a namespace-mapped owner (namespace/global primaries), a
+// class-owned owner from ownerIdFromClassEntity, or a template-owned owner
+// from ownerIdFromTemplateDecl (direct member class primaries under a
+// published class template). Function primaries use a distinct kind so they
+// cannot share slots with class primaries. Distinct free function-template
+// overloads use distinct signature indices; matching shapes reuse the same
+// TemplateDeclId.
 class TemplateDeclTable {
 public:
 	enum class PrimaryKind : uint8_t {
 		Class = 0,
 		Function = 1,
+		Alias = 2,
 	};
 
 	TemplateDeclId publishPrimaryClassTemplate(OwnerId owner, StringHandle name) {
@@ -38,6 +40,17 @@ public:
 
 	std::optional<TemplateDeclId> findPrimaryClassTemplate(OwnerId owner, StringHandle name) const {
 		return findPrimary(owner, name, PrimaryKind::Class, 0u);
+	}
+
+	// Member alias-template primaries publish under the same OwnerId
+	// derivation as member class templates; there are no alias overloads, so
+	// the signature index is always 0.
+	TemplateDeclId publishPrimaryAliasTemplate(OwnerId owner, StringHandle name) {
+		return publishPrimary(owner, name, PrimaryKind::Alias, 0u);
+	}
+
+	std::optional<TemplateDeclId> findPrimaryAliasTemplate(OwnerId owner, StringHandle name) const {
+		return findPrimary(owner, name, PrimaryKind::Alias, 0u);
 	}
 
 	// signature_index discriminates free function-template overloads under the
@@ -98,6 +111,25 @@ public:
 		return found->second;
 	}
 
+	// Anchor the syntax node of a published primary alias template under its
+	// TemplateDeclId so identity-based resolution yields the alias node
+	// without a spelling lookup. Same replace and fail-closed rules as the
+	// class-pattern anchor.
+	void attachPrimaryAliasPattern(TemplateDeclId id, ASTNode pattern) {
+		if (!id || !hasPrimary(id)) {
+			throw InternalError("template decl: attach alias pattern for unpublished TemplateDeclId");
+		}
+		primary_alias_patterns_.insert_or_assign(id.value, pattern);
+	}
+
+	std::optional<ASTNode> primaryAliasPattern(TemplateDeclId id) const {
+		const auto found = primary_alias_patterns_.find(id.value);
+		if (found == primary_alias_patterns_.end()) {
+			return std::nullopt;
+		}
+		return found->second;
+	}
+
 	// The legacy instance-name bridge needs an owner-derived disambiguator only
 	// when two member class-template primaries share the same simple spelling.
 	// Namespace and template-owned primaries retain their existing spelling path.
@@ -150,8 +182,8 @@ private:
 		if (!name.isValid()) {
 			throw InternalError("template decl: invalid template name");
 		}
-		if (kind == PrimaryKind::Class && signature_index != 0u) {
-			throw InternalError("template decl: class primary signature index must be 0");
+		if (kind != PrimaryKind::Function && signature_index != 0u) {
+			throw InternalError("template decl: non-function primary signature index must be 0");
 		}
 		const Key key{owner.value, name, kind, signature_index};
 		const auto existing = ids_by_key_.find(key);
@@ -164,9 +196,7 @@ private:
 		const uint32_t raw = static_cast<uint32_t>(ids_by_key_.size() + 1u);
 		const TemplateDeclId id{raw};
 		ids_by_key_.emplace(key, id);
-		if (kind == PrimaryKind::Class) {
-			published_class_ids_.insert(raw);
-		}
+		published_ids_.insert(raw);
 		return id;
 	}
 
@@ -190,11 +220,12 @@ private:
 		if (!id) {
 			return false;
 		}
-		const auto found = published_class_ids_.find(id.value);
-		return found != published_class_ids_.end();
+		const auto found = published_ids_.find(id.value);
+		return found != published_ids_.end();
 	}
 
 	std::unordered_map<Key, TemplateDeclId, KeyHash> ids_by_key_;
-	std::unordered_set<uint32_t> published_class_ids_;
+	std::unordered_set<uint32_t> published_ids_;
 	std::unordered_map<uint32_t, ASTNode> primary_class_patterns_;
+	std::unordered_map<uint32_t, ASTNode> primary_alias_patterns_;
 };

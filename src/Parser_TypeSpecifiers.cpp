@@ -1276,7 +1276,7 @@ ParseResult Parser::parse_type_specifier() {
 		// placeholder named after the alias template itself.
 		if (peek() == "<"_tok) {
 			std::optional<TemplateArgumentVector> template_args;
-			if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(type_name);
+			if (auto alias_template_opt = findAliasTemplateBySpelling(type_name);
 				alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
 				std::vector<ASTNode> template_arg_syntax_nodes;
 				template_args = parse_explicit_template_arguments(
@@ -2085,7 +2085,7 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (should_parse_as_template) {
-				if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(type_name);
+				if (auto alias_template_opt = findAliasTemplateBySpelling(type_name);
 					alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
 					template_args = parse_explicit_template_arguments(
 						alias_template_opt->as<TemplateAliasNode>().template_parameters(),
@@ -2111,7 +2111,7 @@ ParseResult Parser::parse_type_specifier() {
 			if (template_args.has_value()) {
 				// Check if this is an alias template
 				FLASH_LOG_FORMAT(Parser, Debug, "Checking for alias template: '{}'", type_name);
-				auto alias_opt = gTemplateRegistry.lookup_alias_template(type_name);
+				auto alias_opt = findAliasTemplateBySpelling(type_name);
 				if (alias_opt.has_value()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Found alias template for '{}', is_deferred={}", type_name, alias_opt->as<TemplateAliasNode>().is_deferred());
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
