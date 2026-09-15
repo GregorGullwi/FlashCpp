@@ -2043,13 +2043,14 @@ ParseResult Parser::parse_type_specifier() {
 					std::string_view member_name = type_name.substr(last_colon_pos + 2);
 
 					// Check if the member is a known template. Qualified member
-					// class-template spellings resolve through identity first.
+					// class-template and variable-template spellings resolve
+					// through identity first.
 					auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 					auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
 
 					// Also check with the full qualified name
 					auto full_template_opt = findClassTemplatePatternBySpelling(type_name);
-					auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(type_name);
+					auto full_var_template_opt = findVariableTemplateBySpelling(type_name);
 
 					bool member_is_template = member_template_opt.has_value() ||
 											  member_var_template_opt.has_value() ||

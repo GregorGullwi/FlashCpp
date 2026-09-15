@@ -1446,6 +1446,53 @@ TEST_SUITE("FrontendContext") {
 		CHECK_FALSE(parser.findAliasTemplateByIdentityChain("ns::Gauge::NoMember").has_value());
 	}
 
+	TEST_CASE("Member variable template resolves qualified spellings through published identity") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"namespace ns {\n"
+			"struct Gauge {\n"
+			"  template<typename T> static constexpr int Meter = 42;\n"
+			"};\n"
+			"}\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_variable_template_identity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		// The legacy enclosing-name key still answers at parse time.
+		const auto legacy_opt =
+			gTemplateRegistry.lookupVariableTemplate("Gauge::Meter");
+		REQUIRE(legacy_opt.has_value());
+		REQUIRE(legacy_opt->is<TemplateVariableDeclarationNode>());
+
+		// The qualified spellings resolve through published identity to the
+		// same variable node the legacy key answers.
+		const std::optional<ASTNode> chain_variable =
+			parser.findVariableTemplateByIdentityChain("ns::Gauge::Meter");
+		REQUIRE(chain_variable.has_value());
+		REQUIRE(chain_variable->is<TemplateVariableDeclarationNode>());
+		CHECK(&chain_variable->as<TemplateVariableDeclarationNode>() ==
+			  &legacy_opt->as<TemplateVariableDeclarationNode>());
+		const std::optional<ASTNode> suffix_variable =
+			parser.findVariableTemplateBySpelling("Gauge::Meter");
+		REQUIRE(suffix_variable.has_value());
+		REQUIRE(suffix_variable->is<TemplateVariableDeclarationNode>());
+		CHECK(&suffix_variable->as<TemplateVariableDeclarationNode>() ==
+			  &legacy_opt->as<TemplateVariableDeclarationNode>());
+
+		// Fail-closed: an unresolvable owner chain and a missing member find
+		// no variable template.
+		CHECK_FALSE(parser.findVariableTemplateByIdentityChain("Missing::Meter").has_value());
+		CHECK_FALSE(parser.findVariableTemplateByIdentityChain("ns::Gauge::NoMember").has_value());
+	}
+
 	TEST_CASE("NamespaceRegistry partial qualified-name suffixes follow parent chain") {
 		const StringHandle name_a =
 			StringTable::getOrInternStringHandle("partial_suffix_ns_a");

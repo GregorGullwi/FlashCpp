@@ -5,11 +5,13 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-15 after member alias templates with class owners
+Last updated: 2026-09-15 after member variable templates with class owners
 published `TemplateDeclId` identity on
-`boundary-3a-identity-qualified-alias-lookup`: qualified member alias type-ids
-now resolve through published identity end to end, with no owner-chain
-spelling dependence for member aliases.
+`boundary-3a-identity-member-variable-templates`: qualified member
+variable-template spellings resolve through published identity and the
+variable-template instance name stem is collision-disambiguated with
+`$td<TemplateDeclId>`, so same-spelling member variable templates under
+distinct owners no longer share registry keys or instantiation cache entries.
 
 ## Current boundary and handoff
 
@@ -127,7 +129,20 @@ materialization choke point `materializeAliasTemplateInstantiation`, so
 partial-namespace-suffix spellings such as `m::Gauge::Meter<int>` (class
 `Gauge` in namespace `n::m`) that missed the registration-time owner-qualified
 registry key now resolve through the owner chain's type-system lookup. Member
-variable templates, instantiated-owner alias chains (`Outer<int>::Meter`),
+variable templates now publish identity the same way:
+`parse_member_variable_template` publishes a `TemplateDeclId`
+(`TemplateDeclTable` `PrimaryKind::Variable`) under the same OwnerId
+derivation, anchoring the `TemplateVariableDeclarationNode`, and qualified
+variable-template spellings resolve through
+`Parser::findVariableTemplateBySpelling` (identity chain first, registry
+variable lookup fail-closed fallback) at the
+`try_instantiate_variable_template` choke point and the `parse_type_specifier`
+`<` gate's full-name variable arm. The variable-template instance name stem is
+collision-disambiguated with `$td<TemplateDeclId>` through
+`Parser::getVariableTemplateInstanceKeyStem` (mirroring the class-template
+instance bridge), so two same-spelling class-owned variable primaries never
+share an instantiation cache entry. Instantiated-owner alias and variable
+chains (`Outer<int>::Meter`),
 dependent alias families, the `<` gate alias arm (expression-side gating), and
 alias partial specializations still resolve through their legacy paths. The
 `TemplateRegistry` owner-chain alias shim is
@@ -338,10 +353,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
   stable. Dependent-expression and template-decl interning are not transactional.
 - Remaining 3A work includes nested member-template Spec-rooted dependent
   stamping, identity resolution for the remaining qualified member-template
-  chain consumers (member variable templates with class owners,
-  friend-of-member-template, expression-side gating, and instantiated-owner
-  chains such as `Outer<int>::Box`; member alias templates now resolve through
-  identity), complete declarator interleaving, and
+  chain consumers (friend-of-member-template, expression-side gating, and
+  instantiated-owner chains such as `Outer<int>::Box`; member alias and
+  variable templates now resolve through identity), complete declarator
+  interleaving, and
   deletion of the flat semantic representation. Stop here for review before
   starting another family, 3B, or the parallel frontend experiment.
 
@@ -413,19 +428,23 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for member alias-template identity publication: sharded
-rebuild; the new `test_canonical_member_alias_identity_chain_ret0` proves a
-member alias template under a namespace-scope class resolves through both the
-fully qualified spelling and the partial namespace suffix with mixed native
-widths. Mutation validation: disabling the identity attempt inside
-`findAliasTemplateBySpelling` fails that regression with
-"No primary class template found". FlashCppTest verifies that
-`findAliasTemplateByIdentityChain("ns::Gauge::Meter")` and the partial-suffix
-wrapper call resolve to the same node the legacy `ns::Gauge::Meter` key
-answers, and fail-closed misses; the TemplateDeclTable native checks cover
-alias-kind slot separation from class/function primaries, anchor-map
-disjointness, and unpublished-id attach rejection. The full Linux suite passes
-(2,991 single-file cases, 12 multi-TU cases, 0 crash / 0 mismatch) and the
+Latest validation for member variable-template identity publication: sharded
+rebuild; `test_canonical_member_variable_template_identity_ret0` proves two
+same-spelling member variable templates under distinct owners stay distinct
+with mixed native types, and
+`test_canonical_member_variable_template_instance_stem_ret0` proves identical
+template arguments and T-dependent initializers still resolve per owner
+(instance-key stem protection). Layered mutation validation: disabling the
+identity attempt inside `findVariableTemplateBySpelling` fails both
+regressions; disabling the `$td` stem in
+`hasConflictingClassOwnedPrimaryVariableTemplate` fails only the
+instance-stem test. FlashCppTest verifies that
+`findVariableTemplateByIdentityChain("ns::Gauge::Meter")` and the wrapper call
+resolve to the same node the legacy `Gauge::Meter` key answers, and
+fail-closed misses; the TemplateDeclTable native checks cover
+variable-kind slot separation from class/function/alias primaries and
+anchor-map disjointness. The full Linux suite passes (2,984 single-file
+cases, 12 multi-TU cases, 0 crash / 0 mismatch) and the
 doctest suite passes except the two pre-documented active findings
 (`SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState` and
 `SymbolTable enablePersistentScopePublication requires an active
@@ -552,12 +571,17 @@ Advanced, not completed:
    resolved primary pattern, and partial-namespace-suffix owner spellings
    served by nested-class type-map aliases) with the `TemplateRegistry`
    owner-chain alias shim deleted (registration reduced to the legacy
-   owner-prefix and simple member keys), and primary member alias-template
+   owner-prefix and simple member keys), primary member alias-template
    `TemplateDeclId` publication under class-owned / template-owned OwnerIds
    with qualified alias type-ids resolving through
    `findAliasTemplateBySpelling` (identity chain first, registry alias lookup
    fail-closed fallback) at the `parse_type_specifier` alias lookups and the
-   `materializeAliasTemplateInstantiation` choke point are landed.
+   `materializeAliasTemplateInstantiation` choke point, and primary member
+   variable-template `TemplateDeclId` publication with qualified
+   variable-template spellings resolving through `findVariableTemplateBySpelling`
+   at the `try_instantiate_variable_template` choke point and the
+   `parse_type_specifier` `<` gate's full-name variable arm, plus the
+   `$td<TemplateDeclId>` variable-template instance-key stem, are landed.
    Nested
    member-template Spec-rooted dependent stamping,
    unpublished/incomplete nominal, anonymous-union, and
@@ -586,15 +610,15 @@ must not increase an implementation percentage.
 
 - The `TemplateRegistry` owner-chain spelling shim is deleted; qualified
   member class-template type-ids resolve through `TemplateDeclId` in
-  `parse_type_specifier` and instantiation, and primary member alias
-  templates publish `TemplateDeclId` identity under class-owned /
-  template-owned OwnerIds with qualified alias type-ids resolving
-  identity-first. Route the remaining qualified
-  member-template chain consumers through identity as their families migrate
-  (member variable templates with class owners,
-  friend-of-member-template, expression-side gating, instantiated-owner
-  chains such as `Outer<int>::Box`), then nested member-template Spec-rooted
-  dependent stamping, then
+  `parse_type_specifier` and instantiation, and primary member alias and
+  variable templates publish `TemplateDeclId` identity under class-owned /
+  template-owned OwnerIds with qualified spellings resolving identity-first
+  (variable templates also get the `$td<TemplateDeclId>` instance-key stem).
+  Route the remaining qualified member-template chain consumers through
+  identity as their families migrate (friend-of-member-template,
+  expression-side gating, instantiated-owner chains such as
+  `Outer<int>::Box`), then nested member-template Spec-rooted dependent
+  stamping, then
   richer adapters before expanding boundary-1 shadow coverage (default
   arguments, exception specifications, fields, templates) or removing
   `SymbolTable` merge / `matches_signature` authority.

@@ -766,6 +766,19 @@ lookup and alias resolution determine the resulting canonical type. See the
 [C++20 draft, temp.over.link](https://timsong-cpp.github.io/cppwp/n4861/temp.over.link)
 and [temp.dep.type](https://timsong-cpp.github.io/cppwp/n4861/temp.dep.type).
 
+Alias and variable template primaries are declaration-layer identity, not
+types: the canonical type table has no alias or variable node kind, so a
+substituted alias or variable contributes zero `TypeId` identity (a redirect
+that client layers cannot observe). While a specialization is dependent,
+C++20 requires the opposite: a dependent alias/variable template-id keeps its
+own identity (alias/variable `TemplateDeclId` plus argument links), is a
+non-deduced context ([temp.deduct.type]), and compares by structure without
+lookup ([temp.over.link]) — an eager redirect there would be premature
+lookup. Any future canonical alias/variable-specialization node therefore
+carries `TemplateDeclId` + argument links, never the resolved target, and
+only collapses to its target once every argument imports concretely through
+`CanonicalTypeTable::substitute`.
+
 The first dependent-name slice provides opaque plain-identifier chains rooted
 in published type parameters. Production parser publication of those plain
 chains and of type-only member template-ids (`DependentTemplateMember`) is

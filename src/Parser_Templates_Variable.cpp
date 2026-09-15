@@ -41,6 +41,40 @@ std::optional<TemplateDeclId> tryPublishMemberPrimaryAliasTemplate(
 	return template_decl;
 }
 
+// Publish TemplateDeclId for a primary member variable template when its
+// immediate enclosing class has either a published EntityId (namespace/global
+// non-template classes and nested classes) or a published primary
+// TemplateDeclId (direct members of namespace/global class templates).
+// Qualified member variable-template spellings resolve through this identity;
+// the registry spelling keys remain the fail-closed fallback. Spelling is a
+// lookup key only and is never semantic identity.
+std::optional<TemplateDeclId> tryPublishMemberPrimaryVariableTemplate(
+	StructDeclarationNode& enclosing,
+	ASTNode variable_node,
+	StringHandle simple_name,
+	TemplateDeclId enclosing_template_decl,
+	bool is_direct_member_of_top_level_class_template) {
+	if (!simple_name.isValid()) {
+		return std::nullopt;
+	}
+	OwnerId owner{};
+	if (enclosing.has_entity_id()) {
+		owner = ownerIdFromClassEntity(enclosing.entity_id());
+	} else if (is_direct_member_of_top_level_class_template &&
+		enclosing.has_template_decl_id() &&
+		enclosing.template_decl_id() == enclosing_template_decl) {
+		owner = ownerIdFromTemplateDecl(enclosing_template_decl);
+	}
+	if (!owner) {
+		return std::nullopt;
+	}
+	FrontendContext& front_end = requireFrontendContext();
+	const TemplateDeclId template_decl =
+		front_end.templateDecls().publishPrimaryVariableTemplate(owner, simple_name);
+	front_end.templateDecls().attachPrimaryVariablePattern(template_decl, variable_node);
+	return template_decl;
+}
+
 } // namespace
 
 TemplateDefinitionLookupContext Parser::buildDefinitionLookupContextFromToken(
@@ -527,6 +561,17 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	// Register in template registry
 	gTemplateRegistry.registerVariableTemplate(var_name_token.handle(), template_var_node);
 	gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
+
+	// Publish the member variable template primary's identity so qualified
+	// spellings resolve through the owner chain instead of registry
+	// spelling keys, whose bare and enclosing-name keys conflate same-named
+	// members under different owners.
+	(void)tryPublishMemberPrimaryVariableTemplate(
+		struct_node,
+		template_var_node,
+		var_name_token.handle(),
+		active_template_decl_id_,
+		struct_parsing_context_stack_.size() == 1u);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member variable template: {}", StringTable::getStringView(qualified_name));
 
