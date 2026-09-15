@@ -4505,17 +4505,27 @@ private:	 // Resume private methods
 		if (!active_template_decl_id_) {
 			return;
 		}
-		const auto binding = current_template_params_.publishedBindingOf(param_name);
-		if (!binding.has_value()) {
-			throw InternalError("stamp template param: name missing from active parameter list");
-		}
 		// Names-only tracking leaves kinds empty and historically means Type.
 		// When kinds are present, only type parameters get TemplateParameter TypeIds.
 		const auto kind = currentTemplateParamKind(param_name);
 		if (kind.has_value() && *kind != TemplateParameterKind::Type) {
 			return;
 		}
-		type_spec.set_template_parameter_decl(binding->template_decl, binding->parameter_index);
+		if (const auto binding = current_template_params_.publishedBindingOf(param_name);
+			binding.has_value()) {
+			type_spec.set_template_parameter_decl(binding->template_decl, binding->parameter_index);
+			return;
+		}
+		// A member template's own parameter (a member function template parsed under
+		// a published enclosing class template) has no published binding yet. Stamp
+		// it provisionally with the enclosing identity and nearest index;
+		// stampPublishedFunctionTemplateParameters replaces it once the member's own
+		// TemplateDeclId is published.
+		const auto index = current_template_params_.indexOf(param_name);
+		if (!index.has_value()) {
+			throw InternalError("stamp template param: name missing from active parameter list");
+		}
+		type_spec.set_template_parameter_decl(active_template_decl_id_, *index);
 	}
 
 	void bindCurrentUnpublishedTemplateParameters(TemplateDeclId template_decl) {
