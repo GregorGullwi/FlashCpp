@@ -117,23 +117,49 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 } // namespace
 
 // Resolve the owner chain of a qualified member template spelling to the
-// class-owned OwnerId of its published class EntityId. The owner spelling is
-// a type-system lookup key only; every miss returns nullopt and callers fall
-// back to the registry lookup fail-closed. Shared by class-,
-// alias-, and variable-template identity-chain resolution and the
-// instance-key stems.
+// published owner of its primary. A non-template class owns members through
+// its EntityId. An instantiated class-template specialization points at its
+// primary pattern, whose published TemplateDeclId owns direct members. The
+// owner spelling is a type-system lookup key only; every miss returns nullopt
+// and callers fall back to the registry lookup fail-closed. Shared by class-,
+// alias-, and variable-template identity-chain resolution and the instance-key
+// stems.
 std::optional<OwnerId> Parser::resolveOwnerChainClassOwner(std::string_view owner_chain) {
 	const TypeInfo* owner_type_info = findTypeByName(
 		StringTable::getOrInternStringHandle(owner_chain));
-	if (owner_type_info == nullptr || !owner_type_info->isStruct()) {
+	if (owner_type_info != nullptr && owner_type_info->isStruct()) {
+		const StructTypeInfo* owner_struct = owner_type_info->getStructInfo();
+		if (owner_struct == nullptr || owner_struct->declaration_node == nullptr) {
+			return std::nullopt;
+		}
+		const StructDeclarationNode& owner_declaration =
+			*owner_struct->declaration_node;
+		if (owner_declaration.has_entity_id()) {
+			return ownerIdFromClassEntity(owner_declaration.entity_id());
+		}
+		const StructDeclarationNode* primary_pattern =
+			owner_declaration.injected_class_pattern_declaration();
+		if (primary_pattern != nullptr && primary_pattern->has_template_decl_id() &&
+			!primary_pattern->is_nested()) {
+			return ownerIdFromTemplateDecl(primary_pattern->template_decl_id());
+		}
+	}
+
+	// Primary class templates have no TypeInfo until a specialization is
+	// materialized. Their registered pattern is a spelling lookup key only; the
+	// published TemplateDeclId is the owner identity for direct members.
+	const std::optional<ASTNode> owner_pattern =
+		gTemplateRegistry.lookupTemplate(owner_chain);
+	if (!owner_pattern.has_value() ||
+		!owner_pattern->is<TemplateClassDeclarationNode>()) {
 		return std::nullopt;
 	}
-	const StructTypeInfo* owner_struct = owner_type_info->getStructInfo();
-	if (owner_struct == nullptr || owner_struct->declaration_node == nullptr ||
-		!owner_struct->declaration_node->has_entity_id()) {
+	const TemplateClassDeclarationNode& primary =
+		owner_pattern->as<TemplateClassDeclarationNode>();
+	if (!primary.has_template_decl_id() || primary.class_decl_node().is_nested()) {
 		return std::nullopt;
 	}
-	return ownerIdFromClassEntity(owner_struct->declaration_node->entity_id());
+	return ownerIdFromTemplateDecl(primary.template_decl_id());
 }
 
 void Parser::synthesize_implicit_copy_constructor_if_needed(
