@@ -1,8 +1,47 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "FrontendContext.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
+
+namespace {
+
+// Publish TemplateDeclId for a primary member alias template when its
+// immediate enclosing class has either a published EntityId (namespace/global
+// non-template classes and nested classes) or a published primary
+// TemplateDeclId (direct members of namespace/global class templates).
+// Qualified member alias type-ids resolve through this identity; the registry
+// spelling keys remain the fail-closed fallback. Spelling is a lookup key
+// only and is never TypeId identity.
+std::optional<TemplateDeclId> tryPublishMemberPrimaryAliasTemplate(
+	StructDeclarationNode& enclosing,
+	ASTNode alias_node,
+	StringHandle simple_name,
+	TemplateDeclId enclosing_template_decl,
+	bool is_direct_member_of_top_level_class_template) {
+	if (!simple_name.isValid()) {
+		return std::nullopt;
+	}
+	OwnerId owner{};
+	if (enclosing.has_entity_id()) {
+		owner = ownerIdFromClassEntity(enclosing.entity_id());
+	} else if (is_direct_member_of_top_level_class_template &&
+		enclosing.has_template_decl_id() &&
+		enclosing.template_decl_id() == enclosing_template_decl) {
+		owner = ownerIdFromTemplateDecl(enclosing_template_decl);
+	}
+	if (!owner) {
+		return std::nullopt;
+	}
+	FrontendContext& front_end = requireFrontendContext();
+	const TemplateDeclId template_decl =
+		front_end.templateDecls().publishPrimaryAliasTemplate(owner, simple_name);
+	front_end.templateDecls().attachPrimaryAliasPattern(template_decl, alias_node);
+	return template_decl;
+}
+
+} // namespace
 
 TemplateDefinitionLookupContext Parser::buildDefinitionLookupContextFromToken(
 	const Token& definition_token,
@@ -325,6 +364,15 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		StringBuilder().append(owner_qualified_name).append("::").append(alias_name));
 	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
 	gTemplateRegistry.register_alias_template(alias_name_token.handle(), alias_node);
+
+	// Publish the member alias primary's identity so qualified type-ids
+	// resolve through the owner chain instead of registry spelling keys.
+	(void)tryPublishMemberPrimaryAliasTemplate(
+		struct_node,
+		alias_node,
+		alias_name_handle,
+		active_template_decl_id_,
+		struct_parsing_context_stack_.size() == 1u);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", StringTable::getStringView(qualified_name));
 

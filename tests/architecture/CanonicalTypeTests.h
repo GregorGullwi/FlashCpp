@@ -820,6 +820,30 @@ inline void checkTemplateDeclPublication() {
 	require(decls.findPrimaryFunctionTemplate(OwnerId{1}, fn_name, 1u) == fn_overload);
 	require(decls.nextFunctionSignatureIndex(OwnerId{1}, fn_name) == 2u);
 	rejects([&] { (void)decls.publishPrimaryFunctionTemplate(OwnerId{}, fn_name, 0u); });
+
+	// Alias-template primaries use their own kind so they cannot share slots
+	// with class or function primaries under the same OwnerId + name.
+	const auto alias_name = StringTable::getOrInternStringHandle("AlphaAlias");
+	const auto alias_first = decls.publishPrimaryAliasTemplate(OwnerId{1}, alias_name);
+	require(alias_first != first);
+	require(alias_first != fn_first);
+	require(decls.publishPrimaryAliasTemplate(OwnerId{1}, alias_name) == alias_first);
+	require(decls.findPrimaryAliasTemplate(OwnerId{1}, alias_name) == alias_first);
+	require(!decls.findPrimaryClassTemplate(OwnerId{1}, alias_name).has_value());
+	require(decls.publishPrimaryAliasTemplate(OwnerId{1}, name_a) != alias_first);
+	rejects([&] { (void)decls.publishPrimaryAliasTemplate(OwnerId{}, alias_name); });
+	const auto alias_member = decls.publishPrimaryAliasTemplate(class_owner, name_a);
+	require(alias_member != member);
+	require(alias_member != alias_first);
+	require(decls.findPrimaryAliasTemplate(class_owner, name_a) == alias_member);
+	require(decls.findPrimaryClassTemplate(class_owner, name_a) == member);
+
+	// Anchored alias patterns are keyed by the alias TemplateDeclId and stay
+	// disjoint from the class-pattern map.
+	decls.attachPrimaryAliasPattern(alias_member, ASTNode{});
+	require(decls.primaryAliasPattern(alias_member).has_value());
+	require(!decls.primaryClassTemplatePattern(alias_member).has_value());
+	rejects([&] { decls.attachPrimaryAliasPattern(TemplateDeclId{999999}, ASTNode{}); });
 }
 
 inline void checkDependentNames() {
