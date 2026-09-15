@@ -5196,8 +5196,13 @@ ParseResult Parser::parse_friend_declaration() {
 			StringTable::getOrInternStringHandle(qualified_friend_name);
 		StringHandle selected_friend_template_name = selected_friend_name;
 		const StructDeclarationNode* selected_friend_declaration = nullptr;
+		// Qualified member class-template spellings resolve through identity
+		// first; the registry lookup stays the fail-closed fallback so the
+		// grant anchors to the right owner's primary, never a conflated
+		// same-spelling key.
 		if (std::optional<ASTNode> friend_template =
-				gTemplateRegistry.lookupTemplate(selected_friend_name);
+				findClassTemplatePatternBySpelling(
+					StringTable::getStringView(selected_friend_name));
 			friend_template.has_value() &&
 			friend_template->is<TemplateClassDeclarationNode>()) {
 			selected_friend_declaration =

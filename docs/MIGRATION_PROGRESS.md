@@ -5,13 +5,13 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-15 after member variable templates with class owners
-published `TemplateDeclId` identity on
-`boundary-3a-identity-member-variable-templates`: qualified member
-variable-template spellings resolve through published identity and the
-variable-template instance name stem is collision-disambiguated with
-`$td<TemplateDeclId>`, so same-spelling member variable templates under
-distinct owners no longer share registry keys or instantiation cache entries.
+Last updated: 2026-09-15 after the expression-side member-template call path
+resolved owner primaries through `TemplateDeclId` identity on
+`boundary-3a-identity-friend-member-template`: qualified member-template
+call owners materialize through identity (per-owner `$td` instance stems),
+and friend class/struct declarations naming member class templates resolve
+through identity first, so same-spelling member primaries no longer share
+conflated owners, instances, or friend grants.
 
 ## Current boundary and handoff
 
@@ -48,8 +48,8 @@ owner-chain alias shim is deleted: member class templates register only the
 legacy owner-prefix key (`Inner::Box`) and the simple member name (`Box`), and
 partial-namespace-suffix owner spellings (`inner::Outer::Inner`) now come from
 the nested type system's type-map aliases, which identity resolution reads.
-Member class templates under published class templates, member variable
-templates with class owners, friend-of-member-template lookups, and
+Member class templates under published class templates and member variable
+templates with class owners, friend-of-member-template grants, and
 replay-cluster consumers still resolve through their legacy keys; routing
 those through identity belongs to their own families.
 `reparse_template_function_body` now receives the instantiation context's
@@ -141,9 +141,17 @@ variable lookup fail-closed fallback) at the
 collision-disambiguated with `$td<TemplateDeclId>` through
 `Parser::getVariableTemplateInstanceKeyStem` (mirroring the class-template
 instance bridge), so two same-spelling class-owned variable primaries never
-share an instantiation cache entry. Instantiated-owner alias and variable
+share an instantiation cache entry. The expression-side member-access and
+member-template call path now materializes the owning class template through
+`findClassTemplatePatternBySpelling` (identity first, registry fail-closed
+fallback) in `materializePrimaryTemplateOwnerForLookup` whenever the registry
+answer is not a published class template, so same-spelling member class
+templates under different owners materialize per-owner `$td` instances and
+member calls bind to the right instance's functions. Friend class/struct
+declarations naming member class templates resolve through identity first at
+the same choke point. Instantiated-owner alias and variable
 chains (`Outer<int>::Meter`),
-dependent alias families, the `<` gate alias arm (expression-side gating), and
+dependent alias families, the `<` gate alias arm, and
 alias partial specializations still resolve through their legacy paths. The
 `TemplateRegistry` owner-chain alias shim is
 deleted: the extra `TemplateRegistry` owner-chain spellings (`Outer::Inner::Box`,
@@ -353,10 +361,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
   stable. Dependent-expression and template-decl interning are not transactional.
 - Remaining 3A work includes nested member-template Spec-rooted dependent
   stamping, identity resolution for the remaining qualified member-template
-  chain consumers (friend-of-member-template, expression-side gating, and
-  instantiated-owner chains such as `Outer<int>::Box`; member alias and
-  variable templates now resolve through identity), complete declarator
-  interleaving, and
+  chain consumers (instantiated-owner chains such as `Outer<int>::Box`;
+  friend-of-member-template declarations and the expression-side
+  member-access/call owner materialization now resolve through identity),
+  complete declarator interleaving, and
   deletion of the flat semantic representation. Stop here for review before
   starting another family, 3B, or the parallel frontend experiment.
 
@@ -428,27 +436,20 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for member variable-template identity publication: sharded
-rebuild; `test_canonical_member_variable_template_identity_ret0` proves two
-same-spelling member variable templates under distinct owners stay distinct
-with mixed native types, and
-`test_canonical_member_variable_template_instance_stem_ret0` proves identical
-template arguments and T-dependent initializers still resolve per owner
-(instance-key stem protection). Layered mutation validation: disabling the
-identity attempt inside `findVariableTemplateBySpelling` fails both
-regressions; disabling the `$td` stem in
-`hasConflictingClassOwnedPrimaryVariableTemplate` fails only the
-instance-stem test. FlashCppTest verifies that
-`findVariableTemplateByIdentityChain("ns::Gauge::Meter")` and the wrapper call
-resolve to the same node the legacy `Gauge::Meter` key answers, and
-fail-closed misses; the TemplateDeclTable native checks cover
-variable-kind slot separation from class/function/alias primaries and
-anchor-map disjointness. The full Linux suite passes (2,984 single-file
-cases, 12 multi-TU cases, 0 crash / 0 mismatch) and the
-doctest suite passes except the two pre-documented active findings
-(`SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState` and
-`SymbolTable enablePersistentScopePublication requires an active
-FrontendContext`). Fixed-corpus
+Latest validation for expression-side member-template call-owner identity:
+sharded rebuild; `test_canonical_member_template_call_identity_collision_ret0`
+proves two same-spelling member class templates under distinct owners, each
+granted friendship by its own host and called through qualified member
+template ids, evaluate their own out-of-line bodies (previously the second
+owner evaluated the first owner's body through a shared conflated instance
+`Box$<hash>`), and
+`test_canonical_member_template_friend_spec_identity_ret0` proves args-carrying
+specialization friend grants to member class templates under the same
+collision resolve per owner with distinct argument sets. Mutation validation:
+disabling the identity attempt inside
+`materializePrimaryTemplateOwnerForLookup` fails both regressions. The full
+Linux suite passes (2,990 single-file cases, 12 multi-TU cases, 0 crash /
+0 mismatch). Fixed-corpus
 migration counters remain within baseline; `template_old_engine` on
 `test_template_recursive_static_constexpr_member_ret0.cpp` measured 58 on
 Linux while MSVC still measures 59, so the shared baseline stays 59 and the
@@ -586,9 +587,8 @@ Advanced, not completed:
    member-template Spec-rooted dependent stamping,
    unpublished/incomplete nominal, anonymous-union, and
    unpublished-base forms stay deferred, as do the remaining qualified
-   chain consumers (member variable templates with class owners,
-   friend-of-member-template, expression-side gating, instantiated-owner
-   chains). Remaining families and flat-field
+   chain consumers (instantiated-owner chains, replay-cluster
+   consumers). Remaining families and flat-field
    deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
@@ -615,10 +615,9 @@ must not increase an implementation percentage.
   template-owned OwnerIds with qualified spellings resolving identity-first
   (variable templates also get the `$td<TemplateDeclId>` instance-key stem).
   Route the remaining qualified member-template chain consumers through
-  identity as their families migrate (friend-of-member-template,
-  expression-side gating, instantiated-owner chains such as
-  `Outer<int>::Box`), then nested member-template Spec-rooted dependent
-  stamping, then
+  identity as their families migrate (instantiated-owner chains such as
+  `Outer<int>::Box`, replay-cluster consumers), then nested
+  member-template Spec-rooted dependent stamping, then
   richer adapters before expanding boundary-1 shadow coverage (default
   arguments, exception specifications, fields, templates) or removing
   `SymbolTable` merge / `matches_signature` authority.

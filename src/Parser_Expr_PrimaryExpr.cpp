@@ -2655,6 +2655,15 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 
 		auto template_entry =
 			lookup_result.firstDeclarationOfKind(TemplateDeclarationKind::ClassTemplate);
+		if (!template_entry.has_value() ||
+			!template_entry->is<TemplateClassDeclarationNode>()) {
+			// Qualified member class-template spellings resolve through
+			// published identity first so same-spelling member primaries
+			// under different owners materialize their own instances and
+			// member calls never share a conflated owner; the registry
+			// lookup remains the fail-closed fallback.
+			template_entry = findClassTemplatePatternBySpelling(candidate_name);
+		}
 		if (!template_entry.has_value() || !template_entry->is<TemplateClassDeclarationNode>()) {
 			return {};
 		}
