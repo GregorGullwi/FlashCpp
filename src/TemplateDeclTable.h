@@ -163,11 +163,12 @@ public:
 
 	// The legacy instance-name bridge needs an owner-derived disambiguator only
 	// when two member class-template primaries share the same simple spelling.
-	// Namespace and template-owned primaries retain their existing spelling path.
-	bool hasConflictingClassOwnedPrimaryClassTemplate(
+	// Both class-owned and template-owned primaries are members; namespace
+	// primaries retain their existing spelling path.
+	bool hasConflictingMemberOwnedPrimaryClassTemplate(
 		StringHandle name,
 		TemplateDeclId primary) const {
-		return hasConflictingClassOwnedPrimary(PrimaryKind::Class, name, primary);
+		return hasConflictingMemberOwnedPrimary(PrimaryKind::Class, name, primary);
 	}
 
 	// Same test for member variable-template primaries feeding the
@@ -179,6 +180,22 @@ public:
 	}
 
 private:
+	bool hasConflictingMemberOwnedPrimary(
+		PrimaryKind kind,
+		StringHandle name,
+		TemplateDeclId primary) const {
+		for (const auto& [key, candidate] : ids_by_key_) {
+			const OwnerId owner{key.owner_value};
+			if (key.name == name &&
+				key.kind == kind &&
+				(isClassOwnedOwnerId(owner) || isTemplateOwnedOwnerId(owner)) &&
+				candidate != primary) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	bool hasConflictingClassOwnedPrimary(
 		PrimaryKind kind,
 		StringHandle name,
