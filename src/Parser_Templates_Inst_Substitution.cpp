@@ -908,6 +908,101 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 	return legacy_key_stem;
 }
 
+// Mirror of getClassTemplateInstanceKeyStem for member variable templates:
+// the legacy instance-name bridge keys instantiations by the simple member
+// spelling, so two same-spelling class-owned variable primaries would share
+// cache entries. Resolve the full spelling by identity (owner chain → class
+// EntityId → findPrimaryVariableTemplate), complete a lexical owner-chain
+// suffix for partially qualified spellings, and add a `$td<TemplateDeclId>`
+// stem only when an actual same-spelling collision between distinct
+// class-owned primaries exists. Unambiguous and namespace/global spellings
+// retain their legacy base key.
+std::string_view Parser::getVariableTemplateInstanceKeyStem(std::string_view template_name) {
+	const size_t separator = template_name.rfind("::");
+	const std::string_view legacy_key_stem = separator == std::string_view::npos
+		? template_name
+		: template_name.substr(separator + 2);
+	const std::string_view member_name = legacy_key_stem;
+
+	auto resolvePrimaryDecl =
+		[&](std::string_view candidate) -> std::optional<TemplateDeclId> {
+		const size_t candidate_separator = candidate.rfind("::");
+		if (candidate_separator == std::string_view::npos ||
+			candidate_separator + 2 >= candidate.size()) {
+			return std::nullopt;
+		}
+		const std::optional<OwnerId> owner = resolveOwnerChainClassOwner(
+			candidate.substr(0, candidate_separator));
+		if (!owner.has_value()) {
+			return std::nullopt;
+		}
+		return requireFrontendContext().templateDecls().findPrimaryVariableTemplate(
+			*owner,
+			StringTable::getOrInternStringHandle(
+				candidate.substr(candidate_separator + 2)));
+	};
+
+	std::optional<TemplateDeclId> primary_decl = resolvePrimaryDecl(template_name);
+	bool resolved_by_identity = primary_decl.has_value();
+	if (!primary_decl.has_value()) {
+		// A bare member-template spelling is valid only through ordinary
+		// lexical lookup. A partially qualified spelling may omit outer class
+		// owners. Prefer the innermost matching lexical owner so every
+		// accepted spelling reaches the same published TemplateDeclId.
+		const std::string_view requested_owner = separator == std::string_view::npos
+			? std::string_view{}
+			: template_name.substr(0, separator);
+		for (auto context = struct_parsing_context_stack_.rbegin();
+			 context != struct_parsing_context_stack_.rend();
+			 ++context) {
+			StringBuilder owner_name;
+			bool has_owner_component = false;
+			for (auto outer = struct_parsing_context_stack_.begin();
+				 outer != context.base();
+				 ++outer) {
+				if (outer->struct_name.empty()) {
+					continue;
+				}
+				if (has_owner_component) {
+					owner_name.append("::"sv);
+				}
+				owner_name.append(outer->struct_name);
+				has_owner_component = true;
+			}
+			if (!has_owner_component) {
+				owner_name.reset();
+				continue;
+			}
+			const std::string_view owner_chain = owner_name.preview();
+			if (!requested_owner.empty() && !owner_chain.ends_with(requested_owner)) {
+				owner_name.reset();
+				continue;
+			}
+			const std::string_view candidate_name =
+				owner_name.append("::"sv).append(member_name).commit();
+			primary_decl = resolvePrimaryDecl(candidate_name);
+			if (primary_decl.has_value()) {
+				resolved_by_identity = true;
+				break;
+			}
+		}
+	}
+
+	if (primary_decl.has_value() && resolved_by_identity &&
+		requireFrontendContext().templateDecls()
+			.hasConflictingClassOwnedPrimaryVariableTemplate(
+				StringTable::getOrInternStringHandle(member_name),
+				*primary_decl)) {
+		return StringBuilder()
+			.append(member_name)
+			.append("$td"sv)
+			.append(static_cast<uint64_t>(primary_decl->value))
+			.commit();
+	}
+
+	return legacy_key_stem;
+}
+
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, std::span<const TemplateTypeArg> template_args) {
 	std::span<const TemplateTypeArg> effective_template_args = template_args;
 	std::vector<TemplateTypeArg> effective_template_args_storage;
@@ -5162,7 +5257,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		}
 	}
 
-	auto template_opt = gTemplateRegistry.lookupVariableTemplate(template_name);
+	auto template_opt = findVariableTemplateBySpelling(template_name);
 	if (!template_opt.has_value() && template_name != simple_template_name) {
 		template_opt = gTemplateRegistry.lookupVariableTemplate(simple_template_name);
 	}
@@ -5377,8 +5472,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 	}
 
 	// Generate unique name for the instantiation using hash-based naming
-	// This ensures consistent naming with class template instantiations
-	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, instantiation_identity_args);
+	// This ensures consistent naming with class template instantiations.
+	// The stem is collision-disambiguated so two same-spelling class-owned
+	// variable primaries never share an instantiation cache entry.
+	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(
+		getVariableTemplateInstanceKeyStem(template_name),
+		instantiation_identity_args);
 
 	// Check if already instantiated
 	if (std::optional<ASTNode> existing_instantiation = gSymbolTable.lookup(persistent_name);

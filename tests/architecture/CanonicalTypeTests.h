@@ -844,6 +844,36 @@ inline void checkTemplateDeclPublication() {
 	require(decls.primaryAliasPattern(alias_member).has_value());
 	require(!decls.primaryClassTemplatePattern(alias_member).has_value());
 	rejects([&] { decls.attachPrimaryAliasPattern(TemplateDeclId{999999}, ASTNode{}); });
+
+	// Variable-template primaries use their own kind so they cannot share
+	// slots with class, function, or alias primaries under the same
+	// OwnerId + name.
+	const auto variable_name = StringTable::getOrInternStringHandle("AlphaVariable");
+	const auto variable_first = decls.publishPrimaryVariableTemplate(OwnerId{1}, variable_name);
+	require(variable_first != first);
+	require(variable_first != fn_first);
+	require(variable_first != alias_first);
+	require(decls.publishPrimaryVariableTemplate(OwnerId{1}, variable_name) == variable_first);
+	require(decls.findPrimaryVariableTemplate(OwnerId{1}, variable_name) == variable_first);
+	require(!decls.findPrimaryClassTemplate(OwnerId{1}, variable_name).has_value());
+	require(!decls.findPrimaryAliasTemplate(OwnerId{1}, variable_name).has_value());
+	require(decls.publishPrimaryVariableTemplate(OwnerId{1}, name_a) != variable_first);
+	rejects([&] { (void)decls.publishPrimaryVariableTemplate(OwnerId{}, variable_name); });
+	const auto variable_member = decls.publishPrimaryVariableTemplate(class_owner, name_a);
+	require(variable_member != member);
+	require(variable_member != alias_member);
+	require(variable_member != variable_first);
+	require(decls.findPrimaryVariableTemplate(class_owner, name_a) == variable_member);
+	require(decls.findPrimaryClassTemplate(class_owner, name_a) == member);
+	require(decls.findPrimaryAliasTemplate(class_owner, name_a) == alias_member);
+
+	// Anchored variable patterns are keyed by the variable TemplateDeclId and
+	// stay disjoint from the other pattern maps.
+	decls.attachPrimaryVariablePattern(variable_member, ASTNode{});
+	require(decls.primaryVariablePattern(variable_member).has_value());
+	require(!decls.primaryClassTemplatePattern(variable_member).has_value());
+	require(!decls.primaryAliasPattern(variable_member).has_value());
+	rejects([&] { decls.attachPrimaryVariablePattern(TemplateDeclId{999999}, ASTNode{}); });
 }
 
 inline void checkDependentNames() {

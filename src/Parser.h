@@ -3208,6 +3208,33 @@ public:
 	std::optional<ASTNode> findAliasTemplateBySpelling(
 		std::string_view alias_template_name);
 
+	// Resolve the owner chain of a qualified member template spelling to the
+	// class-owned OwnerId of its published class EntityId. The owner spelling
+	// is a type-system lookup key only; every miss returns nullopt and
+	// callers fall back to the registry lookup fail-closed. Shared by the
+	// class-, alias-, and variable-template identity chains and the
+	// instance-key stems.
+	std::optional<OwnerId> resolveOwnerChainClassOwner(std::string_view owner_chain);
+
+	// Resolve a qualified member variable-template-id to its published node
+	// by identity: the owner chain resolves to a class EntityId (the owner
+	// spelling is a type-system lookup key only), the member name plus the
+	// class-owned OwnerId find the TemplateDeclId, and the anchored variable
+	// node under that id is returned. Fail-closed: every miss returns nullopt
+	// and the caller falls back to the registry lookup.
+	std::optional<ASTNode> findVariableTemplateByIdentityChain(
+		std::string_view variable_template_name);
+
+	// Resolve a spelled variable-template name to its
+	// TemplateVariableDeclarationNode for instantiation and gating. Qualified
+	// member variable-template spellings resolve through identity first; the
+	// registry variable lookup remains the fail-closed fallback for
+	// namespace/global variable templates and forms identity cannot answer
+	// yet (expression-side gating, partial specializations, instantiated
+	// owners).
+	std::optional<ASTNode> findVariableTemplateBySpelling(
+		std::string_view variable_template_name);
+
 	// Shared Spec-stamping choke point: resolve the spelled primary template
 	// name to its published pattern node, or null when the name is invalid,
 	// unresolvable, or not a published class template (fail-closed).
@@ -3403,6 +3430,7 @@ private:
 	// raw, unfilled arguments.
 	bool hasTemplatedClassOwner(std::string_view template_name);
 	std::string_view getClassTemplateInstanceKeyStem(std::string_view template_name);
+	std::string_view getVariableTemplateInstanceKeyStem(std::string_view template_name);
 	std::string_view get_instantiated_class_name(std::string_view template_name, std::span<const TemplateTypeArg> template_args);	 // NEW: Get mangled name for instantiated class
 	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, std::span<const TemplateTypeArg> template_args);  // Helper: Instantiate base class template and add to AST
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(

@@ -32,6 +32,7 @@ public:
 		Class = 0,
 		Function = 1,
 		Alias = 2,
+		Variable = 3,
 	};
 
 	TemplateDeclId publishPrimaryClassTemplate(OwnerId owner, StringHandle name) {
@@ -51,6 +52,17 @@ public:
 
 	std::optional<TemplateDeclId> findPrimaryAliasTemplate(OwnerId owner, StringHandle name) const {
 		return findPrimary(owner, name, PrimaryKind::Alias, 0u);
+	}
+
+	// Member variable-template primaries publish under the same OwnerId
+	// derivation as member class templates; there are no variable overloads,
+	// so the signature index is always 0.
+	TemplateDeclId publishPrimaryVariableTemplate(OwnerId owner, StringHandle name) {
+		return publishPrimary(owner, name, PrimaryKind::Variable, 0u);
+	}
+
+	std::optional<TemplateDeclId> findPrimaryVariableTemplate(OwnerId owner, StringHandle name) const {
+		return findPrimary(owner, name, PrimaryKind::Variable, 0u);
 	}
 
 	// signature_index discriminates free function-template overloads under the
@@ -130,15 +142,50 @@ public:
 		return found->second;
 	}
 
+	// Anchor the syntax node of a published primary variable template under
+	// its TemplateDeclId so identity-based resolution yields the variable
+	// node without a spelling lookup. Same replace and fail-closed rules as
+	// the class-pattern anchor.
+	void attachPrimaryVariablePattern(TemplateDeclId id, ASTNode pattern) {
+		if (!id || !hasPrimary(id)) {
+			throw InternalError("template decl: attach variable pattern for unpublished TemplateDeclId");
+		}
+		primary_variable_patterns_.insert_or_assign(id.value, pattern);
+	}
+
+	std::optional<ASTNode> primaryVariablePattern(TemplateDeclId id) const {
+		const auto found = primary_variable_patterns_.find(id.value);
+		if (found == primary_variable_patterns_.end()) {
+			return std::nullopt;
+		}
+		return found->second;
+	}
+
 	// The legacy instance-name bridge needs an owner-derived disambiguator only
 	// when two member class-template primaries share the same simple spelling.
 	// Namespace and template-owned primaries retain their existing spelling path.
 	bool hasConflictingClassOwnedPrimaryClassTemplate(
 		StringHandle name,
 		TemplateDeclId primary) const {
+		return hasConflictingClassOwnedPrimary(PrimaryKind::Class, name, primary);
+	}
+
+	// Same test for member variable-template primaries feeding the
+	// variable-template instance-key stem.
+	bool hasConflictingClassOwnedPrimaryVariableTemplate(
+		StringHandle name,
+		TemplateDeclId primary) const {
+		return hasConflictingClassOwnedPrimary(PrimaryKind::Variable, name, primary);
+	}
+
+private:
+	bool hasConflictingClassOwnedPrimary(
+		PrimaryKind kind,
+		StringHandle name,
+		TemplateDeclId primary) const {
 		for (const auto& [key, candidate] : ids_by_key_) {
 			if (key.name == name &&
-				key.kind == PrimaryKind::Class &&
+				key.kind == kind &&
 				isClassOwnedOwnerId(OwnerId{key.owner_value}) &&
 				candidate != primary) {
 				return true;
@@ -147,7 +194,6 @@ public:
 		return false;
 	}
 
-private:
 	struct Key {
 		uint32_t owner_value = 0;
 		StringHandle name;
@@ -228,4 +274,5 @@ private:
 	std::unordered_set<uint32_t> published_ids_;
 	std::unordered_map<uint32_t, ASTNode> primary_class_patterns_;
 	std::unordered_map<uint32_t, ASTNode> primary_alias_patterns_;
+	std::unordered_map<uint32_t, ASTNode> primary_variable_patterns_;
 };

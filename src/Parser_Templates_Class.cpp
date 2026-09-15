@@ -114,12 +114,15 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 	}
 }
 
+} // namespace
+
 // Resolve the owner chain of a qualified member template spelling to the
 // class-owned OwnerId of its published class EntityId. The owner spelling is
 // a type-system lookup key only; every miss returns nullopt and callers fall
-// back to the registry lookup fail-closed. Shared by class- and
-// alias-template identity-chain resolution.
-std::optional<OwnerId> tryResolveOwnerChainClassOwner(std::string_view owner_chain) {
+// back to the registry lookup fail-closed. Shared by class-,
+// alias-, and variable-template identity-chain resolution and the
+// instance-key stems.
+std::optional<OwnerId> Parser::resolveOwnerChainClassOwner(std::string_view owner_chain) {
 	const TypeInfo* owner_type_info = findTypeByName(
 		StringTable::getOrInternStringHandle(owner_chain));
 	if (owner_type_info == nullptr || !owner_type_info->isStruct()) {
@@ -132,8 +135,6 @@ std::optional<OwnerId> tryResolveOwnerChainClassOwner(std::string_view owner_cha
 	}
 	return ownerIdFromClassEntity(owner_struct->declaration_node->entity_id());
 }
-
-} // namespace
 
 void Parser::synthesize_implicit_copy_constructor_if_needed(
 	StructTypeInfo& struct_info,
@@ -5206,7 +5207,7 @@ std::optional<ASTNode> Parser::findClassTemplatePatternByIdentityChain(
 	if (owner_chain.empty() || member_name.empty()) {
 		return std::nullopt;
 	}
-	const std::optional<OwnerId> owner = tryResolveOwnerChainClassOwner(owner_chain);
+	const std::optional<OwnerId> owner = resolveOwnerChainClassOwner(owner_chain);
 	if (!owner.has_value()) {
 		return std::nullopt;
 	}
@@ -5252,7 +5253,7 @@ std::optional<ASTNode> Parser::findAliasTemplateByIdentityChain(
 	if (owner_chain.empty() || member_name.empty()) {
 		return std::nullopt;
 	}
-	const std::optional<OwnerId> owner = tryResolveOwnerChainClassOwner(owner_chain);
+	const std::optional<OwnerId> owner = resolveOwnerChainClassOwner(owner_chain);
 	if (!owner.has_value()) {
 		return std::nullopt;
 	}
@@ -5297,6 +5298,59 @@ std::optional<ASTNode> Parser::findAliasTemplateBySpelling(
 		}
 	}
 	return gTemplateRegistry.lookup_alias_template(alias_template_name);
+}
+
+// Resolve a qualified member variable-template-id through published
+// identity: the owner chain yields a class EntityId and the variable
+// primary's TemplateDeclId, and the anchored TemplateVariableDeclarationNode
+// under that id is returned. Fail-closed: every miss returns nullopt and the
+// caller falls back to the registry lookup.
+std::optional<ASTNode> Parser::findVariableTemplateByIdentityChain(
+	std::string_view variable_template_name) {
+	const size_t separator = variable_template_name.rfind("::");
+	if (separator == std::string_view::npos ||
+		separator + 2 >= variable_template_name.size()) {
+		return std::nullopt;
+	}
+	const std::string_view owner_chain = variable_template_name.substr(0, separator);
+	const std::string_view member_name = variable_template_name.substr(separator + 2);
+	if (owner_chain.empty() || member_name.empty()) {
+		return std::nullopt;
+	}
+	const std::optional<OwnerId> owner = resolveOwnerChainClassOwner(owner_chain);
+	if (!owner.has_value()) {
+		return std::nullopt;
+	}
+	FrontendContext& front_end = requireFrontendContext();
+	const std::optional<TemplateDeclId> primary_decl =
+		front_end.templateDecls().findPrimaryVariableTemplate(
+			*owner, StringTable::getOrInternStringHandle(member_name));
+	FLASH_LOG_FORMAT(Templates, Trace,
+					 "variable identity chain resolution for '{}': owner='{}' member='{}' -> {}",
+					 variable_template_name, owner_chain, member_name,
+					 primary_decl.has_value() ? "found" : "missing");
+	if (!primary_decl.has_value()) {
+		return std::nullopt;
+	}
+	const std::optional<ASTNode> variable_pattern =
+		front_end.templateDecls().primaryVariablePattern(*primary_decl);
+	if (!variable_pattern.has_value() ||
+		!variable_pattern->is<TemplateVariableDeclarationNode>()) {
+		return std::nullopt;
+	}
+	return variable_pattern;
+}
+
+std::optional<ASTNode> Parser::findVariableTemplateBySpelling(
+	std::string_view variable_template_name) {
+	if (variable_template_name.find("::"sv) != std::string_view::npos) {
+		if (auto identity_variable =
+				findVariableTemplateByIdentityChain(variable_template_name);
+			identity_variable.has_value()) {
+			return identity_variable;
+		}
+	}
+	return gTemplateRegistry.lookupVariableTemplate(variable_template_name);
 }
 
 const TemplateClassDeclarationNode* Parser::findPrimaryClassTemplateForStamping(
