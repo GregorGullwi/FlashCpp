@@ -5,12 +5,11 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-15 after instantiated direct member class-template
-owners resolve through their enclosing primary's `TemplateDeclId` identity on
-`codex/boundary-3a-instantiated-owner-chain-identity`: normalized
-`Outer<int>::Box<U>` chains reach the primary's template-owned `OwnerId`, so
-the existing `$td<TemplateDeclId>` instance-key choke point distinguishes
-same-spelling direct member primaries without an owner-chain registry alias.
+Last updated: 2026-09-15 after replayed direct member class-template chains
+preserve template-owned primary identity on
+`codex/boundary-3a-instantiated-owner-chain-identity`: template-body replay
+now gives same-spelling member primaries distinct `$td<TemplateDeclId>`
+instance stems, so their aliases cannot collapse to one cached specialization.
 
 ## Current boundary and handoff
 
@@ -34,7 +33,10 @@ under that TemplateDeclId by `attachPrimaryClassTemplatePattern` (attached at
 wrapper creation for namespace/global primaries and member primaries, with the
 definition attach replacing the forward-declaration anchor). An instantiated
 primary owner reaches the same template-owned OwnerId through its injected
-primary pattern; direct nested primaries remain fail-closed.
+primary pattern; direct nested primaries remain fail-closed. The legacy
+instance-name bridge treats both class-owned and template-owned member
+primaries as collision participants, while namespace primaries retain their
+spelling-based cache key.
 `try_instantiate_class_template` runs that resolution first for names
 containing `::` and falls back to the registry lookup fail-closed.
 `parse_type_specifier` resolves the same ids through
@@ -50,9 +52,8 @@ owner-chain alias shim is deleted: member class templates register only the
 legacy owner-prefix key (`Inner::Box`) and the simple member name (`Box`), and
 partial-namespace-suffix owner spellings (`inner::Outer::Inner`) now come from
 the nested type system's type-map aliases, which identity resolution reads.
-Member variable templates with class owners and replay-cluster consumers still
-resolve through their legacy keys; routing those through identity belongs to
-their own families.
+Member variable templates with class owners still resolve through their legacy
+keys; routing those through identity belongs to their own family.
 `reparse_template_function_body` now receives the instantiation context's
 published `TemplateDeclId` explicitly and keeps it in a scoped
 `active_template_decl_id_` window while parsing the body. Replayed local type
@@ -362,9 +363,9 @@ during concrete alias materialization. This fixes forwarded aliases such as
   stable. Dependent-expression and template-decl interning are not transactional.
 - Remaining 3A work includes nested member-template Spec-rooted dependent
   stamping, identity resolution for the remaining qualified member-template
-  chain consumers (replay-cluster consumers; instantiated-owner chains such
-  as `Outer<int>::Box`, friend-of-member-template declarations, and the
-  expression-side member-access/call owner materialization now resolve through
+  chain consumers (instantiated-owner chains such as `Outer<int>::Box`,
+  friend-of-member-template declarations, expression-side member-access/call
+  owner materialization, and direct-member replay now resolve through
   identity),
   complete declarator interleaving, and
   deletion of the flat semantic representation. Stop here for review before
@@ -438,15 +439,15 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for instantiated direct member-template owner identity:
-sharded rebuild; `test_canonical_instantiated_owner_member_template_identity_collision_ret0`
-proves two same-spelling direct member primaries with different outer layouts
-materialize separately through `WideOwner<long long>::Box<Payload>` and
-`NarrowOwner<char>::Box<Payload>`. Templates trace confirms both normalized
-owners resolve through identity. Mutation validation: making the
-template-owned owner route fail closed removes those identity-chain hits.
-The adjacent nested qualified-id and expression-side call-owner collision
-regressions pass. Fixed-corpus migration counters remain within baseline.
+Latest validation for replayed direct member-template owner identity: sharded
+rebuild; `test_canonical_replay_member_template_owner_identity_collision_ret0`
+proves template-body replay gives `ReplayWideOwner<T>::Box<Payload>` and
+`ReplayNarrowOwner<T>::Box<Payload>` distinct aliases and layouts despite their
+shared member spelling. Mutation validation: excluding template-owned primaries
+from the class-template collision predicate makes the regression return 1.
+The instantiated-owner, nested qualified-id, and expression-side call-owner
+collision regressions pass. Fixed-corpus migration counters remain within
+baseline.
 Adjacent architecture coverage remains the DependentName / Spec-rooted /
 substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes.
 Fixed-corpus migration counters remain within the prior baselines below.
@@ -579,8 +580,7 @@ Advanced, not completed:
    `$td<TemplateDeclId>` variable-template instance-key stem, are landed.
    Nested
    member-template Spec-rooted dependent stamping, unpublished/incomplete
-   nominal, anonymous-union, and unpublished-base forms stay deferred, as do
-   the remaining qualified chain consumers (replay-cluster consumers).
+   nominal, anonymous-union, and unpublished-base forms stay deferred.
    Remaining families and flat-field
    deletion keep all three identity criteria open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
@@ -607,10 +607,8 @@ must not increase an implementation percentage.
   variable templates publish `TemplateDeclId` identity under class-owned /
   template-owned OwnerIds with qualified spellings resolving identity-first
   (variable templates also get the `$td<TemplateDeclId>` instance-key stem).
-  Route the remaining qualified member-template chain consumers through
-  identity as their families migrate (replay-cluster consumers), then nested
-  member-template Spec-rooted dependent stamping, then
-  richer adapters before expanding boundary-1 shadow coverage (default
+  Route nested member-template Spec-rooted dependent stamping through identity,
+  then richer adapters before expanding boundary-1 shadow coverage (default
   arguments, exception specifications, fields, templates) or removing
   `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single

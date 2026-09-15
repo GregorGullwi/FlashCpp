@@ -894,7 +894,7 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 		if (resolved_by_identity &&
 			primary.has_template_decl_id() &&
 			requireFrontendContext().templateDecls()
-				.hasConflictingClassOwnedPrimaryClassTemplate(
+				.hasConflictingMemberOwnedPrimaryClassTemplate(
 					StringTable::getOrInternStringHandle(member_name),
 					primary.template_decl_id())) {
 			return StringBuilder()
