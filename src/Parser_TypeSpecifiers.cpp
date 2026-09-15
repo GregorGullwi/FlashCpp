@@ -206,7 +206,8 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	Token token,
 	TemplateDeclId active_template_decl,
 	std::span<const StringHandle> active_template_param_names,
-	std::span<const TemplateParameterKind> active_template_param_kinds) {
+	std::span<const TemplateParameterKind> active_template_param_kinds,
+	std::span<const PublishedTemplateParameterBinding> active_template_param_bindings) {
 	if (primary_pattern == nullptr || !primary_pattern->has_template_decl_id()) {
 		return std::nullopt;
 	}
@@ -243,6 +244,33 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 	ClassTemplateArgSpecs collected;
 	collected.primary = primary.template_decl_id();
 	collected.args.reserve(filled_args.size());
+	if (active_template_param_bindings.size() != active_template_param_names.size()) {
+		throw InternalError("stamp template specialization: active parameter binding shape mismatch");
+	}
+	const auto stampPublishedTypeArgument = [&](TypeSpecifierNode type_arg,
+		const TemplateTypeArg& arg) {
+		const StringHandle syntax_name = type_arg.token().handle();
+		const StringHandle parameter_name = syntax_name.isValid()
+			? syntax_name
+			: arg.dependent_name;
+		if (!parameter_name.isValid()) {
+			return type_arg;
+		}
+		for (size_t index = active_template_param_names.size(); index-- > 0;) {
+			if (active_template_param_names[index] != parameter_name ||
+				index >= active_template_param_kinds.size() ||
+				active_template_param_kinds[index] != TemplateParameterKind::Type) {
+				continue;
+			}
+			const PublishedTemplateParameterBinding binding =
+				active_template_param_bindings[index];
+			if (binding.template_decl) {
+				type_arg.set_template_parameter_decl(binding.template_decl, binding.parameter_index);
+			}
+			break;
+		}
+		return type_arg;
+	};
 	for (size_t index = 0; index < filled_args.size(); ++index) {
 		const TemplateParameterNode& param =
 			template_params[type_pack_index.has_value() && index >= *type_pack_index
@@ -260,9 +288,11 @@ std::optional<ClassTemplateArgSpecs> collectClassTemplateArgSpecs(
 				if (!argument_syntax_nodes[index].is<TypeSpecifierNode>()) {
 					throw InternalError("stamp template specialization: type-arg syntax is not a TypeSpecifierNode");
 				}
-				collected.args.push_back(argument_syntax_nodes[index].as<TypeSpecifierNode>());
+				collected.args.push_back(stampPublishedTypeArgument(
+					argument_syntax_nodes[index].as<TypeSpecifierNode>(), arg));
 			} else {
-				collected.args.push_back(makeTypeSpecifierFromTemplateTypeArg(arg, token));
+				collected.args.push_back(stampPublishedTypeArgument(
+					makeTypeSpecifierFromTemplateTypeArg(arg, token), arg));
 			}
 			continue;
 		}
@@ -2107,6 +2137,24 @@ ParseResult Parser::parse_type_specifier() {
 						template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
 						*template_args);
 				}
+				for (size_t index = 0;
+					 index < template_args->size() && index < template_arg_syntax_nodes.size();
+					 ++index) {
+					if (!template_arg_syntax_nodes[index].is<TypeSpecifierNode>()) {
+						continue;
+					}
+					const StringHandle argument_name =
+						template_arg_syntax_nodes[index].as<TypeSpecifierNode>().token().handle();
+					if (!current_template_params_.publishedBindingOf(argument_name).has_value()) {
+						continue;
+					}
+					// Preserve published dependent identity before the legacy argument
+					// projection chooses a concrete materialization path. The handle is
+					// used only to locate the scoped binding; canonical equality later
+					// uses that binding's TemplateDeclId and parameter index.
+					(*template_args)[index].is_dependent = true;
+					(*template_args)[index].dependent_name = argument_name;
+				}
 			}
 			// If parsing succeeded, check if this is an alias template first
 			if (template_args.has_value()) {
@@ -3003,6 +3051,37 @@ ParseResult Parser::parse_type_specifier() {
 				if (!has_dependent_args) {
 					for (const auto& arg : *template_args) {
 						if (arg.is_pack || arg.is_dependent) {
+							has_dependent_args = true;
+							break;
+						}
+					}
+				}
+				// A nested member template can retain outer parameters in its syntax
+				// while the legacy TemplateTypeArg projection no longer reports them
+				// as dependent. Published parameter identity is the authoritative
+				// structural signal here; without it, Root<Outer>::member takes the
+				// concrete lookup path and never reaches Spec-rooted stamping.
+				if (!has_dependent_args) {
+					for (const ASTNode& argument_syntax : template_arg_syntax_nodes) {
+						if (!argument_syntax.is<TypeSpecifierNode>()) {
+							continue;
+						}
+						const TypeSpecifierNode& argument_type =
+							argument_syntax.as<TypeSpecifierNode>();
+						if (argument_type.has_template_parameter_decl() ||
+							argument_type.has_dependent_name_type() ||
+							current_template_params_.publishedBindingOf(
+								argument_type.token().handle()).has_value()) {
+							has_dependent_args = true;
+							break;
+						}
+					}
+				}
+				if (!has_dependent_args) {
+					for (const TemplateTypeArg& argument : filled_template_args) {
+						if (argument.dependent_name.isValid() &&
+							current_template_params_.publishedBindingOf(
+								argument.dependent_name).has_value()) {
 							has_dependent_args = true;
 							break;
 						}
@@ -4978,7 +5057,10 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 		std::span<const StringHandle>(
 			current_template_params_.names.data(), current_template_params_.names.size()),
 		std::span<const TemplateParameterKind>(
-			current_template_params_.kinds.data(), current_template_params_.kinds.size()));
+			current_template_params_.kinds.data(), current_template_params_.kinds.size()),
+		std::span<const PublishedTemplateParameterBinding>(
+			current_template_params_.published_bindings.data(),
+			current_template_params_.published_bindings.size()));
 	if (!collected.has_value()) {
 		return;
 	}
@@ -5137,7 +5219,10 @@ void Parser::tryStampDependentInstantiationMemberChain(
 		std::span<const StringHandle>(
 			current_template_params_.names.data(), current_template_params_.names.size()),
 		std::span<const TemplateParameterKind>(
-			current_template_params_.kinds.data(), current_template_params_.kinds.size()));
+			current_template_params_.kinds.data(), current_template_params_.kinds.size()),
+		std::span<const PublishedTemplateParameterBinding>(
+			current_template_params_.published_bindings.data(),
+			current_template_params_.published_bindings.size()));
 	if (!collected.has_value()) {
 		return;
 	}

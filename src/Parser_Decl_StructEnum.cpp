@@ -846,6 +846,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			front_end.templateDecls().publishPrimaryClassTemplate(owner, struct_name);
 		struct_ref.set_template_decl_id(template_decl);
 		active_template_decl_id_ = template_decl;
+		bindCurrentUnpublishedTemplateParameters(template_decl);
 	}
 	const auto stampStructLexicalScope = [&struct_node, this, is_nested_class]() {
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(

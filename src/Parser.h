@@ -60,6 +60,11 @@ inline bool isEncodedUnderlyingTypeIntrinsic(std::string_view type_name) {
 		   type_name.ends_with(kUnderlyingTypeIntrinsicSuffix);
 }
 
+struct PublishedTemplateParameterBinding {
+	TemplateDeclId template_decl{};
+	uint32_t parameter_index = 0;
+};
+
 inline std::string_view extractEncodedUnderlyingTypeArgument(std::string_view type_name) {
 	return type_name.substr(
 		kUnderlyingTypeIntrinsicPrefix.size(),
@@ -1051,6 +1056,7 @@ private:
 		TemplateParamNameVector names;	 // Names of current template parameters - from Token storage
 		TemplateParameterKindVector kinds;
 		TemplateTypeCategoryVector non_type_categories;
+		TemplateVector<PublishedTemplateParameterBinding, 4> published_bindings;
 
 		bool empty() const { return names.empty(); }
 		size_t size() const { return names.size(); }
@@ -1059,6 +1065,15 @@ private:
 			names.clear();
 			kinds.clear();
 			non_type_categories.clear();
+			published_bindings.clear();
+		}
+
+		void resetPublishedBindings() {
+			published_bindings.clear();
+			published_bindings.reserve(names.size());
+			for (size_t index = 0; index < names.size(); ++index) {
+				published_bindings.push_back({});
+			}
 		}
 
 		void resetNonTypeCategories(size_t count) {
@@ -1082,12 +1097,14 @@ private:
 			names = param_names;
 			kinds.clear();
 			resetNonTypeCategories(names.size());
+			resetPublishedBindings();
 		}
 
 		void setNames(TemplateParamNameVector&& param_names) {
 			names = std::move(param_names);
 			kinds.clear();
 			resetNonTypeCategories(names.size());
+			resetPublishedBindings();
 		}
 
 		void setNamesAndKinds(const TemplateParamNameVector& param_names,
@@ -1095,6 +1112,7 @@ private:
 			names = param_names;
 			kinds = param_kinds;
 			resetNonTypeCategories(names.size());
+			resetPublishedBindings();
 		}
 
 		void setNamesAndKinds(TemplateParamNameVector&& param_names,
@@ -1102,6 +1120,7 @@ private:
 			names = std::move(param_names);
 			kinds = std::move(param_kinds);
 			resetNonTypeCategories(names.size());
+			resetPublishedBindings();
 		}
 
 		void setNamesKindsAndCategories(
@@ -1112,6 +1131,7 @@ private:
 			kinds = param_kinds;
 			non_type_categories = param_categories;
 			padNonTypeCategoriesToNameCount();
+			resetPublishedBindings();
 		}
 
 		void setNamesKindsAndCategories(
@@ -1122,6 +1142,7 @@ private:
 			kinds = std::move(param_kinds);
 			non_type_categories = std::move(param_categories);
 			padNonTypeCategoriesToNameCount();
+			resetPublishedBindings();
 		}
 
 		void pushName(StringHandle param_name) {
@@ -1131,6 +1152,7 @@ private:
 			padNonTypeCategoriesToNameCount();
 			names.push_back(param_name);
 			non_type_categories.push_back(TypeCategory::Invalid);
+			published_bindings.push_back({});
 		}
 
 		void pushParameter(
@@ -1150,10 +1172,13 @@ private:
 			names.push_back(param_name);
 			kinds.push_back(param_kind);
 			non_type_categories.push_back(non_type_category);
+			published_bindings.push_back({});
 		}
 
 		std::optional<TemplateParameterKind> kindOf(StringHandle param_name) const {
-			for (size_t i = 0; i < names.size(); ++i) {
+			// Nested template parameter lists may shadow an enclosing spelling; use
+			// the nearest active declaration rather than the first published one.
+			for (size_t i = names.size(); i-- > 0;) {
 				if (names[i] != param_name) {
 					continue;
 				}
@@ -1166,7 +1191,7 @@ private:
 		}
 
 		std::optional<uint32_t> indexOf(StringHandle param_name) const {
-			for (size_t i = 0; i < names.size(); ++i) {
+			for (size_t i = names.size(); i-- > 0;) {
 				if (names[i] == param_name) {
 					return static_cast<uint32_t>(i);
 				}
@@ -1175,7 +1200,7 @@ private:
 		}
 
 		std::optional<TypeCategory> nonTypeCategoryOf(StringHandle param_name) const {
-			for (size_t i = 0; i < names.size(); ++i) {
+			for (size_t i = names.size(); i-- > 0;) {
 				if (names[i] != param_name) {
 					continue;
 				}
@@ -1186,6 +1211,36 @@ private:
 					return non_type_categories[i];
 				}
 				break;
+			}
+			return std::nullopt;
+		}
+
+		void bindUnpublishedParameters(TemplateDeclId template_decl) {
+			if (!template_decl) {
+				throw InternalError("bind template parameters: invalid TemplateDeclId");
+			}
+			if (published_bindings.size() != names.size()) {
+				throw InternalError("bind template parameters: binding slots out of sync");
+			}
+			uint32_t parameter_index = 0;
+			for (PublishedTemplateParameterBinding& binding : published_bindings) {
+				if (binding.template_decl) {
+					continue;
+				}
+				binding.template_decl = template_decl;
+				binding.parameter_index = parameter_index++;
+			}
+		}
+
+		std::optional<PublishedTemplateParameterBinding> publishedBindingOf(
+			StringHandle param_name) const {
+			if (published_bindings.size() != names.size()) {
+				throw InternalError("find template parameter binding: binding slots out of sync");
+			}
+			for (size_t index = names.size(); index-- > 0;) {
+				if (names[index] == param_name && published_bindings[index].template_decl) {
+					return published_bindings[index];
+				}
 			}
 			return std::nullopt;
 		}
@@ -4450,8 +4505,8 @@ private:	 // Resume private methods
 		if (!active_template_decl_id_) {
 			return;
 		}
-		const auto index = current_template_params_.indexOf(param_name);
-		if (!index.has_value()) {
+		const auto binding = current_template_params_.publishedBindingOf(param_name);
+		if (!binding.has_value()) {
 			throw InternalError("stamp template param: name missing from active parameter list");
 		}
 		// Names-only tracking leaves kinds empty and historically means Type.
@@ -4460,7 +4515,11 @@ private:	 // Resume private methods
 		if (kind.has_value() && *kind != TemplateParameterKind::Type) {
 			return;
 		}
-		type_spec.set_template_parameter_decl(active_template_decl_id_, *index);
+		type_spec.set_template_parameter_decl(binding->template_decl, binding->parameter_index);
+	}
+
+	void bindCurrentUnpublishedTemplateParameters(TemplateDeclId template_decl) {
+		current_template_params_.bindUnpublishedParameters(template_decl);
 	}
 
 	// Retroactive type-parameter stamping for published free function templates.

@@ -6418,12 +6418,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	FlashCpp::ScopedStateCopy guard_active_template_decl(active_template_decl_id_);
 	// Fail closed: member-template parameter stamps must use this primary's
 	// TemplateDeclId, never an enclosing class template's active id.
-	if (member_template_decl.has_value()) {
-		active_template_decl_id_ = *member_template_decl;
-	} else {
-		active_template_decl_id_ = {};
-	}
+	active_template_decl_id_ = member_template_decl.value_or(TemplateDeclId{});
 	pushMemberStructTemplateParameters();
+	if (member_template_decl.has_value()) {
+		bindCurrentUnpublishedTemplateParameters(*member_template_decl);
+	}
 	FlashCpp::TemplateDepthGuard guard_ptb_body(parsing_template_depth_);
 
 	// Handle base class list if present (e.g., : true_type<T>)
