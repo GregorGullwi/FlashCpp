@@ -5,11 +5,10 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-15 after replayed direct member class-template chains
-preserve template-owned primary identity on
-`codex/boundary-3a-instantiated-owner-chain-identity`: template-body replay
-now gives same-spelling member primaries distinct `$td<TemplateDeclId>`
-instance stems, so their aliases cannot collapse to one cached specialization.
+Last updated: 2026-09-15 after nested member class-template Spec-rooted
+dependent stamping on `codex/boundary-3a-nested-member-spec-stamping`:
+published child parameter bindings now carry the member primary's
+`TemplateDeclId` and local index into canonical specialization arguments.
 
 ## Current boundary and handoff
 
@@ -54,6 +53,16 @@ partial-namespace-suffix owner spellings (`inner::Outer::Inner`) now come from
 the nested type system's type-map aliases, which identity resolution reads.
 Member variable templates with class owners still resolve through their legacy
 keys; routing those through identity belongs to their own family.
+Nested member class-template bodies now retain published parameter bindings
+alongside their active parameter names. The class-template argument parser
+recognizes those bindings before legacy projections select a concrete path, and
+the shared Spec-stamp collector repairs type-only argument syntax to the
+published `(TemplateDeclId, index)` binding before import. Thus
+`Root<Inner>::template Rebind<Inner>::type` inside an eligible direct member
+class template stamps as a structural `TemplateSpecialization` followed by
+`DependentTemplateMember` and `DependentName`; parameter spelling remains only
+the scoped lookup key. Unpublished and non-type/template/pack arguments remain
+fail-closed.
 `reparse_template_function_body` now receives the instantiation context's
 published `TemplateDeclId` explicitly and keeps it in a scoped
 `active_template_decl_id_` window while parsing the body. Replayed local type
@@ -607,8 +616,7 @@ must not increase an implementation percentage.
   variable templates publish `TemplateDeclId` identity under class-owned /
   template-owned OwnerIds with qualified spellings resolving identity-first
   (variable templates also get the `$td<TemplateDeclId>` instance-key stem).
-  Route nested member-template Spec-rooted dependent stamping through identity,
-  then richer adapters before expanding boundary-1 shadow coverage (default
+  Richer adapters still block expanding boundary-1 shadow coverage (default
   arguments, exception specifications, fields, templates) or removing
   `SymbolTable` merge / `matches_signature` authority.
 - Before boundary 10A, approve a parser-family routing table for the single
