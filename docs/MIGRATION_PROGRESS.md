@@ -464,11 +464,14 @@ sharded rebuild; `test_member_class_template_ool_plain_member_ret0` proves
 attaches to the instantiated member class and emits its body, with the same
 spelling under a distinct owner staying distinct. Mutation validation:
 reverting the out-of-line attachment fix makes the regression fail to compile.
-The scanner records `OutOfLineMemberFunctionFlags` for the inner-head owner and
-the function's own template head, packed into one byte (replacing five bools);
-`sizeof(OutOfLineMemberFunction)` remains 5,608 bytes on Linux clang++. The full
-single-file and multi-TU runner passed (2,990 single-file + 12 multi-TU, 264
-negative, 0 failures). Fixed-corpus migration counters remain within baseline.
+The scanner records `OutOfLineMemberFunctionFlags` (has-initializer-list,
+inner-head owner, function's own template head), packed into one byte. The
+`= default` / `= delete` state is not duplicated onto the record: it is general
+function state owned by the function declaration, and the record's copy was
+never read. `sizeof(OutOfLineMemberFunction)` remains 5,608 bytes on Linux
+clang++. The full single-file and multi-TU runner passed (2,990 single-file +
+12 multi-TU, 264 negative, 0 failures). Fixed-corpus migration counters remain
+within baseline.
 
 Latest validation for identity-resolved instantiated-owner friend
 declarations: sharded rebuild;
