@@ -5226,6 +5226,135 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 	return ParseResult::success();
 }
 
+ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
+	// Parse a possibly qualified class-template-id component-wise so owner
+	// components may carry template arguments (friend struct
+	// Outer<int>::Box<char>). The final component names the friend template and
+	// its arguments are the friend specialization. Owner template arguments are a
+	// type-system lookup key only, so the member primary's spelling drops them
+	// (Outer::Box) exactly like the type-id identity path; the identity lookup
+	// stays identity-first with the registry as the fail-closed fallback.
+	struct FriendNameComponent {
+		Token token;
+		std::optional<TemplateArgumentVector> arguments;
+	};
+	std::vector<FriendNameComponent> friend_name_components;
+	for (;;) {
+		Token component_token = advance();
+		if (!component_token.kind().is_identifier()) {
+			const std::string message =
+				"Expected class name after 'friend class'";
+			context_.diagnostics().report(
+				DiagnosticId::MalformedFriendClassDeclaration,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				message,
+				{});
+			return ParseResult::error(message, current_token_);
+		}
+		FriendNameComponent component{component_token, std::nullopt};
+		if (peek() == "<"_tok) {
+			if (std::optional<TemplateArgumentVector> parsed_arguments =
+					parse_explicit_template_arguments();
+				parsed_arguments.has_value()) {
+				component.arguments = std::move(*parsed_arguments);
+			} else {
+				skip_template_arguments();
+			}
+		}
+		friend_name_components.push_back(std::move(component));
+		if (peek() != "::"_tok) {
+			break;
+		}
+		advance(); // consume '::'
+	}
+
+	StringBuilder friend_primary_name_builder;
+	for (size_t component_index = 0;
+		 component_index < friend_name_components.size();
+		 ++component_index) {
+		if (component_index > 0) {
+			friend_primary_name_builder.append("::");
+		}
+		friend_primary_name_builder.append(
+			friend_name_components[component_index].token.value());
+	}
+	const std::string_view friend_primary_name =
+		friend_primary_name_builder.commit();
+	StringHandle selected_friend_name =
+		StringTable::getOrInternStringHandle(friend_primary_name);
+	StringHandle selected_friend_template_name = selected_friend_name;
+	const StructDeclarationNode* selected_friend_declaration = nullptr;
+	if (std::optional<ASTNode> friend_template =
+			findClassTemplatePatternBySpelling(friend_primary_name);
+		friend_template.has_value() &&
+		friend_template->is<TemplateClassDeclarationNode>()) {
+		selected_friend_declaration =
+			&friend_template->as<TemplateClassDeclarationNode>()
+				 .class_decl_node();
+	}
+	if (const TypeInfo* selected_friend_type =
+			lookupTypeInCurrentContext(selected_friend_name);
+		selected_friend_type != nullptr) {
+		selected_friend_name = selected_friend_type->name();
+		if (selected_friend_type->getStructInfo() != nullptr) {
+			selected_friend_declaration =
+				selected_friend_type->getStructInfo()->declaration_node;
+		}
+	}
+	// A qualified friend class declarator must name a previously declared class
+	// or class template ([class.friend]/3, [namespace.memdef]/3); an unqualified
+	// one may declare a new class in the innermost enclosing namespace, so it
+	// stays accepted. Fail closed instead of silently granting friendship to an
+	// undeclared owner or member.
+	const bool friend_name_is_qualified = friend_name_components.size() > 1;
+	if (friend_name_is_qualified && selected_friend_declaration == nullptr) {
+		const std::string message = std::string(StringBuilder()
+			.append("Friend class declaration '")
+			.append(friend_primary_name)
+			.append("' does not name a previously declared class or class template")
+			.commit());
+		context_.diagnostics().report(
+			DiagnosticId::FriendClassNotDeclared,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(current_token_),
+			message,
+			{});
+		return ParseResult::error(message, current_token_);
+	}
+	TemplateArgumentVector friend_template_arguments;
+	if (friend_name_components.back().arguments.has_value()) {
+		friend_template_arguments =
+			std::move(*friend_name_components.back().arguments);
+	}
+
+	// Preserve specialization arguments so instantiation can grant friendship to
+	// exactly the named specialization.
+	if (!friend_template_arguments.empty()) {
+		const bool arguments_are_concrete = std::none_of(
+			friend_template_arguments.begin(),
+			friend_template_arguments.end(),
+			[](const TemplateTypeArg& argument) {
+				return templateArgIsStructurallyDependent(argument);
+			});
+		if (arguments_are_concrete) {
+			selected_friend_name =
+				StringTable::getOrInternStringHandle(
+					get_instantiated_class_name(
+						StringTable::getStringView(selected_friend_template_name),
+						std::span<const TemplateTypeArg>(
+							friend_template_arguments.data(),
+							friend_template_arguments.size())));
+		}
+	}
+
+	out.selected_name = selected_friend_name;
+	out.selected_template_name = selected_friend_template_name;
+	out.selected_declaration = selected_friend_declaration;
+	out.template_arguments = std::move(friend_template_arguments);
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_friend_declaration() {
 	ScopedTokenPosition saved_position(*this);
 
@@ -5248,121 +5377,18 @@ ParseResult Parser::parse_friend_declaration() {
 		// path; the registry lookup stays the fail-closed fallback and the grant
 		// anchors to the right owner's primary, never a conflated same-spelling
 		// key.
-		struct FriendNameComponent {
-			Token token;
-			std::optional<TemplateArgumentVector> arguments;
-		};
-		std::vector<FriendNameComponent> friend_name_components;
-		for (;;) {
-			Token component_token = advance();
-			if (!component_token.kind().is_identifier()) {
-				const std::string message =
-					"Expected class name after 'friend class'";
-				context_.diagnostics().report(
-					DiagnosticId::MalformedFriendClassDeclaration,
-					DiagnosticSeverity::Error,
-					lexer_.getSourceLocation(current_token_),
-					message,
-					{});
-				return ParseResult::error(message, current_token_);
-			}
-			FriendNameComponent component{component_token, std::nullopt};
-			if (peek() == "<"_tok) {
-				if (std::optional<TemplateArgumentVector> parsed_arguments =
-						parse_explicit_template_arguments();
-					parsed_arguments.has_value()) {
-					component.arguments = std::move(*parsed_arguments);
-				} else {
-					skip_template_arguments();
-				}
-			}
-			friend_name_components.push_back(std::move(component));
-			if (peek() != "::"_tok) {
-				break;
-			}
-			advance(); // consume '::'
+		FriendClassSpec friend_spec;
+		ParseResult friend_name_result = parseFriendClassSpec(friend_spec);
+		if (friend_name_result.is_error()) {
+			return friend_name_result;
 		}
-
-		StringBuilder friend_primary_name_builder;
-		for (size_t component_index = 0;
-			 component_index < friend_name_components.size();
-			 ++component_index) {
-			if (component_index > 0) {
-				friend_primary_name_builder.append("::");
-			}
-			friend_primary_name_builder.append(
-				friend_name_components[component_index].token.value());
-		}
-		const std::string_view friend_primary_name =
-			friend_primary_name_builder.commit();
-		StringHandle selected_friend_name =
-			StringTable::getOrInternStringHandle(friend_primary_name);
-		StringHandle selected_friend_template_name = selected_friend_name;
-		const StructDeclarationNode* selected_friend_declaration = nullptr;
-		if (std::optional<ASTNode> friend_template =
-				findClassTemplatePatternBySpelling(friend_primary_name);
-			friend_template.has_value() &&
-			friend_template->is<TemplateClassDeclarationNode>()) {
-			selected_friend_declaration =
-				&friend_template->as<TemplateClassDeclarationNode>()
-					 .class_decl_node();
-		}
-		if (const TypeInfo* selected_friend_type =
-				lookupTypeInCurrentContext(selected_friend_name);
-			selected_friend_type != nullptr) {
-			selected_friend_name = selected_friend_type->name();
-			if (selected_friend_type->getStructInfo() != nullptr) {
-				selected_friend_declaration =
-					selected_friend_type->getStructInfo()->declaration_node;
-			}
-		}
-		// A qualified friend class declarator must name a previously declared
-		// class or class template ([class.friend]/3, [namespace.memdef]/3); an
-		// unqualified one may declare a new class in the innermost enclosing
-		// namespace, so it stays accepted. Fail closed instead of silently
-		// granting friendship to an undeclared owner or member.
-		const bool friend_name_is_qualified = friend_name_components.size() > 1;
-		if (friend_name_is_qualified &&
-			selected_friend_declaration == nullptr) {
-			const std::string message = std::string(StringBuilder()
-				.append("Friend class declaration '")
-				.append(friend_primary_name)
-				.append("' does not name a previously declared class or class template")
-				.commit());
-			context_.diagnostics().report(
-				DiagnosticId::FriendClassNotDeclared,
-				DiagnosticSeverity::Error,
-				lexer_.getSourceLocation(current_token_),
-				message,
-				{});
-			return ParseResult::error(message, current_token_);
-		}
-		TemplateArgumentVector friend_template_arguments;
-		if (friend_name_components.back().arguments.has_value()) {
-			friend_template_arguments =
-				std::move(*friend_name_components.back().arguments);
-		}
-
-		// Preserve specialization arguments so instantiation can grant friendship
-		// to exactly the named specialization.
-		if (!friend_template_arguments.empty()) {
-			const bool arguments_are_concrete = std::none_of(
-				friend_template_arguments.begin(),
-				friend_template_arguments.end(),
-				[](const TemplateTypeArg& argument) {
-					return templateArgIsStructurallyDependent(argument);
-				});
-			if (arguments_are_concrete) {
-				selected_friend_name =
-					StringTable::getOrInternStringHandle(
-						get_instantiated_class_name(
-							StringTable::getStringView(
-								selected_friend_template_name),
-							std::span<const TemplateTypeArg>(
-								friend_template_arguments.data(),
-								friend_template_arguments.size())));
-			}
-		}
+		StringHandle selected_friend_name = friend_spec.selected_name;
+		StringHandle selected_friend_template_name =
+			friend_spec.selected_template_name;
+		const StructDeclarationNode* selected_friend_declaration =
+			friend_spec.selected_declaration;
+		TemplateArgumentVector friend_template_arguments =
+			std::move(friend_spec.template_arguments);
 
 		// Expect semicolon
 		if (!consume(";"_tok)) {
@@ -5830,22 +5856,42 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		return saved_position.success(friend_node);
 	}
 
-	// Parse the class/struct name (may be namespace-qualified: std::ClassName)
-	if (!peek().is_identifier()) {
-		return ParseResult::error("Expected class/struct name after 'friend struct/class'", peek_info());
+	// Parse the class/struct name with the same component-wise owner-chain parser
+	// as non-template friend declarations, so owner/member template arguments are
+	// accepted and the member primary resolves by identity rather than by the
+	// legacy spelling suffix.
+	FriendClassSpec friend_spec;
+	ParseResult friend_name_result = parseFriendClassSpec(friend_spec);
+	if (friend_name_result.is_error()) {
+		return friend_name_result;
 	}
-
-	// Build the full qualified name: ns1::ns2::ClassName
-	// Handle namespace-qualified names: std::_Rb_tree_merge_helper
-	std::string_view qualified_name = consume_qualified_name_suffix(advance().value());
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after template friend class declaration", peek_info());
 	}
 
-	// Create friend declaration node with TemplateClass kind, storing the full qualified name
-	auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::TemplateClass, StringTable::getOrInternStringHandle(qualified_name));
+	if (!friend_spec.template_arguments.empty()) {
+		// A friend template naming member specialization arguments grants access
+		// to exactly the resolved specialization, matching the non-template
+		// friend path's exact-specialization representation.
+		auto friend_node = emplace_node<FriendDeclarationNode>(
+			FriendKind::Class, friend_spec.selected_name);
+		FriendDeclarationNode& friend_declaration =
+			friend_node.as<FriendDeclarationNode>();
+		friend_declaration.set_class_declaration(
+			friend_spec.selected_declaration);
+		friend_declaration.set_class_template_name(
+			friend_spec.selected_template_name);
+		friend_declaration.set_class_template_arguments(
+			std::move(friend_spec.template_arguments));
+		struct_node.add_friend(friend_node);
+		return saved_position.success(friend_node);
+	}
+
+	// A bare friend class template keeps the all-specializations representation.
+	auto friend_node = emplace_node<FriendDeclarationNode>(
+		FriendKind::TemplateClass, friend_spec.selected_name);
 	struct_node.add_friend(friend_node);
 
 	return saved_position.success(friend_node);
