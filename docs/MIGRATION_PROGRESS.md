@@ -470,9 +470,16 @@ compile. The new component-wise reject points report the stable
 parser error, so
 `test_member_template_friend_instantiated_owner_malformed_e1015` asserts that a
 dangling scope operator (`friend struct Outer<int>::;`) is rejected with exactly
-that ID. That parser-source diagnostic belongs to boundary 2B and is deleted
-with the friend declarator at boundary 10C. The full single-file and multi-TU
-runner passed (2990 single-file + 12 multi-TU, 265 negative, 0 failures).
+that ID. A qualified friend class declarator that does not name a previously
+declared class or class template is likewise rejected with
+`FriendClassNotDeclared` (#1016), while an unqualified one may still declare a
+new class: `test_friend_qualified_undeclared_e1016` and
+`test_member_template_friend_instantiated_owner_undeclared_e1016` cover the
+non-template and template cases, and a merely forward-declared qualified class
+stays accepted. Those parser-source diagnostics belong to boundary 2B and are
+deleted with the friend declarator at boundary 10C. The full single-file and
+multi-TU runner passed (2990 single-file + 12 multi-TU, 267 negative, 0
+failures).
 Fixed-corpus migration counters and the static dollar inventory remain within
 baseline (one `template_old_engine` counter improved 59 to 58).
 

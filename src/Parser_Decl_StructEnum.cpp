@@ -5261,6 +5261,27 @@ ParseResult Parser::parse_friend_declaration() {
 					selected_friend_type->getStructInfo()->declaration_node;
 			}
 		}
+		// A qualified friend class declarator must name a previously declared
+		// class or class template ([class.friend]/3, [namespace.memdef]/3); an
+		// unqualified one may declare a new class in the innermost enclosing
+		// namespace, so it stays accepted. Fail closed instead of silently
+		// granting friendship to an undeclared owner or member.
+		const bool friend_name_is_qualified = friend_name_components.size() > 1;
+		if (friend_name_is_qualified &&
+			selected_friend_declaration == nullptr) {
+			const std::string message = std::string(StringBuilder()
+				.append("Friend class declaration '")
+				.append(friend_primary_name)
+				.append("' does not name a previously declared class or class template")
+				.commit());
+			context_.diagnostics().report(
+				DiagnosticId::FriendClassNotDeclared,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				message,
+				{});
+			return ParseResult::error(message, current_token_);
+		}
 		TemplateArgumentVector friend_template_arguments;
 		if (friend_name_components.back().arguments.has_value()) {
 			friend_template_arguments =
