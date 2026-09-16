@@ -69,6 +69,29 @@ TEST_CASE("Canonical adapter imports the source corpus at publication") {
 	CHECK(found_enum);
 }
 
+TEST_CASE("DeclarationBuilder distinguishes nested function parameter signatures") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+
+	FrontendContext context;
+	const std::string code = R"(
+void accept(void (*callback)(int));
+void accept(void (*callback)(double));
+)";
+	CompileContext test_context;
+	test_context.setInputFile("nested_function_parameter_signature.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, sema);
+	REQUIRE(!parser.parse().is_error());
+
+	DeclarationBuilder& builder = context.declarationBuilder();
+	CHECK(builder.declarationCount() == 2u);
+	CHECK(builder.entityCount() == 2u);
+	CHECK(builder.canonicalDeclaratorRequests() == 4u);
+	CHECK(builder.unmigratedDeclaratorRequests() == 0u);
+}
+
 TEST_CASE("Parser publishes namespace enum declarations through DeclarationBuilder") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();

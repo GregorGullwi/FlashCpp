@@ -5,15 +5,15 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-16 after out-of-line member-class-template definitions on
-`boundary-3a-ool-member-template-attachment`: plain out-of-line members attach
-to the instantiated member class and substitute both the member class's and the
-enclosing class's template arguments, and out-of-line record facts are packed
-into one flags byte. Earlier on `main`: identity-resolved friend declarations
-naming member class-template specializations through instantiated owner chains
-on `boundary-3a-instantiated-member-template-identity`, and nested member
-class-template Spec-rooted dependent stamping on
-`codex/boundary-3a-nested-member-spec-stamping`.
+Last updated: 2026-09-16 after mutation-validating nested callable parameter
+identity on `codex/boundary-3a-nested-function-signature-identity`: the
+declaration-builder bridge imports `void (*)(int)` and `void (*)(double)`
+structurally and publishes distinct entities without the flat
+`matches_signature` fallback. Earlier on `main`: out-of-line member-class-
+template definitions on `boundary-3a-ool-member-template-attachment`,
+identity-resolved friend declarations naming member class-template
+specializations through instantiated owner chains, and nested member
+class-template Spec-rooted dependent stamping.
 
 ## Current boundary and handoff
 
@@ -458,6 +458,19 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
+Latest validation for nested callable declaration-builder identity: the parser-
+level `DeclarationBuilder distinguishes nested function parameter signatures`
+doctest proves overload declarations taking `void (*)(int)` and
+`void (*)(double)` publish two entities through four Supported canonical
+declarator requests and zero Unmigrated requests. Mutation validation forcing
+callable parameters back through `matches_signature` collapses them to one
+entity and makes the test fail. Sharded MSVC rebuild, the 25-supported / zero-
+deferred canonical adapter corpus, all migration counters, the static dollar
+inventory, and the full runner passed (3,022 single-file + 12 multi-TU, 275
+negative, 0 failures). A downstream executable call still selects the wrong
+function-pointer overload and is recorded in [known issues](KNOWN_ISSUES.md);
+`SymbolTable` merge authority remains intentionally unchanged.
+
 Latest validation for out-of-line `= default` / `= delete`:
 `Parser::isDefaultableMemberFunction` classifies special members and comparison
 operators, and the in-class and all out-of-line paths reject a non-special
@@ -689,7 +702,10 @@ must not increase an implementation percentage.
   (variable templates also get the `$td<TemplateDeclId>` instance-key stem).
   Richer adapters still block expanding boundary-1 shadow coverage (default
   arguments, exception specifications, fields, templates) or removing
-  `SymbolTable` merge / `matches_signature` authority.
+  `SymbolTable` merge / `matches_signature` authority. Nested concrete callable
+  parameters are proved canonical at the builder choke point; select and bound
+  the next still-Unmigrated callable, dependent, or template adapter family
+  before expanding that coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in
@@ -718,7 +734,3 @@ must not increase an implementation percentage.
   Owner: scratch object lifetime registration.
 - Top-level expression fallback can mask declaration-parse errors; see
   [known issues](KNOWN_ISSUES.md). Owner: parser declaration dispatch.
-- The `TelemetryTypeId` bridge ignores nested `FunctionSignature` data through
-  `matches_signature`: `void f(void (*)(int))` and `void f(void (*)(double))` can
-  share a builder signature. Owner: 3A. Do not delete `SymbolTable` merge on this
-  interner.
