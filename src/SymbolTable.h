@@ -153,17 +153,28 @@ inline bool functionAcceptsArgumentCount(
 
 namespace SymbolTableDetail {
 
+inline bool functionDeclaratorTypesCompatible(
+	const TypeSpecifierNode& first,
+	const TypeSpecifierNode& second) {
+	if (!first.matches_signature(second) ||
+		first.has_function_signature() != second.has_function_signature()) {
+		return false;
+	}
+	return !first.has_function_signature() ||
+		FlashCpp::equalFunctionSignatureIdentity(
+			first.function_signature(), second.function_signature());
+}
+
 inline bool variableTypesCompatible(
 	const TypeSpecifierNode& first,
 	const TypeSpecifierNode& second) {
 	// matches_signature() handles aliases and the base type identity, but it is
 	// intentionally permissive for function overloads.  Variables need their
 	// complete declared shape to agree as well.
-	if (!first.matches_signature(second) ||
+	if (!functionDeclaratorTypesCompatible(first, second) ||
 		first.cv_qualifier() != second.cv_qualifier() ||
 		first.reference_qualifier() != second.reference_qualifier() ||
-		first.has_pointee_array_declarator() != second.has_pointee_array_declarator() ||
-		first.has_function_signature() != second.has_function_signature()) {
+		first.has_pointee_array_declarator() != second.has_pointee_array_declarator()) {
 		return false;
 	}
 
@@ -208,12 +219,7 @@ inline bool variableTypesCompatible(
 		}
 	}
 
-	if (!first.has_function_signature()) {
-		return true;
-	}
-
-	return FlashCpp::equalFunctionSignatureIdentity(
-		first.function_signature(), second.function_signature());
+	return true;
 }
 
 inline void stampLexicalScopeOnDeclaration(ASTNode& node, ScopeId scope_id) {
@@ -459,7 +465,8 @@ public:
 							const auto& new_param_type = new_params[j].as<DeclarationNode>().type_specifier_node();
 							const auto& existing_param_type = existing_params[j].as<DeclarationNode>().type_specifier_node();
 
-							if (!new_param_type.matches_signature(existing_param_type)) {
+							if (!SymbolTableDetail::functionDeclaratorTypesCompatible(
+								new_param_type, existing_param_type)) {
 								all_match = false;
 								break;
 							}
@@ -470,7 +477,8 @@ public:
 						if (all_match) {
 							const auto& new_return_type = new_func->decl_node().type_specifier_node();
 							const auto& existing_return_type = existing_func->decl_node().type_specifier_node();
-							if (!new_return_type.matches_signature(existing_return_type)) {
+							if (!SymbolTableDetail::functionDeclaratorTypesCompatible(
+								new_return_type, existing_return_type)) {
 								all_match = false;  // Different return types = different specializations
 							}
 						}
@@ -507,7 +515,8 @@ public:
 													for (size_t m = 0; m < ns_params.size(); ++m) {
 														const auto& ns_param_type = ns_params[m].as<DeclarationNode>().type_specifier_node();
 														const auto& new_param_type = new_params[m].as<DeclarationNode>().type_specifier_node();
-														if (!ns_param_type.matches_signature(new_param_type)) {
+														if (!SymbolTableDetail::functionDeclaratorTypesCompatible(
+															ns_param_type, new_param_type)) {
 															params_match = false;
 															break;
 														}

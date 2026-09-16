@@ -56,6 +56,19 @@ inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b) {
 	return a == b; // interned: equal IDs ⟺ equal canonical types
 }
 
+inline bool isPlainNoexceptFunctionPointerConversion(
+	const FunctionSignature& from,
+	const FunctionSignature& to) {
+	if (!from.is_noexcept || to.is_noexcept ||
+		from.noexcept_expression.has_value() ||
+		to.noexcept_expression.has_value()) {
+		return false;
+	}
+	FunctionSignature non_noexcept_from = from;
+	non_noexcept_from.is_noexcept = false;
+	return FlashCpp::equalFunctionSignatureIdentity(non_noexcept_from, to);
+}
+
 // Unified conversion plan: combines ConversionRank (for overload resolution ranking)
 // with StandardConversionKind (for semantic annotation).
 // Replaces the previous two-call pattern of can_convert_type() + determineConversionKind().
@@ -70,6 +83,10 @@ struct ConversionPlan {
 
 	static ConversionPlan exact_match() {
 		return {ConversionRank::ExactMatch, StandardConversionKind::None, true};
+	}
+	static ConversionPlan qualification_adjustment() {
+		return {ConversionRank::QualificationAdjustment,
+			StandardConversionKind::QualificationAdjustment, true};
 	}
 	static ConversionPlan no_match() {
 		return {ConversionRank::NoMatch, StandardConversionKind::None, false};
@@ -873,6 +890,22 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		return {ConversionRank::Conversion, StandardConversionKind::PointerConversion, true};
 	}
 
+	if (from.is_function_pointer() || to.is_function_pointer()) {
+		if (!from.is_function_pointer() || !to.is_function_pointer() ||
+			!from.has_function_signature() || !to.has_function_signature()) {
+			return ConversionPlan::no_match();
+		}
+		const FunctionSignature& from_signature = from.function_signature();
+		const FunctionSignature& to_signature = to.function_signature();
+		if (FlashCpp::equalFunctionSignatureIdentity(from_signature, to_signature)) {
+			return ConversionPlan::exact_match();
+		}
+		if (isPlainNoexceptFunctionPointerConversion(from_signature, to_signature)) {
+			return ConversionPlan::qualification_adjustment();
+		}
+		return ConversionPlan::no_match();
+	}
+
 	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
 	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
@@ -882,6 +915,20 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	if (from.is_pointer() && to.is_pointer()) {
 		// Pointer depth must match
 		if (from.pointer_depth() != to.pointer_depth()) {
+			return ConversionPlan::no_match();
+		}
+		if (from.has_function_signature() != to.has_function_signature()) {
+			return ConversionPlan::no_match();
+		}
+		if (from.has_function_signature()) {
+			const FunctionSignature& from_signature = from.function_signature();
+			const FunctionSignature& to_signature = to.function_signature();
+			if (FlashCpp::equalFunctionSignatureIdentity(from_signature, to_signature)) {
+				return ConversionPlan::exact_match();
+			}
+			if (isPlainNoexceptFunctionPointerConversion(from_signature, to_signature)) {
+				return ConversionPlan::qualification_adjustment();
+			}
 			return ConversionPlan::no_match();
 		}
 

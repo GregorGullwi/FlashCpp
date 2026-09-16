@@ -49,6 +49,8 @@ inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const F
 		parameter_types.push_back(makeFunctionTypeFromSpecifier(param_type));
 	}
 	sig.setParameterTypes(std::move(parameter_types));
+	sig.calling_convention = func_decl.calling_convention();
+	sig.is_variadic = func_decl.is_variadic();
 	sig.is_noexcept = func_decl.is_noexcept();
 	if (func_decl.has_noexcept_expression()) {
 		sig.noexcept_expression = *func_decl.noexcept_expression();
@@ -84,6 +86,8 @@ inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(c
 		parameter_types.push_back(makeFunctionTypeFromSpecifier(param_type));
 	}
 	sig.setParameterTypes(std::move(parameter_types));
+	sig.calling_convention = func_decl.calling_convention();
+	sig.is_variadic = func_decl.is_variadic();
 
 	TypeSpecifierNode mfp_type(
 		TypeCategory::MemberFunctionPointer,
