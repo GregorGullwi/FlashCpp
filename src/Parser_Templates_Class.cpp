@@ -731,6 +731,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 			advance(); // consume '>'
 
+			// A further template head declares the out-of-line function itself as
+			// a template (template<T> template<U> template<V> ... Box<U>::f(V)).
+			const bool function_has_own_template_head = (peek() == "template"_tok);
+
 			// Extract inner template parameter names
 			FlashCpp::TemplateParameterScope inner_template_scope;
 			TemplateParameterMetadata inner_template_param_metadata = registerTemplateParametersInScope(inner_template_params, inner_template_scope);
@@ -747,6 +751,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			std::string nested_qualified_class_name;
 			Token nested_func_name_token;
 			bool found_nested_def = false;
+			// Set when a qualified component after the first class carries template
+			// arguments (e.g. Owner<T>::Box<U>::value), which means the inner
+			// template head belongs to that member class template, not the function.
+			bool saw_member_class_template_arguments = false;
 
 			// Skip return type and everything up to ClassName<...>::FunctionName(
 			// Strategy: scan tokens looking for the pattern: identifier < ... > :: identifier
@@ -830,11 +838,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 									Token candidate_token = peek_info();
 									advance();
+									bool candidate_had_template_args = false;
 									if (peek() == "<"_tok) {
 										skip_template_arguments();
+										candidate_had_template_args = true;
 									}
 
 									if (peek() == "::"_tok) {
+										if (candidate_had_template_args) {
+											saw_member_class_template_arguments = true;
+										}
 										appendQualifiedComponent(owner_name, candidate_token.value());
 										nested_class_name = candidate_token.value();
 										advance(); // consume '::'
@@ -973,6 +986,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				out_of_line_member.template_param_names = template_param_names;
 				out_of_line_member.inner_template_params = inner_template_params;
 				out_of_line_member.inner_template_param_names = inner_template_param_names;
+				out_of_line_member.inner_params_belong_to_member_class =
+					saw_member_class_template_arguments;
+				out_of_line_member.function_has_own_template_head =
+					function_has_own_template_head;
 				out_of_line_member.has_initializer_list = has_initializer_list;
 				out_of_line_member.definition_lookup_context =
 					buildDefinitionLookupContextFromToken(
