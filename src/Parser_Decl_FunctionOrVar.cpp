@@ -562,6 +562,53 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			func_ref.linkage() == Linkage::None) {
 			func_ref.set_linkage(attr_info.linkage);
 		}
+
+		// Handle '= default' / '= delete' on an out-of-line member function
+		// definition. Returns nullopt when the next token is not '='; throws for
+		// the diagnostic cases (non-defaultable function, deleted definition
+		// that is not the first declaration).
+		auto handle_out_of_line_default_delete =
+			[&](FunctionDeclarationNode& target_func) -> std::optional<ParseResult> {
+			if (peek() != "="_tok) {
+				return std::nullopt;
+			}
+			advance(); // consume '='
+			if (peek() == "default"_tok) {
+				advance(); // consume 'default'
+				if (!consume(";"_tok)) {
+					return ParseResult::error("Expected ';' after '= default'", peek_info());
+				}
+				// Only special member functions and comparison operators may be
+				// defaulted ([dcl.fct.def.default]/1).
+				if (!isDefaultableMemberFunction(target_func, class_name.view())) {
+					throw makeStructuredCompileError(
+						context_.diagnostics(),
+						DiagnosticId::DefaultedFunctionNotSpecialMember,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(current_token_),
+						"Only special member functions and comparison operators may be defaulted",
+						{});
+				}
+				target_func.set_is_implicit(true);
+				target_func.set_is_inline(true);
+				target_func.set_definition(
+					create_defaulted_member_function_body(target_func));
+				finalize_function_after_definition(target_func, true);
+				return ParseResult::success();
+			}
+			if (peek() == "delete"_tok) {
+				// An out-of-line member definition is never the first
+				// declaration ([dcl.fct.def.delete]/1).
+				throw makeStructuredCompileError(
+					context_.diagnostics(),
+					DiagnosticId::DeletedDefinitionNotFirstDeclaration,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(current_token_),
+					"Deleted definition must be the first declaration",
+					{});
+			}
+			return ParseResult::error("Expected 'default' or 'delete' after '='", peek_info());
+		};
 		func_ref.set_is_constexpr(is_constexpr);
 		func_ref.set_is_constinit(is_constinit);
 		func_ref.set_is_consteval(is_consteval);
@@ -618,6 +665,15 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 										   /*is_final_func=*/false);
 			// cv_qualifier is now auto-derived by propagateAstProperties
 
+			if (auto special = handle_out_of_line_default_delete(func_ref);
+				special.has_value()) {
+				if (special->is_error()) {
+					return *special;
+				}
+				appendUserNode(func_node);
+				return saved_position.success(func_node);
+			}
+
 			// Check for declaration only (;) or function definition ({)
 			if (consume(";"_tok)) {
 				appendUserNode(func_node);
@@ -673,6 +729,14 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			FLASH_LOG(Parser, Error, validation_result.error_message, " in out-of-line definition of '",
 					  class_name.view(), "::", function_name_token.value(), "'");
 			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+		}
+
+		if (auto special = handle_out_of_line_default_delete(existing_func_ref);
+			special.has_value()) {
+			if (special->is_error()) {
+				return *special;
+			}
+			return saved_position.success();
 		}
 
 		// Check for declaration only (;) or function definition ({)
@@ -1446,6 +1510,62 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 		FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name, is_destructor ? "::~" : "::", class_name,
 				  "' does not match any declaration in the class");
 		return ParseResult::error("No matching declaration found", func_name_token);
+	}
+
+	// = default / = delete out-of-line definition of a constructor/destructor.
+	if (peek() == "="_tok) {
+		advance(); // consume '='
+		if (peek() == "default"_tok) {
+			advance(); // consume 'default'
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after '= default'", peek_info());
+			}
+			// Constructors and destructors are special member functions, so an
+			// out-of-line defaulted definition is valid. Reuse the in-class
+			// shape: empty body and implicit inline.
+			ASTNode& member_decl = existing_member->function_decl;
+			if (member_decl.is<ConstructorDeclarationNode>()) {
+				ConstructorDeclarationNode& ctor_decl =
+					member_decl.as<ConstructorDeclarationNode>();
+				ctor_decl.set_is_implicit(true);
+				ctor_decl.set_is_explicitly_defaulted(true);
+				ctor_decl.set_is_inline(true);
+				auto [block_node, block_ref] = create_node_ref(BlockNode());
+				(void)block_ref;
+				NameMangling::MangledName mangled =
+					NameMangling::generateMangledNameFromNode(
+						ctor_decl, {}, NameMangling::ConstructorVariant::Complete);
+				ctor_decl.set_mangled_name(mangled.view());
+				ctor_decl.set_definition(block_node);
+			} else if (member_decl.is<DestructorDeclarationNode>()) {
+				DestructorDeclarationNode& dtor_decl =
+					member_decl.as<DestructorDeclarationNode>();
+				dtor_decl.set_is_inline(true);
+				auto [block_node, block_ref] = create_node_ref(BlockNode());
+				(void)block_ref;
+				NameMangling::MangledName mangled =
+					NameMangling::generateMangledNameFromNode(dtor_decl);
+				dtor_decl.set_mangled_name(mangled);
+				dtor_decl.set_definition(block_node);
+			} else {
+				return ParseResult::error(
+					"Defaulted out-of-line definition does not match a constructor or destructor",
+					func_name_token);
+			}
+			return saved_position.success();
+		}
+		if (peek() == "delete"_tok) {
+			// An out-of-line constructor/destructor is never the first
+			// declaration ([dcl.fct.def.delete]/1).
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::DeletedDefinitionNotFirstDeclaration,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				"Deleted definition must be the first declaration",
+				{});
+		}
+		return ParseResult::error("Expected 'default' or 'delete' after '='", peek_info());
 	}
 
 	// Get mutable reference to constructor for adding member initializers

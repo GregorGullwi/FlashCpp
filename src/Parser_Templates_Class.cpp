@@ -960,9 +960,49 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				// Constructors may have a member-initializer list, so capture this
 				// only after skipping any leading ':' initializers.
 				SaveHandle body_start = save_token_position();
+				bool nested_is_defaulted = false;
 
 				if (peek() == "{"_tok) {
 					skip_balanced_braces();
+				} else if (peek() == "="_tok) {
+					std::string_view nested_class_simple_name =
+						nested_qualified_class_name;
+					if (const size_t separator =
+							nested_class_simple_name.rfind("::");
+						separator != std::string_view::npos) {
+						nested_class_simple_name =
+							nested_class_simple_name.substr(separator + 2);
+					}
+					advance(); // consume '='
+					if (peek() == "default"_tok) {
+						// Only special member functions and comparison operators
+						// may be defaulted ([dcl.fct.def.default]/1).
+						if (!isDefaultableMemberFunction(
+								func_ref, nested_class_simple_name)) {
+							throw makeStructuredCompileError(
+								context_.diagnostics(),
+								DiagnosticId::DefaultedFunctionNotSpecialMember,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(current_token_),
+								"Only special member functions and comparison operators may be defaulted",
+								{});
+						}
+						nested_is_defaulted = true;
+						advance(); // consume 'default'
+					} else if (peek() == "delete"_tok) {
+						// An out-of-line member definition is never the first
+						// declaration ([dcl.fct.def.delete]/1).
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::DeletedDefinitionNotFirstDeclaration,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(current_token_),
+							"Deleted definition must be the first declaration",
+							{});
+					}
+					if (peek() == ";"_tok) {
+						advance(); // consume ';'
+					}
 				} else if (peek() == ";"_tok) {
 					advance();
 				}
@@ -998,6 +1038,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					out_of_line_member.flags,
 					OutOfLineMemberFunctionFlags::HasInitializerList,
 					has_initializer_list);
+				setOutOfLineMemberFunctionFlag(
+					out_of_line_member.flags,
+					OutOfLineMemberFunctionFlags::IsDefaulted,
+					nested_is_defaulted);
 				out_of_line_member.definition_lookup_context =
 					buildDefinitionLookupContextFromToken(
 						nested_func_name_token,

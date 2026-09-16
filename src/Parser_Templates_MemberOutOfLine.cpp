@@ -250,14 +250,26 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					}
 
 						// Save body position and consume body / = default / = delete
+					bool ctor_is_defaulted = false;
 					SaveHandle ctor_body_start = save_token_position();
 					if (peek() == "{"_tok) {
 						skip_balanced_braces();
 					} else if (peek() == "="_tok) {
 							// Handle = default; and = delete;
 						advance(); // consume '='
-						if (peek() == "default"_tok || peek() == "delete"_tok) {
-							advance(); // consume 'default'/'delete'
+						if (peek() == "default"_tok) {
+							ctor_is_defaulted = true;
+							advance(); // special member, may be defaulted
+						} else if (peek() == "delete"_tok) {
+							// An out-of-line constructor/destructor is never the
+							// first declaration ([dcl.fct.def.delete]/1).
+							throw makeStructuredCompileError(
+								context_.diagnostics(),
+								DiagnosticId::DeletedDefinitionNotFirstDeclaration,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(current_token_),
+								"Deleted definition must be the first declaration",
+								{});
 						}
 						if (peek() == ";"_tok) {
 							advance(); // consume ';'
@@ -281,6 +293,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						out_of_line_ctor.flags,
 						OutOfLineMemberFunctionFlags::HasInitializerList,
 						ctor_has_initializer_list);
+					setOutOfLineMemberFunctionFlag(
+						out_of_line_ctor.flags,
+						OutOfLineMemberFunctionFlags::IsDefaulted,
+						ctor_is_defaulted);
 					out_of_line_ctor.definition_lookup_context =
 						buildDefinitionLookupContextFromToken(
 							ctor_name_token,
@@ -799,6 +815,38 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		advance(); // consume ';' (declaration without body)
 	}
 
+	if (member_is_defaulted || member_is_deleted) {
+		std::string_view class_simple_name = qualified_class_name;
+		if (const size_t separator = class_simple_name.rfind("::");
+			separator != std::string_view::npos) {
+			class_simple_name = class_simple_name.substr(separator + 2);
+		}
+		// Only special member functions and comparison operators may be
+		// defaulted ([dcl.fct.def.default]/1).
+		if (member_is_defaulted &&
+			!isDefaultableMemberFunction(func_ref, class_simple_name)) {
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::DefaultedFunctionNotSpecialMember,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				"Only special member functions and comparison operators may be defaulted",
+				{});
+		}
+		// A deleted definition must be the first declaration
+		// ([dcl.fct.def.delete]/1); the explicit-specialization form (template<>)
+		// is the exception, and template_params is empty only there.
+		if (member_is_deleted && !template_params.empty()) {
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::DeletedDefinitionNotFirstDeclaration,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				"Deleted definition must be the first declaration",
+				{});
+		}
+	}
+
 	// Check if this is a template member function specialization
 	bool is_specialization = !function_template_args.empty();
 
@@ -940,6 +988,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			out_of_line_member.flags,
 			OutOfLineMemberFunctionFlags::HasInitializerList,
 			has_initializer_list);
+		setOutOfLineMemberFunctionFlag(
+			out_of_line_member.flags,
+			OutOfLineMemberFunctionFlags::IsDefaulted,
+			member_is_defaulted);
 		out_of_line_member.initializer_list_start = initializer_list_start;
 		out_of_line_member.definition_lookup_context =
 			buildDefinitionLookupContextFromToken(
