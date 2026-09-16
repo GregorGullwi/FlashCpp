@@ -81,6 +81,7 @@ enum class DiagnosticId : uint32_t {
 	AutoReturnTypeMismatch = 1013,
 	AutoTypeDeductionFailure = 1014,
 	MalformedFriendClassDeclaration = 1015,
+	FriendClassNotDeclared = 1016,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -236,6 +237,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AutoTypeDeductionFailure";
 	case DiagnosticId::MalformedFriendClassDeclaration:
 		return "MalformedFriendClassDeclaration";
+	case DiagnosticId::FriendClassNotDeclared:
+		return "FriendClassNotDeclared";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:
