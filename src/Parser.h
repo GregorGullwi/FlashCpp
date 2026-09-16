@@ -156,15 +156,6 @@ private:
 template <typename Func>
 ScopeGuard(Func) -> ScopeGuard<Func>;
 
-enum class ParserError {
-	None,
-	UnexpectedToken,
-	MissingSemicolon,
-	RedefinedSymbolWithDifferentValue,
-
-	NotImplemented
-};
-
 enum class SubstitutedDefaultArgumentPolicy {
 	None,
 	SubstituteTemplateParameters,
@@ -187,26 +178,6 @@ bool nodeHasDeferredTemplateDependency(
 	const TemplateParamNameVector& current_template_param_names);
 
 } // namespace ParserExpressionDependency
-
-static std::string_view get_parser_error_string(ParserError e) {
-	switch (e) {
-	case ParserError::None:
-	default:
-		return "Internal error";
-
-	case ParserError::UnexpectedToken:
-		return "Unexpected token";
-
-	case ParserError::MissingSemicolon:
-		return "Missing semicolon(;)";
-
-	case ParserError::RedefinedSymbolWithDifferentValue:
-		return "Redefined symbol with different value";
-
-	case ParserError::NotImplemented:
-		return "Feature/token type not implemented yet";
-	}
-}
 
 class ParseResult {
 public:
@@ -334,10 +305,6 @@ public:
 	}
 	static ParseResult error(const std::string& error_message, Token token) {
 		return ParseResult(error_message, std::move(token));
-	}
-	static ParseResult error(ParserError e, Token token) {
-		return ParseResult(std::string(get_parser_error_string(e)),
-						   std::move(token));
 	}
 	// Report a structured Error diagnostic at the token's macro-mapped source
 	// location and construct the matching error in one step. The message template
