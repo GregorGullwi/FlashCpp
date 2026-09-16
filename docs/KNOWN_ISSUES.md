@@ -415,3 +415,14 @@ bounded-depth regression to architecture boundary 10E (bounded parser control
 flow), coordinating with the template/semantic worklist migration where the
 measured path crosses that boundary. Do not pursue a standalone stack-reserve
 change before that work.
+
+## Function-pointer overload calls select the wrong overload
+
+An overload regression using both `void (*)(int)` and `void (*)(double)` found
+that calls with both callback types selected the same overload: bodies returning
+1 and 2 produced a sum of 2 instead of 3 (exit code 255 after subtracting 3).
+Invoking the callbacks also produced a wrong result. The boundary-3A
+declaration-builder bridge publishes distinct canonical identities, so this is
+an existing downstream overload-resolution/codegen defect, not a reason to
+restore flat builder identity. Investigate the call-resolution path before
+adding an executable callback-overload regression.
