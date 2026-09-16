@@ -503,15 +503,8 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 	const OverloadableOperator operator_kind =
 		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
 	const Token& operator_token = func_decl.decl_node().identifier_token();
-	const SourceLocation operator_location = lexer_.getSourceLocation(operator_token);
 	auto reportSignatureError = [&](DiagnosticId diagnostic_id, std::string_view message) -> ParseResult {
-		context_.diagnostics().report(
-			diagnostic_id,
-			DiagnosticSeverity::Error,
-			operator_location,
-			message,
-			{});
-		return ParseResult::error(std::string(message), operator_token);
+		return error(diagnostic_id, operator_token, message);
 	};
 	auto reportNonStaticMemberRequired = [&]() -> ParseResult {
 		const std::string message = std::string(StringBuilder()
@@ -3077,15 +3070,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (!isDefaultableMemberFunction(
 						member_func_ref,
 						StringTable::getStringView(struct_name))) {
-					const std::string message =
-						"Only special member functions and comparison operators may be defaulted";
-					context_.diagnostics().report(
-						DiagnosticId::DefaultedFunctionNotSpecialMember,
-						DiagnosticSeverity::Error,
-						lexer_.getSourceLocation(current_token_),
-						message,
-						{});
-					return ParseResult::error(message, current_token_);
+					return error(DiagnosticId::DefaultedFunctionNotSpecialMember, current_token_,
+						"Only special member functions and comparison operators may be defaulted");
 				}
 				// Expect ';'
 				if (!consume(";"_tok)) {
@@ -3354,13 +3340,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			if (member_result.node()->is<DeclarationNode>()) {
 				const DeclarationNode& member_decl = member_result.node()->as<DeclarationNode>();
 				if (member_decl.is_parameter_pack()) {
-					context_.diagnostics().report(
-						DiagnosticId::ParameterPackDataMember,
-						DiagnosticSeverity::Error,
-						lexer_.getSourceLocation(member_decl.identifier_token()),
-						"Only function and template parameters can be parameter packs",
-						{});
-					return ParseResult::error("Only function and template parameters can be parameter packs", member_decl.identifier_token());
+					return error(DiagnosticId::ParameterPackDataMember, member_decl.identifier_token(),
+						"Only function and template parameters can be parameter packs");
 				}
 			}
 
@@ -5247,15 +5228,8 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 		Token component_token = advance();
 		if (!component_token.kind().is_identifier()) {
 			friend_primary_name_builder.reset();
-			const std::string message =
-				"Expected class name after 'friend class'";
-			context_.diagnostics().report(
-				DiagnosticId::MalformedFriendClassDeclaration,
-				DiagnosticSeverity::Error,
-				lexer_.getSourceLocation(current_token_),
-				message,
-				{});
-			return ParseResult::error(message, current_token_);
+			return error(DiagnosticId::MalformedFriendClassDeclaration, current_token_,
+				"Expected class name after 'friend class'");
 		}
 		if (friend_name_is_qualified) {
 			friend_primary_name_builder.append("::");
@@ -5307,18 +5281,9 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 	// stays accepted. Fail closed instead of silently granting friendship to an
 	// undeclared owner or member.
 	if (friend_name_is_qualified && selected_friend_declaration == nullptr) {
-		const std::string message = std::string(StringBuilder()
-			.append("Friend class declaration '")
-			.append(friend_primary_name)
-			.append("' does not name a previously declared class or class template")
-			.commit());
-		context_.diagnostics().report(
-			DiagnosticId::FriendClassNotDeclared,
-			DiagnosticSeverity::Error,
-			lexer_.getSourceLocation(current_token_),
-			message,
-			{});
-		return ParseResult::error(message, current_token_);
+		return errorf(DiagnosticId::FriendClassNotDeclared, current_token_,
+			"Friend class declaration '{}' does not name a previously declared class or class template",
+			friend_primary_name);
 	}
 	// Preserve specialization arguments so instantiation can grant friendship to
 	// exactly the named specialization.
@@ -5384,15 +5349,8 @@ ParseResult Parser::parse_friend_declaration() {
 
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			const std::string message =
-				"Expected ';' after friend class declaration";
-			context_.diagnostics().report(
-				DiagnosticId::MalformedFriendClassDeclaration,
-				DiagnosticSeverity::Error,
-				lexer_.getSourceLocation(current_token_),
-				message,
-				{});
-			return ParseResult::error(message, current_token_);
+			return error(DiagnosticId::MalformedFriendClassDeclaration, current_token_,
+				"Expected ';' after friend class declaration");
 		}
 
 		auto friend_node = emplace_node<FriendDeclarationNode>(
