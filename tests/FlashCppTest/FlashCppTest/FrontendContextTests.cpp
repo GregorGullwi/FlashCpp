@@ -3728,6 +3728,9 @@ TEST_SUITE("Diagnostics") {
 		CHECK(diagnosticIdName(DiagnosticId::AmbiguousDerivedToBasePointerConversion) == "AmbiguousDerivedToBasePointerConversion");
 		CHECK(diagnosticIdName(DiagnosticId::InaccessibleDerivedToBasePointerConversion) == "InaccessibleDerivedToBasePointerConversion");
 		CHECK(diagnosticIdName(DiagnosticId::AmbiguousBuiltInSubscriptConversion) == "AmbiguousBuiltInSubscriptConversion");
+		CHECK(diagnosticIdName(DiagnosticId::UnexpectedToken) == "UnexpectedToken");
+		CHECK(diagnosticIdName(DiagnosticId::MissingSemicolon) == "MissingSemicolon");
+		CHECK(diagnosticIdName(DiagnosticId::UnexpectedEndOfFile) == "UnexpectedEndOfFile");
 
 		// Same ID must serve different message templates without identity drift.
 		DiagnosticEngine engine;

@@ -137,8 +137,8 @@ ParseResult Parser::parse_return_statement() {
 	auto current_token_opt = peek_info();
 	if (current_token_opt.type() != Token::Type::Keyword ||
 		current_token_opt.value() != "return") {
-		return ParseResult::error(ParserError::UnexpectedToken,
-								  current_token_opt);
+		return error(DiagnosticId::UnexpectedToken, current_token_opt,
+					 "Expected 'return' keyword");
 	}
 	Token return_token = current_token_opt;
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to consume 'return'. current_token={}, peek={}",
@@ -166,8 +166,8 @@ ParseResult Parser::parse_return_statement() {
 
 	// Consume the semicolon
 	if (!consume(";"_tok)) {
-		return ParseResult::error(ParserError::MissingSemicolon,
-								  peek_info());
+		return error(DiagnosticId::MissingSemicolon, peek_info(),
+					 "Missing semicolon(;) after return statement");
 	}
 
 	if (return_expr_result.has_value()) {

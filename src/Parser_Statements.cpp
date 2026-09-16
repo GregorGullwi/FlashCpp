@@ -1148,7 +1148,7 @@ ParseResult Parser::parse_variable_declaration() {
 				StringHandle func_name = identifier_token.handle();
 				if (auto func_node = function_result.node()) {
 					if (!gSymbolTable.insert(func_name, *func_node)) {
-						return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+						return error(DiagnosticId::DuplicateDeclaration, identifier_token, "Redefined symbol with different value");
 					}
 				}
 

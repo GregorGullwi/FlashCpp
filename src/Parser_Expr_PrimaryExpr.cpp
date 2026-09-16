@@ -7126,7 +7126,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			// Parse arguments to deduce template parameters
 			if (peek().is_eof())
-				return ParseResult::error(ParserError::NotImplemented, identifier_token);
+				return error(DiagnosticId::UnexpectedEndOfFile, identifier_token, "Unexpected end of file");
 
 			ChunkedVector<ASTNode> args;
 			std::vector<TypeSpecifierNode> arg_types;
@@ -7298,7 +7298,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				if (peek().is_eof())
-					return ParseResult::error(ParserError::NotImplemented, Token());
+					return error(DiagnosticId::UnexpectedEndOfFile, Token(), "Unexpected end of file");
 			}
 
 			if (!consume(")"_tok)) {
@@ -8205,7 +8205,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (!found_member_function_in_context && gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value()) {
 					// Parse arguments to deduce template parameters
 					if (peek().is_eof())
-						return ParseResult::error(ParserError::NotImplemented, identifier_token);
+						return error(DiagnosticId::UnexpectedEndOfFile, identifier_token, "Unexpected end of file");
 
 					auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 						.handle_pack_expansion = true,
@@ -8287,7 +8287,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				if (peek().is_eof())
-					return ParseResult::error(ParserError::NotImplemented, identifier_token);
+					return error(DiagnosticId::UnexpectedEndOfFile, identifier_token, "Unexpected end of file");
 
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 					.handle_pack_expansion = true,
@@ -9519,7 +9519,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							   !identifierType->is<TemplateVariableDeclarationNode>() &&
 							   !identifierType->is<TemplateParameterReferenceNode>())) {
 			FLASH_LOG(Parser, Error, "Identifier type check failed, type_name=", identifierType->type_name());
-			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, current_token_);
+			return error(DiagnosticId::DuplicateDeclaration, current_token_, "Redefined symbol with different value");
 		} else {
 			// Identifier already consumed at line 1621
 
@@ -10327,7 +10327,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			if (is_function_call && consume("("_tok)) {
 				if (peek().is_eof())
-					return ParseResult::error(ParserError::NotImplemented, identifier_token);
+					return error(DiagnosticId::UnexpectedEndOfFile, identifier_token, "Unexpected end of file");
 
 				// Use parse_function_arguments to handle all argument parsing including brace-init-list
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{

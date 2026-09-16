@@ -8,13 +8,8 @@
 #include "TypeTraitEvaluator.h"
 
 ParseResult Parser::duplicateVariableDeclarationError(const Token& identifier_token) {
-	context_.diagnostics().report(
-		DiagnosticId::DuplicateDeclaration,
-		DiagnosticSeverity::Error,
-		lexer_.getSourceLocation(identifier_token),
-		"Redefined symbol with different value",
-		{});
-	return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+	return error(DiagnosticId::DuplicateDeclaration, identifier_token,
+		"Redefined symbol with different value");
 }
 
 bool Parser::isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const {
@@ -344,7 +339,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
 				if (peek().is_eof()) {
 					FLASH_LOG(Parser, Error, "Expected operator symbol after 'operator'");
-					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+					return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 				}
 
 				// Build the full operator name using StringBuilder
@@ -388,7 +383,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				advance();
 			} else {
 				FLASH_LOG(Parser, Error, "Expected function name or 'operator' after '::'");
-				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
 			}
 		}
 
@@ -396,7 +391,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		auto struct_iter = getTypesByNameMap().find(class_name);
 		if (struct_iter == getTypesByNameMap().end()) {
 			FLASH_LOG(Parser, Error, "Unknown class '", class_name.view(), "' in out-of-line member function definition");
-			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
+			return error(DiagnosticId::UnexpectedToken, decl_node.identifier_token(), "Unexpected token");
 		}
 
 		TypeInfo* type_info = struct_iter->second;
@@ -412,7 +407,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		}
 		if (!struct_info) {
 			FLASH_LOG(Parser, Error, "'", class_name.view(), "' is not a struct/class type");
-			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
+			return error(DiagnosticId::UnexpectedToken, decl_node.identifier_token(), "Unexpected token");
 		}
 
 		// Check if this is an out-of-line static member variable definition with parenthesized initializer
@@ -440,19 +435,19 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			if (init_result.is_error() || !init_result.node().has_value()) {
 				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
 						  class_name.view(), "::", function_name_token.value(), "'");
-				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 			}
 
 			// Expect closing parenthesis
 			if (!consume(")"_tok)) {
 				FLASH_LOG(Parser, Error, "Expected ')' after static member variable initializer");
-				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
 			}
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
 				FLASH_LOG(Parser, Error, "Expected ';' after static member variable definition");
-				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
 			}
 
 			return finalize_static_member_init(static_member, *init_result.node(), decl_node, function_name_token, saved_position);
@@ -483,7 +478,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			// Expect semicolon
 			if (!consume(";"_tok)) {
 				FLASH_LOG(Parser, Error, "Expected ';' after static member variable brace initializer");
-				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
 			}
 
 			// Finalize the static member initializer (handling empty brace-init) and return the variable node
@@ -504,13 +499,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			if (!init_result.node().has_value()) {
 				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
 						  class_name.view(), "::", function_name_token.value(), "'");
-				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 			}
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
 				FLASH_LOG(Parser, Error, "Expected ';' after static member variable definition");
-				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
 			}
 
 			return finalize_static_member_init(static_member, init_result.node(), decl_node, function_name_token, saved_position);
@@ -638,13 +633,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				// Name matches but const/volatile qualifiers don't match
 				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(),
 						  "' does not match any declaration in the class (const/volatile qualifier mismatch)");
-				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 			}
 			if (has_name_match && has_qualifier_match) {
 				// Name and qualifiers match but parameter count differs (overload not found)
 				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(),
 						  "' does not match any declaration in the class (parameter count mismatch)");
-				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 			}
 
 			// No declaration at all for this name. This can happen for:
@@ -685,7 +680,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			if (peek() != "{"_tok && peek() != "try"_tok) {
 				FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
 						  (!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
-				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+				return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
 			}
 
 			// Parse body using delayed parsing (skip_function_body handles try-blocks too).
@@ -719,7 +714,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// Validate that the existing declaration is a FunctionDeclarationNode
 		if (!existing_member->function_decl.is<FunctionDeclarationNode>()) {
 			FLASH_LOG(Parser, Error, "Member '", function_name_token.value(), "' is not a function");
-			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 		}
 
 		FunctionDeclarationNode& existing_func_ref = existing_member->function_decl.as<FunctionDeclarationNode>();
@@ -729,7 +724,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		if (!validation_result.is_match()) {
 			FLASH_LOG(Parser, Error, validation_result.error_message, " in out-of-line definition of '",
 					  class_name.view(), "::", function_name_token.value(), "'");
-			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 		}
 
 		if (auto special = handle_out_of_line_default_delete(existing_func_ref);
@@ -750,7 +745,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		if (peek() != "{"_tok && peek() != "try"_tok) {
 			FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
 					  (!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
-			return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			return error(DiagnosticId::UnexpectedToken, peek_info(), "Unexpected token");
 		}
 
 		// FunctionParsingScopeGuard owns all per-function entry/exit work:
@@ -773,7 +768,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			if (!existing_func_ref.set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Function '", class_name.view(), "::", function_name_token.value(),
 						  "' already has a definition");
-				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 			}
 			// Update parameter nodes to use definition's parameter names
 			// C++ allows declaration and definition to have different parameter names
@@ -1014,7 +1009,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			if (!gSymbolTable.insert(func_name, *func_node)) {
 				// Note: With overloading support, insert() now allows multiple functions with same name
 				// It only returns false for non-function duplicate symbols
-				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+				return error(DiagnosticId::DuplicateDeclaration, identifier_token, "Redefined symbol with different value");
 			}
 
 			if (wired_free_function) {
@@ -1381,7 +1376,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				}
 
 				if (!gSymbolTable.insert(next_identifier_token.value(), next_var_node)) {
-					return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, next_identifier_token);
+					return error(DiagnosticId::DuplicateDeclaration, next_identifier_token, "Redefined symbol with different value");
 				}
 
 				// Phase 3 Consolidation: Use shared copy initialization helper

@@ -203,6 +203,11 @@ enum class DiagnosticId : uint32_t {
 	ExplicitInstantiationNonClassTemplate = 1809,
 	TemplateStaticAssertFailure = 1810,
 	NonTypeTemplateDefaultEvaluationFailure = 1811,
+
+	// Parser syntax family (1901..1999).
+	UnexpectedToken = 1901,
+	MissingSemicolon = 1902,
+	UnexpectedEndOfFile = 1903,
 };
 
 inline std::string_view diagnosticIdName(DiagnosticId id) {
@@ -447,6 +452,12 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "TemplateStaticAssertFailure";
 	case DiagnosticId::NonTypeTemplateDefaultEvaluationFailure:
 		return "NonTypeTemplateDefaultEvaluationFailure";
+	case DiagnosticId::UnexpectedToken:
+		return "UnexpectedToken";
+	case DiagnosticId::MissingSemicolon:
+		return "MissingSemicolon";
+	case DiagnosticId::UnexpectedEndOfFile:
+		return "UnexpectedEndOfFile";
 	case DiagnosticId::None:
 	default:
 		return "None";
