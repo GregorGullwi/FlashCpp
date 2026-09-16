@@ -5201,7 +5201,15 @@ ParseResult Parser::parse_friend_declaration() {
 		for (;;) {
 			Token component_token = advance();
 			if (!component_token.kind().is_identifier()) {
-				return ParseResult::error("Expected class name after 'friend class'", current_token_);
+				const std::string message =
+					"Expected class name after 'friend class'";
+				context_.diagnostics().report(
+					DiagnosticId::MalformedFriendClassDeclaration,
+					DiagnosticSeverity::Error,
+					lexer_.getSourceLocation(current_token_),
+					message,
+					{});
+				return ParseResult::error(message, current_token_);
 			}
 			FriendNameComponent component{component_token, std::nullopt};
 			if (peek() == "<"_tok) {
@@ -5282,7 +5290,15 @@ ParseResult Parser::parse_friend_declaration() {
 
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after friend class declaration", current_token_);
+			const std::string message =
+				"Expected ';' after friend class declaration";
+			context_.diagnostics().report(
+				DiagnosticId::MalformedFriendClassDeclaration,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(current_token_),
+				message,
+				{});
+			return ParseResult::error(message, current_token_);
 		}
 
 		auto friend_node = emplace_node<FriendDeclarationNode>(

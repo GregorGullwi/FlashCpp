@@ -465,10 +465,16 @@ declarations: sharded rebuild;
 same-spelling member templates under distinct owners instantiating distinct
 types. Mutation validation: restoring the
 `consume_qualified_name_suffix`-only owner parse makes the regression fail to
-compile. The full single-file and multi-TU runner passed (2994 single-file + 12
-multi-TU, 0 failures). Fixed-corpus migration counters and the static dollar
-inventory remain within baseline (one `template_old_engine` counter improved
-59 to 58).
+compile. The new component-wise reject points report the stable
+`MalformedFriendClassDeclaration` (#1015) diagnostic before returning the
+parser error, so
+`test_member_template_friend_instantiated_owner_malformed_e1015` asserts that a
+dangling scope operator (`friend struct Outer<int>::;`) is rejected with exactly
+that ID. That parser-source diagnostic belongs to boundary 2B and is deleted
+with the friend declarator at boundary 10C. The full single-file and multi-TU
+runner passed (2990 single-file + 12 multi-TU, 265 negative, 0 failures).
+Fixed-corpus migration counters and the static dollar inventory remain within
+baseline (one `template_old_engine` counter improved 59 to 58).
 
 Latest validation for replayed direct member-template owner identity: sharded
 rebuild; `test_canonical_replay_member_template_owner_identity_collision_ret0`
