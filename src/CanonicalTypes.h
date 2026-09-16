@@ -767,12 +767,14 @@ public:
 
 	// Structural substitution for one published primary's type parameters.
 	// Replaces TemplateParameter(env, i) with args[i], rebuilds Spec / DependentName
-	// / DependentTemplateMember / cv / pointer / array / reference wrappers, and
-	// leaves unresolved member tips as DependentName-family nodes (no lookup).
-	// Function and member-pointer walks, pack / template-template args, and
-	// production wiring stay deferred. Spec NTTP ExprId arguments are preserved
-	// opaquely through substitute. Iterative: logical depth does not map to
-	// native call depth.
+	// / DependentTemplateMember / Function / member-pointer / cv / pointer / array /
+	// reference wrappers, and leaves unresolved member tips as DependentName-family
+	// nodes (no lookup). Function and member-pointer rebuilds preserve calling
+	// convention, cv/ref qualifiers, variadic, plain noexcept, dll linkage, and the
+	// opaque dependent-noexcept ExprId; a substituted shape that violates those
+	// categories fails closed. Pack / template-template args and production wiring
+	// stay deferred. Spec NTTP ExprId arguments are preserved opaquely through
+	// substitute. Iterative: logical depth does not map to native call depth.
 	TypeId substitute(TypeId type, TemplateDeclId env, std::span<const TypeId> args) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -1584,10 +1586,30 @@ private:
 					stack.pop_back();
 					continue;
 				}
-				case CanonicalTypeKind::Function:
+				case CanonicalTypeKind::Function: {
+					// Return type plus every parameter element. The FunctionParam
+					// links themselves are rebuilt during the build pass.
+					stack.back().building = true;
+					TypeId param_link = unpackFunctionParamLink(node.array_extent);
+					while (param_link) {
+						const CanonicalTypeNode parameter_node = nodeUnlocked(param_link);
+						if (parameter_node.kind != CanonicalTypeKind::FunctionParam) {
+							throw InternalError("canonical type: corrupt function parameter link");
+						}
+						stack.push_back(
+							{TypeId{static_cast<uint32_t>(parameter_node.array_extent)}, false});
+						param_link = parameter_node.child;
+					}
+					stack.push_back({node.child, false});
+					continue;
+				}
 				case CanonicalTypeKind::MemberObjectPointer:
-				case CanonicalTypeKind::MemberFunctionPointer:
-					throw InternalError("canonical type: substitute does not walk function or member-pointer types");
+				case CanonicalTypeKind::MemberFunctionPointer: {
+					stack.back().building = true;
+					stack.push_back({node.child, false});
+					stack.push_back({TypeId{static_cast<uint32_t>(node.array_extent)}, false});
+					continue;
+				}
 				case CanonicalTypeKind::FunctionParam:
 				case CanonicalTypeKind::TemplateArg:
 				case CanonicalTypeKind::NonTypeTemplateArg:
@@ -1800,6 +1822,94 @@ private:
 							rebuildTemplateArgListUnlocked(rebuilt_args)),
 					});
 				}
+				break;
+			}
+			case CanonicalTypeKind::Function: {
+				const TypeId substituted_return = memo.at(node.child.value);
+				rebuilt_args.clear();
+				bool unchanged = substituted_return == node.child;
+				TypeId param_link = unpackFunctionParamLink(node.array_extent);
+				while (param_link) {
+					const CanonicalTypeNode parameter_link_node = nodeUnlocked(param_link);
+					const TypeId original =
+						TypeId{static_cast<uint32_t>(parameter_link_node.array_extent)};
+					const TypeId substituted = memo.at(original.value);
+					unchanged = unchanged && substituted == original;
+					rebuilt_args.push_back(substituted);
+					param_link = parameter_link_node.child;
+				}
+				if (unchanged) {
+					rebuilt = frame.id;
+					break;
+				}
+				const CanonicalTypeNode return_node = nodeUnlocked(substituted_return);
+				if (return_node.kind == CanonicalTypeKind::Function ||
+					isInternalLink(return_node.kind) ||
+					return_node.kind == CanonicalTypeKind::Array) {
+					throw InternalError("canonical type: substituted invalid function return type");
+				}
+				TypeId rebuilt_param_link{};
+				for (size_t index = rebuilt_args.size(); index-- > 0;) {
+					const TypeId parameter = rebuilt_args[index];
+					const CanonicalTypeNode parameter_node = nodeUnlocked(parameter);
+					if (parameter_node.kind == CanonicalTypeKind::Function ||
+						isInternalLink(parameter_node.kind) ||
+						parameter_node.kind == CanonicalTypeKind::Array) {
+						throw InternalError("canonical type: substituted undecayed function parameter type");
+					}
+					rebuilt_param_link = internUnlocked({
+						.child = rebuilt_param_link,
+						.kind = CanonicalTypeKind::FunctionParam,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = parameter.value,
+					});
+				}
+				rebuilt = internUnlocked({
+					.child = substituted_return,
+					.kind = CanonicalTypeKind::Function,
+					.builtin = node.builtin,
+					.qualifiers = node.qualifiers,
+					.flags = node.flags,
+					.array_extent = packFunctionArrayExtent(
+						rebuilt_param_link, unpackFunctionDependentNoexcept(node.array_extent)),
+				});
+				break;
+			}
+			case CanonicalTypeKind::MemberObjectPointer:
+			case CanonicalTypeKind::MemberFunctionPointer: {
+				const TypeId original_owner = TypeId{static_cast<uint32_t>(node.array_extent)};
+				const TypeId substituted_owner = memo.at(original_owner.value);
+				const TypeId substituted_pointee = memo.at(node.child.value);
+				if (substituted_owner == original_owner && substituted_pointee == node.child) {
+					rebuilt = frame.id;
+					break;
+				}
+				if (nodeUnlocked(substituted_owner).kind != CanonicalTypeKind::Record) {
+					throw InternalError("canonical type: substituted member pointer owner must be a record");
+				}
+				if (node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+					if (nodeUnlocked(substituted_pointee).kind != CanonicalTypeKind::Function) {
+						throw InternalError("canonical type: substituted member function pointee must be a function");
+					}
+				} else {
+					const CanonicalTypeNode pointee_node = nodeUnlocked(substituted_pointee);
+					if (pointee_node.kind == CanonicalTypeKind::Function ||
+						isInternalLink(pointee_node.kind) ||
+						(pointee_node.kind == CanonicalTypeKind::Builtin &&
+							pointee_node.builtin == CanonicalBuiltinKind::Void)) {
+						throw InternalError("canonical type: substituted invalid member object pointee");
+					}
+				}
+				rebuilt = internUnlocked({
+					.child = substituted_pointee,
+					.kind = node.kind,
+					.builtin = CanonicalBuiltinKind::Void,
+					.qualifiers = CVQualifier::None,
+					.flags = CanonicalTypeNodeFlags::None,
+					.array_extent = substituted_owner.value,
+				});
 				break;
 			}
 			default:

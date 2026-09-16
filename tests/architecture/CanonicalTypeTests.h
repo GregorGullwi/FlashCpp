@@ -1195,11 +1195,14 @@ inline void checkSubstitution() {
 	rejects([&] { table.substitute(param0, env, {}); });
 	const TypeId bytes{static_cast<uint32_t>(table.node(member).array_extent)};
 	rejects([&] { table.substitute(bytes, env, args); });
-	rejects([&] {
-		table.substitute(table.function(integer, {}, false, CVQualifier::None,
-			ReferenceQualifier::None, false, CanonicalCallingConvention::Default,
-			CanonicalDllLinkage::None, ExprId{}), env, args);
-	});
+	// A callable with no matching environment parameter is returned unchanged and
+	// interns no new node; callable walks are covered by checkCallableSubstitution.
+	const TypeId stable_function = table.function(integer, {}, false, CVQualifier::None,
+		ReferenceQualifier::None, false, CanonicalCallingConvention::Default,
+		CanonicalDllLinkage::None, ExprId{});
+	const size_t before_stable_function = table.size();
+	require(table.substitute(stable_function, env, args) == stable_function);
+	require(table.size() == before_stable_function);
 
 	CanonicalTypeTable reordered;
 	const TypeId reordered_param = reordered.templateParameter(env, 0);
@@ -1222,6 +1225,127 @@ inline void checkSubstitution() {
 	}
 	require(cursor == integer);
 	std::printf("substitution: node=%zu deep=65536\n", sizeof(CanonicalTypeNode));
+}
+
+inline void checkCallableSubstitution() {
+	CanonicalTypeTable table;
+	const TemplateDeclId env{7};
+	const TemplateDeclId foreign_env{99};
+	const TypeId param0 = table.templateParameter(env, 0);
+	const TypeId foreign = table.templateParameter(foreign_env, 0);
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId void_builtin = table.builtin(CanonicalBuiltinKind::Void);
+	const TypeId args[] = {integer};
+
+	// Function return and parameter types substitute; calling convention, cv/ref,
+	// variadic, and dll linkage all stay on the rebuilt Function identity.
+	const TypeId dependent_params[] = {param0};
+	const TypeId dependent_function = table.function(void_builtin, dependent_params, true,
+		CVQualifier::Const, ReferenceQualifier::LValueReference, false,
+		CanonicalCallingConvention::Stdcall, CanonicalDllLinkage::Import, ExprId{});
+	const TypeId int_params[] = {integer};
+	const TypeId expected_function = table.function(void_builtin, int_params, true,
+		CVQualifier::Const, ReferenceQualifier::LValueReference, false,
+		CanonicalCallingConvention::Stdcall, CanonicalDllLinkage::Import, ExprId{});
+	const TypeId subst_function = table.substitute(dependent_function, env, args);
+	require(subst_function == expected_function);
+	require(subst_function != dependent_function);
+	require(table.node(subst_function).qualifiers == CVQualifier::Const);
+	require(table.node(subst_function).builtin ==
+		static_cast<CanonicalBuiltinKind>(CanonicalCallingConvention::Stdcall));
+	require(hasCanonicalTypeNodeFlag(table.node(subst_function).flags,
+		CanonicalTypeNodeFlags::VariadicFunction));
+	require(hasCanonicalTypeNodeFlag(table.node(subst_function).flags,
+		CanonicalTypeNodeFlags::FunctionLValueRef));
+	require(hasCanonicalTypeNodeFlag(table.node(subst_function).flags,
+		CanonicalTypeNodeFlags::FunctionDllImport));
+
+	// Substituting an already-concrete callable is identity and interns nothing.
+	const size_t before_identity = table.size();
+	require(table.substitute(subst_function, env, args) == subst_function);
+	require(table.size() == before_identity);
+
+	// Dependent return type and opaque dependent-noexcept ExprId survive.
+	const TypeId dependent_return_function = table.function(param0, std::span<const TypeId>{},
+		false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{31});
+	const TypeId subst_return_function = table.substitute(dependent_return_function, env, args);
+	require(table.node(subst_return_function).child == integer);
+	require(table.functionDependentNoexcept(subst_return_function).value == 31);
+	require(subst_return_function !=
+		table.function(integer, std::span<const TypeId>{}, false, CVQualifier::None,
+			ReferenceQualifier::None, false, CanonicalCallingConvention::Default,
+			CanonicalDllLinkage::None, ExprId{}));
+
+	// A pointer wrapper over a dependent callable substitutes through into it.
+	require(table.substitute(table.pointer(dependent_function), env, args) ==
+		table.pointer(subst_function));
+
+	// Member pointers substitute owner and pointee independently.
+	const TypeId owner_a = table.record(EntityId{41});
+	const TypeId owner_b = table.record(EntityId{42});
+	const TypeId mfp = table.memberFunctionPointer(owner_a, dependent_function);
+	const TypeId subst_mfp = table.substitute(mfp, env, args);
+	require(subst_mfp == table.memberFunctionPointer(owner_a, subst_function));
+	require(subst_mfp != table.memberFunctionPointer(owner_b, subst_function));
+	const TypeId mop = table.memberObjectPointer(owner_a, param0);
+	require(table.substitute(mop, env, args) == table.memberObjectPointer(owner_a, integer));
+	require(table.substitute(table.memberObjectPointer(owner_a, foreign), env, args) ==
+		table.memberObjectPointer(owner_a, foreign));
+
+	// Interleaved array/pointer/member-function-pointer/function declarator has one
+	// structural substitution shape.
+	const TypeId nested_function = table.function(param0, dependent_params, false,
+		CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId interleaved = table.array(
+		table.pointer(table.memberFunctionPointer(owner_a, nested_function)), 3);
+	const TypeId expected_interleaved = table.array(
+		table.pointer(table.memberFunctionPointer(owner_a,
+			table.function(integer, int_params, false, CVQualifier::None,
+				ReferenceQualifier::None, false, CanonicalCallingConvention::Default,
+				CanonicalDllLinkage::None, ExprId{}))), 3);
+	require(table.substitute(interleaved, env, args) == expected_interleaved);
+
+	// A foreign environment is never substituted.
+	require(table.substitute(foreign, env, args) == foreign);
+
+	// Fail-closed invalid composition: a member object pointer whose pointee
+	// substitutes to a function type must reject rather than build a bad MOP.
+	rejects([&] {
+		const TypeId function_args[] = {dependent_function};
+		table.substitute(mop, env, function_args);
+	});
+
+	// Deep pointer nesting stays iterative: logical depth does not map to native
+	// call depth.
+	auto deep = dependent_function;
+	for (size_t level = 0; level < 65536; ++level) {
+		deep = table.pointer(deep);
+	}
+	const TypeId subst_deep = table.substitute(deep, env, args);
+	TypeId cursor = subst_deep;
+	for (size_t level = 0; level < 65536; ++level) {
+		require(table.node(cursor).kind == CanonicalTypeKind::Pointer);
+		cursor = table.node(cursor).child;
+	}
+	require(cursor == subst_function);
+
+	// Reordered construction with unrelated insertions yields the same structure.
+	CanonicalTypeTable reordered;
+	const TypeId reordered_param = reordered.templateParameter(env, 0);
+	const TypeId reordered_int = reordered.builtin(CanonicalBuiltinKind::Int);
+	reordered.builtin(CanonicalBuiltinKind::Double);
+	const TypeId reordered_params[] = {reordered_param};
+	const TypeId reordered_function = reordered.function(
+		reordered.builtin(CanonicalBuiltinKind::Void), reordered_params, true,
+		CVQualifier::Const, ReferenceQualifier::LValueReference, false,
+		CanonicalCallingConvention::Stdcall, CanonicalDllLinkage::Import, ExprId{});
+	const TypeId reordered_args[] = {reordered_int};
+	require(sameStructure(table, subst_function, reordered,
+		reordered.substitute(reordered_function, env, reordered_args)));
+
+	std::printf("callable substitution: node=%zu deep=65536\n", sizeof(CanonicalTypeNode));
 }
 
 inline void checkDependentTipResolve() {
@@ -1428,6 +1552,7 @@ inline void checkConcretePackSpecArgs() {
 inline int run() {
 	checkDependentNames();
 	checkSubstitution();
+	checkCallableSubstitution();
 	checkDependentTipResolve();
 	checkNttpSpecArgs();
 	checkConcretePackSpecArgs();
