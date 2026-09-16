@@ -21,16 +21,8 @@ member class-template Spec-rooted dependent stamping.
 
 ## Current boundary and handoff
 
-Architecture boundary 3A's identity-based owner-chain resolution is on
-`boundary-3a-delete-owner-chain-shim` (after member class-template qualified
-owner-chain registry keys including nested-namespace and
-partial-namespace spellings — since deleted, see below — parse-time nested
-class EntityId publication under class-owned OwnerIds, direct primary member
-class-template and member function-template stamping under published
-namespace/global class templates, direct member function-template stamping,
-free function-template body replay stamping, free function-template declared
-type-parameter stamping, signature-aware free function TemplateDeclId
-publication, and member class-template TemplateDeclId).
+Architecture boundary 3A resolves class and member-template identity through
+published `EntityId` / `TemplateDeclId` rather than registry spelling aliases.
 Qualified member class-template ids now resolve by identity end to end:
 `Parser::findClassTemplatePatternByIdentityChain` walks the owner chain to a
 published class EntityId or a namespace/global primary class template's
@@ -60,8 +52,6 @@ owner-chain alias shim is deleted: member class templates register only the
 legacy owner-prefix key (`Inner::Box`) and the simple member name (`Box`), and
 partial-namespace-suffix owner spellings (`inner::Outer::Inner`) now come from
 the nested type system's type-map aliases, which identity resolution reads.
-Member variable templates with class owners still resolve through their legacy
-keys; routing those through identity belongs to their own family.
 Nested member class-template bodies now retain published parameter bindings
 alongside their active parameter names. The class-template argument parser
 recognizes those bindings before legacy projections select a concrete path, and
@@ -508,76 +498,6 @@ retains calling-convention and variadic metadata, including the canonical
 adapter corpus's `__stdcall` callback. `SymbolTable` merge authority remains
 intentionally unchanged.
 
-Latest validation for out-of-line `= default` / `= delete`:
-`Parser::isDefaultableMemberFunction` classifies special members and comparison
-operators, and the in-class and all out-of-line paths reject a non-special
-`= default` with `DefaultedFunctionNotSpecialMember` (#1017) and a deleted
-definition that is not the first declaration (any out-of-line member without
-explicit specialisation) with `DeletedDefinitionNotFirstDeclaration` (#1018).
-Out-of-line `= default` now materializes for a non-template constructor/copy
-assignment and for a class-template constructor; nine runner tests cover the
-positive and both negative rules. Two valid forms still fail at instantiation
-for pre-existing stub-resolution reasons (template destructors and nested
-member-class constructors; see [known issues](KNOWN_ISSUES.md)): their `= default`
-and body forms are unaffected by the placement rules. The full single-file and
-multi-TU runner passed (2991 single-file + 12 multi-TU, 272 negative, 0
-failures). Fixed-corpus migration counters remain within baseline.
-
-Latest validation for out-of-line plain members of a member class template:
-sharded rebuild; `test_member_class_template_ool_plain_member_ret0` proves
-`template <typename T> template <typename U> int Owner<T>::Box<U>::scaled()`
-attaches to the instantiated member class and emits its body, with the same
-spelling under a distinct owner staying distinct. Mutation validation:
-reverting the out-of-line attachment fix makes the regression fail to compile.
-The scanner records `OutOfLineMemberFunctionFlags` (has-initializer-list,
-inner-head owner, function's own template head), packed into one byte. The
-`= default` / `= delete` state is not duplicated onto the record: it is general
-function state owned by the function declaration, and the record's copy was
-never read. `sizeof(OutOfLineMemberFunction)` remains 5,608 bytes on Linux
-clang++. The full single-file and multi-TU runner passed (2,990 single-file +
-12 multi-TU, 264 negative, 0 failures). Fixed-corpus migration counters remain
-within baseline.
-
-Latest validation for identity-resolved instantiated-owner friend
-declarations: sharded rebuild;
-`test_canonical_member_template_friend_instantiated_owner_ret0` proves
-`friend struct WideOwner<long long>::Box<PayloadA>;`,
-`friend struct NarrowOwner<char>::Box<PayloadB>;`, and
-`friend struct ns::Holder<int>::Slot<short>;` parse and resolve, with the
-same-spelling member templates under distinct owners instantiating distinct
-types. Mutation validation: restoring the
-`consume_qualified_name_suffix`-only owner parse makes the regression fail to
-compile. The new component-wise reject points report the stable
-`MalformedFriendClassDeclaration` (#1015) diagnostic before returning the
-parser error, so
-`test_member_template_friend_instantiated_owner_malformed_e1015` asserts that a
-dangling scope operator (`friend struct Outer<int>::;`) is rejected with exactly
-that ID. A qualified friend class declarator that does not name a previously
-declared class or class template is likewise rejected with
-`FriendClassNotDeclared` (#1016), while an unqualified one may still declare a
-new class: `test_friend_qualified_undeclared_e1016` and
-`test_member_template_friend_instantiated_owner_undeclared_e1016` cover the
-non-template and template cases, and a merely forward-declared qualified class
-stays accepted. Those parser-source diagnostics belong to boundary 2B and are
-deleted with the friend declarator at boundary 10C. The full single-file and
-multi-TU runner passed (2990 single-file + 12 multi-TU, 267 negative, 0
-failures).
-Fixed-corpus migration counters and the static dollar inventory remain within
-baseline (one `template_old_engine` counter improved 59 to 58).
-
-Latest validation for replayed direct member-template owner identity: sharded
-rebuild; `test_canonical_replay_member_template_owner_identity_collision_ret0`
-proves template-body replay gives `ReplayWideOwner<T>::Box<Payload>` and
-`ReplayNarrowOwner<T>::Box<Payload>` distinct aliases and layouts despite their
-shared member spelling. Mutation validation: excluding template-owned primaries
-from the class-template collision predicate makes the regression return 1.
-The instantiated-owner, nested qualified-id, and expression-side call-owner
-collision regressions pass. Fixed-corpus migration counters remain within
-baseline.
-Adjacent architecture coverage remains the DependentName / Spec-rooted /
-substitute / restamp / tip-schema / tip-projection / opaque-NTTP probes.
-Fixed-corpus migration counters remain within the prior baselines below.
-
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
 and PIE modes. Persistent-scope and failed-scratch probes each cover 4,096 levels/
@@ -620,100 +540,20 @@ Explicit exit criteria: **9/78 complete (11.5%)**. The nine completed criteria a
 Advanced, not completed:
 
 - **3A:** no parser/member-stack dependency, parse-order independence, and
-  string-insertion-order independence are proved for builtin/cv/pointer/reference/
-  array/function/record/member-pointer nodes only. Array bounds, unknown bounds,
-  dimension order, cv propagation, pointer binding, parameter adjustment, function
-  parameter lists, function cv/ref, variadic, noexcept, calling convention,
-  dllimport/dllexport, unstructured TypeIndex projections, FunctionPointer
-  wrapping, Function-as-parameter decay, Record and Enum EntityId identity, and
-  member-pointer owner/pointee distinction are mutation-validated. Class and enum
-  EntityId publication, EntityId-backed adapter MOP/MFP import, parse-time
-  member-pointer owner binding, opaque Struct→Record and Enum→Enum adapter
-  import, complete-object layout snapshots, fixed-bound array import for
-  complete published nominal types, EntityId-keyed member/base field schemas,
-  cc/dll Function identity, unstructured signature import, dependent-`noexcept`
-  ExprId identity, opaque TemplateParameter(TemplateDeclId, index) identity,
-  primary class-template TemplateDeclId publication (with type-parameter
-  stamping), type-only TemplateSpecialization(TemplateDeclId, arg list)
-  identity, production type-only template-id stamping for published primaries,
-  opaque DependentName identity with production publication of plain-identifier
-  chains rooted in published type parameters, opaque DependentTemplateMember
-  identity with production stamping of type-only member template-ids, opaque
-  DependentName / DependentTemplateMember chains rooted in type-only
-  TemplateSpecialization qualifiers, production stamping of Spec-rooted chains
-  for DependentInstantiation / CurrentInstantiation / UnknownSpecialization
-  owners (plain members and type-only member template-ids), and opaque
-  structural `CanonicalTypeTable::substitute` for type-parameter environments
-  including function and member-pointer graphs (metadata preserved, invalid
-  compositions fail closed), production fail-closed `dependent_name_type_`
-  restamp through ExpressionSubstitutor, opaque named type-member schemas with
-  `tryResolveDependentTip`, production fail-closed publish of Supported nested
-  typedef/using schemas on complete published records, and ExpressionSubstitutor
-  tip-resolve restamp (Set DependentName-family / Clear on collapse), nested
-  class EntityId ownership under class-owned OwnerIds, and TypeId→TypeIndex
-  projection for collapsed Builtin/Record/Enum tips on restamp Clear, and opaque
-  Spec NTTP `ExprId` arguments (with substitute preserving them), production
-  stamping of bool / integral literal NTTP Spec args (opaque ExprId intern), and
-  concrete published primary-class template-template Spec args (with substitute
-  preserving them), explicit concrete final type-pack Spec args with ordered
-  links, active dependent template-template Spec args represented by owning
-  TemplateDeclId plus parameter index (with substitute preserving them),
-  explicit dependent NTTP Spec args represented by opaque ExprIds, primary
-  member class-template TemplateDeclId publication under published non-template
-  enclosing classes (class-owned OwnerId + early enclosing EntityId before body),
-  and signature-aware free function TemplateDeclId publication (kind-tagged
-  OwnerId+name+signature index with shape-matched redeclaration merge), and
-  retroactive stamping of free function-template declared type parameters
-  (return/parameter specifiers bind to the published TemplateDeclId + Type-kind
-  parameter index, adapter-imported as TemplateParameter), and scoped published
-  TemplateDeclId activation while those free function-template bodies replay,
-  including structural plain-member chains and type-only member template-ids
-  rooted in their published Type-kind parameters, and direct member function
-  templates under published non-template namespace/global classes (class-owned
-  OwnerId + signature-aware publication, retroactive Type-kind parameter stamp,
-  and published replay activation), and direct primary member class templates
-  under published namespace/global class templates (template-owned OwnerId,
-  forward-to-definition merge, and child Type-kind parameter stamps), and
-  direct member function templates under those class templates (template-owned
-  OwnerId + signature-aware publication, redeclaration merge, overload
-  separation, retroactive Type-kind parameter stamp, and replay activation), and
-  parse-time nested class EntityId publication under enclosing class-owned
-  OwnerIds (non-definition before nested body parse, definition merge at the
-  nested complete-definition epoch, nested forward-to-definition merge, no
-  namespace-level nested publication), and member class-template plus member
-  function-template publication under those published nested classes (with
-   declared Type-kind parameter stamps), and identity-based owner-chain
-   primary resolution (owner chain → class EntityId or published enclosing
-   primary `TemplateDeclId` → `findPrimaryClassTemplate` →
-   `TemplateDeclId`-anchored pattern node; `try_instantiate_class_template`
-   resolves qualified ids through it before the registry fallback), and
-   qualified member class-template type-ids resolving through `TemplateDeclId`
-   end to end in `parse_type_specifier` (identity-first
-   `findClassTemplatePatternBySpelling` at every spelled class-template lookup,
-   the shared Spec-stamp choke point `collectClassTemplateArgSpecs` taking the
-   resolved primary pattern, and partial-namespace-suffix owner spellings
-   served by nested-class type-map aliases) with the `TemplateRegistry`
-   owner-chain alias shim deleted (registration reduced to the legacy
-   owner-prefix and simple member keys), primary member alias-template
-   `TemplateDeclId` publication under class-owned / template-owned OwnerIds
-   with qualified alias type-ids resolving through
-   `findAliasTemplateBySpelling` (identity chain first, registry alias lookup
-   fail-closed fallback) at the `parse_type_specifier` alias lookups and the
-   `materializeAliasTemplateInstantiation` choke point, and primary member
-   variable-template `TemplateDeclId` publication with qualified
-   variable-template spellings resolving through `findVariableTemplateBySpelling`
-   at the `try_instantiate_variable_template` choke point and the
-   `parse_type_specifier` `<` gate's full-name variable arm, plus the
-   `$td<TemplateDeclId>` variable-template instance-key stem, and
-   component-wise `friend class`/`struct` declarators whose owner chain carries
-   template arguments (`friend struct Outer<int>::Box<char>;`) resolving the
-   member primary by identity while preserving the granted specialization
-   arguments, are landed.
-   Nested
-   member-template Spec-rooted dependent stamping, unpublished/incomplete
-   nominal, anonymous-union, and unpublished-base forms stay deferred.
-   Remaining families and flat-field
-   deletion keep all three identity criteria open.
+  string-insertion-order independence are proved and mutation-validated for the
+  canonical node families landed so far: builtin/cv/pointer/reference and array
+  shapes; function and member-pointer shapes including calling convention,
+  dll linkage, variadic, cv/ref, plain and dependent `noexcept`, parameter
+  adjustment, and `ExpressionSubstitutor` substitution; `Record` / `Enum`
+  `EntityId` identity, complete-object layout, and member/base field schemas;
+  opaque `TemplateParameter`, `TemplateSpecialization`, `DependentName`, and
+  `DependentTemplateMember` identity; and production member-template identity
+  publication (class, function, alias, and variable primaries) with qualified
+  owner chains resolving through published IDs. The landed-family inventory
+  lives in `Current boundary and handoff`. Nested member-template Spec-rooted
+  dependent stamping, unpublished/incomplete nominal, anonymous-union, and
+  unpublished-base forms, the remaining dependent/template arguments, and
+  deletion of the flat representation keep the criterion open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser
