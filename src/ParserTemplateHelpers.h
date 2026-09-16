@@ -513,6 +513,7 @@ inline OutOfLineMemberStubResolution findPlainOutOfLineMemberStubByIdentity(
 
 struct OutOfLineConstructorStubResolution {
 	ConstructorDeclarationNode* ctor = nullptr;
+	DestructorDeclarationNode* dtor = nullptr;
 	const ASTNode* source_member = nullptr;
 	bool ambiguous = false;
 	bool insufficient_evidence = false;
@@ -530,14 +531,35 @@ inline OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 	OverloadVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	const ASTNode* matched_source_member = nullptr;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
-		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
+		const bool is_constructor =
+			source_member.function_declaration.is<ConstructorDeclarationNode>();
+		const bool is_destructor =
+			source_member.function_declaration.is<DestructorDeclarationNode>();
+		if (!is_constructor && !is_destructor) {
 			continue;
 		}
 
 		ASTNode* matched_stub = findSourceMemberStubByIdentity(
 			identity_maps,
 			source_member.function_declaration);
-		if (matched_stub == nullptr || !matched_stub->is<ConstructorDeclarationNode>()) {
+		if (matched_stub == nullptr) {
+			continue;
+		}
+		if (is_destructor) {
+			if (!matched_stub->is<DestructorDeclarationNode>() ||
+				!out_of_line_decl.parameter_nodes().empty() ||
+				resolution.dtor != nullptr) {
+				if (resolution.dtor != nullptr) {
+					resolution.ambiguous = true;
+					resolution.dtor = nullptr;
+				}
+				continue;
+			}
+			resolution.dtor = &matched_stub->as<DestructorDeclarationNode>();
+			resolution.source_member = &source_member.function_declaration;
+			continue;
+		}
+		if (!matched_stub->is<ConstructorDeclarationNode>()) {
 			continue;
 		}
 

@@ -5543,40 +5543,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		return ParseResult::error("Expected static member function body, requires-clause, '= default', '= delete', or ';'", current_token_);
 	};
 
-	auto skipMemberStructTemplateConstructor = [&]() {
-		if (peek() == "("_tok) {
-			skip_balanced_parens();
-		}
-
-		int angle_depth = 0;
-		while (!peek().is_eof()) {
-			auto tk = peek();
-			if (angle_depth == 0 &&
-				(tk == ":"_tok || tk == "{"_tok || tk == "try"_tok || tk == ";"_tok || tk == "="_tok || tk == "requires"_tok)) {
-				break;
-			}
-			if (tk == "("_tok) {
-				skip_balanced_parens();
-			} else if (tk == "<"_tok || tk == ">"_tok || tk == ">>"_tok) {
-				update_angle_depth(tk, angle_depth);
-				advance();
-			} else {
-				advance();
-			}
-		}
-
-		// Handle requires clause before the member-initializer-list.
-		if (peek() == "requires"_tok) {
-			skip_trailing_requires_clause();
-		}
-
-		if (peek() == ":"_tok) {
-			skip_constructor_member_initializer_list();
-		}
-
-		skipMemberTemplateFunctionTail();
-	};
-
 	// Skip a member struct template destructor (~Name(...)) entirely, including
 	// any trailing noexcept/override/final/requires, and the body or
 	// `= default` / `= delete`.  Destructors are re-parsed during instantiation
@@ -6224,12 +6190,69 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				advance(); // consume struct name
 
 				if (peek() == "("_tok) {
-					// This is a constructor - skip it for now
-					// Member struct template constructors will be instantiated when the template is used
 					discard_saved_token(ctor_lookahead_pos);
 					discard_saved_token(member_saved_pos);
-					FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template: Skipping constructor for {}", struct_name);
-					skipMemberStructTemplateConstructor();
+					StringHandle constructor_name =
+						StringTable::getOrInternStringHandle(struct_name);
+					auto [constructor_node, constructor_ref] =
+						emplace_node_ref<ConstructorDeclarationNode>(
+							qualified_pattern_name,
+							constructor_name);
+					FlashCpp::ParsedParameterList constructor_params;
+					auto params_result = parse_parameter_list(constructor_params);
+					if (params_result.is_error()) {
+						return params_result;
+					}
+					for (const ASTNode& parameter : constructor_params.parameters) {
+						constructor_ref.add_parameter_node(parameter);
+					}
+
+					FlashCpp::MemberQualifiers constructor_quals;
+					FlashCpp::FunctionSpecifiers constructor_specs;
+					auto specs_result = parse_function_trailing_specifiers(
+						constructor_quals,
+						constructor_specs,
+						constructor_ref.parameter_nodes());
+					if (specs_result.is_error()) {
+						return specs_result;
+					}
+					constructor_ref.set_explicit(is_member_explicit);
+					constructor_ref.set_constexpr(member_specs.is_constexpr());
+					constructor_ref.set_noexcept(constructor_specs.is_noexcept);
+					if (constructor_specs.is_deleted()) {
+						if (!consume(";"_tok)) {
+							return ParseResult::error("Expected ';' after '= delete'", peek_info());
+						}
+						continue;
+					}
+					if (constructor_specs.is_defaulted()) {
+						if (!consume(";"_tok)) {
+							return ParseResult::error("Expected ';' after '= default'", peek_info());
+						}
+						constructor_ref.set_is_implicit(true);
+						constructor_ref.set_is_explicitly_defaulted(true);
+						constructor_ref.set_is_inline(true);
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						(void)block_ref;
+						constructor_ref.set_definition(block_node);
+						member_struct_ref.add_constructor(constructor_node, current_access);
+						continue;
+					}
+
+					if (peek() == ":"_tok) {
+						constructor_ref.set_template_initializer_list_position(save_token_position());
+						skip_constructor_member_initializer_list();
+					}
+					if (peek() == "{"_tok || peek() == "try"_tok) {
+						constructor_ref.set_is_inline(true);
+						constructor_ref.set_template_body_position(save_token_position());
+						skip_function_body();
+					} else if (!consume(";"_tok)) {
+						return ParseResult::error(
+							"Expected constructor body or ';'",
+							peek_info());
+					}
+					member_struct_ref.add_constructor(constructor_node, current_access);
 					continue;
 				} else {
 					// Not a constructor, restore position to BEFORE specifiers so they get re-parsed
@@ -6790,12 +6813,65 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			advance(); // consume struct name
 
 			if (peek() == "("_tok) {
-				// This is a constructor - skip it for now
-				// Member struct template constructors will be instantiated when the template is used
 				discard_saved_token(ctor_lookahead_pos2);
 				discard_saved_token(member_saved_pos2);
-				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template (primary): Skipping constructor for {}", struct_name);
-				skipMemberStructTemplateConstructor();
+				StringHandle constructor_name =
+					StringTable::getOrInternStringHandle(struct_name);
+				auto [constructor_node, constructor_ref] =
+					emplace_node_ref<ConstructorDeclarationNode>(
+						qualified_name,
+						constructor_name);
+				FlashCpp::ParsedParameterList constructor_params;
+				auto params_result = parse_parameter_list(constructor_params);
+				if (params_result.is_error()) {
+					return params_result;
+				}
+				for (const ASTNode& parameter : constructor_params.parameters) {
+					constructor_ref.add_parameter_node(parameter);
+				}
+				FlashCpp::MemberQualifiers constructor_quals;
+				FlashCpp::FunctionSpecifiers constructor_specs;
+				auto specs_result = parse_function_trailing_specifiers(
+					constructor_quals,
+					constructor_specs,
+					constructor_ref.parameter_nodes());
+				if (specs_result.is_error()) {
+					return specs_result;
+				}
+				constructor_ref.set_explicit(is_member_explicit2);
+				constructor_ref.set_constexpr(member_specs2.is_constexpr());
+				constructor_ref.set_noexcept(constructor_specs.is_noexcept);
+				if (constructor_specs.is_deleted()) {
+					if (!consume(";"_tok)) {
+						return ParseResult::error("Expected ';' after '= delete'", peek_info());
+					}
+					continue;
+				}
+				if (constructor_specs.is_defaulted()) {
+					if (!consume(";"_tok)) {
+						return ParseResult::error("Expected ';' after '= default'", peek_info());
+					}
+					constructor_ref.set_is_implicit(true);
+					constructor_ref.set_is_explicitly_defaulted(true);
+					constructor_ref.set_is_inline(true);
+					auto [block_node, block_ref] = create_node_ref(BlockNode());
+					(void)block_ref;
+					constructor_ref.set_definition(block_node);
+					member_struct_ref.add_constructor(constructor_node, current_access);
+					continue;
+				}
+				if (peek() == ":"_tok) {
+					constructor_ref.set_template_initializer_list_position(save_token_position());
+					skip_constructor_member_initializer_list();
+				}
+				if (peek() == "{"_tok || peek() == "try"_tok) {
+					constructor_ref.set_is_inline(true);
+					constructor_ref.set_template_body_position(save_token_position());
+					skip_function_body();
+				} else if (!consume(";"_tok)) {
+					return ParseResult::error("Expected constructor body or ';'", peek_info());
+				}
+				member_struct_ref.add_constructor(constructor_node, current_access);
 				continue;
 			} else {
 				// Not a constructor, restore position to BEFORE specifiers so they get re-parsed
