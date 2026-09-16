@@ -754,6 +754,11 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
 	return std::move(result);
 }
 
+ParseResult Parser::error(DiagnosticId id, const Token& token, std::string_view message) const {
+	return ParseResult::error(
+		context_.diagnostics(), lexer_, id, token, message, std::span<const DiagnosticArgument>{});
+}
+
 #if WITH_PARSER_RUNTIME_STATS
 static size_t getTokenDeltaBucket(size_t delta) {
 	if (delta == 0) return 0;

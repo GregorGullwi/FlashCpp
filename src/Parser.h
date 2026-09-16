@@ -339,6 +339,18 @@ public:
 		return ParseResult(std::string(get_parser_error_string(e)),
 						   std::move(token));
 	}
+	// Report a structured Error diagnostic at the token's macro-mapped source
+	// location and construct the matching error in one step. The message template
+	// and its arguments are recorded on the diagnostic and rendered once for the
+	// error. The engine and lexer are explicit because ParseResult owns neither;
+	// callers with a Parser use Parser::error / Parser::errorf.
+	static ParseResult error(DiagnosticEngine& diagnostics, Lexer& lexer, DiagnosticId id,
+							 const Token& token, std::string_view message_template,
+							 std::span<const DiagnosticArgument> arguments) {
+		diagnostics.report(
+			id, DiagnosticSeverity::Error, lexer.getSourceLocation(token), message_template, arguments);
+		return ParseResult(renderDiagnosticMessage(message_template, arguments), token);
+	}
 	static ParseResult null() {
 		return ParseResult();
 	}
@@ -1661,6 +1673,46 @@ private:
 		bool discarded_ = false;
 		std::source_location location_;
 	};
+
+	// Report a structured Error diagnostic at the token's own source location and
+	// return the matching ParseResult error, so one call both records and
+	// propagates a failure. Thin wrappers over the ParseResult factory above;
+	// use errorf for '{}' placeholder substitution. For another severity or a
+	// different location call the engine directly.
+	ParseResult error(DiagnosticId id, const Token& token, std::string_view message) const;
+
+	// Adapt one errorf argument to a diagnostic placeholder, keeping integral
+	// signedness and interned StringHandle identity. Payloads without a natural
+	// mapping (constant bytes, structural values) should be passed to the engine
+	// as a DiagnosticArgument directly.
+	template <typename T>
+	static DiagnosticArgument makeDiagnosticArgument(const T& value) {
+		using Decayed = std::decay_t<T>;
+		if constexpr (std::is_same_v<Decayed, StringHandle>) {
+			return DiagnosticArgument::internedText(value);
+		} else if constexpr (std::is_convertible_v<Decayed, std::string_view>) {
+			return DiagnosticArgument::text(static_cast<std::string_view>(value));
+		} else if constexpr (std::is_integral_v<Decayed> && std::is_signed_v<Decayed>) {
+			return DiagnosticArgument::signedInteger(static_cast<int64_t>(value));
+		} else if constexpr (std::is_integral_v<Decayed> && std::is_unsigned_v<Decayed>) {
+			return DiagnosticArgument::unsignedInteger(static_cast<uint64_t>(value));
+		} else {
+			static_assert(!std::is_same_v<Decayed, Decayed>,
+				"unsupported diagnostic formatting argument");
+		}
+	}
+
+	// error() with '{}' placeholder substitution. Adapts each argument, then
+	// delegates to the ParseResult factory so the message is recorded and
+	// rendered in one place.
+	template <typename... Args>
+	ParseResult errorf(DiagnosticId id, const Token& token, std::string_view format,
+		Args&&... args) const {
+		const std::array<DiagnosticArgument, sizeof...(Args)> arguments{
+			makeDiagnosticArgument(args)...};
+		return ParseResult::error(context_.diagnostics(), lexer_, id, token, format,
+			std::span<const DiagnosticArgument>(arguments));
+	}
 
 	class ScopedLexerPositionRestore {
 	public:
