@@ -5,10 +5,13 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-15 after nested member class-template Spec-rooted
-dependent stamping on `codex/boundary-3a-nested-member-spec-stamping`:
-published child parameter bindings now carry the member primary's
-`TemplateDeclId` and local index into canonical specialization arguments.
+Last updated: 2026-09-16 after identity-resolved `friend` declarations naming
+member class-template specializations through instantiated owner chains
+(`friend struct Outer<int>::Box<char>;`) on
+`boundary-3a-instantiated-member-template-identity`: the declarator parses the
+qualified-id component-wise, drops owner template arguments from the
+member-primary lookup spelling (`Outer::Box`, matching the type-id identity
+path), and keeps the member's own arguments as the granted specialization.
 
 ## Current boundary and handoff
 
@@ -160,7 +163,11 @@ answer is not a published class template, so same-spelling member class
 templates under different owners materialize per-owner `$td` instances and
 member calls bind to the right instance's functions. Friend class/struct
 declarations naming member class templates resolve through identity first at
-the same choke point. Instantiated-owner alias and variable
+the same choke point; the declarator now parses the owner chain component-wise,
+so owner template arguments (`friend struct Outer<int>::Box<char>;`) are a
+type-system lookup key only while the member primary spelling drops them
+(`Outer::Box`) and the member's own arguments remain the granted
+specialization. Instantiated-owner alias and variable
 chains (`Outer<int>::Meter`),
 dependent alias families, the `<` gate alias arm, and
 alias partial specializations still resolve through their legacy paths. The
@@ -370,15 +377,16 @@ during concrete alias materialization. This fixes forwarded aliases such as
 - Canonical nodes participate in nested publication and frontend scratch
   transactions. Rollback reuses discarded arena slots; committed IDs remain
   stable. Dependent-expression and template-decl interning are not transactional.
-- Remaining 3A work includes nested member-template Spec-rooted dependent
-  stamping, identity resolution for the remaining qualified member-template
-  chain consumers (instantiated-owner chains such as `Outer<int>::Box`,
-  friend-of-member-template declarations, expression-side member-access/call
-  owner materialization, and direct-member replay now resolve through
-  identity),
-  complete declarator interleaving, and
-  deletion of the flat semantic representation. Stop here for review before
-  starting another family, 3B, or the parallel frontend experiment.
+- Remaining 3A work includes complete declarator interleaving and deletion of
+  the flat semantic representation. The nested member-template Spec-rooted
+  dependent stamping and the named qualified member-template chain consumers
+  (instantiated-owner chains such as `Outer<int>::Box`, friend-of-member-template
+  declarations, expression-side member-access/call owner materialization, and
+  direct-member replay) now resolve through identity. Dependent-owner and
+  template-parameterized friend forms (`template <...> friend struct
+  Outer<T>::Box<int>;`) and OOL member class-template definitions remain on
+  their legacy paths. Stop here for review before starting another family, 3B,
+  or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -447,6 +455,20 @@ Preserve these ownership contracts during subsequent migration:
   object's text. See architecture boundary 2 in the plan for the ABI decision.
 
 ## Validation and compatibility baselines
+
+Latest validation for identity-resolved instantiated-owner friend
+declarations: sharded rebuild;
+`test_canonical_member_template_friend_instantiated_owner_ret0` proves
+`friend struct WideOwner<long long>::Box<PayloadA>;`,
+`friend struct NarrowOwner<char>::Box<PayloadB>;`, and
+`friend struct ns::Holder<int>::Slot<short>;` parse and resolve, with the
+same-spelling member templates under distinct owners instantiating distinct
+types. Mutation validation: restoring the
+`consume_qualified_name_suffix`-only owner parse makes the regression fail to
+compile. The full single-file and multi-TU runner passed (2994 single-file + 12
+multi-TU, 0 failures). Fixed-corpus migration counters and the static dollar
+inventory remain within baseline (one `template_old_engine` counter improved
+59 to 58).
 
 Latest validation for replayed direct member-template owner identity: sharded
 rebuild; `test_canonical_replay_member_template_owner_identity_collision_ret0`
@@ -586,7 +608,11 @@ Advanced, not completed:
    variable-template spellings resolving through `findVariableTemplateBySpelling`
    at the `try_instantiate_variable_template` choke point and the
    `parse_type_specifier` `<` gate's full-name variable arm, plus the
-   `$td<TemplateDeclId>` variable-template instance-key stem, are landed.
+   `$td<TemplateDeclId>` variable-template instance-key stem, and
+   component-wise `friend class`/`struct` declarators whose owner chain carries
+   template arguments (`friend struct Outer<int>::Box<char>;`) resolving the
+   member primary by identity while preserving the granted specialization
+   arguments, are landed.
    Nested
    member-template Spec-rooted dependent stamping, unpublished/incomplete
    nominal, anonymous-union, and unpublished-base forms stay deferred.
