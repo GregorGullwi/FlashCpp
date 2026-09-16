@@ -5234,14 +5234,19 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 	// type-system lookup key only, so the member primary's spelling drops them
 	// (Outer::Box) exactly like the type-id identity path; the identity lookup
 	// stays identity-first with the registry as the fail-closed fallback.
-	struct FriendNameComponent {
-		Token token;
-		std::optional<TemplateArgumentVector> arguments;
-	};
-	std::vector<FriendNameComponent> friend_name_components;
+	//
+	// The components stream straight into the primary spelling and only the final
+	// component's arguments are retained: an owner component's arguments are
+	// released as soon as the following '::' proves it is not last. The parse then
+	// needs no per-component container, only the name builder and the final
+	// specialization argument list.
+	StringBuilder friend_primary_name_builder;
+	TemplateArgumentVector friend_template_arguments;
+	bool friend_name_is_qualified = false;
 	for (;;) {
 		Token component_token = advance();
 		if (!component_token.kind().is_identifier()) {
+			friend_primary_name_builder.reset();
 			const std::string message =
 				"Expected class name after 'friend class'";
 			context_.diagnostics().report(
@@ -5252,32 +5257,26 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 				{});
 			return ParseResult::error(message, current_token_);
 		}
-		FriendNameComponent component{component_token, std::nullopt};
+		if (friend_name_is_qualified) {
+			friend_primary_name_builder.append("::");
+		}
+		friend_primary_name_builder.append(component_token.value());
+		TemplateArgumentVector component_arguments;
 		if (peek() == "<"_tok) {
 			if (std::optional<TemplateArgumentVector> parsed_arguments =
 					parse_explicit_template_arguments();
 				parsed_arguments.has_value()) {
-				component.arguments = std::move(*parsed_arguments);
+				component_arguments = std::move(*parsed_arguments);
 			} else {
 				skip_template_arguments();
 			}
 		}
-		friend_name_components.push_back(std::move(component));
 		if (peek() != "::"_tok) {
+			friend_template_arguments = std::move(component_arguments);
 			break;
 		}
 		advance(); // consume '::'
-	}
-
-	StringBuilder friend_primary_name_builder;
-	for (size_t component_index = 0;
-		 component_index < friend_name_components.size();
-		 ++component_index) {
-		if (component_index > 0) {
-			friend_primary_name_builder.append("::");
-		}
-		friend_primary_name_builder.append(
-			friend_name_components[component_index].token.value());
+		friend_name_is_qualified = true;
 	}
 	const std::string_view friend_primary_name =
 		friend_primary_name_builder.commit();
@@ -5307,7 +5306,6 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 	// one may declare a new class in the innermost enclosing namespace, so it
 	// stays accepted. Fail closed instead of silently granting friendship to an
 	// undeclared owner or member.
-	const bool friend_name_is_qualified = friend_name_components.size() > 1;
 	if (friend_name_is_qualified && selected_friend_declaration == nullptr) {
 		const std::string message = std::string(StringBuilder()
 			.append("Friend class declaration '")
@@ -5322,12 +5320,6 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 			{});
 		return ParseResult::error(message, current_token_);
 	}
-	TemplateArgumentVector friend_template_arguments;
-	if (friend_name_components.back().arguments.has_value()) {
-		friend_template_arguments =
-			std::move(*friend_name_components.back().arguments);
-	}
-
 	// Preserve specialization arguments so instantiation can grant friendship to
 	// exactly the named specialization.
 	if (!friend_template_arguments.empty()) {
