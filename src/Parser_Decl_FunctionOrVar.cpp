@@ -217,6 +217,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name failed: ", type_and_name_result.error_message());
 		return type_and_name_result;
 	}
+	const CallingConvention declarator_calling_convention = last_calling_convention_;
 
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name succeeded. current_token={}, peek={}",
 					 std::string(current_token_.value()),
@@ -805,7 +806,15 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	// parse_function_declaration which normally sets the calling convention.
 	// Apply it here so __cdecl / __stdcall / etc. are not silently lost.
 	if (preparsed_function_decl) {
-		preparsed_function_decl->set_calling_convention(attr_info.calling_convention);
+		if (declarator_calling_convention != CallingConvention::Default) {
+			preparsed_function_decl->set_calling_convention(declarator_calling_convention);
+		}
+	} else if (auto function_node = function_definition_result.node();
+		function_node.has_value() &&
+		function_node->is<FunctionDeclarationNode>() &&
+		declarator_calling_convention != CallingConvention::Default) {
+		function_node->as<FunctionDeclarationNode>().set_calling_convention(
+			declarator_calling_convention);
 	}
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_declaration returned. is_error={}, current_token={}, peek={}",
 					 function_definition_result.is_error(),

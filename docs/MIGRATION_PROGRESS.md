@@ -9,7 +9,9 @@ Last updated: 2026-09-16 after mutation-validating nested callable parameter
 identity on `codex/boundary-3a-nested-function-signature-identity`: the
 declaration-builder bridge imports `void (*)(int)` and `void (*)(double)`
 structurally and publishes distinct entities without the flat
-`matches_signature` fallback. Earlier on `main`: out-of-line member-class-
+`matches_signature` fallback; `SymbolTable` merge and overload conversion now
+also compare retained callable signatures, so overload calls distinguish native
+and record parameter types end to end. Earlier on `main`: out-of-line member-class-
 template definitions on `boundary-3a-ool-member-template-attachment`,
 identity-resolved friend declarations naming member class-template
 specializations through instantiated owner chains, and nested member
@@ -467,9 +469,12 @@ callable parameters back through `matches_signature` collapses them to one
 entity and makes the test fail. Sharded MSVC rebuild, the 25-supported / zero-
 deferred canonical adapter corpus, all migration counters, the static dollar
 inventory, and the full runner passed (3,022 single-file + 12 multi-TU, 275
-negative, 0 failures). A downstream executable call still selects the wrong
-function-pointer overload and is recorded in [known issues](KNOWN_ISSUES.md);
-`SymbolTable` merge authority remains intentionally unchanged.
+negative, 0 failures). Follow-up end-to-end coverage proves `SymbolTable` keeps
+the distinct overloads and conversion planning selects and invokes the matching
+`int`, `double`, and record callback overloads. Function-identifier decay also
+retains calling-convention and variadic metadata, including the canonical
+adapter corpus's `__stdcall` callback. `SymbolTable` merge authority remains
+intentionally unchanged.
 
 Latest validation for out-of-line `= default` / `= delete`:
 `Parser::isDefaultableMemberFunction` classifies special members and comparison
