@@ -24,6 +24,18 @@ struct OutOfLineMemberFunction {
 	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
 	TemplateParameterVector inner_template_params;
 	TemplateParamNameVector inner_template_param_names;
+	// True when the out-of-line definition's inner template head belongs to an
+	// intervening member class template rather than to the function itself, e.g.
+	//   template<typename T> template<typename U> int Owner<T>::Box<U>::value();
+	// Here inner_template_params are Owner::Box's parameters, so the member
+	// `value` may be a plain function and must not be matched as a function
+	// template by the inner parameter count.
+	bool inner_params_belong_to_member_class = false;
+	// True when a further template head declares the out-of-line function itself
+	// as a template, e.g.
+	//   template<typename T> template<typename U> template<typename V>
+	//   V Owner<T>::Box<U>::convert(V v);
+	bool function_has_own_template_head = false;
 	TemplateDefinitionLookupContext definition_lookup_context; // Definition-context lookup boundary for two-phase lookup
 	const StructDeclarationNode* pattern_owner_struct_node = nullptr;
 	// Function specifiers from out-of-line definition (= default, = delete)

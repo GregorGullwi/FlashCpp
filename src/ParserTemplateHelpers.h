@@ -2832,6 +2832,28 @@ inline bool isMatchingMemberTemplate(
 		func_decl->parameter_nodes().size() == ool_function_param_count;
 }
 
+// A member function template of a member class template whose out-of-line
+// definition stored the member class's template head in inner_template_params
+// (template<typename T> template<typename U> ... Owner<T>::Box<U>::convert(...)).
+// The function's own template parameters were not captured by that head, so the
+// candidate is matched by name and parameter count only; the signature
+// comparison uses the candidate's own template parameters.
+inline bool isMatchingMemberTemplateWithItsOwnParameters(
+	const StructMemberFunctionDecl& member,
+	std::string_view ool_func_name,
+	size_t ool_function_param_count) {
+	if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+		return false;
+	}
+	const FunctionDeclarationNode* func_decl =
+		get_function_decl_node(member.function_declaration);
+	if (func_decl == nullptr) {
+		return false;
+	}
+	return func_decl->decl_node().identifier_token().value() == ool_func_name &&
+		func_decl->parameter_nodes().size() == ool_function_param_count;
+}
+
 inline ReplaySignatureMatchResult nestedOutOfLineMemberTemplateMatchesCandidate(
 	Parser& parser,
 	const ASTNode& candidate_member,

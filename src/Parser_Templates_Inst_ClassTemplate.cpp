@@ -11614,7 +11614,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		// Check if this is a nested template (member function template of a class template)
 		// Pattern: template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
-		if (!out_of_line_member.inner_template_params.empty()) {
+		// When the inner template head belongs to an intervening member class
+		// template (Owner<T>::Box<U>::value) and no further head declares the
+		// function as a template, the function is a plain member of that member
+		// class and is attached through the plain replay path below.
+		const bool out_of_line_function_is_template =
+			!out_of_line_member.inner_params_belong_to_member_class ||
+			out_of_line_member.function_has_own_template_head;
+		if (out_of_line_function_is_template &&
+			!out_of_line_member.inner_template_params.empty()) {
 			const FunctionDeclarationNode& ool_func = out_of_line_member.function_node.as<FunctionDeclarationNode>();
 			const DeclarationNode& ool_decl = ool_func.decl_node();
 			std::string_view ool_func_name = ool_decl.identifier_token().value();
@@ -11746,11 +11754,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			bool saw_insufficient_replay_evidence = false;
 			bool saw_ambiguous_replay_match = false;
 			for (const auto& source_member : effective_member_functions) {
-				if (!isMatchingMemberTemplate(
-						source_member,
-						ool_func_name,
-						ool_inner_template_param_count,
-						ool_function_param_count)) {
+				const bool candidate_matches =
+					out_of_line_member.inner_params_belong_to_member_class
+						? isMatchingMemberTemplateWithItsOwnParameters(
+							  source_member,
+							  ool_func_name,
+							  ool_function_param_count)
+						: isMatchingMemberTemplate(
+							  source_member,
+							  ool_func_name,
+							  ool_inner_template_param_count,
+							  ool_function_param_count);
+				if (!candidate_matches) {
 					continue;
 				}
 				ASTNode* matched_stub = findSourceMemberStubByIdentity(
@@ -11770,6 +11785,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (matched_template_func_decl->has_template_body_position()) {
 					continue;
 				}
+				// When the out-of-line inner template head belongs to the member
+				// class template, the function's own template parameters were not
+				// captured by it; compare against the candidate's own parameters.
+				const std::span<const TemplateParameterNode> out_of_line_inner_params =
+					out_of_line_member.inner_params_belong_to_member_class
+						? std::span<const TemplateParameterNode>(
+							  source_member.function_declaration
+								  .as<TemplateFunctionDeclarationNode>()
+								  .template_parameters()
+								  .data(),
+							  source_member.function_declaration
+								  .as<TemplateFunctionDeclarationNode>()
+								  .template_parameters()
+								  .size())
+						: std::span<const TemplateParameterNode>(
+							  out_of_line_member.inner_template_params.data(),
+							  out_of_line_member.inner_template_params.size());
 				ReplaySignatureMatchResult signature_match =
 					nestedOutOfLineMemberTemplateMatchesCandidate(
 						*this,
@@ -11783,9 +11815,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_args_to_use.size()),
 						struct_type_info.registeredTypeIndex().withCategory(
 							TypeCategory::Struct),
-						std::span<const TemplateParameterNode>(
-							out_of_line_member.inner_template_params.data(),
-							out_of_line_member.inner_template_params.size()));
+						out_of_line_inner_params);
 				if (signature_match == ReplaySignatureMatchResult::InsufficientEvidence) {
 					saw_insufficient_replay_evidence = true;
 					continue;
@@ -11936,7 +11966,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Replay-first plain-member attachment path: match the out-of-line definition
 		// against source declarations, then resolve directly to the instantiated stub
-		// through source-member -> stub identity.
+		// through source-member -> stub identity. The merged effective parameter and
+		// argument lists pair the enclosing template's bindings with this class's
+		// own, so a plain member of a member class template substitutes both
+		// (Owner<T>::Box<U>::value substitutes T and U).
+		const std::span<const TemplateParameterNode> plain_replay_template_params(
+			effective_template_params.data(),
+			effective_template_params.size());
+		const std::span<const TemplateTypeArg> plain_replay_template_args(
+			effective_template_args.data(),
+			effective_template_args.size());
 		bool found_match = false;
 		OutOfLineMemberStubResolution plain_member_resolution =
 			findPlainOutOfLineMemberStubByIdentity(
@@ -11946,12 +11985,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					effective_member_functions.data(),
 					effective_member_functions.size()),
 				func_decl,
-				std::span<const TemplateParameterNode>(
-					out_of_line_member.template_params.data(),
-					out_of_line_member.template_params.size()),
-				std::span<const TemplateTypeArg>(
-					template_args_to_use.data(),
-					template_args_to_use.size()),
+				plain_replay_template_params,
+				plain_replay_template_args,
 				struct_type_info.registeredTypeIndex().withCategory(
 					TypeCategory::Struct));
 		if (FunctionDeclarationNode* inst_func = plain_member_resolution.func;
@@ -11964,12 +11999,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::span<const ASTNode>(
 					func_decl.parameter_nodes().data(),
 					func_decl.parameter_nodes().size()),
-				std::span<const TemplateParameterNode>(
-					out_of_line_member.template_params.data(),
-					out_of_line_member.template_params.size()),
-				std::span<const TemplateTypeArg>(
-					template_args_to_use.data(),
-					template_args_to_use.size()),
+				plain_replay_template_params,
+				plain_replay_template_args,
 				struct_type_info.registeredTypeIndex().withCategory(
 					TypeCategory::Struct));
 			const std::span<const ASTNode> inst_func_params = inst_func->parameter_nodes();
@@ -12002,12 +12033,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				out_of_line_member.body_start,
 				out_of_line_member.definition_lookup_context,
 				decl.identifier_token(),
-				std::span<const TemplateParameterNode>(
-					out_of_line_member.template_params.data(),
-					out_of_line_member.template_params.size()),
-				std::span<const TemplateTypeArg>(
-					template_args_to_use.data(),
-					template_args_to_use.size()),
+				plain_replay_template_params,
+				plain_replay_template_args,
 				pattern_owner_struct_node,
 				"primary-template",
 				decl.identifier_token().value());
