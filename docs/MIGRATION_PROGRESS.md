@@ -458,6 +458,21 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
+Latest validation for out-of-line `= default` / `= delete`:
+`Parser::isDefaultableMemberFunction` classifies special members and comparison
+operators, and the in-class and all out-of-line paths reject a non-special
+`= default` with `DefaultedFunctionNotSpecialMember` (#1017) and a deleted
+definition that is not the first declaration (any out-of-line member without
+explicit specialisation) with `DeletedDefinitionNotFirstDeclaration` (#1018).
+Out-of-line `= default` now materializes for a non-template constructor/copy
+assignment and for a class-template constructor; nine runner tests cover the
+positive and both negative rules. Two valid forms still fail at instantiation
+for pre-existing stub-resolution reasons (template destructors and nested
+member-class constructors; see [known issues](KNOWN_ISSUES.md)): their `= default`
+and body forms are unaffected by the placement rules. The full single-file and
+multi-TU runner passed (2991 single-file + 12 multi-TU, 272 negative, 0
+failures). Fixed-corpus migration counters remain within baseline.
+
 Latest validation for out-of-line plain members of a member class template:
 sharded rebuild; `test_member_class_template_ool_plain_member_ret0` proves
 `template <typename T> template <typename U> int Owner<T>::Box<U>::scaled()`

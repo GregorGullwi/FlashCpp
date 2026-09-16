@@ -32,6 +32,10 @@ enum class OutOfLineMemberFunctionFlags : uint8_t {
 	//   template<typename T> template<typename U> template<typename V>
 	//   V Owner<T>::Box<U>::convert(V v);
 	FunctionHasOwnTemplateHead = 1 << 2,
+	// The out-of-line definition is '= default'. Instantiation materializes the
+	// corresponding member as an explicitly-defaulted (empty-body) function
+	// instead of replaying a body.
+	IsDefaulted = 1 << 3,
 };
 
 inline OutOfLineMemberFunctionFlags operator|(OutOfLineMemberFunctionFlags a,

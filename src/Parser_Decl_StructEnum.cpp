@@ -620,6 +620,46 @@ ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNod
 	return validateOperatorSignature(func_decl, true);
 }
 
+bool Parser::isDefaultableMemberFunction(
+	const FunctionDeclarationNode& func_decl,
+	std::string_view class_simple_name) const {
+	const std::string_view name =
+		func_decl.decl_node().identifier_token().value();
+	// Constructors and destructors are special member functions.
+	if (name == class_simple_name) {
+		return true;
+	}
+	if (name.size() == class_simple_name.size() + 1 &&
+		name.front() == '~' && name.substr(1) == class_simple_name) {
+		return true;
+	}
+	// A comparison operator may be defaulted; its single parameter must be a
+	// const lvalue reference to the class ([class.compare.default]).
+	if (name == "operator==" || name == "operator<=>") {
+		const std::span<const ASTNode> params = func_decl.parameter_nodes();
+		if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
+			return false;
+		}
+		const TypeSpecifierNode& param =
+			params[0].as<DeclarationNode>().type_specifier_node();
+		return param.is_lvalue_reference() &&
+			hasCVQualifier(param.cv_qualifier(), CVQualifier::Const) &&
+			param.token().value() == class_simple_name;
+	}
+	// Copy/move assignment operators are special member functions; the first
+	// parameter names the class type.
+	if (name == "operator=") {
+		const std::span<const ASTNode> params = func_decl.parameter_nodes();
+		if (params.empty() || !params[0].is<DeclarationNode>()) {
+			return false;
+		}
+		const TypeSpecifierNode& param =
+			params[0].as<DeclarationNode>().type_specifier_node();
+		return param.token().value() == class_simple_name;
+	}
+	return false;
+}
+
 ParseResult Parser::parse_struct_declaration() {
 	return parse_struct_declaration_with_specs(false, false);
 }
@@ -3032,6 +3072,21 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Handle defaulted functions: set implicit flag and create empty body
 			if (is_defaulted) {
+				// Only special member functions and comparison operators may be
+				// explicitly defaulted ([dcl.fct.def.default]/1).
+				if (!isDefaultableMemberFunction(
+						member_func_ref,
+						StringTable::getStringView(struct_name))) {
+					const std::string message =
+						"Only special member functions and comparison operators may be defaulted";
+					context_.diagnostics().report(
+						DiagnosticId::DefaultedFunctionNotSpecialMember,
+						DiagnosticSeverity::Error,
+						lexer_.getSourceLocation(current_token_),
+						message,
+						{});
+					return ParseResult::error(message, current_token_);
+				}
 				// Expect ';'
 				if (!consume(";"_tok)) {
 					return ParseResult::error("Expected ';' after '= default'", peek_info());

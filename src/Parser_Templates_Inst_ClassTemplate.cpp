@@ -12191,6 +12191,41 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				copyDefinitionParameterIdentifiers(
 					ctor.parameter_nodes(),
 					func_decl.parameter_nodes());
+				// An out-of-line '= default' definition has no body to replay;
+				// materialize the instantiated constructor as explicitly
+				// defaulted with an empty body, mirroring the in-class path.
+				if (hasOutOfLineMemberFunctionFlag(
+						out_of_line_member.flags,
+						OutOfLineMemberFunctionFlags::IsDefaulted)) {
+					auto [default_block_node, default_block_ref] =
+						create_node_ref(BlockNode());
+					(void)default_block_ref;
+					ctor.set_is_implicit(true);
+					ctor.set_is_explicitly_defaulted(true);
+					ctor.set_is_inline(true);
+					ctor.set_definition(default_block_node);
+					if (struct_type_info.getStructInfo() != nullptr) {
+						OutOfLineConstructorStubResolution info_resolution =
+							findReplayedOutOfLineConstructorInStructInfo(
+								struct_type_info.getStructInfo(),
+								struct_info_member_identity_maps,
+								ctor_resolution.source_member,
+								ctor,
+								[](const ConstructorDeclarationNode& info_ctor) {
+									return !info_ctor.is_materialized();
+								});
+						if (info_resolution.ctor != nullptr) {
+							info_resolution.ctor->set_is_implicit(true);
+							info_resolution.ctor->set_is_explicitly_defaulted(true);
+							info_resolution.ctor->set_is_inline(true);
+							info_resolution.ctor->set_definition(default_block_node);
+						}
+					}
+					registerLateMaterializedOwningStructRoot(instantiated_name);
+					normalizePendingSemanticRoots();
+					found_match = true;
+					continue;
+				}
 				// Save current position
 				SaveHandle saved_pos = save_token_position();
 

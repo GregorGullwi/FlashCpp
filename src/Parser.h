@@ -1775,6 +1775,11 @@ private:
 	ParseResult parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl);
 	ParseResult validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const;
 	ParseResult validateMemberOperatorSignature(const FunctionDeclarationNode& func_decl) const;
+	// A function that may carry a valid '= default': a special member function
+	// (constructor, destructor, copy/move assignment) or a comparison operator
+	// ([dcl.fct.def.default]). `class_simple_name` is the unqualified class name.
+	bool isDefaultableMemberFunction(const FunctionDeclarationNode& func_decl,
+		std::string_view class_simple_name) const;
 	ParseResult parse_namespace();
 	ParseResult parse_using_directive_or_declaration();	// Parse using directive/declaration/alias
 	ParseResult parse_type_specifier();
