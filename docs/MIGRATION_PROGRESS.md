@@ -5,17 +5,19 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-16 after mutation-validating nested callable parameter
-identity on `codex/boundary-3a-nested-function-signature-identity`: the
-declaration-builder bridge imports `void (*)(int)` and `void (*)(double)`
-structurally and publishes distinct entities without the flat
-`matches_signature` fallback; `SymbolTable` merge and overload conversion now
-also compare retained callable signatures, so overload calls distinguish native
-and record parameter types end to end. Earlier on `main`: out-of-line member-class-
-template definitions on `boundary-3a-ool-member-template-attachment`,
-identity-resolved friend declarations naming member class-template
-specializations through instantiated owner chains, and nested member
-class-template Spec-rooted dependent stamping.
+Last updated: 2026-09-16 after landing callable substitution on
+`boundary-3a-callable-substitute`: `CanonicalTypeTable::substitute` now walks
+`Function`, `MemberObjectPointer`, and `MemberFunctionPointer` nodes instead of
+throwing, rebuilding return and parameter types and member-pointer owner/pointee
+through the same environment while preserving calling convention, cv/ref
+qualifiers, variadic, plain noexcept, dll linkage, and the opaque
+dependent-noexcept `ExprId`; a substitution that would compose an invalid
+callable or member-pointer shape fails closed. Earlier on `main`: nested callable
+parameter builder identity on
+`codex/boundary-3a-nested-function-signature-identity`, out-of-line member-class-
+template definitions, identity-resolved friend declarations naming member
+class-template specializations through instantiated owner chains, and nested
+member class-template Spec-rooted dependent stamping.
 
 ## Current boundary and handoff
 
@@ -345,8 +347,14 @@ during concrete alias materialization. This fixes forwarded aliases such as
   owner/index arguments, and
   leaves unresolved member tips as DependentName-family nodes (concrete
   qualifiers allowed only as substitute results; public `dependentName` still
-  requires a dependent qualifier kind). Function and member-pointer walks throw.
-  Nodes remain 16 bytes.
+  requires a dependent qualifier kind). `Function`, `MemberObjectPointer`, and
+  `MemberFunctionPointer` walks substitute return and parameter element types and
+  member-pointer owner/pointee iteratively, rebuild the `FunctionParam` link list,
+  preserve calling convention / cv / ref / variadic / plain noexcept / dll
+  linkage and the opaque dependent-noexcept `ExprId`, and fail closed when a
+  substituted return type, undecayed parameter, non-Record owner, or wrong
+  member-pointer pointee category would result. Pack and template-template
+  arguments remain deferred. Nodes remain 16 bytes.
 - `ExpressionSubstitutor::substituteInType` runs the legacy TypeIndex body
   unchanged, then fail-closed overlays `dependent_name_type_` when
   `CanonicalTypeTable::substitute` succeeds with a unique TemplateDeclId
@@ -388,9 +396,11 @@ during concrete alias materialization. This fixes forwarded aliases such as
   declarations, expression-side member-access/call owner materialization, and
   direct-member replay) now resolve through identity. Dependent-owner and
   template-parameterized friend forms (`template <...> friend struct
-  Outer<T>::Box<int>;`) and OOL member class-template definitions remain on
-  their legacy paths. Stop here for review before starting another family, 3B,
-  or the parallel frontend experiment.
+  Outer<T>::Box<int>;`) remain on their legacy paths. `CanonicalTypeTable::
+  substitute` now closes the function and member-pointer walk deferral; the next
+  still-Unmigrated callable, dependent, or template adapter family still has to
+  be selected and bounded before expanding boundary-1 coverage. Stop here for
+  review before starting another family, 3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -459,6 +469,28 @@ Preserve these ownership contracts during subsequent migration:
   object's text. See architecture boundary 2 in the plan for the ABI decision.
 
 ## Validation and compatibility baselines
+
+Latest validation for callable substitution: the native architecture harness
+(`tests/architecture/run_canonical_types.py`) builds `checkCallableSubstitution`
+into `CanonicalTypeTests::run()` and proves that a function type substitutes its
+return and parameter element types while keeping cv/ref, variadic, calling
+convention, dll linkage, and the dependent-noexcept `ExprId`; that member function
+and member object pointers substitute owner and pointee; that an interleaved
+array/pointer/member-function-pointer/function declarator has one structural
+result; that a foreign environment is untouched; that substitution of an already
+concrete callable interns no new nodes; that a 65,536-deep pointer chain
+substitutes without native recursion; and that a member object pointer whose
+pointee substitutes to a function type is rejected. Five new mutation anchors
+(`lost_substitute_function_return`, `lost_substitute_function_parameter`,
+`lost_substitute_member_pointer_pointee`,
+`lost_substitute_function_dependent_noexcept`, `lost_substitute_function_cv`)
+each make the harness exit 1, so the walk, the owner/pointee split, and the
+preserved metadata are all mutation-validated. The sharded MSVC rebuild is
+warning-free, the 25-supported / zero-deferred canonical adapter corpus, all
+migration counters, and the static dollar inventory stay within baseline, and the
+full runner passed (3,024 single-file + 12 multi-TU, 275 negative, 0 failures).
+The doctest translation unit that embeds the same header compiles under clang-cl
+`/W4 /WX`.
 
 Latest validation for nested callable declaration-builder identity: the parser-
 level `DeclarationBuilder distinguishes nested function parameter signatures`
@@ -611,9 +643,10 @@ Advanced, not completed:
   TemplateSpecialization qualifiers, production stamping of Spec-rooted chains
   for DependentInstantiation / CurrentInstantiation / UnknownSpecialization
   owners (plain members and type-only member template-ids), and opaque
-  structural `CanonicalTypeTable::substitute` for type-parameter environments,
-  production fail-closed `dependent_name_type_` restamp through
-  ExpressionSubstitutor, opaque named type-member schemas with
+  structural `CanonicalTypeTable::substitute` for type-parameter environments
+  including function and member-pointer graphs (metadata preserved, invalid
+  compositions fail closed), production fail-closed `dependent_name_type_`
+  restamp through ExpressionSubstitutor, opaque named type-member schemas with
   `tryResolveDependentTip`, production fail-closed publish of Supported nested
   typedef/using schemas on complete published records, and ExpressionSubstitutor
   tip-resolve restamp (Set DependentName-family / Clear on collapse), nested
@@ -708,9 +741,10 @@ must not increase an implementation percentage.
   Richer adapters still block expanding boundary-1 shadow coverage (default
   arguments, exception specifications, fields, templates) or removing
   `SymbolTable` merge / `matches_signature` authority. Nested concrete callable
-  parameters are proved canonical at the builder choke point; select and bound
-  the next still-Unmigrated callable, dependent, or template adapter family
-  before expanding that coverage.
+  parameters are proved canonical at the builder choke point and
+  `CanonicalTypeTable::substitute` now walks function and member-pointer graphs;
+  select and bound the next still-Unmigrated callable, dependent, or template
+  adapter family before expanding that coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

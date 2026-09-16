@@ -219,6 +219,35 @@ def main():
             "lost_substitute_parameter": (
                 "memo.emplace(frame.id.value, args[index]);",
                 "memo.emplace(frame.id.value, frame.id);"),
+            "lost_substitute_function_return": (
+                "const TypeId substituted_return = memo.at(node.child.value);",
+                "const TypeId substituted_return = node.child;"),
+            "lost_substitute_function_parameter": (
+                "const CanonicalTypeNode parameter_link_node = nodeUnlocked(param_link);\n"
+                "\t\t\t\t\tconst TypeId original =\n"
+                "\t\t\t\t\t\tTypeId{static_cast<uint32_t>(parameter_link_node.array_extent)};\n"
+                "\t\t\t\t\tconst TypeId substituted = memo.at(original.value);",
+                "const CanonicalTypeNode parameter_link_node = nodeUnlocked(param_link);\n"
+                "\t\t\t\t\tconst TypeId original =\n"
+                "\t\t\t\t\t\tTypeId{static_cast<uint32_t>(parameter_link_node.array_extent)};\n"
+                "\t\t\t\t\tconst TypeId substituted = original;"),
+            "lost_substitute_member_pointer_pointee": (
+                "const TypeId substituted_pointee = memo.at(node.child.value);",
+                "const TypeId substituted_pointee = node.child;"),
+            "lost_substitute_function_dependent_noexcept": (
+                ".array_extent = packFunctionArrayExtent(\n"
+                "\t\t\t\t\t\trebuilt_param_link, unpackFunctionDependentNoexcept(node.array_extent)),",
+                ".array_extent = packFunctionArrayExtent(\n"
+                "\t\t\t\t\t\trebuilt_param_link, ExprId{}),"),
+            "lost_substitute_function_cv": (
+                ".kind = CanonicalTypeKind::Function,\n"
+                "\t\t\t\t\t.builtin = node.builtin,\n"
+                "\t\t\t\t\t.qualifiers = node.qualifiers,\n"
+                "\t\t\t\t\t.flags = node.flags,",
+                ".kind = CanonicalTypeKind::Function,\n"
+                "\t\t\t\t\t.builtin = node.builtin,\n"
+                "\t\t\t\t\t.qualifiers = CVQualifier::None,\n"
+                "\t\t\t\t\t.flags = node.flags,"),
             "lost_template_specialization": (
                 ".child = rebuildMixedTemplateArgListUnlocked(arguments),\n"
                 "\t\t\t.kind = CanonicalTypeKind::TemplateSpecialization,\n"
