@@ -1872,6 +1872,20 @@ private:
 	ParseResult parse_static_assert();	   // NEW: Parse static_assert declarations
 	ParseResult parse_friend_declaration();	// NEW: Parse friend declarations
 	ParseResult parse_template_friend_declaration(StructDeclarationNode& struct_node);  // NEW: Parse template friend declarations
+	// Shared component-wise parse and identity-first resolution for a friend
+	// class / class-template name. The caller has consumed 'friend' and any
+	// 'class' / 'struct'; owner template arguments are a type-system lookup key
+	// only, the member primary spelling drops them, and the resolved declaration,
+	// primary template spelling, and member specialization arguments are returned
+	// for the friend node. Reports MalformedFriendClassDeclaration /
+	// FriendClassNotDeclared for a rejected name.
+	struct FriendClassSpec {
+		StringHandle selected_name;
+		StringHandle selected_template_name;
+		const StructDeclarationNode* selected_declaration = nullptr;
+		TemplateArgumentVector template_arguments;
+	};
+	ParseResult parseFriendClassSpec(FriendClassSpec& out);
 	void registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info);	// Helper: register friend in StructTypeInfo (all kinds)
 	// C++20 [temp.friend]/1 / [temp.inst]: materialize hidden friend function
 	// definitions for a class-template specialization from the pattern friends.

@@ -5,19 +5,19 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-16 after landing callable substitution on
-`boundary-3a-callable-substitute`: `CanonicalTypeTable::substitute` now walks
-`Function`, `MemberObjectPointer`, and `MemberFunctionPointer` nodes instead of
-throwing, rebuilding return and parameter types and member-pointer owner/pointee
-through the same environment while preserving calling convention, cv/ref
-qualifiers, variadic, plain noexcept, dll linkage, and the opaque
-dependent-noexcept `ExprId`; a substitution that would compose an invalid
-callable or member-pointer shape fails closed. Earlier on `main`: nested callable
-parameter builder identity on
-`codex/boundary-3a-nested-function-signature-identity`, out-of-line member-class-
-template definitions, identity-resolved friend declarations naming member
-class-template specializations through instantiated owner chains, and nested
-member class-template Spec-rooted dependent stamping.
+Last updated: 2026-09-16 after landing template-friend member identity on
+`boundary-3a-template-friend-member-ids`: the `template <...> friend
+struct/class Owner<...>::Member<...>;` class branch now parses the friend name
+with the same component-wise owner-chain parser as non-template friend
+declarations and resolves the member primary by identity, instead of failing on
+the trailing template-id with the legacy spelling-suffix path. A friend naming
+member specialization arguments uses the exact-specialization representation
+(`FriendKind::Class` with declaration, primary spelling, and arguments); a bare
+name keeps `FriendKind::TemplateClass`. Earlier on `main`: callable substitution
+on `boundary-3a-callable-substitute`, nested callable parameter builder identity,
+out-of-line member-class-template definitions, identity-resolved friend
+declarations naming member class-template specializations through instantiated
+owner chains, and nested member class-template Spec-rooted dependent stamping.
 
 ## Current boundary and handoff
 
@@ -163,7 +163,12 @@ the same choke point; the declarator now parses the owner chain component-wise,
 so owner template arguments (`friend struct Outer<int>::Box<char>;`) are a
 type-system lookup key only while the member primary spelling drops them
 (`Outer::Box`) and the member's own arguments remain the granted
-specialization. Instantiated-owner alias and variable
+specialization. The `template <...> friend struct/class Owner<...>::Member<...>;`
+class branch shares that parser and identity resolution instead of the retired
+spelling-suffix path, so a member specialization argument is accepted and the
+member primary binds by identity; a bare friend class-template name keeps the
+all-specializations `FriendKind::TemplateClass` representation.
+Instantiated-owner alias and variable
 chains (`Outer<int>::Meter`),
 dependent alias families, the `<` gate alias arm, and
 alias partial specializations still resolve through their legacy paths. The
@@ -384,13 +389,14 @@ during concrete alias materialization. This fixes forwarded aliases such as
   dependent stamping and the named qualified member-template chain consumers
   (instantiated-owner chains such as `Outer<int>::Box`, friend-of-member-template
   declarations, expression-side member-access/call owner materialization, and
-  direct-member replay) now resolve through identity. Dependent-owner and
-  template-parameterized friend forms (`template <...> friend struct
-  Outer<T>::Box<int>;`) remain on their legacy paths. `CanonicalTypeTable::
-  substitute` now closes the function and member-pointer walk deferral; the next
-  still-Unmigrated callable, dependent, or template adapter family still has to
-  be selected and bounded before expanding boundary-1 coverage. Stop here for
-  review before starting another family, 3B, or the parallel frontend experiment.
+  direct-member replay) now resolve through identity. Template-parameterized
+  friend member class-template ids (`template <...> friend struct
+  Outer<T>::Box<int>;`) now parse component-wise and bind their member primary by
+  identity too. `CanonicalTypeTable::substitute` closes the function and
+  member-pointer walk deferral; the next still-Unmigrated callable, dependent, or
+  template adapter family still has to be selected and bounded before expanding
+  boundary-1 coverage. Stop here for review before starting another family, 3B,
+  or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -459,6 +465,24 @@ Preserve these ownership contracts during subsequent migration:
   object's text. See architecture boundary 2 in the plan for the ABI decision.
 
 ## Validation and compatibility baselines
+
+Latest validation for template-friend member identity: the `FrontendContext`
+doctest `Template friend declaration resolves its member primary by identity`
+parses `template <typename T> friend struct WideOwner<T>::WideBox<int>;` and the
+same-spelling `NarrowOwner<T>::NarrowBox<int>` form and checks that each
+`FriendDeclarationNode` uses the exact-specialization kind, resolves a non-null
+member-primary declaration, and that the two same-spelling-bound primaries are
+distinct AST nodes with `WideOwner::WideBox` / `NarrowOwner::NarrowBox` primary
+spellings. `test_template_friend_member_identity_ret0` exercises a dependent owner
+with a concrete argument, a concrete owner, and a dependent member argument end
+to end. The three forms previously failed to compile with "Expected ';' after
+template friend class declaration". The sharded MSVC rebuild is warning-free, the
+full runner passed (3,025 single-file + 12 multi-TU, 275 negative, 0 failures),
+and all migration counters and the static dollar inventory stay within baseline.
+Note: private access through a member class-template friend is not granted even
+for the plain concrete non-template form (the access check reports the private
+member but the compiler still exits 0), so that enforcement is a separate
+pre-existing defect, not part of this parse/identity slice.
 
 Latest validation for callable substitution: the native architecture harness
 (`tests/architecture/run_canonical_types.py`) builds `checkCallableSubstitution`
@@ -547,9 +571,11 @@ Advanced, not completed:
   adjustment, and `ExpressionSubstitutor` substitution; `Record` / `Enum`
   `EntityId` identity, complete-object layout, and member/base field schemas;
   opaque `TemplateParameter`, `TemplateSpecialization`, `DependentName`, and
-  `DependentTemplateMember` identity; and production member-template identity
+  `DependentTemplateMember` identity; production member-template identity
   publication (class, function, alias, and variable primaries) with qualified
-  owner chains resolving through published IDs. The landed-family inventory
+  owner chains resolving through published IDs; and template-parameterized
+  friend member class-template ids resolving their member primary by identity.
+  The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
   dependent stamping, unpublished/incomplete nominal, anonymous-union, and
   unpublished-base forms, the remaining dependent/template arguments, and

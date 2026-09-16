@@ -4021,6 +4021,94 @@ TEST_SUITE("Diagnostics") {
 		CHECK(threw);
 	}
 
+	TEST_CASE("Template friend declaration resolves its member primary by identity") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code = R"(
+struct FriendPayload {};
+template <typename T>
+struct WideOwner {
+	template <typename U> struct WideBox { U inner; };
+};
+template <typename T>
+struct NarrowOwner {
+	template <typename U> struct NarrowBox { U inner; };
+};
+struct FriendHostWide {
+	template <typename T>
+	friend struct WideOwner<T>::WideBox<int>;
+	int markerWide = 1;
+};
+struct FriendHostNarrow {
+	template <typename T>
+	friend struct NarrowOwner<T>::NarrowBox<int>;
+	int markerNarrow = 2;
+};
+)";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("template_friend_member_identity.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const StructDeclarationNode* wide_host = nullptr;
+		const StructDeclarationNode* narrow_host = nullptr;
+		for (const ASTNode& node : parser.get_nodes()) {
+			if (!node.is<StructDeclarationNode>()) {
+				continue;
+			}
+			const StructDeclarationNode& candidate = node.as<StructDeclarationNode>();
+			if (candidate.name() ==
+				StringTable::getOrInternStringHandle("FriendHostWide")) {
+				wide_host = &candidate;
+			} else if (candidate.name() ==
+				StringTable::getOrInternStringHandle("FriendHostNarrow")) {
+				narrow_host = &candidate;
+			}
+		}
+		REQUIRE(wide_host != nullptr);
+		REQUIRE(narrow_host != nullptr);
+
+		const std::span<const ASTNode> wide_friends =
+			wide_host->friend_declarations();
+		REQUIRE(wide_friends.size() == 1u);
+		REQUIRE(wide_friends[0].is<FriendDeclarationNode>());
+		const FriendDeclarationNode& wide_friend =
+			wide_friends[0].as<FriendDeclarationNode>();
+
+		const std::span<const ASTNode> narrow_friends =
+			narrow_host->friend_declarations();
+		REQUIRE(narrow_friends.size() == 1u);
+		REQUIRE(narrow_friends[0].is<FriendDeclarationNode>());
+		const FriendDeclarationNode& narrow_friend =
+			narrow_friends[0].as<FriendDeclarationNode>();
+
+		// A friend naming member specialization arguments uses the exact-
+		// specialization representation, not the legacy all-specializations kind.
+		CHECK(wide_friend.kind() == FriendKind::Class);
+		CHECK(narrow_friend.kind() == FriendKind::Class);
+
+		// The member primary resolves by identity: both declarations name a
+		// distinct member template, and the same-spelling-bound primaries are
+		// different AST nodes with different owner-derived template names.
+		REQUIRE(wide_friend.class_declaration() != nullptr);
+		REQUIRE(narrow_friend.class_declaration() != nullptr);
+		CHECK(wide_friend.class_declaration() != narrow_friend.class_declaration());
+		CHECK(StringTable::getStringView(wide_friend.class_template_name()) ==
+			"WideOwner::WideBox"sv);
+		CHECK(StringTable::getStringView(narrow_friend.class_template_name()) ==
+			"NarrowOwner::NarrowBox"sv);
+
+		// The granted specialization arguments are retained.
+		REQUIRE(wide_friend.class_template_arguments().size() == 1u);
+		REQUIRE(narrow_friend.class_template_arguments().size() == 1u);
+	}
+
 	TEST_CASE("Record size inventory for stored diagnostic records") {
 		// Cold-path records; sizes documented here so future layout changes
 		// are conscious decisions rather than accidents.
