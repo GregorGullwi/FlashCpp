@@ -249,21 +249,15 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						}
 					}
 
-						// Save body position and handle body / = default / = delete
-					bool ctor_is_defaulted = false;
-					bool ctor_is_deleted = false;
+						// Save body position and consume body / = default / = delete
 					SaveHandle ctor_body_start = save_token_position();
 					if (peek() == "{"_tok) {
 						skip_balanced_braces();
 					} else if (peek() == "="_tok) {
 							// Handle = default; and = delete;
 						advance(); // consume '='
-						if (peek() == "default"_tok) {
-							ctor_is_defaulted = true;
-							advance(); // consume 'default'
-						} else if (peek() == "delete"_tok) {
-							ctor_is_deleted = true;
-							advance(); // consume 'delete'
+						if (peek() == "default"_tok || peek() == "delete"_tok) {
+							advance(); // consume 'default'/'delete'
 						}
 						if (peek() == ";"_tok) {
 							advance(); // consume ';'
@@ -287,14 +281,6 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						out_of_line_ctor.flags,
 						OutOfLineMemberFunctionFlags::HasInitializerList,
 						ctor_has_initializer_list);
-					setOutOfLineMemberFunctionFlag(
-						out_of_line_ctor.flags,
-						OutOfLineMemberFunctionFlags::IsDefaulted,
-						ctor_is_defaulted);
-					setOutOfLineMemberFunctionFlag(
-						out_of_line_ctor.flags,
-						OutOfLineMemberFunctionFlags::IsDeleted,
-						ctor_is_deleted);
 					out_of_line_ctor.definition_lookup_context =
 						buildDefinitionLookupContextFromToken(
 							ctor_name_token,
@@ -950,14 +936,6 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.template_param_names = template_param_names;
 		out_of_line_member.inner_template_params = inner_template_params;
 		out_of_line_member.inner_template_param_names = inner_template_param_names;
-		setOutOfLineMemberFunctionFlag(
-			out_of_line_member.flags,
-			OutOfLineMemberFunctionFlags::IsDefaulted,
-			member_is_defaulted);
-		setOutOfLineMemberFunctionFlag(
-			out_of_line_member.flags,
-			OutOfLineMemberFunctionFlags::IsDeleted,
-			member_is_deleted);
 		setOutOfLineMemberFunctionFlag(
 			out_of_line_member.flags,
 			OutOfLineMemberFunctionFlags::HasInitializerList,

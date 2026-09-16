@@ -12,26 +12,26 @@ inline bool patternPointerDepthMatches(
 	return pattern_arg.pointer_depth == concrete_arg.pointer_depth;
 }
 
-// Facts recorded while scanning/parsing an out-of-line member definition,
-// packed into one byte.
+// Facts the out-of-line declarator scanner produces about a definition, packed
+// into one byte. = default / = delete is not duplicated here: that is general
+// function state owned by the function declaration, not an out-of-line fact.
 enum class OutOfLineMemberFunctionFlags : uint8_t {
 	None = 0,
-	// Function specifiers from the out-of-line definition (= default, = delete).
+	// The definition has a constructor member-initializer list before its body,
+	// so replay must start at ':' rather than '{'.
 	HasInitializerList = 1 << 0,
-	IsDefaulted = 1 << 1,
-	IsDeleted = 1 << 2,
 	// The out-of-line definition's inner template head belongs to an
 	// intervening member class template rather than to the function itself, e.g.
 	//   template<typename T> template<typename U> int Owner<T>::Box<U>::value();
 	// inner_template_params are then the member class's parameters, so the
 	// member may be a plain function and must not be matched as a function
 	// template by the inner parameter count.
-	InnerParamsBelongToMemberClass = 1 << 3,
+	InnerParamsBelongToMemberClass = 1 << 1,
 	// A further template head declares the out-of-line function itself as a
 	// template, e.g.
 	//   template<typename T> template<typename U> template<typename V>
 	//   V Owner<T>::Box<U>::convert(V v);
-	FunctionHasOwnTemplateHead = 1 << 4,
+	FunctionHasOwnTemplateHead = 1 << 2,
 };
 
 inline OutOfLineMemberFunctionFlags operator|(OutOfLineMemberFunctionFlags a,
