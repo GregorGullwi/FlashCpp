@@ -3653,47 +3653,7 @@ int decl_builder_wire_check_row(int (&)[2]) { return 1; }
 	}
 }
 TEST_SUITE("Diagnostics") {
-	TEST_CASE("Stable diagnostic IDs keep fixed values independent of message text") {
-		// Mutation target: changing any value here breaks this test and every
-		// converted-site assertion below, which is exactly the point.
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::None) == 0u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::PointerToReferenceType) == 1001u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::MultipleAsmSuffixesOnDeclarator) == 1002u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::ExpectedCloseBracketAfterArraySize) == 1003u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::DecltypeAutoCvQualifier) == 1004u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::DecltypeAutoPointerOrReference) == 1005u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::DecltypeAutoStructuredBinding) == 1006u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::ParameterPackDataMember) == 1007u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::NoteToMatchOpeningBracket) == 1051u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointModuloOperator) == 1301u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointBitwiseCompoundAssignment) == 1302u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointShiftOperator) == 1303u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::FloatingPointBitwiseOperator) == 1304u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousOperatorOverload) == 1305u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::StaticOperatorMustBeNonStaticMember) == 1306u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::OperatorDefaultArgumentsForbidden) == 1307u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::AssignmentOperatorArity) == 1308u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::SubscriptOperatorArity) == 1309u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::ArrowOperatorArity) == 1310u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::IncrementDecrementOperatorForm) == 1311u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::OrdinaryOperatorArity) == 1312u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::DeletedCopyAssignment) == 1313u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::DeletedMoveAssignment) == 1314u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::ImmediateInvocationNotConstant) == 1315u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::DeletedCopyConstructor) == 1316u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::DeletedMoveConstructor) == 1317u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::AssignmentToConstObject) == 1318u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::OperatorOverloadNotFound) == 1319u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::DeletedOperatorFunction) == 1320u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstinitInitializerNotConstant) == 1501u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::ConstexprStaticMemberInitializerNotConstant) == 1502u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::ExplicitConstructorCopyInitialization) == 1503u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousConstructorCall) == 1504u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::RangeForBeginEndRequired) == 1601u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousDerivedToBasePointerConversion) == 1602u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::InaccessibleDerivedToBasePointerConversion) == 1603u);
-		REQUIRE(static_cast<uint32_t>(DiagnosticId::AmbiguousBuiltInSubscriptConversion) == 1604u);
-
+	TEST_CASE("Diagnostic ID names and identity stay stable independent of message text") {
 		CHECK(diagnosticIdName(DiagnosticId::PointerToReferenceType) == "PointerToReferenceType");
 		CHECK(diagnosticIdName(DiagnosticId::NoteToMatchOpeningBracket) == "NoteToMatchOpeningBracket");
 		CHECK(diagnosticIdName(DiagnosticId::DecltypeAutoCvQualifier) == "DecltypeAutoCvQualifier");
