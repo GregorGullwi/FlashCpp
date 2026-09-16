@@ -5184,26 +5184,60 @@ ParseResult Parser::parse_friend_declaration() {
 	if (peek() == "class"_tok || peek() == "struct"_tok) {
 		advance(); // consume 'class'/'struct'
 
-		// Parse class name (may be qualified: Outer::Inner)
-		auto class_name_token = advance();
-		if (!class_name_token.kind().is_identifier()) {
-			return ParseResult::error("Expected class name after 'friend class'", current_token_);
+		// Parse a possibly qualified class-template-id component-wise so owner
+		// components may carry template arguments (friend struct
+		// Outer<int>::Box<char>). The final component names the friend template
+		// and its arguments are the friend specialization. Owner template
+		// arguments are a type-system lookup key only, so the member primary's
+		// spelling drops them (Outer::Box) exactly like the type-id identity
+		// path; the registry lookup stays the fail-closed fallback and the grant
+		// anchors to the right owner's primary, never a conflated same-spelling
+		// key.
+		struct FriendNameComponent {
+			Token token;
+			std::optional<TemplateArgumentVector> arguments;
+		};
+		std::vector<FriendNameComponent> friend_name_components;
+		for (;;) {
+			Token component_token = advance();
+			if (!component_token.kind().is_identifier()) {
+				return ParseResult::error("Expected class name after 'friend class'", current_token_);
+			}
+			FriendNameComponent component{component_token, std::nullopt};
+			if (peek() == "<"_tok) {
+				if (std::optional<TemplateArgumentVector> parsed_arguments =
+						parse_explicit_template_arguments();
+					parsed_arguments.has_value()) {
+					component.arguments = std::move(*parsed_arguments);
+				} else {
+					skip_template_arguments();
+				}
+			}
+			friend_name_components.push_back(std::move(component));
+			if (peek() != "::"_tok) {
+				break;
+			}
+			advance(); // consume '::'
 		}
 
-		// Handle qualified names: friend class locale::_Impl;
-		// Build full qualified name for proper friend resolution
-		std::string_view qualified_friend_name = consume_qualified_name_suffix(class_name_token.value());
+		StringBuilder friend_primary_name_builder;
+		for (size_t component_index = 0;
+			 component_index < friend_name_components.size();
+			 ++component_index) {
+			if (component_index > 0) {
+				friend_primary_name_builder.append("::");
+			}
+			friend_primary_name_builder.append(
+				friend_name_components[component_index].token.value());
+		}
+		const std::string_view friend_primary_name =
+			friend_primary_name_builder.commit();
 		StringHandle selected_friend_name =
-			StringTable::getOrInternStringHandle(qualified_friend_name);
+			StringTable::getOrInternStringHandle(friend_primary_name);
 		StringHandle selected_friend_template_name = selected_friend_name;
 		const StructDeclarationNode* selected_friend_declaration = nullptr;
-		// Qualified member class-template spellings resolve through identity
-		// first; the registry lookup stays the fail-closed fallback so the
-		// grant anchors to the right owner's primary, never a conflated
-		// same-spelling key.
 		if (std::optional<ASTNode> friend_template =
-				findClassTemplatePatternBySpelling(
-					StringTable::getStringView(selected_friend_name));
+				findClassTemplatePatternBySpelling(friend_primary_name);
 			friend_template.has_value() &&
 			friend_template->is<TemplateClassDeclarationNode>()) {
 			selected_friend_declaration =
@@ -5220,32 +5254,29 @@ ParseResult Parser::parse_friend_declaration() {
 			}
 		}
 		TemplateArgumentVector friend_template_arguments;
+		if (friend_name_components.back().arguments.has_value()) {
+			friend_template_arguments =
+				std::move(*friend_name_components.back().arguments);
+		}
 
 		// Preserve specialization arguments so instantiation can grant friendship
 		// to exactly the named specialization.
-		if (peek() == "<"_tok) {
-			if (std::optional<TemplateArgumentVector> parsed_arguments =
-					parse_explicit_template_arguments();
-				parsed_arguments.has_value()) {
-				friend_template_arguments = std::move(*parsed_arguments);
-				const bool arguments_are_concrete = std::none_of(
-					friend_template_arguments.begin(),
-					friend_template_arguments.end(),
-					[](const TemplateTypeArg& argument) {
-						return templateArgIsStructurallyDependent(argument);
-					});
-				if (arguments_are_concrete) {
-					selected_friend_name =
-						StringTable::getOrInternStringHandle(
-							get_instantiated_class_name(
-								StringTable::getStringView(
-									selected_friend_template_name),
-								std::span<const TemplateTypeArg>(
-									friend_template_arguments.data(),
-									friend_template_arguments.size())));
-				}
-			} else {
-				skip_template_arguments();
+		if (!friend_template_arguments.empty()) {
+			const bool arguments_are_concrete = std::none_of(
+				friend_template_arguments.begin(),
+				friend_template_arguments.end(),
+				[](const TemplateTypeArg& argument) {
+					return templateArgIsStructurallyDependent(argument);
+				});
+			if (arguments_are_concrete) {
+				selected_friend_name =
+					StringTable::getOrInternStringHandle(
+						get_instantiated_class_name(
+							StringTable::getStringView(
+								selected_friend_template_name),
+							std::span<const TemplateTypeArg>(
+								friend_template_arguments.data(),
+								friend_template_arguments.size())));
 			}
 		}
 
