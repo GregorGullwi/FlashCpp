@@ -9,27 +9,6 @@ path works for local typedefs. This is a local-class entity/TypeInfo ownership
 defect, not a canonical template-parameter stamping fallback; defer it until
 the member/local-class ownership work has a bounded authoritative owner.
 
-## Out-of-line template destructors and nested member-class constructors do not attach
-
-Two pre-existing out-of-line attachment defects block the valid `= default`
-forms they carry:
-
-- `template <typename T> struct A { ~A(); }; template <typename T> A<T>::~A() {}`
-  fails at instantiation with `Could not attach out-of-line constructor stub 'A'
-  ... via source-member identity mapping`. The out-of-line destructor is treated
-  as a constructor stub, and `findPlainOutOfLineConstructorStubByIdentity` only
-  resolves `ConstructorDeclarationNode` stubs.
-- `template <typename T> struct A { template <typename U> struct B { B(); }; };
-  template <typename T> template <typename U> A<T>::B<U>::B() {}` fails with the
-  same attach message for `B`; the nested member-class constructor stub is not
-  matched by the constructor-stub resolver.
-
-The corresponding `... ~A() = default;` and `... B<U>::B() = default;` forms are
-valid C++20 but cannot materialize for the same reason. The `= default` /
-`= delete` placement validation itself is implemented and covered by
-`test_defaulted_*_e1017` / `test_deleted_*_e1018`. Owner: out-of-line
-constructor/destructor stub resolution (boundary 8A).
-
 ## Declaration-parse errors are masked by the expression-statement fallback
 
 When `parse_function_declaration` returns a `ParseResult` error, the top-level

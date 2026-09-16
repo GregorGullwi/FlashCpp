@@ -761,11 +761,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// signature, including user-written copy and move constructors.
 	auto makeCurrentInstantiationTypeRewrite = [](
 		const ConstructorDeclarationNode& pattern_constructor,
-		TypeIndex instantiated_struct_type_index) -> CurrentInstantiationTypeRewrite {
+		TypeIndex instantiated_struct_type_index) -> std::optional<CurrentInstantiationTypeRewrite> {
 		TypeIndex pattern_struct_type_index = pattern_constructor.owning_type_index();
-		if (!pattern_struct_type_index.is_valid() || !instantiated_struct_type_index.is_valid()) {
+		if (!instantiated_struct_type_index.is_valid()) {
 			throw InternalError(
-				"Constructor parameter substitution requires canonical pattern and instantiated owner types");
+				"Constructor parameter substitution requires a canonical instantiated owner type");
+		}
+		if (!pattern_struct_type_index.is_valid()) {
+			return std::nullopt;
 		}
 		pattern_struct_type_index.setCategory(TypeCategory::Struct);
 		instantiated_struct_type_index.setCategory(TypeCategory::Struct);
@@ -12140,14 +12143,64 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						effective_member_functions.data(),
 						effective_member_functions.size()),
 					func_decl,
-					std::span<const TemplateParameterNode>(
-						out_of_line_member.template_params.data(),
-						out_of_line_member.template_params.size()),
-					std::span<const TemplateTypeArg>(
-						template_args_to_use.data(),
-						template_args_to_use.size()),
+					plain_replay_template_params,
+					plain_replay_template_args,
 					struct_type_info.registeredTypeIndex().withCategory(
 						TypeCategory::Struct));
+			if (ctor_resolution.dtor != nullptr) {
+				DestructorDeclarationNode& dtor = *ctor_resolution.dtor;
+				if (hasOutOfLineMemberFunctionFlag(
+						out_of_line_member.flags,
+						OutOfLineMemberFunctionFlags::IsDefaulted)) {
+					auto [default_block_node, default_block_ref] =
+						create_node_ref(BlockNode());
+					(void)default_block_ref;
+					dtor.set_definition(default_block_node);
+					registerLateMaterializedOwningStructRoot(instantiated_name);
+					normalizePendingSemanticRoots();
+					found_match = true;
+					continue;
+				}
+
+				SaveHandle saved_pos = save_token_position();
+				restore_lexer_position_only(out_of_line_member.body_start);
+				TemplateDefinitionLookupContext definition_lookup_context =
+					ensureReplayDefinitionLookupContext(
+						out_of_line_member.definition_lookup_context,
+						decl.identifier_token(),
+						gSymbolTable.get_current_namespace_handle(),
+						instantiated_name);
+				ScopedDefinitionLookupContext ctx_scope(
+					current_template_definition_lookup_context_,
+					definition_lookup_context.is_valid()
+						? &definition_lookup_context
+						: nullptr);
+				gSymbolTable.enter_scope(ScopeType::Function);
+				setup_member_function_context(
+					&instantiated_struct_ref,
+					instantiated_name,
+					struct_type_info.type_index_,
+					true);
+				auto body_result = parse_function_body(true);
+				member_function_context_stack_.pop_back();
+				gSymbolTable.exit_scope();
+				restore_lexer_position_only(saved_pos);
+				if (body_result.is_error() || !body_result.node().has_value()) {
+					continue;
+				}
+				ASTNode substituted_body = substituteTemplateParameters(
+					*body_result.node(),
+					plain_replay_template_params,
+					plain_replay_template_args,
+					struct_type_info.registeredTypeIndex().withCategory(
+						TypeCategory::Struct),
+					true);
+				dtor.set_definition(substituted_body);
+				registerLateMaterializedOwningStructRoot(instantiated_name);
+				normalizePendingSemanticRoots();
+				found_match = true;
+				continue;
+			}
 			if (ctor_resolution.ambiguous) {
 				std::string ambiguity_msg = std::string(StringBuilder()
 					.append("Could not uniquely match out-of-line constructor '")
@@ -12342,8 +12395,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								try {
 									ASTNode substituted_arg = substituteTemplateParameters(
 										arg,
-										out_of_line_member.template_params,
-										template_args_to_use);
+										plain_replay_template_params,
+										plain_replay_template_args);
 									substituted_args.push_back(substituted_arg);
 								} catch (const std::exception& e) {
 									FLASH_LOG(Templates, Error, "Exception during template parameter substitution in constructor initializer: ", e.what());
@@ -12438,8 +12491,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				try {
 					ASTNode substituted_body = substituteTemplateParameters(
 						*body_result.node(),
-						out_of_line_member.template_params,
-						template_args_to_use,
+						plain_replay_template_params,
+						plain_replay_template_args,
 						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
 						true);
 					ctor.set_definition(substituted_body);
