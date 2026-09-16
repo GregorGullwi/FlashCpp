@@ -12,6 +12,52 @@ inline bool patternPointerDepthMatches(
 	return pattern_arg.pointer_depth == concrete_arg.pointer_depth;
 }
 
+// Facts recorded while scanning/parsing an out-of-line member definition,
+// packed into one byte.
+enum class OutOfLineMemberFunctionFlags : uint8_t {
+	None = 0,
+	// Function specifiers from the out-of-line definition (= default, = delete).
+	HasInitializerList = 1 << 0,
+	IsDefaulted = 1 << 1,
+	IsDeleted = 1 << 2,
+	// The out-of-line definition's inner template head belongs to an
+	// intervening member class template rather than to the function itself, e.g.
+	//   template<typename T> template<typename U> int Owner<T>::Box<U>::value();
+	// inner_template_params are then the member class's parameters, so the
+	// member may be a plain function and must not be matched as a function
+	// template by the inner parameter count.
+	InnerParamsBelongToMemberClass = 1 << 3,
+	// A further template head declares the out-of-line function itself as a
+	// template, e.g.
+	//   template<typename T> template<typename U> template<typename V>
+	//   V Owner<T>::Box<U>::convert(V v);
+	FunctionHasOwnTemplateHead = 1 << 4,
+};
+
+inline OutOfLineMemberFunctionFlags operator|(OutOfLineMemberFunctionFlags a,
+	OutOfLineMemberFunctionFlags b) {
+	return static_cast<OutOfLineMemberFunctionFlags>(
+		static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+
+inline OutOfLineMemberFunctionFlags& operator|=(OutOfLineMemberFunctionFlags& a,
+	OutOfLineMemberFunctionFlags b) {
+	return a = a | b;
+}
+
+inline bool hasOutOfLineMemberFunctionFlag(OutOfLineMemberFunctionFlags flags,
+	OutOfLineMemberFunctionFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
+// Sets `bit` when `enabled` is true without branching: the boolean multiplies
+// the bit value, so the mask is either 0 or the bit itself.
+inline void setOutOfLineMemberFunctionFlag(OutOfLineMemberFunctionFlags& flags,
+	OutOfLineMemberFunctionFlags bit, bool enabled) {
+	flags |= static_cast<OutOfLineMemberFunctionFlags>(
+		static_cast<uint8_t>(bit) * static_cast<uint8_t>(enabled));
+}
+
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
 	TemplateParameterVector template_params; // Template parameters (e.g., <typename T>)
@@ -24,24 +70,10 @@ struct OutOfLineMemberFunction {
 	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
 	TemplateParameterVector inner_template_params;
 	TemplateParamNameVector inner_template_param_names;
-	// True when the out-of-line definition's inner template head belongs to an
-	// intervening member class template rather than to the function itself, e.g.
-	//   template<typename T> template<typename U> int Owner<T>::Box<U>::value();
-	// Here inner_template_params are Owner::Box's parameters, so the member
-	// `value` may be a plain function and must not be matched as a function
-	// template by the inner parameter count.
-	bool inner_params_belong_to_member_class = false;
-	// True when a further template head declares the out-of-line function itself
-	// as a template, e.g.
-	//   template<typename T> template<typename U> template<typename V>
-	//   V Owner<T>::Box<U>::convert(V v);
-	bool function_has_own_template_head = false;
 	TemplateDefinitionLookupContext definition_lookup_context; // Definition-context lookup boundary for two-phase lookup
 	const StructDeclarationNode* pattern_owner_struct_node = nullptr;
-	// Function specifiers from out-of-line definition (= default, = delete)
-	bool has_initializer_list = false;
-	bool is_defaulted = false;
-	bool is_deleted = false;
+	// Scanner/definition facts; see OutOfLineMemberFunctionFlags.
+	OutOfLineMemberFunctionFlags flags = OutOfLineMemberFunctionFlags::None;
 };
 
 // Outer template parameter bindings for member function templates of class templates.

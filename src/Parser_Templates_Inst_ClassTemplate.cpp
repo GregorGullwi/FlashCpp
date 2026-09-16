@@ -4427,7 +4427,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				[](const OutOfLineMemberFunction& lhs, const OutOfLineMemberFunction& rhs) {
 					if (lhs.body_start != rhs.body_start ||
 						lhs.initializer_list_start != rhs.initializer_list_start ||
-						lhs.has_initializer_list != rhs.has_initializer_list ||
+						lhs.flags != rhs.flags ||
 						lhs.pattern_owner_struct_node != rhs.pattern_owner_struct_node ||
 						lhs.inner_template_params.size() != rhs.inner_template_params.size() ||
 						lhs.template_params.size() != rhs.template_params.size() ||
@@ -11618,9 +11618,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// template (Owner<T>::Box<U>::value) and no further head declares the
 		// function as a template, the function is a plain member of that member
 		// class and is attached through the plain replay path below.
+		const bool inner_params_belong_to_member_class =
+			hasOutOfLineMemberFunctionFlag(
+				out_of_line_member.flags,
+				OutOfLineMemberFunctionFlags::InnerParamsBelongToMemberClass);
+		const bool function_has_own_template_head =
+			hasOutOfLineMemberFunctionFlag(
+				out_of_line_member.flags,
+				OutOfLineMemberFunctionFlags::FunctionHasOwnTemplateHead);
 		const bool out_of_line_function_is_template =
-			!out_of_line_member.inner_params_belong_to_member_class ||
-			out_of_line_member.function_has_own_template_head;
+			!inner_params_belong_to_member_class || function_has_own_template_head;
 		if (out_of_line_function_is_template &&
 			!out_of_line_member.inner_template_params.empty()) {
 			const FunctionDeclarationNode& ool_func = out_of_line_member.function_node.as<FunctionDeclarationNode>();
@@ -11755,7 +11762,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			bool saw_ambiguous_replay_match = false;
 			for (const auto& source_member : effective_member_functions) {
 				const bool candidate_matches =
-					out_of_line_member.inner_params_belong_to_member_class
+					inner_params_belong_to_member_class
 						? isMatchingMemberTemplateWithItsOwnParameters(
 							  source_member,
 							  ool_func_name,
@@ -11789,7 +11796,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// class template, the function's own template parameters were not
 				// captured by it; compare against the candidate's own parameters.
 				const std::span<const TemplateParameterNode> out_of_line_inner_params =
-					out_of_line_member.inner_params_belong_to_member_class
+					inner_params_belong_to_member_class
 						? std::span<const TemplateParameterNode>(
 							  source_member.function_declaration
 								  .as<TemplateFunctionDeclarationNode>()
@@ -12190,7 +12197,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Restore to the out-of-line definition position
 				// For constructors with initializer lists, restore to ':' so parse_function_body
 				// can parse the initializer list; otherwise restore to '{'.
-				if (out_of_line_member.has_initializer_list && out_of_line_member.initializer_list_start != 0) {
+				if (hasOutOfLineMemberFunctionFlag(
+						out_of_line_member.flags,
+						OutOfLineMemberFunctionFlags::HasInitializerList) &&
+					out_of_line_member.initializer_list_start != 0) {
 					restore_lexer_position_only(out_of_line_member.initializer_list_start);
 				} else {
 					restore_lexer_position_only(out_of_line_member.body_start);
@@ -12221,7 +12231,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					true);
 
 				// Parse constructor initializer list if present (before parsing body)
-				if (out_of_line_member.has_initializer_list) {
+				if (hasOutOfLineMemberFunctionFlag(
+						out_of_line_member.flags,
+						OutOfLineMemberFunctionFlags::HasInitializerList)) {
 					if (peek() == ":"_tok) {
 						advance();  // consume ':'
 
