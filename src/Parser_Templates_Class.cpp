@@ -986,11 +986,18 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				out_of_line_member.template_param_names = template_param_names;
 				out_of_line_member.inner_template_params = inner_template_params;
 				out_of_line_member.inner_template_param_names = inner_template_param_names;
-				out_of_line_member.inner_params_belong_to_member_class =
-					saw_member_class_template_arguments;
-				out_of_line_member.function_has_own_template_head =
-					function_has_own_template_head;
-				out_of_line_member.has_initializer_list = has_initializer_list;
+				setOutOfLineMemberFunctionFlag(
+					out_of_line_member.flags,
+					OutOfLineMemberFunctionFlags::InnerParamsBelongToMemberClass,
+					saw_member_class_template_arguments);
+				setOutOfLineMemberFunctionFlag(
+					out_of_line_member.flags,
+					OutOfLineMemberFunctionFlags::FunctionHasOwnTemplateHead,
+					function_has_own_template_head);
+				setOutOfLineMemberFunctionFlag(
+					out_of_line_member.flags,
+					OutOfLineMemberFunctionFlags::HasInitializerList,
+					has_initializer_list);
 				out_of_line_member.definition_lookup_context =
 					buildDefinitionLookupContextFromToken(
 						nested_func_name_token,

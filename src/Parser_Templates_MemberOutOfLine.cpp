@@ -283,9 +283,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					out_of_line_ctor.template_param_names = template_param_names;
 					out_of_line_ctor.inner_template_params = inner_template_params;
 					out_of_line_ctor.inner_template_param_names = inner_template_param_names;
-					out_of_line_ctor.has_initializer_list = ctor_has_initializer_list;
-					out_of_line_ctor.is_defaulted = ctor_is_defaulted;
-					out_of_line_ctor.is_deleted = ctor_is_deleted;
+					setOutOfLineMemberFunctionFlag(
+						out_of_line_ctor.flags,
+						OutOfLineMemberFunctionFlags::HasInitializerList,
+						ctor_has_initializer_list);
+					setOutOfLineMemberFunctionFlag(
+						out_of_line_ctor.flags,
+						OutOfLineMemberFunctionFlags::IsDefaulted,
+						ctor_is_defaulted);
+					setOutOfLineMemberFunctionFlag(
+						out_of_line_ctor.flags,
+						OutOfLineMemberFunctionFlags::IsDeleted,
+						ctor_is_deleted);
 					out_of_line_ctor.definition_lookup_context =
 						buildDefinitionLookupContextFromToken(
 							ctor_name_token,
@@ -941,9 +950,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.template_param_names = template_param_names;
 		out_of_line_member.inner_template_params = inner_template_params;
 		out_of_line_member.inner_template_param_names = inner_template_param_names;
-		out_of_line_member.is_defaulted = member_is_defaulted;
-		out_of_line_member.is_deleted = member_is_deleted;
-		out_of_line_member.has_initializer_list = has_initializer_list;
+		setOutOfLineMemberFunctionFlag(
+			out_of_line_member.flags,
+			OutOfLineMemberFunctionFlags::IsDefaulted,
+			member_is_defaulted);
+		setOutOfLineMemberFunctionFlag(
+			out_of_line_member.flags,
+			OutOfLineMemberFunctionFlags::IsDeleted,
+			member_is_deleted);
+		setOutOfLineMemberFunctionFlag(
+			out_of_line_member.flags,
+			OutOfLineMemberFunctionFlags::HasInitializerList,
+			has_initializer_list);
 		out_of_line_member.initializer_list_start = initializer_list_start;
 		out_of_line_member.definition_lookup_context =
 			buildDefinitionLookupContextFromToken(

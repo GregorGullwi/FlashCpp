@@ -5,13 +5,15 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-16 after identity-resolved `friend` declarations naming
-member class-template specializations through instantiated owner chains
-(`friend struct Outer<int>::Box<char>;`) on
-`boundary-3a-instantiated-member-template-identity`: the declarator parses the
-qualified-id component-wise, drops owner template arguments from the
-member-primary lookup spelling (`Outer::Box`, matching the type-id identity
-path), and keeps the member's own arguments as the granted specialization.
+Last updated: 2026-09-16 after out-of-line member-class-template definitions on
+`boundary-3a-ool-member-template-attachment`: plain out-of-line members attach
+to the instantiated member class and substitute both the member class's and the
+enclosing class's template arguments, and out-of-line record facts are packed
+into one flags byte. Earlier on `main`: identity-resolved friend declarations
+naming member class-template specializations through instantiated owner chains
+on `boundary-3a-instantiated-member-template-identity`, and nested member
+class-template Spec-rooted dependent stamping on
+`codex/boundary-3a-nested-member-spec-stamping`.
 
 ## Current boundary and handoff
 
@@ -455,6 +457,18 @@ Preserve these ownership contracts during subsequent migration:
   object's text. See architecture boundary 2 in the plan for the ABI decision.
 
 ## Validation and compatibility baselines
+
+Latest validation for out-of-line plain members of a member class template:
+sharded rebuild; `test_member_class_template_ool_plain_member_ret0` proves
+`template <typename T> template <typename U> int Owner<T>::Box<U>::scaled()`
+attaches to the instantiated member class and emits its body, with the same
+spelling under a distinct owner staying distinct. Mutation validation:
+reverting the out-of-line attachment fix makes the regression fail to compile.
+The scanner records `OutOfLineMemberFunctionFlags` for the inner-head owner and
+the function's own template head, packed into one byte (replacing five bools);
+`sizeof(OutOfLineMemberFunction)` remains 5,608 bytes on Linux clang++. The full
+single-file and multi-TU runner passed (2,990 single-file + 12 multi-TU, 264
+negative, 0 failures). Fixed-corpus migration counters remain within baseline.
 
 Latest validation for identity-resolved instantiated-owner friend
 declarations: sharded rebuild;

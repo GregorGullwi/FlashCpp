@@ -839,7 +839,9 @@ inline void setOutOfLineConstructorTemplateReplayMetadata(
 	ConstructorDeclarationNode& ctor_decl,
 	const OutOfLineMemberFunction& out_of_line_member) {
 	ctor_decl.set_template_body_position(out_of_line_member.body_start);
-	if (out_of_line_member.has_initializer_list) {
+	if (hasOutOfLineMemberFunctionFlag(
+			out_of_line_member.flags,
+			OutOfLineMemberFunctionFlags::HasInitializerList)) {
 		ctor_decl.set_template_initializer_list_position(
 			out_of_line_member.initializer_list_start);
 	}
