@@ -5277,6 +5277,23 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		explicit_outer_binding != nullptr
 			? explicit_outer_binding
 			: gTemplateRegistry.getOuterTemplateBinding(template_name);
+	std::optional<OuterTemplateBinding> synthesized_outer_binding;
+	if (explicit_outer_binding == nullptr &&
+		(outer_binding == nullptr || outer_binding->params.empty())) {
+		if (const size_t owner_sep = template_name.rfind("::");
+			owner_sep != std::string_view::npos && owner_sep > 0) {
+			synthesized_outer_binding = buildOuterBindingForOwner(
+				StringTable::getOrInternStringHandle(
+					template_name.substr(0, owner_sep)));
+		}
+		if (synthesized_outer_binding.has_value() &&
+			!synthesized_outer_binding->params.empty()) {
+			outer_binding = &*synthesized_outer_binding;
+			gTemplateRegistry.registerOuterTemplateBinding(
+				StringTable::getOrInternStringHandle(template_name),
+				*synthesized_outer_binding);
+		}
+	}
 
 	auto fill_missing_variable_template_args =
 		[&](std::span<const TemplateTypeArg> input_args) -> std::optional<std::vector<TemplateTypeArg>> {
