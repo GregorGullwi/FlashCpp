@@ -543,7 +543,9 @@ std::optional<ParseResult> Parser::try_parse_instantiated_owner_member_variable_
 		if (std::optional<OuterTemplateBinding> outer_binding =
 				buildOuterBindingForOwner(
 					StringTable::getOrInternStringHandle(instantiated_owner_name));
-			outer_binding.has_value() && !outer_binding->param_names.empty()) {
+			outer_binding.has_value() &&
+			!outer_binding->param_names.empty() &&
+			!outer_binding->params.empty()) {
 			gTemplateRegistry.registerOuterTemplateBinding(
 				instantiate_name,
 				std::move(*outer_binding));
@@ -1495,22 +1497,52 @@ std::optional<OuterTemplateBinding> Parser::buildOuterBindingForOwner(StringHand
 		arg.setCategory(owner_arg.category());
 		binding.all_args.push_back(arg);
 	}
-	if (owner_type_info->isTemplateInstantiation()) {
+
+	auto append_params_from_template_instantiation =
+		[&](const TypeInfo* pattern_owner) {
+		if (pattern_owner == nullptr || !pattern_owner->isTemplateInstantiation()) {
+			return false;
+		}
 		StringHandle base_template_name =
 			gNamespaceRegistry.buildQualifiedIdentifier(
-				owner_type_info->sourceNamespace(),
-				owner_type_info->baseTemplateName());
+				pattern_owner->sourceNamespace(),
+				pattern_owner->baseTemplateName());
 		auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 		if (!template_opt.has_value()) {
-			template_opt = gTemplateRegistry.lookupTemplate(owner_type_info->baseTemplateName());
+			template_opt = gTemplateRegistry.lookupTemplate(pattern_owner->baseTemplateName());
 		}
-		if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-			const auto& template_params =
-				template_opt->as<TemplateClassDeclarationNode>().template_parameters();
-			binding.params.reserve(template_params.size());
-			for (const TemplateParameterNode& template_param : template_params) {
-				binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
+		if (!template_opt.has_value() ||
+			!template_opt->is<TemplateClassDeclarationNode>()) {
+			return false;
+		}
+		const auto& template_params =
+			template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+		binding.params.reserve(template_params.size());
+		for (const TemplateParameterNode& template_param : template_params) {
+			binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
+		}
+		return !binding.params.empty();
+	};
+
+	// Nested non-template classes of a class-template specialization carry the
+	// enclosing InstantiationContext but are not themselves template
+	// instantiations. Walk the owner-chain prefix to recover parameter metadata
+	// from the nearest template-instantiation ancestor.
+	if (!append_params_from_template_instantiation(owner_type_info)) {
+		std::string_view owner_view = StringTable::getStringView(owner_name);
+		while (binding.params.empty()) {
+			const size_t separator = owner_view.rfind("::");
+			if (separator == std::string_view::npos || separator == 0) {
+				break;
 			}
+			owner_view = owner_view.substr(0, separator);
+			auto ancestor_it = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(owner_view));
+			if (ancestor_it == getTypesByNameMap().end() ||
+				ancestor_it->second == nullptr) {
+				continue;
+			}
+			append_params_from_template_instantiation(ancestor_it->second);
 		}
 	}
 	return binding;
