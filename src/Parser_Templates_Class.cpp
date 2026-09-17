@@ -5409,20 +5409,6 @@ std::optional<Parser::KnownMemberTemplate> Parser::findKnownQualifiedMemberTempl
 		throw InternalError(
 			"template registry lookup returned a non-class/non-function pattern");
 	};
-	auto require_variable = [](ASTNode node) -> KnownMemberTemplate {
-		if (!node.is<TemplateVariableDeclarationNode>()) {
-			throw InternalError(
-				"variable-template spelling resolution returned a non-variable pattern");
-		}
-		return KnownMemberTemplate{KnownMemberTemplateKind::Variable, node};
-	};
-	auto require_alias = [](ASTNode node) -> KnownMemberTemplate {
-		if (!node.is<TemplateAliasNode>()) {
-			throw InternalError(
-				"alias-template spelling resolution returned a non-alias pattern");
-		}
-		return KnownMemberTemplate{KnownMemberTemplateKind::Alias, node};
-	};
 
 	// Qualified / identity-first so owner-colliding simple names do not
 	// select the wrong parameter list for argument parsing.
@@ -5434,11 +5420,19 @@ std::optional<Parser::KnownMemberTemplate> Parser::findKnownQualifiedMemberTempl
 	}
 	if (auto node = findVariableTemplateBySpelling(qualified_name);
 		node.has_value()) {
-		return require_variable(*node);
+		if (!node->is<TemplateVariableDeclarationNode>()) {
+			throw InternalError(
+				"variable-template spelling resolution returned a non-variable pattern");
+		}
+		return KnownMemberTemplate{KnownMemberTemplateKind::Variable, *node};
 	}
 	if (auto node = findAliasTemplateBySpelling(qualified_name);
 		node.has_value()) {
-		return require_alias(*node);
+		if (!node->is<TemplateAliasNode>()) {
+			throw InternalError(
+				"alias-template spelling resolution returned a non-alias pattern");
+		}
+		return KnownMemberTemplate{KnownMemberTemplateKind::Alias, *node};
 	}
 
 	if (!simple_member_name.empty()) {
@@ -5448,11 +5442,19 @@ std::optional<Parser::KnownMemberTemplate> Parser::findKnownQualifiedMemberTempl
 		}
 		if (auto node = gTemplateRegistry.lookupVariableTemplate(simple_member_name);
 			node.has_value()) {
-			return require_variable(*node);
+			if (!node->is<TemplateVariableDeclarationNode>()) {
+				throw InternalError(
+					"variable-template spelling resolution returned a non-variable pattern");
+			}
+			return KnownMemberTemplate{KnownMemberTemplateKind::Variable, *node};
 		}
 		if (auto node = gTemplateRegistry.lookup_alias_template(simple_member_name);
 			node.has_value()) {
-			return require_alias(*node);
+			if (!node->is<TemplateAliasNode>()) {
+				throw InternalError(
+					"alias-template spelling resolution returned a non-alias pattern");
+			}
+			return KnownMemberTemplate{KnownMemberTemplateKind::Alias, *node};
 		}
 	}
 	return std::nullopt;
