@@ -2085,25 +2085,25 @@ void attachQualifiedIdentifierTemplateArguments(
 }
 
 bool qualifiedMemberTemplateIdIsKnown(
+	Parser& parser,
 	std::string_view owner_name,
 	StringHandle member_name) {
-	if (gTemplateRegistry.lookupTemplate(member_name).has_value() ||
-		gTemplateRegistry.lookupVariableTemplate(member_name).has_value() ||
-		gTemplateRegistry.lookup_alias_template(member_name).has_value()) {
-		return true;
-	}
-	if (owner_name.empty()) {
-		return false;
-	}
 	std::string_view member_name_view = StringTable::getStringView(member_name);
+	if (owner_name.empty()) {
+		return parser.findKnownQualifiedMemberTemplate(
+						 member_name_view,
+						 member_name_view)
+			.has_value();
+	}
 	std::string_view qualified_member_name = StringBuilder()
 		.append(owner_name)
 		.append("::")
 		.append(member_name_view)
 		.commit();
-	return gTemplateRegistry.lookupTemplate(qualified_member_name).has_value() ||
-		   gTemplateRegistry.lookupVariableTemplate(qualified_member_name).has_value() ||
-		   gTemplateRegistry.lookup_alias_template(qualified_member_name).has_value();
+	return parser.findKnownQualifiedMemberTemplate(
+					 qualified_member_name,
+					 member_name_view)
+		.has_value();
 }
 
 TypeSpecifierNode normalizeAtomicBuiltinParameterType(const TypeSpecifierNode& arg_type) {
@@ -4445,16 +4445,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		if (current_token_.value() == "<") {
 			std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 			std::string_view member_name = qual_id.name();
-			auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
-			auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
-			auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-			auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
-			auto member_alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
-			auto full_alias_template_opt = gTemplateRegistry.lookup_alias_template(qualified_name);
-
-			bool is_known_template = member_template_opt.has_value() || full_template_opt.has_value() ||
-									 member_var_template_opt.has_value() || full_var_template_opt.has_value() ||
-									 member_alias_template_opt.has_value() || full_alias_template_opt.has_value();
+			const bool is_known_template =
+				findKnownQualifiedMemberTemplate(qualified_name, member_name)
+					.has_value();
 
 			if (is_known_template || context != ExpressionContext::TemplateTypeArg) {
 				template_args = parse_explicit_template_arguments(&template_arg_nodes);
@@ -5366,6 +5359,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									current_token_.value() == "(";
 								const bool known_template =
 									qualifiedMemberTemplateIdIsKnown(
+										*this,
 										gNamespaceRegistry.getQualifiedName(full_ns_handle),
 										member_token.handle());
 								if (!template_id_disambiguated &&
@@ -8863,6 +8857,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											peek() == "("_tok;
 										const bool known_template =
 											qualifiedMemberTemplateIdIsKnown(
+												*this,
 												resolved_namespace_name,
 												segment_identifier.handle());
 										if (!template_id_disambiguated &&
