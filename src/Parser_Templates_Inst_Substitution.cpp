@@ -910,13 +910,13 @@ std::string_view Parser::getClassTemplateInstanceKeyStem(std::string_view templa
 
 // Mirror of getClassTemplateInstanceKeyStem for member variable templates:
 // the legacy instance-name bridge keys instantiations by the simple member
-// spelling, so two same-spelling class-owned variable primaries would share
-// cache entries. Resolve the full spelling by identity (owner chain → class
-// EntityId → findPrimaryVariableTemplate), complete a lexical owner-chain
-// suffix for partially qualified spellings, and add a `$td<TemplateDeclId>`
-// stem only when an actual same-spelling collision between distinct
-// class-owned primaries exists. Unambiguous and namespace/global spellings
-// retain their legacy base key.
+// spelling, so two same-spelling member variable primaries would share cache
+// entries. Resolve the full spelling by identity (owner chain → class
+// EntityId or injected primary TemplateDeclId → findPrimaryVariableTemplate),
+// complete a lexical owner-chain suffix for partially qualified spellings,
+// and add a `$td<TemplateDeclId>` stem only when an actual same-spelling
+// collision between distinct class-owned or template-owned primaries exists.
+// Unambiguous and namespace/global spellings retain their legacy base key.
 std::string_view Parser::getVariableTemplateInstanceKeyStem(std::string_view template_name) {
 	const size_t separator = template_name.rfind("::");
 	const std::string_view legacy_key_stem = separator == std::string_view::npos
@@ -990,7 +990,7 @@ std::string_view Parser::getVariableTemplateInstanceKeyStem(std::string_view tem
 
 	if (primary_decl.has_value() && resolved_by_identity &&
 		requireFrontendContext().templateDecls()
-			.hasConflictingClassOwnedPrimaryVariableTemplate(
+			.hasConflictingMemberOwnedPrimaryVariableTemplate(
 				StringTable::getOrInternStringHandle(member_name),
 				*primary_decl)) {
 		return StringBuilder()

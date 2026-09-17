@@ -172,11 +172,13 @@ public:
 	}
 
 	// Same test for member variable-template primaries feeding the
-	// variable-template instance-key stem.
-	bool hasConflictingClassOwnedPrimaryVariableTemplate(
+	// variable-template instance-key stem. Class-owned and template-owned
+	// primaries both collide on the legacy simple-member stem; namespace
+	// primaries retain their spelling path.
+	bool hasConflictingMemberOwnedPrimaryVariableTemplate(
 		StringHandle name,
 		TemplateDeclId primary) const {
-		return hasConflictingClassOwnedPrimary(PrimaryKind::Variable, name, primary);
+		return hasConflictingMemberOwnedPrimary(PrimaryKind::Variable, name, primary);
 	}
 
 private:
