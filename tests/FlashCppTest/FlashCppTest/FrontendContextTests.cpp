@@ -1597,6 +1597,80 @@ TEST_SUITE("FrontendContext") {
 		CHECK(parser.findAliasTemplateBySpelling(narrow_meter).has_value());
 	}
 
+
+	TEST_CASE("Instantiated-owner member variable resolves through published identity") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename T> struct WideOwner {\n"
+			"  template<typename U> static constexpr int Meter = 1;\n"
+			"};\n"
+			"template<typename T> struct NarrowOwner {\n"
+			"  template<typename U> static constexpr int Meter = 2;\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("instantiated_owner_member_variable_identity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		TemplateArgumentVector long_args;
+		long_args.push_back(TemplateTypeArg::makeType(
+			nativeTypeIndex(TypeCategory::LongLong)));
+		TemplateArgumentVector char_args;
+		char_args.push_back(TemplateTypeArg::makeType(
+			nativeTypeIndex(TypeCategory::Char)));
+
+		const std::optional<ASTNode> wide_instance =
+			parser.instantiateClassTemplateForSignatureReplay(
+				"WideOwner", long_args, false);
+		REQUIRE(wide_instance.has_value());
+		REQUIRE(wide_instance->is<StructDeclarationNode>());
+		const std::optional<ASTNode> narrow_instance =
+			parser.instantiateClassTemplateForSignatureReplay(
+				"NarrowOwner", char_args, false);
+		REQUIRE(narrow_instance.has_value());
+		REQUIRE(narrow_instance->is<StructDeclarationNode>());
+
+		const std::string_view wide_inst_name =
+			StringTable::getStringView(wide_instance->as<StructDeclarationNode>().name());
+		const std::string_view narrow_inst_name =
+			StringTable::getStringView(narrow_instance->as<StructDeclarationNode>().name());
+		REQUIRE(wide_inst_name != narrow_inst_name);
+
+		const std::string wide_meter = std::string(wide_inst_name) + "::Meter";
+		const std::string narrow_meter = std::string(narrow_inst_name) + "::Meter";
+
+		const std::optional<ASTNode> wide_variable =
+			parser.findVariableTemplateByIdentityChain(wide_meter);
+		REQUIRE(wide_variable.has_value());
+		REQUIRE(wide_variable->is<TemplateVariableDeclarationNode>());
+		const std::optional<ASTNode> narrow_variable =
+			parser.findVariableTemplateByIdentityChain(narrow_meter);
+		REQUIRE(narrow_variable.has_value());
+		REQUIRE(narrow_variable->is<TemplateVariableDeclarationNode>());
+		CHECK(&wide_variable->as<TemplateVariableDeclarationNode>() !=
+			  &narrow_variable->as<TemplateVariableDeclarationNode>());
+
+		const auto wide_legacy =
+			gTemplateRegistry.lookupVariableTemplate("WideOwner::Meter");
+		const auto narrow_legacy =
+			gTemplateRegistry.lookupVariableTemplate("NarrowOwner::Meter");
+		REQUIRE(wide_legacy.has_value());
+		REQUIRE(narrow_legacy.has_value());
+		CHECK(&wide_variable->as<TemplateVariableDeclarationNode>() ==
+			  &wide_legacy->as<TemplateVariableDeclarationNode>());
+		CHECK(&narrow_variable->as<TemplateVariableDeclarationNode>() ==
+			  &narrow_legacy->as<TemplateVariableDeclarationNode>());
+		CHECK(parser.findVariableTemplateBySpelling(wide_meter).has_value());
+		CHECK(parser.findVariableTemplateBySpelling(narrow_meter).has_value());
+	}
+
 	TEST_CASE("Member variable template resolves qualified spellings through published identity") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

@@ -482,6 +482,107 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 	return ParseResult::success(result);
 }
 
+std::optional<ParseResult> Parser::try_parse_instantiated_owner_member_variable_template(
+	std::string_view instantiated_owner_name,
+	std::string_view member_name,
+	const Token& member_token,
+	std::optional<TemplateArgumentVector> pre_parsed_member_template_args) {
+	std::optional<TemplateArgumentVector> member_template_args =
+		std::move(pre_parsed_member_template_args);
+	if (!member_template_args.has_value()) {
+		if (peek() != "<"_tok && current_token_.value() != "<") {
+			return std::nullopt;
+		}
+	}
+
+	auto parent_type_it = getTypesByNameMap().find(
+		StringTable::getOrInternStringHandle(instantiated_owner_name));
+	StringHandle pattern_var_name;
+	if (parent_type_it != getTypesByNameMap().end() &&
+		parent_type_it->second != nullptr &&
+		parent_type_it->second->isTemplateInstantiation()) {
+		pattern_var_name = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(parent_type_it->second->baseTemplateName())
+				.append("::")
+				.append(member_name)
+				.commit());
+	}
+	StringHandle hashed_var_name = StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(instantiated_owner_name)
+			.append("::")
+			.append(member_name)
+			.commit());
+
+	std::optional<ASTNode> identity_var_template =
+		findVariableTemplateBySpelling(StringTable::getStringView(hashed_var_name));
+	if (!identity_var_template.has_value() && pattern_var_name.isValid()) {
+		identity_var_template = findVariableTemplateBySpelling(
+			StringTable::getStringView(pattern_var_name));
+	}
+	if (!identity_var_template.has_value() ||
+		!identity_var_template->is<TemplateVariableDeclarationNode>()) {
+		return std::nullopt;
+	}
+
+	StringHandle instantiate_name =
+		pattern_var_name.isValid() ? pattern_var_name : hashed_var_name;
+	// Call only after try_parse_member_template_function_call returned nullopt.
+	// That helper restores tentatively-parsed `<args>` when the form is not a
+	// call; pre-parsed args are already consumed and arrive via the optional.
+	if (!member_template_args.has_value()) {
+		member_template_args = parse_explicit_template_arguments();
+	}
+	if (!member_template_args.has_value() || member_template_args->empty()) {
+		return std::nullopt;
+	}
+
+	if (parent_type_it != getTypesByNameMap().end() &&
+		parent_type_it->second != nullptr) {
+		if (std::optional<OuterTemplateBinding> outer_binding =
+				buildOuterBindingForOwner(
+					StringTable::getOrInternStringHandle(instantiated_owner_name));
+			outer_binding.has_value() && !outer_binding->param_names.empty()) {
+			gTemplateRegistry.registerOuterTemplateBinding(
+				instantiate_name,
+				std::move(*outer_binding));
+		}
+	}
+
+	auto instantiated_var = try_instantiate_variable_template(
+		StringTable::getStringView(instantiate_name),
+		*member_template_args,
+		nullptr);
+	if (!instantiated_var.has_value()) {
+		return std::nullopt;
+	}
+
+	std::string_view inst_name;
+	if (instantiated_var->is<VariableDeclarationNode>()) {
+		inst_name = instantiated_var->as<VariableDeclarationNode>()
+						.declaration()
+						.identifier_token()
+						.value();
+	} else if (instantiated_var->is<DeclarationNode>()) {
+		inst_name = instantiated_var->as<DeclarationNode>()
+						.identifier_token()
+						.value();
+	}
+	if (inst_name.empty()) {
+		return std::nullopt;
+	}
+
+	Token inst_token(
+		Token::Type::Identifier,
+		inst_name,
+		member_token.line(),
+		member_token.column(),
+		member_token.file_index());
+	return ParseResult::success(
+		emplace_node<ExpressionNode>(IdentifierNode(inst_token)));
+}
+
 // Helper to parse member template function calls: Template<T>::member<U>()
 // This consolidates the logic for parsing member template arguments and function calls
 // that appears in multiple places when handling qualified identifiers after template instantiation.

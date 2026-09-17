@@ -5342,6 +5342,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								result = *member_call_result->node();
 								return ParseResult::success(*result);
 							}
+							if (auto member_var_result =
+									try_parse_instantiated_owner_member_variable_template(
+										instantiated_name,
+										member_token.value(),
+										member_token,
+										std::nullopt);
+								member_var_result.has_value()) {
+								return *member_var_result;
+							}
 						}
 
 						std::optional<TemplateArgumentVector> member_template_args;
@@ -6727,6 +6736,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									return *member_call_result;
 								}
 								return ParseResult::success(*member_call_result->node());
+							}
+							if (auto member_var_result =
+									try_parse_instantiated_owner_member_variable_template(
+										instantiated_name,
+										qualified_node2.name(),
+										qualified_node2.identifier_token(),
+										std::nullopt);
+								member_var_result.has_value()) {
+								return *member_var_result;
 							}
 							return ParseResult::success(*qualified_result.node());
 						}
@@ -8910,6 +8928,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 
 							// Try to parse member template function call: Template<T>::member<U>()
+							std::optional<TemplateArgumentVector> member_args_for_variable =
+								member_template_args;
 							auto func_call_result = try_parse_member_template_function_call(
 								resolved_namespace_name,
 								final_identifier.value(),
@@ -8924,6 +8944,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								pending_explicit_template_args_.reset();
 								return ParseResult::success(*result);
 							}
+							if (auto member_var_result =
+									try_parse_instantiated_owner_member_variable_template(
+										resolved_namespace_name,
+										final_identifier.value(),
+										final_identifier,
+										member_args_for_variable);
+								member_var_result.has_value()) {
+								pending_explicit_template_args_.reset();
+								return *member_var_result;
+							}
 
 							// Create a QualifiedIdentifierNode with the instantiated type name (stack-local; copied into ExpressionNode)
 							NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
@@ -8932,7 +8962,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 							attachQualifiedIdentifierTemplateArguments(
 								qual_id,
-								member_template_args,
+								member_args_for_variable,
 								member_template_arg_nodes);
 							result = emplace_node<ExpressionNode>(qual_id);
 							// Clear pending template args since they were used for this qualified identifier
@@ -10007,6 +10037,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 							result = *func_call_result->node();
 							return ParseResult::success(*result);
+						}
+						if (auto member_var_result =
+								try_parse_instantiated_owner_member_variable_template(
+									instantiated_class_name,
+									qualified_node.name(),
+									qualified_node.identifier_token(),
+									std::nullopt);
+							member_var_result.has_value()) {
+							return *member_var_result;
 						}
 
 						// Not a function call - return as already-wrapped qualified identifier

@@ -3321,11 +3321,12 @@ public:
 
 	// Resolve a spelled variable-template name to its
 	// TemplateVariableDeclarationNode for instantiation and gating. Qualified
-	// member variable-template spellings resolve through identity first; the
-	// registry variable lookup remains the fail-closed fallback for
-	// namespace/global variable templates and forms identity cannot answer
-	// yet (expression-side gating, partial specializations, instantiated
-	// owners).
+	// member variable-template spellings resolve through identity first,
+	// including instantiated-owner chains whose specialization TypeInfo
+	// injects the primary pattern; the registry variable lookup remains the
+	// fail-closed fallback for namespace/global variable templates and forms
+	// identity cannot answer yet (partial specializations, dependent
+	// families).
 	std::optional<ASTNode> findVariableTemplateBySpelling(
 		std::string_view variable_template_name);
 
@@ -4178,6 +4179,20 @@ private:	 // Resume private methods
 		const Token& member_token,
 		std::optional<TemplateArgumentVector> pre_parsed_member_template_args,
 		std::vector<ASTNode> pre_parsed_member_template_arg_nodes);
+
+	// After Outer<Args>::member, if member is a published variable template,
+	// parse `<Args>` (when present), resolve the primary by identity, register
+	// outer bindings from the instantiated owner, and return an Identifier for
+	// the instantiated variable. Returns nullopt when the member is not a
+	// variable template or `<` / pre-parsed args are absent.
+	// Call after try_parse_member_template_function_call returns nullopt: that
+	// helper restores tentatively-parsed `<args>`, but pre-parsed args stay
+	// consumed and must be forwarded here.
+	std::optional<ParseResult> try_parse_instantiated_owner_member_variable_template(
+		std::string_view instantiated_owner_name,
+		std::string_view member_name,
+		const Token& member_token,
+		std::optional<TemplateArgumentVector> pre_parsed_member_template_args);
 
 	// Utility functions
 	bool consume_punctuator(const std::string_view& value);
