@@ -3871,7 +3871,8 @@ ParseResult Parser::parse_type_specifier() {
 						// via the injected pattern. Prefer the primary pattern
 						// spelling (Outer::Meter) for materialization and outer
 						// binding, matching the member class-template arm.
-						std::string member_alias_name_str = std::string(qualified_type_name);
+						StringHandle member_alias_name =
+							StringTable::getOrInternStringHandle(qualified_type_name);
 						auto member_alias_opt = findAliasTemplateBySpelling(qualified_type_name);
 						auto parent_type_it = getTypesByNameMap().find(
 							StringTable::getOrInternStringHandle(instantiated_name));
@@ -3889,7 +3890,8 @@ ParseResult Parser::parse_type_specifier() {
 									findAliasTemplateBySpelling(template_member_name);
 							}
 							if (member_alias_opt.has_value()) {
-								member_alias_name_str = std::string(template_member_name);
+								member_alias_name =
+									StringTable::getOrInternStringHandle(template_member_name);
 							}
 						}
 
@@ -3908,7 +3910,8 @@ ParseResult Parser::parse_type_specifier() {
 								member_alias_opt =
 									gTemplateRegistry.lookup_alias_template(pattern_member_alias_name);
 								if (member_alias_opt.has_value()) {
-									member_alias_name_str = std::string(pattern_member_alias_name);
+									member_alias_name =
+										StringTable::getOrInternStringHandle(pattern_member_alias_name);
 								}
 								pattern_builder.reset();
 							}
@@ -3936,7 +3939,8 @@ ParseResult Parser::parse_type_specifier() {
 								member_alias_opt =
 									gTemplateRegistry.lookup_alias_template(base_member_alias_name);
 								if (member_alias_opt.has_value()) {
-									member_alias_name_str = std::string(base_member_alias_name);
+									member_alias_name =
+										StringTable::getOrInternStringHandle(base_member_alias_name);
 								}
 								base_builder.reset();
 							}
@@ -3952,7 +3956,8 @@ ParseResult Parser::parse_type_specifier() {
 								member_alias_opt =
 									gTemplateRegistry.lookup_alias_template(inherited_member_alias_name);
 								if (member_alias_opt.has_value()) {
-									member_alias_name_str = std::string(inherited_member_alias_name);
+									member_alias_name =
+										StringTable::getOrInternStringHandle(inherited_member_alias_name);
 								}
 							}
 						}
@@ -3963,7 +3968,13 @@ ParseResult Parser::parse_type_specifier() {
 							// Parse template arguments for the member alias
 							auto member_template_args = parse_explicit_template_arguments();
 							if (!member_template_args.has_value()) {
-								return ParseResult::error("Failed to parse template arguments for member template alias: " + member_alias_name_str, type_name_token);
+								return ParseResult::error(
+									std::string(
+										StringBuilder()
+											.append("Failed to parse template arguments for member template alias: ")
+											.append(StringTable::getStringView(member_alias_name))
+											.commit()),
+									type_name_token);
 							}
 
 							if (parent_type_it != getTypesByNameMap().end()) {
@@ -3974,7 +3985,7 @@ ParseResult Parser::parse_type_specifier() {
 										StringHandle{});
 								if (!outer_binding.param_names.empty()) {
 									gTemplateRegistry.registerOuterTemplateBinding(
-										StringTable::getOrInternStringHandle(member_alias_name_str),
+										member_alias_name,
 										std::move(outer_binding));
 								}
 							}
@@ -3984,7 +3995,7 @@ ParseResult Parser::parse_type_specifier() {
 							// bindings for aliases such as Owner<T>::Node::template Apply<U>.
 							AliasTemplateMaterializationResult materialized_alias =
 								materializeAliasTemplateInstantiation(
-									member_alias_name_str,
+									StringTable::getStringView(member_alias_name),
 									*member_template_args);
 							if (materialized_alias.resolved_type_info != nullptr) {
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
