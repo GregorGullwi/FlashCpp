@@ -5397,12 +5397,17 @@ std::optional<ASTNode> Parser::findAliasTemplateBySpelling(
 std::optional<Parser::KnownMemberTemplate> Parser::findKnownQualifiedMemberTemplate(
 	std::string_view qualified_name,
 	std::string_view simple_member_name) {
-	auto require_class = [](ASTNode node) -> KnownMemberTemplate {
-		if (!node.is<TemplateClassDeclarationNode>()) {
-			throw InternalError(
-				"class-template spelling resolution returned a non-class pattern");
+	// lookupTemplate returns class templates preferentially, else function
+	// templates. Both are valid `<` gate hits; only unexpected node kinds fail.
+	auto classify_registry_template = [](ASTNode node) -> KnownMemberTemplate {
+		if (node.is<TemplateClassDeclarationNode>()) {
+			return KnownMemberTemplate{KnownMemberTemplateKind::Class, node};
 		}
-		return KnownMemberTemplate{KnownMemberTemplateKind::Class, node};
+		if (node.is<TemplateFunctionDeclarationNode>()) {
+			return KnownMemberTemplate{KnownMemberTemplateKind::Function, node};
+		}
+		throw InternalError(
+			"template registry lookup returned a non-class/non-function pattern");
 	};
 	auto require_variable = [](ASTNode node) -> KnownMemberTemplate {
 		if (!node.is<TemplateVariableDeclarationNode>()) {
@@ -5419,10 +5424,27 @@ std::optional<Parser::KnownMemberTemplate> Parser::findKnownQualifiedMemberTempl
 		return KnownMemberTemplate{KnownMemberTemplateKind::Alias, node};
 	};
 
+	// Qualified / identity-first so owner-colliding simple names do not
+	// select the wrong parameter list for argument parsing.
+	if (auto node = findClassTemplatePatternBySpelling(qualified_name);
+		node.has_value()) {
+		// Identity-chain hits are class patterns; spelling fallback uses
+		// lookupTemplate and may therefore yield a function template.
+		return classify_registry_template(*node);
+	}
+	if (auto node = findVariableTemplateBySpelling(qualified_name);
+		node.has_value()) {
+		return require_variable(*node);
+	}
+	if (auto node = findAliasTemplateBySpelling(qualified_name);
+		node.has_value()) {
+		return require_alias(*node);
+	}
+
 	if (!simple_member_name.empty()) {
 		if (auto node = gTemplateRegistry.lookupTemplate(simple_member_name);
 			node.has_value()) {
-			return require_class(*node);
+			return classify_registry_template(*node);
 		}
 		if (auto node = gTemplateRegistry.lookupVariableTemplate(simple_member_name);
 			node.has_value()) {
@@ -5432,19 +5454,6 @@ std::optional<Parser::KnownMemberTemplate> Parser::findKnownQualifiedMemberTempl
 			node.has_value()) {
 			return require_alias(*node);
 		}
-	}
-
-	if (auto node = findClassTemplatePatternBySpelling(qualified_name);
-		node.has_value()) {
-		return require_class(*node);
-	}
-	if (auto node = findVariableTemplateBySpelling(qualified_name);
-		node.has_value()) {
-		return require_variable(*node);
-	}
-	if (auto node = findAliasTemplateBySpelling(qualified_name);
-		node.has_value()) {
-		return require_alias(*node);
 	}
 	return std::nullopt;
 }

@@ -3330,14 +3330,20 @@ public:
 	std::optional<ASTNode> findVariableTemplateBySpelling(
 		std::string_view variable_template_name);
 
-	// Shared `<` / dependent-member gate resolution: simple-name registry
-	// first (when simple_member_name is non-empty), then identity-first full
-	// spelling. Returned pattern nodes are fail-closed against the declared
-	// kind (InternalError on mismatch). Callers branch on kind and `.as<>()`.
+	// Shared `<` / dependent-member gate resolution: identity-first full
+	// spelling, then simple-name registry fallback (when simple_member_name
+	// is non-empty). Preferring the qualified spelling matters when the
+	// returned pattern drives parameter-aware argument parsing — unqualified
+	// names can collide across owners. `lookupTemplate` may yield class or
+	// function templates; both count as known for `<` disambiguation.
+	// Variable/alias probes stay fail-closed (InternalError on kind mismatch).
+	// Callers that need parameters branch on Class/Alias and `.as<>()`;
+	// Function falls through to generic argument parsing.
 	enum class KnownMemberTemplateKind : std::uint8_t {
 		Class,
 		Variable,
 		Alias,
+		Function,
 	};
 	struct KnownMemberTemplate {
 		KnownMemberTemplateKind kind = KnownMemberTemplateKind::Class;
