@@ -2073,19 +2073,24 @@ ParseResult Parser::parse_type_specifier() {
 					std::string_view member_name = type_name.substr(last_colon_pos + 2);
 
 					// Check if the member is a known template. Qualified member
-					// class-template and variable-template spellings resolve
-					// through identity first.
+					// class-template, variable-template, and alias-template
+					// spellings resolve through identity first.
 					auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 					auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+					auto member_alias_template_opt =
+						gTemplateRegistry.lookup_alias_template(member_name);
 
 					// Also check with the full qualified name
 					auto full_template_opt = findClassTemplatePatternBySpelling(type_name);
 					auto full_var_template_opt = findVariableTemplateBySpelling(type_name);
+					auto full_alias_template_opt = findAliasTemplateBySpelling(type_name);
 
 					bool member_is_template = member_template_opt.has_value() ||
 											  member_var_template_opt.has_value() ||
+											  member_alias_template_opt.has_value() ||
 											  full_template_opt.has_value() ||
-											  full_var_template_opt.has_value();
+											  full_var_template_opt.has_value() ||
+											  full_alias_template_opt.has_value();
 
 					if (!member_is_template) {
 						// Member is NOT a known template
@@ -3579,15 +3584,15 @@ ParseResult Parser::parse_type_specifier() {
 							// EXCEPTION: If the 'template' keyword was present (e.g., ::template type<Args>),
 							// then we MUST treat the member as a template regardless of registry lookup.
 							if (has_template_args && !had_template_keyword) {
-								// Check if the member is a known template before parsing < as template arguments
+								// Check if the member is a known template before parsing < as template arguments.
+								// Qualified class / variable / alias spellings resolve through identity first.
 								auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 								auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
 								auto member_alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
 
-								// Also check with the full qualified name
-								auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_type_name);
-								auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_type_name);
-								auto full_alias_template_opt = gTemplateRegistry.lookup_alias_template(qualified_type_name);
+								auto full_template_opt = findClassTemplatePatternBySpelling(qualified_type_name);
+								auto full_var_template_opt = findVariableTemplateBySpelling(qualified_type_name);
+								auto full_alias_template_opt = findAliasTemplateBySpelling(qualified_type_name);
 
 								bool member_is_template = member_template_opt.has_value() ||
 														  member_var_template_opt.has_value() ||

@@ -5,22 +5,18 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-17 after landing instantiated-owner member variable
-identity on `boundary-3a-instantiated-owner-variable-identity`: expression-side
-`Outer<Args>::Meter<…>` forms resolve through
-`try_parse_instantiated_owner_member_variable_template` (identity first via
-`findVariableTemplateBySpelling`, including the `baseTemplateName::member`
-pattern spelling) after the member function-call probe, register outer bindings
-from the instantiated owner via `buildOuterBindingForOwner`, and return an
-Identifier for the instantiated variable. The variable-template instance-key
-stem treats template-owned same-spelling collisions like class-owned ones
-(`hasConflictingMemberOwnedPrimaryVariableTemplate`). Same-spelling member
-variable templates under distinct class-template owners stay distinct.
-Earlier on `main`: instantiated-owner member alias identity, template-friend
-member identity, callable substitution, nested callable parameter builder
-identity, out-of-line member-class-template definitions, and identity-resolved
-friend declarations naming member class-template specializations through
-instantiated owner chains.
+Last updated: 2026-09-17 after landing the `parse_type_specifier` `<` gate
+alias arm on `boundary-3a-gate-alias-arm`: the known-template disambiguation
+test now includes alias templates (`lookup_alias_template` on the simple
+member spelling and `findAliasTemplateBySpelling` on the full qualified
+spelling), matching the existing class- and variable-template arms, so
+`T::Meter<Args>` is not misread as a comparison when `Meter` is a published
+alias template. The parallel dependent-member gate under instantiated owners
+uses the same identity-first full-name helpers. Earlier on `main`:
+instantiated-owner member variable identity, instantiated-owner member alias
+identity, template-friend member identity, callable substitution, nested
+callable parameter builder identity, and out-of-line member-class-template
+definitions.
 
 ## Current boundary and handoff
 
@@ -175,8 +171,9 @@ Instantiated-owner member alias chains
 (`Outer<int>::Meter<…>`) now resolve through identity in
 `parse_type_specifier`. Instantiated-owner member variable chains
 (`Outer<Args>::Meter<…>` expression forms) now resolve through identity after
-the member function-call probe. Dependent alias
-families, the `<` gate alias arm, and alias partial specializations still
+the member function-call probe. The `parse_type_specifier` `<` gate known-
+template test now includes alias templates alongside class and variable
+templates. Dependent alias families and alias partial specializations still
 resolve through their legacy paths. The
 `TemplateRegistry` owner-chain alias shim is
 deleted: the extra `TemplateRegistry` owner-chain spellings (`Outer::Inner::Box`,
@@ -403,8 +400,9 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `parse_type_specifier` arm as well. Instantiated-owner member variable
   expression forms resolve through identity after the member function-call
   probe. `CanonicalTypeTable::substitute` closes
-  the function and member-pointer walk deferral. Dependent alias families, the
-  `<` gate alias arm, alias partials, and
+  the function and member-pointer walk deferral. The `parse_type_specifier` `<`
+  gate known-template test includes alias templates. Dependent alias families,
+  alias partials, and
   class-instantiation alias re-registration deletion remain deferred; select and
   bound the next still-Unmigrated callable, dependent, or template adapter
   family before expanding boundary-1 coverage. Stop here for review before
@@ -477,6 +475,18 @@ Preserve these ownership contracts during subsequent migration:
   object's text. See architecture boundary 2 in the plan for the ABI decision.
 
 ## Validation and compatibility baselines
+
+Latest validation for the `<` gate alias arm: neutralizing the alias entries in
+the known-template disambiguation test makes
+`test_canonical_gate_alias_arm_dependent_member_ret0` fail to parse
+`using Through = T::Meter<int>;` with "Expected ';' after alias template
+declaration". With the arm present, that TU compiles and
+`Outer::Meter<char>` materializes as `char`. Adjacent member-alias identity and
+`test_less_in_base_class_ret0` (template-param base with non-template `<`
+comparison) still pass. Linux sharded rebuild is warning-free;
+`git diff --check` is clean. Fixed-corpus migration counters were not
+re-measured on this Linux slice (no counter-touching choke points changed);
+expect no movement.
 
 Latest validation for instantiated-owner member variable identity: the
 `FrontendContext` doctest `Instantiated-owner member variable resolves through
@@ -625,8 +635,10 @@ Advanced, not completed:
   owner chains resolving through published IDs; and template-parameterized
   friend member class-template ids resolving their member primary by identity,
   instantiated-owner member alias type-ids resolving through identity in
-  `parse_type_specifier`, and instantiated-owner member variable expression
-  forms resolving through identity after the member function-call probe.
+  `parse_type_specifier`, instantiated-owner member variable expression
+  forms resolving through identity after the member function-call probe, and
+  the `parse_type_specifier` `<` gate known-template test including alias
+  templates.
   The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
   dependent stamping, unpublished/incomplete nominal, anonymous-union, and
@@ -662,10 +674,11 @@ must not increase an implementation percentage.
   parameters are proved canonical at the builder choke point and
   `CanonicalTypeTable::substitute` now walks function and member-pointer graphs,
   and instantiated-owner member alias type-ids resolve through identity, and
-  instantiated-owner member variable expression forms resolve through identity;
-  select and bound the next still-Unmigrated callable, dependent, or template
-  adapter family (dependent alias families, the
-  `<` gate alias arm, or alias partials) before expanding that coverage.
+  instantiated-owner member variable expression forms resolve through identity,
+  and the `<` gate known-template test includes alias templates; select and
+  bound the next still-Unmigrated callable, dependent, or template adapter
+  family (dependent alias families or alias partials) before expanding that
+  coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in
