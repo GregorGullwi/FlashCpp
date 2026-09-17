@@ -3294,10 +3294,11 @@ public:
 
 	// Resolve a spelled alias-template name to its TemplateAliasNode for
 	// type-id parsing and materialization. Qualified member alias-template
-	// spellings resolve through identity first; the registry alias lookup
-	// remains the fail-closed fallback for namespace/global aliases and forms
-	// identity cannot answer yet (instantiated-owner chains, dependent
-	// families).
+	// spellings resolve through identity first, including instantiated-owner
+	// chains whose specialization TypeInfo injects the primary pattern; the
+	// registry alias lookup remains the fail-closed fallback for
+	// namespace/global aliases and forms identity cannot answer yet (dependent
+	// families, alias partial specializations).
 	std::optional<ASTNode> findAliasTemplateBySpelling(
 		std::string_view alias_template_name);
 
