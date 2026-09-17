@@ -5394,6 +5394,61 @@ std::optional<ASTNode> Parser::findAliasTemplateBySpelling(
 	return gTemplateRegistry.lookup_alias_template(alias_template_name);
 }
 
+std::optional<Parser::KnownMemberTemplate> Parser::findKnownQualifiedMemberTemplate(
+	std::string_view qualified_name,
+	std::string_view simple_member_name) {
+	auto require_class = [](ASTNode node) -> KnownMemberTemplate {
+		if (!node.is<TemplateClassDeclarationNode>()) {
+			throw InternalError(
+				"class-template spelling resolution returned a non-class pattern");
+		}
+		return KnownMemberTemplate{KnownMemberTemplateKind::Class, node};
+	};
+	auto require_variable = [](ASTNode node) -> KnownMemberTemplate {
+		if (!node.is<TemplateVariableDeclarationNode>()) {
+			throw InternalError(
+				"variable-template spelling resolution returned a non-variable pattern");
+		}
+		return KnownMemberTemplate{KnownMemberTemplateKind::Variable, node};
+	};
+	auto require_alias = [](ASTNode node) -> KnownMemberTemplate {
+		if (!node.is<TemplateAliasNode>()) {
+			throw InternalError(
+				"alias-template spelling resolution returned a non-alias pattern");
+		}
+		return KnownMemberTemplate{KnownMemberTemplateKind::Alias, node};
+	};
+
+	if (!simple_member_name.empty()) {
+		if (auto node = gTemplateRegistry.lookupTemplate(simple_member_name);
+			node.has_value()) {
+			return require_class(*node);
+		}
+		if (auto node = gTemplateRegistry.lookupVariableTemplate(simple_member_name);
+			node.has_value()) {
+			return require_variable(*node);
+		}
+		if (auto node = gTemplateRegistry.lookup_alias_template(simple_member_name);
+			node.has_value()) {
+			return require_alias(*node);
+		}
+	}
+
+	if (auto node = findClassTemplatePatternBySpelling(qualified_name);
+		node.has_value()) {
+		return require_class(*node);
+	}
+	if (auto node = findVariableTemplateBySpelling(qualified_name);
+		node.has_value()) {
+		return require_variable(*node);
+	}
+	if (auto node = findAliasTemplateBySpelling(qualified_name);
+		node.has_value()) {
+		return require_alias(*node);
+	}
+	return std::nullopt;
+}
+
 // Resolve a qualified member variable-template-id through published
 // identity: the owner chain yields a class EntityId and the variable
 // primary's TemplateDeclId, and the anchored TemplateVariableDeclarationNode
