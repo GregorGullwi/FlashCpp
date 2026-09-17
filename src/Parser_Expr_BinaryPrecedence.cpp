@@ -577,11 +577,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					}
 
 					// Check if the member is a known template
-					auto template_opt = gTemplateRegistry.lookupTemplate(member_name);
-					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-					auto alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
-
-					if (template_opt.has_value() || var_template_opt.has_value() || alias_template_opt.has_value()) {
+					if (findKnownQualifiedMemberTemplate(member_name, member_name)
+							.has_value()) {
 						// Member is a known template, allow template argument parsing
 						could_be_template_name = true;
 					} else if (context == ExpressionContext::TemplateTypeArg) {
