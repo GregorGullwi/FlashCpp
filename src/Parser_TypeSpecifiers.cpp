@@ -2063,6 +2063,7 @@ ParseResult Parser::parse_type_specifier() {
 
 			// If ::template was used, always parse < as template arguments
 			// This is the explicit template disambiguator for dependent contexts
+			std::optional<KnownMemberTemplate> known_member_template;
 			if (has_explicit_template_keyword) {
 				should_parse_as_template = true;
 			} else {
@@ -2071,28 +2072,10 @@ ParseResult Parser::parse_type_specifier() {
 				if (last_colon_pos != std::string_view::npos) {
 					// Extract the member name (part after the last ::)
 					std::string_view member_name = type_name.substr(last_colon_pos + 2);
+					known_member_template =
+						findKnownQualifiedMemberTemplate(type_name, member_name);
 
-					// Check if the member is a known template. Qualified member
-					// class-template, variable-template, and alias-template
-					// spellings resolve through identity first.
-					auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
-					auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-					auto member_alias_template_opt =
-						gTemplateRegistry.lookup_alias_template(member_name);
-
-					// Also check with the full qualified name
-					auto full_template_opt = findClassTemplatePatternBySpelling(type_name);
-					auto full_var_template_opt = findVariableTemplateBySpelling(type_name);
-					auto full_alias_template_opt = findAliasTemplateBySpelling(type_name);
-
-					bool member_is_template = member_template_opt.has_value() ||
-											  member_var_template_opt.has_value() ||
-											  member_alias_template_opt.has_value() ||
-											  full_template_opt.has_value() ||
-											  full_var_template_opt.has_value() ||
-											  full_alias_template_opt.has_value();
-
-					if (!member_is_template) {
+					if (!known_member_template.has_value()) {
 						// Member is NOT a known template
 						// Check if the base (before ::) is a template parameter - if so, this is dependent
 						// and we should NOT parse < as template arguments
@@ -2121,15 +2104,26 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (should_parse_as_template) {
-				if (auto alias_template_opt = findAliasTemplateBySpelling(type_name);
-					alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
+				if (!known_member_template.has_value()) {
+					std::string_view simple_member_name;
+					if (size_t last_colon_pos = type_name.rfind("::");
+						last_colon_pos != std::string_view::npos) {
+						simple_member_name = type_name.substr(last_colon_pos + 2);
+					}
+					known_member_template =
+						findKnownQualifiedMemberTemplate(type_name, simple_member_name);
+				}
+				if (known_member_template.has_value() &&
+					known_member_template->kind == KnownMemberTemplateKind::Alias) {
 					template_args = parse_explicit_template_arguments(
-						alias_template_opt->as<TemplateAliasNode>().template_parameters(),
+						known_member_template->pattern.as<TemplateAliasNode>()
+							.template_parameters(),
 						&template_arg_syntax_nodes);
-				} else if (auto class_template_opt = findClassTemplatePatternBySpelling(type_name);
-						   class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+				} else if (known_member_template.has_value() &&
+						   known_member_template->kind == KnownMemberTemplateKind::Class) {
 					template_args = parse_explicit_template_arguments(
-						class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+						known_member_template->pattern.as<TemplateClassDeclarationNode>()
+							.template_parameters(),
 						&template_arg_syntax_nodes);
 				} else {
 					template_args = parse_explicit_template_arguments(&template_arg_syntax_nodes);
@@ -3585,23 +3579,8 @@ ParseResult Parser::parse_type_specifier() {
 							// then we MUST treat the member as a template regardless of registry lookup.
 							if (has_template_args && !had_template_keyword) {
 								// Check if the member is a known template before parsing < as template arguments.
-								// Qualified class / variable / alias spellings resolve through identity first.
-								auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
-								auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-								auto member_alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
-
-								auto full_template_opt = findClassTemplatePatternBySpelling(qualified_type_name);
-								auto full_var_template_opt = findVariableTemplateBySpelling(qualified_type_name);
-								auto full_alias_template_opt = findAliasTemplateBySpelling(qualified_type_name);
-
-								bool member_is_template = member_template_opt.has_value() ||
-														  member_var_template_opt.has_value() ||
-														  member_alias_template_opt.has_value() ||
-														  full_template_opt.has_value() ||
-														  full_var_template_opt.has_value() ||
-														  full_alias_template_opt.has_value();
-
-								if (!member_is_template) {
+								if (!findKnownQualifiedMemberTemplate(qualified_type_name, member_name)
+										 .has_value()) {
 									// Member is NOT a known template, so < is likely a comparison operator
 									// Don't parse it as template arguments - create placeholder without template args
 									FLASH_LOG_FORMAT(Templates, Trace,

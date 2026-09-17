@@ -3330,6 +3330,23 @@ public:
 	std::optional<ASTNode> findVariableTemplateBySpelling(
 		std::string_view variable_template_name);
 
+	// Shared `<` / dependent-member gate resolution: simple-name registry
+	// first (when simple_member_name is non-empty), then identity-first full
+	// spelling. Returned pattern nodes are fail-closed against the declared
+	// kind (InternalError on mismatch). Callers branch on kind and `.as<>()`.
+	enum class KnownMemberTemplateKind : std::uint8_t {
+		Class,
+		Variable,
+		Alias,
+	};
+	struct KnownMemberTemplate {
+		KnownMemberTemplateKind kind = KnownMemberTemplateKind::Class;
+		ASTNode pattern;
+	};
+	std::optional<KnownMemberTemplate> findKnownQualifiedMemberTemplate(
+		std::string_view qualified_name,
+		std::string_view simple_member_name);
+
 	// Shared Spec-stamping choke point: resolve the spelled primary template
 	// name to its published pattern node, or null when the name is invalid,
 	// unresolvable, or not a published class template (fail-closed).
