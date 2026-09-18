@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -17,6 +18,7 @@
 #include "Log.h"
 #include "CompileError.h"
 #include "FrontendIds.h"
+#include "InlineVector.h"
 #include "TypeQualifiers.h"
 
 enum class CanonicalBuiltinKind : uint8_t {
@@ -828,7 +830,7 @@ public:
 	TypeId substitute(TypeId type, TemplateDeclId env, std::span<const TypeId> args) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
-		return substituteUnlocked(type, env, args);
+		return resolveDirectAliasChainUnlocked(substituteUnlocked(type, env, args));
 	}
 
 	TypeId memberObjectPointer(TypeId owner, TypeId pointee) {
@@ -1494,6 +1496,32 @@ private:
 		return false;
 	}
 
+	TypeId resolveDirectAliasChainUnlocked(TypeId type) {
+		TemplateVector<uint32_t, 4> visited;
+		for (;;) {
+			const CanonicalTypeNode node = nodeUnlocked(type);
+			if (node.kind != CanonicalTypeKind::AliasTemplateSpecialization) {
+				return type;
+			}
+			const uint32_t primary = static_cast<uint32_t>(node.array_extent);
+			if (std::find(visited.begin(), visited.end(), primary) != visited.end()) {
+				return type;
+			}
+			visited.push_back(primary);
+			TemplateVector<TypeId, 4> arguments;
+			for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
+				const CanonicalTypeNode arg = nodeUnlocked(link);
+				if (arg.kind != CanonicalTypeKind::TemplateArg) return type;
+				const TypeId value{static_cast<uint32_t>(arg.array_extent)};
+				if (containsTemplateParameterUnlocked(value)) return type;
+				arguments.push_back(value);
+			}
+			const auto target = alias_template_targets_.find(primary);
+			if (target == alias_template_targets_.end()) return type;
+			type = substituteUnlocked(target->second, TemplateDeclId{primary}, arguments);
+		}
+	}
+
 	TypeId packIdentifierBytesUnlocked(std::string_view identifier) {
 		if (identifier.empty() || identifier.find('\0') != std::string_view::npos) {
 			throw InternalError("canonical type: invalid dependent identifier");
@@ -1859,14 +1887,6 @@ private:
 						throw InternalError("canonical type: corrupt template argument link");
 					}
 					arg_link = arg_node.child;
-				}
-				if (node.kind == CanonicalTypeKind::AliasTemplateSpecialization && type_only_concrete) {
-					const auto target = alias_template_targets_.find(static_cast<uint32_t>(node.array_extent));
-					if (target != alias_template_targets_.end()) {
-						rebuilt = substituteUnlocked(target->second,
-							TemplateDeclId{static_cast<uint32_t>(node.array_extent)}, rebuilt_args);
-						break;
-					}
 				}
 				if (unchanged) {
 					rebuilt = frame.id;
