@@ -1603,6 +1603,231 @@ inline void checkConcretePackSpecArgs() {
 		}));
 }
 
+inline void checkAliasRedirection() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId floating = table.builtin(CanonicalBuiltinKind::Double);
+	const TypeId dummy_args[] = {integer};
+
+	// Mixed concrete argument layouts are matched positionally against the
+	// published parameter kinds. The non-type and template-template positions
+	// keep their opaque ExprId / TemplateDeclId identity while the trailing type
+	// position drives the redirect.
+	const TemplateDeclId mixed_alias{41};
+	const CanonicalTemplateArgKind mixed_kinds[] = {
+		CanonicalTemplateArgKind::NonType,
+		CanonicalTemplateArgKind::Template,
+		CanonicalTemplateArgKind::Type,
+	};
+	table.publishAliasTemplateTarget(
+		mixed_alias, table.templateParameter(mixed_alias, 2), mixed_kinds);
+	const CanonicalTemplateArgument mixed_int[] = {
+		CanonicalTemplateArgument::makeNonType(ExprId{71}),
+		CanonicalTemplateArgument::makeTemplate(TemplateDeclId{72}),
+		CanonicalTemplateArgument::makeType(integer),
+	};
+	const CanonicalTemplateArgument mixed_float[] = {
+		CanonicalTemplateArgument::makeNonType(ExprId{73}),
+		CanonicalTemplateArgument::makeTemplate(TemplateDeclId{74}),
+		CanonicalTemplateArgument::makeType(floating),
+	};
+	require(table.substitute(
+		table.aliasTemplateSpecialization(mixed_alias, mixed_int),
+		mixed_alias, dummy_args) == integer);
+	require(table.substitute(
+		table.aliasTemplateSpecialization(mixed_alias, mixed_float),
+		mixed_alias, dummy_args) == floating);
+
+	// Unresolved alias specializations keep distinct ExprId identity even when
+	// they eventually redirect to the same concrete type.
+	const CanonicalTemplateArgument mixed_other_expr[] = {
+		CanonicalTemplateArgument::makeNonType(ExprId{75}),
+		CanonicalTemplateArgument::makeTemplate(TemplateDeclId{72}),
+		CanonicalTemplateArgument::makeType(integer),
+	};
+	require(table.aliasTemplateSpecialization(mixed_alias, mixed_int) !=
+		table.aliasTemplateSpecialization(mixed_alias, mixed_other_expr));
+	require(table.substitute(
+		table.aliasTemplateSpecialization(mixed_alias, mixed_other_expr),
+		mixed_alias, dummy_args) == integer);
+
+	// Publishing the same alias with a different parameter layout conflicts.
+	const CanonicalTemplateArgKind conflicting_kinds[] = {
+		CanonicalTemplateArgKind::Type,
+		CanonicalTemplateArgKind::NonType,
+		CanonicalTemplateArgKind::Type,
+	};
+	rejects([&] { table.publishAliasTemplateTarget(
+		mixed_alias, table.templateParameter(mixed_alias, 2), conflicting_kinds); });
+
+	// A target that names the alias's own template-template parameter by owner
+	// and index is replaced by the concrete TemplateDeclId argument.
+	const TemplateDeclId ttp_alias{51};
+	const CanonicalTemplateArgKind ttp_kinds[] = {
+		CanonicalTemplateArgKind::Type,
+		CanonicalTemplateArgKind::Template,
+	};
+	const CanonicalTemplateArgument ttp_target_args[] = {
+		CanonicalTemplateArgument::makeType(table.templateParameter(ttp_alias, 0)),
+		CanonicalTemplateArgument::makeDependentTemplate(ttp_alias, 1),
+	};
+	table.publishAliasTemplateTarget(ttp_alias,
+		table.templateSpecialization(TemplateDeclId{52}, ttp_target_args), ttp_kinds);
+	const CanonicalTemplateArgument ttp_concrete[] = {
+		CanonicalTemplateArgument::makeType(integer),
+		CanonicalTemplateArgument::makeTemplate(TemplateDeclId{53}),
+	};
+	const CanonicalTemplateArgument ttp_expected_args[] = {
+		CanonicalTemplateArgument::makeType(integer),
+		CanonicalTemplateArgument::makeTemplate(TemplateDeclId{53}),
+	};
+	require(table.substitute(
+		table.aliasTemplateSpecialization(ttp_alias, ttp_concrete),
+		ttp_alias, dummy_args) ==
+		table.templateSpecialization(TemplateDeclId{52}, ttp_expected_args));
+
+	// Chains resolve iteratively across the mixed type/template layout.
+	const TemplateDeclId chain_outer{81};
+	const TemplateDeclId chain_inner{82};
+	const CanonicalTemplateArgKind chain_kinds[] = {
+		CanonicalTemplateArgKind::Type,
+		CanonicalTemplateArgKind::Template,
+	};
+	const CanonicalTemplateArgument chain_outer_target_args[] = {
+		CanonicalTemplateArgument::makeType(table.templateParameter(chain_outer, 0)),
+		CanonicalTemplateArgument::makeDependentTemplate(chain_outer, 1),
+	};
+	table.publishAliasTemplateTarget(chain_outer,
+		table.aliasTemplateSpecialization(chain_inner, chain_outer_target_args),
+		chain_kinds);
+	table.publishAliasTemplateTarget(chain_inner,
+		table.templateParameter(chain_inner, 0), chain_kinds);
+	const CanonicalTemplateArgument chain_concrete[] = {
+		CanonicalTemplateArgument::makeType(integer),
+		CanonicalTemplateArgument::makeTemplate(TemplateDeclId{83}),
+	};
+	require(table.substitute(
+		table.aliasTemplateSpecialization(chain_outer, chain_concrete),
+		chain_outer, dummy_args) == integer);
+
+	// Self and mutual declaration-ID cycles leave the alias boundary instead of
+	// looping.
+	const TemplateDeclId self_cycle{91};
+	const CanonicalTemplateArgKind cycle_kinds[] = {CanonicalTemplateArgKind::Type};
+	const TypeId self_cycle_args[] = {table.templateParameter(self_cycle, 0)};
+	table.publishAliasTemplateTarget(self_cycle,
+		table.aliasTemplateSpecialization(self_cycle, self_cycle_args), cycle_kinds);
+	const CanonicalTemplateArgument self_cycle_concrete[] = {
+		CanonicalTemplateArgument::makeType(integer),
+	};
+	const TypeId self_cycle_spec =
+		table.aliasTemplateSpecialization(self_cycle, self_cycle_concrete);
+	require(table.substitute(self_cycle_spec, self_cycle, dummy_args) == self_cycle_spec);
+
+	const TemplateDeclId mutual_a{92};
+	const TemplateDeclId mutual_b{93};
+	const TypeId mutual_a_args[] = {table.templateParameter(mutual_a, 0)};
+	const TypeId mutual_b_args[] = {table.templateParameter(mutual_b, 0)};
+	table.publishAliasTemplateTarget(mutual_a,
+		table.aliasTemplateSpecialization(mutual_b, mutual_a_args), cycle_kinds);
+	table.publishAliasTemplateTarget(mutual_b,
+		table.aliasTemplateSpecialization(mutual_a, mutual_b_args), cycle_kinds);
+	const TypeId mutual_result = table.substitute(
+		table.aliasTemplateSpecialization(mutual_a, self_cycle_concrete),
+		mutual_a, dummy_args);
+	require(table.node(mutual_result).kind == CanonicalTypeKind::AliasTemplateSpecialization);
+
+	// Fail-closed: arity mismatches, argument-kind mismatches, dependent type
+	// arguments, dependent template-template arguments, and targets whose
+	// non-type references cannot be proven concrete keep the alias boundary.
+	const TemplateDeclId arity_alias{94};
+	table.publishAliasTemplateTarget(arity_alias,
+		table.templateParameter(arity_alias, 0), cycle_kinds);
+	const TypeId arity_spec = table.aliasTemplateSpecialization(
+		arity_alias,
+		std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeType(integer),
+			CanonicalTemplateArgument::makeType(floating),
+		});
+	require(table.substitute(arity_spec, arity_alias, dummy_args) == arity_spec);
+
+	const TemplateDeclId kind_alias{95};
+	const CanonicalTemplateArgKind kind_kinds[] = {
+		CanonicalTemplateArgKind::NonType,
+		CanonicalTemplateArgKind::Type,
+	};
+	table.publishAliasTemplateTarget(kind_alias,
+		table.templateParameter(kind_alias, 1), kind_kinds);
+	const TypeId kind_spec = table.aliasTemplateSpecialization(
+		kind_alias,
+		std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeType(integer),
+			CanonicalTemplateArgument::makeType(floating),
+		});
+	require(table.substitute(kind_spec, kind_alias, dummy_args) == kind_spec);
+
+	const TypeId dependent_arg_spec = table.aliasTemplateSpecialization(
+		kind_alias,
+		std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeNonType(ExprId{96}),
+			CanonicalTemplateArgument::makeType(
+				table.templateParameter(TemplateDeclId{97}, 0)),
+		});
+	require(table.substitute(dependent_arg_spec, kind_alias, dummy_args) ==
+		dependent_arg_spec);
+
+	const TypeId dependent_template_spec = table.aliasTemplateSpecialization(
+		ttp_alias,
+		std::array<CanonicalTemplateArgument, 2>{
+			CanonicalTemplateArgument::makeType(integer),
+			CanonicalTemplateArgument::makeDependentTemplate(TemplateDeclId{98}, 0),
+		});
+	require(table.substitute(dependent_template_spec, ttp_alias, dummy_args) ==
+		dependent_template_spec);
+
+	const TemplateDeclId nttp_alias{99};
+	const CanonicalTemplateArgKind nttp_kinds[] = {CanonicalTemplateArgKind::NonType};
+	const CanonicalTemplateArgument nttp_target_args[] = {
+		CanonicalTemplateArgument::makeNonType(ExprId{100}),
+	};
+	table.publishAliasTemplateTarget(nttp_alias,
+		table.templateSpecialization(TemplateDeclId{101}, nttp_target_args), nttp_kinds);
+	const CanonicalTemplateArgument nttp_concrete[] = {
+		CanonicalTemplateArgument::makeNonType(ExprId{102}),
+	};
+	const TypeId nttp_spec = table.aliasTemplateSpecialization(nttp_alias, nttp_concrete);
+	require(table.substitute(nttp_spec, nttp_alias, dummy_args) == nttp_spec);
+
+	// An opaque non-type argument in an intermediate alias target is preserved
+	// by ExprId identity when the outer redirect rebuilds it. The inner alias has
+	// no published target, so the chain stops and the rebuilt argument is
+	// observable.
+	const TemplateDeclId opaque_outer{103};
+	const TemplateDeclId opaque_inner{104};
+	const CanonicalTemplateArgKind opaque_outer_kinds[] = {CanonicalTemplateArgKind::Type};
+	const CanonicalTemplateArgument opaque_outer_target[] = {
+		CanonicalTemplateArgument::makeType(table.templateParameter(opaque_outer, 0)),
+		CanonicalTemplateArgument::makeNonType(ExprId{105}),
+	};
+	table.publishAliasTemplateTarget(opaque_outer,
+		table.aliasTemplateSpecialization(opaque_inner, opaque_outer_target),
+		opaque_outer_kinds);
+	const CanonicalTemplateArgument opaque_concrete[] = {
+		CanonicalTemplateArgument::makeType(integer),
+	};
+	const TypeId opaque_result = table.substitute(
+		table.aliasTemplateSpecialization(opaque_outer, opaque_concrete),
+		opaque_outer, dummy_args);
+	require(table.node(opaque_result).kind == CanonicalTypeKind::AliasTemplateSpecialization);
+	const TypeId opaque_args = table.templateSpecializationArguments(opaque_result);
+	require(table.templateArgumentType(opaque_args) == integer);
+	const TypeId opaque_next = table.templateArgumentNext(opaque_args);
+	require(table.templateArgumentKind(opaque_next) == CanonicalTemplateArgKind::NonType);
+	require(table.templateArgumentExpr(opaque_next) == ExprId{105});
+
+	std::printf("alias redirection: mixed args\n");
+}
+
 inline int run() {
 	checkDependentNames();
 	checkSubstitution();
@@ -1610,6 +1835,7 @@ inline int run() {
 	checkDependentTipResolve();
 	checkNttpSpecArgs();
 	checkConcretePackSpecArgs();
+	checkAliasRedirection();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();
