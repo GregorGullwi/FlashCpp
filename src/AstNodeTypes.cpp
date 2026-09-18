@@ -3126,8 +3126,8 @@ void StructTypeInfo::buildRTTI() {
 	}
 	type_desc->vtable = nullptr; // No vtable pointer needed for our purposes
 	type_desc->spare = nullptr;
-	// Use safe string copy
-	strncpy(type_desc->name, mangled_name.c_str(), name_len);
+	// Copy the full buffer including the null terminator
+	std::memcpy(type_desc->name, mangled_name.c_str(), name_len);
 	type_desc->name[name_len - 1] = '\0'; // Ensure null termination
 	type_descriptor_storage.push_back(type_desc);
 	rtti_info->type_descriptor = type_desc;
