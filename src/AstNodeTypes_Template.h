@@ -318,6 +318,9 @@ public:
 	// Get the underlying TypeSpecifierNode
 	TypeSpecifierNode& target_type_node() { return target_type_; }
 	const TypeSpecifierNode& target_type_node() const { return target_type_; }
+	TemplateDeclId template_decl_id() const { return template_decl_id_; }
+	bool has_template_decl_id() const { return static_cast<bool>(template_decl_id_); }
+	void set_template_decl_id(TemplateDeclId template_decl_id) { template_decl_id_ = template_decl_id; }
 
 private:
 	TemplateParameterVector template_parameters_;
@@ -326,6 +329,7 @@ private:
 	TypeSpecifierNode target_type_;  // The target type (e.g., T*)
 
 	// Deferred instantiation (Option 1: cleaner than string parsing)
+	TemplateDeclId template_decl_id_;
 	bool is_deferred_;  // True if target is a template with unresolved parameters
 	StringHandle target_template_name_;	// Template name (e.g., "integral_constant")
 	TemplateAstNodeVector target_template_args_;	// Unevaluated argument AST nodes

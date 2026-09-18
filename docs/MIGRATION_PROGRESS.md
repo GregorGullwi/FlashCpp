@@ -5,13 +5,14 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-18 after landing namespace/global alias-template
-declaration identity on `boundary-3a-namespace-alias-identity`, the first
-bounded split of the dependent-alias family. Namespace and global alias
-primaries now publish a `TemplateDeclId` under the namespace-mapped `OwnerId`
-and anchor their `TemplateAliasNode`, matching the member alias/variable/class
-publication already landed, so alias declaration identity no longer depends on
-the registry spelling key. Earlier on `main`: the deferred `MemberObjectPointer`
+Last updated: 2026-09-18 after landing the direct dependent-alias canonical
+identity substrate on `codex/boundary-3a-dependent-alias-identity`. Published
+namespace/global alias primaries retain their `TemplateDeclId` on the
+`TemplateAliasNode`; type-only dependent alias uses stamp that ID and ordered
+arguments, and the canonical adapter imports a distinct
+`AliasTemplateSpecialization` node rather than a class specialization or a
+registry spelling identity. Target redirection after concrete substitution and
+alias partials remain deferred. Earlier on `main`: the deferred `MemberObjectPointer`
 canonical adapter family (cast/NTTP pointee preservation plus MSVC mangling
 recovery), the `parse_type_specifier` `<` gate alias arm, instantiated-owner
 member variable identity, instantiated-owner member alias identity,
@@ -717,9 +718,12 @@ must not increase an implementation percentage.
   and the `<` gate known-template test includes alias templates, the callable
   `MemberObjectPointer` adapter family now imports the preserved cast/NTTP
   pointee structurally (with MSVC mangling recovery), and namespace/global
-  alias templates publish declaration identity; select and bound the next
-  still-Unmigrated dependent or template adapter family (dependent alias
-  families or alias partials) before expanding that coverage.
+  alias templates publish declaration identity. Direct namespace/global
+  dependent alias type-only arguments now carry a published
+  `AliasTemplateSpecialization` identity through the canonical adapter; target
+  redirection after concrete substitution, non-type/template arguments, member
+  dependent aliases, and alias partials remain deferred. Select and bound one
+  of those remaining families before expanding boundary-1 coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

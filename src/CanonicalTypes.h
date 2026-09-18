@@ -29,7 +29,7 @@ enum class CanonicalBuiltinKind : uint8_t {
 enum class CanonicalTypeKind : uint8_t {
 	Builtin, Qualified, Pointer, LValueReference, RValueReference, Array,
 	Function, FunctionParam, Record, MemberObjectPointer, MemberFunctionPointer,
-	Enum, TemplateParameter, TemplateSpecialization, TemplateArg,
+	Enum, TemplateParameter, TemplateSpecialization, AliasTemplateSpecialization, TemplateArg,
 	DependentName, DependentTemplateMember, NameBytes,
 	// Internal Spec/DTM argument-list links carrying opaque payload identities.
 	NonTypeTemplateArg, TemplateTemplateArg, DependentTemplateTemplateArg,
@@ -165,7 +165,7 @@ inline TypeId unpackDependentTemplateMemberArgs(uint64_t array_extent) {
 // Function nodes pack parameter-list TypeId in the low 32 bits of array_extent
 // and optional dependent-noexcept ExprId in the high 32 bits. TemplateParameter
 // nodes pack TemplateDeclId in the low 32 bits and parameter index in the high
-// 32 bits. TemplateSpecialization stores TemplateDeclId in array_extent and the
+// 32 bits. TemplateSpecialization and AliasTemplateSpecialization store TemplateDeclId in array_extent and the
 // first TemplateArg / NonTypeTemplateArg / TemplateTemplateArg /
 // DependentTemplateTemplateArg link in child.
 // TemplateArg links store a type TypeId in array_extent; NonTypeTemplateArg links
@@ -635,6 +635,34 @@ public:
 		});
 	}
 
+	// An unresolved alias template-id preserves its own declaration identity.
+	// It may redirect to the alias target only after concrete substitution.
+	TypeId aliasTemplateSpecialization(TemplateDeclId primary,
+		std::span<const CanonicalTemplateArgument> arguments) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!primary) {
+			throw InternalError("canonical type: invalid alias specialization TemplateDeclId");
+		}
+		return internUnlocked({
+			.child = rebuildMixedTemplateArgListUnlocked(arguments),
+			.kind = CanonicalTypeKind::AliasTemplateSpecialization,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = primary.value,
+		});
+	}
+
+	TypeId aliasTemplateSpecialization(TemplateDeclId primary, std::span<const TypeId> arguments) {
+		std::vector<CanonicalTemplateArgument> mixed;
+		mixed.reserve(arguments.size());
+		for (const TypeId argument : arguments) {
+			mixed.push_back(CanonicalTemplateArgument::makeType(argument));
+		}
+		return aliasTemplateSpecialization(primary, mixed);
+	}
+
 	// Type-only convenience overload for Spec identity.
 	TypeId templateSpecialization(TemplateDeclId primary, std::span<const TypeId> arguments) {
 		std::vector<CanonicalTemplateArgument> mixed;
@@ -957,7 +985,8 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		const auto input = nodeUnlocked(specialization);
-		if (input.kind != CanonicalTypeKind::TemplateSpecialization) {
+		if (input.kind != CanonicalTypeKind::TemplateSpecialization &&
+			input.kind != CanonicalTypeKind::AliasTemplateSpecialization) {
 			throw InternalError("canonical type: TypeId is not a template specialization");
 		}
 		return TemplateDeclId{static_cast<uint32_t>(input.array_extent)};
@@ -967,7 +996,8 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		const auto input = nodeUnlocked(specialization);
-		if (input.kind != CanonicalTypeKind::TemplateSpecialization) {
+		if (input.kind != CanonicalTypeKind::TemplateSpecialization &&
+			input.kind != CanonicalTypeKind::AliasTemplateSpecialization) {
 			throw InternalError("canonical type: TypeId is not a template specialization");
 		}
 		if (!input.child) {
@@ -1415,6 +1445,7 @@ private:
 	static bool isDependentQualifierKind(CanonicalTypeKind kind) {
 		return kind == CanonicalTypeKind::TemplateParameter ||
 			kind == CanonicalTypeKind::TemplateSpecialization ||
+			kind == CanonicalTypeKind::AliasTemplateSpecialization ||
 			kind == CanonicalTypeKind::DependentName ||
 			kind == CanonicalTypeKind::DependentTemplateMember;
 	}
@@ -1627,9 +1658,11 @@ private:
 					stack.push_back({node.child, false});
 					continue;
 				case CanonicalTypeKind::TemplateSpecialization:
+				case CanonicalTypeKind::AliasTemplateSpecialization:
 				case CanonicalTypeKind::DependentTemplateMember: {
 					stack.back().building = true;
-					TypeId arg_link = node.kind == CanonicalTypeKind::TemplateSpecialization
+					TypeId arg_link = (node.kind == CanonicalTypeKind::TemplateSpecialization ||
+						node.kind == CanonicalTypeKind::AliasTemplateSpecialization)
 						? node.child
 						: unpackDependentTemplateMemberArgs(node.array_extent);
 					while (arg_link) {
@@ -1753,7 +1786,8 @@ private:
 				}
 				break;
 			}
-			case CanonicalTypeKind::TemplateSpecialization: {
+			case CanonicalTypeKind::TemplateSpecialization:
+			case CanonicalTypeKind::AliasTemplateSpecialization: {
 				rebuilt_mixed.clear();
 				TypeId arg_link = node.child;
 				bool unchanged = true;
@@ -1784,7 +1818,7 @@ private:
 				} else {
 					rebuilt = internUnlocked({
 						.child = rebuildMixedTemplateArgListUnlocked(rebuilt_mixed),
-						.kind = CanonicalTypeKind::TemplateSpecialization,
+						.kind = node.kind,
 						.builtin = CanonicalBuiltinKind::Void,
 						.qualifiers = CVQualifier::None,
 						.flags = CanonicalTypeNodeFlags::None,

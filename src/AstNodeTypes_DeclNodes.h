@@ -2019,6 +2019,9 @@ public:
 	bool has_template_specialization() const {
 		return static_cast<bool>(specialization_template_decl_);
 	}
+	bool is_alias_template_specialization() const {
+		return specialization_is_alias_template_;
+	}
 	TemplateDeclId specialization_template_decl() const {
 		return specialization_template_decl_;
 	}
@@ -2106,11 +2109,18 @@ public:
 		clear_template_parameter_identity();
 		clear_dependent_name_type();
 		specialization_template_decl_ = primary;
+		specialization_is_alias_template_ = false;
 		specialization_arg_kinds_.assign(type_args.size(), SpecTemplateArgKind::Type);
 		specialization_type_args_ = std::move(type_args);
 		specialization_nttp_args_.clear();
 		specialization_template_args_.clear();
 		specialization_dependent_template_args_.clear();
+	}
+	void set_alias_template_specialization(
+		TemplateDeclId primary,
+		std::vector<TypeSpecifierNode> type_args) {
+		set_template_specialization(primary, std::move(type_args));
+		specialization_is_alias_template_ = true;
 	}
 	void set_template_specialization_mixed(
 		TemplateDeclId primary,
@@ -2162,6 +2172,7 @@ public:
 		clear_template_parameter_identity();
 		clear_dependent_name_type();
 		specialization_template_decl_ = primary;
+		specialization_is_alias_template_ = false;
 		specialization_arg_kinds_ = std::move(arg_kinds);
 		specialization_type_args_ = std::move(type_args);
 		specialization_nttp_args_ = std::move(nttp_args);
@@ -2170,6 +2181,7 @@ public:
 	}
 	void clear_template_specialization() {
 		specialization_template_decl_ = {};
+		specialization_is_alias_template_ = false;
 		specialization_arg_kinds_.clear();
 		specialization_type_args_.clear();
 		specialization_nttp_args_.clear();
@@ -2214,6 +2226,7 @@ public:
 		template_decl_id_ = other.template_decl_id_;
 		template_parameter_index_ = other.template_parameter_index_;
 		specialization_template_decl_ = other.specialization_template_decl_;
+		specialization_is_alias_template_ = other.specialization_is_alias_template_;
 		specialization_arg_kinds_ = other.specialization_arg_kinds_;
 		specialization_type_args_ = other.specialization_type_args_;
 		specialization_nttp_args_ = other.specialization_nttp_args_;
@@ -2313,6 +2326,7 @@ private:
 	TemplateDeclId template_decl_id_; // Published template owner; never StringHandle identity
 	uint32_t template_parameter_index_ = 0; // Index within that template's parameter list
 	TemplateDeclId specialization_template_decl_; // Primary for stamped specializations
+	bool specialization_is_alias_template_ = false; // Alias primaries retain their own dependent identity
 	TypeId dependent_name_type_; // Canonical base; declarator wrappers remain syntax
 	std::vector<SpecTemplateArgKind> specialization_arg_kinds_; // parallel to arg order
 	std::vector<TypeSpecifierNode> specialization_type_args_; // Type payloads only
