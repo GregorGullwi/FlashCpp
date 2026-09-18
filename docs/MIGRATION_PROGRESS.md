@@ -8,10 +8,16 @@ recoverable from git history. Replace stale state rather than appending history.
 Last updated: 2026-09-18 after landing mixed concrete direct-alias
 redirection on `codex/boundary-3a-direct-alias-redirection`. Published
 namespace/global and member alias primaries retain their `TemplateDeclId` on
-the `TemplateAliasNode`; type-only dependent alias uses stamp that ID and
-ordered arguments, and importable direct targets publish a canonical pattern
-under that declaration ID together with its declared type/non-type/template
-argument layout. Concrete direct alias specializations now redirect to the
+the `TemplateAliasNode`; dependent alias uses stamp that ID and ordered
+arguments, and importable direct targets publish a canonical pattern under that
+declaration ID together with its declared type/non-type/template argument
+layout. Dependent alias uses now stamp mixed arguments when every argument is
+representable: type arguments that name a published active parameter carry its
+`TemplateDeclId` and index, concrete published primary class templates used as
+template-template arguments carry their `TemplateDeclId`, and active
+template-template parameters keep owner plus index. Non-type arguments still
+need a published `ExprId`, so a call site with one keeps the whole canonical
+stamp deferred. Concrete direct alias specializations now redirect to the
 published target for both type-only and mixed layouts: each argument is matched
 positionally against the published parameter kinds, opaque NTTP `ExprId` and
 template-template `TemplateDeclId` identities are preserved, and an alias
@@ -733,11 +739,16 @@ must not increase an implementation percentage.
   and the `<` gate known-template test includes alias templates, the callable
   `MemberObjectPointer` adapter family now imports the preserved cast/NTTP
   pointee structurally (with MSVC mangling recovery), and namespace/global
-  alias templates publish declaration identity. Direct namespace/global
-  dependent alias type-only arguments now carry a published
-  `AliasTemplateSpecialization` identity through the canonical adapter. Direct
+  alias templates publish declaration identity. Dependent namespace/global alias
+  uses now stamp a published `AliasTemplateSpecialization` identity through the
+  canonical adapter for type-only arguments and, when every argument is
+  representable, for mixed layouts: dependent type arguments carry their active
+  parameter `TemplateDeclId` + index, concrete published primary class templates
+  carry their `TemplateDeclId`, and active template-template parameters keep
+  owner + index. Non-type arguments still need a published `ExprId`, so one at a
+  call site keeps that whole canonical stamp deferred. Direct
   alias targets now redirect after concrete substitution for both type-only and
-  mixed non-type/template-template layouts: argument identity kinds are matched
+  mixed layouts: argument identity kinds are matched
   positionally against the published parameter kinds, `ExprId` / `TemplateDeclId`
   payloads survive, and targets naming a template-template parameter by
   owner/index rebuild with the concrete `TemplateDeclId` while chain resolution
@@ -749,8 +760,11 @@ must not increase an implementation percentage.
   layouts, unresolved-identity distinction, layout conflict rejection,
   template-template placeholder replacement, mixed chain resolution, self and
   mutual cycles, and the arity/kind/dependent/non-type fail-closed boundaries.
-  A source regression `test_canonical_direct_alias_mixed_params_ret42` covers the
-  ready non-type mixed direct-alias materialization path. Select and bound one
+  Source regressions `test_canonical_direct_alias_mixed_params_ret42` and
+  `test_canonical_direct_alias_mixed_template_arg_ret42` cover the ready non-type
+  and template-template mixed direct-alias materialization paths; a trace probe
+  confirmed `buildDependentAliasTemplateTypeSpecifier` enters the mixed stamp with
+  both arguments representable. Select and bound one
   of the remaining families before expanding boundary-1 coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.

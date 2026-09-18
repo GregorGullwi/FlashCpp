@@ -2122,6 +2122,22 @@ public:
 		set_template_specialization(primary, std::move(type_args));
 		specialization_is_alias_template_ = true;
 	}
+	void set_alias_template_specialization_mixed(
+		TemplateDeclId primary,
+		std::vector<SpecTemplateArgKind> arg_kinds,
+		std::vector<TypeSpecifierNode> type_args,
+		std::vector<ExprId> nttp_args,
+		std::vector<TemplateDeclId> template_args,
+		std::vector<SpecDependentTemplateArg> dependent_template_args) {
+		set_template_specialization_mixed(
+			primary,
+			std::move(arg_kinds),
+			std::move(type_args),
+			std::move(nttp_args),
+			std::move(template_args),
+			std::move(dependent_template_args));
+		specialization_is_alias_template_ = true;
+	}
 	void set_template_specialization_mixed(
 		TemplateDeclId primary,
 		std::vector<SpecTemplateArgKind> arg_kinds,
