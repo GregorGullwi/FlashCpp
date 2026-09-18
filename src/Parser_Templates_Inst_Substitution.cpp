@@ -1849,18 +1849,142 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 		ReferenceQualifier::None);
 	// The placeholder remains the legacy materialization bridge, but published
 	// namespace/global alias primaries also carry structural declaration identity
-	// for the canonical adapter. Non-type/template arguments remain deferred.
+	// for the canonical adapter. Type arguments are stamped with the active
+	// environment when they name a published type parameter. Concrete published
+	// primary class templates used as template-template arguments retain their
+	// TemplateDeclId, and active template-template parameters keep owner + index.
+	// Non-type arguments still need a published ExprId, so they remain deferred
+	// and leave the call-site spelling on the legacy placeholder.
 	if (alias_node.has_template_decl_id()) {
-		std::vector<TypeSpecifierNode> type_args;
-		type_args.reserve(template_args.size());
+		const auto stampDependentTypeArgument =
+			[&](TypeSpecifierNode& type_arg, const TemplateTypeArg& argument) {
+				if (!argument.dependent_name.isValid()) {
+					return;
+				}
+				if (const auto binding =
+						current_template_params_.publishedBindingOf(argument.dependent_name);
+					binding.has_value()) {
+					type_arg.set_template_parameter_decl(
+						binding->template_decl, binding->parameter_index);
+					return;
+				}
+				if (!active_template_decl_id_) {
+					return;
+				}
+				if (const auto parameter_index =
+						current_template_params_.indexOf(argument.dependent_name);
+					parameter_index.has_value()) {
+					type_arg.set_template_parameter_decl(
+						active_template_decl_id_,
+						static_cast<uint32_t>(*parameter_index));
+				}
+			};
+		bool all_type_arguments = true;
 		for (const TemplateTypeArg& argument : template_args) {
 			if (!argument.isTypeArgument()) {
-				return dependent_spec;
+				all_type_arguments = false;
+				break;
 			}
-			type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(argument, source_token));
 		}
-		dependent_spec.set_alias_template_specialization(
-			alias_node.template_decl_id(), std::move(type_args));
+		if (all_type_arguments) {
+			std::vector<TypeSpecifierNode> type_args;
+			type_args.reserve(template_args.size());
+			for (const TemplateTypeArg& argument : template_args) {
+				TypeSpecifierNode type_arg =
+					makeTypeSpecifierFromTemplateTypeArg(argument, source_token);
+				stampDependentTypeArgument(type_arg, argument);
+				type_args.push_back(std::move(type_arg));
+			}
+			dependent_spec.set_alias_template_specialization(
+				alias_node.template_decl_id(), std::move(type_args));
+		} else {
+			const TemplateParameterVector& alias_params = alias_node.template_parameters();
+			std::vector<SpecTemplateArgKind> argument_kinds;
+			std::vector<TypeSpecifierNode> type_args;
+			std::vector<ExprId> nttp_args;
+			std::vector<TemplateDeclId> template_decl_args;
+			std::vector<SpecDependentTemplateArg> dependent_template_args;
+			argument_kinds.reserve(template_args.size());
+			bool stamped = true;
+			for (size_t index = 0; index < template_args.size(); ++index) {
+				const TemplateTypeArg& argument = template_args[index];
+				std::optional<TemplateParameterKind> parameter_kind;
+				if (index < alias_params.size() && !alias_params[index].is_variadic()) {
+					parameter_kind = alias_params[index].kind();
+				}
+				if (!parameter_kind.has_value() ||
+					*parameter_kind == TemplateParameterKind::Type) {
+					if (!argument.isTypeArgument()) {
+						stamped = false;
+						break;
+					}
+					TypeSpecifierNode type_arg =
+						makeTypeSpecifierFromTemplateTypeArg(argument, source_token);
+					stampDependentTypeArgument(type_arg, argument);
+					argument_kinds.push_back(SpecTemplateArgKind::Type);
+					type_args.push_back(std::move(type_arg));
+					continue;
+				}
+				if (*parameter_kind == TemplateParameterKind::Template) {
+					if (!argument.is_template_template_arg) {
+						stamped = false;
+						break;
+					}
+					const StringHandle parameter_name =
+						argument.template_name_handle.isValid()
+							? argument.template_name_handle
+							: argument.dependent_name;
+					if (active_template_decl_id_ && parameter_name.isValid()) {
+						const auto parameter_index =
+							current_template_params_.indexOf(parameter_name);
+						if (parameter_index.has_value() &&
+							currentTemplateParamKind(parameter_name) ==
+								TemplateParameterKind::Template &&
+							(!argument.dependent_name.isValid() ||
+							 argument.dependent_name == parameter_name)) {
+							argument_kinds.push_back(SpecTemplateArgKind::DependentTemplate);
+							dependent_template_args.push_back(SpecDependentTemplateArg{
+								active_template_decl_id_,
+								static_cast<uint32_t>(*parameter_index)});
+							continue;
+						}
+					}
+					if (!parameter_name.isValid()) {
+						stamped = false;
+						break;
+					}
+					std::optional<ASTNode> template_entry =
+						gTemplateRegistry.lookupTemplate(parameter_name);
+					if (!template_entry.has_value() ||
+						!template_entry->is<TemplateClassDeclarationNode>()) {
+						stamped = false;
+						break;
+					}
+					const TemplateClassDeclarationNode& class_template =
+						template_entry->as<TemplateClassDeclarationNode>();
+					if (!class_template.has_template_decl_id()) {
+						stamped = false;
+						break;
+					}
+					argument_kinds.push_back(SpecTemplateArgKind::Template);
+					template_decl_args.push_back(class_template.template_decl_id());
+					continue;
+				}
+				// Non-type arguments need an ExprId that TemplateTypeArg does not
+				// carry; keep the whole call site deferred.
+				stamped = false;
+				break;
+			}
+			if (stamped) {
+				dependent_spec.set_alias_template_specialization_mixed(
+					alias_node.template_decl_id(),
+					std::move(argument_kinds),
+					std::move(type_args),
+					std::move(nttp_args),
+					std::move(template_decl_args),
+					std::move(dependent_template_args));
+			}
+		}
 	}
 	return dependent_spec;
 }
