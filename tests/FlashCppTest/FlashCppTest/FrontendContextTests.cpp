@@ -1524,6 +1524,33 @@ TEST_SUITE("FrontendContext") {
 		CHECK_FALSE(parser.findAliasTemplateByIdentityChain("ns::Gauge::NoMember").has_value());
 	}
 
+	TEST_CASE("Member alias target capturing enclosing template parameters remains deferred") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename Owner> struct Captures {\n"
+			"  template<typename Value> using Pointer = Owner*;\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_alias_captured_owner_target_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto member_alias = gTemplateRegistry.lookup_alias_template("Captures::Pointer");
+		REQUIRE(member_alias.has_value());
+		REQUIRE(member_alias->is<TemplateAliasNode>());
+		REQUIRE(member_alias->as<TemplateAliasNode>().has_template_decl_id());
+		CHECK_FALSE(context.canonicalTypes()
+			.aliasTemplateTarget(member_alias->as<TemplateAliasNode>().template_decl_id())
+			.has_value());
+	}
+
 
 	TEST_CASE("Namespace and global alias templates publish declaration identity") {
 		clearLegacyTypeTablesForTesting();
