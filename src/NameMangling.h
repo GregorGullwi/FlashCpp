@@ -645,7 +645,12 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		member_type.set_reference_qualifier(ReferenceQualifier::None);
 		member_type.set_member_class_name(StringHandle{});
 		if (member_type.category() == TypeCategory::MemberObjectPointer) {
-			throw InternalError("MSVC name mangling: member object pointer missing underlying member type");
+			// Cast/NTTP rewrites flatten the pointee category. The parser keeps
+			// the pre-rewrite pointee specifier; encode it instead of failing.
+			if (!member_type.has_member_object_pointee()) {
+				throw InternalError("MSVC name mangling: member object pointer missing underlying member type");
+			}
+			member_type = member_type.member_object_pointee();
 		}
 		appendTypeCode(output, member_type);
 		return;
