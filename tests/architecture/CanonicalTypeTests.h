@@ -548,6 +548,12 @@ inline void checkAdapter() {
 		table.templateParameter(TemplateDeclId{31}, 0));
 	table.publishAliasTemplateTarget(TemplateDeclId{31}, alias_target_pattern);
 	require(table.aliasTemplateTarget(TemplateDeclId{31}) == alias_target_pattern);
+	const TypeId alias_concrete_arg[] = {table.builtin(CanonicalBuiltinKind::Int)};
+	const TypeId alias_dependent_arg[] = {table.templateParameter(TemplateDeclId{31}, 0)};
+	require(table.substitute(
+		table.aliasTemplateSpecialization(TemplateDeclId{31}, alias_dependent_arg),
+		TemplateDeclId{31}, alias_concrete_arg) ==
+		table.pointer(table.builtin(CanonicalBuiltinKind::Int)));
 	table.publishAliasTemplateTarget(TemplateDeclId{31}, alias_target_pattern);
 	rejects([&] { table.publishAliasTemplateTarget(
 		TemplateDeclId{31}, table.builtin(CanonicalBuiltinKind::Int)); });
