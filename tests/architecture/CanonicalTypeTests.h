@@ -419,6 +419,28 @@ inline void checkAdapter() {
 		table.record(EntityId{7}), table.builtin(CanonicalBuiltinKind::Int)));
 	require(imported_mop.type != imported_mfp.type);
 
+	// A cast/NTTP rewrite publishes the class EntityId but flattens the pointee
+	// category. Without the preserved pointee specifier it stays fail-closed;
+	// with it the adapter imports the structural member object pointer.
+	member_object.set_member_class_entity(EntityId{7});
+	require(importCanonicalType(table, member_object).status == CanonicalTypeImportStatus::UnmigratedCallable);
+	TypeSpecifierNode recovered_pointee(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	member_object.set_member_object_pointee(&recovered_pointee);
+	const auto imported_recovered_mop = importCanonicalType(table, member_object);
+	require(imported_recovered_mop.status == CanonicalTypeImportStatus::Supported);
+	require(imported_recovered_mop.type == table.memberObjectPointer(
+		table.record(EntityId{7}), table.builtin(CanonicalBuiltinKind::Int)));
+	require(imported_recovered_mop.type == imported_mop.type);
+	require(imported_recovered_mop.type != imported_mfp.type);
+
+	// An unsupported pointee keeps the whole member object pointer fail-closed
+	// instead of silently flattening the pointee.
+	TypeSpecifierNode unpublished_pointee(TypeCategory::Struct, TypeQualifier::None, 64, Token{},
+		CVQualifier::None);
+	member_object.set_member_object_pointee(&unpublished_pointee);
+	require(importCanonicalType(table, member_object).status ==
+		CanonicalTypeImportStatus::UnmigratedNominal);
+
 	TypeSpecifierNode unpublished_record(TypeCategory::Struct, TypeQualifier::None, 64, Token{},
 		CVQualifier::Const);
 	unpublished_record.set_reference_qualifier(ReferenceQualifier::LValueReference);

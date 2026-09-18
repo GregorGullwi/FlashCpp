@@ -384,8 +384,23 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		return {id, CanonicalTypeImportStatus::Supported};
 	}
 	if (syntax.category() == TypeCategory::MemberObjectPointer) {
-		// Cast/MOP forms overwrite the pointee category; recover it later.
-		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+		// Cast/NTTP forms overwrite the flat pointee category. The parser keeps
+		// the pre-rewrite pointee specifier as syntax; import it structurally and
+		// fail closed when it is absent or does not import.
+		if (!syntax.has_member_object_pointee()) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+		}
+		const CanonicalTypeImport imported_pointee = importCanonicalTypeImpl(
+			table, syntax.member_object_pointee(), CanonicalTypeImportContext::Exact);
+		if (imported_pointee.status != CanonicalTypeImportStatus::Supported) {
+			return imported_pointee;
+		}
+		auto id = table.memberObjectPointer(owner, imported_pointee.type);
+		id = table.qualify(id, syntax.cv_qualifier());
+		if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+			id = table.reference(id, syntax.reference_qualifier());
+		}
+		return {id, CanonicalTypeImportStatus::Supported};
 	}
 	if (!syntax.has_member_class()) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};

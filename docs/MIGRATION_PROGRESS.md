@@ -5,18 +5,19 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-17 after landing the `parse_type_specifier` `<` gate
-alias arm on `boundary-3a-gate-alias-arm`: the known-template disambiguation
-test now includes alias templates (`lookup_alias_template` on the simple
-member spelling and `findAliasTemplateBySpelling` on the full qualified
-spelling), matching the existing class- and variable-template arms, so
-`T::Meter<Args>` is not misread as a comparison when `Meter` is a published
-alias template. The parallel dependent-member gate under instantiated owners
-uses the same identity-first full-name helpers. Earlier on `main`:
-instantiated-owner member variable identity, instantiated-owner member alias
-identity, template-friend member identity, callable substitution, nested
-callable parameter builder identity, and out-of-line member-class-template
-definitions.
+Last updated: 2026-09-18 after landing the deferred `MemberObjectPointer`
+canonical adapter family on
+`boundary-3a-member-object-pointer-adapter-recovery`: cast and
+non-type-template-parameter rewrites flatten a member object pointer to the
+flat `MemberObjectPointer` category and cannot carry the pointee, so the
+pre-rewrite pointee specifier is now kept as syntax on `TypeSpecifierNode` and
+imported structurally by the adapter. Member object pointers recovered through
+`decltype(cast)` import as `CanonicalTypeKind::MemberObjectPointer(owner,
+pointee)` instead of `UnmigratedCallable`. Earlier on `main`: the
+`parse_type_specifier` `<` gate alias arm, instantiated-owner member variable
+identity, instantiated-owner member alias identity, template-friend member
+identity, callable substitution, nested callable parameter builder identity,
+and out-of-line member-class-template definitions.
 
 ## Current boundary and handoff
 
@@ -401,12 +402,15 @@ during concrete alias materialization. This fixes forwarded aliases such as
   expression forms resolve through identity after the member function-call
   probe. `CanonicalTypeTable::substitute` closes
   the function and member-pointer walk deferral. The `parse_type_specifier` `<`
-  gate known-template test includes alias templates. Dependent alias families,
-  alias partials, and
-  class-instantiation alias re-registration deletion remain deferred; select and
-  bound the next still-Unmigrated callable, dependent, or template adapter
-  family before expanding boundary-1 coverage. Stop here for review before
-  starting another family, 3B, or the parallel frontend experiment.
+  gate known-template test includes alias templates. The callable
+  `MemberObjectPointer` adapter family is now migrated: the parser preserves the
+  pre-rewrite pointee specifier that cast and non-type-template-parameter
+  rewrites flatten, and `importCanonicalMemberPointer` imports it structurally
+  (fail-closed when absent or unsupported). Dependent alias families, alias
+  partials, and class-instantiation alias re-registration deletion remain
+  deferred; select and bound the next still-Unmigrated dependent or template
+  adapter family before expanding boundary-1 coverage. Stop here for review
+  before starting another family, 3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -487,6 +491,21 @@ comparison) still pass. Linux sharded rebuild is warning-free;
 `git diff --check` is clean. Fixed-corpus migration counters were not
 re-measured on this Linux slice (no counter-touching choke points changed);
 expect no movement.
+
+Latest validation for member object pointer adapter recovery: a function
+returning `decltype(static_cast<int MemberHost::*>(nullptr))` previously left
+one Unmigrated declarator request; it now imports as a canonical
+`MemberObjectPointer(owner, pointee)` (the production adapter corpus moves
+25/0 to 26/0 supported/deferred, and the baseline is raised accordingly).
+The native `checkAdapter` proves the recovered form equals the
+declarator-shaped member object pointer and that a missing or unsupported
+pointee stays fail-closed; the `adapter_member_object_pointee` mutation
+(wrong pointee) makes the harness exit 1. The reduced regression
+`test_canonical_member_object_pointer_decltype_ret0` keeps the parser shape
+runnable and mixes the recovered flat form with a declarator member pointer.
+Linux sharded rebuild is warning-free; the full runner passed (3011
+single-file + 12 multi-TU, 275 negative, 0 failures); fixed-corpus migration
+counters and the static dollar inventory stay within baseline.
 
 Latest validation for instantiated-owner member variable identity: the
 `FrontendContext` doctest `Instantiated-owner member variable resolves through
@@ -636,9 +655,10 @@ Advanced, not completed:
   friend member class-template ids resolving their member primary by identity,
   instantiated-owner member alias type-ids resolving through identity in
   `parse_type_specifier`, instantiated-owner member variable expression
-  forms resolving through identity after the member function-call probe, and
-  the `parse_type_specifier` `<` gate known-template test including alias
-  templates.
+  forms resolving through identity after the member function-call probe, the
+  `parse_type_specifier` `<` gate known-template test including alias
+  templates, and cast/NTTP member object pointer pointee recovery
+  (`MemberObjectPointer` adapter family).
   The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
   dependent stamping, unpublished/incomplete nominal, anonymous-union, and
@@ -675,10 +695,11 @@ must not increase an implementation percentage.
   `CanonicalTypeTable::substitute` now walks function and member-pointer graphs,
   and instantiated-owner member alias type-ids resolve through identity, and
   instantiated-owner member variable expression forms resolve through identity,
-  and the `<` gate known-template test includes alias templates; select and
-  bound the next still-Unmigrated callable, dependent, or template adapter
-  family (dependent alias families or alias partials) before expanding that
-  coverage.
+  and the `<` gate known-template test includes alias templates, and the
+  callable `MemberObjectPointer` adapter family now imports the preserved
+  cast/NTTP pointee structurally; select and bound the next still-Unmigrated
+  dependent or template adapter family (dependent alias families or alias
+  partials) before expanding that coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

@@ -407,6 +407,10 @@ def main():
              "if (false && syntax.has_template_specialization()) {\n"
              "\t\tCanonicalTypeTransaction transaction(table);\n"
              "\t\tconst auto imported = importCanonicalTemplateSpecialization(table, syntax, context);"),
+            ("adapter_member_object_pointee", "CanonicalTypeAdapter.h",
+             "const CanonicalTypeImport imported_pointee = importCanonicalTypeImpl(\n"
+             "\t\t\ttable, syntax.member_object_pointee(), CanonicalTypeImportContext::Exact);",
+             "const CanonicalTypeImport imported_pointee = {owner, CanonicalTypeImportStatus::Supported};"),
             ("aggregate_peak", "ArenaAccounting.h", "stats_.peak_bytes = stats_.current_bytes;",
              "stats_.peak_bytes += stats_.current_bytes;"),
         ):
