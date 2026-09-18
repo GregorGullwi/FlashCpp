@@ -218,8 +218,25 @@ def main():
                 ".array_extent = packTemplateParameterExtent(template_decl, parameter_index),",
                 ".array_extent = packTemplateParameterExtent(TemplateDeclId{1}, parameter_index),"),
             "lost_substitute_parameter": (
-                "memo.emplace(frame.id.value, args[index]);",
+                "memo.emplace(frame.id.value, args[index].type);",
                 "memo.emplace(frame.id.value, frame.id);"),
+            "lost_alias_parameter_kind_check": (
+                "\t\t\tif (!kinds_match) {\n"
+                "\t\t\t\treturn type;\n"
+                "\t\t\t}",
+                "\t\t\tif (!kinds_match && false) {\n"
+                "\t\t\t\treturn type;\n"
+                "\t\t\t}"),
+            "lost_alias_template_placeholder_replacement": (
+                "if (placeholder_decl == env && placeholder_index < args.size() &&\n"
+                "\t\t\t\t\t\t\targs[placeholder_index].kind == CanonicalTemplateArgKind::Template) {\n"
+                "\t\t\t\t\t\t\trebuilt_mixed.push_back(CanonicalTemplateArgument::makeTemplate(\n"
+                "\t\t\t\t\t\t\t\targs[placeholder_index].template_decl));\n"
+                "\t\t\t\t\t\t\tunchanged = false;",
+                "if (false) {\n"
+                "\t\t\t\t\t\t\trebuilt_mixed.push_back(CanonicalTemplateArgument::makeTemplate(\n"
+                "\t\t\t\t\t\t\t\targs[placeholder_index].template_decl));\n"
+                "\t\t\t\t\t\t\tunchanged = false;"),
             "lost_substitute_function_return": (
                 "const TypeId substituted_return = memo.at(node.child.value);",
                 "const TypeId substituted_return = node.child;"),

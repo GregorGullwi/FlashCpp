@@ -5,19 +5,26 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-18 after landing direct dependent-alias canonical target
-pattern publication on `codex/boundary-3a-dependent-alias-redirection`.
-Published
-namespace/global alias primaries retain their `TemplateDeclId` on the
-`TemplateAliasNode`; type-only dependent alias uses stamp that ID and ordered
-arguments, and importable direct targets publish a canonical pattern under
-that declaration ID together with its declared type/non-type/template argument
-layout; concrete type-only substitution now redirects those
-direct alias specializations to the published target, while dependent uses
-retain the alias boundary; the canonical adapter imports a distinct
+Last updated: 2026-09-18 after landing mixed concrete direct-alias
+redirection on `codex/boundary-3a-direct-alias-redirection`. Published
+namespace/global and member alias primaries retain their `TemplateDeclId` on
+the `TemplateAliasNode`; type-only dependent alias uses stamp that ID and
+ordered arguments, and importable direct targets publish a canonical pattern
+under that declaration ID together with its declared type/non-type/template
+argument layout. Concrete direct alias specializations now redirect to the
+published target for both type-only and mixed layouts: each argument is matched
+positionally against the published parameter kinds, opaque NTTP `ExprId` and
+template-template `TemplateDeclId` identities are preserved, and an alias
+target that names its own template-template parameter by owner and index is
+rebuilt with the concrete `TemplateDeclId`. Chains resolve iteratively with
+declaration-ID cycle detection. The canonical adapter imports a distinct
 `AliasTemplateSpecialization` node rather than a class specialization or a
-registry spelling identity. Target redirection after concrete substitution and
-alias partials remain deferred. Earlier on `main`: the deferred `MemberObjectPointer`
+registry spelling identity. Dependent type arguments, argument-kind and arity
+mismatches, targets that mention non-type arguments while the alias declares a
+non-type parameter, dependent template-template arguments, targets that capture
+an enclosing environment, dependent-member targets, alias partial
+specializations, and arbitrary nested alias graphs remain deferred. Earlier on
+`main`: the deferred `MemberObjectPointer`
 canonical adapter family (cast/NTTP pointee preservation plus MSVC mangling
 recovery), the `parse_type_specifier` `<` gate alias arm, instantiated-owner
 member variable identity, instantiated-owner member alias identity,
@@ -728,12 +735,23 @@ must not increase an implementation percentage.
   pointee structurally (with MSVC mangling recovery), and namespace/global
   alias templates publish declaration identity. Direct namespace/global
   dependent alias type-only arguments now carry a published
-  `AliasTemplateSpecialization` identity through the canonical adapter; direct
-  type-only targets redirect after concrete substitution, and target
-  publication retains the mixed parameter layout needed for later non-type and
-  template-argument substitution. Non-type/template argument redirection,
-  member dependent aliases, and alias partials remain deferred. Select and bound one
-  of those remaining families before expanding boundary-1 coverage.
+  `AliasTemplateSpecialization` identity through the canonical adapter. Direct
+  alias targets now redirect after concrete substitution for both type-only and
+  mixed non-type/template-template layouts: argument identity kinds are matched
+  positionally against the published parameter kinds, `ExprId` / `TemplateDeclId`
+  payloads survive, and targets naming a template-template parameter by
+  owner/index rebuild with the concrete `TemplateDeclId` while chain resolution
+  stays iterative with declaration-ID cycle detection. Non-type argument
+  references in a target cannot be distinguished from literals, so such targets
+  stay deferred once the alias declares a non-type parameter, along with member
+  dependent aliases and alias partials. Latest architecture validation: the
+  native `CanonicalTypeTests` `checkAliasRedirection` case exercises mixed
+  layouts, unresolved-identity distinction, layout conflict rejection,
+  template-template placeholder replacement, mixed chain resolution, self and
+  mutual cycles, and the arity/kind/dependent/non-type fail-closed boundaries.
+  A source regression `test_canonical_direct_alias_mixed_params_ret42` covers the
+  ready non-type mixed direct-alias materialization path. Select and bound one
+  of the remaining families before expanding boundary-1 coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in
