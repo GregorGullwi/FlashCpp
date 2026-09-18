@@ -1011,6 +1011,40 @@ public:
 		return unpackTemplateParameterIndex(input.array_extent);
 	}
 
+	// Direct alias targets may only capture Type-kind parameters owned by the
+	// alias primary itself. Member aliases that also capture an enclosing class
+	// template parameter need a combined environment and remain deferred.
+	bool dependsOnlyOnTemplateParameters(TypeId type, TemplateDeclId template_decl) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!type || !template_decl) {
+			throw InternalError("canonical type: invalid template-parameter dependency query");
+		}
+		TemplateVector<TypeId, 4> pending;
+		pending.push_back(type);
+		while (!pending.empty()) {
+			const CanonicalTypeNode node = nodeUnlocked(pending.back());
+			pending.pop_back();
+			if (node.kind == CanonicalTypeKind::TemplateParameter &&
+				unpackTemplateParameterDecl(node.array_extent) != template_decl) {
+				return false;
+			}
+			if (node.kind == CanonicalTypeKind::FunctionParam ||
+				node.kind == CanonicalTypeKind::TemplateArg) {
+				pending.push_back(TypeId{static_cast<uint32_t>(node.array_extent)});
+			} else if (isMemberPointer(node.kind)) {
+				pending.push_back(TypeId{static_cast<uint32_t>(node.array_extent)});
+			}
+			if (node.kind == CanonicalTypeKind::Function) {
+				pending.push_back(unpackFunctionParamLink(node.array_extent));
+			}
+			if (node.child) {
+				pending.push_back(node.child);
+			}
+		}
+		return true;
+	}
+
 	TemplateDeclId templateSpecializationDecl(TypeId specialization) const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();

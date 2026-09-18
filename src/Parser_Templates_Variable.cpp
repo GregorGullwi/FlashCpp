@@ -424,7 +424,9 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		}
 		const CanonicalTypeImport imported_target =
 			importCanonicalType(requireFrontendContext().canonicalTypes(), target);
-		if (imported_target.status == CanonicalTypeImportStatus::Supported) {
+		if (imported_target.status == CanonicalTypeImportStatus::Supported &&
+			requireFrontendContext().canonicalTypes().dependsOnlyOnTemplateParameters(
+				imported_target.type, *template_decl)) {
 			TemplateVector<CanonicalTemplateArgKind, 4> parameter_kinds;
 			for (const TemplateParameterNode& parameter : published_alias.template_parameters()) {
 				parameter_kinds.push_back(parameter.kind() == TemplateParameterKind::Type

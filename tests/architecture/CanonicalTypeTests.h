@@ -551,6 +551,9 @@ inline void checkAdapter() {
 	require(table.aliasTemplateTarget(TemplateDeclId{31}) == alias_target_pattern);
 	const TypeId alias_concrete_arg[] = {table.builtin(CanonicalBuiltinKind::Int)};
 	const TypeId alias_dependent_arg[] = {table.templateParameter(TemplateDeclId{31}, 0)};
+	require(table.dependsOnlyOnTemplateParameters(alias_target_pattern, TemplateDeclId{31}));
+	require(!table.dependsOnlyOnTemplateParameters(
+		table.pointer(table.templateParameter(TemplateDeclId{32}, 0)), TemplateDeclId{31}));
 	require(table.substitute(
 		table.aliasTemplateSpecialization(TemplateDeclId{31}, alias_dependent_arg),
 		TemplateDeclId{31}, alias_concrete_arg) ==
