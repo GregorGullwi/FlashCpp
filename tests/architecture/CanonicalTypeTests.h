@@ -530,6 +530,20 @@ inline void checkAdapter() {
 	const TypeId dependent_arg_ids[] = {table.templateParameter(TemplateDeclId{4}, 0)};
 	require(imported_dependent_spec.type == table.qualify(
 		table.templateSpecialization(TemplateDeclId{11}, dependent_arg_ids), CVQualifier::Const));
+	TypeSpecifierNode dependent_alias_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
+		CVQualifier::None);
+	dependent_alias_specialization.set_alias_template_specialization(
+		TemplateDeclId{31}, dependent_args);
+	const auto imported_dependent_alias = importCanonicalType(table, dependent_alias_specialization);
+	require(imported_dependent_alias.status == CanonicalTypeImportStatus::Supported);
+	require(table.node(imported_dependent_alias.type).kind ==
+		CanonicalTypeKind::AliasTemplateSpecialization);
+	require(imported_dependent_alias.type == table.aliasTemplateSpecialization(
+		TemplateDeclId{31}, dependent_arg_ids));
+	require(imported_dependent_alias.type != table.aliasTemplateSpecialization(
+		TemplateDeclId{32}, dependent_arg_ids));
+	require(imported_dependent_alias.type != table.templateSpecialization(
+		TemplateDeclId{31}, dependent_arg_ids));
 	TypeSpecifierNode nttp_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
 		CVQualifier::None);
 	nttp_specialization.set_template_specialization_mixed(

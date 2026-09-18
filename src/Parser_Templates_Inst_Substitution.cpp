@@ -1840,13 +1840,29 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 			"Dependent alias-template placeholder collided with a non-template type");
 	}
 
-	return TypeSpecifierNode(
+	TypeSpecifierNode dependent_spec(
 		dependent_alias_info->registeredTypeIndex().withCategory(
 			TypeCategory::Template),
 		0,
 		source_token,
 		cv_qualifier,
 		ReferenceQualifier::None);
+	// The placeholder remains the legacy materialization bridge, but published
+	// namespace/global alias primaries also carry structural declaration identity
+	// for the canonical adapter. Non-type/template arguments remain deferred.
+	if (alias_node.has_template_decl_id()) {
+		std::vector<TypeSpecifierNode> type_args;
+		type_args.reserve(template_args.size());
+		for (const TemplateTypeArg& argument : template_args) {
+			if (!argument.isTypeArgument()) {
+				return dependent_spec;
+			}
+			type_args.push_back(makeTypeSpecifierFromTemplateTypeArg(argument, source_token));
+		}
+		dependent_spec.set_alias_template_specialization(
+			alias_node.template_decl_id(), std::move(type_args));
+	}
+	return dependent_spec;
 }
 
 TypeSpecifierNode Parser::buildDependentDirectAliasTypeSpecifier(

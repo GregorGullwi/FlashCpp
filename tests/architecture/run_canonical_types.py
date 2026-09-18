@@ -101,6 +101,7 @@ def main():
             "lost_specialization_dependent_qualifier": (
                 "kind == CanonicalTypeKind::TemplateParameter ||\n"
                 "\t\t\tkind == CanonicalTypeKind::TemplateSpecialization ||\n"
+                "\t\t\tkind == CanonicalTypeKind::AliasTemplateSpecialization ||\n"
                 "\t\t\tkind == CanonicalTypeKind::DependentName ||",
                 "kind == CanonicalTypeKind::TemplateParameter ||\n"
                 "\t\t\tkind == CanonicalTypeKind::DependentName ||"),

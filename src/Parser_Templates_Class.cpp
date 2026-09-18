@@ -1501,6 +1501,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				const TemplateDeclId template_decl =
 					front_end.templateDecls().publishPrimaryAliasTemplate(
 						owner, StringTable::getOrInternStringHandle(alias_name));
+				alias_node.as<TemplateAliasNode>().set_template_decl_id(template_decl);
 				front_end.templateDecls().attachPrimaryAliasPattern(template_decl, alias_node);
 			}
 		}

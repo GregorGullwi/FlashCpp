@@ -590,7 +590,9 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 		}
 		argument_ids.push_back(CanonicalTemplateArgument::makeNonType(expr));
 	}
-	auto id = table.templateSpecialization(syntax.specialization_template_decl(), argument_ids);
+	auto id = syntax.is_alias_template_specialization()
+		? table.aliasTemplateSpecialization(syntax.specialization_template_decl(), argument_ids)
+		: table.templateSpecialization(syntax.specialization_template_decl(), argument_ids);
 	id = table.qualify(id, syntax.cv_qualifier());
 	id = applyCanonicalPointerArrayReference(
 		table, id, syntax, context, has_ordinary_array, has_pointee_array);
