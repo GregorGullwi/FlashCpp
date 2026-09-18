@@ -663,6 +663,28 @@ public:
 		return aliasTemplateSpecialization(primary, mixed);
 	}
 
+	// Direct alias patterns are keyed by declaration identity. The target is a
+	// canonical type in that alias's parameter environment; it is never a
+	// spelling or an AST pointer.
+	void publishAliasTemplateTarget(TemplateDeclId primary, TypeId target) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!primary || !target || isInternalLink(nodeUnlocked(target).kind)) {
+			throw InternalError("canonical type: invalid alias target publication");
+		}
+		const auto [it, inserted] = alias_template_targets_.emplace(primary.value, target);
+		if (!inserted && it->second != target) {
+			throw InternalError("canonical type: conflicting alias target publication");
+		}
+	}
+
+	std::optional<TypeId> aliasTemplateTarget(TemplateDeclId primary) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto it = alias_template_targets_.find(primary.value);
+		return it == alias_template_targets_.end() ? std::nullopt : std::optional<TypeId>(it->second);
+	}
+
 	// Type-only convenience overload for Spec identity.
 	TypeId templateSpecialization(TemplateDeclId primary, std::span<const TypeId> arguments) {
 		std::vector<CanonicalTemplateArgument> mixed;
@@ -2499,6 +2521,7 @@ private:
 	mutable std::mutex mutex_;
 	ChunkedVector<CanonicalTypeNode, kChunkSize> nodes_;
 	std::unordered_map<CanonicalTypeNode, TypeId, NodeHash> ids_;
+	std::unordered_map<uint32_t, TypeId> alias_template_targets_;
 	// Layout samples use 16 slots (384 record bytes / 256 enum bytes per chunk)
 	// until a production corpus provides a larger measured complete-layout peak.
 	ChunkedVector<CanonicalRecordLayout, 16> record_layouts_;
