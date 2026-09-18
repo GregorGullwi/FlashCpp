@@ -131,12 +131,15 @@ publish `TemplateDeclId`s during the nested body and retroactively stamp their
 declared Type-kind parameters through the existing publication helpers; the
 lazy enclosing-epoch path stays as fallback for nested classes whose enclosing
 lacked an EntityId at parse time (template-nested, local, and anonymous forms
-still fail closed there). Primary member alias templates publish identity the
-same way: `parse_member_template_alias` publishes a `TemplateDeclId`
+still fail closed there). Primary member alias templates publish identity and
+direct canonical targets the same way: `parse_member_template_alias` publishes a `TemplateDeclId`
 (`TemplateDeclTable` `PrimaryKind::Alias`) under the class-owned OwnerId from
 the enclosing parse-time EntityId, or a template-owned OwnerId for direct
 members of published namespace/global primary class templates, anchoring the
-`TemplateAliasNode` under that id. Qualified member alias type-ids resolve
+`TemplateAliasNode` under that id. Directly importable targets stamp their own
+Type-kind parameters with that member alias id and publish the target plus its
+argument layout under the same canonical declaration key; unresolved,
+dependent-member, and partial targets remain deferred. Qualified member alias type-ids resolve
 through `Parser::findAliasTemplateBySpelling` (identity chain first via
 `findAliasTemplateByIdentityChain`, registry alias lookup fail-closed
 fallback) at the `parse_type_specifier` alias lookups and at the shared

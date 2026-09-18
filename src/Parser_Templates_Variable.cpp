@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CanonicalTypeAdapter.h"
 #include "ConstExprEvaluator.h"
 #include "FrontendContext.h"
 #include "NameMangling.h"
@@ -401,12 +402,41 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Publish the member alias primary's identity so qualified type-ids
 	// resolve through the owner chain instead of registry spelling keys.
-	(void)tryPublishMemberPrimaryAliasTemplate(
+	const std::optional<TemplateDeclId> template_decl = tryPublishMemberPrimaryAliasTemplate(
 		struct_node,
 		alias_node,
 		alias_name_handle,
 		active_template_decl_id_,
 		struct_parsing_context_stack_.size() == 1u);
+	if (template_decl.has_value()) {
+		TemplateAliasNode& published_alias = alias_node.as<TemplateAliasNode>();
+		published_alias.set_template_decl_id(*template_decl);
+		TypeSpecifierNode& target = published_alias.target_type_node();
+		if (target.has_template_parameter_identity()) {
+			for (uint32_t index = 0; index < published_alias.template_parameters().size(); ++index) {
+				const TemplateParameterNode& parameter = published_alias.template_parameters()[index];
+				if (parameter.kind() == TemplateParameterKind::Type &&
+					parameter.nameHandle() == target.template_parameter_name()) {
+					target.set_template_parameter_decl(*template_decl, index);
+					break;
+				}
+			}
+		}
+		const CanonicalTypeImport imported_target =
+			importCanonicalType(requireFrontendContext().canonicalTypes(), target);
+		if (imported_target.status == CanonicalTypeImportStatus::Supported) {
+			TemplateVector<CanonicalTemplateArgKind, 4> parameter_kinds;
+			for (const TemplateParameterNode& parameter : published_alias.template_parameters()) {
+				parameter_kinds.push_back(parameter.kind() == TemplateParameterKind::Type
+					? CanonicalTemplateArgKind::Type
+					: parameter.kind() == TemplateParameterKind::NonType
+						? CanonicalTemplateArgKind::NonType
+						: CanonicalTemplateArgKind::Template);
+			}
+			requireFrontendContext().canonicalTypes().publishAliasTemplateTarget(
+				*template_decl, imported_target.type, parameter_kinds);
+		}
+	}
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", StringTable::getStringView(qualified_name));
 

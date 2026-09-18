@@ -1493,12 +1493,19 @@ TEST_SUITE("FrontendContext") {
 		REQUIRE(!parser.parse().is_error());
 
 		// The legacy owner-prefix key still answers at parse time.
-		const auto legacy_opt =
-			gTemplateRegistry.lookup_alias_template("ns::Gauge::Meter");
-		REQUIRE(legacy_opt.has_value());
-		REQUIRE(legacy_opt->is<TemplateAliasNode>());
+	const auto legacy_opt =
+		gTemplateRegistry.lookup_alias_template("ns::Gauge::Meter");
+	REQUIRE(legacy_opt.has_value());
+	REQUIRE(legacy_opt->is<TemplateAliasNode>());
+	const TemplateAliasNode& member_alias = legacy_opt->as<TemplateAliasNode>();
+	REQUIRE(member_alias.has_template_decl_id());
+	const std::optional<TypeId> member_alias_target =
+		context.canonicalTypes().aliasTemplateTarget(member_alias.template_decl_id());
+	REQUIRE(member_alias_target.has_value());
+	CHECK(*member_alias_target == context.canonicalTypes().templateParameter(
+		member_alias.template_decl_id(), 0));
 
-		// The partial namespace suffix spelling resolves through published
+	// The partial namespace suffix spelling resolves through published
 		// identity to the same alias node the legacy key answers.
 		const std::optional<ASTNode> chain_alias =
 			parser.findAliasTemplateByIdentityChain("ns::Gauge::Meter");
