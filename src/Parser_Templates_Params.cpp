@@ -732,10 +732,15 @@ ParseResult Parser::parse_template_parameter() {
 				advance(); // consume '*'
 				// This is T ClassName::* — member object pointer NTTP
 				// Rewrite nttp_type as MemberObjectPointer (64-bit, no extra pointer level)
+				// The flat category cannot carry the pointee; keep the pre-rewrite
+				// pointee specifier as syntax for the canonical adapter.
+				TypeSpecifierNode mop_pointee_syntax = nttp_type;
+				ASTNode mop_pointee_node = emplace_node<TypeSpecifierNode>(std::move(mop_pointee_syntax));
 				nttp_type.set_type_index(nativeTypeIndex(TypeCategory::MemberObjectPointer));
 				nttp_type.set_size_in_bits(64);
 				nttp_type.limit_pointer_depth(0);
 				nttp_type.set_member_class_name(mop_class_token.handle());
+				nttp_type.set_member_object_pointee(&mop_pointee_node.as<TypeSpecifierNode>());
 				tryBindPublishedMemberClassEntity(nttp_type);
 				discard_saved_token(mop_pos);
 				FLASH_LOG(Parser, Debug, "Parsed member object pointer NTTP: ",

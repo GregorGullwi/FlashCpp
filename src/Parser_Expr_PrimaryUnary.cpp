@@ -207,10 +207,16 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 			advance(); // consume '::'
 			if (peek() == "*"_tok) {
 				advance(); // consume '*'
+				// The flat MemberObjectPointer category cannot carry the pointee.
+				// Keep the pre-rewrite pointee specifier as syntax so the canonical
+				// adapter can import a structural member object pointer.
+				TypeSpecifierNode pointee_syntax = type_spec;
+				ASTNode pointee_node = emplace_node<TypeSpecifierNode>(std::move(pointee_syntax));
 				type_spec.set_type_index(nativeTypeIndex(TypeCategory::MemberObjectPointer));
 				type_spec.set_size_in_bits(64);
 				type_spec.limit_pointer_depth(0);
 				type_spec.set_member_class_name(mop_class_token.handle());
+				type_spec.set_member_object_pointee(&pointee_node.as<TypeSpecifierNode>());
 				tryBindPublishedMemberClassEntity(type_spec);
 				discard_saved_token(mop_save);
 			} else {

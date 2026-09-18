@@ -2221,6 +2221,7 @@ public:
 		injected_class_declaration_ = other.injected_class_declaration_;
 		member_class_entity_ = other.member_class_entity_;
 		type_entity_ = other.type_entity_;
+		member_object_pointee_ = other.member_object_pointee_;
 	}
 	// Pointer-to-member support (for types like int Class::*)
 	bool has_member_class() const { return member_class_name_.has_value(); }
@@ -2240,6 +2241,22 @@ public:
 		member_class_name_.reset();
 		member_class_entity_ = {};
 	}
+	// Cast and non-type-template-parameter rewrites flatten a member object
+	// pointer to the MemberObjectPointer category and cannot carry the pointee
+	// category in the flat type_index. The parser preserves the pre-rewrite
+	// pointee specifier here as syntax; the canonical adapter imports it. The
+	// address is an arena/chunked-storage slot, never semantic identity.
+	bool has_member_object_pointee() const { return member_object_pointee_ != nullptr; }
+	const TypeSpecifierNode& member_object_pointee() const {
+		if (member_object_pointee_ == nullptr) {
+			throw InternalError("type specifier: missing member object pointee");
+		}
+		return *member_object_pointee_;
+	}
+	void set_member_object_pointee(const TypeSpecifierNode* pointee) {
+		member_object_pointee_ = pointee;
+	}
+	void clear_member_object_pointee() { member_object_pointee_ = nullptr; }
 	// Published class/struct identity for the named type itself (not a member owner).
 	bool has_type_entity() const { return static_cast<bool>(type_entity_); }
 	EntityId type_entity() const { return type_entity_; }
@@ -2306,6 +2323,7 @@ private:
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	EntityId member_class_entity_; // Published class owner; never StringHandle identity
 	EntityId type_entity_; // Published named type entity; never StringHandle identity
+	const TypeSpecifierNode* member_object_pointee_ = nullptr; // Preserved MOP pointee syntax
 	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
 
 public:

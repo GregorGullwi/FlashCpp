@@ -8,6 +8,13 @@ enum class Access : unsigned short {
 	Write = 5,
 };
 
+struct MemberHost {
+	int field;
+	long other;
+};
+
+decltype(static_cast<int MemberHost::*>(nullptr)) readMemberObject();
+
 int readShort(const short* value);
 int readShort(const short* value) { return *value; }
 int readLong(long long& value) { return static_cast<int>(value); }
