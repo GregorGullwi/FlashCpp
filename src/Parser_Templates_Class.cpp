@@ -1487,6 +1487,24 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			QualifiedIdentifier::fromQualifiedName(alias_name, gSymbolTable.get_current_namespace_handle()),
 			alias_node);
 
+		// Publish declaration-layer identity for namespace/global alias
+		// primaries: the TemplateDeclId is keyed by namespace OwnerId + name and
+		// anchors the alias pattern, so qualified and dependent alias identity no
+		// longer depends on the registry spelling key. Member alias primaries
+		// publish through the same table from parse_member_template_alias.
+		{
+			const ScopeType publish_scope = gSymbolTable.get_current_scope_type();
+			if (publish_scope == ScopeType::Global || publish_scope == ScopeType::Namespace) {
+				FrontendContext& front_end = requireFrontendContext();
+				const OwnerId owner =
+					ownerIdFromNamespaceHandle(gSymbolTable.get_current_namespace_handle());
+				const TemplateDeclId template_decl =
+					front_end.templateDecls().publishPrimaryAliasTemplate(
+						owner, StringTable::getOrInternStringHandle(alias_name));
+				front_end.templateDecls().attachPrimaryAliasPattern(template_decl, alias_node);
+			}
+		}
+
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
 		clearCurrentTemplateParameters();
