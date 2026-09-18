@@ -11,7 +11,9 @@ Published
 namespace/global alias primaries retain their `TemplateDeclId` on the
 `TemplateAliasNode`; type-only dependent alias uses stamp that ID and ordered
 arguments, and importable direct targets publish a canonical pattern under
-that declaration ID; the canonical adapter imports a distinct
+that declaration ID; concrete type-only substitution now redirects those
+direct alias specializations to the published target, while dependent uses
+retain the alias boundary; the canonical adapter imports a distinct
 `AliasTemplateSpecialization` node rather than a class specialization or a
 registry spelling identity. Target redirection after concrete substitution and
 alias partials remain deferred. Earlier on `main`: the deferred `MemberObjectPointer`
@@ -722,9 +724,10 @@ must not increase an implementation percentage.
   pointee structurally (with MSVC mangling recovery), and namespace/global
   alias templates publish declaration identity. Direct namespace/global
   dependent alias type-only arguments now carry a published
-  `AliasTemplateSpecialization` identity through the canonical adapter; target
-  redirection after concrete substitution, non-type/template arguments, member
-  dependent aliases, and alias partials remain deferred. Select and bound one
+  `AliasTemplateSpecialization` identity through the canonical adapter; direct
+  type-only targets redirect after concrete substitution. Non-type/template
+  arguments, member dependent aliases, alias partials, and alias-target chains
+  remain deferred. Select and bound one
   of those remaining families before expanding boundary-1 coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.

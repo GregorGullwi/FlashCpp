@@ -1477,6 +1477,23 @@ private:
 			kind == CanonicalTypeKind::DependentTemplateMember;
 	}
 
+	bool containsTemplateParameterUnlocked(TypeId type) const {
+		std::vector<TypeId> pending{type};
+		while (!pending.empty()) {
+			const CanonicalTypeNode node = nodeUnlocked(pending.back());
+			pending.pop_back();
+			if (node.kind == CanonicalTypeKind::TemplateParameter) {
+				return true;
+			}
+			if (node.kind == CanonicalTypeKind::Qualified || node.kind == CanonicalTypeKind::Pointer ||
+				node.kind == CanonicalTypeKind::LValueReference || node.kind == CanonicalTypeKind::RValueReference ||
+				node.kind == CanonicalTypeKind::Array) {
+				pending.push_back(node.child);
+			}
+		}
+		return false;
+	}
+
 	TypeId packIdentifierBytesUnlocked(std::string_view identifier) {
 		if (identifier.empty() || identifier.find('\0') != std::string_view::npos) {
 			throw InternalError("canonical type: invalid dependent identifier");
@@ -1811,8 +1828,10 @@ private:
 			case CanonicalTypeKind::TemplateSpecialization:
 			case CanonicalTypeKind::AliasTemplateSpecialization: {
 				rebuilt_mixed.clear();
+				rebuilt_args.clear();
 				TypeId arg_link = node.child;
 				bool unchanged = true;
+				bool type_only_concrete = true;
 				while (arg_link) {
 					const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
 					if (arg_node.kind == CanonicalTypeKind::TemplateArg) {
@@ -1820,13 +1839,19 @@ private:
 						const TypeId substituted = memo.at(original.value);
 						unchanged = unchanged && substituted == original;
 						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeType(substituted));
+						rebuilt_args.push_back(substituted);
+						type_only_concrete = type_only_concrete &&
+							!containsTemplateParameterUnlocked(substituted);
 					} else if (arg_node.kind == CanonicalTypeKind::NonTypeTemplateArg) {
+						type_only_concrete = false;
 						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeNonType(
 							ExprId{static_cast<uint32_t>(arg_node.array_extent)}));
 					} else if (arg_node.kind == CanonicalTypeKind::TemplateTemplateArg) {
+						type_only_concrete = false;
 						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeTemplate(
 							TemplateDeclId{static_cast<uint32_t>(arg_node.array_extent)}));
 					} else if (arg_node.kind == CanonicalTypeKind::DependentTemplateTemplateArg) {
+						type_only_concrete = false;
 						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeDependentTemplate(
 							unpackTemplateParameterDecl(arg_node.array_extent),
 							unpackTemplateParameterIndex(arg_node.array_extent)));
@@ -1834,6 +1859,14 @@ private:
 						throw InternalError("canonical type: corrupt template argument link");
 					}
 					arg_link = arg_node.child;
+				}
+				if (node.kind == CanonicalTypeKind::AliasTemplateSpecialization && type_only_concrete) {
+					const auto target = alias_template_targets_.find(static_cast<uint32_t>(node.array_extent));
+					if (target != alias_template_targets_.end()) {
+						rebuilt = substituteUnlocked(target->second,
+							TemplateDeclId{static_cast<uint32_t>(node.array_extent)}, rebuilt_args);
+						break;
+					}
 				}
 				if (unchanged) {
 					rebuilt = frame.id;
