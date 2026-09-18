@@ -668,14 +668,20 @@ public:
 	// Direct alias patterns are keyed by declaration identity. The target is a
 	// canonical type in that alias's parameter environment; it is never a
 	// spelling or an AST pointer.
-	void publishAliasTemplateTarget(TemplateDeclId primary, TypeId target) {
+	void publishAliasTemplateTarget(TemplateDeclId primary, TypeId target,
+		std::span<const CanonicalTemplateArgKind> parameter_kinds) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		if (!primary || !target || isInternalLink(nodeUnlocked(target).kind)) {
 			throw InternalError("canonical type: invalid alias target publication");
 		}
-		const auto [it, inserted] = alias_template_targets_.emplace(primary.value, target);
-		if (!inserted && it->second != target) {
+		AliasTemplateTarget published{target, {}};
+		published.parameter_kinds.assign(parameter_kinds.begin(), parameter_kinds.end());
+		const auto [it, inserted] = alias_template_targets_.emplace(primary.value, std::move(published));
+		if (!inserted && (it->second.target != target ||
+			it->second.parameter_kinds.size() != parameter_kinds.size() ||
+			!std::equal(it->second.parameter_kinds.begin(), it->second.parameter_kinds.end(),
+				parameter_kinds.begin()))) {
 			throw InternalError("canonical type: conflicting alias target publication");
 		}
 	}
@@ -684,7 +690,7 @@ public:
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		const auto it = alias_template_targets_.find(primary.value);
-		return it == alias_template_targets_.end() ? std::nullopt : std::optional<TypeId>(it->second);
+		return it == alias_template_targets_.end() ? std::nullopt : std::optional<TypeId>(it->second.target);
 	}
 
 	// Type-only convenience overload for Spec identity.
@@ -1408,6 +1414,10 @@ public:
 	}
 
 private:
+	struct AliasTemplateTarget {
+		TypeId target;
+		TemplateVector<CanonicalTemplateArgKind, 4> parameter_kinds;
+	};
 	struct CanonicalRecordFieldSchemaHeader {
 		EntityId entity;
 		uint32_t member_begin;
@@ -1518,7 +1528,7 @@ private:
 			}
 			const auto target = alias_template_targets_.find(primary);
 			if (target == alias_template_targets_.end()) return type;
-			type = substituteUnlocked(target->second, TemplateDeclId{primary}, arguments);
+			type = substituteUnlocked(target->second.target, TemplateDeclId{primary}, arguments);
 		}
 	}
 
@@ -2574,7 +2584,7 @@ private:
 	mutable std::mutex mutex_;
 	ChunkedVector<CanonicalTypeNode, kChunkSize> nodes_;
 	std::unordered_map<CanonicalTypeNode, TypeId, NodeHash> ids_;
-	std::unordered_map<uint32_t, TypeId> alias_template_targets_;
+	std::unordered_map<uint32_t, AliasTemplateTarget> alias_template_targets_;
 	// Layout samples use 16 slots (384 record bytes / 256 enum bytes per chunk)
 	// until a production corpus provides a larger measured complete-layout peak.
 	ChunkedVector<CanonicalRecordLayout, 16> record_layouts_;

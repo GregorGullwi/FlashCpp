@@ -1522,7 +1522,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				const CanonicalTypeImport imported_target =
 					importCanonicalType(front_end.canonicalTypes(), target);
 				if (imported_target.status == CanonicalTypeImportStatus::Supported) {
-					front_end.canonicalTypes().publishAliasTemplateTarget(template_decl, imported_target.type);
+					TemplateVector<CanonicalTemplateArgKind, 4> parameter_kinds;
+					for (const TemplateParameterNode& parameter : published_alias.template_parameters()) {
+						parameter_kinds.push_back(parameter.kind() == TemplateParameterKind::Type
+							? CanonicalTemplateArgKind::Type
+							: parameter.kind() == TemplateParameterKind::NonType
+								? CanonicalTemplateArgKind::NonType
+								: CanonicalTemplateArgKind::Template);
+					}
+					front_end.canonicalTypes().publishAliasTemplateTarget(
+						template_decl, imported_target.type, parameter_kinds);
 				}
 			}
 		}
