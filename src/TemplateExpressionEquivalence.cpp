@@ -464,7 +464,7 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			   lhs_unary->is_builtin_addressof() == rhs_unary->is_builtin_addressof() &&
 			   equalStructuralExpressionChildren(lhs, rhs);
 	}
-	if (const TernaryOperatorNode* lhs_ternary = tryGetNode<TernaryOperatorNode>(lhs)) {
+	if (tryGetNode<TernaryOperatorNode>(lhs)) {
 		const TernaryOperatorNode* rhs_ternary = tryGetNode<TernaryOperatorNode>(rhs);
 		return rhs_ternary != nullptr &&
 			   equalStructuralExpressionChildren(lhs, rhs);
@@ -490,7 +490,7 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			   lhs_pseudo_dtor->type_name() == rhs_pseudo_dtor->type_name() &&
 			   equalStructuralExpressionChildren(lhs, rhs);
 	}
-	if (const ArraySubscriptNode* lhs_subscript = tryGetNode<ArraySubscriptNode>(lhs)) {
+	if (tryGetNode<ArraySubscriptNode>(lhs)) {
 		const ArraySubscriptNode* rhs_subscript = tryGetNode<ArraySubscriptNode>(rhs);
 		return rhs_subscript != nullptr &&
 			   equalStructuralExpressionChildren(lhs, rhs);
@@ -512,7 +512,7 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			   lhs_alignof->is_type() == rhs_alignof->is_type() &&
 			   equalStructuralExpressionChildren(lhs, rhs);
 	}
-	if (const NoexceptExprNode* lhs_noexcept = tryGetNode<NoexceptExprNode>(lhs)) {
+	if (tryGetNode<NoexceptExprNode>(lhs)) {
 		const NoexceptExprNode* rhs_noexcept = tryGetNode<NoexceptExprNode>(rhs);
 		return rhs_noexcept != nullptr &&
 			   equalStructuralExpressionChildren(lhs, rhs);
@@ -545,22 +545,22 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 			   lhs_delete->is_array() == rhs_delete->is_array() &&
 			   equalStructuralExpressionChildren(lhs, rhs);
 	}
-	if (const StaticCastNode* lhs_static_cast = tryGetNode<StaticCastNode>(lhs)) {
+	if (tryGetNode<StaticCastNode>(lhs)) {
 		const StaticCastNode* rhs_static_cast = tryGetNode<StaticCastNode>(rhs);
 		return rhs_static_cast != nullptr &&
 			   equalStructuralExpressionChildren(lhs, rhs);
 	}
-	if (const DynamicCastNode* lhs_dynamic_cast = tryGetNode<DynamicCastNode>(lhs)) {
+	if (tryGetNode<DynamicCastNode>(lhs)) {
 		const DynamicCastNode* rhs_dynamic_cast = tryGetNode<DynamicCastNode>(rhs);
 		return rhs_dynamic_cast != nullptr &&
 			   equalStructuralExpressionChildren(lhs, rhs);
 	}
-	if (const ConstCastNode* lhs_const_cast = tryGetNode<ConstCastNode>(lhs)) {
+	if (tryGetNode<ConstCastNode>(lhs)) {
 		const ConstCastNode* rhs_const_cast = tryGetNode<ConstCastNode>(rhs);
 		return rhs_const_cast != nullptr &&
 			   equalStructuralExpressionChildren(lhs, rhs);
 	}
-	if (const ReinterpretCastNode* lhs_reinterpret_cast = tryGetNode<ReinterpretCastNode>(lhs)) {
+	if (tryGetNode<ReinterpretCastNode>(lhs)) {
 		const ReinterpretCastNode* rhs_reinterpret_cast = tryGetNode<ReinterpretCastNode>(rhs);
 		return rhs_reinterpret_cast != nullptr &&
 			   equalStructuralExpressionChildren(lhs, rhs);
