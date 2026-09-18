@@ -5,11 +5,13 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-18 after landing the direct dependent-alias canonical
-identity substrate on `codex/boundary-3a-dependent-alias-identity`. Published
+Last updated: 2026-09-18 after landing direct dependent-alias canonical target
+pattern publication on `codex/boundary-3a-dependent-alias-redirection`.
+Published
 namespace/global alias primaries retain their `TemplateDeclId` on the
 `TemplateAliasNode`; type-only dependent alias uses stamp that ID and ordered
-arguments, and the canonical adapter imports a distinct
+arguments, and importable direct targets publish a canonical pattern under
+that declaration ID; the canonical adapter imports a distinct
 `AliasTemplateSpecialization` node rather than a class specialization or a
 registry spelling identity. Target redirection after concrete substitution and
 alias partials remain deferred. Earlier on `main`: the deferred `MemberObjectPointer`

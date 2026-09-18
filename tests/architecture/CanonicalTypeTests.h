@@ -544,6 +544,14 @@ inline void checkAdapter() {
 		TemplateDeclId{32}, dependent_arg_ids));
 	require(imported_dependent_alias.type != table.templateSpecialization(
 		TemplateDeclId{31}, dependent_arg_ids));
+	const TypeId alias_target_pattern = table.pointer(
+		table.templateParameter(TemplateDeclId{31}, 0));
+	table.publishAliasTemplateTarget(TemplateDeclId{31}, alias_target_pattern);
+	require(table.aliasTemplateTarget(TemplateDeclId{31}) == alias_target_pattern);
+	table.publishAliasTemplateTarget(TemplateDeclId{31}, alias_target_pattern);
+	rejects([&] { table.publishAliasTemplateTarget(
+		TemplateDeclId{31}, table.builtin(CanonicalBuiltinKind::Int)); });
+	require(!table.aliasTemplateTarget(TemplateDeclId{32}).has_value());
 	TypeSpecifierNode nttp_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
 		CVQualifier::None);
 	nttp_specialization.set_template_specialization_mixed(

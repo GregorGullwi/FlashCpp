@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "CanonicalTypeAdapter.h"
 #include "DeclarationBuilder.h"
 #include "FrontendContext.h"
 #include "NameMangling.h"
@@ -1503,6 +1504,26 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						owner, StringTable::getOrInternStringHandle(alias_name));
 				alias_node.as<TemplateAliasNode>().set_template_decl_id(template_decl);
 				front_end.templateDecls().attachPrimaryAliasPattern(template_decl, alias_node);
+				// The direct alias target is a canonical pattern in the alias's own
+				// parameter environment. Unsupported target families stay deferred;
+				// no spelling lookup is used to recover them.
+				TemplateAliasNode& published_alias = alias_node.as<TemplateAliasNode>();
+				TypeSpecifierNode& target = published_alias.target_type_node();
+				if (target.has_template_parameter_identity()) {
+					for (uint32_t index = 0; index < published_alias.template_parameters().size(); ++index) {
+						const TemplateParameterNode& parameter = published_alias.template_parameters()[index];
+						if (parameter.kind() == TemplateParameterKind::Type &&
+							parameter.nameHandle() == target.template_parameter_name()) {
+							target.set_template_parameter_decl(template_decl, index);
+							break;
+						}
+					}
+				}
+				const CanonicalTypeImport imported_target =
+					importCanonicalType(front_end.canonicalTypes(), target);
+				if (imported_target.status == CanonicalTypeImportStatus::Supported) {
+					front_end.canonicalTypes().publishAliasTemplateTarget(template_decl, imported_target.type);
+				}
 			}
 		}
 
