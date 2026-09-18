@@ -1518,6 +1518,71 @@ TEST_SUITE("FrontendContext") {
 	}
 
 
+	TEST_CASE("Namespace and global alias templates publish declaration identity") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"namespace ns {\n"
+			"template<typename T> using Meter = T;\n"
+			"}\n"
+			"template<typename T> using GlobalMeter = T;\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("namespace_alias_template_identity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		// The legacy registry spelling keys still answer.
+		const auto legacy_ns = gTemplateRegistry.lookup_alias_template("ns::Meter");
+		REQUIRE(legacy_ns.has_value());
+		REQUIRE(legacy_ns->is<TemplateAliasNode>());
+		const auto legacy_global = gTemplateRegistry.lookup_alias_template("GlobalMeter");
+		REQUIRE(legacy_global.has_value());
+		REQUIRE(legacy_global->is<TemplateAliasNode>());
+
+		// Identity is keyed by namespace OwnerId + name and anchors the same
+		// alias node the registry spelling answers.
+		const OwnerId global_owner =
+			ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE);
+		const std::optional<TemplateDeclId> global_primary =
+			context.templateDecls().findPrimaryAliasTemplate(
+				global_owner, StringTable::getOrInternStringHandle("GlobalMeter"));
+		REQUIRE(global_primary.has_value());
+		const std::optional<ASTNode> global_pattern =
+			context.templateDecls().primaryAliasPattern(*global_primary);
+		REQUIRE(global_pattern.has_value());
+		REQUIRE(global_pattern->is<TemplateAliasNode>());
+		CHECK(&global_pattern->as<TemplateAliasNode>() ==
+			  &legacy_global->as<TemplateAliasNode>());
+
+		const NamespaceHandle ns_handle =
+			gSymbolTable.resolve_namespace_handle("ns", false);
+		REQUIRE(ns_handle.isValid());
+		const OwnerId ns_owner = ownerIdFromNamespaceHandle(ns_handle);
+		const std::optional<TemplateDeclId> ns_primary =
+			context.templateDecls().findPrimaryAliasTemplate(
+				ns_owner, StringTable::getOrInternStringHandle("Meter"));
+		REQUIRE(ns_primary.has_value());
+		const std::optional<ASTNode> ns_pattern =
+			context.templateDecls().primaryAliasPattern(*ns_primary);
+		REQUIRE(ns_pattern.has_value());
+		REQUIRE(ns_pattern->is<TemplateAliasNode>());
+		CHECK(&ns_pattern->as<TemplateAliasNode>() ==
+			  &legacy_ns->as<TemplateAliasNode>());
+		CHECK(ns_owner != global_owner);
+
+		// Fail-closed: an unpublished name finds no identity.
+		CHECK_FALSE(context.templateDecls()
+			.findPrimaryAliasTemplate(
+				global_owner, StringTable::getOrInternStringHandle("Missing"))
+			.has_value());
+	}
+
 	TEST_CASE("Instantiated-owner member alias resolves through published identity") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
