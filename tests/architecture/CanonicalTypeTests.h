@@ -546,7 +546,8 @@ inline void checkAdapter() {
 		TemplateDeclId{31}, dependent_arg_ids));
 	const TypeId alias_target_pattern = table.pointer(
 		table.templateParameter(TemplateDeclId{31}, 0));
-	table.publishAliasTemplateTarget(TemplateDeclId{31}, alias_target_pattern);
+	const CanonicalTemplateArgKind alias_type_parameter[] = {CanonicalTemplateArgKind::Type};
+	table.publishAliasTemplateTarget(TemplateDeclId{31}, alias_target_pattern, alias_type_parameter);
 	require(table.aliasTemplateTarget(TemplateDeclId{31}) == alias_target_pattern);
 	const TypeId alias_concrete_arg[] = {table.builtin(CanonicalBuiltinKind::Int)};
 	const TypeId alias_dependent_arg[] = {table.templateParameter(TemplateDeclId{31}, 0)};
@@ -554,9 +555,9 @@ inline void checkAdapter() {
 		table.aliasTemplateSpecialization(TemplateDeclId{31}, alias_dependent_arg),
 		TemplateDeclId{31}, alias_concrete_arg) ==
 		table.pointer(table.builtin(CanonicalBuiltinKind::Int)));
-	table.publishAliasTemplateTarget(TemplateDeclId{31}, alias_target_pattern);
+	table.publishAliasTemplateTarget(TemplateDeclId{31}, alias_target_pattern, alias_type_parameter);
 	rejects([&] { table.publishAliasTemplateTarget(
-		TemplateDeclId{31}, table.builtin(CanonicalBuiltinKind::Int)); });
+		TemplateDeclId{31}, table.builtin(CanonicalBuiltinKind::Int), alias_type_parameter); });
 	require(!table.aliasTemplateTarget(TemplateDeclId{32}).has_value());
 	TypeSpecifierNode nttp_specialization(TypeCategory::Template, TypeQualifier::None, 0, Token{},
 		CVQualifier::None);

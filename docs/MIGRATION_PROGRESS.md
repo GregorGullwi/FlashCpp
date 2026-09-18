@@ -11,7 +11,8 @@ Published
 namespace/global alias primaries retain their `TemplateDeclId` on the
 `TemplateAliasNode`; type-only dependent alias uses stamp that ID and ordered
 arguments, and importable direct targets publish a canonical pattern under
-that declaration ID; concrete type-only substitution now redirects those
+that declaration ID together with its declared type/non-type/template argument
+layout; concrete type-only substitution now redirects those
 direct alias specializations to the published target, while dependent uses
 retain the alias boundary; the canonical adapter imports a distinct
 `AliasTemplateSpecialization` node rather than a class specialization or a
@@ -725,9 +726,10 @@ must not increase an implementation percentage.
   alias templates publish declaration identity. Direct namespace/global
   dependent alias type-only arguments now carry a published
   `AliasTemplateSpecialization` identity through the canonical adapter; direct
-  type-only targets redirect after concrete substitution. Non-type/template
-  arguments, member dependent aliases, alias partials, and alias-target chains
-  remain deferred. Select and bound one
+  type-only targets redirect after concrete substitution, and target
+  publication retains the mixed parameter layout needed for later non-type and
+  template-argument substitution. Non-type/template argument redirection,
+  member dependent aliases, and alias partials remain deferred. Select and bound one
   of those remaining families before expanding boundary-1 coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
