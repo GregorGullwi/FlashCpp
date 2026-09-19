@@ -77,12 +77,12 @@ reports `UnsupportedAliasTemplateTargetDeclarator` (1816) instead of a
 semicolon error. Supporting the target requires preserving the pointee array
 declarator and its bounds through alias-template substitution.
 
-Multidimensional array parameters still crash when indexed at runtime, even
-with a direct declaration such as `int f(int a[2][3]) { return a[1][2]; }`.
-One-dimensional array aliases used as parameters now decay correctly, but
-multidimensional alias-array parameters report
-`AliasMultidimensionalParameterUnsupported` (1818) until the shared lowering
-path preserves and uses the inner bounds.
+Concrete multidimensional array parameters now preserve inner bounds through
+parameter adjustment and flatten pointer-row subscripts. A dependent inner
+bound in a function template (`template<int N> int f(int a[2][N])`) is still
+lost before instantiation; indexing the instantiated parameter can crash at
+runtime. The parameter declaration needs to retain the dependent bound
+expression for substitution.
 
 Member class-template friend declarations parse and retain distinct owner
 identities, but private access through such a friend is not enforced: the
