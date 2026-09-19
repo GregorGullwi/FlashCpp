@@ -370,7 +370,10 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Expect semicolon
 	if (!consume(";"_tok)) {
-		return ParseResult::error("Expected ';' after member template alias declaration", current_token_);
+		return error(
+			DiagnosticId::MissingSemicolon,
+			peek_info(),
+			"Expected ';' after member template alias declaration");
 	}
 
 	// Create TemplateAliasNode
