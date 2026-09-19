@@ -787,8 +787,15 @@ must not increase an implementation percentage.
   non-type, template-template, dependent non-type, and literal non-type mixed
   direct-alias materialization paths; trace probes confirmed
   `buildDependentAliasTemplateTypeSpecifier` enters the mixed stamp with both
-  arguments representable in each case. Select and
-  bound one of the remaining families before expanding boundary-1 coverage.
+  arguments representable in each case. Alias targets that are arrays now
+  materialize as array objects: `using A = int[3];` and
+  `template <class T> using M = T[2][3];` carry their extents on the alias type
+  specifier, which the declaration path mirrors into the declaration so
+  `M<int> obj;` gets the correct `sizeof`, initializer, and element access
+  (`test_alias_array_object_ret42`); a malformed bound reports the existing
+  1003/1051 bracket diagnostic. Alias-array *parameters* still hit a separate
+  sema/IR gap for array-argument decay and are not part of this slice. Select
+  and bound one of the remaining families before expanding boundary-1 coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

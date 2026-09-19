@@ -2564,6 +2564,20 @@ ParseResult Parser::parse_type_specifier() {
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
 							rebound_arg,
 							Token());
+						// rebindDependentTemplateTypeArg merges cv/pointer/reference
+						// surface but not array dimensions, so apply the alias
+						// target's array wrapper (outer dims) around any element dims
+						// the rebind already carried.
+						if (alias_target_type_spec.is_array()) {
+							std::vector<size_t> combined(
+								alias_target_type_spec.array_dimensions().begin(),
+								alias_target_type_spec.array_dimensions().end());
+							combined.insert(
+								combined.end(),
+								instantiated_type.array_dimensions().begin(),
+								instantiated_type.array_dimensions().end());
+							instantiated_type.set_array_dimensions(std::move(combined));
+						}
 					} else if (!has_dependent_alias_args) {
 						if (const TypeInfo* concrete_member_info =
 								materializeInstantiatedMemberAliasTarget(

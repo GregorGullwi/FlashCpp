@@ -777,6 +777,36 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	std::optional<std::string_view> asm_symbol_name;
 	skip_asm_suffix(&asm_symbol_name);
 
+	// An alias whose target is an array (`using A = int[3];`) carries its extents
+	// on the type specifier rather than in declarator brackets. Mirror known
+	// extents into the declaration's array dimensions so array-object handling,
+	// initializer sizing, and sizeof agree with a directly written `int a[3];`.
+	if (!parsing_parameter_declaration_type_id_ &&
+		array_dimensions.empty() && !is_unsized_array) {
+		if (auto type_node = type_specifier_result.node()) {
+			const TypeSpecifierNode& spec = type_node->as<TypeSpecifierNode>();
+			bool known_extents = !spec.array_dimensions().empty() &&
+				!spec.has_unsized_outer_array_dimension();
+			for (const size_t extent : spec.array_dimensions()) {
+				if (extent == 0) {
+					known_extents = false;
+					break;
+				}
+			}
+			if (known_extents) {
+				for (const size_t extent : spec.array_dimensions()) {
+					const Token extent_token(Token::Type::Literal, std::string_view{},
+						identifier_token.line(), identifier_token.column(),
+						identifier_token.file_index());
+					array_dimensions.push_back(ASTNode::emplace_node<ExpressionNode>(
+						NumericLiteralNode(extent_token,
+							static_cast<unsigned long long>(extent),
+							TypeCategory::UnsignedLongLong, TypeQualifier::None, 64)));
+				}
+			}
+		}
+	}
+
 	// Unwrap the optional ASTNode before passing it to emplace_node
 	if (auto node = type_specifier_result.node()) {
 		ASTNode decl_node;
