@@ -1781,6 +1781,7 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 	std::string_view alias_name,
 	const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> template_args,
+	std::span<const ASTNode> argument_syntax_nodes,
 	const Token& source_token,
 	CVQualifier cv_qualifier) {
 	// Dependent NTTPs currently hash like placeholder value 0, so a concrete
@@ -1970,16 +1971,31 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 					template_decl_args.push_back(class_template.template_decl_id());
 					continue;
 				}
-				// A dependent non-type expression carries its original AST, which
-				// interns to a stable ExprId identity. Literal values have no
-				// expression node here, so they keep the whole call site deferred.
-				if (!argument.is_value || !argument.dependent_expr.has_value()) {
+				// A non-type argument needs a published ExprId. A dependent
+				// expression carries its original AST; a bool/unsigned-integral
+				// literal carries its matching call-site syntax node. Other NTTP
+				// forms keep the whole call site deferred.
+				if (!argument.is_value) {
+					stamped = false;
+					break;
+				}
+				const ASTNode* nttp_syntax = argument.dependent_expr.has_value()
+					? &*argument.dependent_expr
+					: nullptr;
+				if (nttp_syntax == nullptr && index < argument_syntax_nodes.size()) {
+					const ASTNode& argument_syntax = argument_syntax_nodes[index];
+					if (argument_syntax.is<ExpressionNode>() &&
+						isStampableNttpLiteralExpression(
+							argument_syntax.as<ExpressionNode>())) {
+						nttp_syntax = &argument_syntax;
+					}
+				}
+				if (nttp_syntax == nullptr) {
 					stamped = false;
 					break;
 				}
 				const ExprId nttp_expr =
-					requireFrontendContext().dependentExpressions().intern(
-						*argument.dependent_expr);
+					requireFrontendContext().dependentExpressions().intern(*nttp_syntax);
 				if (!nttp_expr) {
 					stamped = false;
 					break;
@@ -2006,6 +2022,7 @@ TypeSpecifierNode Parser::buildDependentDirectAliasTypeSpecifier(
 	std::string_view alias_name,
 	const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> template_args,
+	std::span<const ASTNode> argument_syntax_nodes,
 	const Token& source_token,
 	CVQualifier cv_qualifier) {
 	if (!findDirectAliasTargetParameterIndex(alias_node).has_value()) {
@@ -2016,6 +2033,7 @@ TypeSpecifierNode Parser::buildDependentDirectAliasTypeSpecifier(
 		alias_name,
 		alias_node,
 		template_args,
+		argument_syntax_nodes,
 		source_token,
 		cv_qualifier);
 }
@@ -2385,6 +2403,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					alias_template_name,
 					*alias_node,
 					template_args,
+					{},
 					alias_node->target_type_node().token(),
 					alias_node->target_type_node().cv_qualifier());
 			const TypeInfo* dependent_alias_info =

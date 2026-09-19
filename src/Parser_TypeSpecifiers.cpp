@@ -116,16 +116,6 @@ struct ClassTemplateArgSpecs {
 	std::vector<std::variant<TypeSpecifierNode, ASTNode, TemplateDeclId, SpecDependentTemplateArg>> args;
 };
 
-bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
-	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		return true;
-	}
-	if (const NumericLiteralNode* lit = std::get_if<NumericLiteralNode>(&expr)) {
-		return isIntegralType(lit->type()) && std::holds_alternative<unsigned long long>(lit->value());
-	}
-	return false;
-}
-
 bool isStampableDependentNttpArgument(const TemplateTypeArg& arg) {
 	return arg.is_value &&
 		(arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value());
@@ -2651,6 +2641,7 @@ ParseResult Parser::parse_type_specifier() {
 										type_name,
 										alias_node,
 										*template_args,
+										template_arg_syntax_nodes,
 										type_name_token,
 										cv_qualifier)));
 							}
@@ -2676,6 +2667,7 @@ ParseResult Parser::parse_type_specifier() {
 								type_name,
 								alias_node,
 								*template_args,
+								template_arg_syntax_nodes,
 								type_name_token,
 								cv_qualifier)));
 					}

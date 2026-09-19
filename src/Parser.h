@@ -52,6 +52,20 @@
 
 using namespace std::literals::string_view_literals;
 
+// A non-type template argument expression whose semantic identity is fully
+// captured by its interned structural AST node: bool and unsigned integral
+// literals. Other NTTP forms keep the surrounding call site deferred.
+inline bool isStampableNttpLiteralExpression(const ExpressionNode& expr) {
+	if (std::holds_alternative<BoolLiteralNode>(expr)) {
+		return true;
+	}
+	if (const NumericLiteralNode* literal = std::get_if<NumericLiteralNode>(&expr)) {
+		return isIntegralType(literal->type()) &&
+			std::holds_alternative<unsigned long long>(literal->value());
+	}
+	return false;
+}
+
 inline constexpr std::string_view kUnderlyingTypeIntrinsicPrefix = "__underlying_type("sv;
 inline constexpr std::string_view kUnderlyingTypeIntrinsicSuffix = ")"sv;
 
@@ -2966,6 +2980,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::string_view alias_name,
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args,
+		std::span<const ASTNode> argument_syntax_nodes,
 		const Token& source_token,
 		CVQualifier cv_qualifier);
 	// Like buildDependentDirectAliasTypeSpecifier, but for any alias template
@@ -2976,6 +2991,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::string_view alias_name,
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args,
+		std::span<const ASTNode> argument_syntax_nodes,
 		const Token& source_token,
 		CVQualifier cv_qualifier);
 	std::optional<TypeSpecifierNode> tryMaterializeDependentAliasTypeSpecifier(
