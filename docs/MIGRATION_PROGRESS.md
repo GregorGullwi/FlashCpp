@@ -15,10 +15,11 @@ layout. Dependent alias uses now stamp mixed arguments when every argument is
 representable: type arguments that name a published active parameter carry its
 `TemplateDeclId` and index, concrete published primary class templates used as
 template-template arguments carry their `TemplateDeclId`, active
-template-template parameters keep owner plus index, and dependent non-type
-expressions intern to a stable `ExprId`. Literal non-type values have no
-expression node on `TemplateTypeArg`, so a call site with one keeps the whole
-canonical stamp deferred. Concrete direct alias specializations now redirect to the
+template-template parameters keep owner plus index, dependent non-type
+expressions intern to a stable `ExprId`, and stampable bool/unsigned-integral
+literal arguments intern their call-site syntax node. Other non-type forms have
+no expression node, so a call site with one keeps the whole canonical stamp
+deferred. Concrete direct alias specializations now redirect to the
 published target for both type-only and mixed layouts: each argument is matched
 positionally against the published parameter kinds, opaque NTTP `ExprId` and
 template-template `TemplateDeclId` identities are preserved, and an alias
@@ -746,9 +747,10 @@ must not increase an implementation percentage.
   representable,   for mixed layouts: dependent type arguments carry their active
   parameter `TemplateDeclId` + index, concrete published primary class templates
   carry their `TemplateDeclId`, active template-template parameters keep
-  owner + index, and dependent non-type expressions intern to a stable `ExprId`.
-  Literal non-type values have no expression node on `TemplateTypeArg`, so one at
-  a call site keeps that whole canonical stamp deferred. Direct
+  owner + index, dependent non-type expressions intern to a stable `ExprId`, and
+  stampable bool/unsigned-integral literal arguments intern their call-site
+  syntax node. Other non-type forms have no expression node, so one at a call
+  site keeps that whole canonical stamp deferred. Direct
   alias targets now redirect after concrete substitution for both type-only and
   mixed layouts: argument identity kinds are matched
   positionally against the published parameter kinds, `ExprId` / `TemplateDeclId`
@@ -763,11 +765,13 @@ must not increase an implementation percentage.
   template-template placeholder replacement, mixed chain resolution, self and
   mutual cycles, and the arity/kind/dependent/non-type fail-closed boundaries.
   Source regressions `test_canonical_direct_alias_mixed_params_ret42`,
-  `test_canonical_direct_alias_mixed_template_arg_ret42`, and
-  `test_canonical_direct_alias_mixed_nttp_arg_ret42` cover the ready non-type,
-  template-template, and dependent non-type mixed direct-alias materialization
-  paths; trace probes confirmed `buildDependentAliasTemplateTypeSpecifier` enters
-  the mixed stamp with both arguments representable in each case. Select and
+  `test_canonical_direct_alias_mixed_template_arg_ret42`,
+  `test_canonical_direct_alias_mixed_nttp_arg_ret42`, and
+  `test_canonical_direct_alias_mixed_literal_nttp_arg_ret42` cover the ready
+  non-type, template-template, dependent non-type, and literal non-type mixed
+  direct-alias materialization paths; trace probes confirmed
+  `buildDependentAliasTemplateTypeSpecifier` enters the mixed stamp with both
+  arguments representable in each case. Select and
   bound one of the remaining families before expanding boundary-1 coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
