@@ -2165,6 +2165,16 @@ bool isSupportedAtomicBuiltin(std::string_view name) {
 		name == "__atomic_signal_fence";
 }
 
+bool isConstructibleClassAliasType(const ResolvedAliasTypeInfo& resolved_alias) {
+	const TypeCategory ctor_type = resolved_alias.typeEnum();
+	return resolved_alias.type_index.is_valid() &&
+		(is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined) &&
+		resolved_alias.pointer_depth == 0 &&
+		resolved_alias.reference_qualifier == ReferenceQualifier::None &&
+		!resolved_alias.function_signature.has_value() &&
+		!resolved_alias.isArray();
+}
+
 std::optional<std::pair<TypeIndex, SizeInBits>> tryResolveConstructibleClassAlias(const Token& type_token) {
 	const TypeInfo* type_info = lookupTypeInCurrentContext(type_token.handle());
 	if (!type_info) {
@@ -2191,15 +2201,10 @@ std::optional<std::pair<TypeIndex, SizeInBits>> tryResolveConstructibleClassAlia
 
 	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 		type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-	const TypeCategory ctor_type = resolved_alias.typeEnum();
-	if (!resolved_alias.type_index.is_valid() ||
-		!(is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined) ||
-		resolved_alias.pointer_depth != 0 ||
-		resolved_alias.reference_qualifier != ReferenceQualifier::None ||
-		resolved_alias.function_signature.has_value() ||
-		resolved_alias.isArray()) {
+	if (!isConstructibleClassAliasType(resolved_alias)) {
 		return std::nullopt;
 	}
+	const TypeCategory ctor_type = resolved_alias.typeEnum();
 
 	SizeInBits type_size{};
 	if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_alias.type_index)) {
@@ -4747,15 +4752,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			}
 
 			// Also check for type aliases and enums.  Per C++20 [expr.type.conv],
-			// T(expr) is a valid functional cast / explicit type conversion for any
-			// simple-type-specifier T, including typedef names and enum names.
-			// Class-type aliases must still go through the constructor-call path.
+			// T(expr) / T{} is a valid functional cast for any simple-type-specifier,
+			// including typedef names. A class object type still uses the
+			// constructor-call path, but pointer/reference/array/function aliases
+			// are not class types even when their terminal is a struct.
 			const TypeInfo* alias_info = lookupTypeInCurrentContext(identifier_token.handle());
 			if (alias_info && (alias_info->isTypeAlias() || alias_info->isEnum())) {
 				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 					alias_info->registeredTypeIndex().withCategory(alias_info->typeEnum()));
-				const TypeCategory resolved_type = resolved_alias.typeEnum();
-				if (!is_struct_type(resolved_type) && resolved_type != TypeCategory::UserDefined) {
+				if (!isConstructibleClassAliasType(resolved_alias)) {
 					return parse_functional_cast(id_name, identifier_token);
 				}
 			}
