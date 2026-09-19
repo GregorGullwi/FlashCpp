@@ -545,160 +545,24 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
-Latest validation for the owner-capturing member alias environment: the native
-`CanonicalTypeTests` `checkMemberAliasOwnerEnvironmentFailClosed` case proves
-the resolver returns no target without throwing for a dependent owner argument,
-a dependent alias argument, an owner specialization that does not cover the
-target's owner parameter references, a non-Type owner argument kind, and a
-non-Type published member layout; the existing `checkMemberAliasOwnerEnvironment`
-and the new `checkMemberAliasOwnerNestedTarget` prove the concrete redirect and
-that a published `Both<Owner, Value>` target resolves with owner arguments
-followed by alias arguments and differs when the argument order is swapped. Two
-mutation anchors
-(`lost_member_alias_owner_dependent_argument`, `lost_member_alias_owner_arity`)
-each make the harness exit 1. The `FrontendContext` doctest `Nested owner and
-alias argument member alias target publishes` parses `Both<Owner, Value>` and
-proves the canonical key redirects to `Both<int, char>` with concrete owner and
-alias arguments while the plain pointer target also publishes and resolves.
-Source regressions `test_canonical_member_alias_owner_capture_ret42`,
-`test_canonical_member_alias_nested_target_ret42`, and
-`test_canonical_dependent_member_alias_target_ret42` return 42, and the
-canonical adapter corpus is unchanged at 26 supported / 0 deferred. The sharded
-MSVC rebuild is warning-free.
+Completed validation anchors remain in the source and architecture suites:
 
-Latest validation for the `<` gate alias arm: neutralizing the alias entries in
-the known-template disambiguation test makes
-`test_canonical_gate_alias_arm_dependent_member_ret0` fail to parse
-`using Through = T::Meter<int>;` with "Expected ';' after alias template
-declaration". With the arm present, that TU compiles and
-`Outer::Meter<char>` materializes as `char`. Adjacent member-alias identity and
-`test_less_in_base_class_ret0` (template-param base with non-template `<`
-comparison) still pass. Linux sharded rebuild is warning-free;
-`git diff --check` is clean. Fixed-corpus migration counters were not
-re-measured on this Linux slice (no counter-touching choke points changed);
-expect no movement.
+| Capability | Regression anchor |
+|------------|-------------------|
+| Owner-capturing and nested member aliases | `checkMemberAliasOwnerEnvironmentFailClosed`, `checkMemberAliasOwnerNestedTarget`, `test_canonical_member_alias_nested_target_ret42` |
+| Alias `<` disambiguation | `test_canonical_gate_alias_arm_dependent_member_ret0`, `test_less_in_base_class_ret0` |
+| Namespace/global alias identity | `Namespace and global alias templates publish declaration identity` doctest |
+| Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
+| Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
+| Template-friend member identity | `test_template_friend_member_identity_ret0` |
+| Callable substitution and bounded recursion | `checkCallableSubstitution` (including a 65,536-deep pointer chain) |
+| Nested callable declaration identity | `DeclarationBuilder distinguishes nested function parameter signatures` doctest |
 
-Latest validation for namespace/global alias-template identity: the
-`FrontendContext` doctest `Namespace and global alias templates publish
-declaration identity` parses `namespace ns { template<typename T> using Meter =
-T; }` plus a global alias and proves `findPrimaryAliasTemplate` under the
-namespace and global `OwnerId` answers, that `primaryAliasPattern` yields the
-same `TemplateAliasNode` the registry spelling key answers, that the two owners
-are distinct, and that an unpublished name stays a fail-closed miss (16
-assertions). Existing alias doctests still pass, so registry spelling keys and
-lookup consumers are unchanged. Linux sharded rebuild is warning-free; the full
-runner passed (3011 single-file + 12 multi-TU, 2995 runtime, 275 negative, 0
-failures); the canonical architecture harness and the production adapter corpus
-are unchanged; migration counters and the static dollar inventory stay within
-baseline; `git diff --check` is clean.
-
-Latest validation for member object pointer adapter recovery: a function
-returning `decltype(static_cast<int MemberHost::*>(nullptr))` previously left
-one Unmigrated declarator request; it now imports as a canonical
-`MemberObjectPointer(owner, pointee)` (the production adapter corpus moves
-25/0 to 26/0 supported/deferred, and the baseline is raised accordingly).
-The native `checkAdapter` proves the recovered form equals the
-declarator-shaped member object pointer and that a missing or unsupported
-pointee stays fail-closed; the `adapter_member_object_pointee` mutation
-(wrong pointee) makes the harness exit 1. The reduced regression
-`test_canonical_member_object_pointer_decltype_ret0` keeps the parser shape
-runnable and mixes the recovered flat form with a declarator member pointer.
-Linux sharded rebuild is warning-free; the full runner passed (3011
-single-file + 12 multi-TU, 275 negative, 0 failures); fixed-corpus migration
-counters and the static dollar inventory stay within baseline.
-
-Latest validation for instantiated-owner member variable identity: the
-`FrontendContext` doctest `Instantiated-owner member variable resolves through
-published identity` materializes `WideOwner<long long>` and
-`NarrowOwner<char>`, then proves `findVariableTemplateByIdentityChain` on each
-instantiated-owner `::Meter` spelling answers the owner's published variable
-node (matching the `WideOwner::Meter` / `NarrowOwner::Meter` registry keys).
-Mutation validation: neutralizing
-`resolveOwnerChainClassOwner`'s injected-primary path makes
-`REQUIRE(wide_variable.has_value())` fail. The end-to-end regression
-`test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`
-proves `WideOwner<long long>::Meter<Payload>` and
-`NarrowOwner<char>::Meter<Payload>` instantiate distinct same-spelling
-primaries (`sizeof(long long)` versus `sizeof(Payload)`). Adjacent member-
-variable identity/stem and `test_member_var_template_ret42` regressions pass.
-Linux sharded rebuild is warning-free; `git diff --check` is clean. Fixed-corpus
-migration counters were not re-measured on this Linux slice (no counter-
-touching choke points changed); expect no movement.
-
-Latest validation for instantiated-owner member alias identity: the
-`FrontendContext` doctest `Instantiated-owner member alias resolves through
-published identity` materializes `WideOwner<long long>` and
-`NarrowOwner<char>`, then proves `findAliasTemplateByIdentityChain` on each
-instantiated-owner `::Meter` spelling answers the owner's published alias node
-(matching the `WideOwner::Meter` / `NarrowOwner::Meter` registry keys).
-Mutation validation: neutralizing
-`resolveOwnerChainClassOwner`'s injected-primary path makes
-`REQUIRE(wide_alias.has_value())` fail. The end-to-end regression
-`test_canonical_instantiated_owner_member_alias_identity_collision_ret0` proves
-`WideOwner<long long>::Meter<Payload>` and
-`NarrowOwner<char>::Meter<Payload>` materialize distinct same-spelling
-primaries (`char` versus `Payload`). Adjacent member-alias and instantiated-
-owner class-template identity regressions pass. Linux sharded rebuild is
-warning-free; `git diff --check` is clean. Class-instantiation alias
-re-registration is intentionally kept for other consumers. Fixed-corpus
-migration counters were not re-measured on this Linux slice (no counter-
-touching choke points changed); expect no movement.
-
-Latest validation for template-friend member identity: the `FrontendContext`
-doctest `Template friend declaration resolves its member primary by identity`
-parses `template <typename T> friend struct WideOwner<T>::WideBox<int>;` and the
-same-spelling `NarrowOwner<T>::NarrowBox<int>` form and checks that each
-`FriendDeclarationNode` uses the exact-specialization kind, resolves a non-null
-member-primary declaration, and that the two same-spelling-bound primaries are
-distinct AST nodes with `WideOwner::WideBox` / `NarrowOwner::NarrowBox` primary
-spellings. `test_template_friend_member_identity_ret0` exercises a dependent owner
-with a concrete argument, a concrete owner, and a dependent member argument end
-to end. The three forms previously failed to compile with "Expected ';' after
-template friend class declaration". The sharded MSVC rebuild is warning-free, the
-full runner passed (3,025 single-file + 12 multi-TU, 275 negative, 0 failures),
-and all migration counters and the static dollar inventory stay within baseline.
-Note: private access through a member class-template friend is not granted even
-for the plain concrete non-template form (the access check reports the private
-member but the compiler still exits 0), so that enforcement is a separate
-pre-existing defect, not part of this parse/identity slice.
-
-Latest validation for callable substitution: the native architecture harness
-(`tests/architecture/run_canonical_types.py`) builds `checkCallableSubstitution`
-into `CanonicalTypeTests::run()` and proves that a function type substitutes its
-return and parameter element types while keeping cv/ref, variadic, calling
-convention, dll linkage, and the dependent-noexcept `ExprId`; that member function
-and member object pointers substitute owner and pointee; that an interleaved
-array/pointer/member-function-pointer/function declarator has one structural
-result; that a foreign environment is untouched; that substitution of an already
-concrete callable interns no new nodes; that a 65,536-deep pointer chain
-substitutes without native recursion; and that a member object pointer whose
-pointee substitutes to a function type is rejected. Five new mutation anchors
-(`lost_substitute_function_return`, `lost_substitute_function_parameter`,
-`lost_substitute_member_pointer_pointee`,
-`lost_substitute_function_dependent_noexcept`, `lost_substitute_function_cv`)
-each make the harness exit 1, so the walk, the owner/pointee split, and the
-preserved metadata are all mutation-validated. The sharded MSVC rebuild is
-warning-free, the 25-supported / zero-deferred canonical adapter corpus, all
-migration counters, and the static dollar inventory stay within baseline, and the
-full runner passed (3,024 single-file + 12 multi-TU, 275 negative, 0 failures).
-The doctest translation unit that embeds the same header compiles under clang-cl
-`/W4 /WX`.
-
-Latest validation for nested callable declaration-builder identity: the parser-
-level `DeclarationBuilder distinguishes nested function parameter signatures`
-doctest proves overload declarations taking `void (*)(int)` and
-`void (*)(double)` publish two entities through four Supported canonical
-declarator requests and zero Unmigrated requests. Mutation validation forcing
-callable parameters back through `matches_signature` collapses them to one
-entity and makes the test fail. Sharded MSVC rebuild, the 25-supported / zero-
-deferred canonical adapter corpus, all migration counters, the static dollar
-inventory, and the full runner passed (3,022 single-file + 12 multi-TU, 275
-negative, 0 failures). Follow-up end-to-end coverage proves `SymbolTable` keeps
-the distinct overloads and conversion planning selects and invokes the matching
-`int`, `double`, and record callback overloads. Function-identifier decay also
-retains calling-convention and variadic metadata, including the canonical
-adapter corpus's `__stdcall` callback. `SymbolTable` merge authority remains
-intentionally unchanged.
+The owner-alias tests also cover dependent/non-Type arguments and incomplete
+owner environments failing closed. Member class-template friend access
+enforcement remains open; see `KNOWN_ISSUES.md`. The earlier per-change
+mutation results, historical runner totals, and platform build reports are
+recoverable from git history.
 
 Gate 0 evidence remains the warning-free 12-case Windows and ELF PIE/no-PIE
 multi-TU corpus plus `tests/runner/run_elf_eh_frame_tests.sh` in both link orders
@@ -848,9 +712,21 @@ must not increase an implementation percentage.
   specifier, which the declaration path mirrors into the declaration so
   `M<int> obj;` gets the correct `sizeof`, initializer, and element access
   (`test_alias_array_object_ret42`); a malformed bound reports the existing
-  1003/1051 bracket diagnostic. Alias-array *parameters* still hit a separate
-  sema/IR gap for array-argument decay and are not part of this slice. Select
-  and bound one of the remaining families before expanding boundary-1 coverage.
+  1003/1051 bracket diagnostic. Dependent alias-template bounds retain their
+  expressions until concrete substitution, so `T[N]` and `T[N + 1]` have the
+  correct size, initializer, and element access
+  (`alias_template_dependent_bound_ret42`). Nonpositive or unresolved concrete
+  bounds report `AliasTemplateArrayBoundUnresolved` (1817). Declaration
+  synthesis keeps pointer-to-array objects scalar
+  (`decltype_pointer_array_scalar_ret42`). One-dimensional alias-array function
+  parameters adjust to pointers, and calls apply array-to-pointer decay
+  (`alias_array_parameter_decay_ret42`). Multidimensional alias-array
+  parameters report `AliasMultidimensionalParameterUnsupported` (1818)
+  pending the general multidimensional parameter lowering fix.
+  Parenthesized pointer-to-array alias
+  template targets remain unsupported and report
+  `UnsupportedAliasTemplateTargetDeclarator` (1816). Select and bound one of
+  the remaining families before expanding boundary-1 coverage.
 - Before boundary 10A, approve a parser-family routing table for the single
   translation-unit parse entry point.
 - Boundary 11 must resolve raw pre-ICE `std::cerr` dumps in

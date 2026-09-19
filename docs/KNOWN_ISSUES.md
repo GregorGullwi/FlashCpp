@@ -71,6 +71,24 @@ The per-file recovery map is indexed in
 
 ## Pointer-to-array declarator coverage gaps
 
+Alias-template targets with a parenthesized pointer-to-array declarator, such
+as `template<class T> using P = T(*)[3];`, remain unsupported. The parser
+reports `UnsupportedAliasTemplateTargetDeclarator` (1816) instead of a
+semicolon error. Supporting the target requires preserving the pointee array
+declarator and its bounds through alias-template substitution.
+
+Multidimensional array parameters still crash when indexed at runtime, even
+with a direct declaration such as `int f(int a[2][3]) { return a[1][2]; }`.
+One-dimensional array aliases used as parameters now decay correctly, but
+multidimensional alias-array parameters report
+`AliasMultidimensionalParameterUnsupported` (1818) until the shared lowering
+path preserves and uses the inner bounds.
+
+Member class-template friend declarations parse and retain distinct owner
+identities, but private access through such a friend is not enforced: the
+compiler reports the private member and still exits successfully. This also
+occurs for a concrete non-template friend form.
+
 `sizeof`/`alignof` type-ids with pointer-to-array declarators (`int(*)[3]`,
 `const int(*)[3]`, `int(*const)[3]`) parse through the shared
 abstract-declarator machinery; named multi-bound declarators
