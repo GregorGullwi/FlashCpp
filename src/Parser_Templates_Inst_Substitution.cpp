@@ -1970,10 +1970,23 @@ TypeSpecifierNode Parser::buildDependentAliasTemplateTypeSpecifier(
 					template_decl_args.push_back(class_template.template_decl_id());
 					continue;
 				}
-				// Non-type arguments need an ExprId that TemplateTypeArg does not
-				// carry; keep the whole call site deferred.
-				stamped = false;
-				break;
+				// A dependent non-type expression carries its original AST, which
+				// interns to a stable ExprId identity. Literal values have no
+				// expression node here, so they keep the whole call site deferred.
+				if (!argument.is_value || !argument.dependent_expr.has_value()) {
+					stamped = false;
+					break;
+				}
+				const ExprId nttp_expr =
+					requireFrontendContext().dependentExpressions().intern(
+						*argument.dependent_expr);
+				if (!nttp_expr) {
+					stamped = false;
+					break;
+				}
+				argument_kinds.push_back(SpecTemplateArgKind::NonType);
+				nttp_args.push_back(nttp_expr);
+				continue;
 			}
 			if (stamped) {
 				dependent_spec.set_alias_template_specialization_mixed(
