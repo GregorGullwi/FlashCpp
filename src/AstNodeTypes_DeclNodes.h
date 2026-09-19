@@ -2058,6 +2058,18 @@ public:
 		}
 		return specialization_type_args_[type_index];
 	}
+	TypeSpecifierNode& specialization_arg_type(size_t index) {
+		if (!specialization_arg_is_type(index)) {
+			throw InternalError("type specifier: expected type specialization argument");
+		}
+		size_t type_index = 0;
+		for (size_t i = 0; i < index; ++i) {
+			if (specialization_arg_kinds_[i] == SpecTemplateArgKind::Type) {
+				++type_index;
+			}
+		}
+		return specialization_type_args_[type_index];
+	}
 	ExprId specialization_arg_expr(size_t index) const {
 		if (index >= specialization_arg_kinds_.size() ||
 			specialization_arg_kinds_[index] != SpecTemplateArgKind::NonType) {

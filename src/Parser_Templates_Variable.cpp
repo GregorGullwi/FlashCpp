@@ -447,6 +447,67 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 				}
 			}
 		}
+		// A nested target such as Both<Owner, Value> names its own parameters in
+		// argument position. The member alias TemplateDeclId is published only
+		// after the body is parsed, so those arguments could not be stamped while
+		// the target parsed (an enclosing owner parameter of the same spelling was
+		// stamped instead). Walk the target specialization's type-argument
+		// specifiers with an explicit worklist and stamp each argument that
+		// matches a scoped parameter name. Alias parameters are checked first
+		// because an inner alias parameter shadows an enclosing owner parameter of
+		// the same spelling. The scoped names are only the lookup key; the
+		// canonical identity is TemplateDeclId plus index. Arguments that match
+		// neither keep the target unpublished rather than partially stamped.
+		if (target.has_template_specialization()) {
+			const auto parameterNameOf = [&](const TypeSpecifierNode& argument) -> StringHandle {
+				if (argument.has_template_parameter_identity()) {
+					return argument.template_parameter_name();
+				}
+				return getAliasTargetNameHandle(argument);
+			};
+			const auto stampArgument = [&](TypeSpecifierNode& argument) {
+				const StringHandle argument_name = parameterNameOf(argument);
+				if (!argument_name.isValid()) {
+					return;
+				}
+				for (uint32_t index = 0; index < published_alias.template_parameters().size(); ++index) {
+					const TemplateParameterNode& parameter = published_alias.template_parameters()[index];
+					if (parameter.kind() == TemplateParameterKind::Type &&
+						parameter.nameHandle() == argument_name) {
+						argument.set_template_parameter_decl(*template_decl, index);
+						return;
+					}
+				}
+				if (!owner_template_decl) {
+					return;
+				}
+				for (const auto& [name, index] : enclosing_type_params) {
+					if (name == argument_name) {
+						argument.set_template_parameter_decl(owner_template_decl, index);
+						return;
+					}
+				}
+			};
+			std::vector<TypeSpecifierNode*> pending_arguments;
+			for (size_t index = 0; index < target.specialization_arg_count(); ++index) {
+				if (target.specialization_arg_is_type(index)) {
+					pending_arguments.push_back(&target.specialization_arg_type(index));
+				}
+			}
+			while (!pending_arguments.empty()) {
+				TypeSpecifierNode& argument = *pending_arguments.back();
+				pending_arguments.pop_back();
+				stampArgument(argument);
+				if (!argument.has_template_specialization()) {
+					continue;
+				}
+				for (size_t index = 0; index < argument.specialization_arg_count(); ++index) {
+					if (argument.specialization_arg_is_type(index)) {
+						pending_arguments.push_back(&argument.specialization_arg_type(index));
+					}
+				}
+			}
+		}
 		const CanonicalTypeImport imported_target =
 			importCanonicalType(requireFrontendContext().canonicalTypes(), target);
 		if (imported_target.status == CanonicalTypeImportStatus::Supported &&

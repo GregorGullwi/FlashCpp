@@ -1560,7 +1560,7 @@ TEST_SUITE("FrontendContext") {
 	}
 
 
-	TEST_CASE("Nested owner and alias argument member alias target stays deferred") {
+	TEST_CASE("Nested owner and alias argument member alias target publishes") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
 		gConceptRegistry.clear();
@@ -1574,14 +1574,13 @@ TEST_SUITE("FrontendContext") {
 			"};\n";
 		FrontendContext context;
 		CompileContext test_context;
-		test_context.setInputFile("member_alias_nested_owner_argument_deferral_test.cpp");
+		test_context.setInputFile("member_alias_nested_owner_argument_publication_test.cpp");
 		Lexer lexer(code);
 		SemanticAnalysis sema(test_context, gSymbolTable);
 		Parser parser(lexer, test_context, sema);
 		REQUIRE(!parser.parse().is_error());
 
-		// The plain owner-capturing pointer target is directly representable:
-		// import is Supported and the canonical target publishes.
+		// The plain owner-capturing pointer target stays directly representable.
 		const auto pointer_alias = gTemplateRegistry.lookup_alias_template("Captures::Pointer");
 		REQUIRE(pointer_alias.has_value());
 		REQUIRE(pointer_alias->is<TemplateAliasNode>());
@@ -1591,30 +1590,39 @@ TEST_SUITE("FrontendContext") {
 		const auto pointer_target = context.canonicalTypes().aliasTemplateTarget(pointer_decl);
 		REQUIRE(pointer_target.has_value());
 
-		// The nested Both<Owner, Value> target is a bounded deferral. The alias's
-		// own Value appears in argument position and has no published
-		// TemplateDeclId while the target parses, so canonical import stays
-		// Unresolved and publication is skipped. Legacy alias materialization
-		// still handles the use site; the canonical key simply stays a
-		// fail-closed miss instead of publishing a partially dependent target.
+		// The nested Both<Owner, Value> target now publishes. Both arguments are
+		// stamped after the alias TemplateDeclId exists: Owner to the enclosing
+		// owner declaration and Value to the member alias declaration.
 		const auto mixed_alias = gTemplateRegistry.lookup_alias_template("Captures::Mixed");
 		REQUIRE(mixed_alias.has_value());
 		REQUIRE(mixed_alias->is<TemplateAliasNode>());
 		REQUIRE(mixed_alias->as<TemplateAliasNode>().has_template_decl_id());
 		const TemplateDeclId mixed_decl = mixed_alias->as<TemplateAliasNode>().template_decl_id();
-		CHECK_FALSE(context.canonicalTypes().aliasTemplateTarget(mixed_decl).has_value());
+		const auto mixed_target = context.canonicalTypes().aliasTemplateTarget(mixed_decl);
+		REQUIRE(mixed_target.has_value());
 
-		// The resolver stays fail-closed for the deferred member target rather
-		// than reconstructing a target from the use-site spelling.
+		const auto both_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("Both"));
+		REQUIRE(both_opt.has_value());
+		REQUIRE(both_opt->is<TemplateClassDeclarationNode>());
+		const TemplateDeclId both_decl =
+			both_opt->as<TemplateClassDeclarationNode>().template_decl_id();
+		REQUIRE(both_decl);
+
+		// Resolving the published target with concrete owner and alias arguments
+		// redirects to Both<owner, alias> with owner arguments first.
 		const TemplateDeclId owner_decl = context.canonicalTypes().templateParameterDecl(
 			context.canonicalTypes().node(*pointer_target).child);
 		const TypeId owner_arg[] = {context.canonicalTypes().builtin(CanonicalBuiltinKind::Int)};
-		const TypeId alias_arg[] = {context.canonicalTypes().builtin(CanonicalBuiltinKind::Long)};
+		const TypeId alias_arg[] = {context.canonicalTypes().builtin(CanonicalBuiltinKind::Char)};
 		const TypeId owner_spec =
 			context.canonicalTypes().templateSpecialization(owner_decl, owner_arg);
-		CHECK_FALSE(context.canonicalTypes()
-			.resolveMemberAliasTarget(mixed_decl, owner_spec, alias_arg)
-			.has_value());
+		const auto resolved = context.canonicalTypes()
+			.resolveMemberAliasTarget(mixed_decl, owner_spec, alias_arg);
+		REQUIRE(resolved.has_value());
+		const TypeId expected = context.canonicalTypes().templateSpecialization(
+			both_decl, std::array<TypeId, 2>{owner_arg[0], alias_arg[0]});
+		CHECK(*resolved == expected);
 	}
 
 
