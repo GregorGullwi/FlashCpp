@@ -1472,7 +1472,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 		// Expect semicolon
 		if (!consume(";"_tok)) {
-			return ParseResult::error("Expected ';' after alias template declaration", current_token_);
+			return error(
+				DiagnosticId::MissingSemicolon,
+				peek_info(),
+				"Expected ';' after alias template declaration");
 		}
 
 		// Create TemplateAliasNode - use deferred constructor if we have unresolved parameters
