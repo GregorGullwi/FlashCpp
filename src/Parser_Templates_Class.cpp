@@ -1470,6 +1470,53 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 		consume_pointer_ref_modifiers(type_spec);
 
+		// Array dimensions in the alias target: using A = T[3]; or using A = T[N];
+		// The bound may be a concrete constant or a dependent expression (which
+		// stores extent 0 until substitution).
+		while (peek() == "["_tok) {
+			Token opening_bracket_token = peek_info();
+			advance(); // consume '['
+			if (peek() == "]"_tok) {
+				type_spec.set_array(true);
+				advance(); // consume ']'
+			} else {
+				auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (dim_result.is_error()) {
+					return dim_result;
+				}
+				const auto dim_value = dim_result.node().has_value()
+					? try_evaluate_constant_expression(*dim_result.node())
+					: std::nullopt;
+				const size_t dim_size = dim_value.has_value()
+					? static_cast<size_t>(dim_value->value)
+					: 0;
+				type_spec.add_array_dimension(dim_size);
+				if (!consume("]"_tok)) {
+					const SourceLocation opening_bracket_location =
+						lexer_.getSourceLocation(opening_bracket_token);
+					const SourceLocation unexpected_token_location =
+						lexer_.getSourceLocation(peek_info());
+					DiagnosticEngine& diagnostics_engine = context_.diagnostics();
+					const uint32_t bracket_diagnostic_index = diagnostics_engine.reportWithRange(
+						DiagnosticId::ExpectedCloseBracketAfterArraySize,
+						DiagnosticSeverity::Error,
+						unexpected_token_location,
+						SourceRange::fromLocations(opening_bracket_location, unexpected_token_location),
+						"Expected ']' after array size",
+						{});
+					diagnostics_engine.attachNote(
+						bracket_diagnostic_index,
+						DiagnosticId::NoteToMatchOpeningBracket,
+						opening_bracket_location,
+						"to match this '['",
+						{});
+					return ParseResult::error(
+						"Expected ']' after array dimension in alias template",
+						current_token_);
+				}
+			}
+		}
+
 		// Expect semicolon
 		if (!consume(";"_tok)) {
 			return error(
