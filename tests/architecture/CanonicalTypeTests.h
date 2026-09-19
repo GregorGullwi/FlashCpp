@@ -1638,6 +1638,39 @@ inline void checkMemberAliasOwnerEnvironment() {
 		table.templateSpecialization(TemplateDeclId{84}, owner_args), alias_args).has_value());
 }
 
+// A nested owner+alias argument target (Both<Owner, Value>) publishes under the
+// member alias declaration with the owner declaration and resolves with owner
+// arguments followed by alias arguments. Swapping the argument order must yield
+// a structurally different specialization.
+inline void checkMemberAliasOwnerNestedTarget() {
+	CanonicalTypeTable table;
+	const TemplateDeclId owner{90};
+	const TemplateDeclId alias{91};
+	const TemplateDeclId nested_primary{92};
+	const TypeId owner_param = table.templateParameter(owner, 0);
+	const TypeId alias_param = table.templateParameter(alias, 0);
+	const TypeId owner_arg = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId alias_arg = table.builtin(CanonicalBuiltinKind::Char);
+	const CanonicalTemplateArgKind kinds[] = {CanonicalTemplateArgKind::Type};
+	const TypeId target = table.templateSpecialization(nested_primary,
+		std::array<TypeId, 2>{owner_param, alias_param});
+	require(table.dependsOnlyOnTemplateParameters(target, alias, owner));
+	table.publishAliasTemplateTarget(alias, owner, target, kinds);
+	const TypeId owner_args[] = {owner_arg};
+	const TypeId alias_args[] = {alias_arg};
+	const TypeId owner_spec = table.templateSpecialization(owner, owner_args);
+	const std::optional<TypeId> resolved =
+		table.resolveMemberAliasTarget(alias, owner_spec, alias_args);
+	require(resolved.has_value());
+	const TypeId expected = table.templateSpecialization(nested_primary,
+		std::array<TypeId, 2>{owner_arg, alias_arg});
+	require(*resolved == expected);
+	require(*resolved != table.templateSpecialization(nested_primary,
+		std::array<TypeId, 2>{alias_arg, owner_arg}));
+
+	std::printf("member alias owner nested target: published\n");
+}
+
 // The member-alias resolver is fail-closed: a partially dependent owner/member
 // argument, a non-Type argument layout, or an owner specialization that does not
 // cover the target's owner parameter references must return nullopt rather than
@@ -1926,6 +1959,7 @@ inline int run() {
 	checkConcretePackSpecArgs();
 	checkAliasRedirection();
 	checkMemberAliasOwnerEnvironment();
+	checkMemberAliasOwnerNestedTarget();
 	checkMemberAliasOwnerEnvironmentFailClosed();
 	checkTransactions();
 	checkAdapter();
