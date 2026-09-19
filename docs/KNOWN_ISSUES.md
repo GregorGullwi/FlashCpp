@@ -365,6 +365,22 @@ this construct; the query benchmark retains a separate 1,025-level logical
 dependency probe. Architecture boundary 7 must move the real instantiation and
 substitution path onto small arena-owned frames before this issue can be closed.
 
+## A used recursive alias template overflows the native stack
+
+A self-referential alias template such as
+`template <class T> using Self = Self<T>;` used as `Self<int>` recurses through
+`Parser::instantiate_and_register_base_template` (via
+`materializeDeferredAliasTemplateArgs`) until the native stack overflows
+(`0xC00000FD`), so the compiler crashes instead of reporting a diagnostic. The
+canonical direct-alias resolver's declaration-ID cycle detection keeps the alias
+boundary, but the legacy alias rematerialization path runs first and never
+reaches that guard. Add an explicit alias-rematerialization cycle/depth guard
+that reports a source diagnostic before recursing, and keep the canonical cycle
+detection as the structural backstop. An unused `using Self = Self<T>;`
+declaration is accepted silently today, so the eventual guard should also cover
+the declaration path. Discovered while adding the canonical alias special-case
+regressions; not introduced by the canonical redirection work.
+
 ## SemanticAnalysis query-state doctest fails on a clean tree
 
 The unity doctest build (tests/FlashCppTest) fails
