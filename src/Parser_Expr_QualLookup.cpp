@@ -3567,6 +3567,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// Dereferencing a pointer removes one level of pointer
 				TypeSpecifierNode result = operand_type;
 				result.remove_pointer_level();
+				if (const int pointee_size_bits = getTypeSpecSizeBits(result);
+					pointee_size_bits > 0) {
+					result.set_size_in_bits(pointee_size_bits);
+				}
 				return result;
 			}
 		}

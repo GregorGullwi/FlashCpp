@@ -273,10 +273,10 @@ std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type
 		return std::nullopt;
 	}
 
-	int size_bits = aligned_type.size_in_bits();
-	if (size_bits == 0) {
-		size_bits = getTypeSpecSizeBits(aligned_type);
-	}
+	// Prefer getTypeSpecSizeBits over the parser-set size_in_bits(): composed
+	// pointer aliases such as Owner* store the 64-bit pointer size on the spec,
+	// and unary * peels pointer_levels without always refreshing that field.
+	const int size_bits = getTypeSpecSizeBits(aligned_type);
 	if (size_bits <= 0) {
 		return std::nullopt;
 	}
@@ -512,6 +512,10 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 					operand_type.array_dimensions().end());
 				operand_type.set_array_dimensions(pointee_dims);
 				operand_type.set_pointee_array_declarator(false);
+			}
+			if (const int pointee_size_bits = getTypeSpecSizeBits(operand_type);
+				pointee_size_bits > 0) {
+				operand_type.set_size_in_bits(pointee_size_bits);
 			}
 			return operand_type;
 		}

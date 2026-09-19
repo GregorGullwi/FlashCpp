@@ -37,6 +37,19 @@ static const TypeInfo* resolveConcreteAliasSemanticType(const TypeInfo* type_inf
 	return current_type_info;
 }
 
+// Map a builtin spelling produced by getTypeName (e.g. "int", "unsigned int")
+// back to its native TypeInfo. Native builtins live in gNativeTypes only, so
+// findTypeByName misses them and alias materialization must reverse-map the
+// spelling to keep the resolved terminal type concrete.
+static const TypeInfo* resolveBuiltinTypeInfoByName(std::string_view builtin_name) {
+	if (const std::optional<TypeCategory> builtin_category =
+			typeCategoryFromName(builtin_name);
+		builtin_category.has_value()) {
+		return findNativeType(*builtin_category);
+	}
+	return nullptr;
+}
+
 template <typename TemplateParamStorage, typename TemplateArgStorage, typename OnOuterParam>
 static bool appendOuterAliasTemplateSubstitutionInputs(
 	const OuterTemplateBinding& outer_binding,
@@ -2530,6 +2543,22 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 
 	result.resolved_type_info =
 		findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
+	if (result.resolved_type_info == nullptr) {
+		// Native scalars live in gNativeTypes, so findTypeByName misses them.
+		// Reverse-map only when the alias target is not one of the alias's own
+		// parameters: `using Pointer = Owner*` needs the outer Owner builtin,
+		// but `using type = _Up` must stay unresolved here so the caller's
+		// alias_node (including class-template specializations) can substitute
+		// its own parameters. Trusting a builtin spelling from the primary
+		// alias would bind `_Tp` and skip the specialization's `_Up`.
+		const bool direct_param_alias =
+			alias_node != nullptr &&
+			findDirectAliasTargetParameterIndex(*alias_node).has_value();
+		if (!direct_param_alias) {
+			result.resolved_type_info =
+				resolveBuiltinTypeInfoByName(result.instantiated_name);
+		}
+	}
 	if (result.resolved_type_info == nullptr &&
 		resolved_deferred_decltype_spec.has_value()) {
 		tryResolveDeferredDecltypeAliasTarget();
@@ -2827,37 +2856,6 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiationForLookup(
 	std::string_view template_name,
 	std::span<const TemplateTypeArg> template_args) {
-	auto resolve_builtin_type_info_by_name = [](std::string_view builtin_name) -> const TypeInfo* {
-		constexpr TypeCategory builtin_categories[] = {
-			TypeCategory::Void,
-			TypeCategory::Nullptr,
-			TypeCategory::Bool,
-			TypeCategory::Char,
-			TypeCategory::UnsignedChar,
-			TypeCategory::Short,
-			TypeCategory::UnsignedShort,
-			TypeCategory::Int,
-			TypeCategory::UnsignedInt,
-			TypeCategory::Long,
-			TypeCategory::UnsignedLong,
-			TypeCategory::LongLong,
-			TypeCategory::UnsignedLongLong,
-			TypeCategory::WChar,
-			TypeCategory::Char8,
-			TypeCategory::Char16,
-			TypeCategory::Char32,
-			TypeCategory::Float,
-			TypeCategory::Double,
-			TypeCategory::LongDouble,
-		};
-		for (TypeCategory builtin_category : builtin_categories) {
-			if (getTypeName(builtin_category) == builtin_name) {
-				return findNativeType(builtin_category);
-			}
-		}
-		return nullptr;
-	};
-
 	if (gTemplateRegistry.lookup_alias_template(template_name).has_value()) {
 		AliasTemplateMaterializationResult alias_result =
 			materializeAliasTemplateInstantiation(template_name, template_args);
@@ -2869,7 +2867,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 			}
 			if (alias_result.resolved_type_info == nullptr) {
 				alias_result.resolved_type_info =
-					resolve_builtin_type_info_by_name(alias_result.instantiated_name);
+					resolveBuiltinTypeInfoByName(alias_result.instantiated_name);
 			}
 		}
 		return alias_result;
