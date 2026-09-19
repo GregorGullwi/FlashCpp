@@ -1311,6 +1311,21 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		std::string_view alias_name = alias_name_token.value();
 		advance();
 
+		// Alias templates are typedef-names, not class templates, so they have no
+		// specialization grammar ([temp.alias], [temp.class.spec]). A template-id
+		// here is a partial or explicit specialization attempt.
+		if (peek() == "<"_tok) {
+			context_.diagnostics().report(
+				DiagnosticId::AliasTemplateSpecializationForbidden,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(peek_info()),
+				"Alias templates cannot be partially or explicitly specialized",
+				{});
+			return ParseResult::error(
+				"Alias templates cannot be partially or explicitly specialized",
+				peek_info());
+		}
+
 		// Expect '='
 		if (peek() != "="_tok) {
 			return ParseResult::error("Expected '=' after alias name in template", current_token_);

@@ -30,8 +30,12 @@ declaration-ID cycle detection. The canonical adapter imports a distinct
 registry spelling identity. Dependent type arguments, argument-kind and arity
 mismatches, targets that mention non-type arguments while the alias declares a
 non-type parameter, dependent template-template arguments, targets that capture
-an enclosing environment, dependent-member targets, alias partial
-specializations, and arbitrary nested alias graphs remain deferred. Earlier on
+an enclosing environment, dependent-member targets, and arbitrary nested alias
+graphs remain deferred. A direct alias target that names a non-type parameter is
+rejected with `NonTypeAliasTargetUnsupported` (1812), and alias partial or
+explicit specialization syntax is rejected with
+`AliasTemplateSpecializationForbidden` (1813); their canonical representation
+remains unsupported. Earlier on
 `main`: the deferred `MemberObjectPointer`
 canonical adapter family (cast/NTTP pointee preservation plus MSVC mangling
 recovery), the `parse_type_specifier` `<` gate alias arm, instantiated-owner
@@ -759,7 +763,14 @@ must not increase an implementation percentage.
   stays iterative with declaration-ID cycle detection. Non-type argument
   references in a target cannot be distinguished from literals, so such targets
   stay deferred once the alias declares a non-type parameter, along with member
-  dependent aliases and alias partials. Latest architecture validation: the
+  dependent aliases and alias partials. Unsupported alias shapes now carry
+  structured diagnostics: a direct alias target that names a non-type parameter
+  reports `NonTypeAliasTargetUnsupported` (1812), and alias partial/explicit
+  specialization syntax reports `AliasTemplateSpecializationForbidden` (1813),
+  each covered by an exact-ID negative test. A used recursive alias template
+  still overflows the native stack through the legacy base-instantiation path
+  before the canonical cycle guard is reached; see
+  [known issues](KNOWN_ISSUES.md). Latest architecture validation: the
   native `CanonicalTypeTests` `checkAliasRedirection` case exercises mixed
   layouts, unresolved-identity distinction, layout conflict rejection,
   template-template placeholder replacement, mixed chain resolution, self and
