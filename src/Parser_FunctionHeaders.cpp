@@ -77,13 +77,25 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			// declares a pointer and must keep its type.
 			if (node->is<DeclarationNode>()) {
 				auto& decl = node->as<DeclarationNode>();
-				if (decl.array_size().has_value() &&
-					!decl.type_specifier_node().is_reference() &&
-					!decl.type_specifier_node().has_pointee_array_declarator()) {
+				const TypeSpecifierNode& orig_type = decl.type_specifier_node();
+				const bool alias_array_parameter =
+					!decl.is_array() && orig_type.is_array() && !orig_type.is_reference() &&
+					!orig_type.has_pointee_array_declarator();
+				if (alias_array_parameter && orig_type.array_dimensions().size() > 1) {
+					return error(
+						DiagnosticId::AliasMultidimensionalParameterUnsupported,
+						decl.identifier_token(),
+						"Multidimensional array alias parameters are not supported");
+				}
+				if ((decl.array_size().has_value() || alias_array_parameter) &&
+					!orig_type.is_reference() &&
+					!orig_type.has_pointee_array_declarator()) {
 					// This is an array parameter - convert to pointer
 					// Get the underlying type and add a pointer level
-					const TypeSpecifierNode& orig_type = decl.type_specifier_node();
 					TypeSpecifierNode param_type = orig_type;  // Copy needed since we modify
+					if (alias_array_parameter) {
+						param_type.set_array(false);
+					}
 					param_type.add_pointer_level();
 
 					// Create new declaration without array size (now a pointer)
