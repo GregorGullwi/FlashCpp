@@ -64,6 +64,7 @@ inline const char* diagnosticSeverityTag(DiagnosticSeverity severity) {
 enum class DiagnosticId : uint32_t {
 	None = 0,
 	ScratchAllocationLimit = 3001,
+	AliasInstantiationDepthExceeded = 3002,
 
 	// Declarator / type-id family (1001..1099).
 	PointerToReferenceType = 1001,
@@ -217,6 +218,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 	switch (id) {
 	case DiagnosticId::ScratchAllocationLimit:
 		return "ScratchAllocationLimit";
+	case DiagnosticId::AliasInstantiationDepthExceeded:
+		return "AliasInstantiationDepthExceeded";
 	case DiagnosticId::PointerToReferenceType:
 		return "PointerToReferenceType";
 	case DiagnosticId::MultipleAsmSuffixesOnDeclarator:

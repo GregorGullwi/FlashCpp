@@ -1609,6 +1609,10 @@ private:
 	// Track template aliases currently being resolved to prevent infinite recursion
 	std::unordered_set<std::string_view> resolving_aliases_;
 
+	// Bounds recursive alias materialization so a cyclic alias graph reports an
+	// implementation limit instead of overflowing the native stack.
+	size_t alias_materialization_depth_ = 0;
+
 	// Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
 	std::vector<ASTNode> pending_struct_variables_;
 

@@ -2128,6 +2128,29 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInstantiation(
 	std::string_view alias_template_name,
 	std::span<const TemplateTypeArg> template_args) {
+	// Alias materialization can recurse through itself and
+	// materializeTemplateInstantiationForLookup (an indirectly recursive alias
+	// graph). Bound the logical depth and report an implementation limit instead
+	// of overflowing the native stack. A name-only cycle guard is not usable:
+	// legitimate nested uses such as A<A<int>> re-enter the same alias.
+	static constexpr size_t kMaxAliasMaterializationDepth = 128;
+	if (alias_materialization_depth_ >= kMaxAliasMaterializationDepth) {
+		DiagnosticEngine& diagnostics_engine = context_.diagnostics();
+		const uint32_t diagnostic_index = diagnostics_engine.report(
+			DiagnosticId::AliasInstantiationDepthExceeded,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(current_token_),
+			"Alias template instantiation exceeded the maximum depth",
+			{});
+		throw CompileError::fromStructuredDiagnostic(
+			diagnostics_engine.diagnostic(diagnostic_index));
+	}
+	struct AliasMaterializationDepthGuard {
+		size_t& depth;
+		explicit AliasMaterializationDepthGuard(size_t& value) : depth(value) { ++depth; }
+		~AliasMaterializationDepthGuard() { --depth; }
+	} depth_guard(alias_materialization_depth_);
+
 	AliasTemplateMaterializationResult result;
 	std::optional<TypeSpecifierNode> resolved_deferred_decltype_spec;
 	const TemplateAliasNode* alias_node = nullptr;
