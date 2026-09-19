@@ -48,8 +48,6 @@ an existing bounded owner. Their source is preserved as non-discovered
   `test_template_member_func_template_const_ref_return_fail.cpp`.
 - Out-of-line and injected-identity fixtures that require identity recovery:
   `test_injected_identity_ool_namespace_owner_fail.cpp`,
-  `test_injected_identity_other_specialization_default_fail.cpp`,
-  `test_injected_identity_terminal_member_template_fail.cpp`,
   `test_template_nested_ool_ctor_template_alias_target_mismatch_fail.cpp`,
   `test_template_ool_member_template_single_candidate_alias_target_mismatch_fail.cpp`,
   `test_template_ool_plain_member_multi_param_late_mismatch_fail.cpp`,

@@ -1,4 +1,9 @@
 // Holder<T>::template Box<T> must resolve to Box, not stop at Holder.
+//
+// Box<int> has an extra int member and is larger than Holder<int>, so the
+// static_assert condition is false and reports StaticAssertFailure#1619.
+// If the terminal member template incorrectly resolved as its Holder owner,
+// the two sizes would match and the assertion would wrongly pass.
 template <class T>
 struct Holder {
 	T owner;

@@ -179,6 +179,7 @@ enum class DiagnosticId : uint32_t {
 	UndeclaredIdentifier = 1616,
 	AccessControlViolation = 1617,
 	AmbiguousQualifiedLookup = 1618,
+	StaticAssertFailure = 1619,
 
 	// Call-expression family (1701..1799).
 	AmbiguousFunctionCall = 1701,
@@ -418,6 +419,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AccessControlViolation";
 	case DiagnosticId::AmbiguousQualifiedLookup:
 		return "AmbiguousQualifiedLookup";
+	case DiagnosticId::StaticAssertFailure:
+		return "StaticAssertFailure";
 	case DiagnosticId::AmbiguousFunctionCall:
 		return "AmbiguousFunctionCall";
 	case DiagnosticId::AmbiguousCallOperator:

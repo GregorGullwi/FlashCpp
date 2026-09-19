@@ -36,8 +36,6 @@ An agent looking for a regression to recover should:
 | `test_function_template_recursive_trailing_return_fail.cpp.txt` | Recursive trailing-return instantiation | Recursive substitution terminates through a stable rejection owner. |
 | `test_if_constexpr_active_branch_invalid_fail.cpp.txt` | `if constexpr` active-branch validation | The active branch is validated through its existing semantic owner. |
 | `test_injected_identity_ool_namespace_owner_fail.cpp.txt` | Out-of-line injected identity | Namespace/owner identity is preserved without recovery heuristics. |
-| `test_injected_identity_other_specialization_default_fail.cpp.txt` | Injected identity and default arguments | Specialization identity is stable through default-argument substitution. |
-| `test_injected_identity_terminal_member_template_fail.cpp.txt` | Injected identity and member templates | Terminal member-template identity has a bounded owner. |
 | `test_mismatch_args_fail.cpp.txt` | Declaration parser fallback | Shared declaration dispatch preserves the originating mismatch. |
 | `test_mismatch_const_fail.cpp.txt` | Declaration parser fallback | Const-mismatch validation is owned before expression fallback. |
 | `test_mismatch_return_fail.cpp.txt` | Declaration parser fallback | Return mismatch is reported at declaration validation. |
