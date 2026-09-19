@@ -2553,6 +2553,12 @@ ParseResult Parser::parse_type_specifier() {
 						const TemplateTypeArg& rebound_arg = *direct_rebound_alias_arg;
 						if (rebound_arg.is_value) {
 							FLASH_LOG(Parser, Error, "Non-type template arguments not supported in alias templates yet");
+							context_.diagnostics().report(
+								DiagnosticId::NonTypeAliasTargetUnsupported,
+								DiagnosticSeverity::Error,
+								lexer_.getSourceLocation(type_name_token),
+								"Non-type template arguments not supported in alias templates",
+								{});
 							return ParseResult::error("Non-type template arguments not supported in alias templates", type_name_token);
 						}
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
