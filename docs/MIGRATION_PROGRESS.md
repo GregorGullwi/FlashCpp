@@ -11,10 +11,18 @@ IDs. Direct type targets recover the owner parameter's declaration and index
 from the enclosing parser parameter scope before canonical import. The
 canonical table resolves an explicitly identified direct member alias
 with owner specialization arguments followed by alias arguments, using the
-existing iterative substitution worklist. Canonical `DependentTemplateMember`
+existing iterative substitution worklist. That resolution is fail-closed: a
+dependent (partially concrete) owner or alias argument, a non-Type owner or
+member argument layout, or an owner specialization that does not cover every
+owner parameter reference the published target performs returns no target
+instead of substituting a short layout or emitting a partially dependent type.
+Canonical `DependentTemplateMember`
 nodes still lack member alias declaration identity, so automatic redirection
 of those nodes remains deferred. Targets that cannot be imported directly
-remain deferred.
+remain deferred, including a nested owner+alias argument target such as
+`Both<Owner, Value>`: the alias's own parameter in argument position has no
+published identity while the target parses, so canonical import is Unresolved
+and publication is skipped (legacy materialization still serves the use site).
 
 Published namespace/global and member alias primaries retain their `TemplateDeclId` on
 the `TemplateAliasNode`; dependent alias uses stamp that ID and ordered
@@ -172,8 +180,17 @@ members of published namespace/global primary class templates, anchoring the
 `TemplateAliasNode` under that id. Directly importable targets stamp their own
 Type-kind parameters with that member alias id and publish the target plus its
 argument layout and known enclosing template ID under the same canonical
-declaration key. Unresolved, dependent-member, and partial targets remain
-deferred. Qualified member alias type-ids resolve
+declaration key. `resolveMemberAliasTarget` resolves such a target by
+substituting the owner environment and then the alias environment through the
+iterative worklist, and is fail-closed: a dependent owner or alias argument, a
+non-Type owner or member argument layout, or an owner specialization that does
+not cover the target's owner parameter references returns `std::nullopt` rather
+than building a partially dependent type or reaching the worklist's arity
+throw. Unresolved, dependent-member, and partial targets remain
+deferred, including the nested owner+alias argument target
+`Both<Owner, Value>` (the alias's own parameter is not stamped in argument
+position, so import is Unresolved and publication is skipped).
+Qualified member alias type-ids resolve
 through `Parser::findAliasTemplateBySpelling` (identity chain first via
 `findAliasTemplateByIdentityChain`, registry alias lookup fail-closed
 fallback) at the `parse_type_specifier` alias lookups and at the shared
@@ -527,6 +544,23 @@ Preserve these ownership contracts during subsequent migration:
 
 ## Validation and compatibility baselines
 
+Latest validation for the owner-capturing member alias environment: the native
+`CanonicalTypeTests` `checkMemberAliasOwnerEnvironmentFailClosed` case proves
+the resolver returns no target without throwing for a dependent owner argument,
+a dependent alias argument, an owner specialization that does not cover the
+target's owner parameter references, a non-Type owner argument kind, and a
+non-Type published member layout; the existing `checkMemberAliasOwnerEnvironment`
+still proves the concrete redirect. Two mutation anchors
+(`lost_member_alias_owner_dependent_argument`, `lost_member_alias_owner_arity`)
+each make the harness exit 1. The `FrontendContext` doctest `Nested owner and
+alias argument member alias target stays deferred` parses `Both<Owner, Value>`
+and proves the canonical key stays a fail-closed miss while the plain pointer
+target publishes and resolves. Source regressions
+`test_canonical_member_alias_owner_capture_ret42` and
+`test_canonical_dependent_member_alias_target_ret42` still return 42, and the
+canonical adapter corpus is unchanged at 26 supported / 0 deferred. The sharded
+MSVC rebuild is warning-free.
+
 Latest validation for the `<` gate alias arm: neutralizing the alias entries in
 the known-template disambiguation test makes
 `test_canonical_gate_alias_arm_dependent_member_ret0` fail to parse
@@ -778,7 +812,11 @@ must not increase an implementation percentage.
   stays iterative with declaration-ID cycle detection. Non-type argument
   references in a target cannot be distinguished from literals, so such targets
   stay deferred once the alias declares a non-type parameter, along with member
-  dependent aliases and alias partials. Unsupported alias shapes now carry
+  dependent aliases, alias partials, and nested owner+alias argument member-alias
+  targets whose own argument is unstamped (`Both<Owner, Value>`). The
+  member-alias resolver is fail-closed against dependent and non-Type argument
+  layouts and uncovered owner arity, returning no target instead of substituting.
+  Unsupported alias shapes now carry
   structured diagnostics: a direct alias target that names a non-type parameter
   reports `NonTypeAliasTargetUnsupported` (1812), alias partial/explicit
   specialization syntax reports `AliasTemplateSpecializationForbidden` (1813),

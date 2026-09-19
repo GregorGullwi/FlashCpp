@@ -1560,6 +1560,64 @@ TEST_SUITE("FrontendContext") {
 	}
 
 
+	TEST_CASE("Nested owner and alias argument member alias target stays deferred") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<class First, class Second> struct Both { First first; Second second; };\n"
+			"template<class Owner> struct Captures {\n"
+			"  template<class Value> using Pointer = Owner*;\n"
+			"  template<class Value> using Mixed = Both<Owner, Value>;\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_alias_nested_owner_argument_deferral_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		// The plain owner-capturing pointer target is directly representable:
+		// import is Supported and the canonical target publishes.
+		const auto pointer_alias = gTemplateRegistry.lookup_alias_template("Captures::Pointer");
+		REQUIRE(pointer_alias.has_value());
+		REQUIRE(pointer_alias->is<TemplateAliasNode>());
+		REQUIRE(pointer_alias->as<TemplateAliasNode>().has_template_decl_id());
+		const TemplateDeclId pointer_decl =
+			pointer_alias->as<TemplateAliasNode>().template_decl_id();
+		const auto pointer_target = context.canonicalTypes().aliasTemplateTarget(pointer_decl);
+		REQUIRE(pointer_target.has_value());
+
+		// The nested Both<Owner, Value> target is a bounded deferral. The alias's
+		// own Value appears in argument position and has no published
+		// TemplateDeclId while the target parses, so canonical import stays
+		// Unresolved and publication is skipped. Legacy alias materialization
+		// still handles the use site; the canonical key simply stays a
+		// fail-closed miss instead of publishing a partially dependent target.
+		const auto mixed_alias = gTemplateRegistry.lookup_alias_template("Captures::Mixed");
+		REQUIRE(mixed_alias.has_value());
+		REQUIRE(mixed_alias->is<TemplateAliasNode>());
+		REQUIRE(mixed_alias->as<TemplateAliasNode>().has_template_decl_id());
+		const TemplateDeclId mixed_decl = mixed_alias->as<TemplateAliasNode>().template_decl_id();
+		CHECK_FALSE(context.canonicalTypes().aliasTemplateTarget(mixed_decl).has_value());
+
+		// The resolver stays fail-closed for the deferred member target rather
+		// than reconstructing a target from the use-site spelling.
+		const TemplateDeclId owner_decl = context.canonicalTypes().templateParameterDecl(
+			context.canonicalTypes().node(*pointer_target).child);
+		const TypeId owner_arg[] = {context.canonicalTypes().builtin(CanonicalBuiltinKind::Int)};
+		const TypeId alias_arg[] = {context.canonicalTypes().builtin(CanonicalBuiltinKind::Long)};
+		const TypeId owner_spec =
+			context.canonicalTypes().templateSpecialization(owner_decl, owner_arg);
+		CHECK_FALSE(context.canonicalTypes()
+			.resolveMemberAliasTarget(mixed_decl, owner_spec, alias_arg)
+			.has_value());
+	}
+
+
 	TEST_CASE("Namespace and global alias templates publish declaration identity") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

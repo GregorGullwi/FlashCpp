@@ -1638,6 +1638,60 @@ inline void checkMemberAliasOwnerEnvironment() {
 		table.templateSpecialization(TemplateDeclId{84}, owner_args), alias_args).has_value());
 }
 
+// The member-alias resolver is fail-closed: a partially dependent owner/member
+// argument, a non-Type argument layout, or an owner specialization that does not
+// cover the target's owner parameter references must return nullopt rather than
+// substitute (a short layout would otherwise throw inside the worklist).
+inline void checkMemberAliasOwnerEnvironmentFailClosed() {
+	CanonicalTypeTable table;
+	const TemplateDeclId owner{80};
+	const TemplateDeclId alias{81};
+	const TypeId owner_param = table.templateParameter(owner, 0);
+	const TypeId alias_param = table.templateParameter(alias, 0);
+	const TypeId owner_arg = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId alias_arg = table.builtin(CanonicalBuiltinKind::Char);
+	const CanonicalTemplateArgKind kinds[] = {CanonicalTemplateArgKind::Type};
+	const TypeId target = table.templateSpecialization(TemplateDeclId{82},
+		std::array<TypeId, 2>{owner_param, alias_param});
+	table.publishAliasTemplateTarget(alias, owner, target, kinds);
+	const TypeId owner_args[] = {owner_arg};
+	const TypeId alias_args[] = {alias_arg};
+	const TypeId owner_spec = table.templateSpecialization(owner, owner_args);
+	require(table.resolveMemberAliasTarget(alias, owner_spec, alias_args).has_value());
+
+	// A dependent owner argument defers instead of producing a partially
+	// dependent target.
+	const TypeId dependent_owner_args[] = {table.templateParameter(TemplateDeclId{83}, 0)};
+	require(!table.resolveMemberAliasTarget(alias,
+		table.templateSpecialization(owner, dependent_owner_args), alias_args).has_value());
+
+	// A dependent member argument defers for the same reason.
+	const TypeId dependent_alias_args[] = {table.templateParameter(TemplateDeclId{83}, 0)};
+	require(!table.resolveMemberAliasTarget(alias, owner_spec, dependent_alias_args).has_value());
+
+	// An owner specialization that does not cover the target's owner parameter
+	// reference defers instead of reaching substitution and throwing.
+	const TypeId uncovered_owner_spec =
+		table.templateSpecialization(owner, std::span<const TypeId>{});
+	require(!table.resolveMemberAliasTarget(alias, uncovered_owner_spec, alias_args).has_value());
+
+	// A non-Type owner argument kind is not directly representable.
+	const CanonicalTemplateArgument non_type_owner[] = {
+		CanonicalTemplateArgument::makeNonType(ExprId{71}),
+	};
+	require(!table.resolveMemberAliasTarget(alias,
+		table.templateSpecialization(owner, non_type_owner), alias_args).has_value());
+
+	// A non-Type member parameter layout is not directly representable.
+	const TemplateDeclId nttp_alias{84};
+	const CanonicalTemplateArgKind nttp_kinds[] = {CanonicalTemplateArgKind::NonType};
+	table.publishAliasTemplateTarget(nttp_alias, owner,
+		table.templateParameter(nttp_alias, 0), nttp_kinds);
+	require(!table.resolveMemberAliasTarget(nttp_alias, owner_spec, alias_args).has_value());
+
+	std::printf("member alias owner environment: fail-closed\n");
+}
+
 inline void checkAliasRedirection() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -1872,6 +1926,7 @@ inline int run() {
 	checkConcretePackSpecArgs();
 	checkAliasRedirection();
 	checkMemberAliasOwnerEnvironment();
+	checkMemberAliasOwnerEnvironmentFailClosed();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();
