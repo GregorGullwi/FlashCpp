@@ -3591,6 +3591,39 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
+	if (type_spec.pointer_depth() > 0) {
+		const PointerDepth pointer_depth{
+			static_cast<int>(type_spec.pointer_depth())};
+		const SizeInBits pointer_size_bits{64};
+		if (num_args == 0) {
+			return makeExprResult(
+				type_spec.type_index(),
+				pointer_size_bits,
+				IrOperand{0ULL},
+				pointer_depth,
+				ValueStorage::ContainsData);
+		}
+		if (num_args == 1) {
+			ASTNode first_arg;
+			constructorCallNode.arguments().visit([&](ASTNode arg) {
+				if (!first_arg.has_value()) {
+					first_arg = arg;
+				}
+			});
+			if (!first_arg.is<ExpressionNode>()) {
+				throw InternalError("Pointer constructor call argument must be an expression");
+			}
+			ExprResult arg_result = visitExpressionNode(first_arg.as<ExpressionNode>());
+			arg_result.pointer_depth = pointer_depth;
+			arg_result.size_in_bits = pointer_size_bits;
+			if (type_spec.type_index().is_valid()) {
+				arg_result.type_index = type_spec.type_index();
+			}
+			return arg_result;
+		}
+		throw CompileError("Pointer constructor call must have 0 or 1 arguments");
+	}
+
 	if (!is_struct_type(constructor_type_category) &&
 		constructor_type_category != TypeCategory::UserDefined) {
 		const int type_size_bits = get_type_size_bits(constructor_type_category);

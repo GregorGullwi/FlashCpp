@@ -556,6 +556,10 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		if (!cast_array_dimensions.empty()) {
 			type_spec.set_array_dimensions(cast_array_dimensions);
 		}
+		if (const int composed_size_bits = getTypeSpecSizeBits(type_spec);
+			composed_size_bits > 0) {
+			type_spec.set_size_in_bits(composed_size_bits);
+		}
 		return emplace_node<TypeSpecifierNode>(type_spec);
 	};
 
