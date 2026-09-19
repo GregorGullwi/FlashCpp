@@ -2464,27 +2464,34 @@ ParseResult Parser::parse_type_specifier() {
 					};
 					const bool has_dependent_alias_args =
 						aliasTemplateArgsStillDependent(*template_args);
-					std::vector<size_t> resolved_alias_dimensions(
-						alias_target_type_spec.array_dimensions().begin(),
-						alias_target_type_spec.array_dimensions().end());
-					if (!has_dependent_alias_args) {
-						const auto bound_expressions = alias_node.arrayBoundExpressions();
-						for (size_t i = 0; i < bound_expressions.size() && i < resolved_alias_dimensions.size(); ++i) {
-							if (resolved_alias_dimensions[i] != 0) {
-								continue;
-							}
-							auto bound = evaluateDependentNTTPExpression(
-								bound_expressions[i], alias_node.template_parameters(), *template_args);
-							if (bound.has_value() && bound->is_value && bound->value > 0) {
-								resolved_alias_dimensions[i] = static_cast<size_t>(bound->value);
-							} else {
-								return error(
-									DiagnosticId::AliasTemplateArrayBoundUnresolved,
-									type_name_token,
-									"Alias template array bound must be a positive constant expression");
+					auto resolveAliasDimensions = [&]() -> std::optional<std::vector<size_t>> {
+						std::vector<size_t> dimensions(
+							alias_target_type_spec.array_dimensions().begin(),
+							alias_target_type_spec.array_dimensions().end());
+						if (!has_dependent_alias_args) {
+							const auto bound_expressions = alias_node.arrayBoundExpressions();
+							for (size_t i = 0; i < bound_expressions.size() && i < dimensions.size(); ++i) {
+								if (dimensions[i] != 0) {
+									continue;
+								}
+								auto bound = evaluateDependentNTTPExpression(
+									bound_expressions[i], alias_node.template_parameters(), *template_args);
+								if (!bound.has_value() || !bound->is_value || bound->value <= 0) {
+									return std::nullopt;
+								}
+								dimensions[i] = static_cast<size_t>(bound->value);
 							}
 						}
+						return dimensions;
+					};
+					std::optional<std::vector<size_t>> resolved_dimensions = resolveAliasDimensions();
+					if (!resolved_dimensions.has_value()) {
+						return error(
+							DiagnosticId::AliasTemplateArrayBoundUnresolved,
+							type_name_token,
+							"Alias template array bound must be a positive constant expression");
 					}
+					const std::vector<size_t>& resolved_alias_dimensions = *resolved_dimensions;
 					const std::optional<TemplateTypeArg> direct_rebound_alias_arg =
 						!has_dependent_alias_args
 							? tryRebindAliasTargetTemplateArg(alias_node, *template_args)
@@ -2546,7 +2553,7 @@ ParseResult Parser::parse_type_specifier() {
 								alias_node.template_parameters(),
 								*template_args);
 							if (substituted_alias_target.is<TypeSpecifierNode>()) {
-								TypeSpecifierNode substituted_target =
+								TypeSpecifierNode& substituted_target =
 									substituted_alias_target.as<TypeSpecifierNode>();
 								if (alias_target_type_spec.is_array()) {
 									substituted_target.set_array_dimensions(resolved_alias_dimensions);
