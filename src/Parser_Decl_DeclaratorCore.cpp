@@ -785,7 +785,8 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		array_dimensions.empty() && !is_unsized_array) {
 		if (auto type_node = type_specifier_result.node()) {
 			const TypeSpecifierNode& spec = type_node->as<TypeSpecifierNode>();
-			bool known_extents = !spec.array_dimensions().empty() &&
+			bool known_extents = spec.is_array() && !spec.has_pointee_array_declarator() &&
+				!spec.array_dimensions().empty() &&
 				!spec.has_unsized_outer_array_dimension();
 			for (const size_t extent : spec.array_dimensions()) {
 				if (extent == 0) {

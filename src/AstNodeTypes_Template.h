@@ -298,6 +298,8 @@ public:
 	const TemplateParamNameVector& template_param_names() const { return template_param_names_; }
 	std::string_view alias_name() const { return alias_name_.view(); }
 	const TypeSpecifierNode& target_type() const { return target_type_; }
+	void setArrayBoundExpressions(std::vector<ASTNode> expressions) { array_bound_expressions_ = std::move(expressions); }
+	std::span<const ASTNode> arrayBoundExpressions() const { return {array_bound_expressions_.data(), array_bound_expressions_.size()}; }
 
 	// Deferred instantiation support
 	bool is_deferred() const { return is_deferred_; }
@@ -327,6 +329,7 @@ private:
 	TemplateParamNameVector template_param_names_;	 // Parameter names for lookup
 	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
 	TypeSpecifierNode target_type_;  // The target type (e.g., T*)
+	std::vector<ASTNode> array_bound_expressions_;
 
 	// Deferred instantiation (Option 1: cleaner than string parsing)
 	TemplateDeclId template_decl_id_;

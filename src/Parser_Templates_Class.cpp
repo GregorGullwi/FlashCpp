@@ -1470,6 +1470,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 		consume_pointer_ref_modifiers(type_spec);
 
+		std::vector<ASTNode> alias_array_bound_expressions;
 		// Array dimensions in the alias target: using A = T[3]; or using A = T[N];
 		// The bound may be a concrete constant or a dependent expression (which
 		// stores extent 0 until substitution).
@@ -1487,9 +1488,16 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				const auto dim_value = dim_result.node().has_value()
 					? try_evaluate_constant_expression(*dim_result.node())
 					: std::nullopt;
+				if (dim_value.has_value() && dim_value->value <= 0) {
+					return error(
+						DiagnosticId::AliasTemplateArrayBoundUnresolved,
+						opening_bracket_token,
+						"Alias template array bound must be a positive constant expression");
+				}
 				const size_t dim_size = dim_value.has_value()
 					? static_cast<size_t>(dim_value->value)
 					: 0;
+				alias_array_bound_expressions.push_back(*dim_result.node());
 				type_spec.add_array_dimension(dim_size);
 				if (!consume("]"_tok)) {
 					const SourceLocation opening_bracket_location =
@@ -1518,6 +1526,12 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		}
 
 		// Expect semicolon
+		if (peek() == "("_tok) {
+			return error(
+				DiagnosticId::UnsupportedAliasTemplateTargetDeclarator,
+				peek_info(),
+				"Parenthesized alias template target declarator is not supported");
+		}
 		if (!consume(";"_tok)) {
 			return error(
 				DiagnosticId::MissingSemicolon,
@@ -1545,6 +1559,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				StringTable::getOrInternStringHandle(alias_name),
 				type_result.node().value());
 		}
+		alias_node.as<TemplateAliasNode>().setArrayBoundExpressions(std::move(alias_array_bound_expressions));
 
 		// A deferred alias whose target names the alias itself is directly
 		// recursive. Reject it at declaration time: the legacy materialization
