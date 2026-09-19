@@ -5041,7 +5041,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (!eval_result.as_bool()) {
 					std::string error_msg = buildDeferredStaticAssertInstantiationError(
 						std::string_view(), deferred_assert.message, false);
-					if (!is_implicit_instantiation) {
+					// A definitively false static_assert is ill-formed for a committed
+					// instantiation. Speculative probes (ShapeOnly/SoftProbe/candidate)
+					// still soft-fail so overload resolution and shape probing continue;
+					// a later committed instantiation reports the structured error.
+					if (force_eager ||
+						template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
 						throw makeStructuredCompileError(
 							context_.diagnostics(),
 							DiagnosticId::TemplateStaticAssertFailure,
@@ -13343,7 +13348,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (!eval_result.as_bool()) {
 			std::string error_msg = buildDeferredStaticAssertInstantiationError(
 				std::string_view(), deferred_assert.message, false);
-			if (force_eager) {
+			// See the committed-instantiation note in try_instantiate_class_template:
+			// a definitively false static_assert is an error once the instantiation
+			// commits, while speculative probes remain soft failures.
+			if (force_eager ||
+				template_instantiation_mode_ == TemplateInstantiationMode::HardUse) {
 				throw makeStructuredCompileError(
 					context_.diagnostics(),
 					DiagnosticId::TemplateStaticAssertFailure,

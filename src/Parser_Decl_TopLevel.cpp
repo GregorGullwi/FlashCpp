@@ -455,11 +455,11 @@ ParseResult Parser::parse_static_assert() {
 			}
 			return saved_position.success();
 		}
-		std::string error_msg = "static_assert failed";
 		if (!message.empty()) {
-			error_msg += ": " + message;
+			return errorf(DiagnosticId::StaticAssertFailure, static_assert_keyword,
+				"static_assert failed: {}", message);
 		}
-		return ParseResult::error(error_msg, static_assert_keyword);
+		return error(DiagnosticId::StaticAssertFailure, static_assert_keyword, "static_assert failed");
 	}
 
 	// static_assert passed - just skip it

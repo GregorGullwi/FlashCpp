@@ -1,6 +1,10 @@
 // Wrapper<long long> is a different specialization from the current
 // Wrapper<char> instantiation. Rebinding it to the injected current class
 // would make this deliberately false assertion pass.
+//
+// The explicit Wrapper<long long> default must remain distinct, so the
+// deferred static_assert fails during the committed instantiation of
+// Wrapper<char>::MemberDefault<> and reports TemplateStaticAssertFailure#1810.
 template <class T>
 struct Wrapper {
 	T value;
