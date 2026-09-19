@@ -1496,6 +1496,22 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				type_result.node().value());
 		}
 
+		// A deferred alias whose target names the alias itself is directly
+		// recursive. Reject it at declaration time: the legacy materialization
+		// path otherwise recurses without bound, and a later name-only guard
+		// cannot distinguish it from a legitimate nested use such as A<A<int>>.
+		const TemplateAliasNode& created_alias = alias_node.as<TemplateAliasNode>();
+		if (created_alias.is_deferred() &&
+			created_alias.target_template_name() == alias_name) {
+			context_.diagnostics().report(
+				DiagnosticId::RecursiveAliasTemplateInstantiation,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(alias_name_token),
+				"Alias template cannot refer to itself",
+				{});
+			return ParseResult::error("Alias template cannot refer to itself", alias_name_token);
+		}
+
 		// Register the alias template in the template registry
 		// We'll handle instantiation later when the alias is used
 		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys

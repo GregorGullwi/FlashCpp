@@ -32,10 +32,12 @@ mismatches, targets that mention non-type arguments while the alias declares a
 non-type parameter, dependent template-template arguments, targets that capture
 an enclosing environment, dependent-member targets, and arbitrary nested alias
 graphs remain deferred. A direct alias target that names a non-type parameter is
-rejected with `NonTypeAliasTargetUnsupported` (1812), and alias partial or
-explicit specialization syntax is rejected with
-`AliasTemplateSpecializationForbidden` (1813); their canonical representation
-remains unsupported. Earlier on
+rejected with `NonTypeAliasTargetUnsupported` (1812), alias partial or explicit
+specialization syntax is rejected with
+`AliasTemplateSpecializationForbidden` (1813), and a directly self-referential
+alias declaration is rejected with `RecursiveAliasTemplateInstantiation` (1814);
+their canonical representations remain unsupported. Indirect alias recursion
+still overflows the native stack (see [known issues](KNOWN_ISSUES.md)). Earlier on
 `main`: the deferred `MemberObjectPointer`
 canonical adapter family (cast/NTTP pointee preservation plus MSVC mangling
 recovery), the `parse_type_specifier` `<` gate alias arm, instantiated-owner
@@ -765,12 +767,13 @@ must not increase an implementation percentage.
   stay deferred once the alias declares a non-type parameter, along with member
   dependent aliases and alias partials. Unsupported alias shapes now carry
   structured diagnostics: a direct alias target that names a non-type parameter
-  reports `NonTypeAliasTargetUnsupported` (1812), and alias partial/explicit
+  reports `NonTypeAliasTargetUnsupported` (1812), alias partial/explicit
   specialization syntax reports `AliasTemplateSpecializationForbidden` (1813),
-  each covered by an exact-ID negative test. A used recursive alias template
-  still overflows the native stack through the legacy base-instantiation path
-  before the canonical cycle guard is reached; see
-  [known issues](KNOWN_ISSUES.md). Latest architecture validation: the
+  and a directly self-referential alias declaration reports
+  `RecursiveAliasTemplateInstantiation` (1814), each covered by an exact-ID
+  negative test. Indirect alias recursion still overflows the native stack
+  through the legacy materialization cycle before the canonical cycle guard is
+  reached; see [known issues](KNOWN_ISSUES.md). Latest architecture validation: the
   native `CanonicalTypeTests` `checkAliasRedirection` case exercises mixed
   layouts, unresolved-identity distinction, layout conflict rejection,
   template-template placeholder replacement, mixed chain resolution, self and
