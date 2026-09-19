@@ -1603,6 +1603,41 @@ inline void checkConcretePackSpecArgs() {
 		}));
 }
 
+inline void checkMemberAliasOwnerEnvironment() {
+	CanonicalTypeTable table;
+	const TemplateDeclId owner{80};
+	const TemplateDeclId alias{81};
+	const TypeId owner_param = table.templateParameter(owner, 0);
+	const TypeId alias_param = table.templateParameter(alias, 0);
+	const TypeId owner_arg = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId alias_arg = table.builtin(CanonicalBuiltinKind::Char);
+	const TypeId owner_args[] = {owner_arg};
+	const TypeId alias_args[] = {alias_arg};
+	const CanonicalTemplateArgKind kinds[] = {CanonicalTemplateArgKind::Type};
+	const TypeId target = table.templateSpecialization(TemplateDeclId{82},
+		std::array<TypeId, 2>{owner_param, alias_param});
+	require(table.dependsOnlyOnTemplateParameters(target, alias, owner));
+	require(!table.dependsOnlyOnTemplateParameters(target, alias));
+	require(!table.dependsOnlyOnTemplateParameters(
+		table.templateParameter(TemplateDeclId{83}, 0), alias, owner));
+	table.publishAliasTemplateTarget(alias, owner, target, kinds);
+	const TypeId qualifier = table.templateSpecialization(owner, owner_args);
+	const TypeId member_use = table.dependentTemplateMember(qualifier, "Pointer", alias_args);
+	const TypeId member_argument = table.templateArgumentType(
+		table.dependentTemplateMemberArguments(member_use));
+	const TypeId resolved_member_args[] = {member_argument};
+	const TypeId expected = table.templateSpecialization(TemplateDeclId{82},
+		std::array<TypeId, 2>{owner_arg, alias_arg});
+	require(table.resolveMemberAliasTarget(alias,
+		table.dependentNameQualifier(member_use), resolved_member_args) == expected);
+	require(table.resolveMemberAliasTarget(alias,
+		table.dependentNameQualifier(member_use), resolved_member_args) !=
+		table.templateSpecialization(TemplateDeclId{82},
+			std::array<TypeId, 2>{alias_arg, owner_arg}));
+	require(!table.resolveMemberAliasTarget(alias,
+		table.templateSpecialization(TemplateDeclId{84}, owner_args), alias_args).has_value());
+}
+
 inline void checkAliasRedirection() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -1836,6 +1871,7 @@ inline int run() {
 	checkNttpSpecArgs();
 	checkConcretePackSpecArgs();
 	checkAliasRedirection();
+	checkMemberAliasOwnerEnvironment();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();

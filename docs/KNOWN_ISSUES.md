@@ -415,3 +415,11 @@ bounded-depth regression to architecture boundary 10E (bounded parser control
 flow), coordinating with the template/semantic worklist migration where the
 measured path crosses that boundary. Do not pursue a standalone stack-reserve
 change before that work.
+
+## `sizeof` on a dereferenced instantiated member alias pointer
+
+For `template<class Owner> struct Captures { template<class Value> using Pointer = Owner*; };`,
+`using P = typename Captures<int>::template Pointer<char>;` accepts `int value; P p = &value;`
+and `*p = 41`, but `sizeof(*p)` currently evaluates to pointer size instead of
+`sizeof(int)`. The concrete alias type works for assignment and dereference;
+the `sizeof` expression's pointee type calculation needs separate investigation.

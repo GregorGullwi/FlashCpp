@@ -1524,7 +1524,7 @@ TEST_SUITE("FrontendContext") {
 		CHECK_FALSE(parser.findAliasTemplateByIdentityChain("ns::Gauge::NoMember").has_value());
 	}
 
-	TEST_CASE("Member alias target capturing enclosing template parameters remains deferred") {
+	TEST_CASE("Member alias target captures enclosing template parameters") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
 		gConceptRegistry.clear();
@@ -1546,9 +1546,17 @@ TEST_SUITE("FrontendContext") {
 		REQUIRE(member_alias.has_value());
 		REQUIRE(member_alias->is<TemplateAliasNode>());
 		REQUIRE(member_alias->as<TemplateAliasNode>().has_template_decl_id());
-		CHECK_FALSE(context.canonicalTypes()
-			.aliasTemplateTarget(member_alias->as<TemplateAliasNode>().template_decl_id())
-			.has_value());
+		CHECK(member_alias->as<TemplateAliasNode>().target_type_node().has_template_parameter_decl());
+		const TemplateDeclId alias_decl = member_alias->as<TemplateAliasNode>().template_decl_id();
+		const auto target = context.canonicalTypes().aliasTemplateTarget(alias_decl);
+		REQUIRE(target.has_value());
+		const TemplateDeclId owner_decl = context.canonicalTypes().templateParameterDecl(
+			context.canonicalTypes().node(*target).child);
+		const TypeId owner_arg[] = {context.canonicalTypes().builtin(CanonicalBuiltinKind::Int)};
+		const TypeId alias_arg[] = {context.canonicalTypes().builtin(CanonicalBuiltinKind::Char)};
+		const TypeId owner_spec = context.canonicalTypes().templateSpecialization(owner_decl, owner_arg);
+		CHECK(context.canonicalTypes().resolveMemberAliasTarget(alias_decl, owner_spec, alias_arg) ==
+			context.canonicalTypes().pointer(owner_arg[0]));
 	}
 
 
