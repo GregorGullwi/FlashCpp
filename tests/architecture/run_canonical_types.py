@@ -227,6 +227,18 @@ def main():
                 "\t\t\tif (!kinds_match && false) {\n"
                 "\t\t\t\treturn type;\n"
                 "\t\t\t}"),
+            "lost_member_alias_owner_dependent_argument": (
+                "if (isDependentAliasArgumentUnlocked(value) ||\n"
+                "\t\t\t\tisInternalLink(nodeUnlocked(value).kind)) {\n"
+                "\t\t\t\treturn std::nullopt;\n"
+                "\t\t\t}",
+                "if (false) {\n"
+                "\t\t\t\treturn std::nullopt;\n"
+                "\t\t\t}"),
+            "lost_member_alias_owner_arity": (
+                "if (!templateParameterReferencesCoveredUnlocked(published->second.target,\n"
+                "\t\t\t\tpublished->second.owner, owner_arguments.size()) ||",
+                "if (false ||"),
             "lost_alias_template_placeholder_replacement": (
                 "if (placeholder_decl == env && placeholder_index < args.size() &&\n"
                 "\t\t\t\t\t\t\targs[placeholder_index].kind == CanonicalTemplateArgKind::Template) {\n"

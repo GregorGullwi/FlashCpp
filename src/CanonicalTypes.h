@@ -693,7 +693,11 @@ public:
 
 	// Resolve a published direct member alias with its enclosing class-template
 	// arguments and its own arguments. Both substitutions use the iterative
-	// canonical worklist; unsupported argument layouts keep the member boundary.
+	// canonical worklist. Fail-closed: a partially dependent argument, a
+	// non-Type owner/member argument layout, or an owner specialization that does
+	// not cover every owner parameter reference the target performs returns
+	// nullopt instead of substituting (a short layout would otherwise reach
+	// substituteArgumentsUnlocked and throw). Extra owner arguments are ignored.
 	std::optional<TypeId> resolveMemberAliasTarget(TemplateDeclId member,
 		TypeId owner_specialization, std::span<const TypeId> alias_args) {
 		std::lock_guard lock(mutex_);
@@ -708,21 +712,37 @@ public:
 			owner_node.array_extent != published->second.owner.value) {
 			return std::nullopt;
 		}
+		// Owner arguments must be type-only and concrete; a NonType or
+		// template-template link has no directly representable member target.
 		TemplateVector<CanonicalTemplateArgument, 4> owner_arguments;
 		for (TypeId link = owner_node.child; link; link = nodeUnlocked(link).child) {
 			const CanonicalTypeNode argument = nodeUnlocked(link);
 			if (argument.kind != CanonicalTypeKind::TemplateArg) {
 				return std::nullopt;
 			}
-			owner_arguments.push_back(CanonicalTemplateArgument::makeType(
-				TypeId{static_cast<uint32_t>(argument.array_extent)}));
+			const TypeId value{static_cast<uint32_t>(argument.array_extent)};
+			if (isDependentAliasArgumentUnlocked(value) ||
+				isInternalLink(nodeUnlocked(value).kind)) {
+				return std::nullopt;
+			}
+			owner_arguments.push_back(CanonicalTemplateArgument::makeType(value));
 		}
+		// Member arguments must match a type-only published layout and be
+		// concrete; every other published kind keeps the member boundary.
 		TemplateVector<CanonicalTemplateArgument, 4> member_arguments;
 		for (size_t index = 0; index < alias_args.size(); ++index) {
-			if (published->second.parameter_kinds[index] != CanonicalTemplateArgKind::Type) {
+			if (published->second.parameter_kinds[index] != CanonicalTemplateArgKind::Type ||
+				isDependentAliasArgumentUnlocked(alias_args[index]) ||
+				isInternalLink(nodeUnlocked(alias_args[index]).kind)) {
 				return std::nullopt;
 			}
 			member_arguments.push_back(CanonicalTemplateArgument::makeType(alias_args[index]));
+		}
+		if (!templateParameterReferencesCoveredUnlocked(published->second.target,
+				published->second.owner, owner_arguments.size()) ||
+			!templateParameterReferencesCoveredUnlocked(published->second.target,
+				member, member_arguments.size())) {
+			return std::nullopt;
 		}
 		const TypeId owner_target = substituteArgumentsUnlocked(published->second.target,
 			published->second.owner, owner_arguments);
@@ -1644,6 +1664,82 @@ private:
 			}
 		}
 		return false;
+	}
+
+	// Every TemplateParameter / dependent template-template reference in `type`
+	// that belongs to `env` must have an index below `argument_count`. This is
+	// the explicit arity/shape gate that keeps substituteArgumentsUnlocked from
+	// throwing on a short environment. Wrappers, functions, member pointers, and
+	// specialization argument links are walked iteratively; no parser state.
+	bool templateParameterReferencesCoveredUnlocked(TypeId type, TemplateDeclId env,
+		size_t argument_count) const {
+		TemplateVector<TypeId, 8> pending;
+		pending.push_back(type);
+		while (!pending.empty()) {
+			const CanonicalTypeNode node = nodeUnlocked(pending.back());
+			pending.pop_back();
+			switch (node.kind) {
+			case CanonicalTypeKind::TemplateParameter:
+			case CanonicalTypeKind::DependentTemplateTemplateArg:
+				if (unpackTemplateParameterDecl(node.array_extent) == env &&
+					unpackTemplateParameterIndex(node.array_extent) >= argument_count) {
+					return false;
+				}
+				break;
+			case CanonicalTypeKind::Qualified:
+			case CanonicalTypeKind::Pointer:
+			case CanonicalTypeKind::LValueReference:
+			case CanonicalTypeKind::RValueReference:
+			case CanonicalTypeKind::Array:
+			case CanonicalTypeKind::DependentName:
+				pending.push_back(node.child);
+				break;
+			case CanonicalTypeKind::Function: {
+				pending.push_back(node.child);
+				for (TypeId link = unpackFunctionParamLink(node.array_extent); link;
+					 link = nodeUnlocked(link).child) {
+					pending.push_back(
+						TypeId{static_cast<uint32_t>(nodeUnlocked(link).array_extent)});
+				}
+				break;
+			}
+			case CanonicalTypeKind::MemberObjectPointer:
+			case CanonicalTypeKind::MemberFunctionPointer:
+				pending.push_back(TypeId{static_cast<uint32_t>(node.array_extent)});
+				pending.push_back(node.child);
+				break;
+			case CanonicalTypeKind::TemplateSpecialization:
+			case CanonicalTypeKind::AliasTemplateSpecialization: {
+				for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
+					const CanonicalTypeNode argument = nodeUnlocked(link);
+					if (argument.kind == CanonicalTypeKind::TemplateArg) {
+						pending.push_back(TypeId{static_cast<uint32_t>(argument.array_extent)});
+					} else if (argument.kind ==
+						CanonicalTypeKind::DependentTemplateTemplateArg) {
+						if (unpackTemplateParameterDecl(argument.array_extent) == env &&
+							unpackTemplateParameterIndex(argument.array_extent) >= argument_count) {
+							return false;
+						}
+					}
+				}
+				break;
+			}
+			case CanonicalTypeKind::DependentTemplateMember: {
+				for (TypeId link = unpackDependentTemplateMemberArgs(node.array_extent); link;
+					 link = nodeUnlocked(link).child) {
+					const CanonicalTypeNode argument = nodeUnlocked(link);
+					if (argument.kind == CanonicalTypeKind::TemplateArg) {
+						pending.push_back(TypeId{static_cast<uint32_t>(argument.array_extent)});
+					}
+				}
+				pending.push_back(node.child);
+				break;
+			}
+			default:
+				break;
+			}
+		}
+		return true;
 	}
 
 	// Non-type parameter references have no canonical identity distinct from an
