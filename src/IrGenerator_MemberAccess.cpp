@@ -308,9 +308,16 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 			result.indices.push_back(*it);
 		}
 
-		result.is_valid = (result.base_decl != nullptr) &&
-						  (getEffectiveArrayDimensionCountForCodegen(*result.base_decl) == result.indices.size()) &&
-						  (result.indices.size() > 1); // Only valid for multidimensional
+		if (result.base_decl != nullptr) {
+			const TypeSpecifierNode& base_type = result.base_decl->type_specifier_node();
+			const bool pointer_to_array_rows =
+				base_type.has_pointee_array_declarator() &&
+				base_type.pointer_depth() == 1 &&
+				base_type.array_dimensions().size() + 1 == result.indices.size();
+			result.is_valid = result.indices.size() > 1 &&
+				(getEffectiveArrayDimensionCountForCodegen(*result.base_decl) == result.indices.size() ||
+				 pointer_to_array_rows);
+		}
 	}
 
 	return result;
@@ -721,6 +728,15 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 			// Get all dimension sizes
 			std::vector<size_t> dim_sizes = getEffectiveArrayDimensionsForCodegen(*multi_dim.base_decl);
+			const bool pointer_to_array_rows =
+				type_node.has_pointee_array_declarator() && type_node.pointer_depth() == 1 &&
+				type_node.array_dimensions().size() + 1 == multi_dim.indices.size();
+			if (pointer_to_array_rows) {
+				dim_sizes.clear();
+				dim_sizes.push_back(1);
+				dim_sizes.insert(dim_sizes.end(),
+					type_node.array_dimensions().begin(), type_node.array_dimensions().end());
+			}
 
 			if (dim_sizes.size() == multi_dim.indices.size()) {
 				// All dimensions evaluated successfully, compute flat index
@@ -799,7 +815,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 					0 // offset computed dynamically by index
 				);
 				lvalue_info.array_index = IrValue{flat_index};
-				lvalue_info.is_pointer_to_array = false; // This is a real array, not a pointer
+				lvalue_info.is_pointer_to_array = pointer_to_array_rows;
 				setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 				// Create ArrayAccessOp with the flat index
@@ -808,7 +824,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				payload.element_type_index = element_type_index;
 				payload.element_size_in_bits = element_size_bits;
 				payload.member_offset = 0;
-				payload.is_pointer_to_array = false;
+				payload.is_pointer_to_array = pointer_to_array_rows;
 				payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 				payload.index.setType(TypeCategory::UnsignedLongLong);
 				payload.index.ir_type = IrType::Integer;

@@ -81,22 +81,35 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				const bool alias_array_parameter =
 					!decl.is_array() && orig_type.is_array() && !orig_type.is_reference() &&
 					!orig_type.has_pointee_array_declarator();
-				if (alias_array_parameter && orig_type.array_dimensions().size() > 1) {
-					return error(
-						DiagnosticId::AliasMultidimensionalParameterUnsupported,
-						decl.identifier_token(),
-						"Multidimensional array alias parameters are not supported");
-				}
 				if ((decl.array_size().has_value() || alias_array_parameter) &&
 					!orig_type.is_reference() &&
 					!orig_type.has_pointee_array_declarator()) {
 					// This is an array parameter - convert to pointer
 					// Get the underlying type and add a pointer level
 					TypeSpecifierNode param_type = orig_type;  // Copy needed since we modify
+					std::vector<size_t> pointee_dimensions;
 					if (alias_array_parameter) {
+						const auto dimensions = orig_type.array_dimensions();
+						if (dimensions.size() > 1) {
+							pointee_dimensions.assign(dimensions.begin() + 1, dimensions.end());
+						}
 						param_type.set_array(false);
+					} else {
+						const auto& dimensions = decl.array_dimensions();
+						for (size_t i = 1; i < dimensions.size(); ++i) {
+							const auto dimension = try_evaluate_constant_expression(dimensions[i]);
+							if (!dimension.has_value() || dimension->value <= 0) {
+								pointee_dimensions.clear();
+								break;
+							}
+							pointee_dimensions.push_back(static_cast<size_t>(dimension->value));
+						}
 					}
 					param_type.add_pointer_level();
+					if (!pointee_dimensions.empty()) {
+						param_type.set_pointee_array_dimensions(pointee_dimensions);
+						param_type.set_pointee_array_declarator(true);
+					}
 
 					// Create new declaration without array size (now a pointer)
 					ASTNode new_decl = emplace_node<DeclarationNode>(

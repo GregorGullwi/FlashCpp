@@ -720,10 +720,13 @@ must not increase an implementation percentage.
   synthesis keeps pointer-to-array objects scalar
   (`decltype_pointer_array_scalar_ret42`). One-dimensional alias-array function
   parameters adjust to pointers, and calls apply array-to-pointer decay
-  (`alias_array_parameter_decay_ret42`). Multidimensional alias-array
-  parameters report `AliasMultidimensionalParameterUnsupported` (1818)
-  pending the general multidimensional parameter lowering fix.
-  Parenthesized pointer-to-array alias
+  (`alias_array_parameter_decay_ret42`). Concrete multidimensional parameters
+  now preserve their inner bounds and lower subscripts through a flattened
+  pointer-row access, including direct, alias-template, and explicit
+  pointer-to-array parameter forms (`multidimensional_array_parameter_ret42`,
+  `alias_multidimensional_parameter_ret42`, `pointer_array_parameter_ret42`).
+  Dependent inner bounds in function templates remain open (see
+  `KNOWN_ISSUES.md`). Parenthesized pointer-to-array alias
   template targets remain unsupported and report
   `UnsupportedAliasTemplateTargetDeclarator` (1816). Select and bound one of
   the remaining families before expanding boundary-1 coverage.

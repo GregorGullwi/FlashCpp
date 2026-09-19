@@ -209,7 +209,6 @@ enum class DiagnosticId : uint32_t {
 	RecursiveAliasTemplateInstantiation = 1814,
 	UnsupportedAliasTemplateTargetDeclarator = 1816,
 	AliasTemplateArrayBoundUnresolved = 1817,
-	AliasMultidimensionalParameterUnsupported = 1818,
 
 	// Parser syntax family (1901..1999).
 	UnexpectedToken = 1901,
@@ -471,8 +470,6 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "UnsupportedAliasTemplateTargetDeclarator";
 	case DiagnosticId::AliasTemplateArrayBoundUnresolved:
 		return "AliasTemplateArrayBoundUnresolved";
-	case DiagnosticId::AliasMultidimensionalParameterUnsupported:
-		return "AliasMultidimensionalParameterUnsupported";
 	case DiagnosticId::UnexpectedToken:
 		return "UnexpectedToken";
 	case DiagnosticId::MissingSemicolon:
