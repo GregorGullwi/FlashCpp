@@ -365,40 +365,6 @@ this construct; the query benchmark retains a separate 1,025-level logical
 dependency probe. Architecture boundary 7 must move the real instantiation and
 substitution path onto small arena-owned frames before this issue can be closed.
 
-## Indirectly recursive alias templates can overflow the native stack
-
-A directly self-referential alias template such as
-`template <class T> using Self = Self<T>;` is now rejected at declaration time
-with `RecursiveAliasTemplateInstantiation` (1814), protected by
-`test_recursive_alias_template_e1814.cpp`. The check is exact: it fires only
-when the alias's deferred target template name equals the alias name, so it
-cannot misfire on legitimate nested uses such as `A<A<int>>`.
-
-Indirect recursion still overflows the native stack (`0xC00000FD`) and crashes
-the compiler. For example:
-
-```cpp
-template <class T> struct Wrapper { using type = T; };
-template <class T> using A = typename Wrapper<A<T>>::type;
-```
-
-Debugger stacks show the cycle as
-`Parser::materializeAliasTemplateInstantiation` ->
-`Parser::materializeTemplateInstantiationForLookup` ->
-`Parser::materializeAliasTemplateInstantiation` (and, in other first-chance
-traces, `instantiate_and_register_base_template` ->
-`materializeDeferredAliasTemplateArgs`). The canonical direct-alias resolver
-detects declaration-ID cycles and keeps the alias boundary, but the legacy
-materialization path runs before the canonical adapter and never reaches that
-guard. A name-only guard is unsafe because a legitimate nested use such as
-`A<A<int>>` re-enters the same alias with different arguments, so a correct fix
-needs either a re-entrancy guard keyed by alias declaration plus argument
-identity or an explicit bounded alias materialization stack/frame (the same
-direction as boundary 7). A raw `diagnostics().report` alone does not reject, so
-the guard must also return a parser error or `CompileError`. Discovered while
-adding the canonical alias regressions; not introduced by the canonical
-redirection work.
-
 ## SemanticAnalysis query-state doctest fails on a clean tree
 
 The unity doctest build (tests/FlashCppTest) fails

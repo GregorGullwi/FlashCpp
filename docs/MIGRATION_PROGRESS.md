@@ -36,8 +36,10 @@ rejected with `NonTypeAliasTargetUnsupported` (1812), alias partial or explicit
 specialization syntax is rejected with
 `AliasTemplateSpecializationForbidden` (1813), and a directly self-referential
 alias declaration is rejected with `RecursiveAliasTemplateInstantiation` (1814);
-their canonical representations remain unsupported. Indirect alias recursion
-still overflows the native stack (see [known issues](KNOWN_ISSUES.md)). Earlier on
+their canonical representations remain unsupported. Indirect alias recursion is
+bounded by an implementation-limit guard that reports
+`AliasInstantiationDepthExceeded` (3002) instead of overflowing the native
+stack. Earlier on
 `main`: the deferred `MemberObjectPointer`
 canonical adapter family (cast/NTTP pointee preservation plus MSVC mangling
 recovery), the `parse_type_specifier` `<` gate alias arm, instantiated-owner
@@ -771,9 +773,9 @@ must not increase an implementation percentage.
   specialization syntax reports `AliasTemplateSpecializationForbidden` (1813),
   and a directly self-referential alias declaration reports
   `RecursiveAliasTemplateInstantiation` (1814), each covered by an exact-ID
-  negative test. Indirect alias recursion still overflows the native stack
-  through the legacy materialization cycle before the canonical cycle guard is
-  reached; see [known issues](KNOWN_ISSUES.md). Latest architecture validation: the
+  negative test. Indirect alias recursion is bounded by a logical-depth guard on
+  alias materialization that reports `AliasInstantiationDepthExceeded` (3002)
+  rather than overflowing the native stack. Latest architecture validation: the
   native `CanonicalTypeTests` `checkAliasRedirection` case exercises mixed
   layouts, unresolved-identity distinction, layout conflict rejection,
   template-template placeholder replacement, mixed chain resolution, self and
