@@ -5,9 +5,18 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-18 after landing mixed concrete direct-alias
-redirection on `codex/boundary-3a-direct-alias-redirection`. Published
-namespace/global and member alias primaries retain their `TemplateDeclId` on
+Last updated: 2026-09-19. Direct member alias targets that capture an enclosing
+class-template parameter can publish with separate owner and alias declaration
+IDs. Direct type targets recover the owner parameter's declaration and index
+from the enclosing parser parameter scope before canonical import. The
+canonical table resolves an explicitly identified direct member alias
+with owner specialization arguments followed by alias arguments, using the
+existing iterative substitution worklist. Canonical `DependentTemplateMember`
+nodes still lack member alias declaration identity, so automatic redirection
+of those nodes remains deferred. Targets that cannot be imported directly
+remain deferred.
+
+Published namespace/global and member alias primaries retain their `TemplateDeclId` on
 the `TemplateAliasNode`; dependent alias uses stamp that ID and ordered
 arguments, and importable direct targets publish a canonical pattern under that
 declaration ID together with its declared type/non-type/template argument
@@ -29,8 +38,9 @@ declaration-ID cycle detection. The canonical adapter imports a distinct
 `AliasTemplateSpecialization` node rather than a class specialization or a
 registry spelling identity. Dependent type arguments, argument-kind and arity
 mismatches, targets that mention non-type arguments while the alias declares a
-non-type parameter, dependent template-template arguments, targets that capture
-an enclosing environment, dependent-member targets, and arbitrary nested alias
+non-type parameter, dependent template-template arguments, targets with an
+unknown enclosing environment, dependent-member targets, and arbitrary nested
+alias
 graphs remain deferred. A direct alias target that names a non-type parameter is
 rejected with `NonTypeAliasTargetUnsupported` (1812), alias partial or explicit
 specialization syntax is rejected with
@@ -161,8 +171,9 @@ the enclosing parse-time EntityId, or a template-owned OwnerId for direct
 members of published namespace/global primary class templates, anchoring the
 `TemplateAliasNode` under that id. Directly importable targets stamp their own
 Type-kind parameters with that member alias id and publish the target plus its
-argument layout under the same canonical declaration key; unresolved,
-dependent-member, and partial targets remain deferred. Qualified member alias type-ids resolve
+argument layout and known enclosing template ID under the same canonical
+declaration key. Unresolved, dependent-member, and partial targets remain
+deferred. Qualified member alias type-ids resolve
 through `Parser::findAliasTemplateBySpelling` (identity chain first via
 `findAliasTemplateByIdentityChain`, registry alias lookup fail-closed
 fallback) at the `parse_type_specifier` alias lookups and at the shared

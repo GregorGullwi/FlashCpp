@@ -240,6 +240,13 @@ StringHandle Parser::parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_arg
 
 ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
 	ScopedTokenPosition saved_position(*this);
+	std::vector<std::pair<StringHandle, uint32_t>> enclosing_type_params;
+	for (uint32_t index = 0; index < current_template_params_.names.size() &&
+		index < current_template_params_.kinds.size(); ++index) {
+		if (current_template_params_.kinds[index] == TemplateParameterKind::Type) {
+			enclosing_type_params.emplace_back(current_template_params_.names[index], index);
+		}
+	}
 
 	// Consume 'template' keyword
 	if (!consume("template"_tok)) {
@@ -412,6 +419,11 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		active_template_decl_id_,
 		struct_parsing_context_stack_.size() == 1u);
 	if (template_decl.has_value()) {
+		const TemplateDeclId owner_template_decl =
+			struct_parsing_context_stack_.size() == 1u &&
+			struct_node.has_template_decl_id() &&
+			struct_node.template_decl_id() == active_template_decl_id_
+				? active_template_decl_id_ : TemplateDeclId{};
 		TemplateAliasNode& published_alias = alias_node.as<TemplateAliasNode>();
 		published_alias.set_template_decl_id(*template_decl);
 		TypeSpecifierNode& target = published_alias.target_type_node();
@@ -425,11 +437,21 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 				}
 			}
 		}
+		if (owner_template_decl && !target.has_template_parameter_decl() &&
+			target.type() == TypeCategory::UserDefined) {
+			const StringHandle target_name = getAliasTargetNameHandle(target);
+			for (const auto& [name, index] : enclosing_type_params) {
+				if (name == target_name) {
+					target.set_template_parameter_decl(owner_template_decl, index);
+					break;
+				}
+			}
+		}
 		const CanonicalTypeImport imported_target =
 			importCanonicalType(requireFrontendContext().canonicalTypes(), target);
 		if (imported_target.status == CanonicalTypeImportStatus::Supported &&
 			requireFrontendContext().canonicalTypes().dependsOnlyOnTemplateParameters(
-				imported_target.type, *template_decl)) {
+				imported_target.type, *template_decl, owner_template_decl)) {
 			TemplateVector<CanonicalTemplateArgKind, 4> parameter_kinds;
 			for (const TemplateParameterNode& parameter : published_alias.template_parameters()) {
 				parameter_kinds.push_back(parameter.kind() == TemplateParameterKind::Type
@@ -439,7 +461,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 						: CanonicalTemplateArgKind::Template);
 			}
 			requireFrontendContext().canonicalTypes().publishAliasTemplateTarget(
-				*template_decl, imported_target.type, parameter_kinds);
+				*template_decl, owner_template_decl, imported_target.type, parameter_kinds);
 		}
 	}
 

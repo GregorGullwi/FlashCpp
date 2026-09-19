@@ -670,20 +670,64 @@ public:
 	// spelling or an AST pointer.
 	void publishAliasTemplateTarget(TemplateDeclId primary, TypeId target,
 		std::span<const CanonicalTemplateArgKind> parameter_kinds) {
+		publishAliasTemplateTarget(primary, TemplateDeclId{}, target, parameter_kinds);
+	}
+
+	void publishAliasTemplateTarget(TemplateDeclId primary, TemplateDeclId owner,
+		TypeId target, std::span<const CanonicalTemplateArgKind> parameter_kinds) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		if (!primary || !target || isInternalLink(nodeUnlocked(target).kind)) {
 			throw InternalError("canonical type: invalid alias target publication");
 		}
-		AliasTemplateTarget published{target, {}};
+		AliasTemplateTarget published{target, owner, {}};
 		published.parameter_kinds.assign(parameter_kinds.begin(), parameter_kinds.end());
 		const auto [it, inserted] = alias_template_targets_.emplace(primary.value, std::move(published));
-		if (!inserted && (it->second.target != target ||
+		if (!inserted && (it->second.target != target || it->second.owner != owner ||
 			it->second.parameter_kinds.size() != parameter_kinds.size() ||
 			!std::equal(it->second.parameter_kinds.begin(), it->second.parameter_kinds.end(),
 				parameter_kinds.begin()))) {
 			throw InternalError("canonical type: conflicting alias target publication");
 		}
+	}
+
+	// Resolve a published direct member alias with its enclosing class-template
+	// arguments and its own arguments. Both substitutions use the iterative
+	// canonical worklist; unsupported argument layouts keep the member boundary.
+	std::optional<TypeId> resolveMemberAliasTarget(TemplateDeclId member,
+		TypeId owner_specialization, std::span<const TypeId> alias_args) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto published = alias_template_targets_.find(member.value);
+		if (published == alias_template_targets_.end() || !published->second.owner ||
+			published->second.parameter_kinds.size() != alias_args.size()) {
+			return std::nullopt;
+		}
+		const CanonicalTypeNode owner_node = nodeUnlocked(owner_specialization);
+		if (owner_node.kind != CanonicalTypeKind::TemplateSpecialization ||
+			owner_node.array_extent != published->second.owner.value) {
+			return std::nullopt;
+		}
+		TemplateVector<CanonicalTemplateArgument, 4> owner_arguments;
+		for (TypeId link = owner_node.child; link; link = nodeUnlocked(link).child) {
+			const CanonicalTypeNode argument = nodeUnlocked(link);
+			if (argument.kind != CanonicalTypeKind::TemplateArg) {
+				return std::nullopt;
+			}
+			owner_arguments.push_back(CanonicalTemplateArgument::makeType(
+				TypeId{static_cast<uint32_t>(argument.array_extent)}));
+		}
+		TemplateVector<CanonicalTemplateArgument, 4> member_arguments;
+		for (size_t index = 0; index < alias_args.size(); ++index) {
+			if (published->second.parameter_kinds[index] != CanonicalTemplateArgKind::Type) {
+				return std::nullopt;
+			}
+			member_arguments.push_back(CanonicalTemplateArgument::makeType(alias_args[index]));
+		}
+		const TypeId owner_target = substituteArgumentsUnlocked(published->second.target,
+			published->second.owner, owner_arguments);
+		return resolveDirectAliasChainUnlocked(substituteArgumentsUnlocked(
+			owner_target, member, member_arguments));
 	}
 
 	std::optional<TypeId> aliasTemplateTarget(TemplateDeclId primary) const {
@@ -1022,11 +1066,14 @@ public:
 		return unpackTemplateParameterIndex(input.array_extent);
 	}
 
-	// Direct alias targets may only capture Type-kind parameters and
-	// template-template parameters owned by the alias primary itself. Member
-	// aliases that also capture an enclosing class template parameter need a
-	// combined environment and remain deferred.
+	// Direct alias targets may capture parameters of the alias and its known
+	// enclosing class template. An empty owner permits only alias parameters.
 	bool dependsOnlyOnTemplateParameters(TypeId type, TemplateDeclId template_decl) const {
+		return dependsOnlyOnTemplateParameters(type, template_decl, TemplateDeclId{});
+	}
+
+	bool dependsOnlyOnTemplateParameters(TypeId type, TemplateDeclId template_decl,
+		TemplateDeclId owner_decl) const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		if (!type || !template_decl) {
@@ -1038,11 +1085,13 @@ public:
 			const CanonicalTypeNode node = nodeUnlocked(pending.back());
 			pending.pop_back();
 			if (node.kind == CanonicalTypeKind::TemplateParameter &&
-				unpackTemplateParameterDecl(node.array_extent) != template_decl) {
+				unpackTemplateParameterDecl(node.array_extent) != template_decl &&
+				unpackTemplateParameterDecl(node.array_extent) != owner_decl) {
 				return false;
 			}
 			if (node.kind == CanonicalTypeKind::DependentTemplateTemplateArg &&
-				unpackTemplateParameterDecl(node.array_extent) != template_decl) {
+				unpackTemplateParameterDecl(node.array_extent) != template_decl &&
+				unpackTemplateParameterDecl(node.array_extent) != owner_decl) {
 				return false;
 			}
 			if (node.kind == CanonicalTypeKind::FunctionParam ||
@@ -1466,6 +1515,7 @@ public:
 private:
 	struct AliasTemplateTarget {
 		TypeId target;
+		TemplateDeclId owner;
 		TemplateVector<CanonicalTemplateArgKind, 4> parameter_kinds;
 	};
 	struct CanonicalRecordFieldSchemaHeader {
