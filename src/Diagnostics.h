@@ -205,6 +205,7 @@ enum class DiagnosticId : uint32_t {
 	NonTypeTemplateDefaultEvaluationFailure = 1811,
 	NonTypeAliasTargetUnsupported = 1812,
 	AliasTemplateSpecializationForbidden = 1813,
+	RecursiveAliasTemplateInstantiation = 1814,
 
 	// Parser syntax family (1901..1999).
 	UnexpectedToken = 1901,
@@ -458,6 +459,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "NonTypeAliasTargetUnsupported";
 	case DiagnosticId::AliasTemplateSpecializationForbidden:
 		return "AliasTemplateSpecializationForbidden";
+	case DiagnosticId::RecursiveAliasTemplateInstantiation:
+		return "RecursiveAliasTemplateInstantiation";
 	case DiagnosticId::UnexpectedToken:
 		return "UnexpectedToken";
 	case DiagnosticId::MissingSemicolon:
