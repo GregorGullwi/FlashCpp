@@ -5,6 +5,7 @@
 #include "StringTable.h"
 #include "Log.h"
 #include "Parser.h"
+#include "TemplateEngine.h"
 #include <vector>
 #include <optional>
 #include <string_view>

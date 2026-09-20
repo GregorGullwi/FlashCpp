@@ -923,7 +923,7 @@ inline StringHandle registerLazyConstructorStub(
 	return lazy_registry_key;
 }
 
-bool Parser::static_initializer_requires_replay_metadata(
+inline bool Parser::static_initializer_requires_replay_metadata(
 	const std::optional<ASTNode>& initializer,
 	std::span<const TemplateParameterNode> template_params_for_substitution) {
 	if (!initializer.has_value()) {
@@ -2968,7 +2968,7 @@ inline ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 		out_of_line_pattern_owner);
 }
 
-void Parser::copyDefinitionParameterIdentifiers(
+inline void Parser::copyDefinitionParameterIdentifiers(
 	std::span<ASTNode> instantiated_params,
 	std::span<const ASTNode> definition_params) {
 	if (instantiated_params.size() != definition_params.size()) {
@@ -2987,7 +2987,7 @@ void Parser::copyDefinitionParameterIdentifiers(
 	}
 }
 
-void Parser::copyDefinitionParameterTypes(
+inline void Parser::copyDefinitionParameterTypes(
 	std::span<ASTNode> instantiated_params,
 	std::span<const ASTNode> definition_params) {
 	if (instantiated_params.size() != definition_params.size()) {
@@ -3040,7 +3040,7 @@ inline void materializeReplayAttachedFunctionParameterTypesFromDefinition(
 	}
 }
 
-void Parser::syncOutOfLineConstructorTemplateParameters(
+inline void Parser::syncOutOfLineConstructorTemplateParameters(
 	std::span<ASTNode> instantiated_params,
 	std::span<const ASTNode> definition_params) {
 	// Keep the declaration-side type nodes untouched so inner template-parameter bindings
@@ -3049,7 +3049,7 @@ void Parser::syncOutOfLineConstructorTemplateParameters(
 	copyDefinitionParameterIdentifiers(instantiated_params, definition_params);
 }
 
-bool Parser::replayOutOfLineMemberBody(
+inline bool Parser::replayOutOfLineMemberBody(
 	FunctionDeclarationNode& inst_func,
 	StructDeclarationNode* instantiated_struct_decl,
 	StringHandle instantiated_name,
@@ -3369,7 +3369,7 @@ inline std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 // For conversion operators (operator with an identifier suffix, e.g. "operator value_type"),
 // the substituted return type gives the canonical name (e.g. "operator int").
 // For all other functions the original name is canonical.
-StringHandle Parser::computeInstantiatedLookupName(
+inline StringHandle Parser::computeInstantiatedLookupName(
 	StringHandle original_name,
 	OverloadableOperator op_kind,
 	const TypeSpecifierNode& substituted_return_type) {
@@ -3435,7 +3435,7 @@ StringHandle Parser::computeInstantiatedLookupName(
 	return original_name;
 }
 
-SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
+inline SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	const FunctionDeclarationNode& original_func,
 	const ASTNode& original_return_type_node,
 	const Token& fallback_return_token,
@@ -3538,7 +3538,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 		effective_name};
 }
 
-void Parser::substituteAndCopyMemberFunctionParameters(
+inline void Parser::substituteAndCopyMemberFunctionParameters(
 	std::span<const ASTNode> original_params,
 	FunctionDeclarationNode& target_node,
 	std::span<const TemplateParameterNode> template_params,
@@ -3847,7 +3847,7 @@ inline TemplateArgInfoVector collectEnrichedTemplateArgInfos(
 	return result;
 }
 
-ASTNode rebindStaticMemberInitializerFunctionCalls(
+inline ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info,
 	bool set_qualified_name) {
@@ -3978,7 +3978,7 @@ inline bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 }
 
 template <typename TemplateParamsContainer>
-ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext(
+inline ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext(
 	const SymbolTable& symbol_table,
 	Parser& parser,
 	const StructTypeInfo* struct_info,

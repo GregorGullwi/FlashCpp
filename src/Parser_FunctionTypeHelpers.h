@@ -5,6 +5,13 @@
 #include "SymbolTable.h"
 #include "TemplateEnvironment.h"
 
+class Parser;
+
+void applyDeclarationArrayBoundsToTypeSpec(
+	const DeclarationNode& decl,
+	TypeSpecifierNode& type_spec,
+	Parser& parser);
+
 namespace FlashCpp::ParserFunctionTypeHelpers {
 
 inline const FunctionDeclarationNode* findFunctionDeclarationForIdentifier(std::string_view identifier, const Token& token) {

@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "FrontendContext.h"
 #include "ConstExprEvaluator.h"
 #include <span>
 #include "ExpressionSubstitutor.h"

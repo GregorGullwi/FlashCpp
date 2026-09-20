@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes_DeclNodes.h"
 #include "InlineVector.h"
+#include "SymbolTable.h"
 #include <algorithm>
 #include <ranges>
 #include <span>

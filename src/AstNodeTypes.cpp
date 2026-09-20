@@ -1,4 +1,5 @@
 #include "AstNodeTypes.h"
+#include "MemberFunctionLookupShared.h"
 #include "LazyMemberResolver.h"
 #include "StringBuilder.h"
 #include "NameMangling.h"

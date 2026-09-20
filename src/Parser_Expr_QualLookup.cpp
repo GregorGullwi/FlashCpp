@@ -11,6 +11,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "SemanticAnalysis.h"
 #include "ParserTemplateClassShared.h"
 #include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
