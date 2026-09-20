@@ -290,7 +290,15 @@ inline void checkAdapter() {
 			table.pointer(table.array(table.array(table.pointer(int_type), 5), 3)),
 			CVQualifier::Volatile), 2)),
 		CVQualifier::Const));
-
+	TypeSpecifierNode different_interleaving = interleaved_syntax;
+	different_interleaving.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(5),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(6),
+	});
+	require(!interleaved_syntax.has_same_ordered_declarator(
+		different_interleaving));
 	const CanonicalDeclaratorExport exported =
 		exportCanonicalDeclarator(table, interleaved.type);
 	require(exported.status == CanonicalTypeImportStatus::Supported);
