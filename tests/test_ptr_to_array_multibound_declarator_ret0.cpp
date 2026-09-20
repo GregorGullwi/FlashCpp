@@ -19,8 +19,6 @@ struct Point2D {
 	int y;
 };
 
-Point2D pts[2][2] = {{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}};
-
 long take(long (*param)[2][4]) {
 	return (*param)[1][2];
 }
@@ -66,8 +64,9 @@ int main() {
 	}
 
 	// Multi-bound declarators over a struct element type keep scalar storage.
-	// NOTE: uses file-scope storage; local nested-brace initialization of
-	// multidimensional struct arrays has a separate known bug.
+	// The nested-brace initializer is deliberately local to cover local
+	// aggregate initialization of multidimensional struct arrays.
+	Point2D pts[2][2] = {{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}};
 	Point2D (*ppts)[2][2] = &pts;
 	if (sizeof(ppts) != 8) {
 		return 9;

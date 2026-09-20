@@ -2496,7 +2496,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					struct_info_ptr = type_info->getStructInfo();
 				}
 			}
-			if (!struct_info_ptr && type_node.array_dimension_count() > 1) {
+			if (type_node.array_dimension_count() > 1) {
 				const int element_size_bits = resolveArrayElementSizeBits();
 				if (element_size_bits <= 0 || (element_size_bits % 8) != 0) {
 					throw InternalError("Failed to resolve local multidimensional array element size");

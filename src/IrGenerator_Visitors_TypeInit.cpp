@@ -2765,6 +2765,101 @@ bool AstToIr::tryEmitArrayMemberStores(
 		element_size_bits = static_cast<int>((member.size * 8) / element_count);
 	}
 
+	// Struct elements cannot be flattened like scalars: each brace group maps to
+	// one struct element, and each element needs member-wise stores. When the
+	// braces nest exactly one level per array dimension, walk the dimensions
+	// explicitly and hand the innermost brace group to generateNestedMemberStores,
+	// which understands nested members, arrays and constructors. Brace-elided or
+	// partially-braced forms keep the previous generic lowering.
+	if (const StructTypeInfo* struct_elem_info = tryGetStructTypeInfo(member.type_index)) {
+		const size_t struct_element_size_bytes = toSizeT(struct_elem_info->sizeInBytes());
+		if (struct_element_size_bytes == 0) {
+			return true;
+		}
+
+		auto isFullyNested = [&](const auto& self, const InitializerListNode& list, size_t depth) -> bool {
+			if (depth + 1 >= member.array_dimensions.size()) {
+				return true;
+			}
+			for (const ASTNode& node : list.initializers()) {
+				if (!node.is<InitializerListNode>()) {
+					return false;
+				}
+				if (!self(self, node.as<InitializerListNode>(), depth + 1)) {
+					return false;
+				}
+			}
+			return true;
+		};
+
+		if (!isFullyNested(isFullyNested, init_list, 0)) {
+			// Brace-elided or partially-braced forms are handled by the existing
+			// generic initializer lowering below.
+			return false;
+		}
+
+		struct Frame {
+			size_t dimension_index;
+			size_t base_element_index;
+			const InitializerListNode* list;
+			size_t next_index;
+		};
+		std::vector<Frame> frames;
+		frames.push_back(Frame{0, 0, &init_list, 0});
+		while (!frames.empty()) {
+			const size_t dimension_index = frames.back().dimension_index;
+			const size_t base_element_index = frames.back().base_element_index;
+			const InitializerListNode* current_list = frames.back().list;
+			const std::span<const ASTNode> elements = current_list->initializers();
+			if (frames.back().next_index >= elements.size()) {
+				frames.pop_back();
+				continue;
+			}
+			const size_t element_index = frames.back().next_index++;
+			const ASTNode& element = elements[element_index];
+			const size_t flat_index = base_element_index + element_index;
+
+			if (dimension_index + 1 == member.array_dimensions.size()) {
+				const int element_offset = base_offset + static_cast<int>(member.offset) +
+										   static_cast<int>(flat_index * struct_element_size_bytes);
+				if (element.is<InitializerListNode>()) {
+					generateNestedMemberStores(
+						*struct_elem_info,
+						element.as<InitializerListNode>(),
+						base_object,
+						element_offset,
+						base_object_is_pointer,
+						token);
+				} else if (element.is<ExpressionNode>()) {
+					ExprResult init_operands = visitExpressionNode(element.as<ExpressionNode>());
+					emitArrayStore(
+						member.memberType(),
+						element_size_bits,
+						base_object,
+						makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(flat_index)),
+						toTypedValue(init_operands),
+						base_offset + static_cast<int>(member.offset),
+						base_object_is_pointer,
+						token);
+				}
+				continue;
+			}
+
+			if (element.is<InitializerListNode>()) {
+				size_t subarray_element_count = 1;
+				for (size_t dim = dimension_index + 1; dim < member.array_dimensions.size(); ++dim) {
+					subarray_element_count *= member.array_dimensions[dim];
+				}
+				frames.push_back(Frame{
+					dimension_index + 1,
+					base_element_index + element_index * subarray_element_count,
+					&element.as<InitializerListNode>(),
+					0});
+			}
+		}
+		return true;
+	}
+
 	auto count_expressions = [&](const auto& self, const InitializerListNode& list) -> size_t {
 		size_t count = 0;
 		for (const ASTNode& node : list.initializers()) {
