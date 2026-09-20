@@ -54,13 +54,7 @@ TypeSpecifierNode makeCanonicalMemberTypeSpec(const StructMember& member) {
 		Token{},
 		CVQualifier::None);
 	type_spec.set_reference_qualifier(member.reference_qualifier);
-	type_spec.add_pointer_levels(member.pointer_depth);
-	if (member.pointee_array_declarator) {
-		type_spec.set_pointee_array_declarator(true);
-		type_spec.set_pointee_array_dimensions(member.array_dimensions);
-	} else if (member.is_array) {
-		type_spec.set_array_dimensions(member.array_dimensions);
-	}
+	applyMemberDeclaratorShape(type_spec, member);
 	if (member.function_signature.has_value()) {
 		type_spec.set_function_signature(*member.function_signature);
 	}

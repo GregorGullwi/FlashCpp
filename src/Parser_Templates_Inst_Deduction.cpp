@@ -4122,7 +4122,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (func_decl == nullptr) {
 			return std::nullopt;
 		}
-		if (!canConvertCallArgumentsToFunctionParameters(
+		if (callArgumentsHaveIncompatiblePointerToArrayPointee(
 				*func_decl,
 				*current_explicit_call_arg_types_)) {
 			return std::nullopt;
@@ -4546,20 +4546,14 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 							winner_binding,
 							winner_flags);
 						if (result.has_value()) {
-							const FunctionDeclarationNode* instantiated_func =
-								get_function_decl_node(*result);
-							if (instantiated_func != nullptr &&
-								canConvertCallArgumentsToFunctionParameters(*instantiated_func, arg_types)) {
-								FLASH_LOG_FORMAT(
-									Templates,
-									Debug,
-									"[depth={}]: Shape-selected template overload {} for '{}'",
-									recursion_depth,
-									winner.overload_idx,
-									template_name);
-								return result;
-							}
-							break;
+							FLASH_LOG_FORMAT(
+								Templates,
+								Debug,
+								"[depth={}]: Shape-selected template overload {} for '{}'",
+								recursion_depth,
+								winner.overload_idx,
+								template_name);
+							return result;
 						}
 						break;
 					}
@@ -4615,19 +4609,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 					if (!deferred_forward_declaration_result.has_value()) {
 						deferred_forward_declaration_result = result;
 					}
-					continue;
-				}
-				const FunctionDeclarationNode* instantiated_func =
-					get_function_decl_node(*result);
-				if (instantiated_func == nullptr ||
-					!canConvertCallArgumentsToFunctionParameters(*instantiated_func, arg_types)) {
-					FLASH_LOG_FORMAT(
-						Templates,
-						Trace,
-						"[depth={}]: Overload {} for '{}' instantiated but call arguments are not convertible",
-						recursion_depth,
-						overload_idx,
-						template_name);
 					continue;
 				}
 				// Non-SFINAE: success — return first good match.

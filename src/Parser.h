@@ -4766,9 +4766,9 @@ private:	 // Resume private methods
 		}
 	}
 
-	// If an argument is a plain identifier naming an array declaration, propagate its
-	// declared array bounds into the provided type specifier so overload resolution and
-	// template deduction can observe the real extent information.
+	// If an argument is a plain identifier naming an array object, apply
+	// C++20 [conv.array]/1 so the argument type is a pointer to the first
+	// element, with remaining extents kept as a pointer-to-array pointee.
 	void applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node);
 
 	// Check if a template name is a template-template parameter in the current template context

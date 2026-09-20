@@ -10,6 +10,7 @@
 #include "InlineVector.h"
 #include <algorithm>
 #include <array>
+#include <span>
 #include <vector>
 #include <optional>
 #include <unordered_map>
@@ -130,6 +131,7 @@ inline bool isSameTypeIgnoringTopLevelCvAndRef(
 		lhs_resolved != rhs_resolved ||
 		lhs.pointer_depth() != rhs.pointer_depth() ||
 		lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
+		lhs.has_pointee_array_declarator() != rhs.has_pointee_array_declarator() ||
 		!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions()) ||
 		lhs.has_member_class() != rhs.has_member_class() ||
 		lhs.has_function_signature() != rhs.has_function_signature()) {
@@ -830,26 +832,28 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 	return false;
 }
 
-// C++20 [conv.array]: an array of N T converts to pointer-to-T. For a
-// multidimensional array the inner extents remain on the pointee, so
-// int[2][3] becomes int(*)[3], not int*. Identifier typing currently
-// decays by adding a pointer level while retaining the original extents
-// as a hybrid pointer+array descriptor; drop the outermost extent here.
-inline bool typeIsPointerToArrayAfterDecay(const TypeSpecifierNode& spec) {
-	if (spec.has_pointee_array_declarator()) {
-		return true;
+// C++20 [conv.array]/1: an lvalue or rvalue of type "array of N T" or
+// "array of unknown bound of T" converts to a prvalue of type "pointer to T".
+// For T[N][M], T is itself an array type, so the result is U(*)[M]. Already-
+// pointer types, including T(*)[N], are not array objects and do not decay.
+inline void applyArrayToPointerConversion(TypeSpecifierNode& spec) {
+	if (spec.has_pointee_array_declarator() || !spec.is_array()) {
+		return;
 	}
-	return spec.is_array() && spec.array_dimension_count() > 1;
-}
-
-inline std::span<const size_t> pointerToArrayExtentsAfterDecay(const TypeSpecifierNode& spec) {
-	if (spec.has_pointee_array_declarator()) {
-		return spec.array_dimensions();
+	std::vector<size_t> inner_extents;
+	const std::span<const size_t> source_dims = spec.array_dimensions();
+	if (source_dims.size() > 1) {
+		inner_extents.assign(source_dims.begin() + 1, source_dims.end());
 	}
-	if (spec.is_array() && spec.array_dimension_count() > 1) {
-		return spec.array_dimensions().subspan(1);
+	spec.set_array(false, std::nullopt);
+	spec.set_reference_qualifier(ReferenceQualifier::None);
+	if (spec.pointer_depth() == 0) {
+		spec.add_pointer_level();
 	}
-	return {};
+	if (!inner_extents.empty()) {
+		spec.set_pointee_array_dimensions(inner_extents);
+		spec.set_pointee_array_declarator(true);
+	}
 }
 
 inline bool pointerToArrayExtentsCompatible(
@@ -867,6 +871,44 @@ inline bool pointerToArrayExtentsCompatible(
 		}
 	}
 	return true;
+}
+
+// C++20 [conv.ptr]: pointer conversions compare the complete pointee type.
+// T* and T(*)[N] are distinct types; there is no implicit conversion between
+// them except when the destination is cv void*.
+inline bool pointerPointeeArrayTypesMatch(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to) {
+	if (from.has_pointee_array_declarator() != to.has_pointee_array_declarator()) {
+		return false;
+	}
+	if (!from.has_pointee_array_declarator()) {
+		return true;
+	}
+	return pointerToArrayExtentsCompatible(from.array_dimensions(), to.array_dimensions());
+}
+
+// Restore [dcl.ptr]/1 / [dcl.array] shape from a published struct member.
+template <typename MemberLike>
+inline void applyMemberDeclaratorShape(TypeSpecifierNode& member_type, const MemberLike& member) {
+	if (member.pointer_depth > 0) {
+		member_type.add_pointer_levels(member.pointer_depth);
+	}
+	if (member.pointee_array_declarator) {
+		member_type.set_pointee_array_declarator(true);
+		if (!member.array_dimensions.empty()) {
+			member_type.set_pointee_array_dimensions(member.array_dimensions);
+		}
+		return;
+	}
+	if (!member.is_array) {
+		return;
+	}
+	if (!member.array_dimensions.empty()) {
+		member_type.set_array_dimensions(member.array_dimensions);
+	} else {
+		member_type.set_array(true, std::nullopt);
+	}
 }
 
 // Build a unified conversion plan for full TypeSpecifierNode-level conversions.
@@ -908,21 +950,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		return false;
 	};
 
-	// String literals and other array expressions can reach overload resolution as
-	// array-only types. Identifier arrays may already carry pointer metadata plus
-	// retained array extents from earlier decay paths; !from.is_pointer() keeps
-	// those pre-decayed shapes from receiving a second pointer level here.
-	if (from.is_array() && !from.is_pointer() && !to.is_array() && to.is_pointer()) {
+	// C++20 [conv.array]/1: array objects (including multidimensional ones)
+	// decay to pointer-to-first-element. Remaining extents become the pointee
+	// array type. Pointer-to-array declarators are not array objects.
+	if (from.is_array() && !from.has_pointee_array_declarator() &&
+		!to.is_array() && to.is_pointer()) {
 		TypeSpecifierNode decayed_from = from;
-		const std::span<const size_t> source_dims = from.array_dimensions();
-		decayed_from.set_array(false, std::nullopt);
-		decayed_from.add_pointer_level(CVQualifier::None);
-		decayed_from.set_reference_qualifier(ReferenceQualifier::None);
-		if (source_dims.size() > 1) {
-			std::vector<size_t> inner_dims(source_dims.begin() + 1, source_dims.end());
-			decayed_from.set_pointee_array_dimensions(inner_dims);
-			decayed_from.set_pointee_array_declarator(true);
-		}
+		applyArrayToPointerConversion(decayed_from);
 		ConversionPlan plan = buildConversionPlan(decayed_from, to);
 		if (!plan.is_valid)
 			return ConversionPlan::no_match();
@@ -987,16 +1021,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		const TypeCategory from_resolved_category = from_resolved_index.category();
 		const TypeCategory to_resolved_category = to_resolved_index.category();
 
-		const bool from_pointer_to_array = typeIsPointerToArrayAfterDecay(from);
-		const bool to_pointer_to_array = typeIsPointerToArrayAfterDecay(to);
-		if (from_pointer_to_array != to_pointer_to_array) {
-			if (to_resolved_category != TypeCategory::Void) {
-				return ConversionPlan::no_match();
-			}
-		} else if (from_pointer_to_array &&
-			!pointerToArrayExtentsCompatible(
-				pointerToArrayExtentsAfterDecay(from),
-				pointerToArrayExtentsAfterDecay(to))) {
+		// C++20 [conv.ptr]: T* and T(*)[N] are distinct pointer types. The
+		// only standard exception is conversion of any object pointer to
+		// cv void*, which is applied below.
+		if (!pointerPointeeArrayTypesMatch(from, to) &&
+			to_resolved_category != TypeCategory::Void) {
 			return ConversionPlan::no_match();
 		}
 
@@ -1408,33 +1437,33 @@ inline ArgumentConversionInfo buildArgumentConversionInfo(
 	return {conversion.rank, &parameter_type, conversion.is_valid};
 }
 
-inline bool canConvertCallArgumentsToFunctionParameters(
+inline bool callArgumentsHaveIncompatiblePointerToArrayPointee(
 	const FunctionDeclarationNode& func_decl,
 	std::span<const TypeSpecifierNode> argument_types) {
 	const auto& parameters = func_decl.parameter_nodes();
-	const bool is_variadic = func_decl.is_variadic();
-	const size_t min_required = countMinRequiredArgs(func_decl);
-	if (is_variadic) {
-		if (argument_types.size() < min_required) {
-			return false;
-		}
-	} else if (argument_types.size() < min_required || argument_types.size() > parameters.size()) {
-		return false;
-	}
-
 	const size_t params_to_check = std::min(parameters.size(), argument_types.size());
 	for (size_t i = 0; i < params_to_check; ++i) {
 		if (!parameters[i].is<DeclarationNode>()) {
-			return false;
+			continue;
 		}
 		const TypeSpecifierNode& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
-		const ArgumentConversionInfo conversion =
-			buildArgumentConversionInfo(argument_types[i], param_type, nullptr);
-		if (!conversion.is_valid) {
-			return false;
+		if (param_type.is_reference() || !param_type.is_pointer()) {
+			continue;
+		}
+		TypeSpecifierNode argument_type = argument_types[i];
+		applyArrayToPointerConversion(argument_type);
+		if (!argument_type.is_pointer()) {
+			continue;
+		}
+		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(param_type.type_index());
+		if (to_canonical.resolvedTypeIndex().category() == TypeCategory::Void) {
+			continue;
+		}
+		if (!pointerPointeeArrayTypesMatch(argument_type, param_type)) {
+			return true;
 		}
 	}
-	return true;
+	return false;
 }
 
 // Result of overload resolution

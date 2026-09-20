@@ -1518,7 +1518,18 @@ void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpe
 	if (!sym.has_value()) {
 		return;
 	}
-	if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
+	const DeclarationNode* decl = get_decl_from_symbol(*sym);
+	if (decl == nullptr) {
+		return;
+	}
+	if (decl->is_array_object()) {
+		if (!arg_type_node.has_pointee_array_declarator()) {
+			applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node, *this);
+		}
+		applyArrayToPointerConversion(arg_type_node);
+		return;
+	}
+	if (decl->type_specifier_node().has_pointee_array_declarator()) {
 		applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node, *this);
 	}
 }
