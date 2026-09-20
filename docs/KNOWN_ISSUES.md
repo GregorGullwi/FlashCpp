@@ -114,23 +114,6 @@ Remaining gaps in the same area:
   lazy member resolution and falls back to non-flattened subscripting with a
   bad base.
 
-## Reading an array member of a struct element crashes in local arrays
-
-Brace-initializing a local array of structs that contain an array member lays
-the nested elements out correctly, but reading one back crashes at runtime with
-an access violation:
-
-```cpp
-struct A { int tag; int w[2]; };
-A a[2] = {{1, {2, 3}}, {4, {5, 6}}};
-return a[0].w[0];   // crash; a[0].tag reads fine
-```
-
-Scalar and nested-struct members of the same element read correctly, so the
-defect is isolated to subscript reads of an array member inside an element of a
-local array of structs. It reproduces for both one- and multi-dimensional
-arrays and is independent of how the initializer was lowered.
-
 ## Flat type representation cannot express interleaved pointer/array declarators
 
 C++20 declarators compose recursively: in `int (*(*p)[3])[4]`, `p` is pointer
