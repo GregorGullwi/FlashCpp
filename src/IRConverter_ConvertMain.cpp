@@ -13853,14 +13853,8 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 							   store_addr.op_codes.begin() + store_addr.size_in_bytes);
 		regAlloc.release(addr_reg);
 
-		// Mark this temp var as containing a pointer/address. Array members hold
-		// the address of their storage (not a reference to a scalar), so mark
-		// them address-only to keep decay/copies from dereferencing.
-		if (op.is_array_member) {
-			setAddressOnlyInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, result_var);
-		} else {
-			setReferenceInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, false, result_var);
-		}
+		// Mark this temp var as containing a pointer/address
+		setReferenceInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, false, result_var);
 		return;
 	}
 
