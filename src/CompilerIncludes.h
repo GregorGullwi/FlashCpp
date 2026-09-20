@@ -74,6 +74,9 @@
 // Shared globals (g_enable_debug_output, gNamespaceRegistry, etc.)
 #include "Globals.cpp"
 
+// Canonical type table (out-of-line definitions for the header-only identity)
+#include "CanonicalTypes.cpp"
+
 // Header implementation units kept as separate .cpp files for organization
 #include "IrType.cpp"
 #include "TypeTraitEvaluator.cpp"
