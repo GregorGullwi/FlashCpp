@@ -1958,6 +1958,13 @@ public:
 	std::span<const DeclaratorComponent> declarator_components() const {
 		return declarator_components_;
 	}
+	bool has_same_ordered_declarator(const TypeSpecifierNode& other) const {
+		return has_ordered_declarator() == other.has_ordered_declarator() &&
+			(!has_ordered_declarator() ||
+			 std::ranges::equal(
+				 declarator_components_,
+				 other.declarator_components_));
+	}
 	bool ordered_declarator_has_legacy_projection() const {
 		return !has_ordered_declarator() || declarator_has_legacy_projection_;
 	}
@@ -2797,6 +2804,23 @@ inline CVQualifier TypeSpecifierNode::pointee_cv_for_pointer_conversion() const 
 
 inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() const {
 	TypeSpecifierNode adjusted = *this;
+	if (adjusted.has_ordered_declarator()) {
+		DeclaratorComponent& outer =
+			adjusted.declarator_components_.front();
+		if (outer.kind == DeclaratorComponentKind::LValueReference ||
+			outer.kind == DeclaratorComponentKind::RValueReference) {
+			return adjusted;
+		}
+		if (outer.kind == DeclaratorComponentKind::Array ||
+			outer.kind == DeclaratorComponentKind::UnknownBoundArray ||
+			outer.kind == DeclaratorComponentKind::Function) {
+			outer = DeclaratorComponent::pointer(CVQualifier::None);
+		} else if (outer.kind == DeclaratorComponentKind::Pointer) {
+			outer.cv_qualifier = CVQualifier::None;
+		}
+		adjusted.rebuild_legacy_declarator_projection();
+		return adjusted;
+	}
 	if (adjusted.reference_qualifier_ != ReferenceQualifier::None) {
 		return adjusted;
 	}
@@ -2813,6 +2837,9 @@ inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() c
 inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other) const {
 	const TypeSpecifierNode self = adjusted_function_parameter_type();
 	const TypeSpecifierNode other_adjusted = other.adjusted_function_parameter_type();
+	if (!self.has_same_ordered_declarator(other_adjusted)) {
+		return false;
+	}
 
 	struct EffectiveSignatureType {
 		TypeIndex type_index{};

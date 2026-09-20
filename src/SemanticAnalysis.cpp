@@ -295,6 +295,7 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
 		lhs.reference_qualifier() != rhs.reference_qualifier() ||
 		lhs.pointer_depth() != rhs.pointer_depth() ||
+		!lhs.has_same_ordered_declarator(rhs) ||
 		!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions())) {
 		return false;
 	}
@@ -5064,6 +5065,8 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	desc.type_index = type.type_index();
 	desc.base_cv = type.cv_qualifier();
 	desc.ref_qualifier = type.reference_qualifier();
+	ResolvedAliasTypeInfo resolved_alias;
+	bool resolved_alias_available = false;
 
 	// Copy pointer levels
 	for (const auto& pl : type.pointer_levels()) {
@@ -5093,14 +5096,19 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	}
 	if (type.type_index().is_valid()) {
 		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type.type_index());
+		resolved_alias = alias_info;
+		resolved_alias_available = true;
 		if (alias_info.terminal_type_info && alias_info.terminal_type_info->isTypeAlias()) {
 			// Keep walking through aliases until we reach the concrete terminal type.
 			desc.type_index = alias_info.terminal_type_info->type_index_;
 		} else if (alias_info.terminal_type_info) {
 			desc.type_index = alias_info.terminal_type_info->type_index_;
 		}
-		for (size_t i = 0; i < alias_info.pointer_depth; ++i) {
-			desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+		desc.base_cv |= alias_info.cv_qualifier;
+		if (!type.has_ordered_declarator()) {
+			for (size_t i = 0; i < alias_info.pointer_depth; ++i) {
+				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+			}
 		}
 			// C++20 [dcl.ptr]/1: pointee-bound dimensions must stay outside every
 			// pointer level. An alias that itself carries indirection would place
@@ -5112,27 +5120,46 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 				std::string("unsupported declarator: alias with indirection combined "
 							"with a parenthesized pointer-to-array declarator"));
 		}
-		if (desc.ref_qualifier == ReferenceQualifier::None &&
+		if (!type.has_ordered_declarator() &&
+			desc.ref_qualifier == ReferenceQualifier::None &&
 			alias_info.reference_qualifier != ReferenceQualifier::None) {
 			desc.ref_qualifier = alias_info.reference_qualifier;
 		}
-		if (desc.array_dimensions.empty() && !alias_info.array_dimensions.empty()) {
+		if (!type.has_ordered_declarator() &&
+			desc.array_dimensions.empty() && !alias_info.array_dimensions.empty()) {
 			desc.array_dimensions = alias_info.array_dimensions;
 		}
-		if (!desc.function_signature.has_value() && alias_info.function_signature.has_value()) {
+		if (!type.has_ordered_declarator() &&
+			!desc.function_signature.has_value() && alias_info.function_signature.has_value()) {
 			desc.function_signature = alias_info.function_signature;
 			desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
 		}
 	}
 	if (type.has_ordered_declarator()) {
-		if (!desc.pointer_levels.empty() || !desc.array_dimensions.empty() ||
-			desc.ref_qualifier != ReferenceQualifier::None ||
-			desc.function_signature.has_value()) {
+		if (resolved_alias_available &&
+			(!resolved_alias.array_dimensions.empty() ||
+			 resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+			 resolved_alias.function_signature.has_value() ||
+			 resolved_alias.member_class_name.has_value())) {
 			throw InternalError(
-				"ordered declarator over a wrapped alias is not migrated");
+				"ordered declarator over a non-pointer alias wrapper is not migrated");
 		}
 		TypeSpecifierNode resolved_syntax = type;
 		resolved_syntax.set_type_index(desc.type_index);
+		resolved_syntax.set_cv_qualifier(desc.base_cv);
+		std::vector<DeclaratorComponent> composed_components(
+			type.declarator_components().begin(),
+			type.declarator_components().end());
+		if (resolved_alias_available) {
+			for (size_t index = 0;
+				index < resolved_alias.pointer_depth;
+				++index) {
+				composed_components.push_back(
+					DeclaratorComponent::pointer(CVQualifier::None));
+			}
+		}
+		resolved_syntax.set_ordered_declarator(
+			std::move(composed_components));
 		CanonicalTypeTable& canonical_types =
 			requireFrontendContext().canonicalTypes();
 		const CanonicalTypeImport imported =

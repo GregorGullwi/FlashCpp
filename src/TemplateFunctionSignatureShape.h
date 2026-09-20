@@ -18,6 +18,7 @@ inline bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpeci
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
 		lhs.reference_qualifier() != rhs.reference_qualifier() ||
 		lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
+		!lhs.has_same_ordered_declarator(rhs) ||
 		lhs.is_array() != rhs.is_array()) {
 		return false;
 	}
