@@ -4109,6 +4109,27 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			instantiation_flags);
 	};
 
+	auto instantiateIfCallArgsConvert =
+		[&](const ExplicitOverloadCandidate& candidate) -> std::optional<ASTNode> {
+		std::optional<ASTNode> instantiated = instantiate_explicit_candidate(candidate);
+		if (!instantiated.has_value()) {
+			return std::nullopt;
+		}
+		if (current_explicit_call_arg_types_ == nullptr) {
+			return instantiated;
+		}
+		const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated);
+		if (func_decl == nullptr) {
+			return std::nullopt;
+		}
+		if (!canConvertCallArgumentsToFunctionParameters(
+				*func_decl,
+				*current_explicit_call_arg_types_)) {
+			return std::nullopt;
+		}
+		return instantiated;
+	};
+
 	std::optional<size_t> preferred_candidate_index;
 	if (preferred_definition_bound_template_declaration_ != nullptr) {
 		for (size_t i = 0; i < viable_candidates.size(); ++i) {
@@ -4210,7 +4231,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	if (preferred_candidate_index.has_value() &&
 		*preferred_candidate_index < viable_candidates.size()) {
 		std::optional<ASTNode> preferred_instantiation =
-			instantiate_explicit_candidate(viable_candidates[*preferred_candidate_index]);
+			instantiateIfCallArgsConvert(viable_candidates[*preferred_candidate_index]);
 		if (preferred_instantiation.has_value()) {
 			return *preferred_instantiation;
 		}
@@ -4221,7 +4242,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			continue;
 		}
 		std::optional<ASTNode> instantiated =
-			instantiate_explicit_candidate(viable_candidates[i]);
+			instantiateIfCallArgsConvert(viable_candidates[i]);
 		if (instantiated.has_value()) {
 			return *instantiated;
 		}
@@ -4525,14 +4546,20 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 							winner_binding,
 							winner_flags);
 						if (result.has_value()) {
-							FLASH_LOG_FORMAT(
-								Templates,
-								Debug,
-								"[depth={}]: Shape-selected template overload {} for '{}'",
-								recursion_depth,
-								winner.overload_idx,
-								template_name);
-							return result;
+							const FunctionDeclarationNode* instantiated_func =
+								get_function_decl_node(*result);
+							if (instantiated_func != nullptr &&
+								canConvertCallArgumentsToFunctionParameters(*instantiated_func, arg_types)) {
+								FLASH_LOG_FORMAT(
+									Templates,
+									Debug,
+									"[depth={}]: Shape-selected template overload {} for '{}'",
+									recursion_depth,
+									winner.overload_idx,
+									template_name);
+								return result;
+							}
+							break;
 						}
 						break;
 					}
@@ -4588,6 +4615,19 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 					if (!deferred_forward_declaration_result.has_value()) {
 						deferred_forward_declaration_result = result;
 					}
+					continue;
+				}
+				const FunctionDeclarationNode* instantiated_func =
+					get_function_decl_node(*result);
+				if (instantiated_func == nullptr ||
+					!canConvertCallArgumentsToFunctionParameters(*instantiated_func, arg_types)) {
+					FLASH_LOG_FORMAT(
+						Templates,
+						Trace,
+						"[depth={}]: Overload {} for '{}' instantiated but call arguments are not convertible",
+						recursion_depth,
+						overload_idx,
+						template_name);
 					continue;
 				}
 				// Non-SFINAE: success — return first good match.
