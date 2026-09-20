@@ -72,6 +72,18 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 	return std::visit([this, context](const auto& expr) -> ExprResult {
 		using T = std::decay_t<decltype(expr)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			if (const std::optional<ASTNode> symbol =
+					lookupSymbol(expr.nameHandle().isValid()
+						? expr.nameHandle()
+						: StringTable::getOrInternStringHandle(expr.name()));
+				symbol.has_value()) {
+				if (const DeclarationNode* declaration =
+						get_decl_from_symbol(*symbol)) {
+					declaration->type_specifier_node()
+						.require_legacy_declarator_projection(
+							"identifier IR lowering");
+				}
+			}
 			// Attempt constexpr constant folding only for confirmed constexpr local/global
 			// variables. Skip StaticMember and NonStaticMember identifiers to avoid folding
 			// runtime-mutable static members. Skip enum-typed identifiers since generateIdentifierIr
@@ -1527,6 +1539,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 	auto emitQualifiedGlobalLoad = [&](const TypeSpecifierNode& type_node,
 									 bool is_array_decl,
 									 StringHandle global_name) -> ExprResult {
+		type_node.require_legacy_declarator_projection(
+			"qualified identifier IR lowering");
 		TempVar result_temp = var_counter.next();
 		const bool is_array_type = is_array_decl || type_node.is_array();
 		const bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();

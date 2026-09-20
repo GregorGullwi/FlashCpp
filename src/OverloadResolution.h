@@ -925,6 +925,20 @@ inline void applyMemberDeclaratorShape(TypeSpecifierNode& member_type, const Mem
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	auto isOrderedPointer = [](const TypeSpecifierNode& type) {
+		return type.has_ordered_declarator() &&
+			!type.declarator_components().empty() &&
+			type.declarator_components().front().kind ==
+				DeclaratorComponentKind::Pointer;
+	};
+	if (from.category() == TypeCategory::Nullptr && isOrderedPointer(to)) {
+		return {
+			ConversionRank::Conversion,
+			StandardConversionKind::PointerConversion,
+			true};
+	}
+	from.require_legacy_declarator_projection("overload/conversion resolution");
+	to.require_legacy_declarator_projection("overload/conversion resolution");
 	auto stripReferenceQualifier = [](TypeSpecifierNode spec) {
 		spec.set_reference_qualifier(ReferenceQualifier::None);
 		return spec;

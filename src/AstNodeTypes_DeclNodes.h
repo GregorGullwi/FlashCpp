@@ -1824,6 +1824,68 @@ struct PointerLevel {
 	explicit PointerLevel(CVQualifier cv) : cv_qualifier(cv) {}
 };
 
+// Syntax-owned declarator wrappers in declared-type order (outermost first).
+// The canonical adapter applies this sequence in reverse around the base TypeId.
+// Function and member-pointer payloads continue to live in the existing cold
+// fields during the bridge; the component records their exact position.
+enum class DeclaratorComponentKind : uint8_t {
+	Pointer,
+	LValueReference,
+	RValueReference,
+	Array,
+	UnknownBoundArray,
+	Function,
+	MemberObjectPointer,
+	MemberFunctionPointer,
+};
+
+struct DeclaratorComponent {
+	uint64_t payload = 0; // Array extent, or zero for non-array wrappers.
+	EntityId member_owner{};
+	DeclaratorComponentKind kind = DeclaratorComponentKind::Pointer;
+	CVQualifier cv_qualifier = CVQualifier::None;
+	uint16_t reserved = 0;
+
+	static DeclaratorComponent pointer(CVQualifier cv) {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Pointer, cv, 0};
+	}
+	static DeclaratorComponent lvalueReference() {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::LValueReference,
+			CVQualifier::None, 0};
+	}
+	static DeclaratorComponent rvalueReference() {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::RValueReference,
+			CVQualifier::None, 0};
+	}
+	static DeclaratorComponent array(size_t extent) {
+		return DeclaratorComponent{static_cast<uint64_t>(extent), {},
+			DeclaratorComponentKind::Array, CVQualifier::None, 0};
+	}
+	static DeclaratorComponent unknownBoundArray() {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::UnknownBoundArray,
+			CVQualifier::None, 0};
+	}
+	static DeclaratorComponent function() {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Function,
+			CVQualifier::None, 0};
+	}
+	static DeclaratorComponent memberPointer(EntityId owner, bool is_function,
+		CVQualifier cv) {
+		return DeclaratorComponent{
+			0,
+			owner,
+			is_function
+				? DeclaratorComponentKind::MemberFunctionPointer
+				: DeclaratorComponentKind::MemberObjectPointer,
+			cv,
+			0};
+	}
+
+	friend bool operator==(DeclaratorComponent, DeclaratorComponent) = default;
+};
+
+static_assert(sizeof(DeclaratorComponent) == 16);
+
 class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
@@ -1891,6 +1953,50 @@ public:
 			pointer_levels_.pop_back();
 	}
 	void copy_pointer_levels_from(const TypeSpecifierNode& other) { pointer_levels_ = other.pointer_levels_; }
+
+	bool has_ordered_declarator() const { return !declarator_components_.empty(); }
+	std::span<const DeclaratorComponent> declarator_components() const {
+		return declarator_components_;
+	}
+	bool ordered_declarator_has_legacy_projection() const {
+		return !has_ordered_declarator() || declarator_has_legacy_projection_;
+	}
+	void set_ordered_declarator(std::vector<DeclaratorComponent> components) {
+		declarator_components_ = std::move(components);
+		rebuild_legacy_declarator_projection();
+	}
+	void clear_ordered_declarator() {
+		declarator_components_.clear();
+		declarator_has_legacy_projection_ = true;
+	}
+	void clear_declarator_shape() {
+		pointer_levels_.clear();
+		reference_qualifier_ = ReferenceQualifier::None;
+		is_array_ = false;
+		array_dimensions_.clear();
+		pointee_array_declarator_ = false;
+		has_unsized_outer_array_dimension_ = false;
+		declarator_components_.clear();
+		declarator_has_legacy_projection_ = true;
+	}
+	bool remove_outermost_ordered_declarator_component() {
+		if (declarator_components_.empty()) {
+			return false;
+		}
+		declarator_components_.erase(declarator_components_.begin());
+		rebuild_legacy_declarator_projection();
+		return true;
+	}
+	void prepend_ordered_declarator_component(DeclaratorComponent component) {
+		declarator_components_.insert(declarator_components_.begin(), component);
+		rebuild_legacy_declarator_projection();
+	}
+	void require_legacy_declarator_projection(std::string_view consumer) const {
+		if (!ordered_declarator_has_legacy_projection()) {
+			throw InternalError(std::string("interleaved declarator reached unmigrated ") +
+				std::string(consumer));
+		}
+	}
 
 	// Reference support
 	bool is_reference() const { return reference_qualifier_ != ReferenceQualifier::None; }
@@ -2319,6 +2425,8 @@ public:
 		array_dimensions_ = other.array_dimensions_;
 		pointee_array_declarator_ = other.pointee_array_declarator_;
 		has_unsized_outer_array_dimension_ = other.has_unsized_outer_array_dimension_;
+		declarator_components_ = other.declarator_components_;
+		declarator_has_legacy_projection_ = other.declarator_has_legacy_projection_;
 		function_signature_ = other.function_signature_;
 		member_class_name_ = other.member_class_name_;
 		copy_binding_identity_from(other);
@@ -2337,6 +2445,91 @@ public:
 	bool matches_signature(const TypeSpecifierNode& other) const;
 
 private:
+	void rebuild_legacy_declarator_projection() {
+		pointer_levels_.clear();
+		reference_qualifier_ = ReferenceQualifier::None;
+		is_array_ = false;
+		array_dimensions_.clear();
+		pointee_array_declarator_ = false;
+		has_unsized_outer_array_dimension_ = false;
+		declarator_has_legacy_projection_ = true;
+
+		size_t begin = 0;
+		if (!declarator_components_.empty()) {
+			const DeclaratorComponentKind outer = declarator_components_.front().kind;
+			if (outer == DeclaratorComponentKind::LValueReference ||
+				outer == DeclaratorComponentKind::RValueReference) {
+				reference_qualifier_ =
+					outer == DeclaratorComponentKind::LValueReference
+						? ReferenceQualifier::LValueReference
+						: ReferenceQualifier::RValueReference;
+				begin = 1;
+			}
+		}
+
+		size_t first_pointer = declarator_components_.size();
+		size_t first_array = declarator_components_.size();
+		for (size_t index = begin; index < declarator_components_.size(); ++index) {
+			const DeclaratorComponent& component = declarator_components_[index];
+			if (component.kind == DeclaratorComponentKind::Pointer) {
+				first_pointer = std::min(first_pointer, index);
+			} else if (component.kind == DeclaratorComponentKind::Array ||
+				component.kind == DeclaratorComponentKind::UnknownBoundArray) {
+				first_array = std::min(first_array, index);
+			} else {
+				declarator_has_legacy_projection_ = false;
+				return;
+			}
+		}
+
+		const bool arrays_outside_pointers =
+			first_array < first_pointer || first_array == declarator_components_.size();
+		bool seen_pointer = false;
+		bool seen_array = false;
+		for (size_t index = begin; index < declarator_components_.size(); ++index) {
+			const DeclaratorComponentKind kind = declarator_components_[index].kind;
+			if (kind == DeclaratorComponentKind::Pointer) {
+				if (!arrays_outside_pointers && seen_array) {
+					declarator_has_legacy_projection_ = false;
+					return;
+				}
+				seen_pointer = true;
+			} else {
+				if (arrays_outside_pointers && seen_pointer) {
+					declarator_has_legacy_projection_ = false;
+					return;
+				}
+				seen_array = true;
+			}
+		}
+
+		for (size_t index = declarator_components_.size(); index-- > begin;) {
+			const DeclaratorComponent& component = declarator_components_[index];
+			if (component.kind == DeclaratorComponentKind::Pointer) {
+				pointer_levels_.push_back(PointerLevel{component.cv_qualifier});
+			}
+		}
+		for (size_t index = begin; index < declarator_components_.size(); ++index) {
+			const DeclaratorComponent& component = declarator_components_[index];
+			if (component.kind == DeclaratorComponentKind::Array) {
+				array_dimensions_.push_back(static_cast<size_t>(component.payload));
+			} else if (component.kind == DeclaratorComponentKind::UnknownBoundArray) {
+				if (!array_dimensions_.empty()) {
+					declarator_has_legacy_projection_ = false;
+					return;
+				}
+				has_unsized_outer_array_dimension_ = true;
+			}
+		}
+		if (!array_dimensions_.empty() || has_unsized_outer_array_dimension_) {
+			if (arrays_outside_pointers) {
+				is_array_ = true;
+			} else {
+				pointee_array_declarator_ = true;
+			}
+		}
+	}
+
 	SizeInBits size_{};  // Size in bits
 	TypeQualifier qualifier_ = TypeQualifier::None;
 	CVQualifier cv_qualifier_ = CVQualifier::None;  // CV-qualifier for the base type
@@ -2348,6 +2541,8 @@ private:
 	std::vector<size_t> array_dimensions_;  // Array dimensions (e.g., int[2][3][4] -> {2, 3, 4})
 	bool pointee_array_declarator_ = false;	 // True for T (*p)[N]: dimensions bind to the pointee ([dcl.ptr]/1)
 	bool has_unsized_outer_array_dimension_ = false;	// True for parser-only shapes like T[][N]
+	std::vector<DeclaratorComponent> declarator_components_;
+	bool declarator_has_legacy_projection_ = true;
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;	 // True if this type is followed by ... (pack expansion)
 	StringHandle template_parameter_name_; // Scoped type-template parameter binding
@@ -2930,6 +3125,48 @@ inline TypeSpecifierNode applyPlaceholderDeclaratorDeduction(
 // Final fallback: type_spec.size_in_bits() (set during parsing).
 // Returns 0 only for genuinely incomplete or void types.
 inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
+	if (type_spec.has_ordered_declarator()) {
+		TypeSpecifierNode base_type = type_spec;
+		base_type.clear_declarator_shape();
+		size_t size_bits = static_cast<size_t>(getTypeSpecSizeBits(base_type));
+		bool incomplete = false;
+		for (size_t index = type_spec.declarator_components().size(); index-- > 0;) {
+			const DeclaratorComponent& component =
+				type_spec.declarator_components()[index];
+			switch (component.kind) {
+			case DeclaratorComponentKind::Pointer:
+			case DeclaratorComponentKind::MemberObjectPointer:
+			case DeclaratorComponentKind::MemberFunctionPointer:
+				size_bits = 64;
+				incomplete = false;
+				break;
+			case DeclaratorComponentKind::LValueReference:
+			case DeclaratorComponentKind::RValueReference:
+				break;
+			case DeclaratorComponentKind::Array:
+				if (incomplete) {
+					break;
+				}
+				if (component.payload == 0 ||
+					size_bits > std::numeric_limits<size_t>::max() /
+						static_cast<size_t>(component.payload)) {
+					return 0;
+				}
+				size_bits *= static_cast<size_t>(component.payload);
+				break;
+			case DeclaratorComponentKind::UnknownBoundArray:
+				size_bits = 0;
+				incomplete = true;
+				break;
+			case DeclaratorComponentKind::Function:
+				return 0;
+			}
+		}
+		return incomplete ||
+				size_bits > static_cast<size_t>(std::numeric_limits<int>::max())
+			? 0
+			: static_cast<int>(size_bits);
+	}
 	// Pointers are always 64 bits on x64 regardless of the pointee type
 	if (type_spec.pointer_depth() > 0) {
 		return 64;

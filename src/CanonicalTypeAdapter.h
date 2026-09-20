@@ -14,6 +14,12 @@ struct CanonicalTypeImport {
 
 static_assert(sizeof(CanonicalTypeImport) == 8);
 
+struct CanonicalDeclaratorExport {
+	TypeId base;
+	std::vector<DeclaratorComponent> components;
+	CanonicalTypeImportStatus status;
+};
+
 enum class CanonicalTypeImportContext : uint8_t {
 	Exact, FunctionParameter,
 };
@@ -34,11 +40,70 @@ inline TypeId addCanonicalArrayDimensions(CanonicalTypeTable& table, TypeId id,
 	return id;
 }
 
+inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
+	CanonicalTypeTable& table,
+	TypeId base,
+	const TypeSpecifierNode& syntax,
+	CanonicalTypeImportContext context) {
+	TypeId id = base;
+	const std::span<const DeclaratorComponent> components =
+		syntax.declarator_components();
+	for (size_t index = components.size(); index-- > 0;) {
+		const DeclaratorComponent& component = components[index];
+		switch (component.kind) {
+		case DeclaratorComponentKind::Pointer:
+			if (static_cast<uint8_t>(component.cv_qualifier) > 3) {
+				return {{}, CanonicalTypeImportStatus::Invalid};
+			}
+			id = table.qualify(table.pointer(id), component.cv_qualifier);
+			break;
+		case DeclaratorComponentKind::LValueReference:
+			id = table.reference(id, ReferenceQualifier::LValueReference);
+			break;
+		case DeclaratorComponentKind::RValueReference:
+			id = table.reference(id, ReferenceQualifier::RValueReference);
+			break;
+		case DeclaratorComponentKind::Array:
+			if (component.payload == 0 ||
+				component.payload > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+				return {{}, CanonicalTypeImportStatus::Invalid};
+			}
+			id = table.array(id, static_cast<size_t>(component.payload));
+			break;
+		case DeclaratorComponentKind::UnknownBoundArray:
+			id = table.arrayOfUnknownBound(id);
+			break;
+		case DeclaratorComponentKind::Function:
+		case DeclaratorComponentKind::MemberObjectPointer:
+		case DeclaratorComponentKind::MemberFunctionPointer:
+			return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+		}
+	}
+	if (context == CanonicalTypeImportContext::FunctionParameter &&
+		!components.empty()) {
+		const CanonicalTypeNode outer = table.node(id);
+		if (outer.kind == CanonicalTypeKind::Array) {
+			id = table.pointer(outer.child);
+		} else if (outer.kind == CanonicalTypeKind::Function) {
+			id = table.pointer(id);
+		}
+	}
+	return {id, CanonicalTypeImportStatus::Supported};
+}
+
 // Shared pointer/array/reference shaping after a base TypeId and top-level cv
 // have been formed. Keeps parameter-array decay in one mutation-tested place.
 inline TypeId applyCanonicalPointerArrayReference(CanonicalTypeTable& table, TypeId id,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context,
 	bool has_ordinary_array, bool has_pointee_array) {
+	if (syntax.has_ordered_declarator()) {
+		const CanonicalTypeImport imported =
+			applyCanonicalOrderedDeclarator(table, id, syntax, context);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			throw InternalError("canonical type adapter: ordered declarator was not importable");
+		}
+		return imported.type;
+	}
 	const auto reference = syntax.reference_qualifier();
 	if (has_pointee_array) {
 		if (syntax.array_dimensions().empty()) {
@@ -141,14 +206,19 @@ inline EntityId resolveNamedTypeEntity(const TypeSpecifierNode& syntax) {
 // Opaque Record import for published class/struct types. Alias and unpublished
 // nominal forms stay deferred until their EntityId path lands.
 inline CanonicalTypeImport importCanonicalRecord(CanonicalTypeTable& table,
-	const TypeSpecifierNode& syntax) {
+	const TypeSpecifierNode& syntax,
+	CanonicalTypeImportContext context) {
 	const EntityId entity = resolveNamedTypeEntity(syntax);
 	if (!entity) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	}
 	auto id = table.record(entity);
-	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 	id = table.qualify(id, syntax.cv_qualifier());
+	if (syntax.has_ordered_declarator()) {
+		return applyCanonicalOrderedDeclarator(
+			table, id, syntax, context);
+	}
+	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 		id = table.reference(id, syntax.reference_qualifier());
 	}
@@ -156,14 +226,19 @@ inline CanonicalTypeImport importCanonicalRecord(CanonicalTypeTable& table,
 }
 
 inline CanonicalTypeImport importCanonicalEnum(CanonicalTypeTable& table,
-	const TypeSpecifierNode& syntax) {
+	const TypeSpecifierNode& syntax,
+	CanonicalTypeImportContext context) {
 	const EntityId entity = resolveNamedTypeEntity(syntax);
 	if (!entity) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	}
 	auto id = table.enumeration(entity);
-	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 	id = table.qualify(id, syntax.cv_qualifier());
+	if (syntax.has_ordered_declarator()) {
+		return applyCanonicalOrderedDeclarator(
+			table, id, syntax, context);
+	}
+	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 		id = table.reference(id, syntax.reference_qualifier());
 	}
@@ -497,6 +572,9 @@ inline CanonicalTypeImport importCanonicalShapedBase(CanonicalTypeTable& table,
 		}
 	}
 	id = table.qualify(id, syntax.cv_qualifier());
+	if (syntax.has_ordered_declarator()) {
+		return applyCanonicalOrderedDeclarator(table, id, syntax, context);
+	}
 	id = applyCanonicalPointerArrayReference(
 		table, id, syntax, context, has_ordinary_array, has_pointee_array);
 	return {id, CanonicalTypeImportStatus::Supported};
@@ -668,8 +746,8 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		}
 		CanonicalTypeTransaction transaction(table);
 		const auto imported = syntax.category() == TypeCategory::Struct
-			? importCanonicalRecord(table, syntax)
-			: importCanonicalEnum(table, syntax);
+			? importCanonicalRecord(table, syntax, context)
+			: importCanonicalEnum(table, syntax, context);
 		if (imported.status == CanonicalTypeImportStatus::Supported) {
 			transaction.commit();
 		}
@@ -765,4 +843,61 @@ inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const 
 inline CanonicalTypeImport importCanonicalFunctionParameterType(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax) {
 	return importCanonicalTypeImpl(table, syntax, CanonicalTypeImportContext::FunctionParameter);
+}
+
+// Iteratively decompose the canonical wrapper chain into syntax order. The
+// returned base retains base cv qualification. Callable/member-pointer export
+// remains fail-closed until their AST payloads migrate from FunctionSignature.
+inline CanonicalDeclaratorExport exportCanonicalDeclarator(
+	const CanonicalTypeTable& table,
+	TypeId type) {
+	CanonicalDeclaratorExport result{type, {}, CanonicalTypeImportStatus::Supported};
+	CVQualifier pending_pointer_cv = CVQualifier::None;
+	for (;;) {
+		const CanonicalTypeNode node = table.node(type);
+		if (node.kind == CanonicalTypeKind::Qualified) {
+			const CanonicalTypeNode child = table.node(node.child);
+			if (child.kind != CanonicalTypeKind::Pointer) {
+				result.base = type;
+				return result;
+			}
+			pending_pointer_cv |= node.qualifiers;
+			type = node.child;
+			continue;
+		}
+		switch (node.kind) {
+		case CanonicalTypeKind::Pointer:
+			result.components.push_back(
+				DeclaratorComponent::pointer(pending_pointer_cv));
+			pending_pointer_cv = CVQualifier::None;
+			type = node.child;
+			break;
+		case CanonicalTypeKind::LValueReference:
+			result.components.push_back(DeclaratorComponent::lvalueReference());
+			type = node.child;
+			break;
+		case CanonicalTypeKind::RValueReference:
+			result.components.push_back(DeclaratorComponent::rvalueReference());
+			type = node.child;
+			break;
+		case CanonicalTypeKind::Array:
+			result.components.push_back(
+				hasCanonicalTypeNodeFlag(
+					node.flags, CanonicalTypeNodeFlags::KnownArrayBound)
+					? DeclaratorComponent::array(
+						static_cast<size_t>(node.array_extent))
+					: DeclaratorComponent::unknownBoundArray());
+			type = node.child;
+			break;
+		case CanonicalTypeKind::Function:
+		case CanonicalTypeKind::MemberObjectPointer:
+		case CanonicalTypeKind::MemberFunctionPointer:
+			result.base = type;
+			result.status = CanonicalTypeImportStatus::UnmigratedCallable;
+			return result;
+		default:
+			result.base = type;
+			return result;
+		}
+	}
 }

@@ -5,7 +5,33 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-20. Direct member alias targets that capture an enclosing
+Last updated: 2026-09-20. Boundary 3A now has an outermost-to-innermost
+`DeclaratorComponent` spine on `TypeSpecifierNode`. Named and abstract
+pointer/array declarators use an explicit frame stack, so forms including
+`int (*(*p)[3])[4]`, deeper pointer/array alternation, and pointer cv at each
+level import losslessly into the existing recursive `CanonicalTypeTable`.
+The adapter exports pointer/array/reference wrapper chains iteratively, and
+import-export-import preserves canonical identity independently of unrelated
+canonical insertion order. Legacy pointer/array fields are rebuilt only for
+the two exactly projectable boundary shapes; mixed interleavings are marked
+non-projectable.
+
+The bounded `sizeof`/size and unary dereference/address route now walks the
+ordered/canonical structure. `CanonicalTypeDesc` carries a temporary `TypeId`
+bridge for these non-projectable shapes, while MSVC/Itanium mangling and
+general overload/conversion entry points reject a non-projectable spine
+instead of flattening it. Callable and member-pointer components are named by
+the spine format, but their cold `FunctionSignature`/owner payload export and
+the remaining template, traits, constexpr, and IR consumers are not migrated.
+`DeclaratorComponent` is 16 bytes; the cold vector plus projection-state field
+increased `TypeSpecifierNode` to 520 bytes in the canonical architecture
+probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
+5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
+frames and does not increase native call depth. The exact next slice is
+canonical/ordered name mangling followed by deletion of mangling's flat
+pointer/array reads.
+
+Immediately before this slice, direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
 IDs. Direct type targets recover the owner parameter's declaration and index
 from the enclosing parser parameter scope before canonical import. The

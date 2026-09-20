@@ -1065,6 +1065,164 @@ std::optional<CVQualifier> Parser::scan_parenthesized_pointer_group(
 
 // NEW: Parse declarators (handles function pointers, arrays, etc.)
 ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linkage) {
+	auto tryStructuralPointerArrayDeclarator =
+			[&]() -> std::optional<ParseResult> {
+		// Parse the pointer/array-only recursive declarator grammar with an
+		// explicit frame stack. This path is selected only for a nested
+		// parenthesized group or for a pointer prefix followed by a parenthesized
+		// group; existing callable and boundary-shape handling remains below.
+		if (peek() == "("_tok) {
+			SaveHandle structural_start = save_token_position();
+			bool candidate = base_type.pointer_depth() != 0;
+			if (!candidate) {
+				advance(); // opening group
+				skip_noop_gnu_qualifiers();
+				if (peek() == "*"_tok) {
+					advance();
+					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
+					skip_noop_gnu_qualifiers();
+					candidate = peek() == "("_tok;
+				}
+				restore_token_position(structural_start);
+			}
+
+			if (candidate) {
+				struct DeclaratorFrame {
+					std::vector<PointerLevel> prefixes;
+					std::vector<DeclaratorComponent> child;
+					std::vector<DeclaratorComponent> suffixes;
+					bool delimited = false;
+					bool after_direct = false;
+				};
+				std::vector<DeclaratorFrame> frames;
+				frames.push_back({});
+				for (const PointerLevel &pointer : base_type.pointer_levels()) {
+					frames.front().prefixes.push_back(pointer);
+				}
+				Token identifier;
+				bool has_identifier = false;
+				bool failed = false;
+
+				while (!frames.empty() && !failed) {
+					DeclaratorFrame &frame = frames.back();
+					if (!frame.after_direct) {
+						while (peek() == "*"_tok) {
+							advance();
+							CVQualifier pointer_cv = parse_cv_qualifiers();
+							skip_noop_gnu_qualifiers();
+							pointer_cv |= parse_cv_qualifiers();
+							frame.prefixes.push_back(PointerLevel{pointer_cv});
+						}
+						if (peek() == "("_tok) {
+							advance();
+							frames.push_back(DeclaratorFrame{{}, {}, {}, true, false});
+							continue;
+						}
+						if (peek() == ")"_tok && !has_identifier && frame.delimited &&
+								!frame.prefixes.empty()) {
+							identifier =
+									Token(Token::Type::Identifier, ""sv, current_token_.line(),
+												current_token_.column(), current_token_.file_index());
+							has_identifier = true;
+							frame.after_direct = true;
+							continue;
+						}
+						if (!peek().is_identifier() || has_identifier) {
+							failed = true;
+							break;
+						}
+						identifier = peek_info();
+						has_identifier = true;
+						advance();
+						frame.after_direct = true;
+					}
+
+					while (peek() == "["_tok) {
+						advance();
+						if (peek() == "]"_tok) {
+							frame.suffixes.push_back(
+									DeclaratorComponent::unknownBoundArray());
+							advance();
+							continue;
+						}
+						ParseResult bound =
+								parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (bound.is_error() || !bound.node().has_value()) {
+							failed = true;
+							break;
+						}
+						const auto value = try_evaluate_constant_expression(*bound.node());
+						if (!value.has_value() || value->value <= 0) {
+							failed = true;
+							break;
+						}
+						frame.suffixes.push_back(
+								DeclaratorComponent::array(static_cast<size_t>(value->value)));
+						if (!consume("]"_tok)) {
+							failed = true;
+							break;
+						}
+					}
+					if (failed) {
+						break;
+					}
+
+					if (frame.delimited) {
+						if (peek() != ")"_tok) {
+							failed = true;
+							break;
+						}
+						advance();
+					}
+
+					std::vector<DeclaratorComponent> completed = std::move(frame.child);
+					completed.insert(completed.end(), frame.suffixes.begin(),
+													 frame.suffixes.end());
+					for (auto pointer = frame.prefixes.rbegin();
+							 pointer != frame.prefixes.rend(); ++pointer) {
+						completed.push_back(
+								DeclaratorComponent::pointer(pointer->cv_qualifier));
+					}
+					const bool was_delimited = frame.delimited;
+					frames.pop_back();
+					if (frames.empty()) {
+						if (!has_identifier || peek() == "("_tok) {
+							failed = true;
+							break;
+						}
+						TypeSpecifierNode structural_type = base_type;
+						structural_type.set_ordered_declarator(std::move(completed));
+						if (structural_type.ordered_declarator_has_legacy_projection()) {
+							failed = true;
+							break;
+						}
+						if (identifier.value().empty()) {
+							base_type = structural_type;
+						}
+						discard_saved_token(structural_start);
+						return ParseResult::success(emplace_node<DeclarationNode>(
+								emplace_node<TypeSpecifierNode>(structural_type), identifier));
+					}
+					if (!was_delimited || frames.back().after_direct) {
+						failed = true;
+						break;
+					}
+					frames.back().child = std::move(completed);
+					frames.back().after_direct = true;
+				}
+				restore_token_position(structural_start);
+			discard_saved_token(structural_start);
+			} else {
+				discard_saved_token(structural_start);
+			}
+		}
+		return std::nullopt;
+	};
+	if (std::optional<ParseResult> structural =
+					tryStructuralPointerArrayDeclarator()) {
+		return std::move(*structural);
+	}
+
 	// Check for parenthesized declarator: '(' '*' [identifier] ')'
 	// This is the pattern for function pointers: int (*fp)(int, int)
 	if (peek() == "("_tok) {

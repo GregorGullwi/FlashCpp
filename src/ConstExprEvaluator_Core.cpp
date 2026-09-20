@@ -463,6 +463,21 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 				return binding_it->second.exact_type;
 			}
 		}
+		if (context.symbols) {
+			std::optional<ASTNode> symbol = context.symbols->lookup(identifier.name());
+			if (!symbol.has_value() && context.global_symbols) {
+				symbol = context.global_symbols->lookup(identifier.name());
+			}
+			if (symbol.has_value()) {
+				if (const DeclarationNode* declaration = get_decl_from_symbol(*symbol)) {
+					const ASTNode& type_node = declaration->type_node();
+					if (type_node.is<TypeSpecifierNode>() &&
+						type_node.as<TypeSpecifierNode>().has_ordered_declarator()) {
+						return type_node.as<TypeSpecifierNode>();
+					}
+				}
+			}
+		}
 		return tryParserFallbackForType(std::nullopt, expr_node);
 	}
 
@@ -496,6 +511,20 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 
 		TypeSpecifierNode operand_type = *operand_type_opt;
 		if (unary.op() == "*") {
+			if (operand_type.has_ordered_declarator()) {
+				const std::span<const DeclaratorComponent> components =
+					operand_type.declarator_components();
+				if (components.empty() ||
+					components.front().kind != DeclaratorComponentKind::Pointer) {
+					return std::nullopt;
+				}
+				operand_type.remove_outermost_ordered_declarator_component();
+				if (const int pointee_size_bits = getTypeSpecSizeBits(operand_type);
+					pointee_size_bits > 0) {
+					operand_type.set_size_in_bits(pointee_size_bits);
+				}
+				return operand_type;
+			}
 			// C++20 [dcl.ptr]/1: when the pointer declarator binds array
 			// suffixes inside the pointer (T (*p)[N]), the dereference yields
 			// the complete array object, so the bounds become ordinary array
@@ -520,6 +549,11 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 			return operand_type;
 		}
 		if (unary.op() == "&") {
+			if (operand_type.has_ordered_declarator()) {
+				operand_type.prepend_ordered_declarator_component(
+					DeclaratorComponent::pointer(CVQualifier::None));
+				return operand_type;
+			}
 			operand_type.add_pointer_level();
 			return operand_type;
 		}

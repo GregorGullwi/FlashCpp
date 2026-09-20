@@ -93,6 +93,20 @@ def run_template_owner_tag_mutation():
         (directory / sibling).write_text(text)
     build_and_run(name, directory, 1)
 
+def run_adapter_order_mutation(name, before, after):
+    directory = OUTPUT / name
+    directory.mkdir(parents=True, exist_ok=True)
+    for sibling in (
+        "CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
+        "ArenaAccounting.h"):
+        text = (ROOT / "src" / sibling).read_text()
+        if sibling == "CanonicalTypeAdapter.h":
+            if text.count(before) != 1:
+                raise RuntimeError("mutation anchor changed: " + name)
+            text = text.replace(before, after)
+        (directory / sibling).write_text(text)
+    build_and_run(name, directory, 1)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -105,6 +119,16 @@ def main():
         run_template_owner_tag_mutation()
         return
     if options.mutations:
+        run_adapter_order_mutation(
+            "reversed_declarator_import",
+            "for (size_t index = components.size(); index-- > 0;) {",
+            "for (size_t index = 0; index < components.size(); ++index) {")
+        run_adapter_order_mutation(
+            "skipped_declarator_export",
+            "result.components.push_back(\n"
+            "\t\t\t\tDeclaratorComponent::pointer(pending_pointer_cv));",
+            "if (false) result.components.push_back(\n"
+            "\t\t\t\tDeclaratorComponent::pointer(pending_pointer_cv));")
         original = IMPL.read_text()
         mutations = {
             "lost_dependent_qualifier": (

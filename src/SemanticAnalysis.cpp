@@ -8,6 +8,7 @@
 #include "AstNodeTypes.h"
 #include "AstNodeTypes_Expr.h"
 #include "CallNodeHelpers.h"
+#include "CanonicalTypeAdapter.h"
 #include "OverloadResolution.h"
 #include "Log.h"
 #include "IrGenerator.h"
@@ -538,6 +539,18 @@ void setMaterializedTypeSpecifierSize(TypeSpecifierNode& type_node) {
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.type_index.withCategory(desc.category()), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
+	if (desc.structural_type_id) {
+		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
+			requireFrontendContext().canonicalTypes(),
+			desc.structural_type_id);
+		if (exported.status != CanonicalTypeImportStatus::Supported) {
+			throw InternalError(
+				"semantic materialization rejected ordered declarator");
+		}
+		type_node.set_ordered_declarator(exported.components);
+		setMaterializedTypeSpecifierSize(type_node);
+		return type_node;
+	}
 	type_node.set_reference_qualifier(desc.ref_qualifier);
 	for (const auto& pointer_level : desc.pointer_levels) {
 		type_node.add_pointer_level(pointer_level.cv_qualifier);
@@ -1030,6 +1043,8 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 	if (ref_qualifier != other.ref_qualifier)
 		return false;
 	if (flags != other.flags)
+		return false;
+	if (structural_type_id != other.structural_type_id)
 		return false;
 	if (pointer_levels.size() != other.pointer_levels.size())
 		return false;
@@ -5076,7 +5091,6 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		desc.function_signature = type.function_signature();
 		desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
 	}
-
 	if (type.type_index().is_valid()) {
 		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type.type_index());
 		if (alias_info.terminal_type_info && alias_info.terminal_type_info->isTypeAlias()) {
@@ -5109,6 +5123,25 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			desc.function_signature = alias_info.function_signature;
 			desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
 		}
+	}
+	if (type.has_ordered_declarator()) {
+		if (!desc.pointer_levels.empty() || !desc.array_dimensions.empty() ||
+			desc.ref_qualifier != ReferenceQualifier::None ||
+			desc.function_signature.has_value()) {
+			throw InternalError(
+				"ordered declarator over a wrapped alias is not migrated");
+		}
+		TypeSpecifierNode resolved_syntax = type;
+		resolved_syntax.set_type_index(desc.type_index);
+		CanonicalTypeTable& canonical_types =
+			requireFrontendContext().canonicalTypes();
+		const CanonicalTypeImport imported =
+			importCanonicalType(canonical_types, resolved_syntax);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			throw InternalError(
+				"semantic canonicalization rejected ordered declarator");
+		}
+		desc.structural_type_id = imported.type;
 	}
 
 	// C++20 [temp.local]: inside a class template (and members of its
@@ -6659,6 +6692,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!first_type_id || !second_type_id)
 					return {};
 				const auto& first_desc = type_context_.get(first_type_id);
+				const auto& second_desc = type_context_.get(second_type_id);
+				if (first_desc.structural_type_id ||
+					second_desc.structural_type_id) {
+					throw InternalError(
+						"interleaved declarator reached unmigrated subscript semantics");
+				}
 				const bool first_is_index = first_desc.pointer_levels.empty() &&
 					first_desc.array_dimensions.empty() &&
 					(isIntegralType(first_desc.category()) || first_desc.category() == TypeCategory::Enum);
@@ -6749,6 +6788,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return {};
 					CanonicalTypeDesc result_desc = type_context_.get(operand_id);
 					result_desc.ref_qualifier = ReferenceQualifier::None;
+					if (result_desc.structural_type_id) {
+						result_desc.structural_type_id =
+							requireFrontendContext().canonicalTypes().pointer(
+								result_desc.structural_type_id);
+						return type_context_.intern(result_desc);
+					}
 						// C++20 [expr.unary.op]/3: & applies to the undecayed
 						// operand lvalue. An array object operand yields a
 						// pointer-to-array ([dcl.ptr]/1).
@@ -6771,6 +6816,21 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return {};
 					CanonicalTypeDesc result_desc = type_context_.get(operand_id);
 					result_desc.ref_qualifier = ReferenceQualifier::None;
+					if (result_desc.structural_type_id) {
+						CanonicalTypeTable& structural_types =
+							requireFrontendContext().canonicalTypes();
+						TypeId outer_id = result_desc.structural_type_id;
+						CanonicalTypeNode outer = structural_types.node(outer_id);
+						if (outer.kind == CanonicalTypeKind::Qualified) {
+							outer_id = outer.child;
+							outer = structural_types.node(outer_id);
+						}
+						if (outer.kind != CanonicalTypeKind::Pointer) {
+							return {};
+						}
+						result_desc.structural_type_id = outer.child;
+						return type_context_.intern(result_desc);
+					}
 					if (!result_desc.pointer_levels.empty()) {
 						result_desc.pointer_levels.pop_back();
 						if (result_desc.pointer_levels.empty()) {
