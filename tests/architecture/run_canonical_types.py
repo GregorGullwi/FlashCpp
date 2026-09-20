@@ -239,6 +239,9 @@ def main():
                 "if (!templateParameterReferencesCoveredUnlocked(published->second.target,\n"
                 "\t\t\t\tpublished->second.owner, owner_arguments.size()) ||",
                 "if (false ||"),
+            "lost_member_alias_use_identity": (
+                "packDependentMemberAliasExtent(member, arg_link),",
+                "packDependentMemberAliasExtent(TemplateDeclId{member.value + 1u}, arg_link),"),
             "lost_alias_template_placeholder_replacement": (
                 "if (placeholder_decl == env && placeholder_index < args.size() &&\n"
                 "\t\t\t\t\t\t\targs[placeholder_index].kind == CanonicalTemplateArgKind::Template) {\n"
@@ -369,9 +372,11 @@ def main():
              "if (false && syntax.has_dependent_name_type()) {"),
             ("adapter_dependent_name_kind", "CanonicalTypeAdapter.h",
              "if (base_kind != CanonicalTypeKind::DependentName &&\n"
-             "\t\t\tbase_kind != CanonicalTypeKind::DependentTemplateMember) {",
+             "\t\t\tbase_kind != CanonicalTypeKind::DependentTemplateMember &&\n"
+             "\t\t\tbase_kind != CanonicalTypeKind::DependentMemberAlias) {",
              "if (base_kind == CanonicalTypeKind::DependentName ||\n"
-             "\t\t\tbase_kind == CanonicalTypeKind::DependentTemplateMember) {"),
+             "\t\t\tbase_kind == CanonicalTypeKind::DependentTemplateMember ||\n"
+             "\t\t\tbase_kind == CanonicalTypeKind::DependentMemberAlias) {"),
             ("adapter_cv", "CanonicalTypeAdapter.h",
              "auto id = table.builtin(builtin);\n\tid = table.qualify(id, syntax.cv_qualifier());",
              "auto id = table.builtin(builtin);\n\tid = table.qualify(id, CVQualifier::None);"),

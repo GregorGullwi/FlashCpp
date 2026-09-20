@@ -5,7 +5,7 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-19. Direct member alias targets that capture an enclosing
+Last updated: 2026-09-20. Direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
 IDs. Direct type targets recover the owner parameter's declaration and index
 from the enclosing parser parameter scope before canonical import. The
@@ -16,9 +16,17 @@ dependent (partially concrete) owner or alias argument, a non-Type owner or
 member argument layout, or an owner specialization that does not cover every
 owner parameter reference the published target performs returns no target
 instead of substituting a short layout or emitting a partially dependent type.
-Canonical `DependentTemplateMember`
-nodes still lack member alias declaration identity, so automatic redirection
-of those nodes remains deferred. A nested owner+alias argument target such as
+Qualified member-alias uses now stamp a
+published member alias `TemplateDeclId` into a distinct `DependentMemberAlias`
+canonical node rather than an identity-free `DependentTemplateMember`.
+`CanonicalTypeTable::resolveMemberAliasUse` takes the owner
+specialization from the node's qualifier and the alias arguments from its
+type-only argument chain and redirects through the same owner-then-alias worklist
+as `resolveMemberAliasTarget`; `tryResolveDependentTip` applies it at the
+substitution choke point, so a concrete `Captures<int>::template Pointer<char>`
+collapses to the published target while an unknown declaration or a
+partially-dependent argument stays a dependent tip. A nested owner+alias
+argument target such as
 `Both<Owner, Value>` now publishes: after the member alias declaration ID
 exists, a bounded post-publication pass stamps each matching target type-
 argument specifier with the owner or alias declaration identity and index, so
@@ -198,7 +206,10 @@ fallback) at the `parse_type_specifier` alias lookups and at the shared
 materialization choke point `materializeAliasTemplateInstantiation`, so
 partial-namespace-suffix spellings such as `m::Gauge::Meter<int>` (class
 `Gauge` in namespace `n::m`) that missed the registration-time owner-qualified
-registry key now resolve through the owner chain's type-system lookup. Member
+registry key now resolve through the owner chain's type-system lookup. Dependent
+qualified member-alias uses stamp that same published `TemplateDeclId` into a
+canonical `DependentMemberAlias` node, so `ExpressionSubstitutor` auto-redirects
+them once the owner qualifier is concrete. Member
 variable templates now publish identity the same way:
 `parse_member_variable_template` publishes a `TemplateDeclId`
 (`TemplateDeclTable` `PrimaryKind::Variable`) under the same OwnerId

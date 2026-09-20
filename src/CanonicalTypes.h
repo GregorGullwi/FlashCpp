@@ -35,6 +35,11 @@ enum class CanonicalTypeKind : uint8_t {
 	DependentName, DependentTemplateMember, NameBytes,
 	// Internal Spec/DTM argument-list links carrying opaque payload identities.
 	NonTypeTemplateArg, TemplateTemplateArg, DependentTemplateTemplateArg,
+	// A qualified member-alias use with published declaration identity:
+	// child is the owner qualifier, array_extent packs the alias TemplateDeclId
+	// (low 32) with a type-only TemplateArg chain head (high 32). Appended last
+	// so the numeric identities of the existing kinds are unchanged.
+	DependentMemberAlias,
 };
 
 enum class CanonicalTemplateArgKind : uint8_t {
@@ -159,6 +164,21 @@ inline TypeId unpackDependentTemplateMemberArgs(uint64_t array_extent) {
 	return TypeId{static_cast<uint32_t>(array_extent >> 32)};
 }
 
+// A qualified member-alias use packs the published alias TemplateDeclId in the
+// low 32 bits and the type-only argument chain head in the high 32 bits.
+inline uint64_t packDependentMemberAliasExtent(TemplateDeclId member, TypeId arg_link) {
+	return static_cast<uint64_t>(member.value) |
+		(static_cast<uint64_t>(arg_link.value) << 32);
+}
+
+inline TemplateDeclId unpackDependentMemberAliasDecl(uint64_t array_extent) {
+	return TemplateDeclId{static_cast<uint32_t>(array_extent)};
+}
+
+inline TypeId unpackDependentMemberAliasArgs(uint64_t array_extent) {
+	return TypeId{static_cast<uint32_t>(array_extent >> 32)};
+}
+
 // An immutable structural node. A child is a canonical identity in this table,
 // never an AST pointer, spelling, legacy TypeIndex, or telemetry key.
 // FunctionParam links store the parameter TypeId in array_extent and the next
@@ -178,6 +198,9 @@ inline TypeId unpackDependentTemplateMemberArgs(uint64_t array_extent) {
 // packs a NameBytes link (low 32) with a type-only TemplateArg chain head
 // (high 32) in array_extent — the unresolved member template-id form without a
 // published TemplateDeclId.
+// DependentMemberAlias stores its qualifier in child and packs a published
+// alias TemplateDeclId (low 32) with a type-only TemplateArg chain head
+// (high 32) in array_extent — the resolved-by-identity member template-id form.
 // NameBytes is an internal content link: child is the next link, builtin holds
 // the byte count (1..8), and array_extent packs identifier bytes little-endian.
 // It is not a type or a spelling-handle identity. All links share node rollback.
@@ -702,52 +725,18 @@ public:
 		TypeId owner_specialization, std::span<const TypeId> alias_args) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
-		const auto published = alias_template_targets_.find(member.value);
-		if (published == alias_template_targets_.end() || !published->second.owner ||
-			published->second.parameter_kinds.size() != alias_args.size()) {
-			return std::nullopt;
-		}
-		const CanonicalTypeNode owner_node = nodeUnlocked(owner_specialization);
-		if (owner_node.kind != CanonicalTypeKind::TemplateSpecialization ||
-			owner_node.array_extent != published->second.owner.value) {
-			return std::nullopt;
-		}
-		// Owner arguments must be type-only and concrete; a NonType or
-		// template-template link has no directly representable member target.
-		TemplateVector<CanonicalTemplateArgument, 4> owner_arguments;
-		for (TypeId link = owner_node.child; link; link = nodeUnlocked(link).child) {
-			const CanonicalTypeNode argument = nodeUnlocked(link);
-			if (argument.kind != CanonicalTypeKind::TemplateArg) {
-				return std::nullopt;
-			}
-			const TypeId value{static_cast<uint32_t>(argument.array_extent)};
-			if (isDependentAliasArgumentUnlocked(value) ||
-				isInternalLink(nodeUnlocked(value).kind)) {
-				return std::nullopt;
-			}
-			owner_arguments.push_back(CanonicalTemplateArgument::makeType(value));
-		}
-		// Member arguments must match a type-only published layout and be
-		// concrete; every other published kind keeps the member boundary.
-		TemplateVector<CanonicalTemplateArgument, 4> member_arguments;
-		for (size_t index = 0; index < alias_args.size(); ++index) {
-			if (published->second.parameter_kinds[index] != CanonicalTemplateArgKind::Type ||
-				isDependentAliasArgumentUnlocked(alias_args[index]) ||
-				isInternalLink(nodeUnlocked(alias_args[index]).kind)) {
-				return std::nullopt;
-			}
-			member_arguments.push_back(CanonicalTemplateArgument::makeType(alias_args[index]));
-		}
-		if (!templateParameterReferencesCoveredUnlocked(published->second.target,
-				published->second.owner, owner_arguments.size()) ||
-			!templateParameterReferencesCoveredUnlocked(published->second.target,
-				member, member_arguments.size())) {
-			return std::nullopt;
-		}
-		const TypeId owner_target = substituteArgumentsUnlocked(published->second.target,
-			published->second.owner, owner_arguments);
-		return resolveDirectAliasChainUnlocked(substituteArgumentsUnlocked(
-			owner_target, member, member_arguments));
+		return resolveMemberAliasTargetUnlocked(member, owner_specialization, alias_args);
+	}
+
+	// Resolve a canonical qualified member-alias use by reading the alias
+	// declaration identity it carries: the owner specialization is the node's
+	// qualifier and the alias arguments are its type-only argument chain. This is
+	// the auto-redirect entry point for DependentMemberAlias tips; a use without
+	// published identity is not this kind and stays unresolved.
+	std::optional<TypeId> resolveMemberAliasUse(TypeId use) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		return resolveMemberAliasUseUnlocked(use);
 	}
 
 	std::optional<TypeId> aliasTemplateTarget(TemplateDeclId primary) const {
@@ -842,12 +831,56 @@ public:
 		});
 	}
 
+	// Qualified member-alias use with a published alias TemplateDeclId. Identity
+	// is qualifier + alias declaration + type-only argument TypeIds; no spelling
+	// and no AST pointer participate. The resolver redirects the node only when
+	// the owner specialization and every argument are concrete ([temp.dep]).
+	TypeId dependentMemberAlias(
+		TypeId qualifier,
+		TemplateDeclId member,
+		std::span<const TypeId> arguments) {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		if (!member) {
+			throw InternalError("canonical type: invalid dependent member alias declaration");
+		}
+		if (!isDependentQualifierKind(nodeUnlocked(qualifier).kind)) {
+			throw InternalError("canonical type: unsupported dependent member alias qualifier");
+		}
+		TypeId arg_link{};
+		for (size_t index = arguments.size(); index-- > 0;) {
+			const TypeId argument = arguments[index];
+			const CanonicalTypeNode argument_node = nodeUnlocked(argument);
+			if (isInternalLink(argument_node.kind) ||
+				argument_node.kind == CanonicalTypeKind::Array) {
+				throw InternalError("canonical type: invalid dependent member alias argument");
+			}
+			arg_link = internUnlocked({
+				.child = arg_link,
+				.kind = CanonicalTypeKind::TemplateArg,
+				.builtin = CanonicalBuiltinKind::Void,
+				.qualifiers = CVQualifier::None,
+				.flags = CanonicalTypeNodeFlags::None,
+				.array_extent = argument.value,
+			});
+		}
+		return internUnlocked({
+			.child = qualifier,
+			.kind = CanonicalTypeKind::DependentMemberAlias,
+			.builtin = CanonicalBuiltinKind::Void,
+			.qualifiers = CVQualifier::None,
+			.flags = CanonicalTypeNodeFlags::None,
+			.array_extent = packDependentMemberAliasExtent(member, arg_link),
+		});
+	}
+
 	TypeId dependentNameQualifier(TypeId type) const {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
 		const auto input = nodeUnlocked(type);
 		if (input.kind != CanonicalTypeKind::DependentName &&
-			input.kind != CanonicalTypeKind::DependentTemplateMember) {
+			input.kind != CanonicalTypeKind::DependentTemplateMember &&
+			input.kind != CanonicalTypeKind::DependentMemberAlias) {
 			throw InternalError("canonical type: expected dependent name");
 		}
 		return input.child;
@@ -885,6 +918,26 @@ public:
 			throw InternalError("canonical type: expected dependent template member");
 		}
 		return unpackDependentTemplateMemberArgs(input.array_extent);
+	}
+
+	TemplateDeclId dependentMemberAliasDecl(TypeId type) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(type);
+		if (input.kind != CanonicalTypeKind::DependentMemberAlias) {
+			throw InternalError("canonical type: expected dependent member alias");
+		}
+		return unpackDependentMemberAliasDecl(input.array_extent);
+	}
+
+	TypeId dependentMemberAliasArguments(TypeId type) const {
+		std::lock_guard lock(mutex_);
+		checkTransactionThread();
+		const auto input = nodeUnlocked(type);
+		if (input.kind != CanonicalTypeKind::DependentMemberAlias) {
+			throw InternalError("canonical type: expected dependent member alias");
+		}
+		return unpackDependentMemberAliasArgs(input.array_extent);
 	}
 
 	// Structural substitution for one published primary's type parameters.
@@ -1601,7 +1654,8 @@ private:
 			kind == CanonicalTypeKind::TemplateSpecialization ||
 			kind == CanonicalTypeKind::AliasTemplateSpecialization ||
 			kind == CanonicalTypeKind::DependentName ||
-			kind == CanonicalTypeKind::DependentTemplateMember;
+			kind == CanonicalTypeKind::DependentTemplateMember ||
+			kind == CanonicalTypeKind::DependentMemberAlias;
 	}
 
 	static bool isDependentNameFamily(CanonicalTypeKind kind) {
@@ -1624,6 +1678,7 @@ private:
 			case CanonicalTypeKind::TemplateParameter:
 			case CanonicalTypeKind::DependentName:
 			case CanonicalTypeKind::DependentTemplateMember:
+			case CanonicalTypeKind::DependentMemberAlias:
 				return true;
 			case CanonicalTypeKind::Qualified:
 			case CanonicalTypeKind::Pointer:
@@ -1724,8 +1779,12 @@ private:
 				}
 				break;
 			}
-			case CanonicalTypeKind::DependentTemplateMember: {
-				for (TypeId link = unpackDependentTemplateMemberArgs(node.array_extent); link;
+			case CanonicalTypeKind::DependentTemplateMember:
+			case CanonicalTypeKind::DependentMemberAlias: {
+				const TypeId arg_head = node.kind == CanonicalTypeKind::DependentTemplateMember
+					? unpackDependentTemplateMemberArgs(node.array_extent)
+					: unpackDependentMemberAliasArgs(node.array_extent);
+				for (TypeId link = arg_head; link;
 					 link = nodeUnlocked(link).child) {
 					const CanonicalTypeNode argument = nodeUnlocked(link);
 					if (argument.kind == CanonicalTypeKind::TemplateArg) {
@@ -1754,6 +1813,9 @@ private:
 			switch (node.kind) {
 			case CanonicalTypeKind::NonTypeTemplateArg:
 				return true;
+			case CanonicalTypeKind::DependentMemberAlias:
+				pending.push_back(node.child);
+				break;
 			case CanonicalTypeKind::Qualified:
 			case CanonicalTypeKind::Pointer:
 			case CanonicalTypeKind::LValueReference:
@@ -2086,12 +2148,18 @@ private:
 					continue;
 				case CanonicalTypeKind::TemplateSpecialization:
 				case CanonicalTypeKind::AliasTemplateSpecialization:
-				case CanonicalTypeKind::DependentTemplateMember: {
+				case CanonicalTypeKind::DependentTemplateMember:
+				case CanonicalTypeKind::DependentMemberAlias: {
 					stack.back().building = true;
-					TypeId arg_link = (node.kind == CanonicalTypeKind::TemplateSpecialization ||
-						node.kind == CanonicalTypeKind::AliasTemplateSpecialization)
-						? node.child
-						: unpackDependentTemplateMemberArgs(node.array_extent);
+					TypeId arg_link{};
+					if (node.kind == CanonicalTypeKind::TemplateSpecialization ||
+						node.kind == CanonicalTypeKind::AliasTemplateSpecialization) {
+						arg_link = node.child;
+					} else if (node.kind == CanonicalTypeKind::DependentTemplateMember) {
+						arg_link = unpackDependentTemplateMemberArgs(node.array_extent);
+					} else {
+						arg_link = unpackDependentMemberAliasArgs(node.array_extent);
+					}
 					while (arg_link) {
 						const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
 						if (arg_node.kind == CanonicalTypeKind::TemplateArg) {
@@ -2102,13 +2170,17 @@ private:
 							if (node.kind == CanonicalTypeKind::DependentTemplateMember) {
 								throw InternalError("canonical type: dependent template-member non-type/template args are deferred");
 							}
+							if (node.kind == CanonicalTypeKind::DependentMemberAlias) {
+								throw InternalError("canonical type: dependent member-alias non-type/template args are unsupported");
+							}
 							// Opaque Spec non-type/template arguments do not enter the substitute graph.
 						} else {
 							throw InternalError("canonical type: corrupt template argument link");
 						}
 						arg_link = arg_node.child;
 					}
-					if (node.kind == CanonicalTypeKind::DependentTemplateMember) {
+					if (node.kind == CanonicalTypeKind::DependentTemplateMember ||
+						node.kind == CanonicalTypeKind::DependentMemberAlias) {
 						stack.push_back({node.child, false});
 					}
 					continue;
@@ -2266,10 +2338,13 @@ private:
 				}
 				break;
 			}
-			case CanonicalTypeKind::DependentTemplateMember: {
+			case CanonicalTypeKind::DependentTemplateMember:
+			case CanonicalTypeKind::DependentMemberAlias: {
 				const TypeId qualifier = memo.at(node.child.value);
 				rebuilt_args.clear();
-				TypeId arg_link = unpackDependentTemplateMemberArgs(node.array_extent);
+				TypeId arg_link = node.kind == CanonicalTypeKind::DependentTemplateMember
+					? unpackDependentTemplateMemberArgs(node.array_extent)
+					: unpackDependentMemberAliasArgs(node.array_extent);
 				bool unchanged = qualifier == node.child;
 				while (arg_link) {
 					const CanonicalTypeNode arg_node = nodeUnlocked(arg_link);
@@ -2282,17 +2357,20 @@ private:
 				if (unchanged) {
 					rebuilt = frame.id;
 				} else if (isInternalLink(nodeUnlocked(qualifier).kind)) {
-					throw InternalError("canonical type: substituted dependent template-member qualifier is an internal link");
+					throw InternalError("canonical type: substituted dependent member qualifier is an internal link");
 				} else {
+					const TypeId rebuilt_arg_link = rebuildTemplateArgListUnlocked(rebuilt_args);
 					rebuilt = internUnlocked({
 						.child = qualifier,
-						.kind = CanonicalTypeKind::DependentTemplateMember,
+						.kind = node.kind,
 						.builtin = CanonicalBuiltinKind::Void,
 						.qualifiers = CVQualifier::None,
 						.flags = CanonicalTypeNodeFlags::None,
-						.array_extent = packDependentTemplateMemberExtent(
-							unpackDependentTemplateMemberName(node.array_extent),
-							rebuildTemplateArgListUnlocked(rebuilt_args)),
+						.array_extent = node.kind == CanonicalTypeKind::DependentTemplateMember
+							? packDependentTemplateMemberExtent(
+								unpackDependentTemplateMemberName(node.array_extent), rebuilt_arg_link)
+							: packDependentMemberAliasExtent(
+								unpackDependentMemberAliasDecl(node.array_extent), rebuilt_arg_link),
 					});
 				}
 				break;
@@ -2580,9 +2658,86 @@ private:
 		return std::nullopt;
 	}
 
+	// Shared implementation behind resolveMemberAliasTarget and
+	// resolveMemberAliasUse. The caller holds mutex_.
+	std::optional<TypeId> resolveMemberAliasTargetUnlocked(TemplateDeclId member,
+		TypeId owner_specialization, std::span<const TypeId> alias_args) {
+		const auto published = alias_template_targets_.find(member.value);
+		if (published == alias_template_targets_.end() || !published->second.owner ||
+			published->second.parameter_kinds.size() != alias_args.size()) {
+			return std::nullopt;
+		}
+		const CanonicalTypeNode owner_node = nodeUnlocked(owner_specialization);
+		if (owner_node.kind != CanonicalTypeKind::TemplateSpecialization ||
+			owner_node.array_extent != published->second.owner.value) {
+			return std::nullopt;
+		}
+		// Owner arguments must be type-only and concrete; a NonType or
+		// template-template link has no directly representable member target.
+		TemplateVector<CanonicalTemplateArgument, 4> owner_arguments;
+		for (TypeId link = owner_node.child; link; link = nodeUnlocked(link).child) {
+			const CanonicalTypeNode argument = nodeUnlocked(link);
+			if (argument.kind != CanonicalTypeKind::TemplateArg) {
+				return std::nullopt;
+			}
+			const TypeId value{static_cast<uint32_t>(argument.array_extent)};
+			if (isDependentAliasArgumentUnlocked(value) ||
+				isInternalLink(nodeUnlocked(value).kind)) {
+				return std::nullopt;
+			}
+			owner_arguments.push_back(CanonicalTemplateArgument::makeType(value));
+		}
+		// Member arguments must match a type-only published layout and be
+		// concrete; every other published kind keeps the member boundary.
+		TemplateVector<CanonicalTemplateArgument, 4> member_arguments;
+		for (size_t index = 0; index < alias_args.size(); ++index) {
+			if (published->second.parameter_kinds[index] != CanonicalTemplateArgKind::Type ||
+				isDependentAliasArgumentUnlocked(alias_args[index]) ||
+				isInternalLink(nodeUnlocked(alias_args[index]).kind)) {
+				return std::nullopt;
+			}
+			member_arguments.push_back(CanonicalTemplateArgument::makeType(alias_args[index]));
+		}
+		if (!templateParameterReferencesCoveredUnlocked(published->second.target,
+				published->second.owner, owner_arguments.size()) ||
+			!templateParameterReferencesCoveredUnlocked(published->second.target,
+				member, member_arguments.size())) {
+			return std::nullopt;
+		}
+		const TypeId owner_target = substituteArgumentsUnlocked(published->second.target,
+			published->second.owner, owner_arguments);
+		return resolveDirectAliasChainUnlocked(substituteArgumentsUnlocked(
+			owner_target, member, member_arguments));
+	}
+
+	// Read the declaration identity a DependentMemberAlias carries and redirect
+	// through resolveMemberAliasTargetUnlocked. The caller holds mutex_.
+	std::optional<TypeId> resolveMemberAliasUseUnlocked(TypeId use) {
+		const CanonicalTypeNode node = nodeUnlocked(use);
+		if (node.kind != CanonicalTypeKind::DependentMemberAlias) {
+			return std::nullopt;
+		}
+		const TemplateDeclId member = unpackDependentMemberAliasDecl(node.array_extent);
+		TemplateVector<TypeId, 4> alias_args;
+		for (TypeId link = unpackDependentMemberAliasArgs(node.array_extent); link;
+			 link = nodeUnlocked(link).child) {
+			const CanonicalTypeNode argument = nodeUnlocked(link);
+			if (argument.kind != CanonicalTypeKind::TemplateArg) {
+				return std::nullopt;
+			}
+			alias_args.push_back(TypeId{static_cast<uint32_t>(argument.array_extent)});
+		}
+		return resolveMemberAliasTargetUnlocked(
+			member, node.child, std::span<const TypeId>(alias_args.data(), alias_args.size()));
+	}
+
 	TypeId tryResolveDependentTipUnlocked(TypeId type) {
 		if (!type) {
 			throw InternalError("canonical type: invalid dependent tip TypeId");
+		}
+		if (nodeUnlocked(type).kind == CanonicalTypeKind::DependentMemberAlias) {
+			const std::optional<TypeId> resolved = resolveMemberAliasUseUnlocked(type);
+			return resolved.has_value() ? *resolved : type;
 		}
 		if (nodeUnlocked(type).kind != CanonicalTypeKind::DependentName) {
 			return type;

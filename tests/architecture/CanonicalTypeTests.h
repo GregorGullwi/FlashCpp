@@ -59,6 +59,28 @@ inline bool sameStructure(const CanonicalTypeTable& left, TypeId left_id,
 			right_id = b.child;
 			continue;
 		}
+		if (a.kind == CanonicalTypeKind::DependentMemberAlias) {
+			if (left.dependentMemberAliasDecl(left_id) !=
+				right.dependentMemberAliasDecl(right_id)) {
+				return false;
+			}
+			TypeId left_arg = left.dependentMemberAliasArguments(left_id);
+			TypeId right_arg = right.dependentMemberAliasArguments(right_id);
+			while (left_arg || right_arg) {
+				if (!left_arg || !right_arg) {
+					return false;
+				}
+				if (!sameStructure(left, left.templateArgumentType(left_arg),
+					right, right.templateArgumentType(right_arg))) {
+					return false;
+				}
+				left_arg = left.templateArgumentNext(left_arg);
+				right_arg = right.templateArgumentNext(right_arg);
+			}
+			left_id = a.child;
+			right_id = b.child;
+			continue;
+		}
 		if (a.kind == CanonicalTypeKind::Record || a.kind == CanonicalTypeKind::Enum ||
 			a.kind == CanonicalTypeKind::TemplateParameter) {
 			return a.array_extent == b.array_extent;
@@ -1725,6 +1747,75 @@ inline void checkMemberAliasOwnerEnvironmentFailClosed() {
 	std::printf("member alias owner environment: fail-closed\n");
 }
 
+// A qualified member-alias use with published declaration identity
+// auto-redirects through resolveMemberAliasUse and tryResolveDependentTip. The
+// owner arguments come from the qualifier's TemplateSpecialization and the alias
+// arguments from the use; the owner/alias order is distinguished. An unknown
+// member declaration and a dependent alias argument stay unresolved instead of
+// producing a partial target.
+inline void checkMemberAliasUseAutoRedirect() {
+	CanonicalTypeTable table;
+	const TemplateDeclId owner{100};
+	const TemplateDeclId alias{101};
+	const TemplateDeclId target_primary{102};
+	const TypeId owner_param = table.templateParameter(owner, 0);
+	const TypeId alias_param = table.templateParameter(alias, 0);
+	const TypeId owner_arg = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId alias_arg = table.builtin(CanonicalBuiltinKind::Char);
+	const CanonicalTemplateArgKind kinds[] = {CanonicalTemplateArgKind::Type};
+	const TypeId target = table.templateSpecialization(target_primary,
+		std::array<TypeId, 2>{owner_param, alias_param});
+	table.publishAliasTemplateTarget(alias, owner, target, kinds);
+	const TypeId expected = table.templateSpecialization(target_primary,
+		std::array<TypeId, 2>{owner_arg, alias_arg});
+
+	const TypeId qualifier =
+		table.templateSpecialization(owner, std::array<TypeId, 1>{owner_arg});
+	const TypeId use =
+		table.dependentMemberAlias(qualifier, alias, std::array<TypeId, 1>{alias_arg});
+	require(table.node(use).kind == CanonicalTypeKind::DependentMemberAlias);
+	require(table.dependentMemberAliasDecl(use) == alias);
+	require(table.dependentMemberAliasArguments(use) != TypeId{});
+	require(table.dependentNameQualifier(use) == qualifier);
+	require(table.resolveMemberAliasUse(use).has_value());
+	require(*table.resolveMemberAliasUse(use) == expected);
+	require(table.tryResolveDependentTip(use) == expected);
+	// Owner arguments precede alias arguments; swapping them is a different type.
+	require(*table.resolveMemberAliasUse(use) !=
+		table.templateSpecialization(target_primary,
+			std::array<TypeId, 2>{alias_arg, owner_arg}));
+	require(use == table.dependentMemberAlias(qualifier, alias,
+		std::array<TypeId, 1>{alias_arg}));
+
+	// An unknown member declaration is not a published alias and stays a
+	// dependent tip.
+	const TemplateDeclId unknown{103};
+	const TypeId unknown_use =
+		table.dependentMemberAlias(qualifier, unknown, std::array<TypeId, 1>{alias_arg});
+	require(!table.resolveMemberAliasUse(unknown_use).has_value());
+	require(table.tryResolveDependentTip(unknown_use) == unknown_use);
+
+	// Substitution of the qualifier's owner argument then auto-resolution
+	// redirects through the identity the node carries.
+	const TypeId dependent_qualifier =
+		table.templateSpecialization(owner, std::array<TypeId, 1>{owner_param});
+	const TypeId dependent_use = table.dependentMemberAlias(dependent_qualifier, alias,
+		std::array<TypeId, 1>{alias_arg});
+	const TypeId substituted = table.substitute(dependent_use, owner,
+		std::array<TypeId, 1>{owner_arg});
+	require(table.tryResolveDependentTip(substituted) == expected);
+
+	// A dependent (partially concrete) alias argument defers.
+	const TemplateDeclId other_env{104};
+	const TypeId other_param = table.templateParameter(other_env, 0);
+	const TypeId dependent_argument_use = table.dependentMemberAlias(qualifier, alias,
+		std::array<TypeId, 1>{other_param});
+	require(!table.resolveMemberAliasUse(dependent_argument_use).has_value());
+	require(table.tryResolveDependentTip(dependent_argument_use) == dependent_argument_use);
+
+	std::printf("member alias use auto-redirect: resolved\n");
+}
+
 inline void checkAliasRedirection() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -1961,6 +2052,7 @@ inline int run() {
 	checkMemberAliasOwnerEnvironment();
 	checkMemberAliasOwnerNestedTarget();
 	checkMemberAliasOwnerEnvironmentFailClosed();
+	checkMemberAliasUseAutoRedirect();
 	checkTransactions();
 	checkAdapter();
 	checkTemplateDeclPublication();

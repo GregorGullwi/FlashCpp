@@ -5260,9 +5260,12 @@ ExpressionSubstitutor::tryRestampDependentNameType(const TypeSpecifierNode& type
 				}
 				break;
 			}
-			case CanonicalTypeKind::DependentTemplateMember: {
+			case CanonicalTypeKind::DependentTemplateMember:
+			case CanonicalTypeKind::DependentMemberAlias: {
 				stack.push_back(node.child);
-				TypeId arg_link = table.dependentTemplateMemberArguments(current);
+				TypeId arg_link = node.kind == CanonicalTypeKind::DependentTemplateMember
+					? table.dependentTemplateMemberArguments(current)
+					: table.dependentMemberAliasArguments(current);
 				while (arg_link) {
 					stack.push_back(table.templateArgumentType(arg_link));
 					arg_link = table.templateArgumentNext(arg_link);
@@ -5328,7 +5331,8 @@ ExpressionSubstitutor::tryRestampDependentNameType(const TypeSpecifierNode& type
 	substituted = table.tryResolveDependentTip(substituted);
 	const CanonicalTypeKind tip_kind = table.node(substituted).kind;
 	if (tip_kind == CanonicalTypeKind::DependentName ||
-		tip_kind == CanonicalTypeKind::DependentTemplateMember) {
+		tip_kind == CanonicalTypeKind::DependentTemplateMember ||
+		tip_kind == CanonicalTypeKind::DependentMemberAlias) {
 		return {DependentNameRestampAction::Set, substituted};
 	}
 	// Tip collapsed to a concrete/canonical type. Carry the tip for TypeIndex
