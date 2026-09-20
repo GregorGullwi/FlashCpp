@@ -2139,6 +2139,29 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 				ExprResult init_operands = visitVariableInitializer(init_node.as<ExpressionNode>());
 
+					// C++20 [conv.array]: initializing a pointer from an array lvalue,
+					// including a struct array member such as `int* p = s.values;`,
+					// decays to the array's address. Member-access lowering already
+					// computed that address into a temp; materialize it explicitly so
+					// the pointer store copies the address instead of dereferencing it.
+				if (type_node.pointer_depth() > 0 &&
+					std::holds_alternative<TempVar>(init_operands.value)) {
+					const void* init_key = static_cast<const void*>(&init_node.as<ExpressionNode>());
+					const auto init_slot = sema_.getSlot(init_key);
+					if (init_slot.has_value() && init_slot->has_cast()) {
+						const ImplicitCastInfo& array_decay_cast =
+							sema_.castInfoTable()[init_slot->cast_info_index.value - 1];
+						if (array_decay_cast.cast_kind == StandardConversionKind::ArrayToPointer) {
+							init_operands = materializeAddressResult(
+								init_node.as<ExpressionNode>(),
+								std::move(init_operands),
+								decl.identifier_token());
+							init_operands.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+							init_operands.pointer_depth = PointerDepth{1};
+						}
+					}
+				}
+
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 				{
