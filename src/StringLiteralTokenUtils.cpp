@@ -1,3 +1,4 @@
+#include "AstNodeTypes.h"
 #include "StringLiteralTokenUtils.h"
 #include "AstNodeTypes_TypeSystem.h"
 

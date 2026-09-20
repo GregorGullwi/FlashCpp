@@ -1,3 +1,4 @@
+#include "AstNodeTypes.h"
 #include "IrType.h"
 
 #include "CompileError.h"

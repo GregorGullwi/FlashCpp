@@ -1,3 +1,4 @@
+#include "AstNodeTypes.h"
 #include "TemplateEnvironment.h"
 
 #include "ChunkedAnyVector.h"

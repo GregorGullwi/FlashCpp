@@ -1,3 +1,4 @@
+#include "AstNodeTypes.h"
 #include "SemanticAnalysis.h"
 #include "MigrationStats.h"
 #include "Parser.h"
