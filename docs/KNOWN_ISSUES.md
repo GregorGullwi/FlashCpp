@@ -358,18 +358,6 @@ member cv metadata through parsing and template substitution, then make the
 sema-owned implicit default-constructor record decide this case. Do not recreate
 the decision in IR from type spellings.
 
-## Deferred alias bases can leave an incomplete default-constructor plan
-
-Some deferred class-template base aliases retain the source alias spelling and
-an unresolved `TypeIndex` after the enclosing specialization is otherwise ready
-for IR. Sema records this explicitly as
-`ImplicitDefaultConstructorSemanticRecord::has_unresolved_base_initialization`,
-but cannot yet publish a concrete base-constructor action or determine deletion
-from that base. Preserve the resolved base declaration identity during alias
-substitution, then require semantic special-member finalization to resolve every
-base. Codegen rejects an incomplete plan; do not restore name lookup or silently
-omit the unresolved base action.
-
 ## Recursive class-template constant chains can overflow the native stack
 
 A generated benchmark probe using a recursively specialized class template

@@ -3320,7 +3320,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 						if (type_info->getStructInfo()->isDefaultConstructorDeleted() ||
 							implicit_default_constructor.is_deleted) {
-							throw CompileError("Cannot use deleted default constructor");
+							throw makeStructuredCompileError(
+								context_->diagnostics(),
+								DiagnosticId::DeletedDefaultConstructorCall,
+								DiagnosticSeverity::Error,
+								SourceLocation::fromToken(decl.identifier_token()),
+								"Cannot use deleted default constructor",
+								{});
 						}
 
 						const bool semantic_plan_requires_call =
