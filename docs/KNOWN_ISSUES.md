@@ -380,13 +380,6 @@ root; unrelated to the DiagnosticEngine slice that surfaced it. Suspect shared
 static state across earlier TEST_CASEs in the same process. Owner: sema query
 lifecycle; fix by isolating per-test semantic state or resetting query slots.
 
-## ELF preprocessing also defines Windows target macros
-
-FlashCpp currently defines `_WIN32`, `_WIN64`, and `_MSC_VER` even for its LP64
-ELF target, where it also defines `__ELF__`. Portable source cannot use `_WIN32`
-alone to distinguish the generated object format. The Win64-only virtual ABI
-regression therefore uses `__ELF__` as its target guard.
-
 ## Unity arithmetic test can overflow the native stack
 
 The unity test executable crashes with `SIGSEGV - Stack overflow` in `Arithmetic
