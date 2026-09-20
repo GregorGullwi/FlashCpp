@@ -335,6 +335,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 			ts.is_reference() ||
 			ts.is_rvalue_reference() ||
 			ts.has_function_signature();
+		info.is_pointer_like = ts_is_pointer_like;
 		info.size_in_bits = SizeInBits{ts_is_pointer_like
 										   ? POINTER_SIZE_BITS
 										   : static_cast<int>(ts.size_in_bits())};
@@ -1889,7 +1890,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 			const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-			if (gsi.is_global_or_static && !isIrStructType(toIrType(gsi.bindingType()))) {
+			if (gsi.is_global_or_static &&
+				(gsi.is_pointer_like || !isIrStructType(toIrType(gsi.bindingType())))) {
 				// This is a global variable or static local assignment - generate GlobalStore instruction
 				// Generate IR for the RHS
 				ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());

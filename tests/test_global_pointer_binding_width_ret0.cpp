@@ -3,10 +3,6 @@
 // declaration's base-type size, truncating pointers on store
 // (C++20 [dcl.ptr]/1, [basic.align]).
 //
-// NOTE: member stores through a global struct pointer (wp->tag = 7) still
-// misbehave; that is a separate pre-existing gap tracked in
-// docs/KNOWN_ISSUES.md.
-
 int gv;
 int* gp;
 
@@ -33,4 +29,3 @@ int main() {
 	}
 	return 0;
 }
-

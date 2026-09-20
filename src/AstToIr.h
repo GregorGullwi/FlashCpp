@@ -119,6 +119,7 @@ private:
 
 	struct GlobalStaticBindingInfo {
 		bool is_global_or_static = false;
+		bool is_pointer_like = false;
 		StringHandle store_name;
 		// TypeCategory is embedded in type_index; default = Void to preserve original sentinel.
 		TypeIndex type_index = nativeTypeIndex(TypeCategory::Void);
