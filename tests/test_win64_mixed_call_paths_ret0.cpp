@@ -77,7 +77,7 @@ int main() {
 		return 5;
 	}
 
-#ifndef __ELF__
+#ifdef _WIN32
 	MemberPath* polymorphic = &member;
 	if (polymorphic->virtualCheck(11, 22.5, 33, 44.5, 55, 66.5) != 0) {
 		return 6;

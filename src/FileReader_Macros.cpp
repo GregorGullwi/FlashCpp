@@ -1617,11 +1617,6 @@ void FileReader::addBuiltinDefines() {
 	defines_["_GLIBCXX_ABI_TAG_CXX11"] = DefineDirective{};	// Strip ABI tags
 	defines_["_GLIBCXX_USE_WCHAR_T"] = DefineDirective{"1", {}};	 // Enable wchar_t support and wide char functions
 
-	// MSVC C++ standard version feature flags (cumulative)
-	defines_["_HAS_CXX17"] = DefineDirective{"1", {}};  // C++17 features available
-	defines_["_HAS_CXX20"] = DefineDirective{"1", {}};  // C++20 features available
-	defines_["_MSVC_LANG"] = DefineDirective{"202002L", {}};	 // MSVC language version (C++20)
-
 	// FlashCpp compiler identification
 	defines_["__FLASHCPP__"] = DefineDirective{"1", {}};
 	defines_["__FLASHCPP_VERSION__"] = DefineDirective{"1", {}};
@@ -1629,31 +1624,36 @@ void FileReader::addBuiltinDefines() {
 	defines_["__FLASHCPP_VERSION_MINOR__"] = DefineDirective{"1", {}};
 	defines_["__FLASHCPP_VERSION_PATCH__"] = DefineDirective{"0", {}};
 
-	// Windows platform macros
-	defines_["_WIN32"] = DefineDirective{"1", {}};
-	defines_["_WIN64"] = DefineDirective{"1", {}};
-	defines_["_MSC_VER"] = DefineDirective{"1944", {}};	// MSVC 2022 (match clang behavior)
-	defines_["_MSC_FULL_VER"] = DefineDirective{"194435217", {}};  // MSVC 2022 full version
-	defines_["_MSC_BUILD"] = DefineDirective{"1", {}};
-	defines_["_MSC_EXTENSIONS"] = DefineDirective{"1", {}};	// Enable MSVC extensions
-
-	// MSVC STL macros
-	defines_["_HAS_EXCEPTIONS"] = DefineDirective{"1", {}};	// Exception handling enabled
-	defines_["_CPPRTTI"] = DefineDirective{"1", {}};	 // RTTI enabled
-	defines_["_NATIVE_WCHAR_T_DEFINED"] = DefineDirective{"1", {}};	// wchar_t is native type
-	defines_["_WCHAR_T_DEFINED"] = DefineDirective{"1", {}};
-
-	// Additional common MSVC macros
-	defines_["_INTEGRAL_MAX_BITS"] = DefineDirective{"64", {}};
-	defines_["_MT"] = DefineDirective{"1", {}};	// Multithreaded
-	defines_["_DLL"] = DefineDirective{"1", {}};	 // Using DLL runtime
+	if (settings_.getDataModel() == CompileContext::DataModel::LLP64) {
+		// Windows and MSVC compatibility macros describe the COFF target.
+		defines_["_WIN32"] = DefineDirective{"1", {}};
+		defines_["_WIN64"] = DefineDirective{"1", {}};
+		defines_["_MSC_VER"] = DefineDirective{"1944", {}};	// MSVC 2022 (match clang behavior)
+		defines_["_MSC_FULL_VER"] = DefineDirective{"194435217", {}};  // MSVC 2022 full version
+		defines_["_MSC_BUILD"] = DefineDirective{"1", {}};
+		defines_["_MSC_EXTENSIONS"] = DefineDirective{"1", {}};	// Enable MSVC extensions
+		defines_["_HAS_CXX17"] = DefineDirective{"1", {}};
+		defines_["_HAS_CXX20"] = DefineDirective{"1", {}};
+		defines_["_MSVC_LANG"] = DefineDirective{"202002L", {}};
+		defines_["_HAS_EXCEPTIONS"] = DefineDirective{"1", {}};
+		defines_["_CPPRTTI"] = DefineDirective{"1", {}};
+		defines_["_NATIVE_WCHAR_T_DEFINED"] = DefineDirective{"1", {}};
+		defines_["_WCHAR_T_DEFINED"] = DefineDirective{"1", {}};
+		defines_["_INTEGRAL_MAX_BITS"] = DefineDirective{"64", {}};
+		defines_["_MT"] = DefineDirective{"1", {}};
+		defines_["_DLL"] = DefineDirective{"1", {}};
+	} else {
+		defines_["__ELF__"] = DefineDirective{"1", {}};
+	}
 
 	// Architecture macros
 	defines_["__x86_64__"] = DefineDirective{"1", {}};
 	defines_["__amd64__"] = DefineDirective{"1", {}};
 	defines_["__amd64"] = DefineDirective{"1", {}};
-	defines_["_M_X64"] = DefineDirective{"100", {}};	 // MSVC-style
-	defines_["_M_AMD64"] = DefineDirective{"100", {}};
+	if (settings_.getDataModel() == CompileContext::DataModel::LLP64) {
+		defines_["_M_X64"] = DefineDirective{"100", {}};	 // MSVC-style
+		defines_["_M_AMD64"] = DefineDirective{"100", {}};
+	}
 
 	// Byte order macros (needed by <compare> and other headers)
 	defines_["__ORDER_LITTLE_ENDIAN__"] = DefineDirective{"1234", {}};
@@ -1832,9 +1832,6 @@ void FileReader::addBuiltinDefines() {
 		// _GNU_SOURCE enables POSIX/GNU features in glibc headers (e.g., uselocale in locale.h)
 		// Both Clang and GCC define this by default on Linux, even with -std=c++20
 		defines_["_GNU_SOURCE"] = DefineDirective{"1", {}};
-		if (settings_.getDataModel() == CompileContext::DataModel::LP64) {
-			defines_["__ELF__"] = DefineDirective{"1", {}};
-		}
 		defines_["__VERSION__"] = DefineDirective{"\"FlashCpp (gcc compatibility)\"", {}};
 		defines_["__GCC_ATOMIC_BOOL_LOCK_FREE"] = DefineDirective{"2", {}};
 		defines_["__GCC_ATOMIC_CHAR_LOCK_FREE"] = DefineDirective{"2", {}};
