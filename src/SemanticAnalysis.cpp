@@ -574,7 +574,9 @@ TypeSpecifierNode materializeTypeSpecifierWithMaxPointerDepth(
 // array expressions follow the same path; their parser-facing expression
 // types are not necessarily already decayed.
 std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDesc& desc) {
-	if (desc.array_dimensions.empty()) {
+	// C++20 [conv.array]/1 applies only to array objects. Pointer-to-array
+	// types already have their extents on the pointee and must not decay.
+	if (desc.pointee_array_declarator || desc.array_dimensions.empty()) {
 		return std::nullopt;
 	}
 

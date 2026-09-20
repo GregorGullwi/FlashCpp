@@ -72,9 +72,7 @@ bool memberTypeIsDependent(
 		Token{},
 		CVQualifier::None);
 	member_type.set_type_index(member_result.member->type_index);
-	if (member_result.member->pointer_depth > 0) {
-		member_type.add_pointer_levels(member_result.member->pointer_depth);
-	}
+	applyMemberDeclaratorShape(member_type, *member_result.member);
 	if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
 		member_type.set_reference_qualifier(member_result.member->reference_qualifier);
 	}
@@ -3242,10 +3240,15 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// such as int (*p)[3] already holds a pointer and never decays
 				// further (C++20 [conv.array]/1).
 				if (decl->is_array_object()) {
-					// This is an array declaration - decay to pointer
-					// Create a new TypeSpecifierNode with one level of pointer
+					// C++20 [conv.array]/1: array of N T → pointer to T. Inner
+					// extents remain as a pointer-to-array pointee, e.g.
+					// int[2][3] decays to int(*)[3], not a hybrid int[2][3]*.
 					TypeSpecifierNode pointer_type = type;
-					pointer_type.add_pointer_level();
+					applyDeclarationArrayBoundsToTypeSpec(*decl, pointer_type, *this);
+					applyArrayToPointerConversion(pointer_type);
+					if (!pointer_type.is_pointer()) {
+						pointer_type.add_pointer_level();
+					}
 					return pointer_type;
 				}
 
@@ -3869,15 +3872,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					// member->size is in bytes, TypeSpecifierNode expects bits
 					TypeSpecifierNode member_type(member_result.member->memberType(), TypeQualifier::None, member_result.member->size * 8, Token{}, CVQualifier::None);
 					member_type.set_type_index(member_result.member->type_index);
-					if (member_result.member->is_array) {
-						member_type.set_array(true);
-						if (!member_result.member->array_dimensions.empty()) {
-							member_type.set_array_dimensions(member_result.member->array_dimensions);
-						}
-					}
-					if (member_result.member->pointer_depth > 0) {
-						member_type.add_pointer_levels(member_result.member->pointer_depth);
-					}
+					applyMemberDeclaratorShape(member_type, *member_result.member);
 					if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
 						member_type.set_reference_qualifier(member_result.member->reference_qualifier);
 					} else {
@@ -3923,7 +3918,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		for (size_t i = 1; i < member_pointer_type.pointer_depth(); ++i) {
 			result.add_pointer_level(member_pointer_type.pointer_levels()[i].cv_qualifier);
 		}
-		if (member_pointer_type.is_array()) {
+		if (member_pointer_type.has_pointee_array_declarator()) {
+			result.set_pointee_array_declarator(true);
+			result.set_pointee_array_dimensions(member_pointer_type.array_dimensions());
+		} else if (member_pointer_type.is_array()) {
 			result.set_array_dimensions(member_pointer_type.array_dimensions());
 		}
 		apply_member_access_value_category(
@@ -4064,9 +4062,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						if (static_member->is_const()) {
 							member_type.set_cv_qualifier(CVQualifier::Const);
 						}
-						if (static_member->pointer_depth > 0) {
-							member_type.add_pointer_levels(static_member->pointer_depth);
-						}
+						applyMemberDeclaratorShape(member_type, *static_member);
 						if (static_member->reference_qualifier != ReferenceQualifier::None) {
 							member_type.set_reference_qualifier(static_member->reference_qualifier);
 						}
@@ -4087,15 +4083,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 							Token{},
 							CVQualifier::None);
 						member_type.set_type_index(member_result.member->type_index);
-						if (member_result.member->is_array) {
-							member_type.set_array(true);
-							if (!member_result.member->array_dimensions.empty()) {
-								member_type.set_array_dimensions(member_result.member->array_dimensions);
-							}
-						}
-						if (member_result.member->pointer_depth > 0) {
-							member_type.add_pointer_levels(member_result.member->pointer_depth);
-						}
+						applyMemberDeclaratorShape(member_type, *member_result.member);
 						if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
 							member_type.set_reference_qualifier(member_result.member->reference_qualifier);
 						}
