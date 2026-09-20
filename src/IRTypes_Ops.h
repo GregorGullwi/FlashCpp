@@ -534,6 +534,7 @@ struct MemberLoadOp {
 	const TypeInfo* struct_type_info;				  // Parent struct type (nullptr if not available)
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Member declaration reference qualifier (not access kind)
 	bool is_pointer_to_member = false;			   // True if accessing through pointer (ptr->member), false for direct (obj.member)
+	bool is_array_member = false;				  // True when the member is an array; its address must be preserved
 	std::optional<size_t> bitfield_width;			  // Width in bits for bitfield members
 	size_t bitfield_bit_offset = 0;					// Bit offset within the storage unit for bitfield members
 

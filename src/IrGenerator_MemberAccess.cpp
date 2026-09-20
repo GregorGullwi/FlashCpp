@@ -2099,7 +2099,12 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	lvalue_info.is_pointer_to_member = is_pointer_dereference; // Mark if accessing through pointer
 	lvalue_info.bitfield_width = member->bitfield_width;
 	lvalue_info.bitfield_bit_offset = member->bitfield_bit_offset;
-	if (member_is_xvalue && !member->is_reference()) {
+	if (member->is_array) {
+		// An array member is lowered to its storage address, not a loaded value,
+		// so downstream decay/copy must not dereference it.
+		setTempVarMetadata(result_var, TempVarMetadata::makeAddressOnly(
+			member->type_index, SizeInBits{member_size_bits}, ValueCategory::LValue));
+	} else if (member_is_xvalue && !member->is_reference()) {
 		setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, member->type_index.category(), member_size_bits));
 	} else {
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->type_index.category(), member_size_bits));
@@ -2122,6 +2127,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 	member_load.struct_type_info = nullptr;
 	member_load.is_pointer_to_member = is_pointer_dereference; // Mark if accessing through pointer
+	member_load.is_array_member = member->is_array;
 	member_load.bitfield_width = member->bitfield_width;
 	member_load.bitfield_bit_offset = member->bitfield_bit_offset;
 
@@ -2183,8 +2189,13 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 								PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 	}
 
+	// Array members are lowered to their storage address (see the converter's
+	// keep-address path), so report ContainsAddress: subscripting and
+	// array-to-pointer decay both need the address, not a loaded value.
+	const ValueStorage member_storage =
+		member->is_array ? ValueStorage::ContainsAddress : ValueStorage::ContainsData;
 	return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
-							PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
+							PointerDepth{member->pointer_depth}, member_storage);
 }
 
 std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
