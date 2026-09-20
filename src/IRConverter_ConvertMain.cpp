@@ -13787,7 +13787,9 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 	// Non-union struct members must preserve their address so nested member access keeps
 	// using the subobject as an aggregate base instead of loading raw bytes as though
 	// the struct were a scalar value. Large members already require address storage for
-	// the same reason. Unions stay load-by-value here so existing scalar-style union
+	// the same reason. Array members must also keep their address regardless of total
+	// size, since subscripting and decay operate on the member's storage location, not
+	// on a loaded value. Unions stay load-by-value here so existing scalar-style union
 	// member reads and copies keep their current behavior.
 	bool keep_member_address = false;
 	bool is_addressable_struct_member =
@@ -13799,7 +13801,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			}
 		}
 	}
-	if (member_size_bytes > 8 || keep_member_address) {
+	if (member_size_bytes > 8 || keep_member_address || op.is_array_member) {
 		// Allocate a register to compute the address
 		X64Register addr_reg = allocateRegisterWithSpilling();
 
@@ -13851,8 +13853,14 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 							   store_addr.op_codes.begin() + store_addr.size_in_bytes);
 		regAlloc.release(addr_reg);
 
-		// Mark this temp var as containing a pointer/address
-		setReferenceInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, false, result_var);
+		// Mark this temp var as containing a pointer/address. Array members hold
+		// the address of their storage (not a reference to a scalar), so mark
+		// them address-only to keep decay/copies from dereferencing.
+		if (op.is_array_member) {
+			setAddressOnlyInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, result_var);
+		} else {
+			setReferenceInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, false, result_var);
+		}
 		return;
 	}
 
