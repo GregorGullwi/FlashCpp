@@ -1816,6 +1816,104 @@ inline void checkMemberAliasUseAutoRedirect() {
 	std::printf("member alias use auto-redirect: resolved\n");
 }
 
+// Concrete direct alias specializations nested anywhere in a substituted graph
+// redirect to their published targets: wrappers, specialization type arguments,
+// and array / qualified / reference nodes. A nested alias with a dependent
+// argument or a nested declaration-ID cycle keeps the AliasTemplateSpecialization
+// boundary instead of collapsing or looping.
+inline void checkNestedAliasGraph() {
+	CanonicalTypeTable table;
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId floating = table.builtin(CanonicalBuiltinKind::Double);
+	const TypeId dummy_args[] = {integer};
+	const CanonicalTemplateArgKind type_kind[] = {CanonicalTemplateArgKind::Type};
+
+	// Identity<T> = T, used as a nested argument in several shapes.
+	const TemplateDeclId identity{201};
+	table.publishAliasTemplateTarget(identity,
+		table.templateParameter(identity, 0), type_kind);
+	const CanonicalTemplateArgument identity_int[] = {
+		CanonicalTemplateArgument::makeType(integer),
+	};
+	const TypeId identity_use = table.aliasTemplateSpecialization(identity, identity_int);
+
+	// Nested inside a pointer collapses to pointer(int).
+	require(table.substitute(table.pointer(identity_use), identity, dummy_args) ==
+		table.pointer(integer));
+
+	// Nested as a class-template type argument collapses to int.
+	const TypeId nested_argument = table.templateSpecialization(TemplateDeclId{202},
+		std::array<CanonicalTemplateArgument, 1>{
+			CanonicalTemplateArgument::makeType(identity_use)});
+	const TypeId expected_argument = table.templateSpecialization(TemplateDeclId{202},
+		std::array<CanonicalTemplateArgument, 1>{
+			CanonicalTemplateArgument::makeType(integer)});
+	require(table.substitute(nested_argument, identity, dummy_args) == expected_argument);
+
+	// Nested under array, qualified, and reference wrappers collapses.
+	require(table.substitute(table.array(table.qualify(identity_use, CVQualifier::Const), 4),
+		identity, dummy_args) == table.array(table.qualify(integer, CVQualifier::Const), 4));
+	require(table.substitute(table.reference(table.pointer(identity_use),
+		ReferenceQualifier::LValueReference), identity, dummy_args) ==
+		table.reference(table.pointer(integer), ReferenceQualifier::LValueReference));
+
+	// Swap<T, U> = Pair<U, T> exposes nested aliases in its own published target.
+	const TemplateDeclId swap_alias{203};
+	const CanonicalTemplateArgument swap_target[] = {
+		CanonicalTemplateArgument::makeType(table.templateParameter(swap_alias, 1)),
+		CanonicalTemplateArgument::makeType(table.templateParameter(swap_alias, 0)),
+	};
+	const CanonicalTemplateArgKind swap_kinds[] = {
+		CanonicalTemplateArgKind::Type,
+		CanonicalTemplateArgKind::Type,
+	};
+	table.publishAliasTemplateTarget(swap_alias,
+		table.templateSpecialization(TemplateDeclId{204}, swap_target), swap_kinds);
+	const CanonicalTemplateArgument swap_concrete[] = {
+		CanonicalTemplateArgument::makeType(integer),
+		CanonicalTemplateArgument::makeType(floating),
+	};
+	const TypeId swap_use = table.aliasTemplateSpecialization(swap_alias, swap_concrete);
+	const CanonicalTemplateArgument swap_expected[] = {
+		CanonicalTemplateArgument::makeType(floating),
+		CanonicalTemplateArgument::makeType(integer),
+	};
+	// Outer<Swap<int, double>> normalizes the alias nested in the argument.
+	const TypeId outer_swap = table.templateSpecialization(TemplateDeclId{205},
+		std::array<CanonicalTemplateArgument, 1>{
+			CanonicalTemplateArgument::makeType(swap_use)});
+	require(table.substitute(outer_swap, swap_alias, dummy_args) ==
+		table.templateSpecialization(TemplateDeclId{205},
+			std::array<CanonicalTemplateArgument, 1>{
+				CanonicalTemplateArgument::makeType(
+					table.templateSpecialization(TemplateDeclId{204}, swap_expected))}));
+	require(table.substitute(table.pointer(swap_use), swap_alias, dummy_args) ==
+		table.pointer(table.templateSpecialization(TemplateDeclId{204}, swap_expected)));
+
+	// A nested alias with a dependent argument keeps its alias identity.
+	const TypeId foreign = table.templateParameter(TemplateDeclId{206}, 0);
+	const CanonicalTemplateArgument dependent_concrete[] = {
+		CanonicalTemplateArgument::makeType(foreign),
+	};
+	const TypeId dependent_use = table.aliasTemplateSpecialization(identity, dependent_concrete);
+	require(table.substitute(table.pointer(dependent_use), identity, dummy_args) ==
+		table.pointer(dependent_use));
+
+	// A nested self-cycle terminates and leaves the alias boundary. Cycle<T> =
+	// pointer<Cycle<T>>; the nested pointer expansion stops at Cycle<int>.
+	const TemplateDeclId cycle{207};
+	const CanonicalTemplateArgument cycle_target[] = {
+		CanonicalTemplateArgument::makeType(table.templateParameter(cycle, 0)),
+	};
+	table.publishAliasTemplateTarget(cycle,
+		table.pointer(table.aliasTemplateSpecialization(cycle, cycle_target)), type_kind);
+	const TypeId cycle_use = table.aliasTemplateSpecialization(cycle, identity_int);
+	require(table.substitute(table.pointer(cycle_use), cycle, dummy_args) ==
+		table.pointer(table.pointer(cycle_use)));
+
+	std::printf("nested alias graph: normalized\n");
+}
+
 inline void checkAliasRedirection() {
 	CanonicalTypeTable table;
 	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
@@ -2049,6 +2147,7 @@ inline int run() {
 	checkNttpSpecArgs();
 	checkConcretePackSpecArgs();
 	checkAliasRedirection();
+	checkNestedAliasGraph();
 	checkMemberAliasOwnerEnvironment();
 	checkMemberAliasOwnerNestedTarget();
 	checkMemberAliasOwnerEnvironmentFailClosed();

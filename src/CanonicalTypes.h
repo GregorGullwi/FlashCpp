@@ -951,9 +951,10 @@ public:
 	// stay deferred. Spec NTTP ExprId arguments are preserved opaquely through
 	// substitute. Iterative: logical depth does not map to native call depth.
 	//
-	// Concrete direct alias specializations in the result are redirected to their
-	// published targets; mixed non-type / template-template argument layouts are
-	// interpreted positionally against the target's published parameter kinds.
+	// Concrete direct alias specializations anywhere in the substituted graph are
+	// redirected to their published targets; mixed non-type / template-template
+	// argument layouts are interpreted positionally against the target's published
+	// parameter kinds.
 	TypeId substitute(TypeId type, TemplateDeclId env, std::span<const TypeId> args) {
 		std::lock_guard lock(mutex_);
 		checkTransactionThread();
@@ -962,7 +963,7 @@ public:
 		for (const TypeId argument : args) {
 			arguments.push_back(CanonicalTemplateArgument::makeType(argument));
 		}
-		return resolveDirectAliasChainUnlocked(substituteArgumentsUnlocked(
+		return resolveNestedAliasGraphUnlocked(substituteArgumentsUnlocked(
 			type, env,
 			std::span<const CanonicalTemplateArgument>(arguments.data(), arguments.size())));
 	}
@@ -1859,76 +1860,496 @@ private:
 	}
 
 	// Concrete direct alias specializations redirect to the published target
-	// pattern in the alias's own parameter environment. Mixed type / non-type /
+	// pattern anywhere in the type graph: wrappers, function / member-pointer
+	// shapes, specialization type arguments, and nested array / qualified /
+	// pointer / reference nodes. Every rebuilt child passes through the redirect,
+	// so nested aliases normalize as well. Mixed type / non-type /
 	// template-template argument layouts are matched positionally against the
 	// target's published parameter kinds, and template-template placeholders are
-	// replaced by the concrete TemplateDeclId. Dependent arguments, kind or arity
-	// mismatches, unresolved non-type targets, and declaration-ID cycles keep the
-	// alias boundary. Iterative: chain length does not map to native call depth.
-	TypeId resolveDirectAliasChainUnlocked(TypeId type) {
-		TemplateVector<uint32_t, 4> visited;
-		for (;;) {
-			const CanonicalTypeNode node = nodeUnlocked(type);
-			if (node.kind != CanonicalTypeKind::AliasTemplateSpecialization) {
-				return type;
+	// replaced by the concrete TemplateDeclId. An explicit worklist keeps
+	// nested-alias depth off the native stack; the scope each expansion carries
+	// records the declaration IDs currently being expanded, so direct and nested
+	// declaration-ID cycles leave the alias boundary instead of looping.
+	// Dependent arguments, kind or arity mismatches, unresolved non-type targets,
+	// unpublished declarations, and cycles keep the alias boundary.
+	TypeId resolveNestedAliasGraphUnlocked(TypeId type) {
+		if (!type) {
+			throw InternalError("canonical type: invalid alias graph TypeId");
+		}
+		if (alias_template_targets_.empty()) {
+			return type;
+		}
+
+		enum class Phase : uint8_t { Discover, Expand, Build };
+		struct Frame {
+			TypeId id;
+			Phase phase;
+			uint32_t scope;
+			TypeId expansion_root;
+			uint32_t expansion_scope;
+		};
+		struct Scope {
+			uint32_t parent;
+			uint32_t decl;
+		};
+
+		std::vector<Scope> scopes;
+		scopes.push_back({0, 0});
+		auto scopeContains = [&scopes](uint32_t scope, uint32_t decl) {
+			while (scope != 0) {
+				const Scope& current = scopes[scope];
+				if (current.decl == decl) {
+					return true;
+				}
+				scope = current.parent;
 			}
-			const uint32_t primary = static_cast<uint32_t>(node.array_extent);
-			if (std::find(visited.begin(), visited.end(), primary) != visited.end()) {
-				return type;
+			return false;
+		};
+		auto pushScope = [&scopes](uint32_t parent, uint32_t decl) {
+			scopes.push_back({parent, decl});
+			return static_cast<uint32_t>(scopes.size() - 1);
+		};
+		auto memoKey = [](uint32_t scope, TypeId id) {
+			return (static_cast<uint64_t>(scope) << 32) | id.value;
+		};
+
+		std::vector<Frame> stack;
+		std::unordered_map<uint64_t, TypeId> memo;
+		stack.push_back({type, Phase::Discover, 0, TypeId{}, 0});
+		std::vector<CanonicalTemplateArgument> rebuilt_mixed;
+		std::vector<TypeId> rebuilt_args;
+
+		while (!stack.empty()) {
+			const Frame frame = stack.back();
+			if (memo.find(memoKey(frame.scope, frame.id)) != memo.end()) {
+				stack.pop_back();
+				continue;
 			}
-			visited.push_back(primary);
-			const auto target = alias_template_targets_.find(primary);
-			if (target == alias_template_targets_.end()) {
-				return type;
+			const CanonicalTypeNode node = nodeUnlocked(frame.id);
+
+			if (frame.phase == Phase::Discover) {
+				switch (node.kind) {
+				case CanonicalTypeKind::Builtin:
+				case CanonicalTypeKind::Record:
+				case CanonicalTypeKind::Enum:
+				case CanonicalTypeKind::TemplateParameter:
+					memo.emplace(memoKey(frame.scope, frame.id), frame.id);
+					stack.pop_back();
+					continue;
+				case CanonicalTypeKind::Qualified:
+				case CanonicalTypeKind::Pointer:
+				case CanonicalTypeKind::LValueReference:
+				case CanonicalTypeKind::RValueReference:
+				case CanonicalTypeKind::Array:
+				case CanonicalTypeKind::DependentName: {
+					stack.pop_back();
+					Frame parent = frame;
+					parent.phase = Phase::Build;
+					stack.push_back(parent);
+					stack.push_back({node.child, Phase::Discover, frame.scope, TypeId{}, 0});
+					continue;
+				}
+				case CanonicalTypeKind::Function: {
+					stack.pop_back();
+					Frame parent = frame;
+					parent.phase = Phase::Build;
+					stack.push_back(parent);
+					for (TypeId link = unpackFunctionParamLink(node.array_extent); link;
+						 link = nodeUnlocked(link).child) {
+						stack.push_back({TypeId{static_cast<uint32_t>(
+							nodeUnlocked(link).array_extent)}, Phase::Discover, frame.scope, TypeId{}, 0});
+					}
+					stack.push_back({node.child, Phase::Discover, frame.scope, TypeId{}, 0});
+					continue;
+				}
+				case CanonicalTypeKind::MemberObjectPointer:
+				case CanonicalTypeKind::MemberFunctionPointer: {
+					stack.pop_back();
+					Frame parent = frame;
+					parent.phase = Phase::Build;
+					stack.push_back(parent);
+					stack.push_back({node.child, Phase::Discover, frame.scope, TypeId{}, 0});
+					stack.push_back({TypeId{static_cast<uint32_t>(node.array_extent)},
+						Phase::Discover, frame.scope, TypeId{}, 0});
+					continue;
+				}
+				case CanonicalTypeKind::TemplateSpecialization:
+				case CanonicalTypeKind::AliasTemplateSpecialization: {
+					stack.pop_back();
+					Frame parent = frame;
+					parent.phase = node.kind == CanonicalTypeKind::AliasTemplateSpecialization
+						? Phase::Expand : Phase::Build;
+					stack.push_back(parent);
+					for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
+						const CanonicalTypeNode argument = nodeUnlocked(link);
+						if (argument.kind == CanonicalTypeKind::TemplateArg) {
+							stack.push_back({TypeId{static_cast<uint32_t>(argument.array_extent)},
+								Phase::Discover, frame.scope, TypeId{}, 0});
+						}
+					}
+					continue;
+				}
+				case CanonicalTypeKind::DependentTemplateMember:
+				case CanonicalTypeKind::DependentMemberAlias: {
+					stack.pop_back();
+					Frame parent = frame;
+					parent.phase = Phase::Build;
+					stack.push_back(parent);
+					const TypeId arg_head = node.kind == CanonicalTypeKind::DependentTemplateMember
+						? unpackDependentTemplateMemberArgs(node.array_extent)
+						: unpackDependentMemberAliasArgs(node.array_extent);
+					for (TypeId link = arg_head; link; link = nodeUnlocked(link).child) {
+						const CanonicalTypeNode argument = nodeUnlocked(link);
+						if (argument.kind == CanonicalTypeKind::TemplateArg) {
+							stack.push_back({TypeId{static_cast<uint32_t>(argument.array_extent)},
+								Phase::Discover, frame.scope, TypeId{}, 0});
+						}
+					}
+					stack.push_back({node.child, Phase::Discover, frame.scope, TypeId{}, 0});
+					continue;
+				}
+				default:
+					throw InternalError("canonical type: unsupported alias graph node kind");
+				}
 			}
-			TemplateVector<CanonicalTemplateArgument, 4> arguments;
-			bool concrete = true;
-			for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
-				const CanonicalTypeNode argument = nodeUnlocked(link);
-				if (argument.kind == CanonicalTypeKind::TemplateArg) {
-					const TypeId value{static_cast<uint32_t>(argument.array_extent)};
-					if (isDependentAliasArgumentUnlocked(value)) {
+
+			if (frame.phase == Phase::Expand) {
+				stack.pop_back();
+				TemplateVector<CanonicalTemplateArgument, 4> arguments;
+				bool concrete = true;
+				for (TypeId link = node.child; link; link = nodeUnlocked(link).child) {
+					const CanonicalTypeNode argument = nodeUnlocked(link);
+					if (argument.kind == CanonicalTypeKind::TemplateArg) {
+						const TypeId original{static_cast<uint32_t>(argument.array_extent)};
+						const TypeId value = memo.at(memoKey(frame.scope, original));
+						if (isDependentAliasArgumentUnlocked(value)) {
+							concrete = false;
+							break;
+						}
+						arguments.push_back(CanonicalTemplateArgument::makeType(value));
+					} else if (argument.kind == CanonicalTypeKind::NonTypeTemplateArg) {
+						arguments.push_back(CanonicalTemplateArgument::makeNonType(
+							ExprId{static_cast<uint32_t>(argument.array_extent)}));
+					} else if (argument.kind == CanonicalTypeKind::TemplateTemplateArg) {
+						arguments.push_back(CanonicalTemplateArgument::makeTemplate(
+							TemplateDeclId{static_cast<uint32_t>(argument.array_extent)}));
+					} else {
 						concrete = false;
 						break;
 					}
-					arguments.push_back(CanonicalTemplateArgument::makeType(value));
-				} else if (argument.kind == CanonicalTypeKind::NonTypeTemplateArg) {
-					arguments.push_back(CanonicalTemplateArgument::makeNonType(
-						ExprId{static_cast<uint32_t>(argument.array_extent)}));
-				} else if (argument.kind == CanonicalTypeKind::TemplateTemplateArg) {
-					arguments.push_back(CanonicalTemplateArgument::makeTemplate(
-						TemplateDeclId{static_cast<uint32_t>(argument.array_extent)}));
+				}
+				const uint32_t primary = static_cast<uint32_t>(node.array_extent);
+				const auto target = alias_template_targets_.find(primary);
+				bool expand = concrete && !scopeContains(frame.scope, primary) &&
+					target != alias_template_targets_.end() &&
+					target->second.parameter_kinds.size() == arguments.size();
+				bool has_non_type_parameter = false;
+				if (expand) {
+					for (size_t index = 0; index < arguments.size(); ++index) {
+						if (arguments[index].kind != target->second.parameter_kinds[index]) {
+							expand = false;
+							break;
+						}
+						has_non_type_parameter = has_non_type_parameter ||
+							target->second.parameter_kinds[index] ==
+								CanonicalTemplateArgKind::NonType;
+					}
+				}
+				if (expand && has_non_type_parameter &&
+					containsNonTypeTemplateArgUnlocked(target->second.target)) {
+					expand = false;
+				}
+				if (!expand) {
+					Frame parent = frame;
+					parent.phase = Phase::Build;
+					stack.push_back(parent);
+					continue;
+				}
+				const TypeId expanded = substituteArgumentsUnlocked(
+					target->second.target,
+					TemplateDeclId{primary},
+					std::span<const CanonicalTemplateArgument>(
+						arguments.data(), arguments.size()));
+				Frame parent = frame;
+				parent.phase = Phase::Build;
+				parent.expansion_root = expanded;
+				parent.expansion_scope = pushScope(frame.scope, primary);
+				stack.push_back(parent);
+				stack.push_back({expanded, Phase::Discover, parent.expansion_scope, TypeId{}, 0});
+				continue;
+			}
+
+			stack.pop_back();
+			if (frame.expansion_root) {
+				const TypeId expanded =
+					memo.at(memoKey(frame.expansion_scope, frame.expansion_root));
+				memo.emplace(memoKey(frame.scope, frame.id), expanded);
+				continue;
+			}
+			TypeId rebuilt = frame.id;
+			switch (node.kind) {
+			case CanonicalTypeKind::Qualified: {
+				const TypeId child = memo.at(memoKey(frame.scope, node.child));
+				if (child != node.child) {
+					rebuilt = internUnlocked({
+						.child = child,
+						.kind = CanonicalTypeKind::Qualified,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = node.qualifiers,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = 0,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::Pointer: {
+				const TypeId child = memo.at(memoKey(frame.scope, node.child));
+				if (child != node.child) {
+					rebuilt = internUnlocked({
+						.child = child,
+						.kind = CanonicalTypeKind::Pointer,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = 0,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::LValueReference:
+			case CanonicalTypeKind::RValueReference: {
+				TypeId referent = memo.at(memoKey(frame.scope, node.child));
+				CanonicalTypeKind kind = node.kind;
+				if (isReference(nodeUnlocked(referent).kind)) {
+					const CanonicalTypeNode referent_node = nodeUnlocked(referent);
+					if (referent_node.kind == CanonicalTypeKind::LValueReference) {
+						kind = CanonicalTypeKind::LValueReference;
+					}
+					referent = referent_node.child;
+				}
+				if (referent != node.child || kind != node.kind) {
+					rebuilt = internUnlocked({
+						.child = referent,
+						.kind = kind,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = 0,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::Array: {
+				const TypeId child = memo.at(memoKey(frame.scope, node.child));
+				if (child != node.child) {
+					rebuilt = internUnlocked({
+						.child = child,
+						.kind = CanonicalTypeKind::Array,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = node.flags,
+						.array_extent = node.array_extent,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::DependentName: {
+				const TypeId qualifier = memo.at(memoKey(frame.scope, node.child));
+				if (qualifier != node.child) {
+					if (isInternalLink(nodeUnlocked(qualifier).kind)) {
+						throw InternalError(
+							"canonical type: normalized dependent-name qualifier is an internal link");
+					}
+					rebuilt = internUnlocked({
+						.child = qualifier,
+						.kind = CanonicalTypeKind::DependentName,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = node.array_extent,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::TemplateSpecialization:
+			case CanonicalTypeKind::AliasTemplateSpecialization: {
+				rebuilt_mixed.clear();
+				TypeId arg_link = node.child;
+				bool unchanged = true;
+				while (arg_link) {
+					const CanonicalTypeNode argument = nodeUnlocked(arg_link);
+					if (argument.kind == CanonicalTypeKind::TemplateArg) {
+						const TypeId original{static_cast<uint32_t>(argument.array_extent)};
+						const TypeId value = memo.at(memoKey(frame.scope, original));
+						unchanged = unchanged && value == original;
+						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeType(value));
+					} else if (argument.kind == CanonicalTypeKind::NonTypeTemplateArg) {
+						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeNonType(
+							ExprId{static_cast<uint32_t>(argument.array_extent)}));
+					} else if (argument.kind == CanonicalTypeKind::TemplateTemplateArg) {
+						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeTemplate(
+							TemplateDeclId{static_cast<uint32_t>(argument.array_extent)}));
+					} else if (argument.kind ==
+						CanonicalTypeKind::DependentTemplateTemplateArg) {
+						rebuilt_mixed.push_back(CanonicalTemplateArgument::makeDependentTemplate(
+							unpackTemplateParameterDecl(argument.array_extent),
+							unpackTemplateParameterIndex(argument.array_extent)));
+					} else {
+						throw InternalError("canonical type: corrupt template argument link");
+					}
+					arg_link = argument.child;
+				}
+				if (!unchanged) {
+					rebuilt = internUnlocked({
+						.child = rebuildMixedTemplateArgListUnlocked(rebuilt_mixed),
+						.kind = node.kind,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = node.array_extent,
+					});
+				}
+				break;
+			}
+			case CanonicalTypeKind::Function: {
+				const TypeId substituted_return = memo.at(memoKey(frame.scope, node.child));
+				rebuilt_args.clear();
+				bool unchanged = substituted_return == node.child;
+				TypeId param_link = unpackFunctionParamLink(node.array_extent);
+				while (param_link) {
+					const CanonicalTypeNode parameter_link_node = nodeUnlocked(param_link);
+					const TypeId original =
+						TypeId{static_cast<uint32_t>(parameter_link_node.array_extent)};
+					const TypeId value = memo.at(memoKey(frame.scope, original));
+					unchanged = unchanged && value == original;
+					rebuilt_args.push_back(value);
+					param_link = parameter_link_node.child;
+				}
+				if (unchanged) {
+					break;
+				}
+				const CanonicalTypeNode return_node = nodeUnlocked(substituted_return);
+				if (return_node.kind == CanonicalTypeKind::Function ||
+					isInternalLink(return_node.kind) ||
+					return_node.kind == CanonicalTypeKind::Array) {
+					throw InternalError(
+						"canonical type: normalized invalid function return type");
+				}
+				TypeId normalized_param_link{};
+				for (size_t index = rebuilt_args.size(); index-- > 0;) {
+					const TypeId parameter = rebuilt_args[index];
+					const CanonicalTypeNode parameter_node = nodeUnlocked(parameter);
+					if (parameter_node.kind == CanonicalTypeKind::Function ||
+						isInternalLink(parameter_node.kind) ||
+						parameter_node.kind == CanonicalTypeKind::Array) {
+						throw InternalError(
+							"canonical type: normalized undecayed function parameter type");
+					}
+					normalized_param_link = internUnlocked({
+						.child = normalized_param_link,
+						.kind = CanonicalTypeKind::FunctionParam,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = parameter.value,
+					});
+				}
+				const CanonicalBuiltinKind normalized_calling_convention = node.builtin;
+				rebuilt = internUnlocked({
+					.child = substituted_return,
+					.kind = CanonicalTypeKind::Function,
+					.builtin = normalized_calling_convention,
+					.qualifiers = node.qualifiers,
+					.flags = node.flags,
+					.array_extent = packFunctionArrayExtent(
+						normalized_param_link, unpackFunctionDependentNoexcept(node.array_extent)),
+				});
+				break;
+			}
+			case CanonicalTypeKind::MemberObjectPointer:
+			case CanonicalTypeKind::MemberFunctionPointer: {
+				const TypeId original_owner = TypeId{static_cast<uint32_t>(node.array_extent)};
+				const TypeId substituted_owner = memo.at(memoKey(frame.scope, original_owner));
+				const TypeId substituted_pointee = memo.at(memoKey(frame.scope, node.child));
+				if (substituted_owner == original_owner && substituted_pointee == node.child) {
+					break;
+				}
+				if (nodeUnlocked(substituted_owner).kind != CanonicalTypeKind::Record) {
+					throw InternalError(
+						"canonical type: normalized member pointer owner must be a record");
+				}
+				if (node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+					if (nodeUnlocked(substituted_pointee).kind != CanonicalTypeKind::Function) {
+						throw InternalError(
+							"canonical type: normalized member function pointee must be a function");
+					}
 				} else {
-					concrete = false;
-					break;
+					const CanonicalTypeNode pointee_node = nodeUnlocked(substituted_pointee);
+					if (pointee_node.kind == CanonicalTypeKind::Function ||
+						isInternalLink(pointee_node.kind) ||
+						(pointee_node.kind == CanonicalTypeKind::Builtin &&
+							pointee_node.builtin == CanonicalBuiltinKind::Void)) {
+						throw InternalError(
+							"canonical type: normalized invalid member object pointee");
+					}
 				}
+				rebuilt = internUnlocked({
+					.child = substituted_pointee,
+					.kind = node.kind,
+					.builtin = CanonicalBuiltinKind::Void,
+					.qualifiers = CVQualifier::None,
+					.flags = CanonicalTypeNodeFlags::None,
+					.array_extent = substituted_owner.value,
+				});
+				break;
 			}
-			if (!concrete || target->second.parameter_kinds.size() != arguments.size()) {
-				return type;
-			}
-			bool kinds_match = true;
-			bool has_non_type_parameter = false;
-			for (size_t index = 0; index < arguments.size(); ++index) {
-				if (arguments[index].kind != target->second.parameter_kinds[index]) {
-					kinds_match = false;
-					break;
+			case CanonicalTypeKind::DependentTemplateMember:
+			case CanonicalTypeKind::DependentMemberAlias: {
+				const TypeId qualifier = memo.at(memoKey(frame.scope, node.child));
+				rebuilt_args.clear();
+				TypeId arg_link = node.kind == CanonicalTypeKind::DependentTemplateMember
+					? unpackDependentTemplateMemberArgs(node.array_extent)
+					: unpackDependentMemberAliasArgs(node.array_extent);
+				bool unchanged = qualifier == node.child;
+				while (arg_link) {
+					const CanonicalTypeNode argument = nodeUnlocked(arg_link);
+					if (argument.kind != CanonicalTypeKind::TemplateArg) {
+						throw InternalError(
+							"canonical type: corrupt dependent member argument link");
+					}
+					const TypeId original{static_cast<uint32_t>(argument.array_extent)};
+					const TypeId value = memo.at(memoKey(frame.scope, original));
+					unchanged = unchanged && value == original;
+					rebuilt_args.push_back(value);
+					arg_link = argument.child;
 				}
-				has_non_type_parameter = has_non_type_parameter ||
-					target->second.parameter_kinds[index] == CanonicalTemplateArgKind::NonType;
+				if (!unchanged) {
+					if (isInternalLink(nodeUnlocked(qualifier).kind)) {
+						throw InternalError(
+							"canonical type: normalized dependent member qualifier is an internal link");
+					}
+					const TypeId rebuilt_arg_link = rebuildTemplateArgListUnlocked(rebuilt_args);
+					rebuilt = internUnlocked({
+						.child = qualifier,
+						.kind = node.kind,
+						.builtin = CanonicalBuiltinKind::Void,
+						.qualifiers = CVQualifier::None,
+						.flags = CanonicalTypeNodeFlags::None,
+						.array_extent = node.kind == CanonicalTypeKind::DependentTemplateMember
+							? packDependentTemplateMemberExtent(
+								unpackDependentTemplateMemberName(node.array_extent), rebuilt_arg_link)
+							: packDependentMemberAliasExtent(
+								unpackDependentMemberAliasDecl(node.array_extent), rebuilt_arg_link),
+					});
+				}
+				break;
 			}
-			if (!kinds_match) {
-				return type;
+			default:
+				throw InternalError("canonical type: unexpected alias graph build kind");
 			}
-			if (has_non_type_parameter &&
-				containsNonTypeTemplateArgUnlocked(target->second.target)) {
-				return type;
-			}
-			type = substituteArgumentsUnlocked(
-				target->second.target,
-				TemplateDeclId{primary},
-				std::span<const CanonicalTemplateArgument>(
-					arguments.data(), arguments.size()));
+			memo.emplace(memoKey(frame.scope, frame.id), rebuilt);
 		}
+		return memo.at(memoKey(0, type));
 	}
 
 	TypeId packIdentifierBytesUnlocked(std::string_view identifier) {
@@ -2706,7 +3127,7 @@ private:
 		}
 		const TypeId owner_target = substituteArgumentsUnlocked(published->second.target,
 			published->second.owner, owner_arguments);
-		return resolveDirectAliasChainUnlocked(substituteArgumentsUnlocked(
+		return resolveNestedAliasGraphUnlocked(substituteArgumentsUnlocked(
 			owner_target, member, member_arguments));
 	}
 

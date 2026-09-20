@@ -221,12 +221,22 @@ def main():
                 "memo.emplace(frame.id.value, args[index].type);",
                 "memo.emplace(frame.id.value, frame.id);"),
             "lost_alias_parameter_kind_check": (
-                "\t\t\tif (!kinds_match) {\n"
-                "\t\t\t\treturn type;\n"
-                "\t\t\t}",
-                "\t\t\tif (!kinds_match && false) {\n"
-                "\t\t\t\treturn type;\n"
-                "\t\t\t}"),
+                "\t\t\t\t\tfor (size_t index = 0; index < arguments.size(); ++index) {\n"
+                "\t\t\t\t\t\tif (arguments[index].kind != target->second.parameter_kinds[index]) {\n"
+                "\t\t\t\t\t\t\texpand = false;\n"
+                "\t\t\t\t\t\t\tbreak;\n"
+                "\t\t\t\t\t\t}",
+                "\t\t\t\t\tfor (size_t index = 0; index < arguments.size(); ++index) {\n"
+                "\t\t\t\t\t\tif (false &&\n"
+                "\t\t\t\t\t\t\targuments[index].kind != target->second.parameter_kinds[index]) {\n"
+                "\t\t\t\t\t\t\texpand = false;\n"
+                "\t\t\t\t\t\t\tbreak;\n"
+                "\t\t\t\t\t\t}"),
+            "lost_nested_pointer_redirect": (
+                "\t\t\tcase CanonicalTypeKind::Pointer: {\n"
+                "\t\t\t\tconst TypeId child = memo.at(memoKey(frame.scope, node.child));",
+                "\t\t\tcase CanonicalTypeKind::Pointer: {\n"
+                "\t\t\t\tconst TypeId child = node.child;"),
             "lost_member_alias_owner_dependent_argument": (
                 "if (isDependentAliasArgumentUnlocked(value) ||\n"
                 "\t\t\t\tisInternalLink(nodeUnlocked(value).kind)) {\n"
