@@ -847,9 +847,10 @@ inline void applyArrayToPointerConversion(TypeSpecifierNode& spec) {
 	}
 	spec.set_array(false, std::nullopt);
 	spec.set_reference_qualifier(ReferenceQualifier::None);
-	if (spec.pointer_depth() == 0) {
-		spec.add_pointer_level();
-	}
+	// The new level is the pointer produced by the conversion. Existing
+	// levels belong to the array element type (for example, int*[2] has one
+	// before decay and becomes int**).
+	spec.add_pointer_level();
 	if (!inner_extents.empty()) {
 		spec.set_pointee_array_dimensions(inner_extents);
 		spec.set_pointee_array_declarator(true);

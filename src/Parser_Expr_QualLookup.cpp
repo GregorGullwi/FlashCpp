@@ -3232,24 +3232,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 				TypeSpecifierNode type = decl->type_specifier_node();
 
-				// Handle array-to-pointer decay
-				// When an array is used in an expression (except with sizeof, &, etc.),
-				// it decays to a pointer to its first element
-				// Use is_array_object() which covers sized arrays (int arr[5]) and
-				// unsized arrays (int arr[] = {...}); a pointer-to-array declarator
-				// such as int (*p)[3] already holds a pointer and never decays
-				// further (C++20 [conv.array]/1).
+				// Preserve an array id-expression's unadjusted type here. Whether
+				// C++20 [conv.array]/1 applies is context-dependent: a by-value
+				// function argument decays, while a reference parameter such as
+				// T (&)[N] binds to the array and uses its bound for deduction.
 				if (decl->is_array_object()) {
-					// C++20 [conv.array]/1: array of N T → pointer to T. Inner
-					// extents remain as a pointer-to-array pointee, e.g.
-					// int[2][3] decays to int(*)[3], not a hybrid int[2][3]*.
-					TypeSpecifierNode pointer_type = type;
-					applyDeclarationArrayBoundsToTypeSpec(*decl, pointer_type, *this);
-					applyArrayToPointerConversion(pointer_type);
-					if (!pointer_type.is_pointer()) {
-						pointer_type.add_pointer_level();
-					}
-					return pointer_type;
+					applyDeclarationArrayBoundsToTypeSpec(*decl, type, *this);
 				}
 
 				return type;

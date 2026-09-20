@@ -1522,14 +1522,8 @@ void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpe
 	if (decl == nullptr) {
 		return;
 	}
-	if (decl->is_array_object()) {
-		if (!arg_type_node.has_pointee_array_declarator()) {
-			applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node, *this);
-		}
-		applyArrayToPointerConversion(arg_type_node);
-		return;
-	}
-	if (decl->type_specifier_node().has_pointee_array_declarator()) {
+	if (decl->is_array_object() ||
+		decl->type_specifier_node().has_pointee_array_declarator()) {
 		applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node, *this);
 	}
 }
