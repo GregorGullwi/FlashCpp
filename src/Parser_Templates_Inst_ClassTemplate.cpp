@@ -6371,6 +6371,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_class_name));
 			if (base_type_it != getTypesByNameMap().end()) {
 				const TypeInfo* base_type_info = base_type_it->second;
+				if (base_type_info->isTypeAlias()) {
+					// Substitute the alias target before recording the base's semantic type.
+					TypeSpecifierNode alias_target_spec(
+						base_type_info->type_index_, TypeQualifier::None, SizeInBits{0}, Token{}, CVQualifier::None);
+					TemplateTypeArg concrete_arg;
+					concrete_arg.type_index = substitute_template_parameter(
+						alias_target_spec, effective_template_params, effective_template_args);
+					if (const TypeInfo* concrete_type = resolveConcreteBaseType(concrete_arg);
+						concrete_type != nullptr && concrete_type->getStructInfo() != nullptr) {
+						base_type_info = concrete_type;
+					}
+				}
 				auto [recorded_base_type, recorded_base_index] =
 					canonicalizeRecordedBase(base_type_info, base_type_info->registeredTypeIndex().withCategory(base_type_info->typeEnum()));
 				struct_info->addBaseClass(
