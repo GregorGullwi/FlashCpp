@@ -2144,7 +2144,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// decays to the array's address. Member-access lowering already
 					// computed that address into a temp; materialize it explicitly so
 					// the pointer store copies the address instead of dereferencing it.
-				if (type_node.pointer_depth() > 0 &&
+					// runtime_pointer_depth (not type_node.pointer_depth()) is the
+					// authoritative "outermost object is a pointer" predicate for
+					// ordered interleaved declarators, whose flat pointer levels are
+					// not rebuilt.
+				if (runtime_pointer_depth > 0 &&
 					std::holds_alternative<TempVar>(init_operands.value)) {
 					const void* init_key = static_cast<const void*>(&init_node.as<ExpressionNode>());
 					const auto init_slot = sema_.getSlot(init_key);
