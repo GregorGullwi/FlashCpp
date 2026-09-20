@@ -208,6 +208,7 @@ enum class DiagnosticId : uint32_t {
 	NonTypeAliasTargetUnsupported = 1812,
 	AliasTemplateSpecializationForbidden = 1813,
 	RecursiveAliasTemplateInstantiation = 1814,
+	AliasTemplateArityMismatch = 1815,
 	UnsupportedAliasTemplateTargetDeclarator = 1816,
 	AliasTemplateArrayBoundUnresolved = 1817,
 
@@ -469,6 +470,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "AliasTemplateSpecializationForbidden";
 	case DiagnosticId::RecursiveAliasTemplateInstantiation:
 		return "RecursiveAliasTemplateInstantiation";
+	case DiagnosticId::AliasTemplateArityMismatch:
+		return "AliasTemplateArityMismatch";
 	case DiagnosticId::UnsupportedAliasTemplateTargetDeclarator:
 		return "UnsupportedAliasTemplateTargetDeclarator";
 	case DiagnosticId::AliasTemplateArrayBoundUnresolved:

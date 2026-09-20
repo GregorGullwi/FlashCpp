@@ -9,6 +9,31 @@
 
 namespace {
 
+struct AliasTemplateArity {
+	size_t required = 0;
+	size_t fixed = 0;
+	bool has_pack = false;
+
+	bool accepts(size_t count) const {
+		return count >= required && (has_pack || count <= fixed);
+	}
+};
+
+AliasTemplateArity aliasTemplateArity(const TemplateParameterVector& parameters) {
+	AliasTemplateArity arity;
+	for (const TemplateParameterNode& parameter : parameters) {
+		if (parameter.is_variadic()) {
+			arity.has_pack = true;
+		} else {
+			++arity.fixed;
+			if (!parameter.has_default()) {
+				++arity.required;
+			}
+		}
+	}
+	return arity;
+}
+
 struct DependentMemberSegmentInfo {
 	bool has_template_keyword = false;
 	std::optional<TemplateArgInfoVector> template_args;
@@ -1307,6 +1332,13 @@ ParseResult Parser::parse_type_specifier() {
 					alias_template_opt->as<TemplateAliasNode>().template_parameters(),
 					&template_arg_syntax_nodes);
 				if (template_args.has_value()) {
+					const AliasTemplateArity arity = aliasTemplateArity(
+						alias_template_opt->as<TemplateAliasNode>().template_parameters());
+					if (!arity.accepts(template_args->size())) {
+						return errorf(DiagnosticId::AliasTemplateArityMismatch, type_name_token,
+							"Alias template '{}' expects {} to {} arguments, got {}",
+							type_name, arity.required, arity.fixed, template_args->size());
+					}
 					AliasTemplateMaterializationResult materialized_alias =
 						materializeAliasTemplateInstantiation(type_name, *template_args);
 					const TypeInfo* resolved_type_info = nullptr;
@@ -2157,6 +2189,15 @@ ParseResult Parser::parse_type_specifier() {
 				if (alias_opt.has_value()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Found alias template for '{}', is_deferred={}", type_name, alias_opt->as<TemplateAliasNode>().is_deferred());
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+					const AliasTemplateArity arity = aliasTemplateArity(alias_node.template_parameters());
+					// A registry spelling can also name a class template in the current scope.
+					// Only diagnose arity when this use resolves to the alias.
+					if (!arity.accepts(template_args->size()) &&
+						!findClassTemplatePatternBySpelling(type_name).has_value()) {
+						return errorf(DiagnosticId::AliasTemplateArityMismatch, type_name_token,
+							"Alias template '{}' expects {} to {} arguments, got {}",
+							type_name, arity.required, arity.fixed, template_args->size());
+					}
 					const TypeSpecifierNode& alias_target_type_spec = alias_node.target_type_node();
 					const bool alias_target_preserves_surface =
 						alias_target_type_spec.cv_qualifier() != CVQualifier::None ||
@@ -4006,6 +4047,13 @@ ParseResult Parser::parse_type_specifier() {
 											.append(StringTable::getStringView(member_alias_name))
 											.commit()),
 									type_name_token);
+							}
+							const AliasTemplateArity arity = aliasTemplateArity(alias_node.template_parameters());
+							if (!arity.accepts(member_template_args->size())) {
+								return errorf(DiagnosticId::AliasTemplateArityMismatch, type_name_token,
+									"Alias template '{}' expects {} to {} arguments, got {}",
+									StringTable::getStringView(member_alias_name), arity.required,
+									arity.fixed, member_template_args->size());
 							}
 
 							if (parent_type_it != getTypesByNameMap().end()) {
