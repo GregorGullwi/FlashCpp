@@ -208,9 +208,10 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			// trailing-default requirement ("unless the parameter was expanded
 			// from a parameter pack or is a function parameter pack").
 			if (!param.is_parameter_pack()) {
-				return ParseResult::error("Missing default argument on parameter '" +
-											  std::string(param.identifier_token().value()) + "'",
-										  param.identifier_token());
+				return errorf(DiagnosticId::MissingDefaultArgumentForTrailingParameter,
+					param.identifier_token(),
+					"Missing default argument on parameter '{}'",
+					param.identifier_token().value());
 			}
 		}
 
