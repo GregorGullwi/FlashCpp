@@ -15,20 +15,29 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "tests/architecture/canonical_types_ret0.cpp"
 HEADER = ROOT / "src/CanonicalTypes.h"
+IMPL = ROOT / "src/CanonicalTypes.cpp"
 OUTPUT = ROOT / "x64/canonical-types"
 
 
+def deindent(text):
+    """Remove one leading tab per line, matching the header-to-cpp move."""
+    return "\n".join(line[1:] if line.startswith("\t") else line for line in text.split("\n"))
+
+
 def check_guards():
-    code = re.sub(r"//[^\n]*", "", HEADER.read_text())
-    for forbidden in ("StringHandle", "TypeIndex", "Parser", "matches_signature",
-                      "TypeSpecifierNode", "TelemetryTypeId"):
-        if re.search(r"\b" + forbidden + r"\b", code):
-            raise RuntimeError("canonical identity dependency: " + forbidden)
+    for source in (HEADER, IMPL):
+        code = re.sub(r"//[^\n]*", "", source.read_text())
+        for forbidden in ("StringHandle", "TypeIndex", "Parser", "matches_signature",
+                          "TypeSpecifierNode", "TelemetryTypeId"):
+            if re.search(r"\b" + forbidden + r"\b", code):
+                raise RuntimeError("canonical identity dependency in " + source.name + ": " + forbidden)
     for name in ("FlashCpp.vcxproj", "FlashCppMSVC.vcxproj"):
         project = (ROOT / name).read_text()
         for header in ("CanonicalTypes.h", "TypeQualifiers.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
             if 'Include="src\\' + header + '"' not in project:
                 raise RuntimeError("missing project registration: " + header)
+        if 'Include="src\\CanonicalTypes.cpp"' not in project:
+            raise RuntimeError("missing project registration: CanonicalTypes.cpp")
     adapter = re.sub(r"//[^\n]*", "", (ROOT / "src/CanonicalTypeAdapter.h").read_text())
     for forbidden in ("StringTable", "gTypeInfo", "matches_signature", "Parser"):
         if re.search(r"\b" + forbidden + r"\b", adapter):
@@ -43,14 +52,17 @@ def build_and_run(name, include, expected):
     directory = OUTPUT / name
     directory.mkdir(parents=True, exist_ok=True)
     executable = directory / ("test.exe" if sys.platform == "win32" else "test")
+    implementation = include / "CanonicalTypes.cpp"
     if sys.platform == "win32":
         command = ["clang-cl", "/nologo", "/std:c++20", "/EHsc", "/W4", "/WX",
                    "/I" + str(include), "/I" + str(ROOT / "src"), str(SOURCE),
-                   "/Fo" + str(directory / "test.obj"), "/Fe" + str(executable),
+                   str(implementation),
+                   "/Fo" + str(directory) + "\\", "/Fe" + str(executable),
                    "/clang:-fstack-usage", "/link", "/STACK:1048576"]
     else:
         command = ["clang++", "-std=c++20", "-Wall", "-Wextra", "-Werror",
                    "-I" + str(include), "-I" + str(ROOT / "src"), str(SOURCE),
+                   str(implementation),
                    "-fstack-usage", "-o", str(executable)]
     subprocess.run(command, cwd=directory, check=True)
     result = subprocess.run([str(executable)], cwd=ROOT, capture_output=True, text=True)
@@ -73,8 +85,8 @@ def run_template_owner_tag_mutation():
     directory = OUTPUT / name
     directory.mkdir(parents=True, exist_ok=True)
     for sibling in (
-        "CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h",
-        "TemplateDeclTable.h"):
+        "CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
+        "ArenaAccounting.h", "TemplateDeclTable.h"):
         text = (ROOT / "src" / sibling).read_text()
         if sibling == "TemplateDeclTable.h":
             text = text.replace(before, after)
@@ -93,7 +105,7 @@ def main():
         run_template_owner_tag_mutation()
         return
     if options.mutations:
-        original = HEADER.read_text()
+        original = IMPL.read_text()
         mutations = {
             "lost_dependent_qualifier": (
                 ".child = qualifier,\n\t\t\t.kind = CanonicalTypeKind::DependentName,",
@@ -183,11 +195,11 @@ def main():
                 "\t\t\tflags |= CanonicalTypeNodeFlags::FunctionDllExport;\n"
                 "\t\t}"),
             "lost_member_owner": (
-                "TypeId memberObjectPointer(TypeId owner, TypeId pointee) {\n"
+                "TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {\n"
                 "\t\tstd::lock_guard lock(mutex_);\n"
                 "\t\tcheckTransactionThread();\n"
                 "\t\tconst TypeId record_owner = recordOwnerUnlocked(owner);",
-                "TypeId memberObjectPointer(TypeId owner, TypeId pointee) {\n"
+                "TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {\n"
                 "\t\tstd::lock_guard lock(mutex_);\n"
                 "\t\tcheckTransactionThread();\n"
                 "\t\trecordOwnerUnlocked(owner);\n"
@@ -305,10 +317,10 @@ def main():
                 "\t\t\t.flags = CanonicalTypeNodeFlags::None,\n"
                 "\t\t\t.array_extent = 1,"),
             "lost_specialization_argument_order": (
-                "TypeId rebuildMixedTemplateArgListUnlocked(std::span<const CanonicalTemplateArgument> arguments) {\n"
+                "TypeId CanonicalTypeTable::rebuildMixedTemplateArgListUnlocked(std::span<const CanonicalTemplateArgument> arguments) {\n"
                 "\t\tTypeId arg_link{};\n"
                 "\t\tfor (size_t index = arguments.size(); index-- > 0;) {",
-                "TypeId rebuildMixedTemplateArgListUnlocked(std::span<const CanonicalTemplateArgument> arguments) {\n"
+                "TypeId CanonicalTypeTable::rebuildMixedTemplateArgListUnlocked(std::span<const CanonicalTemplateArgument> arguments) {\n"
                 "\t\tTypeId arg_link{};\n"
                 "\t\tfor (size_t index = 0; index < arguments.size(); ++index) {"),
             "lost_nttp_spec_arg": (
@@ -368,13 +380,16 @@ def main():
                 "\t\treturn type;"),
         }
         for name, (before, after) in mutations.items():
+            before = deindent(before)
+            after = deindent(after)
             if original.count(before) != 1:
                 raise RuntimeError("mutation anchor changed: " + name)
             directory = OUTPUT / name
             directory.mkdir(parents=True, exist_ok=True)
-            for header in ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
-                (directory / header).write_text((ROOT / "src" / header).read_text())
-            (directory / HEADER.name).write_text(original.replace(before, after))
+            for sibling in ("CanonicalTypes.h", "CanonicalTypes.cpp",
+                            "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
+                (directory / sibling).write_text((ROOT / "src" / sibling).read_text())
+            (directory / IMPL.name).write_text(original.replace(before, after))
             build_and_run(name, directory, 1)
         for name, header, before, after in (
             ("adapter_dependent_name", "CanonicalTypeAdapter.h",
@@ -461,7 +476,8 @@ def main():
         ):
             directory = OUTPUT / name
             directory.mkdir(parents=True, exist_ok=True)
-            for sibling in ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
+            for sibling in ("CanonicalTypes.h", "CanonicalTypes.cpp",
+                            "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
                 text = (ROOT / "src" / sibling).read_text()
                 if sibling == header:
                     if text.count(before) != 1:
