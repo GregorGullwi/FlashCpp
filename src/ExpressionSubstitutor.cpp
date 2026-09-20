@@ -3948,8 +3948,21 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 					substituted_arg_types)) {
 				return nullptr;
 			}
-			OverloadResolutionResult resolution =
-				resolve_overload_with_argument_nodes(candidates, substituted_arg_types, std::span<const ASTNode>{});
+			OverloadResolutionResult resolution;
+			if (auto object_type =
+					parser_.get_expression_type(substituted_receiver);
+				object_type.has_value()) {
+				resolution = resolve_member_overload_with_argument_nodes(
+					candidates,
+					*object_type,
+					substituted_arg_types,
+					std::span<const ASTNode>{});
+			} else {
+				resolution = resolve_overload_with_argument_nodes(
+					candidates,
+					substituted_arg_types,
+					std::span<const ASTNode>{});
+			}
 			if (resolution.has_match &&
 				!resolution.is_ambiguous &&
 				resolution.selected_overload != nullptr &&
@@ -4080,63 +4093,64 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 				}
 				return target_func;
 			};
+		// C++20 [class.qual]: a nested-name-specifier nominates the lookup
+		// class. Ordinary lookup in the object expression's class must not
+		// replace `this->Base::touch()` with `Holder::touch`.
+		const bool used_qualified_id_lookup =
+			call.has_dependent_qualified_lookup_record();
 		const FunctionDeclarationNode* rebound_member =
-			tryResolveQualifiedReceiverMember();
-		const bool used_qualified_receiver_rebind =
-			rebound_member != nullptr;
-		if (rebound_member == nullptr) {
+			used_qualified_id_lookup
+				? tryResolveQualifiedReceiverMember()
+				: nullptr;
+		if (!used_qualified_id_lookup) {
 			rebound_member =
 				parser_.tryResolveConcreteMemberFunction(
 					substituted_receiver,
 					call.called_from().value());
-		}
-		if (rebound_member != nullptr) {
-			if (!used_qualified_receiver_rebind) {
-				if (auto receiver_type =
-						parser_.get_expression_type(substituted_receiver);
-					receiver_type.has_value() &&
-					is_struct_type(receiver_type->category())) {
-					if (const TypeInfo* receiver_type_info =
-							tryGetTypeInfo(receiver_type->type_index());
-						receiver_type_info != nullptr) {
-						std::string_view class_name =
-							StringTable::getStringView(
-								receiver_type_info->name());
-						if (parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
-								class_name,
-								call.called_from().value(),
-								std::span<const TemplateTypeArg>{})
-								.has_value()) {
-							rebound_member =
-								parser_.tryResolveConcreteMemberFunction(
-									substituted_receiver,
-									call.called_from().value());
-						}
+			if (auto receiver_type =
+					parser_.get_expression_type(substituted_receiver);
+				receiver_type.has_value() &&
+				is_struct_type(receiver_type->category())) {
+				if (const TypeInfo* receiver_type_info =
+						tryGetTypeInfo(receiver_type->type_index());
+					receiver_type_info != nullptr) {
+					std::string_view class_name =
+						StringTable::getStringView(
+							receiver_type_info->name());
+					if (parser_.templateEngine().instantiateLazyMemberForCanonicalOwner(
+							class_name,
+							call.called_from().value(),
+							std::span<const TemplateTypeArg>{})
+							.has_value()) {
+						rebound_member =
+							parser_.tryResolveConcreteMemberFunction(
+								substituted_receiver,
+								call.called_from().value());
 					}
 				}
 			}
+		}
 
-			if (rebound_member != nullptr) {
-				CallExprNode rebound_call = makeResolvedMemberCallExpr(
-					substituted_receiver,
-					*rebound_member,
-					std::move(substituted_args),
-					call.called_from());
-				CallMetadataCopyOptions copy_options;
-				copy_options.copy_dependent_qualified_lookup_record = false;
-				copyCallMetadataWithTransformedTemplateArguments(
-					rebound_call,
-					call,
-					[this](const ASTNode& template_arg) {
-						return substitute(template_arg);
-					},
-					copy_options);
-				if (rebound_member->has_mangled_name()) {
-					rebound_call.set_mangled_name(rebound_member->mangled_name());
-				}
-				ExpressionNode& rebound_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_call);
-				return ASTNode(&rebound_expr);
+		if (rebound_member != nullptr) {
+			CallExprNode rebound_call = makeResolvedMemberCallExpr(
+				substituted_receiver,
+				*rebound_member,
+				std::move(substituted_args),
+				call.called_from());
+			CallMetadataCopyOptions copy_options;
+			copy_options.copy_dependent_qualified_lookup_record = false;
+			copyCallMetadataWithTransformedTemplateArguments(
+				rebound_call,
+				call,
+				[this](const ASTNode& template_arg) {
+					return substitute(template_arg);
+				},
+				copy_options);
+			if (rebound_member->has_mangled_name()) {
+				rebound_call.set_mangled_name(rebound_member->mangled_name());
 			}
+			ExpressionNode& rebound_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_call);
+			return ASTNode(&rebound_expr);
 		}
 	}
 
