@@ -24,6 +24,25 @@ enum class CanonicalTypeImportContext : uint8_t {
 	Exact, FunctionParameter,
 };
 
+// Alias cv applies to the aliased type as a whole. For a pointer alias it
+// qualifies its outer pointer; otherwise it carries through to the next link.
+inline void appendOrderedAliasPointerLevels(
+	std::vector<DeclaratorComponent>& components,
+	std::span<const PointerLevel> pointer_levels,
+	CVQualifier alias_base_cv,
+	CVQualifier& pending_cv) {
+	for (size_t index = pointer_levels.size(); index-- > 0;) {
+		CVQualifier pointer_cv = pointer_levels[index].cv_qualifier;
+		if (index == pointer_levels.size() - 1) {
+			pointer_cv |= pending_cv;
+		}
+		components.push_back(DeclaratorComponent::pointer(pointer_cv));
+	}
+	pending_cv = pointer_levels.empty()
+		? pending_cv | alias_base_cv
+		: alias_base_cv;
+}
+
 inline TypeId addCanonicalPointerLevels(CanonicalTypeTable& table, TypeId id,
 	std::span<const PointerLevel> pointers) {
 	for (const auto& pointer : pointers) {

@@ -1969,7 +1969,25 @@ public:
 		}
 		const TypeSpecifierNode& ordered =
 			has_ordered_declarator() ? *this : other;
-		return ordered.ordered_declarator_has_legacy_projection();
+		const TypeSpecifierNode& legacy =
+			has_ordered_declarator() ? other : *this;
+		if (!ordered.ordered_declarator_has_legacy_projection() ||
+			ordered.reference_qualifier_ != legacy.reference_qualifier_ ||
+			ordered.is_array_ != legacy.is_array_ ||
+			ordered.pointee_array_declarator_ != legacy.pointee_array_declarator_ ||
+			ordered.has_unsized_outer_array_dimension_ !=
+				legacy.has_unsized_outer_array_dimension_ ||
+			!std::ranges::equal(ordered.array_dimensions_, legacy.array_dimensions_) ||
+			ordered.pointer_levels_.size() != legacy.pointer_levels_.size()) {
+			return false;
+		}
+		for (size_t index = 0; index < ordered.pointer_levels_.size(); ++index) {
+			if (ordered.pointer_levels_[index].cv_qualifier !=
+				legacy.pointer_levels_[index].cv_qualifier) {
+				return false;
+			}
+		}
+		return true;
 	}
 	bool ordered_declarator_has_legacy_projection() const {
 		return !has_ordered_declarator() || declarator_has_legacy_projection_;

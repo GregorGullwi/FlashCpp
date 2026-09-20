@@ -310,6 +310,45 @@ inline void checkAdapter() {
 	legacy_projectable_syntax.clear_ordered_declarator();
 	require(projectable_syntax.has_same_ordered_declarator(
 		legacy_projectable_syntax));
+	TypeSpecifierNode different_legacy_bound = legacy_projectable_syntax;
+	const size_t different_bound[] = {4};
+	different_legacy_bound.set_array_dimensions(different_bound);
+	require(!projectable_syntax.has_same_ordered_declarator(
+		different_legacy_bound));
+	const PointerLevel plain_alias_pointer[] = {PointerLevel{CVQualifier::None}};
+	const PointerLevel const_alias_pointer[] = {PointerLevel{CVQualifier::Const}};
+	std::vector<DeclaratorComponent> alias_components;
+	CVQualifier pending_alias_cv = CVQualifier::Const;
+	appendOrderedAliasPointerLevels(alias_components, plain_alias_pointer,
+		CVQualifier::None, pending_alias_cv);
+	require(alias_components == std::vector<DeclaratorComponent>{
+		DeclaratorComponent::pointer(CVQualifier::Const)});
+	require(pending_alias_cv == CVQualifier::None);
+	alias_components.clear();
+	pending_alias_cv = CVQualifier::None;
+	appendOrderedAliasPointerLevels(alias_components, std::span<const PointerLevel>{},
+		CVQualifier::Const, pending_alias_cv);
+	appendOrderedAliasPointerLevels(alias_components, plain_alias_pointer,
+		CVQualifier::None, pending_alias_cv);
+	require(alias_components == std::vector<DeclaratorComponent>{
+		DeclaratorComponent::pointer(CVQualifier::Const)});
+	alias_components.clear();
+	pending_alias_cv = CVQualifier::None;
+	appendOrderedAliasPointerLevels(alias_components, const_alias_pointer,
+		CVQualifier::None, pending_alias_cv);
+	require(alias_components == std::vector<DeclaratorComponent>{
+		DeclaratorComponent::pointer(CVQualifier::Const)});
+	TypeSpecifierNode const_pointer_alias = interleaved_syntax;
+	const_pointer_alias.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+		alias_components.front(),
+	});
+	require(importCanonicalType(table, const_pointer_alias).type ==
+		table.pointer(table.array(table.pointer(table.array(
+			table.qualify(table.pointer(int_type), CVQualifier::Const), 4)), 3)));
 	const CanonicalDeclaratorExport exported =
 		exportCanonicalDeclarator(table, interleaved.type);
 	require(exported.status == CanonicalTypeImportStatus::Supported);
