@@ -830,6 +830,45 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 	return false;
 }
 
+// C++20 [conv.array]: an array of N T converts to pointer-to-T. For a
+// multidimensional array the inner extents remain on the pointee, so
+// int[2][3] becomes int(*)[3], not int*. Identifier typing currently
+// decays by adding a pointer level while retaining the original extents
+// as a hybrid pointer+array descriptor; drop the outermost extent here.
+inline bool typeIsPointerToArrayAfterDecay(const TypeSpecifierNode& spec) {
+	if (spec.has_pointee_array_declarator()) {
+		return true;
+	}
+	return spec.is_array() && spec.array_dimension_count() > 1;
+}
+
+inline std::span<const size_t> pointerToArrayExtentsAfterDecay(const TypeSpecifierNode& spec) {
+	if (spec.has_pointee_array_declarator()) {
+		return spec.array_dimensions();
+	}
+	if (spec.is_array() && spec.array_dimension_count() > 1) {
+		return spec.array_dimensions().subspan(1);
+	}
+	return {};
+}
+
+inline bool pointerToArrayExtentsCompatible(
+	std::span<const size_t> from_extents,
+	std::span<const size_t> to_extents) {
+	if (from_extents.empty() || to_extents.empty()) {
+		return true;
+	}
+	if (from_extents.size() != to_extents.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < from_extents.size(); ++i) {
+		if (from_extents[i] != to_extents[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // Build a unified conversion plan for full TypeSpecifierNode-level conversions.
 // Handles the full gamut of TypeSpecifierNode cases:
 //   • pointer-to-pointer (depth matching, const qualification, void* conversions)
@@ -875,9 +914,15 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// those pre-decayed shapes from receiving a second pointer level here.
 	if (from.is_array() && !from.is_pointer() && !to.is_array() && to.is_pointer()) {
 		TypeSpecifierNode decayed_from = from;
+		const std::span<const size_t> source_dims = from.array_dimensions();
 		decayed_from.set_array(false, std::nullopt);
 		decayed_from.add_pointer_level(CVQualifier::None);
 		decayed_from.set_reference_qualifier(ReferenceQualifier::None);
+		if (source_dims.size() > 1) {
+			std::vector<size_t> inner_dims(source_dims.begin() + 1, source_dims.end());
+			decayed_from.set_pointee_array_dimensions(inner_dims);
+			decayed_from.set_pointee_array_declarator(true);
+		}
 		ConversionPlan plan = buildConversionPlan(decayed_from, to);
 		if (!plan.is_valid)
 			return ConversionPlan::no_match();
@@ -941,6 +986,19 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		TypeIndex to_resolved_index = to_canonical.resolvedTypeIndex();
 		const TypeCategory from_resolved_category = from_resolved_index.category();
 		const TypeCategory to_resolved_category = to_resolved_index.category();
+
+		const bool from_pointer_to_array = typeIsPointerToArrayAfterDecay(from);
+		const bool to_pointer_to_array = typeIsPointerToArrayAfterDecay(to);
+		if (from_pointer_to_array != to_pointer_to_array) {
+			if (to_resolved_category != TypeCategory::Void) {
+				return ConversionPlan::no_match();
+			}
+		} else if (from_pointer_to_array &&
+			!pointerToArrayExtentsCompatible(
+				pointerToArrayExtentsAfterDecay(from),
+				pointerToArrayExtentsAfterDecay(to))) {
+			return ConversionPlan::no_match();
+		}
 
 		const CVQualifier from_pointee_cv = from.pointee_cv_for_pointer_conversion();
 		const CVQualifier to_pointee_cv = to.pointee_cv_for_pointer_conversion();
@@ -1348,6 +1406,35 @@ inline ArgumentConversionInfo buildArgumentConversionInfo(
 
 	const ConversionPlan conversion = buildConversionPlan(effective_argument_type, parameter_type);
 	return {conversion.rank, &parameter_type, conversion.is_valid};
+}
+
+inline bool canConvertCallArgumentsToFunctionParameters(
+	const FunctionDeclarationNode& func_decl,
+	std::span<const TypeSpecifierNode> argument_types) {
+	const auto& parameters = func_decl.parameter_nodes();
+	const bool is_variadic = func_decl.is_variadic();
+	const size_t min_required = countMinRequiredArgs(func_decl);
+	if (is_variadic) {
+		if (argument_types.size() < min_required) {
+			return false;
+		}
+	} else if (argument_types.size() < min_required || argument_types.size() > parameters.size()) {
+		return false;
+	}
+
+	const size_t params_to_check = std::min(parameters.size(), argument_types.size());
+	for (size_t i = 0; i < params_to_check; ++i) {
+		if (!parameters[i].is<DeclarationNode>()) {
+			return false;
+		}
+		const TypeSpecifierNode& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
+		const ArgumentConversionInfo conversion =
+			buildArgumentConversionInfo(argument_types[i], param_type, nullptr);
+		if (!conversion.is_valid) {
+			return false;
+		}
+	}
+	return true;
 }
 
 // Result of overload resolution
