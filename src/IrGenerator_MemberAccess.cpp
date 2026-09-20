@@ -1506,7 +1506,19 @@ bool AstToIr::setupBaseFromIdentifier(
 	// Member-access validation resolves the declaration/type using the source-level identifier,
 	// but codegen must use the actual storage symbol for globals/static locals.
 	if (binding_info.is_global_or_static && std::holds_alternative<StringHandle>(base_object)) {
-		base_object = binding_info.store_name;
+		if (is_pointer_dereference) {
+			TempVar pointer_value = var_counter.next();
+			GlobalLoadOp load_op;
+			load_op.result.value = pointer_value;
+			load_op.result.setType(TypeCategory::UnsignedLongLong);
+			load_op.result.ir_type = IrType::Integer;
+			load_op.result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+			load_op.global_name = binding_info.store_name;
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), member_token));
+			base_object = pointer_value;
+		} else {
+			base_object = binding_info.store_name;
+		}
 	}
 	return true;
 }

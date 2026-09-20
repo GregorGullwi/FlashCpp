@@ -124,15 +124,6 @@ uses file scope for this reason). The bug is in local aggregate/initializer-
 list lowering for nested braces over struct elements, not in the declarator
 or subscript machinery.
 
-## Member stores through a global struct pointer
-
-With file-scope `W wv; W* wp;`, executing `wp = &wv; wp->tag = 7;` leaves
-`wv.tag` unchanged (verified identical on the pre-pointer-to-array baseline).
-Scalar/int globals, `long*` element writes, and `int**` chains through the
-same binding-width fix behave correctly
-(tests/test_global_pointer_binding_width_ret0.cpp). The arrow-store path for
-aggregate members via a global binding needs its own investigation.
-
 ## Flat type representation cannot express interleaved pointer/array declarators
 
 C++20 declarators compose recursively: in `int (*(*p)[3])[4]`, `p` is pointer
