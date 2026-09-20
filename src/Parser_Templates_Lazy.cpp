@@ -795,6 +795,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 	ASTNode new_func_node = shell.function_node;
 	FunctionDeclarationNode& new_func_ref = *shell.function;
 	new_func_ref.set_lazy_member_registry_key(lazy_info.registry_key);
+	// Apply cv before body replay so injected `this` and implicit-this overload
+	// ranking observe a const receiver inside const methods.
+	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
+	new_func_ref.set_is_volatile_member_function(
+		hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));
 	if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
 		TemplateParamNameVector outer_param_names;
 		TemplateArgInfoVector outer_args;

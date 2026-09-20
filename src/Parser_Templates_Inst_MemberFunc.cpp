@@ -3248,16 +3248,18 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		nullptr	// local_struct_info - not needed for out-of-class member function definitions
 	});
 
-	// Add 'this' pointer to symbol table
-	ASTNode this_type = emplace_node<TypeSpecifierNode>(
+	// Add 'this' pointer to symbol table with pointee cv from the enclosing
+	// member function so const-method bodies rank const overloads correctly.
+	auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
 		struct_type_index.withCategory(TypeCategory::Struct),
 		64,	// Pointer size
 		Token(),
 		CVQualifier::None,
 		ReferenceQualifier::None);
+	this_type_ref.add_pointer_level(currentMemberFunctionThisCv());
 
 	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
-	auto this_decl = emplace_node<DeclarationNode>(this_type, this_token);
+	auto this_decl = emplace_node<DeclarationNode>(this_type_node, this_token);
 	gSymbolTable.insert("this"sv, this_decl);
 
 	// Add parameters to symbol table

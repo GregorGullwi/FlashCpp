@@ -43,10 +43,7 @@ bool postfixExplicitTemplateArgsRequireDeferredInstantiation(
 }
 
 bool typeSpecifierObjectIsConst(const TypeSpecifierNode& type) {
-	if (!type.pointer_levels().empty()) {
-		return hasCVQualifier(type.pointer_levels().back().cv_qualifier, CVQualifier::Const);
-	}
-	return type.is_const();
+	return memberObjectTypeIsConst(type);
 }
 
 bool concreteStructHasConstIncompatibleNamedMember(

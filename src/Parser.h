@@ -1900,6 +1900,7 @@ private:
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
 	void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index, bool inject_this);  // Phase 5: Helper for member function scope setup
+	CVQualifier currentMemberFunctionThisCv() const;  // cv of the implied object parameter from current_function_
 	void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
 	void register_parameters_in_scope(std::span<const ASTNode> params);  // Phase 5: Register function parameters in symbol table
 	StructMemberFunction* find_member_function_by_signature(StructTypeInfo& struct_info, StringHandle name, const FlashCpp::MemberQualifiers& quals, size_t param_count);  // Priority 4: Lookup regular member function by name, cv-qualifiers, and parameter count

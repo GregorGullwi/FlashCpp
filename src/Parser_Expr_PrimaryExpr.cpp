@@ -6207,8 +6207,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			Token this_token(Token::Type::Keyword, "this"sv, identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 
-			// Get the FunctionDeclarationNode
-			FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+			// Rank overloads against the implied object parameter's cv so a const
+			// method body selects the const overload (declaration order must not win).
+			const FunctionDeclarationNode* resolved_func =
+				tryResolveConcreteMemberFunction(this_node, identifier_token.value());
+			const FunctionDeclarationNode& func_decl =
+				resolved_func != nullptr
+					? *resolved_func
+					: identifierType->as<FunctionDeclarationNode>();
 
 			// Create unified member call with implicit 'this'
 			result = emplace_node<ExpressionNode>(
@@ -8349,8 +8355,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					Token this_token(Token::Type::Keyword, "this"sv, identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 					auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 
-					// Get the FunctionDeclarationNode
-					FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+					const FunctionDeclarationNode* resolved_func =
+						tryResolveConcreteMemberFunction(this_node, identifier_token.value());
+					const FunctionDeclarationNode& func_decl =
+						resolved_func != nullptr
+							? *resolved_func
+							: identifierType->as<FunctionDeclarationNode>();
 
 					// Create unified member call with implicit 'this'
 					result = emplace_node<ExpressionNode>(

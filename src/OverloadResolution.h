@@ -2148,6 +2148,23 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 	return OverloadResolutionResult(best_match);
 }
 
+// Receiver object const/volatile for member overload ranking. Pointer receivers
+// (including `this`) store cv on the last pointer level; non-pointer receivers
+// use the type's base cv. Matches typeSpecifierObjectIsConst in the parser.
+inline bool memberObjectTypeIsConst(const TypeSpecifierNode& type) {
+	if (!type.pointer_levels().empty()) {
+		return hasCVQualifier(type.pointer_levels().back().cv_qualifier, CVQualifier::Const);
+	}
+	return type.is_const();
+}
+
+inline bool memberObjectTypeIsVolatile(const TypeSpecifierNode& type) {
+	if (!type.pointer_levels().empty()) {
+		return hasCVQualifier(type.pointer_levels().back().cv_qualifier, CVQualifier::Volatile);
+	}
+	return type.is_volatile();
+}
+
 // Resolve non-static member candidates while ranking the implicit object
 // conversion alongside the explicit arguments. C++20 [over.match.funcs] makes
 // that conversion part of best-viable-function selection; filtering solely by
@@ -2172,13 +2189,16 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 	std::vector<ViableMemberCandidate> viable_candidates;
 	viable_candidates.reserve(overloads.size());
 
+	const bool object_is_const = memberObjectTypeIsConst(object_type);
+	const bool object_is_volatile = memberObjectTypeIsVolatile(object_type);
+
 	for (const ASTNode& overload : overloads) {
 		if (!overload.is<FunctionDeclarationNode>()) {
 			continue;
 		}
 		const FunctionDeclarationNode& function = overload.as<FunctionDeclarationNode>();
-		if ((object_type.is_const() && !function.is_const_member_function()) ||
-			(object_type.is_volatile() && !function.is_volatile_member_function())) {
+		if ((object_is_const && !function.is_const_member_function()) ||
+			(object_is_volatile && !function.is_volatile_member_function())) {
 			continue;
 		}
 
@@ -2192,8 +2212,8 @@ inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
 		ViableMemberCandidate candidate;
 		candidate.overload = &overload;
 		const bool adds_object_qualification =
-			(!object_type.is_const() && function.is_const_member_function()) ||
-			(!object_type.is_volatile() && function.is_volatile_member_function());
+			(!object_is_const && function.is_const_member_function()) ||
+			(!object_is_volatile && function.is_volatile_member_function());
 		candidate.conversion_infos.push_back({
 			adds_object_qualification
 				? ConversionRank::QualificationAdjustment
