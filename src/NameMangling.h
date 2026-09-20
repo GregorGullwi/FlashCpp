@@ -574,6 +574,7 @@ inline bool appendItaniumMemberPointerTypeCode(
 // Works with both std::string and StringBuilder
 template <typename OutputType>
 void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
+	type_node.require_legacy_declarator_projection("MSVC name mangling");
 	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(type_node);
 	const TypeSpecifierNode& normalized = normalized_type;
 	const bool is_member_object_pointer_like =
@@ -1024,6 +1025,7 @@ inline void populateSubstitutionsFromClassContext(
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
 template <typename OutputType>
 inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter) {
+	type_node.require_legacy_declarator_projection("Itanium name mangling");
 	TypeSpecifierNode parameter_adjusted_type =
 		is_function_parameter ? type_node.adjusted_function_parameter_type() : type_node;
 	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(parameter_adjusted_type);

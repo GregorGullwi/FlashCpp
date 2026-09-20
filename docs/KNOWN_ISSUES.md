@@ -116,21 +116,17 @@ Remaining gaps in the same area:
 
 ## Flat type representation cannot express interleaved pointer/array declarators
 
-C++20 declarators compose recursively: in `int (*(*p)[3])[4]`, `p` is pointer
-to array[3] of pointer to array[4] of int — array bounds interleave between
-pointer levels. `TypeSpecifierNode` and `CanonicalTypeDesc` flatten a type into
-a base category plus parallel `pointer_levels` / `array_dimensions` lists, so
-only the two boundary shapes are representable: all dimensions outside the
-pointers (`T* p[N]`) and all dimensions behind every pointer
-(`T (*p)[N]`, `T (**pp)[N]`, `T (*p)[N][M]`), selected by the
-`pointee_array_declarator` flag. Mixed interleavings such as
-`int* (*p)[3]` (pointer to array of pointers) cannot be encoded. The paren
-declarator path rejects a leading declarator star before the group, but an
-alias carrying indirection would silently reorder the levels; canonicalization
-therefore throws for that combination (`canonicalizeType`). Full conformance
-requires replacing the parallel fields with an ordered declarator-component
-sequence (or recursive type nodes) across AST, canonical types, template
-substitution, mangling, traits, and codegen stride derivation.
+The AST and canonical adapter now preserve arbitrary pointer/array
+interleaving in an ordered declarator spine, including
+`int (*(*p)[3])[4]`, deeper alternation, abstract declarators, and per-pointer
+cv. The migrated size/dereference path consumes that structure.
+
+Boundary 3A is not complete: name mangling, the flat `CanonicalTypeDesc` /
+`TypeContext`, template argument and substitution storage, traits, and general
+IR layout/subscript consumers still read parallel pointer/array fields.
+Non-projectable spines are rejected at migrated boundary guards rather than
+being reordered or truncated. Remove this entry when those consumers migrate
+and the compatibility projection fields are deleted.
 
 ## Variable-template initializer replay removed; static-member replay clones remain
 

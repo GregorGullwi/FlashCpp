@@ -255,6 +255,86 @@ inline void checkAdapter() {
 		CVQualifier::Const));
 	require(pointee.type != ordinary.type);
 
+	TypeSpecifierNode interleaved_syntax(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	interleaved_syntax.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+	});
+	require(!interleaved_syntax.ordered_declarator_has_legacy_projection());
+	const CanonicalTypeImport interleaved =
+		importCanonicalType(table, interleaved_syntax);
+	require(interleaved.status == CanonicalTypeImportStatus::Supported);
+	const TypeId expected_interleaved = table.pointer(
+		table.array(table.pointer(table.array(int_type, 4)), 3));
+	require(interleaved.type == expected_interleaved);
+	require(interleaved.type != pointee.type);
+	require(interleaved.type != ordinary.type);
+
+	TypeSpecifierNode deeper_syntax(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	deeper_syntax.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::Volatile),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::array(5),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	const CanonicalTypeImport deeper = importCanonicalType(table, deeper_syntax);
+	require(deeper.status == CanonicalTypeImportStatus::Supported);
+	require(deeper.type == table.qualify(
+		table.pointer(table.array(table.qualify(
+			table.pointer(table.array(table.array(table.pointer(int_type), 5), 3)),
+			CVQualifier::Volatile), 2)),
+		CVQualifier::Const));
+
+	const CanonicalDeclaratorExport exported =
+		exportCanonicalDeclarator(table, interleaved.type);
+	require(exported.status == CanonicalTypeImportStatus::Supported);
+	require(exported.base == int_type);
+	require(exported.components.size() ==
+		interleaved_syntax.declarator_components().size());
+	require(std::equal(
+		exported.components.begin(),
+		exported.components.end(),
+		interleaved_syntax.declarator_components().begin()));
+	TypeSpecifierNode round_trip(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	round_trip.set_ordered_declarator(exported.components);
+	require(importCanonicalType(table, round_trip).type == interleaved.type);
+
+	CanonicalTypeTable reordered_interleaving;
+	reordered_interleaving.builtin(CanonicalBuiltinKind::Double);
+	const TypeId reordered_int =
+		reordered_interleaving.builtin(CanonicalBuiltinKind::Int);
+	TypeSpecifierNode reordered_syntax = interleaved_syntax;
+	const TypeId reordered_type =
+		importCanonicalType(reordered_interleaving, reordered_syntax).type;
+	require(sameStructure(
+		table, interleaved.type, reordered_interleaving, reordered_type));
+	TypeSpecifierNode nominal_parameter(
+		TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	nominal_parameter.set_type_entity(EntityId{72});
+	nominal_parameter.set_ordered_declarator({
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	const TypeId nominal_base = table.record(EntityId{72});
+	require(importCanonicalFunctionParameterType(table, nominal_parameter).type ==
+		table.pointer(table.pointer(
+			table.array(table.pointer(nominal_base), 3))));
+	const TypeId owner = table.record(EntityId{71});
+	const TypeId member_variant = table.pointer(table.array(
+		table.memberObjectPointer(owner, table.qualify(int_type, CVQualifier::Const)), 3));
+	require(member_variant != interleaved.type);
+	require(table.memberPointerOwner(table.node(table.node(member_variant).child).child) == owner);
+	(void)reordered_int;
+
 	TypeSpecifierNode unknown_array(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	unknown_array.set_array(true);
 	unknown_array.set_unsized_outer_array_dimension(true);

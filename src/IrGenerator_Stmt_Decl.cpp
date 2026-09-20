@@ -362,6 +362,19 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 	const auto& decl = node.declaration();
 	const auto& type_node = decl.type_specifier_node();
+	size_t runtime_pointer_depth = type_node.pointer_depth();
+	if (type_node.has_ordered_declarator()) {
+		const std::span<const DeclaratorComponent> components =
+			type_node.declarator_components();
+		if (components.empty() ||
+			components.front().kind != DeclaratorComponentKind::Pointer) {
+			throw InternalError(
+				"interleaved declarator reached unmigrated array-object IR lowering");
+		}
+		// This slice migrates storage for an outer pointer object only. Pointee
+		// operations remain fail-closed in expression lowering.
+		runtime_pointer_depth = 1;
+	}
 	auto flushFullExpressionTemps = [this]() {
 		emitAndClearFullExpressionTempDestructors();
 	};
@@ -1349,11 +1362,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// Generate variable declaration with compile-time value
 				VariableDeclOp decl_op;
 				decl_op.type_index = type_node.type_index();
-				decl_op.size_in_bits = SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
+				decl_op.size_in_bits = SizeInBits{runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
 				decl_op.var_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = false;
 
 					// Set the compile-time evaluated initializer
@@ -1398,7 +1411,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				type_node.type_index(),
 				type_node.type(),
 				type_node.sizeBits(),
-				PointerDepth{static_cast<int>(type_node.pointer_depth())},
+				PointerDepth{static_cast<int>(runtime_pointer_depth)},
 				type_node.reference_qualifier(),
 				decl.identifier_token());
 		initializer_typed_value = toTypedValue(appended_result);
@@ -1425,7 +1438,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	};
 	operands.emplace_back(type_node.type());
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
-	int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+	int size_in_bits = runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 	operands.emplace_back(size_in_bits);
 	operands.emplace_back(decl.identifier_token().handle());
 	operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
@@ -1515,11 +1528,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// Generate VariableDecl with initializer
 				VariableDeclOp decl_op;
 				decl_op.type_index = type_node.type_index();
-				decl_op.size_in_bits = SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
+				decl_op.size_in_bits = SizeInBits{runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
 				decl_op.var_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = decl.is_array_object();
 				if (initializer_typed_value.has_value()) {
 					decl_op.initializer = std::move(initializer_typed_value);
@@ -1534,11 +1547,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// Add the variable declaration without initializer
 				VariableDeclOp decl_op;
 				decl_op.type_index = type_node.type_index();
-				decl_op.size_in_bits = SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
+				decl_op.size_in_bits = SizeInBits{runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
 				decl_op.var_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = decl.is_array_object();
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
@@ -2097,7 +2110,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 			bool is_struct_with_constructor = false;
 			if (type_node.category() == TypeCategory::Struct &&
-				type_node.pointer_depth() == 0 &&
+				runtime_pointer_depth == 0 &&
 				!type_node.is_reference() &&
 				!type_node.is_rvalue_reference()) {
 				const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
@@ -2112,7 +2125,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 				// References don't use copy constructors - they bind to the address of the initializer
 			bool is_copy_init_for_struct = (type_node.category() == TypeCategory::Struct &&
-											type_node.pointer_depth() == 0 &&
+											runtime_pointer_depth == 0 &&
 											!type_node.is_reference() &&
 											!type_node.is_rvalue_reference() &&
 											node.initializer() &&
@@ -2132,7 +2145,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					TypeCategory init_type = init_operands.typeEnum();
 					TypeIndex init_type_index = init_operands.type_index;
 					const TypeCategory init_cat = init_operands.category();
-					const int target_size = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+					const int target_size = runtime_pointer_depth > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 
 						// Check if source and target types differ and source is a struct
 					bool need_conversion = (init_type != type_node.type()) ||
@@ -2210,7 +2223,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// relationship before the backend emits an adjustment. Direct variable
 					// initialization can bypass overload-resolution diagnostics.
 					if (need_conversion && init_cat == TypeCategory::Struct &&
-						type_node.pointer_depth() > 0 && init_operands.pointer_depth.is_pointer() &&
+						runtime_pointer_depth > 0 && init_operands.pointer_depth.is_pointer() &&
 						init_type_index.is_valid() && type_node.type_index().is_valid() &&
 						init_type_index != type_node.type_index()) {
 						const DerivedBaseConversionInfo base_conversion =
@@ -2250,7 +2263,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// Embed the resolved category into type_index (preserves gTypeInfo slot).
 						init_operands.type_index = init_operands.type_index.withCategory(init_cat);
 					}
-					if (init_type != decl_type && init_cat != TypeCategory::Struct && decl_cat != TypeCategory::Struct && init_cat != TypeCategory::Enum && decl_cat != TypeCategory::Enum && init_cat != TypeCategory::Invalid && decl_cat != TypeCategory::Invalid && !isPlaceholderAutoType(init_cat) && !isPlaceholderAutoType(decl_cat) && type_node.pointer_depth() == 0) {
+					if (init_type != decl_type && init_cat != TypeCategory::Struct && decl_cat != TypeCategory::Struct && init_cat != TypeCategory::Enum && decl_cat != TypeCategory::Enum && init_cat != TypeCategory::Invalid && decl_cat != TypeCategory::Invalid && !isPlaceholderAutoType(init_cat) && !isPlaceholderAutoType(decl_cat) && runtime_pointer_depth == 0) {
 						bool sema_applied = false;
 						if (init_node.is<ExpressionNode>()) {
 							const void* key = &init_node.as<ExpressionNode>();
@@ -2351,11 +2364,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	VariableDeclOp decl_op;
 	decl_op.type_index = type_node.type_index();
 		// References and pointers are both 64-bit (pointer size on x64)
-	decl_op.size_in_bits = SizeInBits{(type_node.pointer_depth() > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits())};
+	decl_op.size_in_bits = SizeInBits{(runtime_pointer_depth > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits())};
 	decl_op.var_name = decl.identifier_token().handle();
 	decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 	decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-	decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+	decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 	decl_op.is_array = decl.is_array_object();
 	if (decl.is_array_object() && operands.size() >= 10) {
 		decl_op.array_element_type_index = nativeTypeIndex(std::get<TypeCategory>(operands[7]));
@@ -2441,7 +2454,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (init_node.is<ExpressionNode>() &&
 			std::holds_alternative<StringLiteralNode>(init_node.as<ExpressionNode>()) &&
 			type_node.category() == TypeCategory::Char &&
-			type_node.pointer_depth() == 0 &&
+			runtime_pointer_depth == 0 &&
 			type_node.array_dimension_count() <= 1) {
 			const auto& string_literal = std::get<StringLiteralNode>(init_node.as<ExpressionNode>());
 			std::string literal_bytes = FlashCpp::decodeStringLiteralBytes(string_literal.value());
@@ -2518,7 +2531,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					true,
 					std::vector<size_t>(type_array_dimensions.begin(), type_array_dimensions.end()),
 					false,
-					static_cast<int>(type_node.pointer_depth()),
+					static_cast<int>(runtime_pointer_depth),
 					std::nullopt);
 				if (tryEmitArrayMemberStores(array_member, init_list, decl.identifier_token().handle(), 0, node.declaration().identifier_token()))
 					return;
@@ -2562,7 +2575,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// If this is a struct type with a constructor, generate a constructor call
 		// IMPORTANT: Only for non-pointer struct types. Pointers are just addresses, no constructor needed.
 		// IMPORTANT: References also don't need constructor calls - they just bind to existing objects
-	if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
+	if (type_node.category() == TypeCategory::Struct && runtime_pointer_depth == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
 		TypeIndex type_index = type_node.type_index();
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 
