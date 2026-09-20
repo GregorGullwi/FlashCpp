@@ -59,6 +59,10 @@ inline TypeId addCanonicalArrayDimensions(CanonicalTypeTable& table, TypeId id,
 	return id;
 }
 
+inline CanonicalTypeImport importCanonicalFunctionSignature(
+	CanonicalTypeTable& table,
+	const FunctionSignature& signature);
+
 inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	CanonicalTypeTable& table,
 	TypeId base,
@@ -93,9 +97,35 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			id = table.arrayOfUnknownBound(id);
 			break;
 		case DeclaratorComponentKind::Function:
-		case DeclaratorComponentKind::MemberObjectPointer:
-		case DeclaratorComponentKind::MemberFunctionPointer:
 			return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+		case DeclaratorComponentKind::MemberObjectPointer:
+			if (index != components.size() - 1 || !component.member_owner ||
+				static_cast<uint8_t>(component.cv_qualifier) > 3) {
+				return {{}, CanonicalTypeImportStatus::Invalid};
+			}
+			id = table.qualify(
+				table.memberObjectPointer(table.record(component.member_owner), id),
+				component.cv_qualifier);
+			break;
+		case DeclaratorComponentKind::MemberFunctionPointer: {
+			if (index != components.size() - 1 || !component.member_owner ||
+				static_cast<uint8_t>(component.cv_qualifier) > 3 ||
+				!syntax.has_function_signature()) {
+				return {{}, CanonicalTypeImportStatus::Invalid};
+			}
+			FunctionSignature signature = syntax.function_signature();
+			signature.class_name = {};
+			const CanonicalTypeImport imported_function =
+				importCanonicalFunctionSignature(table, signature);
+			if (imported_function.status != CanonicalTypeImportStatus::Supported) {
+				return imported_function;
+			}
+			id = table.qualify(
+				table.memberFunctionPointer(table.record(component.member_owner),
+					imported_function.type),
+				component.cv_qualifier);
+			break;
+		}
 		}
 	}
 	if (context == CanonicalTypeImportContext::FunctionParameter &&
@@ -454,6 +484,39 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 // also stays deferred.
 inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax) {
+	if (syntax.has_ordered_declarator()) {
+		const std::span<const DeclaratorComponent> components =
+			syntax.declarator_components();
+		if (components.empty()) {
+			return {{}, CanonicalTypeImportStatus::Invalid};
+		}
+		const DeclaratorComponent& innermost = components.back();
+		if (innermost.kind == DeclaratorComponentKind::MemberFunctionPointer) {
+			return applyCanonicalOrderedDeclarator(table, TypeId{}, syntax,
+				CanonicalTypeImportContext::Exact);
+		}
+		if (innermost.kind != DeclaratorComponentKind::MemberObjectPointer) {
+			return {{}, CanonicalTypeImportStatus::Invalid};
+		}
+		if (syntax.category() == TypeCategory::MemberObjectPointer &&
+			!syntax.has_member_object_pointee()) {
+			return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+		}
+		TypeSpecifierNode pointee = syntax.category() == TypeCategory::MemberObjectPointer
+			? syntax.member_object_pointee()
+			: syntax;
+		pointee.clear_member_class_identity();
+		pointee.clear_injected_class_declaration();
+		pointee.clear_ordered_declarator();
+		pointee.limit_pointer_depth(0);
+		const CanonicalTypeImport imported_pointee = importCanonicalTypeImpl(
+			table, pointee, CanonicalTypeImportContext::Exact);
+		if (imported_pointee.status != CanonicalTypeImportStatus::Supported) {
+			return imported_pointee;
+		}
+		return applyCanonicalOrderedDeclarator(table, imported_pointee.type, syntax,
+			CanonicalTypeImportContext::Exact);
+	}
 	const EntityId owner_entity = resolveMemberClassEntity(syntax);
 	if (!owner_entity) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};

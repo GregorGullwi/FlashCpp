@@ -5179,6 +5179,23 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			alias_components.begin(), alias_components.end());
 		resolved_syntax.set_ordered_declarator(
 			std::move(composed_components));
+		// Parser-time owner publication can precede the class declaration's
+		// EntityId assignment. Refresh the bridge before importing the ordered
+		// spine, then copy the published identity into its member components.
+		tryBindPublishedMemberClassEntity(resolved_syntax);
+		if (resolved_syntax.has_member_class_entity()) {
+			std::vector<DeclaratorComponent> bound_components(
+				resolved_syntax.declarator_components().begin(),
+				resolved_syntax.declarator_components().end());
+			for (DeclaratorComponent& component : bound_components) {
+				if ((component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+					 component.kind == DeclaratorComponentKind::MemberFunctionPointer) &&
+					!component.member_owner) {
+					component.member_owner = resolved_syntax.member_class_entity();
+				}
+			}
+			resolved_syntax.set_ordered_declarator(std::move(bound_components));
+		}
 		CanonicalTypeTable& canonical_types =
 			requireFrontendContext().canonicalTypes();
 		const CanonicalTypeImport imported =
