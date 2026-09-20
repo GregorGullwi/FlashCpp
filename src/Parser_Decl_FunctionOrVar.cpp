@@ -1102,6 +1102,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// If the error is a semantic error (not a syntax error about expecting '('),
 		// return it directly instead of trying variable declaration parsing
 		std::string error_msg = function_definition_result.error_message();
+		// A structured declaration rejection originates from a rule that already
+		// reported its diagnostic. Retrying the line as a variable/expression
+		// declaration would replace that diagnostic with an unrelated retry error,
+		// so surface the originating rejection unchanged.
+		if (function_definition_result.diagnostic_id() != DiagnosticId::None) {
+			return function_definition_result;
+		}
 		if (error_msg.find("Variadic") != std::string::npos ||
 			error_msg.find("calling convention") != std::string::npos) {
 			return function_definition_result;

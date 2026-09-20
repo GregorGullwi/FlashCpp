@@ -195,13 +195,28 @@ bool nodeHasDeferredTemplateDependency(
 
 class ParseResult {
 public:
+	struct Error {
+		std::string error_message_;
+		Token token_;
+		DiagnosticId diagnostic_id_ = DiagnosticId::None;
+	};
+
 	ParseResult() : value_or_error_(std::monostate{}) {}
 	ParseResult(ASTNode node) : value_or_error_(node) {}
 	ParseResult(std::string error_message, Token token)
-		: value_or_error_(Error{std::move(error_message), std::move(token)}) {}
+		: value_or_error_(Error{std::move(error_message), std::move(token), DiagnosticId::None}) {}
+	ParseResult(Error error) : value_or_error_(std::move(error)) {}
 
 	bool is_error() const {
 		return std::holds_alternative<Error>(value_or_error_);
+	}
+
+	// The structured DiagnosticId when this result came from a rule report that
+	// used the DiagnosticEngine, or None for an unstructured syntax probe. The
+	// declaration dispatch uses this to tell an originating rejection apart from
+	// a speculative parse failure that may still be an expression.
+	DiagnosticId diagnostic_id() const {
+		return is_error() ? std::get<Error>(value_or_error_).diagnostic_id_ : DiagnosticId::None;
 	}
 
 	bool is_null() const {
@@ -330,16 +345,11 @@ public:
 							 std::span<const DiagnosticArgument> arguments) {
 		diagnostics.report(
 			id, DiagnosticSeverity::Error, lexer.getSourceLocation(token), message_template, arguments);
-		return ParseResult(renderDiagnosticMessage(message_template, arguments), token);
+		return ParseResult(Error{renderDiagnosticMessage(message_template, arguments), token, id});
 	}
 	static ParseResult null() {
 		return ParseResult();
 	}
-
-	struct Error {
-		std::string error_message_;
-		Token token_;
-	};
 
 private:
 	std::variant<std::monostate, ASTNode, Error> value_or_error_;

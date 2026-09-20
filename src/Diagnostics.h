@@ -85,6 +85,7 @@ enum class DiagnosticId : uint32_t {
 	FriendClassNotDeclared = 1016,
 	DefaultedFunctionNotSpecialMember = 1017,
 	DeletedDefinitionNotFirstDeclaration = 1018,
+	MissingDefaultArgumentForTrailingParameter = 1019,
 
 	// Notes attached to declarator-family diagnostics (1051..1079).
 	NoteToMatchOpeningBracket = 1051,
@@ -261,6 +262,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "DefaultedFunctionNotSpecialMember";
 	case DiagnosticId::DeletedDefinitionNotFirstDeclaration:
 		return "DeletedDefinitionNotFirstDeclaration";
+	case DiagnosticId::MissingDefaultArgumentForTrailingParameter:
+		return "MissingDefaultArgumentForTrailingParameter";
 	case DiagnosticId::NoteToMatchOpeningBracket:
 		return "NoteToMatchOpeningBracket";
 	case DiagnosticId::HexFloatRequiresBinaryExponent:
