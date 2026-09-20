@@ -1994,8 +1994,20 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 		}
 
 		if (arg_types.size() == argument_count) {
-			auto overload_result =
-				resolve_overload_with_argument_nodes(candidates, arg_types, std::span<const ASTNode>{});
+			OverloadResolutionResult overload_result;
+			if (auto object_type = get_expression_type(object_expr);
+				object_type.has_value()) {
+				overload_result = resolve_member_overload_with_argument_nodes(
+					candidates,
+					*object_type,
+					arg_types,
+					std::span<const ASTNode>{});
+			} else {
+				overload_result = resolve_overload_with_argument_nodes(
+					candidates,
+					arg_types,
+					std::span<const ASTNode>{});
+			}
 			if (overload_result.has_match &&
 				!overload_result.is_ambiguous &&
 				overload_result.selected_overload != nullptr &&
@@ -2069,6 +2081,86 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			}
 
 			return std::nullopt;
+		};
+	auto attachNestedNameSpecifierLookupRecord =
+		[&](ExpressionNode& call_expr,
+			std::span<const StringHandle> owner_segments,
+			const Token& member_token,
+			const std::optional<TemplateArgumentVector>& member_template_args) {
+			// C++20 [class.qual]: persist the nested-name-specifier so later
+			// substitution looks up in the nominated class, not the complete
+			// object type.
+			ResolvedQualifiedOwner resolved_root_owner;
+			StringHandle current_owner_handle{};
+			TypeIndex current_owner_type_index{};
+			bool current_owner_is_valid = false;
+			if (!owner_segments.empty() && owner_segments.front().isValid()) {
+				resolved_root_owner = resolveQualifiedOwnerForLookup(
+					StringTable::getStringView(owner_segments.front()));
+			}
+			if (resolved_root_owner.resolved_from_current_context &&
+				resolved_root_owner.lookupNameHandle().isValid()) {
+				current_owner_handle = resolved_root_owner.lookupNameHandle();
+				if (resolved_root_owner.type_info != nullptr) {
+					current_owner_type_index =
+						resolved_root_owner.type_info->registeredTypeIndex();
+				}
+				current_owner_is_valid = true;
+			} else if (!member_function_context_stack_.empty()) {
+				current_owner_handle =
+					member_function_context_stack_.back().struct_name;
+				current_owner_type_index =
+					member_function_context_stack_.back().struct_type_index;
+				current_owner_is_valid = current_owner_handle.isValid();
+			} else if (!struct_parsing_context_stack_.empty() &&
+					   !struct_parsing_context_stack_.back().struct_name.empty()) {
+				current_owner_handle = StringTable::getOrInternStringHandle(
+					struct_parsing_context_stack_.back().struct_name);
+				current_owner_is_valid = current_owner_handle.isValid();
+			}
+			if (!current_owner_is_valid) {
+				return;
+			}
+
+			std::vector<PostfixDependentMemberSegmentInfo> member_segments;
+			if (!resolved_root_owner.resolved_from_current_context) {
+				member_segments.reserve(owner_segments.size() + 1);
+				for (StringHandle owner_segment : owner_segments) {
+					PostfixDependentMemberSegmentInfo member_segment;
+					member_segment.name = owner_segment;
+					member_segments.push_back(std::move(member_segment));
+				}
+			}
+			PostfixDependentMemberSegmentInfo final_member_segment;
+			final_member_segment.name =
+				member_token.handle().isValid()
+					? member_token.handle()
+					: StringTable::getOrInternStringHandle(member_token.value());
+			final_member_segment.template_args =
+				member_template_args.has_value()
+					? toTemplateArgInfoList(*member_template_args)
+					: std::optional<TemplateArgInfoVector>{};
+			member_segments.push_back(std::move(final_member_segment));
+			TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
+				resolved_root_owner.resolved_from_current_context
+					? TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+						  DependentInstantiation
+					: TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+						  CurrentInstantiation;
+			TemplateArgInfoVector owner_template_arguments;
+			if (resolved_root_owner.resolved_from_current_context &&
+				resolved_root_owner.type_info != nullptr) {
+				owner_template_arguments =
+					resolved_root_owner.type_info->templateArgs();
+			}
+			setCallDependentQualifiedLookupRecord(
+				call_expr,
+				makePostfixDependentQualifiedNameRecord(
+					current_owner_handle,
+					current_owner_type_index,
+					owner_kind,
+					std::move(owner_template_arguments),
+					member_segments));
 		};
 	auto tryInstantiateQualifiedMemberTemplateCall =
 		[&](const ASTNode& object_expr,
@@ -2206,72 +2298,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						.type_specifier_node());
 			}
 
-			StringHandle current_owner_handle{};
-			TypeIndex current_owner_type_index{};
-			bool current_owner_is_valid = false;
-			if (resolved_root_owner.resolved_from_current_context &&
-				resolved_root_owner.lookupNameHandle().isValid()) {
-				current_owner_handle = resolved_root_owner.lookupNameHandle();
-				if (resolved_root_owner.type_info != nullptr) {
-					current_owner_type_index =
-						resolved_root_owner.type_info->registeredTypeIndex();
-				}
-				current_owner_is_valid = true;
-			} else if (!member_function_context_stack_.empty()) {
-				current_owner_handle =
-					member_function_context_stack_.back().struct_name;
-				current_owner_is_valid = current_owner_handle.isValid();
-			} else if (!struct_parsing_context_stack_.empty() &&
-					   !struct_parsing_context_stack_.back().struct_name.empty()) {
-				current_owner_handle =
-					StringTable::getOrInternStringHandle(
-						struct_parsing_context_stack_.back().struct_name);
-				current_owner_is_valid = current_owner_handle.isValid();
-			}
-
-			if (current_owner_is_valid) {
-				std::vector<PostfixDependentMemberSegmentInfo>
-					member_segments;
-				if (!resolved_root_owner.resolved_from_current_context) {
-					member_segments.reserve(owner_segments.size() + 1);
-					for (StringHandle owner_segment : owner_segments) {
-						PostfixDependentMemberSegmentInfo member_segment;
-						member_segment.name = owner_segment;
-						member_segments.push_back(std::move(member_segment));
-					}
-				}
-				PostfixDependentMemberSegmentInfo final_member_segment;
-				final_member_segment.name =
-					member_token.handle().isValid()
-						? member_token.handle()
-						: StringTable::getOrInternStringHandle(
-								member_token.value());
-				final_member_segment.template_args =
-					toTemplateArgInfoList(member_template_args);
-				member_segments.push_back(std::move(final_member_segment));
-				TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
-					resolved_root_owner.resolved_from_current_context
-						? TypeInfo::DependentQualifiedNameRecord::OwnerKind::
-							  DependentInstantiation
-						: TypeInfo::DependentQualifiedNameRecord::OwnerKind::
-							  CurrentInstantiation;
-				TemplateArgInfoVector
-					owner_template_arguments;
-				if (resolved_root_owner.resolved_from_current_context &&
-					resolved_root_owner.type_info != nullptr) {
-					owner_template_arguments =
-						resolved_root_owner.type_info->templateArgs();
-				}
-				setCallDependentQualifiedLookupRecord(
-					deferred_call.as<ExpressionNode>(),
-					makePostfixDependentQualifiedNameRecord(
-						current_owner_handle,
-						current_owner_type_index,
-						owner_kind,
-						owner_template_arguments,
-						member_segments));
-			}
-
+			attachNestedNameSpecifierLookupRecord(
+				deferred_call.as<ExpressionNode>(),
+				owner_segments,
+				member_token,
+				member_template_args);
 			return deferred_call;
 		};
 
@@ -2469,6 +2500,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 									args_result.arg_types,
 									false,
 									*resolved_func);
+								attachNestedNameSpecifierLookupRecord(
+									result->as<ExpressionNode>(),
+									qualified_owner_segments,
+									qualified_member_token,
+									member_template_args);
 							} else {
 								if (member_template_args.has_value()) {
 									result =
@@ -2504,6 +2540,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 											func_decl_node,
 											std::move(args),
 											qualified_member_token));
+									attachNestedNameSpecifierLookupRecord(
+										result->as<ExpressionNode>(),
+										qualified_owner_segments,
+										qualified_member_token,
+										member_template_args);
 								}
 							}
 						} else {
@@ -2592,6 +2633,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 									args_result.arg_types,
 									false,
 									*resolved_func);
+								attachNestedNameSpecifierLookupRecord(
+									result->as<ExpressionNode>(),
+									qualified_owner_segments,
+									op_token,
+									member_template_args);
 							} else {
 								if (member_template_args.has_value()) {
 									result =
@@ -2627,6 +2673,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 											func_decl_node,
 											std::move(args_result.args),
 											op_token));
+									attachNestedNameSpecifierLookupRecord(
+										result->as<ExpressionNode>(),
+										qualified_owner_segments,
+										op_token,
+										member_template_args);
 								}
 							}
 							handled = true;
