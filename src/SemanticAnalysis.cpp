@@ -5104,7 +5104,9 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		} else if (alias_info.terminal_type_info) {
 			desc.type_index = alias_info.terminal_type_info->type_index_;
 		}
-		desc.base_cv |= alias_info.cv_qualifier;
+		if (!type.has_ordered_declarator()) {
+			desc.base_cv |= alias_info.cv_qualifier;
+		}
 		if (!type.has_ordered_declarator()) {
 			for (size_t i = 0; i < alias_info.pointer_depth; ++i) {
 				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
@@ -5146,18 +5148,35 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 		TypeSpecifierNode resolved_syntax = type;
 		resolved_syntax.set_type_index(desc.type_index);
-		resolved_syntax.set_cv_qualifier(desc.base_cv);
+		CVQualifier pending_cv = type.cv_qualifier();
+		std::vector<DeclaratorComponent> alias_components;
+		TypeIndex alias_index = type.type_index();
+		size_t alias_depth_limit = getTypeInfoCount();
+		while (alias_index.is_valid() && alias_depth_limit-- > 0) {
+			const TypeInfo* alias_type = tryGetTypeInfo(alias_index);
+			if (!alias_type || !alias_type->isTypeAlias()) {
+				break;
+			}
+			const TypeSpecifierNode* alias_spec = alias_type->aliasTypeSpecifier();
+			if (!alias_spec || alias_spec->has_ordered_declarator()) {
+				throw InternalError("ordered declarator over unsupported alias shape");
+			}
+			appendOrderedAliasPointerLevels(alias_components,
+				alias_spec->pointer_levels(), alias_spec->cv_qualifier(), pending_cv);
+			alias_index = alias_spec->type_index().is_valid()
+				? alias_spec->type_index()
+				: alias_type->type_index_;
+		}
+		if (alias_components.size() !=
+			(resolved_alias_available ? resolved_alias.pointer_depth : 0)) {
+			throw InternalError("ordered declarator alias pointer levels are inconsistent");
+		}
+		resolved_syntax.set_cv_qualifier(pending_cv);
 		std::vector<DeclaratorComponent> composed_components(
 			type.declarator_components().begin(),
 			type.declarator_components().end());
-		if (resolved_alias_available) {
-			for (size_t index = 0;
-				index < resolved_alias.pointer_depth;
-				++index) {
-				composed_components.push_back(
-					DeclaratorComponent::pointer(CVQualifier::None));
-			}
-		}
+		composed_components.insert(composed_components.end(),
+			alias_components.begin(), alias_components.end());
 		resolved_syntax.set_ordered_declarator(
 			std::move(composed_components));
 		CanonicalTypeTable& canonical_types =
