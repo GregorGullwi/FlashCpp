@@ -114,19 +114,26 @@ Remaining gaps in the same area:
   lazy member resolution and falls back to non-flattened subscripting with a
   bad base.
 
-## Flat type representation cannot express interleaved pointer/array declarators
+## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
 The AST and canonical adapter now preserve arbitrary pointer/array
 interleaving in an ordered declarator spine, including
 `int (*(*p)[3])[4]`, deeper alternation, abstract declarators, and per-pointer
-cv. The migrated size/dereference path consumes that structure.
+cv. The migrated size/dereference path consumes that structure. Signature and
+placeholder-return comparisons distinguish ordered shapes and compare
+projectable ordered shapes with legacy shapes. Canonicalization composes
+pointer-alias layers with ordered declarators while preserving cv on each
+pointer level; its architecture test checks the resulting canonical type.
 
-Boundary 3A is not complete: name mangling, the flat `CanonicalTypeDesc` /
-`TypeContext`, template argument and substitution storage, traits, and general
-IR layout/subscript consumers still read parallel pointer/array fields.
-Non-projectable spines are rejected at migrated boundary guards rather than
-being reordered or truncated. Remove this entry when those consumers migrate
-and the compatibility projection fields are deleted.
+Boundary 3A is not complete: `CanonicalTypeDesc` carries a
+`structural_type_id` bridge, but other `TypeContext` operations, name mangling,
+template argument and substitution storage, traits, and general IR
+layout/subscript consumers still rely on parallel pointer/array fields.
+Ordered declarators over alias array, reference, function, or member-pointer
+wrappers remain unsupported. Non-projectable spines are rejected at migrated
+boundary guards rather than being reordered or truncated. Remove this entry
+when those consumers migrate and the compatibility projection fields are
+deleted.
 
 ## Variable-template initializer replay removed; static-member replay clones remain
 
