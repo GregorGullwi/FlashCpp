@@ -299,6 +299,17 @@ inline void checkAdapter() {
 	});
 	require(!interleaved_syntax.has_same_ordered_declarator(
 		different_interleaving));
+	TypeSpecifierNode projectable_syntax(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	projectable_syntax.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	require(projectable_syntax.ordered_declarator_has_legacy_projection());
+	TypeSpecifierNode legacy_projectable_syntax = projectable_syntax;
+	legacy_projectable_syntax.clear_ordered_declarator();
+	require(projectable_syntax.has_same_ordered_declarator(
+		legacy_projectable_syntax));
 	const CanonicalDeclaratorExport exported =
 		exportCanonicalDeclarator(table, interleaved.type);
 	require(exported.status == CanonicalTypeImportStatus::Supported);
