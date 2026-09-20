@@ -4693,10 +4693,14 @@ private:	 // Resume private methods
 
 	// Walk member_chain from an already-built qualifier TypeId. The syntax span is
 	// flattened in member-template-id order; each member consumes its recorded
-	// TemplateArgInfoVector size.
+	// TemplateArgInfoVector size. A valid member_alias_owner publishes the first
+	// member template-id with its alias TemplateDeclId when the owner chain has a
+	// published member alias of that name; otherwise the member stays an
+	// unresolved DependentTemplateMember.
 	void stampDependentMemberChainFromQualifier(
 		TypeSpecifierNode& type_spec,
 		TypeId qualifier,
+		OwnerId member_alias_owner,
 		const TypeInfo::DependentQualifiedNameRecord& record,
 		std::span<const TypeSpecifierNode> member_template_arg_syntax);
 

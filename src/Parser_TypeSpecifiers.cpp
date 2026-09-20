@@ -5157,6 +5157,7 @@ void Parser::tryStampTypeOnlyClassTemplateSpecialization(
 void Parser::stampDependentMemberChainFromQualifier(
 	TypeSpecifierNode& type_spec,
 	TypeId qualifier,
+	OwnerId member_alias_owner,
 	const TypeInfo::DependentQualifiedNameRecord& record,
 	std::span<const TypeSpecifierNode> member_template_arg_syntax) {
 	if (record.member_chain.empty()) {
@@ -5200,6 +5201,19 @@ void Parser::stampDependentMemberChainFromQualifier(
 				return;
 			}
 			argument_ids.push_back(imported.type);
+		}
+		// Only the first member is a direct member of the qualifier's owner. A
+		// published member alias there carries declaration identity so the
+		// canonical resolver can auto-redirect the use; every later member (and
+		// every type-parameter-owned chain) stays an unresolved template member.
+		if (member_index == 0 && member_alias_owner) {
+			const std::optional<TemplateDeclId> alias_decl =
+				front_end.templateDecls().findPrimaryAliasTemplate(
+					member_alias_owner, member.name);
+			if (alias_decl.has_value()) {
+				qualifier = table.dependentMemberAlias(qualifier, *alias_decl, argument_ids);
+				continue;
+			}
 		}
 		qualifier = table.dependentTemplateMember(qualifier, member_name, argument_ids);
 	}
@@ -5278,6 +5292,7 @@ void Parser::tryStampDependentMemberChain(
 	stampDependentMemberChainFromQualifier(
 		type_spec,
 		front_end.canonicalTypes().templateParameter(active_template_decl_id_, *index),
+		OwnerId{},
 		record,
 		member_template_arg_syntax);
 }
@@ -5350,6 +5365,7 @@ void Parser::tryStampDependentInstantiationMemberChain(
 	stampDependentMemberChainFromQualifier(
 		type_spec,
 		table.templateSpecialization(collected->primary, argument_ids),
+		ownerIdFromTemplateDecl(collected->primary),
 		record,
 		member_template_arg_syntax);
 }

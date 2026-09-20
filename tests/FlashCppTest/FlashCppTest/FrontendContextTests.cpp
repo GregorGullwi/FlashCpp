@@ -1559,6 +1559,67 @@ TEST_SUITE("FrontendContext") {
 			context.canonicalTypes().pointer(owner_arg[0]));
 	}
 
+	TEST_CASE("Qualified member alias use stamps declaration identity and auto-redirects") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		// A concrete `Captures<int>::Pointer<char>` is fully resolved by the
+		// legacy path before canonical import, so no canonical use survives. The
+		// dependent owner `Captures<T>` keeps the qualified member-alias use
+		// canonical, which is the form the auto-redirect is wired for.
+		const std::string code =
+			"template<typename Owner> struct Captures {\n"
+			"  template<typename Value> using Pointer = Owner*;\n"
+			"};\n"
+			"template<typename T> struct Use {\n"
+			"  typename Captures<T>::template Pointer<char> value;\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("member_alias_use_auto_redirect_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto alias_opt = gTemplateRegistry.lookup_alias_template("Captures::Pointer");
+		REQUIRE(alias_opt.has_value());
+		REQUIRE(alias_opt->is<TemplateAliasNode>());
+		REQUIRE(alias_opt->as<TemplateAliasNode>().has_template_decl_id());
+		const TemplateDeclId alias_decl = alias_opt->as<TemplateAliasNode>().template_decl_id();
+
+		const auto use_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("Use"));
+		REQUIRE(use_opt.has_value());
+		REQUIRE(use_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& use = use_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(use.has_template_decl_id());
+		const auto& members = use.class_decl_node().members();
+		REQUIRE(members.size() == 1u);
+		REQUIRE(members[0].declaration.is<DeclarationNode>());
+		const TypeSpecifierNode& use_type =
+			members[0].declaration.as<DeclarationNode>().type_specifier_node();
+		REQUIRE(use_type.has_dependent_name_type());
+
+		// The qualified use carries the published alias declaration identity,
+		// not a spelling name.
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const TypeId stamp = use_type.dependent_name_type();
+		REQUIRE(table.node(stamp).kind == CanonicalTypeKind::DependentMemberAlias);
+		CHECK(table.dependentMemberAliasDecl(stamp) == alias_decl);
+		CHECK(table.node(table.node(stamp).child).kind ==
+			  CanonicalTypeKind::TemplateSpecialization);
+
+		// Substituting the owner argument auto-redirects through the carried
+		// identity to the resolved pointer target.
+		const TypeId owner_arg[] = {table.builtin(CanonicalBuiltinKind::Int)};
+		const TypeId substituted =
+			table.substitute(stamp, use.template_decl_id(), owner_arg);
+		const TypeId resolved = table.tryResolveDependentTip(substituted);
+		CHECK(resolved == table.pointer(owner_arg[0]));
+	}
 
 	TEST_CASE("Nested owner and alias argument member alias target publishes") {
 		clearLegacyTypeTablesForTesting();
