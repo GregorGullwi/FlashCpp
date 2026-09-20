@@ -51,14 +51,19 @@ positionally against the published parameter kinds, opaque NTTP `ExprId` and
 template-template `TemplateDeclId` identities are preserved, and an alias
 target that names its own template-template parameter by owner and index is
 rebuilt with the concrete `TemplateDeclId`. Chains resolve iteratively with
-declaration-ID cycle detection. The canonical adapter imports a distinct
+declaration-ID cycle detection, and concrete direct alias specializations nested
+anywhere in the substituted graph — wrappers, function and member-pointer
+shapes, specialization type arguments, and nested array/qualified/pointer/
+reference nodes — now normalize to their published targets through the same
+explicit worklist, with the declaration-ID scope carried through each nested
+expansion so nested cycles stop at the alias boundary. The canonical adapter
+imports a distinct
 `AliasTemplateSpecialization` node rather than a class specialization or a
 registry spelling identity. Dependent type arguments, argument-kind and arity
 mismatches, targets that mention non-type arguments while the alias declares a
 non-type parameter, dependent template-template arguments, targets with an
-unknown enclosing environment, dependent-member targets, and arbitrary nested
-alias
-graphs remain deferred. A direct alias target that names a non-type parameter is
+unknown enclosing environment, and dependent-member targets remain deferred. A
+direct alias target that names a non-type parameter is
 rejected with `NonTypeAliasTargetUnsupported` (1812), alias partial or explicit
 specialization syntax is rejected with
 `AliasTemplateSpecializationForbidden` (1813), and a directly self-referential
