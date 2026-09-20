@@ -1066,6 +1066,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (candidate.decl_node().identifier_token().value() != func_decl_node.identifier_token().value()) {
 			return false;
 		}
+		// Receiver cv is part of the member function type; matching parameters alone
+		// would let a const-method body call rematch onto a non-const overload.
+		if (candidate.is_const_member_function() != func_decl.is_const_member_function() ||
+			candidate.is_volatile_member_function() != func_decl.is_volatile_member_function()) {
+			return false;
+		}
 		if (candidate.has_mangled_name() && func_decl.has_mangled_name()) {
 			return candidate.mangled_name() == func_decl.mangled_name();
 		}
@@ -1091,6 +1097,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	};
 	const size_t explicit_arg_count = callExprNode.arguments().size();
 	auto isViableMemberOverload = [&](const FunctionDeclarationNode& candidate) {
+		if (candidate.is_const_member_function() != func_decl.is_const_member_function() ||
+			candidate.is_volatile_member_function() != func_decl.is_volatile_member_function()) {
+			return false;
+		}
 		const auto& params = candidate.parameter_nodes();
 		if (explicit_arg_count > params.size()) {
 			if (params.empty()) {

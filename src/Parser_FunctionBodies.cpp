@@ -67,6 +67,20 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 //  1. Push member_function_context_stack_
 //  2. Register member functions in symbol table (complete-class context)
 //  3. Inject 'this' pointer into the symbol table
+CVQualifier Parser::currentMemberFunctionThisCv() const {
+	CVQualifier this_cv = CVQualifier::None;
+	if (current_function_ == nullptr) {
+		return this_cv;
+	}
+	if (current_function_->is_const_member_function()) {
+		this_cv |= CVQualifier::Const;
+	}
+	if (current_function_->is_volatile_member_function()) {
+		this_cv |= CVQualifier::Volatile;
+	}
+	return this_cv;
+}
+
 // Both immediate (parse_function_body_with_context) and delayed
 // (parse_delayed_function_body) paths call this so they share identical setup.
 void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index, bool inject_this) {
@@ -84,6 +98,8 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 
 	// Inject 'this' pointer into the symbol table for non-static member functions,
 	// constructors, and destructors (C++20 [class.this]).
+	// Pointee cv matches the enclosing member function's cv-qualifiers so
+	// implicit-this overload ranking sees a const receiver inside const methods.
 	if (inject_this && tryGetTypeInfo(struct_type_index)) {
 		auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
@@ -91,7 +107,7 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 			Token(),
 			CVQualifier::None,
 			ReferenceQualifier::None);
-		this_type_ref.add_pointer_level();
+		this_type_ref.add_pointer_level(currentMemberFunctionThisCv());
 
 		Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 		auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);

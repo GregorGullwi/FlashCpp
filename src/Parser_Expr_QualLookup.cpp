@@ -225,7 +225,7 @@ bool Parser::isTypeDependentExpression(const ASTNode& expr) {
 								type_info->type_index_.withCategory(TypeCategory::Struct),
 								type_info->sizeInBits(),
 								Token{},
-								CVQualifier::None,
+								currentMemberFunctionThisCv(),
 								ReferenceQualifier::None);
 						}
 					}
@@ -243,7 +243,7 @@ bool Parser::isTypeDependentExpression(const ASTNode& expr) {
 							type_info->type_index_.withCategory(TypeCategory::Struct),
 							type_info->sizeInBits(),
 							Token{},
-							CVQualifier::None,
+							currentMemberFunctionThisCv(),
 							ReferenceQualifier::None);
 					}
 				}
@@ -3247,6 +3247,24 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				return FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(func);
 			}
 		}
+		// Body substitution pushes member context without injecting `this` into the
+		// symbol table. Synthesize the implied object parameter type from the
+		// enclosing member function's cv so overload rebinding retains constness.
+		if (ident.name() == "this"sv &&
+			!member_function_context_stack_.empty() &&
+			member_function_context_stack_.back().has_implicit_this) {
+			const MemberFunctionContext& member_ctx = member_function_context_stack_.back();
+			if (const TypeInfo* type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
+				TypeSpecifierNode this_type(
+					type_info->type_index_.withCategory(TypeCategory::Struct),
+					64,
+					Token{},
+					CVQualifier::None,
+					ReferenceQualifier::None);
+				this_type.add_pointer_level(currentMemberFunctionThisCv());
+				return this_type;
+			}
+		}
 	} else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& binary = std::get<BinaryOperatorNode>(expr);
 		TokenKind op_kind = binary.get_token().kind();
@@ -3835,7 +3853,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					member_function_context_stack_.back().has_implicit_this) {
 					const auto& member_ctx = member_function_context_stack_.back();
 				if (const TypeInfo* type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
-						object_type_opt = TypeSpecifierNode(type_info->type_index_.withCategory(TypeCategory::Struct), type_info->sizeInBits(), Token{}, CVQualifier::None, ReferenceQualifier::None);
+						object_type_opt = TypeSpecifierNode(type_info->type_index_.withCategory(TypeCategory::Struct), type_info->sizeInBits(), Token{}, currentMemberFunctionThisCv(), ReferenceQualifier::None);
 					}
 				}
 			}

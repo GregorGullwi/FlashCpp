@@ -3772,6 +3772,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			for (DeferredMemberBodySubstitution& deferred_body :
 				 deferred_member_body_substitutions) {
+				FlashCpp::ScopedState guard_current_function(current_function_);
+				if (deferred_body.target.is<FunctionDeclarationNode>()) {
+					current_function_ = &deferred_body.target.as<FunctionDeclarationNode>();
+				} else {
+					current_function_ = nullptr;
+				}
 				ASTNode substituted_body = substituteTemplateParameters(
 					deferred_body.source,
 					template_params,
@@ -4331,6 +4337,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						FLASH_LOG(Templates, Trace, "Copying function definition to new function");
 						ASTNode substituted_body = *orig_func.get_definition();
 						if (!template_args_for_pattern.empty()) {
+							FlashCpp::ScopedState guard_current_function(current_function_);
+							current_function_ = &orig_func;
 							substituted_body = substituteTemplateParameters(
 								*orig_func.get_definition(),
 								template_params,

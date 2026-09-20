@@ -3180,55 +3180,15 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				// Restore token position to the start of the function body
 				restore_token_position(delayed.body_start);
 
-				// Set up function context
-				FlashCpp::SymbolTableScope delayed_scope(ScopeType::Function);
-				member_function_context_stack_.push_back({
-					delayed.struct_name,
-					delayed.struct_type_index,
-					delayed.struct_node,
-					nullptr	// local_struct_info - not needed for delayed function bodies
-				});
-
-				// Set up template parameter names if this is a template member
-				const bool has_template_params = !delayed.template_param_names.empty();
-				std::optional<FlashCpp::ScopedState<ActiveTemplateParameterState>> guard_delay_template_params;
-				std::optional<FlashCpp::TemplateDepthGuard> guard_delay_ptb;
-				if (has_template_params) {
-					guard_delay_template_params.emplace(currentTemplateParamState());
-					setCurrentTemplateParamNames(delayed.template_param_names);
-					guard_delay_ptb.emplace(parsing_template_depth_);
+				std::optional<ASTNode> body;
+				auto result = parse_delayed_function_body(delayed, body);
+				if (result.is_error()) {
+					return result;
 				}
-
-				// Register function parameters using shared helper
-				if (delayed.is_constructor && delayed.ctor_node) {
-					register_parameters_in_scope(delayed.ctor_node->parameter_nodes());
-				} else if (!delayed.is_destructor && delayed.func_node) {
-					register_parameters_in_scope(delayed.func_node->parameter_nodes());
-				}
-				// Destructors have no parameters
-
-				// Parse the function body
-				const bool is_ctor_or_dtor = delayed.is_constructor || delayed.is_destructor;
-				auto block_result = parse_function_body(is_ctor_or_dtor);
-
-				member_function_context_stack_.pop_back();
-
-				if (block_result.is_error()) {
-					return block_result;
-				}
-
-				if (auto block = block_result.node()) {
-					if (delayed.is_constructor && delayed.ctor_node) {
-						delayed.ctor_node->set_definition(*block);
-					} else if (delayed.is_destructor && delayed.dtor_node) {
-						delayed.dtor_node->set_definition(*block);
-						// Collect for ast_nodes_ push AFTER restore_token_position (see below);
-						// restore_token_position() would otherwise erase the node immediately.
-						pending_dtor_ast_nodes.push_back(ASTNode(delayed.dtor_node));
-					} else if (delayed.func_node) {
-						delayed.func_node->set_definition(*block);
-						finalize_function_after_definition(*delayed.func_node);
-					}
+				if (delayed.is_destructor && delayed.dtor_node) {
+					// Collect for ast_nodes_ push AFTER restore_token_position (see below);
+					// restore_token_position() would otherwise erase the node immediately.
+					pending_dtor_ast_nodes.push_back(ASTNode(delayed.dtor_node));
 				}
 			}
 
