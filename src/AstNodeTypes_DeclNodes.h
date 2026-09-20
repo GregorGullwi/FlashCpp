@@ -1959,11 +1959,17 @@ public:
 		return declarator_components_;
 	}
 	bool has_same_ordered_declarator(const TypeSpecifierNode& other) const {
-		return has_ordered_declarator() == other.has_ordered_declarator() &&
-			(!has_ordered_declarator() ||
-			 std::ranges::equal(
-				 declarator_components_,
-				 other.declarator_components_));
+		if (has_ordered_declarator() && other.has_ordered_declarator()) {
+			return std::ranges::equal(
+				declarator_components_,
+				other.declarator_components_);
+		}
+		if (!has_ordered_declarator() && !other.has_ordered_declarator()) {
+			return true;
+		}
+		const TypeSpecifierNode& ordered =
+			has_ordered_declarator() ? *this : other;
+		return ordered.ordered_declarator_has_legacy_projection();
 	}
 	bool ordered_declarator_has_legacy_projection() const {
 		return !has_ordered_declarator() || declarator_has_legacy_projection_;
@@ -2804,18 +2810,15 @@ inline CVQualifier TypeSpecifierNode::pointee_cv_for_pointer_conversion() const 
 
 inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() const {
 	TypeSpecifierNode adjusted = *this;
-	if (adjusted.has_ordered_declarator()) {
+	if (adjusted.has_ordered_declarator() &&
+		!adjusted.ordered_declarator_has_legacy_projection()) {
 		DeclaratorComponent& outer =
 			adjusted.declarator_components_.front();
 		if (outer.kind == DeclaratorComponentKind::LValueReference ||
 			outer.kind == DeclaratorComponentKind::RValueReference) {
 			return adjusted;
 		}
-		if (outer.kind == DeclaratorComponentKind::Array ||
-			outer.kind == DeclaratorComponentKind::UnknownBoundArray ||
-			outer.kind == DeclaratorComponentKind::Function) {
-			outer = DeclaratorComponent::pointer(CVQualifier::None);
-		} else if (outer.kind == DeclaratorComponentKind::Pointer) {
+		if (outer.kind == DeclaratorComponentKind::Pointer) {
 			outer.cv_qualifier = CVQualifier::None;
 		}
 		adjusted.rebuild_legacy_declarator_projection();
@@ -2831,6 +2834,13 @@ inline TypeSpecifierNode TypeSpecifierNode::adjusted_function_parameter_type() c
 
 	adjusted.cv_qualifier_ = adjusted.pointee_cv_for_pointer_conversion();
 	adjusted.pointer_levels_.back().cv_qualifier = CVQualifier::None;
+	if (adjusted.has_ordered_declarator() &&
+		adjusted.declarator_components_.front().kind ==
+			DeclaratorComponentKind::Pointer) {
+		adjusted.declarator_components_.front().cv_qualifier =
+			CVQualifier::None;
+		adjusted.rebuild_legacy_declarator_projection();
+	}
 	return adjusted;
 }
 
