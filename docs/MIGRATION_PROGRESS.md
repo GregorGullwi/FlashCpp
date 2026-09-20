@@ -63,7 +63,9 @@ rejected with `NonTypeAliasTargetUnsupported` (1812), alias partial or explicit
 specialization syntax is rejected with
 `AliasTemplateSpecializationForbidden` (1813), and a directly self-referential
 alias declaration is rejected with `RecursiveAliasTemplateInstantiation` (1814);
-their canonical representations remain unsupported. Indirect alias recursion is
+their canonical representations remain unsupported. Wrong alias use arity reports
+`AliasTemplateArityMismatch` (1815), with defaults and packs accepted at the use
+site. Indirect alias recursion is
 bounded by an implementation-limit guard that reports
 `AliasInstantiationDepthExceeded` (3002) instead of overflowing the native
 stack. Earlier on
@@ -703,7 +705,11 @@ must not increase an implementation percentage.
   specialization syntax reports `AliasTemplateSpecializationForbidden` (1813),
   and a directly self-referential alias declaration reports
   `RecursiveAliasTemplateInstantiation` (1814), each covered by an exact-ID
-  negative test. Indirect alias recursion is bounded by a logical-depth guard on
+  negative test. Alias uses with too few required or too many fixed arguments
+  report `AliasTemplateArityMismatch` (1815); defaults and packs are accepted.
+  TODO: investigate value initialization through a defaulted alias (`J<> z = 42`),
+  which compiles but currently yields an incorrect runtime value.
+  Indirect alias recursion is bounded by a logical-depth guard on
   alias materialization that reports `AliasInstantiationDepthExceeded` (3002)
   rather than overflowing the native stack. Latest architecture validation: the
   native `CanonicalTypeTests` `checkAliasRedirection` case exercises mixed
