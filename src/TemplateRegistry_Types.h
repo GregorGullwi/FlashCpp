@@ -648,6 +648,20 @@ struct TemplateTypeArg {
 	}
 };
 
+inline TypeSpecifierNode typeSpecifierFromTemplateTypeArgProjection(
+	const TemplateTypeArg& arg) {
+	TypeSpecifierNode type_spec(
+		arg.type_index, TypeQualifier::None, 0, Token{}, arg.cv_qualifier);
+	type_spec.set_reference_qualifier(arg.ref_qualifier);
+	for (const CVQualifier pointer_qualifier : arg.pointer_cv_qualifiers) {
+		type_spec.add_pointer_level(pointer_qualifier);
+	}
+	if (arg.function_signature.has_value()) {
+		type_spec.set_function_signature(*arg.function_signature);
+	}
+	return type_spec;
+}
+
 using TemplateArgumentVector =
 	TemplateVector<TemplateTypeArg, 4>;
 

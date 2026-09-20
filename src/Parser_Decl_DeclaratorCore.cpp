@@ -198,6 +198,26 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			// If parse_declarator fails, fall through to regular parsing
 			restore_token_position(saved_pos);
 			;
+		} else if (!peek().is_eof() && peek().is_identifier()) {
+			// An interleaved member-pointer declarator starts with a nested-name
+			// specifier rather than '*': T (C::* const (*name)[N]).  The
+			// structural declarator parser owns this ordered shape.
+			SaveHandle member_pointer_probe = save_token_position();
+			advance();
+			const bool is_member_pointer = consume("::"_tok) && consume("*"_tok);
+			restore_token_position(member_pointer_probe);
+			if (is_member_pointer) {
+				restore_token_position(saved_pos);
+				auto result = parse_declarator(type_spec, Linkage::None);
+				if (!result.is_error()) {
+					discard_saved_token(saved_pos);
+					return result;
+				}
+			}
+			// Not an interleaved member pointer, or the structural parser
+			// declined the shape: restore the opening '(' so the regular
+			// parenthesized-declarator and pointer-to-member paths still see it.
+			restore_token_position(saved_pos);
 		} else if (!peek().is_eof() && (peek() == "&"_tok || peek() == "&&"_tok)) {
 			// This is a reference-to-array or reference-to-function pattern:
 			// T (&arr)[N], T (&&arr)[N], T (&fn)(Args...), or T (&&fn)(Args...)
@@ -474,7 +494,10 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				tryBindPublishedMemberClassEntity(type_spec);
 
 				// Add a pointer level to indicate this is a pointer
-				type_spec.add_pointer_level(CVQualifier::None);
+				CVQualifier member_pointer_cv = parse_cv_qualifiers();
+				skip_noop_gnu_qualifiers();
+				member_pointer_cv |= parse_cv_qualifiers();
+				type_spec.add_pointer_level(member_pointer_cv);
 
 				// Discard the saved position and continue parsing
 				discard_saved_token(saved_pos);
@@ -1082,13 +1105,16 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
 					skip_noop_gnu_qualifiers();
 					candidate = peek() == "("_tok;
+				} else if (peek().is_identifier()) {
+					advance();
+					candidate = consume("::"_tok) && consume("*"_tok);
 				}
 				restore_token_position(structural_start);
 			}
 
 			if (candidate) {
 				struct DeclaratorFrame {
-					std::vector<PointerLevel> prefixes;
+					std::vector<DeclaratorComponent> prefixes;
 					std::vector<DeclaratorComponent> child;
 					std::vector<DeclaratorComponent> suffixes;
 					bool delimited = false;
@@ -1096,12 +1122,24 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				};
 				std::vector<DeclaratorFrame> frames;
 				frames.push_back({});
-				for (const PointerLevel &pointer : base_type.pointer_levels()) {
-					frames.front().prefixes.push_back(pointer);
+				if (base_type.has_member_class()) {
+					frames.front().prefixes.push_back(DeclaratorComponent::memberPointer(
+						base_type.member_class_entity(), false,
+						base_type.pointer_levels().empty()
+							? CVQualifier::None
+							: base_type.pointer_levels().front().cv_qualifier));
+				} else {
+					for (const PointerLevel &pointer : base_type.pointer_levels()) {
+						frames.front().prefixes.push_back(
+							DeclaratorComponent::pointer(pointer.cv_qualifier));
+					}
 				}
 				Token identifier;
 				bool has_identifier = false;
 				bool failed = false;
+				bool has_member_pointer = base_type.has_member_class();
+				bool member_pointer_is_function = false;
+				std::optional<FunctionSignature> member_function_signature;
 
 				while (!frames.empty() && !failed) {
 					DeclaratorFrame &frame = frames.back();
@@ -1111,7 +1149,25 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 							CVQualifier pointer_cv = parse_cv_qualifiers();
 							skip_noop_gnu_qualifiers();
 							pointer_cv |= parse_cv_qualifiers();
-							frame.prefixes.push_back(PointerLevel{pointer_cv});
+							frame.prefixes.push_back(DeclaratorComponent::pointer(pointer_cv));
+						}
+						if (peek().is_identifier()) {
+							SaveHandle member_pointer_start = save_token_position();
+							Token owner_token = peek_info();
+							advance();
+							if (consume("::"_tok) && consume("*"_tok)) {
+								CVQualifier member_cv = parse_cv_qualifiers();
+								skip_noop_gnu_qualifiers();
+								member_cv |= parse_cv_qualifiers();
+								base_type.set_member_class_name(owner_token.handle());
+								tryBindPublishedMemberClassEntity(base_type);
+								frame.prefixes.push_back(DeclaratorComponent::memberPointer(
+									base_type.member_class_entity(), false, member_cv));
+								has_member_pointer = true;
+								discard_saved_token(member_pointer_start);
+							} else {
+								restore_token_position(member_pointer_start);
+							}
 						}
 						if (peek() == "("_tok) {
 							advance();
@@ -1166,6 +1222,40 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					if (failed) {
 						break;
 					}
+					if (frames.size() == 1 && has_member_pointer && peek() == "("_tok) {
+						advance();
+						std::vector<FunctionType> parameter_types;
+						bool is_variadic = false;
+						ParseResult parameter_result = parse_function_pointer_parameter_types(
+							parameter_types, is_variadic);
+						if (parameter_result.is_error() || !consume(")"_tok)) {
+							failed = true;
+							break;
+						}
+						FlashCpp::MemberQualifiers qualifiers;
+						FlashCpp::FunctionSpecifiers specifiers;
+						ParseResult qualifier_result =
+							parse_function_type_qualifiers(qualifiers, specifiers);
+						if (qualifier_result.is_error()) {
+							failed = true;
+							break;
+						}
+						FunctionSignature signature;
+						// The member-pointer owner qualifies the pointer
+						// component, not the callable's return type.  Do not
+						// let it leak into the return type's identity.
+						TypeSpecifierNode return_type_spec = base_type;
+						return_type_spec.clear_member_class_identity();
+						signature.setReturnType(makeFunctionType(return_type_spec));
+						signature.return_type_index = return_type_spec.type_index();
+						signature.setParameterTypes(std::move(parameter_types));
+						signature.linkage = Linkage::None;
+						signature.calling_convention = last_calling_convention_;
+						signature.is_variadic = is_variadic;
+						apply_parsed_function_type_qualifiers(signature, qualifiers, specifiers);
+						member_function_signature = std::move(signature);
+						member_pointer_is_function = true;
+					}
 
 					if (frame.delimited) {
 						if (peek() != ")"_tok) {
@@ -1180,8 +1270,12 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 													 frame.suffixes.end());
 					for (auto pointer = frame.prefixes.rbegin();
 							 pointer != frame.prefixes.rend(); ++pointer) {
-						completed.push_back(
-								DeclaratorComponent::pointer(pointer->cv_qualifier));
+						DeclaratorComponent component = *pointer;
+						if (member_pointer_is_function &&
+							component.kind == DeclaratorComponentKind::MemberObjectPointer) {
+							component.kind = DeclaratorComponentKind::MemberFunctionPointer;
+						}
+						completed.push_back(component);
 					}
 					const bool was_delimited = frame.delimited;
 					frames.pop_back();
@@ -1191,10 +1285,55 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 							break;
 						}
 						TypeSpecifierNode structural_type = base_type;
-						structural_type.set_ordered_declarator(std::move(completed));
-						if (structural_type.ordered_declarator_has_legacy_projection()) {
-							failed = true;
-							break;
+						if (member_pointer_is_function) {
+							for (DeclaratorComponent& component : completed) {
+								if (component.kind == DeclaratorComponentKind::MemberObjectPointer) {
+									component.kind = DeclaratorComponentKind::MemberFunctionPointer;
+								}
+							}
+						}
+						bool bare_member_pointer = false;
+						if (has_member_pointer) {
+							bare_member_pointer = true;
+							for (const DeclaratorComponent& component : completed) {
+								if (component.kind != DeclaratorComponentKind::MemberObjectPointer &&
+									component.kind != DeclaratorComponentKind::MemberFunctionPointer) {
+									bare_member_pointer = false;
+									break;
+								}
+							}
+						}
+						if (bare_member_pointer) {
+							// A pointer-to-member that is not interleaved with
+							// pointer/array declarators keeps the legacy flat
+							// projection, which still carries its owner and
+							// callable payload to unmigrated consumers. Only
+							// interleaved member pointers need the ordered spine.
+							for (const DeclaratorComponent& component : completed) {
+								if (component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
+									structural_type.set_type_index(
+										nativeTypeIndex(TypeCategory::MemberFunctionPointer));
+									structural_type.set_size_in_bits(kFunctionPointerSizeBits);
+									if (member_function_signature.has_value()) {
+										structural_type.set_function_signature(
+											*member_function_signature);
+									}
+								} else {
+									structural_type.add_pointer_level(component.cv_qualifier);
+								}
+							}
+						} else {
+							structural_type.set_ordered_declarator(std::move(completed));
+							if (member_function_signature.has_value()) {
+								structural_type.set_type_index(
+									nativeTypeIndex(TypeCategory::MemberFunctionPointer));
+								structural_type.set_size_in_bits(kFunctionPointerSizeBits);
+								structural_type.set_function_signature(*member_function_signature);
+							}
+							if (structural_type.ordered_declarator_has_legacy_projection()) {
+								failed = true;
+								break;
+							}
 						}
 						if (identifier.value().empty()) {
 							base_type = structural_type;

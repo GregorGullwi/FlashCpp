@@ -1940,6 +1940,18 @@ public:
 	bool is_pointer() const { return !pointer_levels_.empty(); }
 	size_t pointer_depth() const { return pointer_levels_.empty() ? 0 : pointer_levels_.size(); }
 	std::span<const PointerLevel> pointer_levels() const { return pointer_levels_; }
+	// Temporary compatibility view for consumers migrating from the flat
+	// declarator representation. New consumers use declarator_components().
+	std::span<const PointerLevel> legacy_declarator_pointer_wrappers() const {
+		return pointer_levels_;
+	}
+	TypeSpecifierNode without_innermost_legacy_pointer_wrapper() const {
+		TypeSpecifierNode result = *this;
+		if (!result.pointer_levels_.empty()) {
+			result.pointer_levels_.pop_back();
+		}
+		return result;
+	}
 	void limit_pointer_depth(size_t max_depth) { pointer_levels_.resize(std::min(max_depth, pointer_levels_.size())); }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
 	void add_pointer_levels(int pointer_depth) {
@@ -2600,6 +2612,21 @@ public:
 	std::string_view concept_constraint() const { return concept_constraint_; }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
+
+inline TypeSpecifierNode typeSpecifierFromStructMemberProjection(
+	const StructMember& member) {
+	TypeSpecifierNode type_spec(
+		member.type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	type_spec.add_pointer_levels(member.pointer_depth);
+	type_spec.set_reference_qualifier(member.reference_qualifier);
+	if (member.is_array) {
+		type_spec.set_array_dimensions(member.array_dimensions);
+	}
+	if (member.function_signature.has_value()) {
+		type_spec.set_function_signature(*member.function_signature);
+	}
+	return type_spec;
+}
 
 inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_spec) {
 	FunctionType type;

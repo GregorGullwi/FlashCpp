@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "CanonicalTypeAdapter.h"
 #include "IRTypes.h"
 #include "StringBuilder.h"
 #include "TemplateRegistry.h"
@@ -261,27 +262,8 @@ inline TypeSpecifierNode buildFunctionTypeComponentForMangling(
 		message.append(" reached name mangling");
 		throw InternalError(std::string(message.commit()));
 	}
-	TypeSpecifierNode type_spec(
-		resolveTypeAliasIndex(type.type_index),
-		TypeQualifier::None,
-		0,
-		Token{},
-		type.cv_qualifier);
-	for (CVQualifier pointer_qualifier : type.pointer_qualifiers) {
-		type_spec.add_pointer_level(pointer_qualifier);
-	}
-	type_spec.set_reference_qualifier(type.reference_qualifier);
-	if (!type.array_dimensions.empty()) {
-		type_spec.set_array_dimensions(type.array_dimensions);
-	} else if (type.has_unsized_outer_array_dimension) {
-		type_spec.set_unsized_outer_array_dimension(true);
-	}
-	if (type.member_class_name.isValid()) {
-		type_spec.set_member_class_name(type.member_class_name);
-	}
-	if (type.callable_signature) {
-		type_spec.set_function_signature(*type.callable_signature);
-	}
+	TypeSpecifierNode type_spec = typeSpecifierFromFunctionType(type);
+	type_spec.set_type_index(resolveTypeAliasIndex(type_spec.type_index()));
 	return type_spec;
 }
 
@@ -290,15 +272,10 @@ inline TypeSpecifierNode buildFunctionSignatureReturnTypeForMangling(
 	if (sig.hasStructuredTypes()) {
 		return buildFunctionTypeComponentForMangling(sig.return_type());
 	}
-	TypeSpecifierNode return_type(
+	return typeSpecifierFromTypeIndexProjection(
 		resolveTypeAliasIndex(sig.return_type_index),
-		TypeQualifier::None,
-		0,
-		Token{},
-		CVQualifier::None);
-	return_type.set_reference_qualifier(sig.return_reference_qualifier);
-	return_type.add_pointer_levels(sig.return_pointer_depth);
-	return return_type;
+		sig.return_pointer_depth,
+		sig.return_reference_qualifier);
 }
 
 template <typename OutputType>
@@ -356,6 +333,9 @@ inline void appendMsvcMemberFunctionPointerQualifierCode(
 				: sig.is_volatile
 					? CVQualifier::Volatile
 					: CVQualifier::None);
+	// MSVC encodes the callable's calling convention between its cv-qualifier
+	// and return type, mirroring the free-function signature encoding.
+	output += 'A';
 }
 
 // Resolve a TypeIndex through any TypeAlias chain to get the underlying concrete TypeIndex.
@@ -537,15 +517,8 @@ inline bool appendItaniumMemberPointerTypeCode(
 		if (member == nullptr) {
 			return false;
 		}
-		TypeSpecifierNode member_type(member->type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
-		member_type.add_pointer_levels(member->pointer_depth);
-		member_type.set_reference_qualifier(member->reference_qualifier);
-		if (member->is_array) {
-			member_type.set_array_dimensions(member->array_dimensions);
-		}
-		if (member->function_signature.has_value()) {
-			member_type.set_function_signature(*member->function_signature);
-		}
+		const TypeSpecifierNode member_type =
+			typeSpecifierFromStructMemberProjection(*member);
 		appendItaniumTypeCode(output, member_type, false);
 		return true;
 	}
@@ -570,18 +543,177 @@ inline bool appendItaniumMemberPointerTypeCode(
 	return false;
 }
 
+template <typename OutputType>
+inline void appendMsvcArrayExtent(OutputType& output, uint64_t value) {
+	// MSVC encodes the small non-negative values used for array rank and
+	// extents as digits. Larger values use its hexadecimal A..P form.
+	if (value < 10) {
+		output += static_cast<char>('0' + value);
+		return;
+	}
+	char digits[16];
+	size_t count = 0;
+	do {
+		digits[count++] = static_cast<char>('A' + (value & 0xf));
+		value >>= 4;
+	} while (value != 0);
+	while (count != 0) {
+		output += digits[--count];
+	}
+	output += '@';
+}
+
+template <typename OutputType>
+inline void appendMsvcOrderedDeclaratorTypeCode(
+	OutputType& output,
+	const TypeSpecifierNode& normalized) {
+	const std::span<const DeclaratorComponent> components =
+		normalized.declarator_components();
+	for (size_t index = 0; index < components.size();) {
+		const DeclaratorComponent& component = components[index];
+		switch (component.kind) {
+		case DeclaratorComponentKind::Pointer: {
+			if (component.cv_qualifier == CVQualifier::None) {
+				output += "PE";
+			} else if (component.cv_qualifier == CVQualifier::Const) {
+				output += "QE";
+			} else if (component.cv_qualifier == CVQualifier::Volatile) {
+				output += "RE";
+			} else if (component.cv_qualifier == CVQualifier::ConstVolatile) {
+				output += "SE";
+			} else {
+				throw InternalError("MSVC name mangling: invalid ordered pointer qualifier");
+			}
+			const CVQualifier pointee_cv = index + 1 == components.size()
+				? normalized.cv_qualifier()
+				: components[index + 1].kind == DeclaratorComponentKind::Pointer
+					? components[index + 1].cv_qualifier
+					: CVQualifier::None;
+			appendCVQualifier(output, pointee_cv);
+			++index;
+			break;
+		}
+		case DeclaratorComponentKind::LValueReference:
+			output += "AE";
+			appendCVQualifier(output,
+				index + 1 < components.size() &&
+				components[index + 1].kind == DeclaratorComponentKind::Pointer
+					? components[index + 1].cv_qualifier
+					: CVQualifier::None);
+			++index;
+			break;
+		case DeclaratorComponentKind::RValueReference:
+			output += "$$QE";
+			appendCVQualifier(output,
+				index + 1 < components.size() &&
+				components[index + 1].kind == DeclaratorComponentKind::Pointer
+					? components[index + 1].cv_qualifier
+					: CVQualifier::None);
+			++index;
+			break;
+		case DeclaratorComponentKind::Array: {
+			const size_t array_begin = index;
+			while (index < components.size() &&
+				components[index].kind == DeclaratorComponentKind::Array) {
+				if (components[index].payload == 0) {
+					throw InternalError("MSVC name mangling: zero ordered array extent");
+				}
+				++index;
+			}
+			output += 'Y';
+			appendMsvcArrayExtent(output, index - array_begin - 1);
+			for (size_t array_index = array_begin; array_index < index; ++array_index) {
+				appendMsvcArrayExtent(output, components[array_index].payload - 1);
+			}
+			break;
+		}
+		case DeclaratorComponentKind::UnknownBoundArray:
+			throw InternalError("MSVC name mangling: unknown-bound array cannot appear in a mangled type");
+		case DeclaratorComponentKind::Function:
+			throw InternalError("MSVC name mangling: ordered callable declarator is not materialized");
+		case DeclaratorComponentKind::MemberObjectPointer:
+		case DeclaratorComponentKind::MemberFunctionPointer: {
+			if (index + 1 != components.size()) {
+				throw InternalError("MSVC name mangling: ordered member pointer is not innermost");
+			}
+			const std::string_view class_name = getMsvcMemberPointerClassName(normalized);
+			if (class_name.empty()) {
+				throw InternalError("MSVC name mangling: ordered member pointer missing declaring class");
+			}
+			if (component.cv_qualifier == CVQualifier::None) {
+				output += 'P';
+			} else if (component.cv_qualifier == CVQualifier::Const) {
+				output += 'Q';
+			} else if (component.cv_qualifier == CVQualifier::Volatile) {
+				output += 'R';
+			} else if (component.cv_qualifier == CVQualifier::ConstVolatile) {
+				output += 'S';
+			} else {
+				throw InternalError("MSVC name mangling: invalid ordered member pointer qualifier");
+			}
+			if (component.kind == DeclaratorComponentKind::MemberObjectPointer) {
+				output += "EQ";
+				appendMsvcReversedQualifiedName(output, class_name);
+				output += "@@";
+				TypeSpecifierNode member_type = normalized;
+				member_type.clear_declarator_shape();
+				member_type.clear_member_class_identity();
+				if (member_type.category() == TypeCategory::MemberObjectPointer) {
+					if (!member_type.has_member_object_pointee()) {
+						throw InternalError("MSVC name mangling: ordered member object pointer missing underlying member type");
+					}
+					member_type = member_type.member_object_pointee();
+				}
+				appendTypeCode(output, member_type);
+				return;
+			}
+			if (!normalized.has_function_signature()) {
+				throw InternalError("MSVC name mangling: ordered member function pointer missing function signature");
+			}
+			output += '8';
+			appendMsvcReversedQualifiedName(output, class_name);
+			output += "@@";
+			const FunctionSignature& signature = normalized.function_signature();
+			appendMsvcMemberFunctionPointerQualifierCode(output, signature);
+			appendTypeCode(output, buildFunctionSignatureReturnTypeForMangling(signature));
+			if (signature.parameter_type_indices.empty()) {
+				output += 'X';
+			} else {
+				for (const TypeIndex parameter_type : signature.parameter_type_indices) {
+					TypeSpecifierNode parameter_spec(resolveTypeAliasIndex(parameter_type),
+						TypeQualifier::None, 0, Token{}, CVQualifier::None);
+					appendTypeCode(output, parameter_spec.adjusted_function_parameter_type());
+				}
+			}
+			if (signature.is_noexcept) {
+				output += "_E";
+			}
+			output += "@Z";
+			return;
+		}
+		}
+	}
+
+	TypeSpecifierNode base = normalized;
+	base.clear_declarator_shape();
+	appendTypeCode(output, base);
+}
+
 // Generate MSVC type code for mangling
 // Works with both std::string and StringBuilder
 template <typename OutputType>
 void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
-	type_node.require_legacy_declarator_projection("MSVC name mangling");
 	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(type_node);
 	const TypeSpecifierNode& normalized = normalized_type;
+	if (normalized.has_ordered_declarator()) {
+		appendMsvcOrderedDeclaratorTypeCode(output, normalized);
+		return;
+	}
 	const bool is_member_object_pointer_like =
 		normalized.has_member_class() &&
 		!normalized.has_function_signature() &&
 		(normalized.category() == TypeCategory::MemberObjectPointer ||
-		 normalized.pointer_depth() > 0);
+		 !normalized.legacy_declarator_pointer_wrappers().empty());
 
 	// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
 	// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the REFERENCED type
@@ -600,7 +732,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	//   P = pointer, Q = const pointer, R = volatile pointer, S = const volatile pointer
 	//   E = 64-bit (always E for x64)
 	//   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
-	const auto& ptr_levels = normalized.pointer_levels();
+	const auto ptr_levels = normalized.legacy_declarator_pointer_wrappers();
 	const size_t ordinary_pointer_level_count =
 		is_member_object_pointer_like && !ptr_levels.empty()
 			? ptr_levels.size() - 1
@@ -639,10 +771,8 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		appendMsvcReversedQualifiedName(output, class_name);
 		output += "@@";
 
-		TypeSpecifierNode member_type = normalized;
-		if (member_type.pointer_depth() > 0) {
-			member_type.limit_pointer_depth(member_type.pointer_depth() - 1);
-		}
+		TypeSpecifierNode member_type =
+			normalized.without_innermost_legacy_pointer_wrapper();
 		member_type.set_reference_qualifier(ReferenceQualifier::None);
 		member_type.set_member_class_name(StringHandle{});
 		if (member_type.category() == TypeCategory::MemberObjectPointer) {
@@ -822,6 +952,13 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 
 template <typename OutputType>
 void appendParameterTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
+	// MSVC retains top-level pointer cv in its decorated parameter spelling.
+	// Ordered declarators must therefore reach the encoder before the legacy
+	// C++ parameter adjustment clears that component.
+	if (type_node.has_ordered_declarator()) {
+		appendTypeCode(output, type_node);
+		return;
+	}
 	appendTypeCode(output, type_node.adjusted_function_parameter_type());
 }
 
@@ -1024,17 +1161,147 @@ inline void populateSubstitutionsFromClassContext(
 // Append Itanium-style type encoding for basic types
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
 template <typename OutputType>
+inline void appendItaniumOrderedDeclaratorTypeCode(
+	OutputType& output,
+	const TypeSpecifierNode& normalized,
+	bool is_function_parameter) {
+	const std::span<const DeclaratorComponent> components =
+		normalized.declarator_components();
+	for (size_t index = 0; index < components.size(); ++index) {
+		const DeclaratorComponent& component = components[index];
+		switch (component.kind) {
+		case DeclaratorComponentKind::Pointer:
+			if (!(is_function_parameter && index == 0)) {
+				if (component.cv_qualifier == CVQualifier::Const) {
+					output += 'K';
+				} else if (component.cv_qualifier == CVQualifier::Volatile) {
+					output += 'V';
+				} else if (component.cv_qualifier == CVQualifier::ConstVolatile) {
+					output += "KV";
+				} else if (component.cv_qualifier != CVQualifier::None) {
+					throw InternalError("Itanium name mangling: invalid ordered pointer qualifier");
+				}
+			}
+			output += 'P';
+			break;
+		case DeclaratorComponentKind::LValueReference:
+			output += 'R';
+			break;
+		case DeclaratorComponentKind::RValueReference:
+			output += 'O';
+			break;
+		case DeclaratorComponentKind::Array:
+			if (component.payload == 0) {
+				throw InternalError("Itanium name mangling: zero ordered array extent");
+			}
+			output += 'A';
+			output += std::to_string(component.payload);
+			output += '_';
+			break;
+		case DeclaratorComponentKind::UnknownBoundArray:
+			output += "A_";
+			break;
+		case DeclaratorComponentKind::Function:
+			throw InternalError("Itanium name mangling: ordered callable declarator is not materialized");
+		case DeclaratorComponentKind::MemberObjectPointer:
+		case DeclaratorComponentKind::MemberFunctionPointer: {
+			if (index + 1 != components.size()) {
+				throw InternalError("Itanium name mangling: ordered member pointer is not innermost");
+			}
+			const std::string_view class_name = getMsvcMemberPointerClassName(normalized);
+			if (class_name.empty()) {
+				throw InternalError("Itanium name mangling: ordered member pointer missing declaring class");
+			}
+			if (component.cv_qualifier == CVQualifier::Const) {
+				output += 'K';
+			} else if (component.cv_qualifier == CVQualifier::Volatile) {
+				output += 'V';
+			} else if (component.cv_qualifier == CVQualifier::ConstVolatile) {
+				output += "KV";
+			} else if (component.cv_qualifier != CVQualifier::None) {
+				throw InternalError("Itanium name mangling: invalid ordered member pointer qualifier");
+			}
+			output += 'M';
+			appendItaniumQualifiedTypeName(output, class_name);
+			if (component.kind == DeclaratorComponentKind::MemberObjectPointer) {
+				TypeSpecifierNode member_type = normalized;
+				member_type.clear_declarator_shape();
+				member_type.clear_member_class_identity();
+				if (member_type.category() == TypeCategory::MemberObjectPointer) {
+					if (!member_type.has_member_object_pointee()) {
+						throw InternalError("Itanium name mangling: ordered member object pointer missing underlying member type");
+					}
+					member_type = member_type.member_object_pointee();
+				}
+				appendItaniumTypeCode(output, member_type, false);
+				return;
+			}
+			if (!normalized.has_function_signature()) {
+				throw InternalError("Itanium name mangling: ordered member function pointer missing function signature");
+			}
+			const FunctionSignature& signature = normalized.function_signature();
+			output += 'F';
+			appendItaniumTypeCode(
+				output, buildFunctionSignatureReturnTypeForMangling(signature), false);
+			if (signature.hasStructuredTypes()) {
+				if (signature.parameter_types().empty()) {
+					output += 'v';
+				} else {
+					for (const FunctionType& parameter_type : signature.parameter_types()) {
+						appendItaniumTypeCode(output,
+							buildFunctionTypeComponentForMangling(parameter_type), false);
+					}
+				}
+			} else if (signature.parameter_type_indices.empty()) {
+				output += 'v';
+			} else {
+				for (const TypeIndex parameter_type : signature.parameter_type_indices) {
+					TypeSpecifierNode parameter_spec(resolveTypeAliasIndex(parameter_type),
+						TypeQualifier::None, 0, Token{}, CVQualifier::None);
+					appendItaniumTypeCode(output, parameter_spec, false);
+				}
+			}
+			appendItaniumMemberFunctionQualifiers(output, signature);
+			output += 'E';
+			return;
+		}
+		}
+	}
+
+	const bool is_by_value = components.empty();
+	if (!(is_function_parameter && is_by_value)) {
+		if (normalized.cv_qualifier() == CVQualifier::Const) {
+			output += 'K';
+		} else if (normalized.cv_qualifier() == CVQualifier::Volatile) {
+			output += 'V';
+		} else if (normalized.cv_qualifier() == CVQualifier::ConstVolatile) {
+			output += "KV";
+		}
+	}
+
+	TypeSpecifierNode base = normalized;
+	base.clear_declarator_shape();
+	base.set_cv_qualifier(CVQualifier::None);
+	appendItaniumTypeCode(output, base, false);
+}
+
+template <typename OutputType>
 inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter) {
-	type_node.require_legacy_declarator_projection("Itanium name mangling");
 	TypeSpecifierNode parameter_adjusted_type =
 		is_function_parameter ? type_node.adjusted_function_parameter_type() : type_node;
 	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(parameter_adjusted_type);
 	const TypeSpecifierNode& normalized = normalized_type;
+	if (normalized.has_ordered_declarator()) {
+		appendItaniumOrderedDeclaratorTypeCode(
+			output, normalized, is_function_parameter);
+		return;
+	}
 
 	// Handle pointers first (they modify what comes after)
-	for (size_t i = 0; i < normalized.pointer_levels().size(); ++i) {
+	const auto pointer_wrappers = normalized.legacy_declarator_pointer_wrappers();
+	for (size_t i = 0; i < pointer_wrappers.size(); ++i) {
 		output += 'P';
-		const auto& ptr_level = normalized.pointer_levels()[i];
+		const auto& ptr_level = pointer_wrappers[i];
 		// CV-qualifiers on the pointer itself
 		// NOTE: For function parameters, top-level const on the pointer (i == 0) is ignored
 		// per C++ standard [dcl.fct]p5. Examples:
@@ -1064,7 +1331,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	// According to Itanium ABI: K = const, V = volatile
 	// NOTE: For function parameters passed by value (not pointer/reference),
 	// top-level const is ignored per C++ standard [dcl.fct]p5
-	bool is_by_value = normalized.pointer_levels().empty() &&
+	bool is_by_value = pointer_wrappers.empty() &&
 					   !normalized.is_lvalue_reference() &&
 					   !normalized.is_rvalue_reference();
 	bool skip_cv = is_function_parameter && is_by_value;
@@ -1631,17 +1898,8 @@ inline void appendItaniumTypeTemplateArgs(
 					throw InternalError(
 						"Itanium name mangling: callable template argument missing function signature");
 				}
-				TypeSpecifierNode function_type(
-					arg.type_index,
-					TypeQualifier::None,
-					0,
-					Token{},
-					arg.cv_qualifier);
-				function_type.set_reference_qualifier(arg.ref_qualifier);
-				for (CVQualifier pointer_qualifier : arg.pointer_cv_qualifiers) {
-					function_type.add_pointer_level(pointer_qualifier);
-				}
-				function_type.set_function_signature(*arg.function_signature);
+				TypeSpecifierNode function_type =
+					typeSpecifierFromTemplateTypeArgProjection(arg);
 				appendItaniumTypeCode(output, function_type, false);
 				break;
 			}

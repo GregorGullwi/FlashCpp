@@ -111,7 +111,7 @@ pointer-alias layers with ordered declarators while preserving cv on each
 pointer level; its architecture test checks the resulting canonical type.
 
 Boundary 3A is not complete: `CanonicalTypeDesc` carries a
-`structural_type_id` bridge, but other `TypeContext` operations, name mangling,
+`structural_type_id` bridge, but other `TypeContext` operations,
 template argument and substitution storage, traits, and general IR
 layout/subscript consumers still rely on parallel pointer/array fields.
 Ordered declarators over alias array, reference, function, or member-pointer
