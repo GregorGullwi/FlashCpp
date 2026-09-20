@@ -955,6 +955,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					param_decl.default_value(), tmpl_params, tmpl_args);
 				substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			}
+			applySubstitutedFunctionParameterArrayBounds(
+				substituted_param_decl.as<DeclarationNode>(),
+				tmpl_params,
+				tmpl_args);
 			target_node.add_parameter_node(substituted_param_decl);
 		}
 	};

@@ -2148,6 +2148,87 @@ bool Parser::functionTemplateAcceptsCallArgumentCount(
 	return argument_count <= func_decl.parameter_nodes().size();
 }
 
+void Parser::applySubstitutedFunctionParameterArrayBounds(
+	DeclarationNode& param_decl,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	TypeSpecifierNode& type_spec = param_decl.type_specifier_node();
+	if (type_spec.has_pointee_array_declarator()) {
+		// Substitution/normalize uses pointer object size (64). Indexing needs
+		// the element size, matching a directly written `int a[2][3]` parameter.
+		TypeSpecifierNode element_spec = type_spec;
+		element_spec.set_pointee_array_declarator(false);
+		while (element_spec.pointer_depth() > 0) {
+			element_spec.remove_pointer_level();
+		}
+		const int element_size_bits = getTypeSpecSizeBits(element_spec);
+		if (element_size_bits > 0) {
+			type_spec.set_size_in_bits(element_size_bits);
+		}
+	}
+
+	if (!param_decl.is_array() || param_decl.array_dimension_count() <= 1) {
+		return;
+	}
+	if (!type_spec.has_pointee_array_declarator() || !type_spec.array_dimensions().empty()) {
+		return;
+	}
+
+	auto report_unresolved_bound = [&]() {
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::FunctionTemplateArrayBoundUnresolved,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(param_decl.identifier_token()),
+			"Function parameter array bound must be a positive constant expression",
+			{});
+	};
+
+	auto bound_parameter_name = [](const ASTNode& dimension_expr) -> StringHandle {
+		if (!dimension_expr.is<ExpressionNode>()) {
+			return {};
+		}
+		const ExpressionNode& expr = dimension_expr.as<ExpressionNode>();
+		if (const auto* parameter_ref = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+			return parameter_ref->param_name();
+		}
+		if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+			return identifier->getOrInternNameHandle();
+		}
+		return {};
+	};
+
+	std::vector<size_t> resolved_dims;
+	const auto dimensions = param_decl.array_dimensions();
+	resolved_dims.reserve(dimensions.size() - 1);
+	for (size_t i = 1; i < dimensions.size(); ++i) {
+		const StringHandle dimension_parameter_name = bound_parameter_name(dimensions[i]);
+		if (dimension_parameter_name.isValid()) {
+			if (const TemplateTypeArg* arg = findTemplateArgByName(
+					StringTable::getStringView(dimension_parameter_name),
+					template_params,
+					template_args);
+				arg != nullptr && arg->is_value) {
+				if (arg->value <= 0) {
+					report_unresolved_bound();
+				}
+				resolved_dims.push_back(static_cast<size_t>(arg->value));
+				continue;
+			}
+		}
+		auto bound = evaluateDependentNTTPExpression(
+			dimensions[i], template_params, template_args);
+		if (!bound.has_value() || !bound->is_value || bound->value <= 0) {
+			report_unresolved_bound();
+		}
+		resolved_dims.push_back(static_cast<size_t>(bound->value));
+	}
+	if (!resolved_dims.empty()) {
+		type_spec.set_pointee_array_dimensions(resolved_dims);
+	}
+	param_decl.set_array_dimensions({});
+}
+
 bool Parser::materializeTemplateFunctionParameters(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionTemplateInstantiationContext& instantiation_context,
@@ -2377,6 +2458,10 @@ bool Parser::materializeTemplateFunctionParameters(
 			ASTNode param_type = buildMaterializedParamType(param_decl, flat_subst_params, flat_subst_args);
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			new_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
+			applySubstitutedFunctionParameterArrayBounds(
+				new_param_decl.as<DeclarationNode>(),
+				flat_subst_params,
+				flat_subst_args);
 			new_func_ref.add_parameter_node(new_param_decl);
 			arg_type_index++;
 		}
@@ -2545,6 +2630,10 @@ bool Parser::materializeTemplateFunctionParameters(
 
 		auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 		new_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
+		applySubstitutedFunctionParameterArrayBounds(
+			new_param_decl.as<DeclarationNode>(),
+			template_params,
+			template_args);
 		new_func_ref.add_parameter_node(new_param_decl);
 		if (arg_type_index < arg_types->size()) {
 			arg_type_index++;

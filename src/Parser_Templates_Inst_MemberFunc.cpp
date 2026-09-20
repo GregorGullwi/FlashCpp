@@ -3016,6 +3016,10 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				}
 				new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			}
+			applySubstitutedFunctionParameterArrayBounds(
+				new_param_decl.as<DeclarationNode>(),
+				template_params,
+				inline_template_args);
 			new_func_ref.add_parameter_node(new_param_decl);
 			++materialized_param_index;
 		}

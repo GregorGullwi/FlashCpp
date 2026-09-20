@@ -211,6 +211,7 @@ enum class DiagnosticId : uint32_t {
 	AliasTemplateArityMismatch = 1815,
 	UnsupportedAliasTemplateTargetDeclarator = 1816,
 	AliasTemplateArrayBoundUnresolved = 1817,
+	FunctionTemplateArrayBoundUnresolved = 1818,
 
 	// Parser syntax family (1901..1999).
 	UnexpectedToken = 1901,
@@ -476,6 +477,8 @@ inline std::string_view diagnosticIdName(DiagnosticId id) {
 		return "UnsupportedAliasTemplateTargetDeclarator";
 	case DiagnosticId::AliasTemplateArrayBoundUnresolved:
 		return "AliasTemplateArrayBoundUnresolved";
+	case DiagnosticId::FunctionTemplateArrayBoundUnresolved:
+		return "FunctionTemplateArrayBoundUnresolved";
 	case DiagnosticId::UnexpectedToken:
 		return "UnexpectedToken";
 	case DiagnosticId::MissingSemicolon:

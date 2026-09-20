@@ -76,11 +76,12 @@ semicolon error. Supporting the target requires preserving the pointee array
 declarator and its bounds through alias-template substitution.
 
 Concrete multidimensional array parameters now preserve inner bounds through
-parameter adjustment and flatten pointer-row subscripts. A dependent inner
-bound in a function template (`template<int N> int f(int a[2][N])`) is still
-lost before instantiation; indexing the instantiated parameter can crash at
-runtime. The parameter declaration needs to retain the dependent bound
-expression for substitution.
+parameter adjustment and flatten pointer-row subscripts. Dependent inner
+bounds in a function template (`template<int N> int f(int a[2][N])`) are
+retained on the parameter declaration and substituted at instantiation so
+the adjusted pointer-to-array type matches a directly written `int a[2][3]`.
+A bound that cannot be resolved to a positive constant reports
+`FunctionTemplateArrayBoundUnresolved` (1818).
 
 Member class-template friend declarations parse and retain distinct owner
 identities, but private access through such a friend is not enforced: the
