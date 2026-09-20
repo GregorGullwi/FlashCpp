@@ -88,6 +88,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 					// Get the underlying type and add a pointer level
 					TypeSpecifierNode param_type = orig_type;  // Copy needed since we modify
 					std::vector<size_t> pointee_dimensions;
+					bool inner_unresolved = false;
 					if (alias_array_parameter) {
 						const auto dimensions = orig_type.array_dimensions();
 						if (dimensions.size() > 1) {
@@ -98,30 +99,51 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 						const auto& dimensions = decl.array_dimensions();
 						for (size_t i = 1; i < dimensions.size(); ++i) {
 							const auto dimension = try_evaluate_constant_expression(dimensions[i]);
-							if (!dimension.has_value() || dimension->value <= 0) {
+							if (dimension.has_value() && dimension->value <= 0) {
+								return error(
+									DiagnosticId::FunctionTemplateArrayBoundUnresolved,
+									decl.identifier_token(),
+									"Function parameter array bound must be a positive constant expression");
+							}
+							if (!dimension.has_value()) {
+								inner_unresolved = true;
 								pointee_dimensions.clear();
 								break;
 							}
 							pointee_dimensions.push_back(static_cast<size_t>(dimension->value));
+						}
+						if (inner_unresolved && !isTemplateParameterTrackingActive()) {
+							return error(
+								DiagnosticId::FunctionTemplateArrayBoundUnresolved,
+								decl.identifier_token(),
+								"Function parameter array bound must be a positive constant expression");
 						}
 					}
 					param_type.add_pointer_level();
 					if (!pointee_dimensions.empty()) {
 						param_type.set_pointee_array_dimensions(pointee_dimensions);
 						param_type.set_pointee_array_declarator(true);
+					} else if (inner_unresolved) {
+						param_type.set_pointee_array_declarator(true);
 					}
 
-					// Create new declaration without array size (now a pointer)
+					// Create new declaration without array size (now a pointer).
+					// Dependent inner bounds stay on the declaration so instantiation
+					// can substitute them; a concrete inner list is folded onto the
+					// type specifier like a directly written pointer-to-array.
 					ASTNode new_decl = emplace_node<DeclarationNode>(
 						emplace_node<TypeSpecifierNode>(param_type),
 						decl.identifier_token());
 
-					// Copy over any other attributes
-					if (decl.has_default_value()) {
-						new_decl.as<DeclarationNode>().set_default_value(decl.default_value());
-					}
-					if (decl.is_parameter_pack()) {
-						new_decl.as<DeclarationNode>().set_parameter_pack(true);
+					if (inner_unresolved) {
+						new_decl.as<DeclarationNode>().copyMetadataFrom(decl);
+					} else {
+						if (decl.has_default_value()) {
+							new_decl.as<DeclarationNode>().set_default_value(decl.default_value());
+						}
+						if (decl.is_parameter_pack()) {
+							new_decl.as<DeclarationNode>().set_parameter_pack(true);
+						}
 					}
 
 					out_params.parameters.push_back(new_decl);

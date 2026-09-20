@@ -747,8 +747,13 @@ must not increase an implementation percentage.
   pointer-row access, including direct, alias-template, and explicit
   pointer-to-array parameter forms (`multidimensional_array_parameter_ret42`,
   `alias_multidimensional_parameter_ret42`, `pointer_array_parameter_ret42`).
-  Dependent inner bounds in function templates remain open (see
-  `KNOWN_ISSUES.md`). Parenthesized pointer-to-array alias
+  Dependent inner bounds in function templates retain their expressions until
+  concrete substitution, so `int a[2][N]` and `int a[2][N][M]` index with the
+  same flattened pointer-row shape as a directly written parameter
+  (`function_template_dependent_array_bound_ret42`,
+  `function_template_dependent_inner_bounds_ret42`). Nonpositive or unresolved
+  instantiated bounds report `FunctionTemplateArrayBoundUnresolved` (1818).
+  Parenthesized pointer-to-array alias
   template targets remain unsupported and report
   `UnsupportedAliasTemplateTargetDeclarator` (1816). Select and bound one of
   the remaining families before expanding boundary-1 coverage.

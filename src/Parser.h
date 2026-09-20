@@ -3031,6 +3031,30 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const ASTNode& dependent_expr,
 		std::span<const ASTNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
+	// Resolve retained function-parameter array bound expressions after
+	// substitution. Outer decay has already happened; inner extents become
+	// pointee_array_dimensions. Unresolvable or non-positive bounds fail closed.
+	void applySubstitutedFunctionParameterArrayBounds(
+		DeclarationNode& param_decl,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
+	template <typename ParamContainer, typename ArgContainer>
+	void applySubstitutedFunctionParameterArrayBounds(
+		DeclarationNode& param_decl,
+		const ParamContainer& template_params,
+		const ArgContainer& template_args) {
+		TemplateParameterVector typed_params;
+		typed_params.reserve(template_params.size());
+		for (const auto& param : template_params) {
+			if (const TemplateParameterNode* typed = tryGetTemplateParameterNode(param)) {
+				typed_params.push_back(*typed);
+			}
+		}
+		applySubstitutedFunctionParameterArrayBounds(
+			param_decl,
+			std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
+	}
 	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, std::span<const TypeSpecifierNode> arg_types);  // NEW: Instantiate member function template
 	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, std::span<const TemplateTypeArg> template_type_args);  // NEW: Instantiate member function template with explicit args
 		// Core logic shared by both try_instantiate_member_function_template and _explicit.

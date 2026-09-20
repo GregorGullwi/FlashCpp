@@ -337,6 +337,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 						owner_struct_decl);
 					substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 				}
+				applySubstitutedFunctionParameterArrayBounds(
+					substituted_param_decl.as<DeclarationNode>(),
+					lazy_info.template_params,
+					lazy_info.template_args);
 				new_ctor_ref.add_parameter_node(substituted_param_decl);
 			} else {
 				new_ctor_ref.add_parameter_node(param);
