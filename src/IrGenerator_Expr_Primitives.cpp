@@ -79,9 +79,16 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 				symbol.has_value()) {
 				if (const DeclarationNode* declaration =
 						get_decl_from_symbol(*symbol)) {
-					declaration->type_specifier_node()
-						.require_legacy_declarator_projection(
+					const TypeSpecifierNode& declared_type =
+						declaration->type_specifier_node();
+					if (declared_type.has_ordered_declarator() &&
+						declared_type.runtime_pointer_depth() == 0) {
+						// Ordered pointer objects now lower as pointer-sized
+						// values; ordered array/callable objects stay
+						// fail-closed in expression lowering.
+						declared_type.require_legacy_declarator_projection(
 							"identifier IR lowering");
+					}
 				}
 			}
 			// Attempt constexpr constant folding only for confirmed constexpr local/global
@@ -426,7 +433,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		}
 		TypeCategory semantic_type = resolve_type_alias(type_node.type_index());
 		const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
-		const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
+		const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.runtime_pointer_depth()) : 0};
 		return makeIdentifierResult(
 			result_type,
 			size_bits,
@@ -648,8 +655,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					const auto& vd = fast_sym->as<VariableDeclarationNode>();
 					const auto& decl_n = vd.declaration();
 					const auto& type_n = decl_n.type_specifier_node();
-					bool is_array_type = decl_n.is_array_object() || type_n.is_array();
-					bool is_ptr_or_ref = type_n.is_pointer() || type_n.is_reference() || type_n.is_function_pointer();
+					const bool ordered_type = !type_n.ordered_declarator_has_legacy_projection();
+					const size_t runtime_pointer_depth = type_n.runtime_pointer_depth();
+					bool is_array_type = !ordered_type && (decl_n.is_array_object() || type_n.is_array());
+					bool is_ptr_or_ref = runtime_pointer_depth > 0 || type_n.is_reference() || type_n.is_function_pointer();
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp op;
@@ -676,7 +685,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						return *enumerator_constant;
 					}
 					bool is_array_type = decl_n.is_array_object() || type_n.is_array();
-					int size_bits = (type_n.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
+					int size_bits = (type_n.runtime_pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp op;
 					op.result.setType(type_n.category());

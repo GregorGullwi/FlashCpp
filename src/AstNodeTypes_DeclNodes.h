@@ -2004,6 +2004,24 @@ public:
 	bool ordered_declarator_has_legacy_projection() const {
 		return !has_ordered_declarator() || declarator_has_legacy_projection_;
 	}
+	// Runtime pointer depth of a value-level object. For a projectable
+	// declarator this is the flat pointer depth. For a non-projectable ordered
+	// spine it counts the leading Pointer wrappers; an array or callable
+	// outermost wrapper is not a pointer object and yields zero so callers can
+	// fail closed instead of reading the wrong flat size.
+	size_t runtime_pointer_depth() const {
+		if (!has_ordered_declarator()) {
+			return pointer_levels_.size();
+		}
+		size_t depth = 0;
+		for (const DeclaratorComponent& component : declarator_components_) {
+			if (component.kind != DeclaratorComponentKind::Pointer) {
+				break;
+			}
+			++depth;
+		}
+		return depth;
+	}
 	void set_ordered_declarator(std::vector<DeclaratorComponent> components) {
 		declarator_components_ = std::move(components);
 		rebuild_legacy_declarator_projection();
