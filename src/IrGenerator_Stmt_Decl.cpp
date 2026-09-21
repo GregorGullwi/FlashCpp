@@ -362,18 +362,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 	const auto& decl = node.declaration();
 	const auto& type_node = decl.type_specifier_node();
-	size_t runtime_pointer_depth = type_node.pointer_depth();
-	if (type_node.has_ordered_declarator()) {
-		const std::span<const DeclaratorComponent> components =
-			type_node.declarator_components();
-		if (components.empty() ||
-			components.front().kind != DeclaratorComponentKind::Pointer) {
-			throw InternalError(
-				"interleaved declarator reached unmigrated array-object IR lowering");
-		}
-		// This slice migrates storage for an outer pointer object only. Pointee
-		// operations remain fail-closed in expression lowering.
-		runtime_pointer_depth = 1;
+	// This slice migrates storage for an outer pointer object only. An ordered
+	// spine whose outermost wrapper is an array or callable is not a pointer
+	// object and stays fail-closed.
+	const size_t runtime_pointer_depth = type_node.runtime_pointer_depth();
+	if (type_node.has_ordered_declarator() && runtime_pointer_depth == 0) {
+		throw InternalError(
+			"interleaved declarator reached unmigrated array-object IR lowering");
 	}
 	auto flushFullExpressionTemps = [this]() {
 		emitAndClearFullExpressionTempDestructors();
@@ -481,7 +476,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		GlobalVariableDeclOp op;
 		op.type_index = type_node.type_index();
 			// For pointers and references, size is sizeof(void*) regardless of base type
-		if (type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer()) {
+		if (runtime_pointer_depth > 0 || type_node.is_reference() || type_node.is_function_pointer()) {
 			op.size_in_bits = SizeInBits{static_cast<int>(sizeof(void*)) * 8};
 		} else {
 			op.size_in_bits = SizeInBits{type_node.size_in_bits()};
