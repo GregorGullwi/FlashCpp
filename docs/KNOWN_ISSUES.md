@@ -120,25 +120,34 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
-## Ordered pointer values are not coherent through local reads and global assignment
+## Ordered pointer values are not yet coherent when produced by reinterpret_cast
 
-Ordered pointer objects now lower and assign at the static-member and identifier
-level, but the value is still lost through two adjacent paths, so a non-null
-ordered pointer can silently become a wrong non-null value:
+Ordered pointer objects now read, assign, and round-trip coherently through
+locals, globals, and static members, including pointer-sized local reads,
+global/static binding sizes, and chosen qualifiers. One path remains wrong: a
+`reinterpret_cast` to an ordered pointer type used directly as an assignment
+right-hand side stores a value that reads back non-null but incorrect.
 
-- Reading a **local** ordered pointer identifier yields the base type's size and
-  pointer depth `0`. In `int (*(*g)[3])[4]; int (*(*local)[3])[4] = ...; g = local;`
-  the `local` read is 32 bits, so the store truncates.
-- The unqualified-global assignment fast path then stores that truncated value;
-  `reinterpret_cast` to an ordered type itself round-trips correctly
-  (`void* p = reinterpret_cast<int (*(*)[3])[4]>(&storage);` compares equal to
-  `&storage`), so the fault is the local-read size, not the cast.
+Repro (fails; `g = local` or an intervening local works):
 
-Fix the local identifier read (use `runtime_pointer_depth()` in the local path
-of `generateIdentifierIr` and the global/static binding sizes together) before
-relying on ordered pointer values crossing a variable. `test_static_member_ordered_pointer_assignment_ret42`
-only asserts the store is no longer dropped; it does not yet assert the exact
-value.
+```cpp
+int (*(*g)[3])[4] = nullptr;
+int storage = 0;
+void* captured = nullptr;
+int main() {
+	g = reinterpret_cast<int (*(*)[3])[4]>(&storage);
+	captured = g;                     // != &storage
+	return captured == static_cast<void*>(&storage) ? 42 : 1;
+}
+```
+
+`static_cast<int (*(*)[3])[4]>(local)` and `reinterpret_cast<...>(&storage)`
+assigned to an ordinary `int*` both work, and the same reinterpret_cast
+converted immediately to `void*` compares equal, so the fault is the explicit
+reinterpret result used as a pointer store, not the cast value itself.
+`test_interleaved_pointer_array_local_read_ret42` and
+`test_static_member_ordered_pointer_assignment_ret42` cover the paths that now
+work.
 
 ## Variable-template initializer replay removed; static-member replay clones remain
 

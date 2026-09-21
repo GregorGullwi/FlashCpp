@@ -382,7 +382,7 @@ int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, boo
 	bool is_array_type = is_array || type_node.is_array();
 	int size_bits;
 
-	if (is_array_type || type_node.pointer_depth() > 0) {
+	if (is_array_type || type_node.runtime_pointer_depth() > 0) {
 			// For arrays and pointers, the identifier itself is a pointer (64 bits on x64)
 			// The element/pointee size is stored separately and used for pointer arithmetic
 		size_bits = 64;	// Pointer size on x64 architecture
@@ -1312,9 +1312,9 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// Lower non-pointer variables to their runtime representation. For enums
 			// this produces the underlying integer type/size while preserving
 			// semantic type metadata separately via type_index below.
-		assert(type_node.pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+		assert(type_node.runtime_pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
 			   "Pointer depth exceeds maximum int value for PointerDepth construction");
-		PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
+		PointerDepth identifier_pointer_depth{static_cast<int>(type_node.runtime_pointer_depth())};
 		TypeCategory return_type = getRuntimeValueType(type_node.type_index(), identifier_pointer_depth);
 		size_bits = getRuntimeValueSizeBits(
 			type_node.type_index(),
@@ -1335,7 +1335,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// use type_index for layout and zero pointer_depth here.
 		PointerDepth pointer_depth{isIrStructType(toIrType(type_node.type()))
 									   ? 0
-									   : static_cast<int>(type_node.pointer_depth())};
+									   : static_cast<int>(type_node.runtime_pointer_depth())};
 		return makeIdentifierResult(
 			return_type,
 			size_bits,
@@ -1492,7 +1492,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					: TypeIndex{},
 				PointerDepth{isIrStructType(toIrType(result_type))
 								 ? 0
-								 : static_cast<int>(type_node.pointer_depth())});
+								 : static_cast<int>(type_node.runtime_pointer_depth())});
 		}
 	}
 
@@ -2099,8 +2099,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			// Namespace-scoped variables are always global
 			// Generate GlobalLoad for namespace-qualified global variable
 		TempVar result_temp = var_counter.next();
-		bool is_array_type = decl_node.is_array_object() || type_node.is_array();
-		bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
+			bool is_array_type = decl_node.is_array_object() || type_node.is_array();
+			bool is_ptr_or_ref = type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_function_pointer();
 		int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 		GlobalLoadOp op;
 		op.result.setType(type_node.category());
