@@ -914,10 +914,11 @@ inline void applyMemberDeclaratorShape(TypeSpecifierNode& member_type, const Mem
 
 // A non-projectable ordered declarator cannot be flattened into the legacy
 // pointer/array fields, so overload/conversion resolution must consume the
-// ordered spine directly. Compare the resolved base type, base cv, and callable
-// payload that the declarator wraps; the wrapper sequence itself is compared by
-// has_same_ordered_declarator().
-inline bool orderedDeclaratorBaseIdentityMatches(
+// ordered spine directly. Compare the resolved base type and callable payload
+// that the declarator wraps; the wrapper sequence itself is compared by
+// sameOrderedDeclaratorShapeIgnoringCv(), and cv is handled by the
+// qualification rule.
+inline bool orderedDeclaratorBaseTypeMatches(
 	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	const CanonicalTypeAlias from_canonical =
 		canonicalize_type_alias(from.type_index());
@@ -937,9 +938,6 @@ inline bool orderedDeclaratorBaseIdentityMatches(
 		from_resolved != to_resolved) {
 		return false;
 	}
-	if (from.cv_qualifier() != to.cv_qualifier()) {
-		return false;
-	}
 	if (from.has_function_signature() != to.has_function_signature()) {
 		return false;
 	}
@@ -951,10 +949,120 @@ inline bool orderedDeclaratorBaseIdentityMatches(
 	return true;
 }
 
-// Bounded ordered-declarator conversion path. Only exact structural identity is
-// consumed: a null pointer constant to an ordered pointer, and a value argument
-// whose ordered spine and resolved base identity match the destination. Array /
-// function decay, qualification adjustment, void*, derived-to-base, ordered
+// Outer pointer pointee cv for an ordered pointer object. Arrays are transparent
+// (an array takes its element type's cv), so this is the cv of the first
+// non-array wrapper after the outermost pointer. A function or member-pointer
+// pointee is not an object pointer and has no void* conversion.
+inline std::optional<CVQualifier> orderedPointerVoidPointeeCv(
+	const TypeSpecifierNode& type) {
+	const std::span<const DeclaratorComponent> components =
+		type.declarator_components();
+	if (components.empty() ||
+		components.front().kind != DeclaratorComponentKind::Pointer) {
+		return std::nullopt;
+	}
+	for (size_t index = 1; index < components.size(); ++index) {
+		switch (components[index].kind) {
+		case DeclaratorComponentKind::Array:
+		case DeclaratorComponentKind::UnknownBoundArray:
+			continue;
+		case DeclaratorComponentKind::Pointer:
+			return components[index].cv_qualifier;
+		default:
+			return std::nullopt;
+		}
+	}
+	return std::nullopt;
+}
+
+// Same ordered wrapper sequence ignoring per-level cv, so the qualification
+// plan can decide cv compatibility separately. Kinds, array extents, callable
+// positions, and member owners must match exactly.
+inline bool sameOrderedDeclaratorShapeIgnoringCv(
+	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	const std::span<const DeclaratorComponent> from_components =
+		from.declarator_components();
+	const std::span<const DeclaratorComponent> to_components =
+		to.declarator_components();
+	if (from_components.size() != to_components.size()) {
+		return false;
+	}
+	for (size_t index = 0; index < from_components.size(); ++index) {
+		const DeclaratorComponent& lhs = from_components[index];
+		const DeclaratorComponent& rhs = to_components[index];
+		if (lhs.kind != rhs.kind || lhs.payload != rhs.payload ||
+			lhs.member_owner != rhs.member_owner) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// C++20 [conv.qual] over the ordered pointer chain. Index 0 is the outermost
+// pointer object; its cv may be added freely. Deeper pointees (including the
+// innermost base) may only add cv when every shallower pointee pointer is
+// const in the destination, so `const int (*(*)[3])[4]` is not reachable from
+// `int (*(*)[3])[4]` while `int (* const (*)[3])[4]` and
+// `const int (* const (*)[3])[4]` are.
+inline ConversionPlan orderedDeclaratorCvConversionPlan(
+	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	auto allowsAddition = [](CVQualifier from_cv, CVQualifier to_cv) {
+		return (static_cast<uint8_t>(from_cv) & ~static_cast<uint8_t>(to_cv)) == 0;
+	};
+	auto isConst = [](CVQualifier cv) {
+		return (static_cast<uint8_t>(cv) &
+			static_cast<uint8_t>(CVQualifier::Const)) != 0;
+	};
+	std::vector<CVQualifier> from_pointer_cv;
+	std::vector<CVQualifier> to_pointer_cv;
+	for (const DeclaratorComponent& component : from.declarator_components()) {
+		if (component.kind == DeclaratorComponentKind::Pointer) {
+			from_pointer_cv.push_back(component.cv_qualifier);
+		}
+	}
+	for (const DeclaratorComponent& component : to.declarator_components()) {
+		if (component.kind == DeclaratorComponentKind::Pointer) {
+			to_pointer_cv.push_back(component.cv_qualifier);
+		}
+	}
+	if (from_pointer_cv.size() != to_pointer_cv.size()) {
+		return ConversionPlan::no_match();
+	}
+	bool changed = false;
+	for (size_t index = 0; index < from_pointer_cv.size(); ++index) {
+		if (!allowsAddition(from_pointer_cv[index], to_pointer_cv[index])) {
+			return ConversionPlan::no_match();
+		}
+		if (from_pointer_cv[index] == to_pointer_cv[index]) {
+			continue;
+		}
+		changed = true;
+		// Deeper pointer level: every shallower pointee pointer must be const.
+		for (size_t shallower = 1; shallower < index; ++shallower) {
+			if (!isConst(to_pointer_cv[shallower])) {
+				return ConversionPlan::no_match();
+			}
+		}
+	}
+	if (!allowsAddition(from.cv_qualifier(), to.cv_qualifier())) {
+		return ConversionPlan::no_match();
+	}
+	if (from.cv_qualifier() != to.cv_qualifier()) {
+		changed = true;
+		// Changing the innermost base requires every pointee pointer to be const.
+		for (size_t index = 1; index < to_pointer_cv.size(); ++index) {
+			if (!isConst(to_pointer_cv[index])) {
+				return ConversionPlan::no_match();
+			}
+		}
+	}
+	return changed ? ConversionPlan::qualification_adjustment()
+			   : ConversionPlan::exact_match();
+}
+
+// Bounded ordered-declarator conversion path: a null pointer constant to an
+// ordered pointer, an ordered object pointer to `cv void*`, and same-shape
+// qualification conversions. Array / function decay, derived-to-base, ordered
 // reference binding, and callable-component conversions stay deferred and fail
 // closed instead of reaching the flat projection guard.
 inline ConversionPlan buildOrderedDeclaratorConversionPlan(
@@ -973,13 +1081,29 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 	}
 	TypeSpecifierNode from_value = from;
 	from_value.set_reference_qualifier(ReferenceQualifier::None);
-	if (!from_value.has_ordered_declarator() ||
-		!to.has_ordered_declarator() ||
-		!from_value.has_same_ordered_declarator(to) ||
-		!orderedDeclaratorBaseIdentityMatches(from_value, to)) {
+	if (!from_value.has_ordered_declarator()) {
 		return ConversionPlan::no_match();
 	}
-	return ConversionPlan::exact_match();
+	if (to.category() == TypeCategory::Void && to.pointer_depth() == 1 &&
+		!to.is_function_pointer() && !to.is_reference()) {
+		const std::optional<CVQualifier> pointee_cv =
+			orderedPointerVoidPointeeCv(from_value);
+		if (!pointee_cv.has_value()) {
+			return ConversionPlan::no_match();
+		}
+		if ((static_cast<uint8_t>(*pointee_cv) &
+				~static_cast<uint8_t>(to.cv_qualifier())) != 0) {
+			return ConversionPlan::no_match();
+		}
+		return {ConversionRank::Conversion,
+			StandardConversionKind::PointerConversion, true};
+	}
+	if (!to.has_ordered_declarator() ||
+		!sameOrderedDeclaratorShapeIgnoringCv(from_value, to) ||
+		!orderedDeclaratorBaseTypeMatches(from_value, to)) {
+		return ConversionPlan::no_match();
+	}
+	return orderedDeclaratorCvConversionPlan(from_value, to);
 }
 
 // Build a unified conversion plan for full TypeSpecifierNode-level conversions.
