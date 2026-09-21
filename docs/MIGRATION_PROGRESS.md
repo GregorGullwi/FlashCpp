@@ -632,6 +632,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Callable substitution and bounded recursion | `checkCallableSubstitution` (including a 65,536-deep pointer chain) |
 | Nested callable declaration identity | `DeclarationBuilder distinguishes nested function parameter signatures` doctest |
 | Ordered declarator overload/conversion | `test_interleaved_pointer_array_argument_ret42`, `test_interleaved_pointer_array_argument_shape_e1704`, `test_interleaved_pointer_array_argument_value_ret42` |
+| Ordered pointer deferred-conversion boundary | `test_interleaved_pointer_array_argument_void_e1704` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
