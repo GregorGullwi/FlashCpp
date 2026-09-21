@@ -4119,6 +4119,26 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				return enum_type;
 			}
 		}
+
+		// Namespace-scope variables and free functions resolve through qualified
+		// symbol lookup. Return the declared type so a non-projectable ordered
+		// declarator survives into overload resolution and lowering instead of
+		// falling back to an untyped placeholder.
+		if (std::optional<ASTNode> qualified_symbol =
+				gSymbolTable.lookup_qualified(qual_id.qualifiedIdentifier());
+			qualified_symbol.has_value()) {
+			if (const FunctionDeclarationNode* func_decl =
+					FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*qualified_symbol)) {
+				return FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
+			}
+			if (const DeclarationNode* decl = get_decl_from_symbol(*qualified_symbol)) {
+				TypeSpecifierNode type = decl->type_specifier_node();
+				if (decl->is_array_object()) {
+					applyDeclarationArrayBoundsToTypeSpec(*decl, type, *this);
+				}
+				return type;
+			}
+		}
 	}
 	// Add more cases as needed
 
