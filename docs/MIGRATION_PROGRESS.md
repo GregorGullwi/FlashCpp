@@ -32,7 +32,12 @@ now lower as pointer-sized values: `TypeSpecifierNode::runtime_pointer_depth`
 reports the flat pointer depth for projectable declarators and the leading
 `Pointer` wrapper count for a non-projectable spine, and the declaration
 storage, global-fast-path identifier load, and identifier result consume it.
-An ordered spine whose outermost wrapper is an array or callable is not a
+Namespace-scope qualified identifiers (`n::g`) participate the same way:
+`Parser::get_expression_type` falls back to qualified symbol lookup and returns
+the declared ordered type, so an argument no longer collapses to an `int`
+placeholder, and the qualified-identifier global-load path sizes and
+pointer-depths ordered pointer objects identically. An ordered spine whose
+outermost wrapper is an array or callable is not a
 pointer object and stays fail-closed. Callable and member-pointer components are
 named by the spine format, but their cold `FunctionSignature`/owner payload
 export and the remaining template, traits, constexpr, and IR consumers are not
@@ -43,8 +48,9 @@ probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
 5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
 frames and does not increase native call depth. The next slices are the
 deferred conversion families (qualification adjustment and array/function
-decay, then `void*` and ordered reference binding), qualified-name ordered
-pointer value lowering, and removal of the flat pointer/array reads.
+decay, then `void*` and ordered reference binding), remaining qualified-name
+spellings (static members, template-id qualifiers), and removal of the flat
+pointer/array reads.
 
 Immediately before this slice, direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
@@ -534,7 +540,8 @@ during concrete alias materialization. This fixes forwarded aliases such as
   declaration storage, the global-fast-path identifier load, and the
   identifier result, so a by-value ordered pointer argument and its parameter
   comparison execute; an ordered array/callable outer wrapper still fails
-  closed. The callable
+  closed. Namespace-scope qualified identifiers do the same through the
+  qualified-identifier argument-typing fallback and global-load path. The callable
   `MemberObjectPointer` adapter family is now migrated: the parser preserves the
   pre-rewrite pointee specifier that cast and non-type-template-parameter
   rewrites flatten, `importCanonicalMemberPointer` imports it structurally
@@ -545,9 +552,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `TemplateAliasNode`, so their identity no longer depends on the registry
   spelling key. The full dependent-alias behavior, alias partials, and
   class-instantiation alias re-registration deletion remain deferred. The next
-  still-Unmigrated 3A slice is the deferred conversion families and
-  qualified-name ordered pointer value lowering before the flat pointer/array
-  reads are removed, or a bound dependent/template adapter family. Stop here
+  still-Unmigrated 3A slice is the deferred conversion families, remaining
+  qualified-name spellings such as struct static members and template-id
+  qualifiers, before the flat pointer/array reads are removed, or a bound
+  dependent/template adapter family. Stop here
   for review before starting another family, 3B, or the parallel frontend
   experiment.
 
@@ -633,6 +641,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Nested callable declaration identity | `DeclarationBuilder distinguishes nested function parameter signatures` doctest |
 | Ordered declarator overload/conversion | `test_interleaved_pointer_array_argument_ret42`, `test_interleaved_pointer_array_argument_shape_e1704`, `test_interleaved_pointer_array_argument_value_ret42` |
 | Ordered pointer deferred-conversion boundary | `test_interleaved_pointer_array_argument_void_e1704` |
+| Qualified-name ordered pointer value lowering | `test_qualified_ordered_pointer_value_ret42`, `test_qualified_ordered_pointer_void_e1704` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
@@ -701,10 +710,11 @@ Advanced, not completed:
   (`MemberObjectPointer` adapter family), namespace/global alias-template
   primary identity publication, general overload/conversion resolution
   consuming the ordered declarator spine for exact interleaved-shape identity
-  (with the deferred conversion families failing closed), and ordered pointer
+  (with the deferred conversion families failing closed), ordered pointer
   objects lowering as pointer-sized values through the shared
   `runtime_pointer_depth` accessor (with ordered array/callable outer wrappers
-  failing closed).
+  failing closed), and namespace-scope qualified identifiers carrying their
+  declared ordered type through argument typing and global-load lowering.
   The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
   dependent stamping, unpublished/incomplete nominal, anonymous-union, and
