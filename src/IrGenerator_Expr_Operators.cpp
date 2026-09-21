@@ -329,9 +329,11 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		info.type_index = nativeTypeIndex(ts.type());
 		// C++20 [dcl.ptr]/1, [expr.sizeof]: a pointer or reference object
 		// occupies the pointer width regardless of its pointee, so stores
-		// through the binding must not truncate to the element width.
+		// through the binding must not truncate to the element width. A
+		// non-projectable ordered pointer has no flat pointer depth, so use the
+		// runtime depth.
 		const bool ts_is_pointer_like =
-			ts.pointer_depth() > 0 ||
+			ts.runtime_pointer_depth() > 0 ||
 			ts.is_reference() ||
 			ts.is_rvalue_reference() ||
 			ts.has_function_signature();
@@ -422,6 +424,15 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		if (static_member) {
 			info.type_index = nativeTypeIndex(static_member->memberType());
 			info.size_in_bits = SizeInBits{static_cast<int>(static_member->size * 8)};
+			// A non-projectable ordered pointer member is pointer-sized; the flat
+			// member size only reflects the base type.
+			if (std::optional<TypeSpecifierNode> ordered_type =
+					orderedTypeFromStaticMemberDeclaration(*static_member);
+				ordered_type.has_value() &&
+				ordered_type->runtime_pointer_depth() > 0) {
+				info.is_pointer_like = true;
+				info.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+			}
 		}
 		return info;
 	}
