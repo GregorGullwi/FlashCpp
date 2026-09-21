@@ -912,6 +912,76 @@ inline void applyMemberDeclaratorShape(TypeSpecifierNode& member_type, const Mem
 	}
 }
 
+// A non-projectable ordered declarator cannot be flattened into the legacy
+// pointer/array fields, so overload/conversion resolution must consume the
+// ordered spine directly. Compare the resolved base type, base cv, and callable
+// payload that the declarator wraps; the wrapper sequence itself is compared by
+// has_same_ordered_declarator().
+inline bool orderedDeclaratorBaseIdentityMatches(
+	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	const CanonicalTypeAlias from_canonical =
+		canonicalize_type_alias(from.type_index());
+	const CanonicalTypeAlias to_canonical =
+		canonicalize_type_alias(to.type_index());
+	const TypeIndex from_resolved = from_canonical.resolvedTypeIndex();
+	const TypeIndex to_resolved = to_canonical.resolvedTypeIndex();
+	const TypeCategory from_category = from_resolved.is_valid()
+		? from_resolved.category() : from.category();
+	const TypeCategory to_category = to_resolved.is_valid()
+		? to_resolved.category() : to.category();
+	if (from_category != to_category) {
+		return false;
+	}
+	if (needs_type_index(from_category) &&
+		from_resolved.is_valid() && to_resolved.is_valid() &&
+		from_resolved != to_resolved) {
+		return false;
+	}
+	if (from.cv_qualifier() != to.cv_qualifier()) {
+		return false;
+	}
+	if (from.has_function_signature() != to.has_function_signature()) {
+		return false;
+	}
+	if (from.has_function_signature() &&
+		!FlashCpp::equalFunctionSignatureIdentity(
+			from.function_signature(), to.function_signature())) {
+		return false;
+	}
+	return true;
+}
+
+// Bounded ordered-declarator conversion path. Only exact structural identity is
+// consumed: a null pointer constant to an ordered pointer, and a value argument
+// whose ordered spine and resolved base identity match the destination. Array /
+// function decay, qualification adjustment, void*, derived-to-base, ordered
+// reference binding, and callable-component conversions stay deferred and fail
+// closed instead of reaching the flat projection guard.
+inline ConversionPlan buildOrderedDeclaratorConversionPlan(
+	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	if (from.category() == TypeCategory::Nullptr) {
+		if (!to.declarator_components().empty() &&
+			to.declarator_components().front().kind ==
+				DeclaratorComponentKind::Pointer) {
+			return {ConversionRank::Conversion,
+				StandardConversionKind::PointerConversion, true};
+		}
+		return ConversionPlan::no_match();
+	}
+	if (to.is_reference()) {
+		return ConversionPlan::no_match();
+	}
+	TypeSpecifierNode from_value = from;
+	from_value.set_reference_qualifier(ReferenceQualifier::None);
+	if (!from_value.has_ordered_declarator() ||
+		!to.has_ordered_declarator() ||
+		!from_value.has_same_ordered_declarator(to) ||
+		!orderedDeclaratorBaseIdentityMatches(from_value, to)) {
+		return ConversionPlan::no_match();
+	}
+	return ConversionPlan::exact_match();
+}
+
 // Build a unified conversion plan for full TypeSpecifierNode-level conversions.
 // Handles the full gamut of TypeSpecifierNode cases:
 //   • pointer-to-pointer (depth matching, const qualification, void* conversions)
@@ -925,6 +995,12 @@ inline void applyMemberDeclaratorShape(TypeSpecifierNode& member_type, const Mem
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	if ((from.has_ordered_declarator() &&
+			!from.ordered_declarator_has_legacy_projection()) ||
+		(to.has_ordered_declarator() &&
+			!to.ordered_declarator_has_legacy_projection())) {
+		return buildOrderedDeclaratorConversionPlan(from, to);
+	}
 	auto isOrderedPointer = [](const TypeSpecifierNode& type) {
 		return type.has_ordered_declarator() &&
 			!type.declarator_components().empty() &&
