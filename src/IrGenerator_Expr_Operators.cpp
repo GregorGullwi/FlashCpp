@@ -3828,6 +3828,29 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			// Return the assigned value
 			return makeExprResult(nativeTypeIndex(lhsCat), SizeInBits{lhsSize}, IrOperand{std::get<StringHandle>(lhsExprResult.value)}, PointerDepth{}, ValueStorage::ContainsData);
 		} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
+			// A qualified global/static member lowers to a loaded temp that still
+			// carries Global lvalue metadata; store through the global rather than
+			// overwriting the loaded value.
+			if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
+				TempVar store_temp = var_counter.next();
+				AssignmentOp materialize_store;
+				materialize_store.result = store_temp;
+				materialize_store.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, store_temp);
+				materialize_store.rhs = toTypedValue(rhsExprResult);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_store), binaryOperatorNode.get_token()));
+
+				std::vector<IrOperand> store_operands;
+				store_operands.emplace_back(*global_name);
+				store_operands.emplace_back(store_temp);
+				ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
+
+				GlobalStaticBindingInfo binding;
+				binding.is_global_or_static = true;
+				binding.store_name = *global_name;
+				binding.type_index = TypeIndex{0, lhsCat};
+				binding.size_in_bits = SizeInBits{lhsSize};
+				return makeGlobalAssignmentResultLValue(binding);
+			}
 			[[maybe_unused]] TempVar result_var = var_counter.next();
 			AssignmentOp assign_op;
 			assign_op.result = std::get<TempVar>(lhsExprResult.value);

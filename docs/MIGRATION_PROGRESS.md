@@ -44,7 +44,10 @@ non-projectable ordered declarator recover that spine from the member's stored
 declaration AST (`orderedTypeFromStaticMemberDeclaration`), since
 `StructStaticMember` only keeps the flat projection; the qualified-lookup
 static arm, the semantic static-member type, and both static storage
-emission sites use it, so the object is pointer-sized. An ordered spine whose
+emission sites use it, so the object is pointer-sized. Assignment to such a
+member stores through the global symbol: the pointer-assignment fast path used
+to overwrite the loaded temp and drop the store for a qualified lvalue carrying
+Global metadata. An ordered spine whose
 outermost wrapper is an array or callable is not a
 pointer object and stays fail-closed. Callable and member-pointer components are
 named by the spine format, but their cold `FunctionSignature`/owner payload
@@ -654,6 +657,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Ordered pointer void*/qualification conversion | `test_interleaved_pointer_array_argument_void_ret42`, `test_interleaved_pointer_array_argument_base_const_e1704`, `test_interleaved_pointer_array_argument_void_drop_const_e1704` |
 | Qualified-name ordered pointer value lowering | `test_qualified_ordered_pointer_value_ret42`, `test_qualified_ordered_pointer_void_ret42` |
 | Static-member ordered pointer value lowering | `test_static_member_ordered_pointer_value_ret42`, `test_static_member_ordered_pointer_base_const_e1704` |
+| Static-member ordered pointer assignment | `test_static_member_ordered_pointer_assignment_ret42` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
@@ -727,10 +731,10 @@ Advanced, not completed:
   objects lowering as pointer-sized values through the shared
   `runtime_pointer_depth` accessor (with ordered array/callable outer wrappers
   failing closed), namespace-scope qualified identifiers carrying their
-  declared ordered type through argument typing and global-load lowering, and
+  declared ordered type through argument typing and global-load lowering,
   static data members recovering their ordered spine from the member
-  declaration AST through qualified lookup, semantic typing, and pointer-sized
-  storage emission.
+  declaration AST through qualified lookup, semantic typing, pointer-sized
+  storage emission, and Global-symbol assignment.
   The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
   dependent stamping, unpublished/incomplete nominal, anonymous-union, and
