@@ -5,7 +5,7 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-20. Boundary 3A now has an outermost-to-innermost
+Last updated: 2026-09-21. Boundary 3A now has an outermost-to-innermost
 `DeclaratorComponent` spine on `TypeSpecifierNode`. Named and abstract
 pointer/array declarators use an explicit frame stack, so forms including
 `int (*(*p)[3])[4]`, deeper pointer/array alternation, and pointer cv at each
@@ -19,17 +19,27 @@ non-projectable.
 The bounded `sizeof`/size and unary dereference/address route now walks the
 ordered/canonical structure. `CanonicalTypeDesc` carries a temporary `TypeId`
 bridge for these non-projectable shapes. MSVC/Itanium mangling consumes the
-ordered declarator, while general overload/conversion entry points reject a
-non-projectable spine instead of flattening it. Callable and member-pointer components are named by
-the spine format, but their cold `FunctionSignature`/owner payload export and
-the remaining template, traits, constexpr, and IR consumers are not migrated.
+ordered declarator, and general overload/conversion resolution now consumes
+the ordered spine for exact structural identity: a non-projectable argument
+compares its declarator component sequence plus resolved base type, base cv,
+and callable payload, an lvalue's value-category reference qualifier is
+stripped, and a null pointer constant still converts to an ordered pointer.
+Conversion families outside that boundary (array/function decay,
+qualification adjustment, `void*`, derived-to-base, ordered reference
+binding, and callable-component conversion) stay deferred and fail closed as
+an ordinary no-match instead of aborting compilation. IR lowering of ordered
+pointer values is still unmigrated. Callable and member-pointer components are
+named by the spine format, but their cold `FunctionSignature`/owner payload
+export and the remaining template, traits, constexpr, and IR consumers are not
+migrated.
 `DeclaratorComponent` is 16 bytes; the cold vector plus projection-state field
 increased `TypeSpecifierNode` to 520 bytes in the canonical architecture
 probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
 5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
-frames and does not increase native call depth. The exact next slice is
-general overload/conversion consumption of the ordered canonical type,
-followed by removal of its flat pointer/array reads.
+frames and does not increase native call depth. The next slices are the
+deferred conversion families (qualification adjustment and array/function
+decay, then `void*` and ordered reference binding) and IR lowering of ordered
+pointer values, followed by removal of the flat pointer/array reads.
 
 Immediately before this slice, direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
@@ -506,7 +516,15 @@ during concrete alias materialization. This fixes forwarded aliases such as
   expression forms resolve through identity after the member function-call
   probe. `CanonicalTypeTable::substitute` closes
   the function and member-pointer walk deferral. The `parse_type_specifier` `<`
-  gate known-template test includes alias templates. The callable
+  gate known-template test includes alias templates. General
+  overload/conversion resolution now consumes the ordered declarator spine for
+  non-projectable interleaved shapes: exact component/base/cv/callable identity
+  resolves, an lvalue argument's value-category reference qualifier is stripped,
+  a null pointer constant still reaches an ordered pointer, and everything else
+  fails closed as an ordinary no-match instead of aborting at the flat
+  projection guard. Array/function decay, qualification adjustment, `void*`,
+  derived-to-base, ordered reference binding, and callable-component conversion
+  remain deferred. The callable
   `MemberObjectPointer` adapter family is now migrated: the parser preserves the
   pre-rewrite pointee specifier that cast and non-type-template-parameter
   rewrites flatten, `importCanonicalMemberPointer` imports it structurally
@@ -516,10 +534,11 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `TemplateDeclId` under the namespace-mapped `OwnerId` and anchors the
   `TemplateAliasNode`, so their identity no longer depends on the registry
   spelling key. The full dependent-alias behavior, alias partials, and
-  class-instantiation alias re-registration deletion remain deferred; select
-  and bound the next still-Unmigrated dependent or template adapter family
-  before expanding boundary-1 coverage. Stop here for review before starting
-  another family, 3B, or the parallel frontend experiment.
+  class-instantiation alias re-registration deletion remain deferred. The next
+  still-Unmigrated 3A slice is the deferred conversion families and IR lowering
+  of ordered pointer values before the flat pointer/array reads are removed, or
+  a bound dependent/template adapter family. Stop here for review before
+  starting another family, 3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -601,6 +620,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |
 | Callable substitution and bounded recursion | `checkCallableSubstitution` (including a 65,536-deep pointer chain) |
 | Nested callable declaration identity | `DeclarationBuilder distinguishes nested function parameter signatures` doctest |
+| Ordered declarator overload/conversion | `test_interleaved_pointer_array_argument_ret42`, `test_interleaved_pointer_array_argument_shape_e1704` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
@@ -666,8 +686,10 @@ Advanced, not completed:
   forms resolving through identity after the member function-call probe, the
   `parse_type_specifier` `<` gate known-template test including alias
   templates, cast/NTTP member object pointer pointee recovery
-  (`MemberObjectPointer` adapter family), and namespace/global alias-template
-  primary identity publication.
+  (`MemberObjectPointer` adapter family), namespace/global alias-template
+  primary identity publication, and general overload/conversion resolution
+  consuming the ordered declarator spine for exact interleaved-shape identity
+  (with the deferred conversion families failing closed).
   The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
   dependent stamping, unpublished/incomplete nominal, anonymous-union, and
