@@ -13,6 +13,60 @@ TEST_CASE("Canonical types participate in scratch rollback") {
 	}
 	CHECK(context.canonicalTypes().size() == before);
 }
+
+TEST_CASE("Ordered declarator array conversion preserves the element spine") {
+	TypeSpecifierNode source(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	source.set_ordered_declarator({
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	TypeSpecifierNode target(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	target.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+
+	const ConversionPlan plan = buildConversionPlan(source, target);
+	CHECK(plan.is_valid);
+	CHECK(plan.rank == ConversionRank::ExactMatch);
+	CHECK(plan.kind == StandardConversionKind::ArrayToPointer);
+
+	TypeSpecifierNode unknown_bound = source;
+	unknown_bound.set_ordered_declarator({
+		DeclaratorComponent::unknownBoundArray(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	CHECK(buildConversionPlan(unknown_bound, target).kind ==
+		StandardConversionKind::ArrayToPointer);
+
+	TypeSpecifierNode qualified = target;
+	qualified.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	const ConversionPlan qualified_plan = buildConversionPlan(source, qualified);
+	CHECK(qualified_plan.rank == ConversionRank::QualificationAdjustment);
+	CHECK(qualified_plan.kind == StandardConversionKind::ArrayToPointer);
+
+	TypeSpecifierNode mismatched = target;
+	mismatched.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	CHECK_FALSE(buildConversionPlan(source, mismatched).is_valid);
+}
 TEST_CASE("Semantic peak excludes nonoverlapping allocations") {
 	FrontendContext context;
 	auto& builder = context.declarationBuilder();

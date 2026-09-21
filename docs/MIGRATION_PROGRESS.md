@@ -27,10 +27,13 @@ converts to an ordered pointer, and `[conv.qual]` qualification is decided over
 the pointer chain. An ordered object pointer also converts to `cv void*` when
 its outer pointee cv (arrays are transparent) is a subset of the destination
 void's cv; a const inner pointer therefore reaches `const void*` but not
-`void*`. Conversion families outside that boundary (array/function decay,
-derived-to-base, ordered reference binding, and callable-component conversion)
-stay deferred and fail closed as an ordinary no-match instead of aborting
-compilation. Ordered pointer objects
+`void*`. An outer ordered array wrapper now undergoes `[conv.array]`
+array-to-pointer conversion by replacing only that wrapper with an unqualified
+pointer and preserving the interleaved element spine; the conversion plan
+records `ArrayToPointer`, including when the preserved shape needs a permitted
+qualification adjustment. Function decay, derived-to-base, ordered reference
+binding, and callable-component conversion stay deferred and fail closed as an
+ordinary no-match instead of aborting compilation. Ordered pointer objects
 now lower as pointer-sized values: `TypeSpecifierNode::runtime_pointer_depth`
 reports the flat pointer depth for projectable declarators and the leading
 `Pointer` wrapper count for a non-projectable spine, and the declaration
@@ -62,8 +65,8 @@ increased `TypeSpecifierNode` to 520 bytes in the canonical architecture
 probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
 5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
 frames and does not increase native call depth. The next slices are the
-remaining conversion families (array/function decay and ordered reference
-binding), remaining qualified-name spellings (template-id qualifiers), and
+remaining conversion families (function decay and ordered reference binding),
+remaining qualified-name spellings (template-id qualifiers), and
 removal of the flat
 pointer/array reads.
 
@@ -551,9 +554,11 @@ during concrete alias materialization. This fixes forwarded aliases such as
   value-category reference qualifier is stripped, a null pointer constant still
   reaches an ordered pointer, and everything else
   fails closed as an ordinary no-match instead of aborting at the flat
-  projection guard. Array/function decay,
-  derived-to-base, ordered reference binding, and callable-component conversion
-  remain deferred. Ordered pointer objects also lower as pointer-sized values:
+  projection guard. An outer ordered Array / UnknownBoundArray wrapper now
+  converts to a Pointer wrapper while preserving the remaining ordered spine
+  and reports `ArrayToPointer`; function decay, derived-to-base, ordered
+  reference binding, and callable-component conversion remain deferred.
+  Ordered pointer objects also lower as pointer-sized values:
   the shared `TypeSpecifierNode::runtime_pointer_depth` accessor feeds
   declaration storage, the global-fast-path identifier load, and the
   identifier result, so a by-value ordered pointer argument and its parameter
@@ -570,7 +575,8 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `TemplateAliasNode`, so their identity no longer depends on the registry
   spelling key. The full dependent-alias behavior, alias partials, and
   class-instantiation alias re-registration deletion remain deferred. The next
-  still-Unmigrated 3A slice is the remaining conversion families and
+  still-Unmigrated 3A slice is the remaining conversion families (beginning
+  with function decay and ordered reference binding) and
   qualified-name spellings such as template-id qualifiers, before the flat
   pointer/array reads are removed, or a bound
   dependent/template adapter family. Stop here
@@ -658,6 +664,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Callable substitution and bounded recursion | `checkCallableSubstitution` (including a 65,536-deep pointer chain) |
 | Nested callable declaration identity | `DeclarationBuilder distinguishes nested function parameter signatures` doctest |
 | Ordered declarator overload/conversion | `test_interleaved_pointer_array_argument_ret42`, `test_interleaved_pointer_array_argument_shape_e1704`, `test_interleaved_pointer_array_argument_value_ret42` |
+| Ordered array-to-pointer conversion | `Ordered declarator array conversion preserves the element spine` doctest (mutation-validated) |
 | Ordered pointer void*/qualification conversion | `test_interleaved_pointer_array_argument_void_ret42`, `test_interleaved_pointer_array_argument_base_const_e1704`, `test_interleaved_pointer_array_argument_void_drop_const_e1704` |
 | Qualified-name ordered pointer value lowering | `test_qualified_ordered_pointer_value_ret42`, `test_qualified_ordered_pointer_void_ret42` |
 | Static-member ordered pointer value lowering | `test_static_member_ordered_pointer_value_ret42`, `test_static_member_ordered_pointer_base_const_e1704` |
@@ -732,8 +739,9 @@ Advanced, not completed:
   (`MemberObjectPointer` adapter family), namespace/global alias-template
   primary identity publication, general overload/conversion resolution
   consuming the ordered declarator spine for same-shape interleaved identity,
-  `[conv.qual]` qualification, and `cv void*` conversion
-  (with the remaining conversion families failing closed), ordered pointer
+  `[conv.qual]` qualification, `cv void*` conversion, and ordered outer-array
+  decay (with function decay and the remaining conversion families failing
+  closed), ordered pointer
   objects lowering as pointer-sized values through the shared
   `runtime_pointer_depth` accessor (with ordered array/callable outer wrappers
   failing closed), namespace-scope qualified identifiers carrying their

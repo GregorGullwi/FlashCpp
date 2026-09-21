@@ -1085,11 +1085,12 @@ inline ConversionPlan orderedDeclaratorCvConversionPlan(
 			   : ConversionPlan::exact_match();
 }
 
-// Bounded ordered-declarator conversion path: a null pointer constant to an
-// ordered pointer, an ordered object pointer to `cv void*`, and same-shape
-// qualification conversions. Array / function decay, derived-to-base, ordered
-// reference binding, and callable-component conversions stay deferred and fail
-// closed instead of reaching the flat projection guard.
+// Bounded ordered-declarator conversion path: array-to-pointer decay, a null
+// pointer constant to an ordered pointer, an ordered object pointer to `cv
+// void*`, and same-shape qualification conversions. Function decay,
+// derived-to-base, ordered reference binding, and callable-component
+// conversions stay deferred and fail closed instead of reaching the flat
+// projection guard.
 inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	if (from.category() == TypeCategory::Nullptr) {
@@ -1108,6 +1109,16 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 	from_value.set_reference_qualifier(ReferenceQualifier::None);
 	if (!from_value.has_ordered_declarator()) {
 		return ConversionPlan::no_match();
+	}
+	bool array_to_pointer = false;
+	const DeclaratorComponentKind outer_kind =
+		from_value.declarator_components().front().kind;
+	if (outer_kind == DeclaratorComponentKind::Array ||
+		outer_kind == DeclaratorComponentKind::UnknownBoundArray) {
+		from_value.remove_outermost_ordered_declarator_component();
+		from_value.prepend_ordered_declarator_component(
+			DeclaratorComponent::pointer(CVQualifier::None));
+		array_to_pointer = true;
 	}
 	if (to.category() == TypeCategory::Void && to.pointer_depth() == 1 &&
 		!to.is_function_pointer() && !to.is_reference()) {
@@ -1128,7 +1139,11 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 		!orderedDeclaratorBaseTypeMatches(from_value, to)) {
 		return ConversionPlan::no_match();
 	}
-	return orderedDeclaratorCvConversionPlan(from_value, to);
+	ConversionPlan plan = orderedDeclaratorCvConversionPlan(from_value, to);
+	if (!plan.is_valid || !array_to_pointer) {
+		return plan;
+	}
+	return {plan.rank, StandardConversionKind::ArrayToPointer, true};
 }
 
 // Build a unified conversion plan for full TypeSpecifierNode-level conversions.
