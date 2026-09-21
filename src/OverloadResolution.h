@@ -912,6 +912,31 @@ inline void applyMemberDeclaratorShape(TypeSpecifierNode& member_type, const Mem
 	}
 }
 
+// StructStaticMember keeps only the flat pointer/array projection, but retains
+// the original declaration AST. Recover a non-projectable ordered declarator
+// from it so a static member's exact interleaved shape survives into overload
+// resolution and lowering.
+inline std::optional<TypeSpecifierNode> orderedTypeFromStaticMemberDeclaration(
+	const StructStaticMember& member) {
+	if (!member.declaration.has_value()) {
+		return std::nullopt;
+	}
+	const ASTNode& declaration = *member.declaration;
+	const TypeSpecifierNode* declared_type = nullptr;
+	if (declaration.is<DeclarationNode>()) {
+		declared_type = &declaration.as<DeclarationNode>().type_specifier_node();
+	} else if (declaration.is<VariableDeclarationNode>()) {
+		declared_type = &declaration.as<VariableDeclarationNode>()
+					 .declaration()
+					 .type_specifier_node();
+	}
+	if (declared_type == nullptr || !declared_type->has_ordered_declarator() ||
+		declared_type->ordered_declarator_has_legacy_projection()) {
+		return std::nullopt;
+	}
+	return *declared_type;
+}
+
 // A non-projectable ordered declarator cannot be flattened into the legacy
 // pointer/array fields, so overload/conversion resolution must consume the
 // ordered spine directly. Compare the resolved base type and callable payload

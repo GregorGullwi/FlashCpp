@@ -1219,6 +1219,14 @@ void AstToIr::generateStaticMemberDeclarations() {
 				bool allowNormalizedWriteBack = true;
 				op.type_index = static_member.type_index;
 				op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
+				// A non-projectable ordered pointer object is pointer-sized; the
+				// flat member size only reflects the base type.
+				if (std::optional<TypeSpecifierNode> ordered_type =
+						orderedTypeFromStaticMemberDeclaration(static_member);
+					ordered_type.has_value() &&
+					ordered_type->runtime_pointer_depth() > 0) {
+					op.size_in_bits = SizeInBits{static_cast<int>(sizeof(void*)) * 8};
+				}
 				// If size is 0 for struct-like types, look up from resolved struct info.
 				if (!op.size_in_bits.is_set()) {
 					if (const StructTypeInfo* member_si = tryGetStructTypeInfo(static_member.type_index)) {
@@ -2125,6 +2133,12 @@ void AstToIr::generateStaticMemberDeclarations() {
 						GlobalVariableDeclOp alias_op;
 						alias_op.type_index = static_member_ptr->type_index;
 						alias_op.size_in_bits = SizeInBits{static_cast<int>(static_member_ptr->size * 8)};
+						if (std::optional<TypeSpecifierNode> ordered_type =
+								orderedTypeFromStaticMemberDeclaration(*static_member_ptr);
+							ordered_type.has_value() &&
+							ordered_type->runtime_pointer_depth() > 0) {
+							alias_op.size_in_bits = SizeInBits{static_cast<int>(sizeof(void*)) * 8};
+						}
 						alias_op.var_name = derived_name_handle;
 						alias_op.is_initialized = true;
 

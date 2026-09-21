@@ -952,6 +952,11 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 }
 
 TypeSpecifierNode typeSpecifierFromStaticMember(const StructStaticMember& member, const Token& token) {
+	if (std::optional<TypeSpecifierNode> ordered_type =
+			orderedTypeFromStaticMemberDeclaration(member);
+		ordered_type.has_value()) {
+		return *ordered_type;
+	}
 	TypeSpecifierNode type(
 		member.type_index.withCategory(member.memberType()),
 		SizeInBits{static_cast<int>(member.size * 8)},

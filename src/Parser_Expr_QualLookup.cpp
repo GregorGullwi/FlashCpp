@@ -4062,6 +4062,14 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					// Look for static member
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member && owner_struct) {
+						// Preserve a non-projectable ordered declarator from the
+						// member's declaration; StructStaticMember only keeps the
+						// flat projection.
+						if (std::optional<TypeSpecifierNode> ordered_type =
+								orderedTypeFromStaticMemberDeclaration(*static_member);
+							ordered_type.has_value()) {
+							return *ordered_type;
+						}
 						// Found the static member - return its type
 						TypeSpecifierNode member_type(static_member->memberType(), TypeQualifier::None, static_member->size * 8, Token{}, CVQualifier::None);
 						member_type.set_type_index(static_member->type_index);
