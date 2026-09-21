@@ -48,8 +48,10 @@ emission sites use it, so the object is pointer-sized. Assignment to such a
 member stores through the global symbol: the pointer-assignment fast path used
 to overwrite the loaded temp and drop the store for a qualified lvalue carrying
 Global metadata. Local ordered pointer reads and the global/static binding
-sizes also consume `runtime_pointer_depth`, so an ordered pointer value now
-round-trips through a local into a global or static member. An ordered spine whose
+sizes also consume `runtime_pointer_depth`, and `reinterpret_cast` to an ordered
+pointer target reports pointer size and depth, so an ordered pointer value now
+round-trips through a local, a global, a static member, or an explicit cast.
+An ordered spine whose
 outermost wrapper is an array or callable is not a
 pointer object and stays fail-closed. Callable and member-pointer components are
 named by the spine format, but their cold `FunctionSignature`/owner payload
@@ -661,6 +663,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Static-member ordered pointer value lowering | `test_static_member_ordered_pointer_value_ret42`, `test_static_member_ordered_pointer_base_const_e1704` |
 | Static-member ordered pointer assignment | `test_static_member_ordered_pointer_assignment_ret42` |
 | Ordered pointer local read/value round-trip | `test_interleaved_pointer_array_local_read_ret42` |
+| Ordered pointer reinterpret cast store | `test_interleaved_pointer_array_reinterpret_store_ret42` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
@@ -738,7 +741,9 @@ Advanced, not completed:
   static data members recovering their ordered spine from the member
   declaration AST through qualified lookup, semantic typing, pointer-sized
   storage emission, and Global-symbol assignment, and local ordered pointer
-  reads plus global/static binding sizes consuming the runtime pointer depth.
+  reads plus global/static binding sizes consuming the runtime pointer depth,
+  and `reinterpret_cast` to an ordered pointer target carrying pointer size and
+  depth.
   The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
   dependent stamping, unpublished/incomplete nominal, anonymous-union, and

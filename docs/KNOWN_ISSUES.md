@@ -120,35 +120,6 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
-## Ordered pointer values are not yet coherent when produced by reinterpret_cast
-
-Ordered pointer objects now read, assign, and round-trip coherently through
-locals, globals, and static members, including pointer-sized local reads,
-global/static binding sizes, and chosen qualifiers. One path remains wrong: a
-`reinterpret_cast` to an ordered pointer type used directly as an assignment
-right-hand side stores a value that reads back non-null but incorrect.
-
-Repro (fails; `g = local` or an intervening local works):
-
-```cpp
-int (*(*g)[3])[4] = nullptr;
-int storage = 0;
-void* captured = nullptr;
-int main() {
-	g = reinterpret_cast<int (*(*)[3])[4]>(&storage);
-	captured = g;                     // != &storage
-	return captured == static_cast<void*>(&storage) ? 42 : 1;
-}
-```
-
-`static_cast<int (*(*)[3])[4]>(local)` and `reinterpret_cast<...>(&storage)`
-assigned to an ordinary `int*` both work, and the same reinterpret_cast
-converted immediately to `void*` compares equal, so the fault is the explicit
-reinterpret result used as a pointer store, not the cast value itself.
-`test_interleaved_pointer_array_local_read_ret42` and
-`test_static_member_ordered_pointer_assignment_ret42` cover the paths that now
-work.
-
 ## Variable-template initializer replay removed; static-member replay clones remain
 
 RESOLVED for variable templates (2026-08-22, branch `opencode/alias-capture-identity`):
