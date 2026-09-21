@@ -1356,7 +1356,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			TempVar result_temp = var_counter.next();
 				// For arrays, pointers, and references, result is a pointer (64-bit address)
 			bool is_array_type = decl_node.is_array_object() || type_node.is_array();
-			bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
+			bool is_ptr_or_ref = type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_function_pointer();
 			int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.setType(type_node.category());
@@ -2058,7 +2058,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 				// Generate GlobalLoad for namespace-qualified global variable
 			TempVar result_temp = var_counter.next();
 			bool is_array_type = decl_node.is_array_object() || type_node.is_array();
-			bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
+			bool is_ptr_or_ref = type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_function_pointer();
 			int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.setType(type_node.category());
@@ -2099,8 +2099,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			// Namespace-scoped variables are always global
 			// Generate GlobalLoad for namespace-qualified global variable
 		TempVar result_temp = var_counter.next();
-			bool is_array_type = decl_node.is_array_object() || type_node.is_array();
-			bool is_ptr_or_ref = type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_function_pointer();
+		bool is_array_type = decl_node.is_array_object() || type_node.is_array();
+		bool is_ptr_or_ref = type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_function_pointer();
 		int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 		GlobalLoadOp op;
 		op.result.setType(type_node.category());

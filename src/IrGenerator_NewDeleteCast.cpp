@@ -1478,7 +1478,7 @@ ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinter
 	const auto& target_type_node = reinterpretCastNode.target_type();
 	TypeCategory target_type = target_type_node.type();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
-	int target_pointer_depth = target_type_node.pointer_depth();
+	int target_pointer_depth = static_cast<int>(target_type_node.runtime_pointer_depth());
 	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
 
 		// Reference casts need the operand address instead of an already-loaded value.
