@@ -1440,6 +1440,21 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					}
 					const ImplicitCastInfo& cast_info =
 						sema_.castInfoTable()[slot.cast_info_index.value - 1];
+					if (cast_info.cast_kind == StandardConversionKind::ArrayToPointer &&
+						sema_.typeContext().get(cast_info.source_type_id).structural_type_id) {
+						// Projectable arrays stay on the identifier argument path.
+						// An ordered array lvalue from a pointer-to-array
+						// dereference already holds the decayed pointer address.
+						if (argumentIrOperands.storage != ValueStorage::ContainsAddress) {
+							return false;
+						}
+						argumentIrOperands.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+						argumentIrOperands.pointer_depth = PointerDepth{1};
+						argumentIrOperands.storage = ValueStorage::ContainsData;
+						arg_type = argumentIrOperands.typeEnum();
+						arg_type_index = argumentIrOperands.type_index;
+						return true;
+					}
 					TypeCategory from_type =
 						sema_.typeContext().get(cast_info.source_type_id).category();
 					const TypeCategory to_type =
