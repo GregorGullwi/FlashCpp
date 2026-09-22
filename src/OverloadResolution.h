@@ -1085,11 +1085,44 @@ inline ConversionPlan orderedDeclaratorCvConversionPlan(
 			   : ConversionPlan::exact_match();
 }
 
+// Outermost ordered component is a pointer object. Flat pointer types that
+// are not themselves array objects count too, so a decayed ordered array can
+// target `T*` or `cv void*`.
+inline bool orderedDeclaratorIsPointerObject(const TypeSpecifierNode& type) {
+	if (type.has_ordered_declarator() && !type.declarator_components().empty()) {
+		return type.declarator_components().front().kind ==
+			DeclaratorComponentKind::Pointer;
+	}
+	return type.is_pointer() && !type.is_array();
+}
+
+// Outermost ordered component is an array object. Pointer-to-array shapes are
+// pointer objects and do not decay ([conv.array]/1).
+inline bool orderedDeclaratorIsArrayObject(const TypeSpecifierNode& type) {
+	if (!type.has_ordered_declarator() || type.declarator_components().empty()) {
+		return false;
+	}
+	const DeclaratorComponentKind kind = type.declarator_components().front().kind;
+	return kind == DeclaratorComponentKind::Array ||
+		kind == DeclaratorComponentKind::UnknownBoundArray;
+}
+
+// C++20 [conv.array]/1 for a non-projectable array: the outermost bound becomes
+// a pointer and the element type, including further interleaving, stays put.
+inline void decayOrderedArrayToPointer(TypeSpecifierNode& spec) {
+	spec.remove_outermost_ordered_declarator_component();
+	spec.prepend_ordered_declarator_component(
+		DeclaratorComponent::pointer(CVQualifier::None));
+}
+
+inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
+
 // Bounded ordered-declarator conversion path: a null pointer constant to an
-// ordered pointer, an ordered object pointer to `cv void*`, and same-shape
-// qualification conversions. Array / function decay, derived-to-base, ordered
-// reference binding, and callable-component conversions stay deferred and fail
-// closed instead of reaching the flat projection guard.
+// ordered pointer, array-to-pointer decay, an ordered object pointer to
+// `cv void*`, and same-shape qualification conversions. Function decay,
+// derived-to-base, ordered reference binding, and callable-component
+// conversions stay deferred and fail closed instead of reaching the flat
+// projection guard.
 inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	if (from.category() == TypeCategory::Nullptr) {
@@ -1106,6 +1139,16 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 	}
 	TypeSpecifierNode from_value = from;
 	from_value.set_reference_qualifier(ReferenceQualifier::None);
+	if (orderedDeclaratorIsArrayObject(from_value) &&
+		orderedDeclaratorIsPointerObject(to)) {
+		TypeSpecifierNode decayed_from = from_value;
+		decayOrderedArrayToPointer(decayed_from);
+		const ConversionPlan plan = buildConversionPlan(decayed_from, to);
+		if (!plan.is_valid) {
+			return ConversionPlan::no_match();
+		}
+		return {plan.rank, StandardConversionKind::ArrayToPointer, true};
+	}
 	if (!from_value.has_ordered_declarator()) {
 		return ConversionPlan::no_match();
 	}

@@ -1948,11 +1948,15 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 		int element_size = POINTER_SIZE_BITS;
 		int pointer_depth = 0;
+		const TypeSpecifierNode* ordered_pointer_type = nullptr;
+		bool ordered_array_pointee = false;
 
 		// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
 		pointer_depth = operandIrOperands.pointer_depth.value;
-		// If pointer_depth is still 0, look up the pointer operand in the symbol table.
-		if (pointer_depth == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		// Identifier results already carry runtime pointer depth, including a
+		// non-projectable pointer-to-array whose flat depth is zero. Always
+		// recover the declaration type so that shape can suppress the load.
+		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
@@ -1965,9 +1969,28 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_specifier_node();
 					}
 					if (type_node) {
-						pointer_depth = type_node->pointer_depth();
+						ordered_pointer_type = type_node;
+						if (pointer_depth == 0) {
+							pointer_depth = static_cast<int>(type_node->pointer_depth());
+						}
 					}
 				}
+			}
+		}
+		// A non-projectable pointer-to-array has no flat pointer depth. Its
+		// dereference designates the array object, whose address is the pointer
+		// value itself ([expr.unary.op]/1, [conv.array]/1).
+		if (ordered_pointer_type != nullptr &&
+			ordered_pointer_type->has_ordered_declarator() &&
+			ordered_pointer_type->runtime_pointer_depth() == 1) {
+			const std::span<const DeclaratorComponent> components =
+				ordered_pointer_type->declarator_components();
+			if (components.size() >= 2 &&
+				components[0].kind == DeclaratorComponentKind::Pointer &&
+				(components[1].kind == DeclaratorComponentKind::Array ||
+				 components[1].kind == DeclaratorComponentKind::UnknownBoundArray)) {
+				ordered_array_pointee = true;
+				pointer_depth = 1;
 			}
 		}
 
@@ -2035,6 +2058,17 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					operand_desc.array_dimensions.begin(),
 					operand_desc.array_dimensions.end());
 			}
+		}
+		if (ordered_array_pointee && ordered_pointer_type != nullptr) {
+			pointee_is_array = true;
+			TypeSpecifierNode pointee = *ordered_pointer_type;
+			pointee.remove_outermost_ordered_declarator_component();
+			const int pointee_bits = getTypeSpecSizeBits(pointee);
+			if (pointee_bits > 0) {
+				element_size = pointee_bits;
+			}
+			pointee_array_dimensions.clear();
+			pointee_type_index = ordered_pointer_type->type_index();
 		}
 		if (pointee_is_array) {
 			TempVar addr_temp = var_counter.next();

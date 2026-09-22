@@ -5187,6 +5187,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		// Parser-time owner publication can precede the class declaration's
 		// EntityId assignment. Refresh the bridge before importing the ordered
 		// spine, then copy the published identity into its member components.
+		tryBindPublishedTypeEntity(resolved_syntax);
 		tryBindPublishedMemberClassEntity(resolved_syntax);
 		if (resolved_syntax.has_member_class_entity()) {
 			std::vector<DeclaratorComponent> bound_components(
@@ -7870,6 +7871,38 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		slot.value_category = ValueCategory::PRValue;
 		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
 		setSlot(key, slot);
+		stats_.slots_filled++;
+		return true;
+	}
+
+	// Non-projectable ordered declarators have no flat pointer or array
+	// fields. Resolve the conversion from the exported spine so array decay
+	// and qualification are not mistaken for a primitive identity conversion.
+	if (from_desc.structural_type_id || to_desc.structural_type_id) {
+		TypeSpecifierNode from_syntax = materializeTypeSpecifier(from_desc);
+		TypeSpecifierNode to_syntax = materializeTypeSpecifier(to_desc);
+		if (!from_syntax.is_reference() &&
+			from_desc.ref_qualifier != ReferenceQualifier::None) {
+			from_syntax.set_reference_qualifier(from_desc.ref_qualifier);
+		}
+		if (!to_syntax.is_reference() &&
+			to_desc.ref_qualifier != ReferenceQualifier::None) {
+			to_syntax.set_reference_qualifier(to_desc.ref_qualifier);
+		}
+		const ConversionPlan structural_plan =
+			buildConversionPlan(from_syntax, to_syntax);
+		if (!structural_plan.is_valid ||
+			structural_plan.kind == StandardConversionKind::None) {
+			return false;
+		}
+		SemanticSlot structural_slot;
+		structural_slot.type_id = target_type_id;
+		structural_slot.cast_info_index = allocateNonUserDefinedCastInfo(
+			expr_type_id, target_type_id, structural_plan.kind);
+		structural_slot.value_category = ValueCategory::PRValue;
+		const void* structural_key =
+			static_cast<const void*>(&expr_node.as<ExpressionNode>());
+		setSlot(structural_key, structural_slot);
 		stats_.slots_filled++;
 		return true;
 	}

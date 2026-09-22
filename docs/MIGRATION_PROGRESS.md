@@ -5,7 +5,7 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-21. Boundary 3A now has an outermost-to-innermost
+Last updated: 2026-09-22. Boundary 3A now has an outermost-to-innermost
 `DeclaratorComponent` spine on `TypeSpecifierNode`. Named and abstract
 pointer/array declarators use an explicit frame stack, so forms including
 `int (*(*p)[3])[4]`, deeper pointer/array alternation, and pointer cv at each
@@ -27,10 +27,14 @@ converts to an ordered pointer, and `[conv.qual]` qualification is decided over
 the pointer chain. An ordered object pointer also converts to `cv void*` when
 its outer pointee cv (arrays are transparent) is a subset of the destination
 void's cv; a const inner pointer therefore reaches `const void*` but not
-`void*`. Conversion families outside that boundary (array/function decay,
-derived-to-base, ordered reference binding, and callable-component conversion)
-stay deferred and fail closed as an ordinary no-match instead of aborting
-compilation. Ordered pointer objects
+`void*`. A non-projectable array lvalue decays to a pointer to its element
+type ([conv.array]): overload resolution replaces the outermost array wrapper
+with an unqualified pointer and re-enters the ordered plan, argument typing
+peels an ordered pointer so the array object is the conversion source, and
+the dereference of a pointer whose pointee is an ordered array copies the
+pointer value instead of loading through it. Function decay, derived-to-base,
+ordered reference binding, and callable-component conversion stay deferred and
+fail closed as an ordinary no-match instead of aborting compilation. Ordered pointer objects
 now lower as pointer-sized values: `TypeSpecifierNode::runtime_pointer_depth`
 reports the flat pointer depth for projectable declarators and the leading
 `Pointer` wrapper count for a non-projectable spine, and the declaration
@@ -62,10 +66,11 @@ increased `TypeSpecifierNode` to 520 bytes in the canonical architecture
 probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
 5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
 frames and does not increase native call depth. The next slices are the
-remaining conversion families (array/function decay and ordered reference
-binding), remaining qualified-name spellings (template-id qualifiers), and
-removal of the flat
-pointer/array reads.
+remaining conversion families (function-to-pointer decay, then ordered
+reference binding), remaining qualified-name spellings (template-id
+qualifiers), and removal of the flat pointer/array reads. Array-object IR
+storage stays fail-closed; this decay slice only lowers an array that is the
+pointee of an ordered pointer.
 
 Immediately before this slice, direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
@@ -732,8 +737,10 @@ Advanced, not completed:
   (`MemberObjectPointer` adapter family), namespace/global alias-template
   primary identity publication, general overload/conversion resolution
   consuming the ordered declarator spine for same-shape interleaved identity,
-  `[conv.qual]` qualification, and `cv void*` conversion
-  (with the remaining conversion families failing closed), ordered pointer
+  `[conv.qual]` qualification, `cv void*` conversion, and
+  `[conv.array]` decay of a non-projectable array lvalue (function decay,
+  derived-to-base, ordered reference binding, and callable-component
+  conversion still fail closed), ordered pointer
   objects lowering as pointer-sized values through the shared
   `runtime_pointer_depth` accessor (with ordered array/callable outer wrappers
   failing closed), namespace-scope qualified identifiers carrying their
