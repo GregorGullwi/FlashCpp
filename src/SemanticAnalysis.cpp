@@ -1090,8 +1090,6 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 		return false;
 	if (structural_type_id != other.structural_type_id)
 		return false;
-	if (member_pointer_owner != other.member_pointer_owner)
-		return false;
 	if (pointer_levels.size() != other.pointer_levels.size())
 		return false;
 	for (size_t i = 0; i < pointer_levels.size(); ++i) {
@@ -5269,12 +5267,22 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			}
 		}
 	}
+	// A bare data-member-pointer declarator keeps the flat parser projection
+	// (pointee category + one pointer level + a member class). Publish the
+	// structural MemberObjectPointer node as the authoritative shape so the
+	// owner travels with the canonical type instead of a parallel scalar.
 	if (!type.has_ordered_declarator() && type.has_member_class() &&
 		type.category() != TypeCategory::MemberFunctionPointer &&
 		type.runtime_pointer_depth() == 1) {
 		TypeSpecifierNode syntax = type;
 		tryBindPublishedMemberClassEntity(syntax);
-		desc.member_pointer_owner = syntax.member_class_entity();
+		if (syntax.has_member_class_entity()) {
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			const CanonicalTypeImport imported = importCanonicalType(canonical_types, syntax);
+			if (imported.status == CanonicalTypeImportStatus::Supported) {
+				desc.structural_type_id = imported.type;
+			}
+		}
 	}
 
 	// C++20 [temp.local]: inside a class template (and members of its
@@ -5334,8 +5342,6 @@ bool SemanticAnalysis::isMemberObjectPointerType(CanonicalTypeId type_id) const 
 		return false;
 	const CanonicalTypeDesc& desc = type_context_.get(type_id);
 	if (desc.category() == TypeCategory::MemberObjectPointer)
-		return true;
-	if (desc.member_pointer_owner)
 		return true;
 	if (!desc.structural_type_id)
 		return false;
@@ -6820,6 +6826,20 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 
 				CanonicalTypeDesc result_desc = type_context_.get(member_pointer_type_id);
+				// The accessed member's type is the member pointer's pointee, not
+				// the member pointer itself, so replace the structural
+				// MemberObjectPointer node with its pointee before returning.
+				if (result_desc.structural_type_id) {
+					CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+					CanonicalTypeNode member_node = table.node(result_desc.structural_type_id);
+					while (member_node.kind == CanonicalTypeKind::Qualified && member_node.child) {
+						member_node = table.node(member_node.child);
+					}
+					if (member_node.kind == CanonicalTypeKind::MemberObjectPointer ||
+						member_node.kind == CanonicalTypeKind::MemberFunctionPointer) {
+						result_desc.structural_type_id = member_node.child;
+					}
+				}
 				if (!result_desc.pointer_levels.empty()) {
 					result_desc.pointer_levels.pop_back();
 				}

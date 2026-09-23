@@ -1096,6 +1096,19 @@ inline bool orderedDeclaratorIsPointerObject(const TypeSpecifierNode& type) {
 	return type.is_pointer() && !type.is_array();
 }
 
+// Outermost ordered component is a pointer-to-member object. This is a
+// [conv.bool] source in its own right but must not be treated as an object
+// pointer for decay or pointer-conversion targets, so it stays a separate
+// predicate from orderedDeclaratorIsPointerObject.
+inline bool orderedDeclaratorIsMemberPointerObject(const TypeSpecifierNode& type) {
+	if (type.has_ordered_declarator() && !type.declarator_components().empty()) {
+		const DeclaratorComponentKind kind = type.declarator_components().front().kind;
+		return kind == DeclaratorComponentKind::MemberObjectPointer ||
+			kind == DeclaratorComponentKind::MemberFunctionPointer;
+	}
+	return type.is_member_object_pointer() || type.is_member_function_pointer();
+}
+
 // Outermost ordered component is an array object. Pointer-to-array shapes are
 // pointer objects and do not decay ([conv.array]/1).
 inline bool orderedDeclaratorIsArrayObject(const TypeSpecifierNode& type) {
@@ -1268,7 +1281,8 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 		if (orderedDeclaratorIsArrayObject(converted_from)) {
 			decayOrderedArrayToPointer(converted_from);
 		}
-		if (orderedDeclaratorIsPointerObject(converted_from)) {
+		if (orderedDeclaratorIsPointerObject(converted_from) ||
+			orderedDeclaratorIsMemberPointerObject(converted_from)) {
 			return {ConversionRank::Conversion,
 				StandardConversionKind::BooleanConversion, true};
 		}

@@ -593,6 +593,43 @@ inline void checkAdapter() {
 	require(imported_recovered_mop.type == imported_mop.type);
 	require(imported_recovered_mop.type != imported_mfp.type);
 
+	// Export projects a structural member pointer back to an ordered declarator
+	// carrying the published owner EntityId, and re-importing that spine
+	// reproduces the identical canonical node.
+	const CanonicalDeclaratorExport exported_mop =
+		exportCanonicalDeclarator(table, imported_mop.type);
+	require(exported_mop.status == CanonicalTypeImportStatus::Supported);
+	require(exported_mop.components.size() == 1);
+	require(exported_mop.components.front().kind ==
+		DeclaratorComponentKind::MemberObjectPointer);
+	require(exported_mop.components.front().member_owner == EntityId{7});
+	require(exported_mop.components.front().cv_qualifier == CVQualifier::None);
+	require(exported_mop.base == table.builtin(CanonicalBuiltinKind::Int));
+
+	TypeSpecifierNode roundtrip_mop(TypeCategory::Int, TypeQualifier::None, 32, Token{},
+		CVQualifier::None);
+	roundtrip_mop.set_ordered_declarator(exported_mop.components);
+	const auto reimported_mop = importCanonicalType(table, roundtrip_mop);
+	require(reimported_mop.status == CanonicalTypeImportStatus::Supported);
+	require(reimported_mop.type == imported_mop.type);
+
+	const CanonicalDeclaratorExport exported_mfp =
+		exportCanonicalDeclarator(table, imported_mfp.type);
+	require(exported_mfp.status == CanonicalTypeImportStatus::Supported);
+	require(exported_mfp.components.size() == 1);
+	require(exported_mfp.components.front().kind ==
+		DeclaratorComponentKind::MemberFunctionPointer);
+	require(exported_mfp.components.front().member_owner == EntityId{7});
+	require(exported_mfp.base == imported_member.type);
+
+	TypeSpecifierNode roundtrip_mfp(TypeCategory::MemberFunctionPointer, TypeQualifier::None, 64,
+		Token{}, CVQualifier::None);
+	roundtrip_mfp.set_function_signature(member_signature);
+	roundtrip_mfp.set_ordered_declarator(exported_mfp.components);
+	const auto reimported_mfp = importCanonicalType(table, roundtrip_mfp);
+	require(reimported_mfp.status == CanonicalTypeImportStatus::Supported);
+	require(reimported_mfp.type == imported_mfp.type);
+
 	// An unsupported pointee keeps the whole member object pointer fail-closed
 	// instead of silently flattening the pointee.
 	TypeSpecifierNode unpublished_pointee(TypeCategory::Struct, TypeQualifier::None, 64, Token{},
