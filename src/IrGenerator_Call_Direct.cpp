@@ -274,12 +274,16 @@ ExprResult AstToIr::buildCallReturnResult(
 	ValueStorage st = (normalized_return_type.is_reference() || normalized_return_type.is_rvalue_reference())
 						  ? ValueStorage::ContainsAddress
 						  : ValueStorage::ContainsData;
-	return makeExprResult(
+	ExprResult result = makeExprResult(
 		type_index_result.withCategory(normalized_return_type.type()),
 		SizeInBits{result_size},
 		IrOperand{ret_var},
 		PointerDepth{static_cast<int>(normalized_return_type.pointer_depth())},
 		st);
+	if (normalized_return_type.is_member_object_pointer_type()) {
+		result.ir_type = IrType::MemberObjectPointer;
+	}
+	return result;
 }
 
 // Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.

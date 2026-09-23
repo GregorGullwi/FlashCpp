@@ -2118,8 +2118,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// Check if this is an empty brace initializer: int x{};
 		if (peek() == "}"_tok) {
 			advance(); // consume '}'
-			if (type_specifier.category() == TypeCategory::MemberObjectPointer ||
-				(type_specifier.has_member_class() && type_specifier.runtime_pointer_depth() == 1)) {
+			if (type_specifier.is_member_object_pointer_type()) {
 				Token null_token(Token::Type::Keyword, "nullptr"sv, 0, 0, 0);
 				return ParseResult::success(emplace_node<ExpressionNode>(
 					NumericLiteralNode(null_token, 0ULL, TypeCategory::Nullptr,

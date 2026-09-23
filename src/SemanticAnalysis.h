@@ -209,9 +209,6 @@ public:
 	// Public bridge for codegen/helper paths that need the same canonical type
 	// identity as sema while keeping the primary canonicalizeType helper private.
 	CanonicalTypeId canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type);
-	CanonicalTypeId canonicalExpressionType(const ASTNode& node) {
-		return inferExpressionType(node);
-	}
 	bool isMemberObjectPointerType(CanonicalTypeId type_id) const;
 	// Build the type/category view used specifically for overload-resolution arguments.
 	// Unlike getExpressionType(), this preserves overload-sensitive lvalue/xvalue details
