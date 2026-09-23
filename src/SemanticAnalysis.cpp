@@ -11765,6 +11765,19 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 
 	const auto& true_desc = type_context_.get(true_type_id);
 	const auto& false_desc = type_context_.get(false_type_id);
+
+	// C++20 [expr.cond]/3: array-to-pointer conversion is applied to the second
+	// and third operands before the common type is chosen. Annotate each array
+	// branch so codegen emits the decay instead of copying the array object;
+	// this is required even when both branches share the same array type, where
+	// no branch-to-common conversion would otherwise be recorded.
+	if (const std::optional<CanonicalTypeDesc> true_decayed = decayArrayForConditional(true_desc)) {
+		tryAnnotateConversion(ternary_node.true_expr(), type_context_.intern(*true_decayed), true_type_id);
+	}
+	if (const std::optional<CanonicalTypeDesc> false_decayed = decayArrayForConditional(false_desc)) {
+		tryAnnotateConversion(ternary_node.false_expr(), type_context_.intern(*false_decayed), false_type_id);
+	}
+
 	if (canonical_types_match(true_type_id, false_type_id))
 		return;
 	if (auto pointer_result = tryGetConditionalPointerType(
