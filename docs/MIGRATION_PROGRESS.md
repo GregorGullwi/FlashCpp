@@ -71,9 +71,11 @@ A function object whose return spine is a non-projectable pointer/array
 interleaving decays to a pointer to that function ([conv.func]): the plan
 prepends an unqualified `Pointer` and re-enters the ordered conversion. The
 structural parser records exactly one `Function` component when a parameter
-clause appears on the ordered frame stack; the components inside that wrapper
-are the return type, and a function declaration stores that return spine
-without the `Function` component. An array of functions or a function returning
+clause appears on the ordered frame stack and the return spine has no legacy
+projection. A projectable return stays on the flat function-pointer path, so
+mangling never sees a `Function` component for an ordinary pointer to
+function. The components inside the ordered wrapper are the return type, and a
+function declaration stores that return spine without the `Function` component. An array of functions or a function returning
 an array fails the structural parse. Canonical import builds the function node
 from the cold signature after the return spine, parameter function types decay
 to pointers, and export keeps the single component while the original signature
