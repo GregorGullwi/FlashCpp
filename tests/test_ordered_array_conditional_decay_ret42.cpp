@@ -2,17 +2,27 @@
 // pointer before the common type is chosen. A non-projectable ordered array
 // whose elements are all null still designates a non-null address; testing the
 // array object's bytes instead of the decayed pointer made the conditional
-// false. The result must also equal the array's address.
+// false. The decayed result must also equal the source address.
 long zero_block[3] = {0, 0, 0};
 
 int main() {
-	int (*(*ordered)[3])[4] =
-		reinterpret_cast<int (*(*)[3])[4]>(zero_block);
+	// Use a scalar anchor address so the reinterpret source is a pointer, not
+	// an array lvalue that first undergoes array-to-pointer decay.
+	long* anchor = &zero_block[0];
+	int (*(*ordered)[3])[4] = reinterpret_cast<int (*(*)[3])[4]>(anchor);
+
+	// Condition false: still one of the two array branches, decayed to anchor.
+	if (!((1 == 0) ? *ordered : *ordered)) {
+		return 1;
+	}
+	// Condition true: decayed to anchor.
+	if (!((1 == 1) ? *ordered : *ordered)) {
+		return 2;
+	}
+	// The decayed pointer is the array address, not the array's first element.
 	void* result = (1 == 1) ? *ordered : *ordered;
-	const bool true_address = (1 == 1) ? *ordered : *ordered;
-	const bool false_address = (1 == 0) ? *ordered : *ordered;
-	return (result == static_cast<void*>(zero_block) && true_address &&
-			false_address)
-		? 42
-		: 1;
+	if (result != static_cast<void*>(anchor)) {
+		return 3;
+	}
+	return 42;
 }
