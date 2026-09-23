@@ -1220,9 +1220,23 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 	TypeSpecifierNode from_value = from;
 	stripOrderedReference(from_value);
 	if (orderedDeclaratorIsArrayObject(from_value) &&
-		orderedDeclaratorIsPointerObject(to)) {
+		(orderedDeclaratorIsPointerObject(to) ||
+			(to.category() == TypeCategory::Void && to.pointer_depth() == 1 &&
+				!to.is_reference()))) {
 		TypeSpecifierNode decayed_from = from_value;
 		decayOrderedArrayToPointer(decayed_from);
+		if (to.category() == TypeCategory::Void && to.pointer_depth() == 1 &&
+			!to.is_function_pointer() && !to.is_reference()) {
+			const std::optional<CVQualifier> pointee_cv =
+				orderedPointerVoidPointeeCv(decayed_from);
+			if (!pointee_cv.has_value() ||
+				(static_cast<uint8_t>(*pointee_cv) &
+					~static_cast<uint8_t>(to.cv_qualifier())) != 0) {
+				return ConversionPlan::no_match();
+			}
+			return {ConversionRank::Conversion,
+				StandardConversionKind::ArrayToPointer, true};
+		}
 		const ConversionPlan plan = buildConversionPlan(decayed_from, to);
 		if (!plan.is_valid) {
 			return ConversionPlan::no_match();

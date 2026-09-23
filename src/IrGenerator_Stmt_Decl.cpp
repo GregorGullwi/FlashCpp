@@ -2158,6 +2158,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								decl.identifier_token());
 							init_operands.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 							init_operands.pointer_depth = PointerDepth{1};
+							// [conv.array] produced a pointer value, so the later value-context
+							// materializer must not load the array's first element.
+							init_operands.storage = ValueStorage::ContainsData;
 						}
 					}
 				}
