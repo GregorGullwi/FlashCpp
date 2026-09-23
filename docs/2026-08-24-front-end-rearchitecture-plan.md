@@ -1155,6 +1155,14 @@ Deliver:
 - no writes from AST-to-IR into semantic state;
 - adapters to the existing flat IR while the backend remains unchanged.
 
+Array-to-pointer decay ([conv.array]) is lowered independently by each consumer
+today: call argument, initializer, assignment/binary operator, return, and
+conditional branch each read the sema `ArrayToPointer` cast kind and materialize
+the address themselves. That is a temporary compatibility shape, not a second
+authority — sema already owns the conversion. The conversion lowering records
+above replace those consumers, so decay is emitted once from the normalized
+expression result and the per-consumer address materialization is deleted.
+
 Implements: [stmt.ranged], [class.temporary], [class.copy.elision],
 [class.conv], [dcl.init], [over.match.list], [over.match.copy],
 [over.match.ref], [expr.ref], [except.ctor].

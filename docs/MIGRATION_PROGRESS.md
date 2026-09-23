@@ -954,6 +954,12 @@ must not increase an implementation percentage.
   function pointer are architecture boundary 4, not the next 3A slice. Generic
   lambdas stay with architecture boundaries 6 and 8A. Boundary 4 stays open
   while a lambda path still produces a separate flat function pointer.
+- Array-to-pointer decay lowering is still replicated per consumer (call
+  argument, initializer, assignment/binary operator, return, and conditional
+  branch), each reading the sema `ArrayToPointer` cast kind and materializing
+  the address itself. Sema owns the conversion and the conditional branch now
+  consumes the cast kind, but the shared conversion lowering is architecture
+  boundary 9; the per-consumer address materialization is deleted when it lands.
 
 ## Active findings
 
