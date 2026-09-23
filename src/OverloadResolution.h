@@ -1269,6 +1269,17 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		return {ConversionRank::Conversion, StandardConversionKind::PointerConversion, true};
 	}
 
+	// C++20 [conv.bool]: an array lvalue, object pointer, or function pointer
+	// converts to bool. Checked before the function-pointer and struct
+	// user-defined arms so a pointer with a struct or function pointee is not
+	// rejected by their category-only guards. std::nullptr_t is not in the
+	// [conv.bool] source list, so it deliberately does not convert here.
+	if (to.category() == TypeCategory::Bool && !to.is_reference() &&
+		!to.is_array() && to.pointer_depth() == 0 &&
+		(from.is_array() || from.is_pointer() || from.is_function_pointer())) {
+		return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
+	}
+
 	if (from.is_function_pointer() || to.is_function_pointer()) {
 		if (!from.is_function_pointer() || !to.is_function_pointer() ||
 			!from.has_function_signature() || !to.has_function_signature()) {

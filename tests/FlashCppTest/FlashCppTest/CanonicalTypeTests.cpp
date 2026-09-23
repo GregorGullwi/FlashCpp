@@ -103,6 +103,40 @@ TEST_CASE("Ordered pointer and array conversions reach bool") {
 	CHECK_FALSE(buildConversionPlan(member_object, bool_target).is_valid);
 }
 
+TEST_CASE("Projectable pointer and array conversions reach bool") {
+	TypeSpecifierNode bool_target(
+		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+
+	TypeSpecifierNode pointer(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer.add_pointer_level(CVQualifier::None);
+	const ConversionPlan pointer_plan = buildConversionPlan(pointer, bool_target);
+	CHECK(pointer_plan.is_valid);
+	CHECK(pointer_plan.kind == StandardConversionKind::BooleanConversion);
+
+	TypeSpecifierNode array(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const size_t dimensions[] = {3};
+	array.set_array_dimensions(dimensions);
+	const ConversionPlan array_plan = buildConversionPlan(array, bool_target);
+	CHECK(array_plan.is_valid);
+	CHECK(array_plan.kind == StandardConversionKind::BooleanConversion);
+
+	// A function pointer must not be rejected by the function-pointer arm,
+	// which is reached before the primitive category fallback.
+	TypeSpecifierNode function_pointer(
+		TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	const ConversionPlan function_pointer_plan =
+		buildConversionPlan(function_pointer, bool_target);
+	CHECK(function_pointer_plan.is_valid);
+	CHECK(function_pointer_plan.kind == StandardConversionKind::BooleanConversion);
+
+	// std::nullptr_t is not a [conv.bool] source.
+	TypeSpecifierNode null_pointer(
+		TypeCategory::Nullptr, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	CHECK_FALSE(buildConversionPlan(null_pointer, bool_target).is_valid);
+}
+
 TEST_CASE("Semantic peak excludes nonoverlapping allocations") {
 	FrontendContext context;
 	auto& builder = context.declarationBuilder();

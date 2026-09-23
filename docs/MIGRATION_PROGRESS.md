@@ -39,12 +39,20 @@ ordered pointer-to-array dereferences; an array identifier stays on the
 direct-argument path. `Parser::get_expression_type` still peels that ordered
 pointer for argument typing; semantic analysis already peels the same pointer
 from the structural `TypeId`. Remove the parser peel when overload resolution
-no longer types call arguments in the parser. A non-projectable array object
-now reaches `bool` through [conv.array] decay followed by [conv.bool], and a
-non-projectable ordered pointer object converts to `bool` directly; the ordered
-plan returns `BooleanConversion`, so initialization and function-argument
-lowering test the decoded address against zero instead of reinterpreting the
-element type. Function decay, derived-to-base, ordered reference binding, and
+no longer types call arguments in the parser. An array or object/function
+pointer now reaches `bool` through [conv.array] decay where needed followed by
+[conv.bool], for both non-projectable ordered declarators and projectable flat
+types; the plan returns `BooleanConversion` and `emitNonZeroBoolValue` tests
+the decoded address against zero, so initialization, assignment, and function
+arguments materialize a real `bool8` instead of re-tagging the 64-bit address
+(which only happened to work when its low byte was non-zero). The projectable
+flat path previously rejected `bool b = arr;` with
+`InvalidArrayToScalarInitialization` (1612) and failed `bool b = ptr;` with a
+"missed variable init conversion" internal error; struct and function pointers
+are accepted by `buildConversionPlan` before its function-pointer and
+user-defined arms. `std::nullptr_t` deliberately does not convert ([conv.bool]
+excludes it), and pointer-to-member stays out until its ABI null value is read.
+Function decay, derived-to-base, ordered reference binding, and
 callable-component conversion stay deferred and fail closed as an ordinary
 no-match instead of aborting compilation. Ordered pointer objects
 now lower as pointer-sized values: `TypeSpecifierNode::runtime_pointer_depth`
@@ -88,8 +96,8 @@ Function decay over the ordered spine is unreachable until the parser produces
 `DeclaratorComponentKind::Function` for a function object, and ordered
 reference binding is unreachable until interleaved-reference declarators parse,
 so array/pointer-to-bool is the first reachable conversion family in that list.
-The projectable flat array-to-bool path remains a separate documented defect
-([known issues](KNOWN_ISSUES.md)).
+Pointer-to-member-to-bool remains a documented gap
+([known issues](KNOWN_ISSUES.md)); its null value is ABI-defined, not zero.
 
 Immediately before this slice, direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
@@ -575,12 +583,12 @@ during concrete alias materialization. This fixes forwarded aliases such as
   value-category reference qualifier is stripped, a null pointer constant still
   reaches an ordered pointer, and everything else
   fails closed as an ordinary no-match instead of aborting at the flat
-  projection guard. A non-projectable array object also converts to `bool` by
-  decaying to a pointer and applying [conv.bool], and a non-projectable ordered
-  pointer object converts to `bool` directly; the plan reports
-  `BooleanConversion` and codegen tests the decoded address against zero.
-  Function decay, derived-to-base, ordered reference binding, and
-  callable-component conversion remain deferred. Ordered pointer objects also
+  projection guard. An array or object/function pointer also converts to `bool`
+  through [conv.array] decay where needed plus [conv.bool], for both ordered and
+  projectable types; the plan reports `BooleanConversion` and
+  `emitNonZeroBoolValue` tests the decoded address against zero. Function decay,
+  derived-to-base, ordered reference binding, and callable-component conversion
+  remain deferred. Ordered pointer objects also
   lower as pointer-sized values:
   the shared `TypeSpecifierNode::runtime_pointer_depth` accessor feeds
   declaration storage, the global-fast-path identifier load, and the
@@ -693,6 +701,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Ordered pointer local read/value round-trip | `test_interleaved_pointer_array_local_read_ret42` |
 | Ordered pointer reinterpret cast store | `test_interleaved_pointer_array_reinterpret_store_ret42` |
 | Ordered array/pointer boolean conversion | `Ordered pointer and array conversions reach bool` doctest, `test_ordered_array_to_bool_conversion_ret42` |
+| Projectable array/pointer boolean conversion | `Projectable pointer and array conversions reach bool` doctest, `test_projectable_pointer_array_to_bool_conversion_ret42` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
@@ -763,9 +772,10 @@ Advanced, not completed:
   consuming the ordered declarator spine for same-shape interleaved identity,
   `[conv.qual]` qualification, `cv void*` conversion, `[conv.array]` decay of a
   non-projectable array lvalue, and `[conv.array]` followed by `[conv.bool]`
-  (with direct non-projectable pointer-to-bool) for initialization and
-  function arguments (function decay, derived-to-base, ordered reference
-  binding, and callable-component conversion still fail closed;
+  (with direct array/pointer-to-bool) for ordered and projectable types in
+  initialization, assignment, and function arguments (function decay,
+  derived-to-base, ordered reference binding, and callable-component conversion
+  still fail closed;
   `Parser::get_expression_type` still peels the ordered pointer until
   semantic analysis owns call-argument typing), ordered pointer
   objects lowering as pointer-sized values through the shared

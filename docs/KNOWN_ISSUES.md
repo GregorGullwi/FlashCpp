@@ -120,20 +120,18 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
-## Projectable pointer/array-to-bool conversion is incomplete on the legacy flat path
+## Pointer-to-member-to-bool conversion tests the wrong null value
 
-`bool b = a;` and `consume_bool(a)` for a projectable `T a[N]` are valid C++20
-([conv.array] followed by [conv.bool]) but the legacy flat path reports
-`InvalidArrayToScalarInitialization` (1612) in
-`SemanticAnalysis::tryAnnotateConversion`, and `bool b = p;` for a flat `T* p`
-fails IR generation with "sema missed variable init conversion". The ordered
-(non-projectable) array/pointer-to-bool conversion now works through
-`buildOrderedDeclaratorConversionPlan`; the projectable path still needs the
-same [conv.array]+[conv.bool] modelling, with codegen testing the decoded
-address against zero instead of reinterpreting the element type. Do not fix
-this by special-casing `bool` in the array-to-scalar diagnostic without an
-end-to-end lowering; the boolean value must be materialized, not passed as a
-full-width address.
+C++20 [conv.bool] allows a pointer-to-member prvalue to convert to `bool`, but
+the null pointer-to-member value is ABI-defined (`-1` for data members on
+Itanium), not zero. Object-pointer, function-pointer, and array-to-bool
+conversions now materialize a real `bool` by testing the address against zero
+(`emitNonZeroBoolValue`); pointer-to-member is deliberately left out of that
+path. `bool b = &S::member;` currently compiles but yields a wrong result when
+the member offset is zero. Supporting it requires reading the target ABI's null
+member-pointer representation (or comparing against it) instead of zero; the
+member-pointer adapter and mangler already carry the owner/pointee identity this
+needs.
 
 ## Variable-template initializer replay removed; static-member replay clones remain
 
