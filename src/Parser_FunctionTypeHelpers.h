@@ -66,6 +66,24 @@ inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const F
 			sig.noexcept_expression->node());
 	}
 
+	// A non-projectable return spine cannot be flattened into a function-pointer
+	// category. Keep the function object ([conv.func] has not been applied yet)
+	// so overload resolution can prepend the pointer itself.
+	if (return_type.has_ordered_declarator() &&
+		!return_type.ordered_declarator_has_legacy_projection()) {
+		TypeSpecifierNode function_type = return_type;
+		std::vector<DeclaratorComponent> components;
+		components.reserve(return_type.declarator_components().size() + 1);
+		components.push_back(DeclaratorComponent::function());
+		components.insert(
+			components.end(),
+			return_type.declarator_components().begin(),
+			return_type.declarator_components().end());
+		function_type.set_ordered_declarator(std::move(components));
+		function_type.set_function_signature(sig);
+		return function_type;
+	}
+
 	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, func_decl.decl_node().identifier_token(), CVQualifier::None);
 	fp_type.set_function_signature(sig);
 	return fp_type;

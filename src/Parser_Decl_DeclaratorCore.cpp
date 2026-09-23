@@ -9,6 +9,47 @@ namespace {
 
 constexpr int kFunctionPointerSizeBits = 64; // x64 target: always 8 bytes
 
+// [dcl.fct]/1 forbids an array of functions and a function returning an array.
+// The ordered spine records those shapes; reject them here instead of importing
+// a type the canonical table cannot represent.
+bool orderedFunctionComponentIsIllFormed(
+	std::span<const DeclaratorComponent> components) {
+	for (size_t index = 0; index + 1 < components.size(); ++index) {
+		const DeclaratorComponentKind outer = components[index].kind;
+		const DeclaratorComponentKind inner = components[index + 1].kind;
+		const bool outer_is_array =
+			outer == DeclaratorComponentKind::Array ||
+			outer == DeclaratorComponentKind::UnknownBoundArray;
+		const bool inner_is_array =
+			inner == DeclaratorComponentKind::Array ||
+			inner == DeclaratorComponentKind::UnknownBoundArray;
+		if (outer_is_array && inner == DeclaratorComponentKind::Function) {
+			return true;
+		}
+		if (outer == DeclaratorComponentKind::Function && inner_is_array) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// One cold FunctionSignature lives on the type. A second Function component
+// has nowhere to put its parameter list, so this slice keeps a single one.
+std::optional<size_t> singleFunctionComponentIndex(
+	std::span<const DeclaratorComponent> components) {
+	std::optional<size_t> found;
+	for (size_t index = 0; index < components.size(); ++index) {
+		if (components[index].kind != DeclaratorComponentKind::Function) {
+			continue;
+		}
+		if (found.has_value()) {
+			return std::nullopt;
+		}
+		found = index;
+	}
+	return found;
+}
+
 }
 
 ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
@@ -1140,6 +1181,9 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				bool has_member_pointer = base_type.has_member_class();
 				bool member_pointer_is_function = false;
 				std::optional<FunctionSignature> member_function_signature;
+				std::optional<FlashCpp::ParsedParameterList> ordered_function_parameters;
+				FlashCpp::MemberQualifiers ordered_function_qualifiers;
+				FlashCpp::FunctionSpecifiers ordered_function_specifiers;
 
 				while (!frames.empty() && !failed) {
 					DeclaratorFrame &frame = frames.back();
@@ -1222,6 +1266,35 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					if (failed) {
 						break;
 					}
+					// A parameter-clause is a direct-declarator postfix. One per
+					// declarator: the type has a single cold FunctionSignature.
+					// Arrays of functions and functions returning arrays are
+					// rejected after the spine is assembled.
+					if (!has_member_pointer && peek() == "("_tok) {
+						if (ordered_function_parameters.has_value() ||
+							!frame.suffixes.empty()) {
+							failed = true;
+							break;
+						}
+						FlashCpp::ParsedParameterList params;
+						ParseResult param_result = parse_parameter_list(params);
+						if (param_result.is_error()) {
+							failed = true;
+							break;
+						}
+						FlashCpp::MemberQualifiers qualifiers;
+						FlashCpp::FunctionSpecifiers specifiers;
+						ParseResult qualifier_result =
+							parse_function_type_qualifiers(qualifiers, specifiers);
+						if (qualifier_result.is_error()) {
+							failed = true;
+							break;
+						}
+						ordered_function_parameters = std::move(params);
+						ordered_function_qualifiers = qualifiers;
+						ordered_function_specifiers = specifiers;
+						frame.suffixes.push_back(DeclaratorComponent::function());
+					}
 					if (frames.size() == 1 && has_member_pointer && peek() == "("_tok) {
 						advance();
 						std::vector<FunctionType> parameter_types;
@@ -1283,6 +1356,88 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 						if (!has_identifier || peek() == "("_tok) {
 							failed = true;
 							break;
+						}
+						if (ordered_function_parameters.has_value()) {
+							if (orderedFunctionComponentIsIllFormed(completed)) {
+								failed = true;
+								break;
+							}
+							const std::optional<size_t> function_index =
+								singleFunctionComponentIndex(completed);
+							if (!function_index.has_value()) {
+								failed = true;
+								break;
+							}
+							TypeSpecifierNode return_type = base_type;
+							return_type.clear_declarator_shape();
+							std::vector<DeclaratorComponent> return_components(
+								completed.begin() +
+									static_cast<std::ptrdiff_t>(*function_index + 1),
+								completed.end());
+							if (!return_components.empty()) {
+								return_type.set_ordered_declarator(
+									std::move(return_components));
+							}
+							FunctionSignature signature;
+							signature.setReturnType(
+								makeFunctionTypeFromSpecifier(return_type));
+							std::vector<FunctionType> parameter_types;
+							parameter_types.reserve(
+								ordered_function_parameters->parameters.size());
+							bool parameters_ok = true;
+							for (const ASTNode& parameter :
+									ordered_function_parameters->parameters) {
+								if (!parameter.is<DeclarationNode>()) {
+									parameters_ok = false;
+									break;
+								}
+								parameter_types.push_back(makeFunctionTypeFromSpecifier(
+									parameter.as<DeclarationNode>().type_specifier_node()));
+							}
+							if (!parameters_ok) {
+								failed = true;
+								break;
+							}
+							signature.setParameterTypes(std::move(parameter_types));
+							signature.linkage = linkage;
+							signature.calling_convention = last_calling_convention_;
+							signature.is_variadic =
+								ordered_function_parameters->is_variadic;
+							apply_parsed_function_type_qualifiers(
+								signature,
+								ordered_function_qualifiers,
+								ordered_function_specifiers);
+							const bool declares_function =
+								*function_index == 0 && !identifier.value().empty();
+							if (declares_function) {
+								auto decl_node = emplace_node<DeclarationNode>(
+									emplace_node<TypeSpecifierNode>(return_type),
+									identifier);
+								auto func_decl_node = emplace_node<FunctionDeclarationNode>(
+									decl_node.as<DeclarationNode>());
+								FunctionDeclarationNode& func_ref =
+									func_decl_node.as<FunctionDeclarationNode>();
+								for (const ASTNode& parameter :
+										ordered_function_parameters->parameters) {
+									func_ref.add_parameter_node(parameter);
+								}
+								func_ref.set_is_variadic(
+									ordered_function_parameters->is_variadic);
+								func_ref.set_noexcept(signature.is_noexcept);
+								discard_saved_token(structural_start);
+								return ParseResult::success(func_decl_node);
+							}
+							TypeSpecifierNode structural_type = base_type;
+							structural_type.clear_declarator_shape();
+							structural_type.set_ordered_declarator(std::move(completed));
+							structural_type.set_function_signature(signature);
+							if (identifier.value().empty()) {
+								base_type = structural_type;
+							}
+							discard_saved_token(structural_start);
+							return ParseResult::success(emplace_node<DeclarationNode>(
+								emplace_node<TypeSpecifierNode>(structural_type),
+								identifier));
 						}
 						TypeSpecifierNode structural_type = base_type;
 						if (member_pointer_is_function) {

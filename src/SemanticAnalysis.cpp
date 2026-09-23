@@ -549,6 +549,12 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 				"semantic materialization rejected ordered declarator");
 		}
 		type_node.set_ordered_declarator(exported.components);
+		// The cold signature is declaration identity for the single Function
+		// component. Export reconstructs that component; the parameter list
+		// stays on the descriptor that canonicalization copied from syntax.
+		if (desc.function_signature.has_value()) {
+			type_node.set_function_signature(*desc.function_signature);
+		}
 		setMaterializedTypeSpecifierSize(type_node);
 		return type_node;
 	}

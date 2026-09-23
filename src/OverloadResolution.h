@@ -1115,15 +1115,31 @@ inline void decayOrderedArrayToPointer(TypeSpecifierNode& spec) {
 		DeclaratorComponent::pointer(CVQualifier::None));
 }
 
+// Outermost ordered component is a function object. A pointer to a function
+// is already a pointer object and does not decay ([conv.func]/1).
+inline bool orderedDeclaratorIsFunctionObject(const TypeSpecifierNode& type) {
+	if (!type.has_ordered_declarator() || type.declarator_components().empty()) {
+		return false;
+	}
+	return type.declarator_components().front().kind ==
+		DeclaratorComponentKind::Function;
+}
+
+// C++20 [conv.func]/1: the function type stays, and a pointer is added outside it.
+inline void decayOrderedFunctionToPointer(TypeSpecifierNode& spec) {
+	spec.prepend_ordered_declarator_component(
+		DeclaratorComponent::pointer(CVQualifier::None));
+}
+
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
 
 // Bounded ordered-declarator conversion path: a null pointer constant to an
-// ordered pointer, array-to-pointer decay, an ordered object pointer to
-// `cv void*`, array-to-pointer followed by a boolean conversion, an ordered
-// pointer object to `bool`, and same-shape qualification conversions. Function
-// decay, derived-to-base, ordered reference binding, and callable-component
-// conversions stay deferred and fail closed instead of reaching the flat
-// projection guard.
+// ordered pointer, array-to-pointer decay, function-to-pointer decay, an
+// ordered object pointer to `cv void*`, array-to-pointer or function-to-pointer
+// followed by a boolean conversion, an ordered pointer object to `bool`, and
+// same-shape qualification conversions. Derived-to-base, ordered reference
+// binding, and further callable-component conversions stay deferred and fail
+// closed instead of reaching the flat projection guard.
 inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	if (from.category() == TypeCategory::Nullptr) {
@@ -1150,13 +1166,28 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 		}
 		return {plan.rank, StandardConversionKind::ArrayToPointer, true};
 	}
+	// C++20 [conv.func]/1: a function object decays to a pointer to that function.
+	// The function component stays; only an unqualified pointer is prepended.
+	if (orderedDeclaratorIsFunctionObject(from_value) &&
+		orderedDeclaratorIsPointerObject(to)) {
+		TypeSpecifierNode decayed_from = from_value;
+		decayOrderedFunctionToPointer(decayed_from);
+		const ConversionPlan plan = buildConversionPlan(decayed_from, to);
+		if (!plan.is_valid) {
+			return ConversionPlan::no_match();
+		}
+		return {plan.rank, StandardConversionKind::FunctionToPointer, true};
+	}
 	// C++20 [conv.bool]: a non-projectable pointer object converts to bool, and
-	// an array object reaches bool through [conv.array] decay first. The decoded
+	// an array or function object reaches bool through decay first. The decoded
 	// address is tested against zero by the boolean conversion.
 	if (to.category() == TypeCategory::Bool && !to.is_reference() &&
 		to.pointer_depth() == 0 && !to.has_ordered_declarator() &&
 		to.array_dimensions().empty()) {
 		TypeSpecifierNode converted_from = from_value;
+		if (orderedDeclaratorIsFunctionObject(converted_from)) {
+			decayOrderedFunctionToPointer(converted_from);
+		}
 		if (orderedDeclaratorIsArrayObject(converted_from)) {
 			decayOrderedArrayToPointer(converted_from);
 		}

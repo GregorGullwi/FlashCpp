@@ -68,6 +68,81 @@ TEST_CASE("Ordered declarator array conversion preserves the element spine") {
 	CHECK_FALSE(buildConversionPlan(source, mismatched).is_valid);
 }
 
+TEST_CASE("Ordered function objects decay to pointers") {
+	TypeSpecifierNode parameter(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode other_parameter(
+		TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(parameter));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(parameter));
+	signature.setParameterTypes(std::move(parameters));
+	FunctionSignature other_signature;
+	other_signature.setReturnType(makeFunctionTypeFromSpecifier(parameter));
+	OverloadVector<FunctionType, 4> other_parameters;
+	other_parameters.push_back(makeFunctionTypeFromSpecifier(other_parameter));
+	other_signature.setParameterTypes(std::move(other_parameters));
+
+	TypeSpecifierNode function_object(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	function_object.set_ordered_declarator({
+		DeclaratorComponent::function(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	function_object.set_function_signature(signature);
+
+	TypeSpecifierNode function_pointer = function_object;
+	function_pointer.prepend_ordered_declarator_component(
+		DeclaratorComponent::pointer(CVQualifier::None));
+	function_pointer.set_function_signature(signature);
+
+	const ConversionPlan plan = buildConversionPlan(function_object, function_pointer);
+	CHECK(plan.is_valid);
+	CHECK(plan.rank == ConversionRank::ExactMatch);
+	CHECK(plan.kind == StandardConversionKind::FunctionToPointer);
+
+	TypeSpecifierNode qualified_pointer = function_pointer;
+	qualified_pointer.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::function(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	qualified_pointer.set_function_signature(signature);
+	const ConversionPlan qualified_plan =
+		buildConversionPlan(function_object, qualified_pointer);
+	CHECK(qualified_plan.rank == ConversionRank::QualificationAdjustment);
+	CHECK(qualified_plan.kind == StandardConversionKind::FunctionToPointer);
+
+	TypeSpecifierNode mismatched_extent = function_pointer;
+	mismatched_extent.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::function(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	mismatched_extent.set_function_signature(signature);
+	CHECK_FALSE(buildConversionPlan(function_object, mismatched_extent).is_valid);
+
+	TypeSpecifierNode mismatched_parameter = function_pointer;
+	mismatched_parameter.set_function_signature(other_signature);
+	CHECK_FALSE(buildConversionPlan(function_object, mismatched_parameter).is_valid);
+
+	TypeSpecifierNode bool_target(
+		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	const ConversionPlan bool_plan = buildConversionPlan(function_object, bool_target);
+	CHECK(bool_plan.is_valid);
+	CHECK(bool_plan.kind == StandardConversionKind::BooleanConversion);
+}
+
 TEST_CASE("Ordered pointer and array conversions reach bool") {
 	TypeSpecifierNode bool_target(
 		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);

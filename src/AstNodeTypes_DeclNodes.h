@@ -2072,6 +2072,7 @@ public:
 	bool is_function_pointer() const { return type_index_.category() == TypeCategory::FunctionPointer; }
 	bool is_member_function_pointer() const { return type_index_.category() == TypeCategory::MemberFunctionPointer; }
 	bool is_member_object_pointer() const { return type_index_.category() == TypeCategory::MemberObjectPointer; }
+	void clear_function_signature() { function_signature_.reset(); }
 	void set_function_signature(const FunctionSignature& sig) {
 		function_signature_ = sig;
 		if (type_index_.category() == TypeCategory::MemberFunctionPointer &&
@@ -3259,7 +3260,11 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 				incomplete = true;
 				break;
 			case DeclaratorComponentKind::Function:
-				return 0;
+				// A function has no object size. An outer pointer still does:
+				// the walk is inside-out, so a later Pointer wrapper sets 64.
+				size_bits = 0;
+				incomplete = true;
+				break;
 			}
 		}
 		return incomplete ||
