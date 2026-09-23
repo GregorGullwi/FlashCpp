@@ -120,6 +120,19 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
+## Non-projectable ordered array-to-void* conversion is inconsistent
+
+Converting an ordered array lvalue to `void*` does not work uniformly. For
+`int (*(*ordered)[3])[4]`, `void* p = *ordered;` loads the array's element
+instead of decaying to the array address, and `take_void(*ordered)` fails
+overload resolution, while the deeper shape used by
+`test_ordered_array_to_pointer_decay_ret42` (`int (*(*(*)[2])[3])[4]`) works.
+Bool conversion of the same array is correct (it goes through the structural
+`buildOrderedDeclaratorConversionPlan` bool arm), so this is a void*/pointer
+decay-representation gap in the ordered array path, not a bool-conversion
+defect. Keep tests for `[expr.cond]/3` array decay on the ordered-pointer or
+bool result rather than the `void*` initializer until that path is unified.
+
 ## Pointer-to-member-to-bool conversion tests the wrong null value
 
 C++20 [conv.bool] allows a pointer-to-member prvalue to convert to `bool`, but
