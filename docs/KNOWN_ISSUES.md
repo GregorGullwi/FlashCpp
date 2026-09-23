@@ -120,6 +120,14 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
+Flat data-member-pointer declarators are the one shape that publishes a scalar
+owner (`CanonicalTypeDesc::member_pointer_owner`) instead of a structural node:
+`exportCanonicalDeclarator` is deliberately fail-closed for member pointers, so
+the structural node cannot yet be projected back to syntax. The owner is still
+part of the descriptor's identity, which keeps `int A::*` distinct from
+`int B::*`. Retire the scalar once member-pointer export migrates and the flat
+path can carry its owner in the ordered spine.
+
 ## Runtime member-function-pointer address-of is not lowered
 
 `int (S::*p)() = &S::f;` does not materialize the member function's address.
