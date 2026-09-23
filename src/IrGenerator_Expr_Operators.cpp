@@ -1529,6 +1529,40 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		? PointerDepth{static_cast<int>(exact_ternary_result_type->pointer_depth())}
 		: PointerDepth{};
 
+	// C++20 [expr.cond]/3: an array operand of a conditional expression decays
+	// to a pointer before the common type is chosen. Sema annotates each array
+	// branch with ArrayToPointer; materialize the address so the branch
+	// assignment stores the decayed pointer instead of copying the array
+	// object's bytes (which is what happened for an ordered pointer-to-array
+	// dereference whose elements are all null).
+	auto applyAnnotatedArrayDecay = [&](const ASTNode& branch_node, ExprResult& branch_result) {
+		if (context == ExpressionContext::LValueAddress || !branch_node.is<ExpressionNode>())
+			return;
+		const void* key = static_cast<const void*>(&branch_node.as<ExpressionNode>());
+		const auto slot = sema_.getSlot(key);
+		if (!slot.has_value() || !slot->has_cast())
+			return;
+		const ImplicitCastInfo& ci = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+		if (ci.cast_kind != StandardConversionKind::ArrayToPointer)
+			return;
+		// Identifier-backed arrays still name the object, so emit its address.
+		// TempVar-backed arrays (global loads, ordered pointer-to-array
+		// dereferences) already carry the runtime address.
+		if (std::holds_alternative<StringHandle>(branch_result.value)) {
+			branch_result = materializeAddressResult(
+				branch_node.as<ExpressionNode>(),
+				std::move(branch_result),
+				ternaryNode.get_token());
+		}
+		branch_result.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+		branch_result.pointer_depth = result_pointer_depth;
+		// Mark the branch value as an address. Besides being accurate, this keeps
+		// the branch assignment from propagating address-only metadata onto the
+		// shared result temp: the second branch would otherwise read that temp as
+		// a reference and store through the first branch's address.
+		branch_result.storage = ValueStorage::ContainsAddress;
+	};
+
 	// Convert true result to common type if needed.
 	// NOTE: sema annotations were already consumed above when determining common_type
 	// via getSemaAnnotatedTargetType. The actual conversion uses common_type directly;
@@ -1537,6 +1571,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (context != ExpressionContext::LValueAddress &&
 		true_result.typeEnum() != common_type)
 		true_result = generateTypeConversion(true_result, true_result.category(), common_type, ternaryNode.get_token());
+	applyAnnotatedArrayDecay(ternaryNode.true_expr(), true_result);
 
 	int result_size = 0;
 	if (context == ExpressionContext::LValueAddress) {
@@ -1606,6 +1641,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	if (context != ExpressionContext::LValueAddress &&
 		false_result.typeEnum() != common_type)
 		false_result = generateTypeConversion(false_result, false_result.category(), common_type, ternaryNode.get_token());
+	applyAnnotatedArrayDecay(ternaryNode.false_expr(), false_result);
 
 	// Assign false_expr result to result variable
 	AssignmentOp assign_false_op;

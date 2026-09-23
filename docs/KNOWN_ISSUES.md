@@ -327,15 +327,6 @@ this construct; the query benchmark retains a separate 1,025-level logical
 dependency probe. Architecture boundary 7 must move the real instantiation and
 substitution path onto small arena-owned frames before this issue can be closed.
 
-## Ordered array conditional decay still produces the wrong pointer value
-
-`test_ordered_array_conditional_decay_ret42.cpp` compiles but returns `3`
-instead of `42` on the current compiler. The conditional expression's ordered
-array branches should decay to the same pointer value under C++20
-`[expr.cond]/3`; the first equality check fails before the boolean checks run.
-This is separate from ordered array decay to `void*`, which is covered by
-`test_ordered_array_to_void_decay_ret42.cpp`.
-
 ## SemanticAnalysis query-state doctest fails on a clean tree
 
 The unity doctest build (tests/FlashCppTest) fails
