@@ -3,8 +3,8 @@
 // whose elements are all null still designates a non-null address; testing the
 // array object's bytes instead of the decayed pointer made the conditional
 // false. The decayed result must also equal the source address. Compare through
-// an ordered-pointer variable because converting an ordered array/ternary to
-// void* (in the initializer form) is a separate unsupported path.
+// an ordered-pointer variable to keep this test focused on the conditional
+// expression's common type; the void* conversion has its own regression.
 long zero_block[3] = {0, 0, 0};
 
 int main() {

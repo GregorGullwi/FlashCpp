@@ -120,19 +120,6 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
-## Non-projectable ordered array-to-void* conversion is inconsistent
-
-Converting an ordered array lvalue to `void*` does not work uniformly. For
-`int (*(*ordered)[3])[4]`, `void* p = *ordered;` loads the array's element
-instead of decaying to the array address, and `take_void(*ordered)` fails
-overload resolution, while the deeper shape used by
-`test_ordered_array_to_pointer_decay_ret42` (`int (*(*(*)[2])[3])[4]`) works.
-Bool conversion of the same array is correct (it goes through the structural
-`buildOrderedDeclaratorConversionPlan` bool arm), so this is a void*/pointer
-decay-representation gap in the ordered array path, not a bool-conversion
-defect. Keep tests for `[expr.cond]/3` array decay on the ordered-pointer or
-bool result rather than the `void*` initializer until that path is unified.
-
 ## Pointer-to-member-to-bool conversion tests the wrong null value
 
 C++20 [conv.bool] allows a pointer-to-member prvalue to convert to `bool`, but
@@ -330,6 +317,15 @@ producing an implementation-limit diagnostic. The throughput corpus avoids
 this construct; the query benchmark retains a separate 1,025-level logical
 dependency probe. Architecture boundary 7 must move the real instantiation and
 substitution path onto small arena-owned frames before this issue can be closed.
+
+## Ordered array conditional decay still produces the wrong pointer value
+
+`test_ordered_array_conditional_decay_ret42.cpp` compiles but returns `3`
+instead of `42` on the current compiler. The conditional expression's ordered
+array branches should decay to the same pointer value under C++20
+`[expr.cond]/3`; the first equality check fails before the boolean checks run.
+This is separate from ordered array decay to `void*`, which is covered by
+`test_ordered_array_to_void_decay_ret42.cpp`.
 
 ## SemanticAnalysis query-state doctest fails on a clean tree
 
