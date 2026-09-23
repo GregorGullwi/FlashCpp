@@ -1461,24 +1461,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						// C++20 [conv.bool]: materialize a real bool8 from the
 						// pointer/array address. The source category may be Struct
 						// for an object pointer, so this must not fall through to
-						// the struct user-defined arm.
-						const CanonicalTypeDesc& source_desc =
-							sema_.typeContext().get(cast_info.source_type_id);
-						if (!source_desc.array_dimensions.empty() &&
-							argument.is<ExpressionNode>() &&
-							argumentIrOperands.storage != ValueStorage::ContainsAddress) {
-							// A projectable array arrives as its symbol/object, not
-							// its address. Materialize the array address so the
-							// boolean test uses pointer width instead of truncating
-							// the element type.
-							argumentIrOperands = materializeAddressResult(
-								argument.as<ExpressionNode>(),
-								std::move(argumentIrOperands),
-								callExprNode.called_from());
-						}
+						// the struct user-defined arm. generateTypeConversion
+						// centralizes the array-lvalue address handling.
 						argumentIrOperands = generateTypeConversion(
 							argumentIrOperands,
-							source_desc.category(),
+							sema_.typeContext().get(cast_info.source_type_id).category(),
 							TypeCategory::Bool,
 							callExprNode.called_from());
 						arg_type = argumentIrOperands.typeEnum();

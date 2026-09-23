@@ -52,30 +52,36 @@ ExprResult AstToIr::emitNonZeroBoolValue(ExprResult operand, const Token& source
 }
 
 ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token) {
-		// An array lvalue reaches a bool conversion as a ContainsAddress result
-		// (the array's address) whose recorded size is the array object size.
-		// Test the 64-bit address against zero instead of numerically truncating
-		// it through the element type.
-	if (toType == TypeCategory::Bool &&
-		operands.storage == ValueStorage::ContainsAddress) {
-		return emitNonZeroBoolValue(operands, source_token);
+	// C++20 [conv.bool]: every non-floating arithmetic, enum, pointer, or
+	// pointer-to-member scalar converts to bool by comparing against zero.
+	// Routing all such conversions through the shared zero-test keeps array
+	// lvalues (whose value is their address) and ValueStorage::ContainsAddress
+	// results correct without each conversion consumer materializing the
+	// address or truncating through the element type. Pointer-to-member is
+	// excluded: its null value is ABI-defined (-1 for data members on Itanium),
+	// not zero. Floating-point sources use the float comparison path below.
+	{
+		const TypeCategory resolved_source =
+			resolveEnumUnderlyingTypeCategory(operands.type_index);
+		const TypeCategory source_type =
+			resolved_source != TypeCategory::Invalid ? resolved_source : fromType;
+		const IrType source_ir_type = operands.effectiveIrType();
+		const bool is_member_pointer =
+			source_ir_type == IrType::MemberFunctionPointer ||
+			source_ir_type == IrType::MemberObjectPointer;
+		if (toType == TypeCategory::Bool &&
+			source_type != TypeCategory::Struct &&
+			source_type != TypeCategory::Invalid &&
+			!is_floating_point_type(source_type) &&
+			!is_member_pointer) {
+			return emitNonZeroBoolValue(operands, source_token);
+		}
 	}
+
 		// Pointer values are always 64-bit addresses on x64. Numeric type conversion
 		// must never change their size (e.g. truncate 64→32). Only update the type
 		// metadata if needed; the value representation stays the same.
 	if (operands.pointer_depth.value > 0) {
-		// C++20 [conv.bool]: a pointer prvalue converts to bool by testing the
-		// address against zero. Re-tagging the pointer would pass a 64-bit value
-		// where the callee reads a bool8 (correct only when the low byte happens
-		// to be non-zero). Pointer-to-member is excluded: its null value is
-		// ABI-defined (-1 for data members on Itanium), not zero.
-		const IrType pointer_ir_type = operands.effectiveIrType();
-		const bool is_member_pointer =
-			pointer_ir_type == IrType::MemberFunctionPointer ||
-			pointer_ir_type == IrType::MemberObjectPointer;
-		if (toType == TypeCategory::Bool && !is_member_pointer) {
-			return emitNonZeroBoolValue(operands, source_token);
-		}
 		if (operands.category() == toType) {
 			return operands;
 		}

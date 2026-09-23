@@ -42,16 +42,20 @@ from the structural `TypeId`. Remove the parser peel when overload resolution
 no longer types call arguments in the parser. An array or object/function
 pointer now reaches `bool` through [conv.array] decay where needed followed by
 [conv.bool], for both non-projectable ordered declarators and projectable flat
-types; the plan returns `BooleanConversion` and `emitNonZeroBoolValue` tests
-the decoded address against zero at pointer width, so initialization,
-assignment, and function arguments materialize a real `bool8` instead of
-re-tagging or numerically truncating the address (both of which only happened
-to work when its low byte was non-zero). An ordered array dereference carries
-`ValueStorage::ContainsAddress` with the element size, so the zero test
-overrides the recorded size to `POINTER_SIZE_BITS`; a projectable array source
-is materialized to its address (`materializeAddressResult`) before the test
-when the argument or initializer path sees a `BooleanConversion` whose source
-descriptor still has array dimensions. The projectable
+types. The plan returns `BooleanConversion`, and `generateTypeConversion`
+routes every non-floating arithmetic/pointer/enum source to the shared
+`emitNonZeroBoolValue`, which tests the value against zero at pointer width
+when the operand is a pointer or a `ValueStorage::ContainsAddress` array
+address. This is the single conversion choke point, so initialization,
+assignment, return, and function arguments materialize a real `bool8` without
+each consumer knowing whether the source is an array; a projectable array
+symbol already carries its address, and an ordered dereference carries
+`ContainsAddress` with the element size, which the zero test sizes to
+`POINTER_SIZE_BITS`. The ordered dereference type previously kept a stale
+`pointee_array_declarator` from the pointer operand, which hid the array object
+from [conv.array]; `inferExpressionType` now clears it. Conditional
+expressions apply [expr.cond]/3 array-to-pointer decay to their branches (flat
+and structural) before choosing the common type. The projectable
 flat path previously rejected `bool b = arr;` with
 `InvalidArrayToScalarInitialization` (1612) and failed `bool b = ptr;` with a
 "missed variable init conversion" internal error; struct and function pointers
@@ -708,6 +712,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Ordered pointer reinterpret cast store | `test_interleaved_pointer_array_reinterpret_store_ret42` |
 | Ordered array/pointer boolean conversion | `Ordered pointer and array conversions reach bool` doctest, `test_ordered_array_to_bool_conversion_ret42` |
 | Projectable array/pointer boolean conversion | `Projectable pointer and array conversions reach bool` doctest, `test_projectable_pointer_array_to_bool_conversion_ret42` |
+| Conditional array-to-pointer decay | `test_ordered_array_conditional_decay_ret42` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
