@@ -6949,8 +6949,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							return {};
 						}
 					}
-					if (e.get_operand().is<ExpressionNode>()) {
-						const ExpressionNode& operand_expr = e.get_operand().as<ExpressionNode>();
+					if (e.get_operand().template is<ExpressionNode>()) {
+						const ExpressionNode& operand_expr = e.get_operand().template as<ExpressionNode>();
 						if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&operand_expr)) {
 							// A qualified-id naming a non-static data member is only
 							// valid here as the operand of `&`, so ask the resolver to
