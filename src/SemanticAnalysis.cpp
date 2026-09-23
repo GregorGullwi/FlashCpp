@@ -590,15 +590,33 @@ TypeSpecifierNode materializeTypeSpecifierWithMaxPointerDepth(
 std::optional<CanonicalTypeDesc> decayArrayForConditional(const CanonicalTypeDesc& desc) {
 	// C++20 [conv.array]/1 applies only to array objects. Pointer-to-array
 	// types already have their extents on the pointee and must not decay.
-	if (desc.pointee_array_declarator || desc.array_dimensions.empty()) {
+	if (desc.pointee_array_declarator) {
 		return std::nullopt;
 	}
-
-	CanonicalTypeDesc decayed = desc;
-	decayed.array_dimensions.erase(decayed.array_dimensions.begin());
-	decayed.pointer_levels.push_back(PointerLevel{});
-	decayed.ref_qualifier = ReferenceQualifier::None;
-	return decayed;
+	if (!desc.array_dimensions.empty()) {
+		CanonicalTypeDesc decayed = desc;
+		decayed.array_dimensions.erase(decayed.array_dimensions.begin());
+		decayed.pointer_levels.push_back(PointerLevel{});
+		decayed.ref_qualifier = ReferenceQualifier::None;
+		return decayed;
+	}
+	// Non-projectable ordered arrays carry their structure in the canonical
+	// table instead of the flat array fields. [conv.array] replaces the
+	// outermost array node with a pointer to its element.
+	if (desc.structural_type_id) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeNode node = table.node(desc.structural_type_id);
+		if (node.kind == CanonicalTypeKind::Qualified && node.child) {
+			node = table.node(node.child);
+		}
+		if (node.kind == CanonicalTypeKind::Array && node.child) {
+			CanonicalTypeDesc decayed = desc;
+			decayed.structural_type_id = table.pointer(node.child);
+			decayed.ref_qualifier = ReferenceQualifier::None;
+			return decayed;
+		}
+	}
+	return std::nullopt;
 }
 
 std::optional<TypeSpecifierNode> tryGetIndirectCallReturnType(const CallExprNode& call) {
@@ -627,6 +645,20 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 			CanonicalTypeDesc pointer = desc;
 			pointer.ref_qualifier = ReferenceQualifier::None;
 			return pointer;
+		}
+		// Non-projectable pointer objects have no flat pointer levels; their
+		// structure is the canonical pointer node.
+		if (desc.structural_type_id) {
+			CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+			CanonicalTypeNode node = table.node(desc.structural_type_id);
+			if (node.kind == CanonicalTypeKind::Qualified && node.child) {
+				node = table.node(node.child);
+			}
+			if (node.kind == CanonicalTypeKind::Pointer) {
+				CanonicalTypeDesc pointer = desc;
+				pointer.ref_qualifier = ReferenceQualifier::None;
+				return pointer;
+			}
 		}
 		return std::nullopt;
 	};
@@ -6915,6 +6947,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							return {};
 						}
 						result_desc.structural_type_id = outer.child;
+						// The dereferenced object is the pointee, so any
+						// pointer-to-array flag from the operand no longer
+						// applies. Leaving it set would type *p as a
+						// pointer-to-array and hide the array object from
+						// [conv.array] decay.
+						result_desc.pointee_array_declarator = false;
 						return type_context_.intern(result_desc);
 					}
 					if (!result_desc.pointer_levels.empty()) {
@@ -7121,6 +7159,26 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return {};
 				const CanonicalTypeDesc& t_desc = type_context_.get(t_id);
 				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
+				// C++20 [expr.cond]/3: array-to-pointer conversion applies to
+				// the branches before the common type is chosen, so an array
+				// branch never makes the conditional result an array type. This
+				// includes non-projectable ordered arrays, whose structure lives
+				// in the canonical table.
+				const std::optional<CanonicalTypeDesc> t_decayed =
+					decayArrayForConditional(t_desc);
+				const std::optional<CanonicalTypeDesc> f_decayed =
+					decayArrayForConditional(f_desc);
+				if (t_decayed || f_decayed) {
+					if (auto pointer_result = tryGetConditionalPointerType(
+						t_decayed.value_or(t_desc),
+						f_decayed.value_or(f_desc),
+						isIntegerLiteralZeroNullPointerConstant(e.true_expr()) ||
+							t_desc.category() == TypeCategory::Nullptr,
+						isIntegerLiteralZeroNullPointerConstant(e.false_expr()) ||
+							f_desc.category() == TypeCategory::Nullptr))
+						return type_context_.intern(*pointer_result);
+					return {};
+				}
 				if (canonical_types_match(t_id, f_id))
 					return t_id;
 				if (auto pointer_result = tryGetConditionalPointerType(
