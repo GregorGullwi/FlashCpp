@@ -68,6 +68,75 @@ TEST_CASE("Ordered declarator array conversion preserves the element spine") {
 	CHECK_FALSE(buildConversionPlan(source, mismatched).is_valid);
 }
 
+TEST_CASE("Ordered references bind to ordered pointer objects") {
+	TypeSpecifierNode pointer_object(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_object.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+
+	TypeSpecifierNode lvalue_reference = pointer_object;
+	lvalue_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+
+	TypeSpecifierNode lvalue_argument = pointer_object;
+	lvalue_argument.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const ConversionPlan lvalue_plan =
+		buildConversionPlan(lvalue_argument, lvalue_reference);
+	CHECK(lvalue_plan.is_valid);
+	CHECK(lvalue_plan.rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode prvalue = pointer_object;
+	CHECK_FALSE(buildConversionPlan(prvalue, lvalue_reference).is_valid);
+
+	TypeSpecifierNode const_pointer_object = pointer_object;
+	const_pointer_object.set_cv_qualifier(CVQualifier::Const);
+	TypeSpecifierNode const_lvalue_reference = const_pointer_object;
+	const_lvalue_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const ConversionPlan const_plan =
+		buildConversionPlan(const_pointer_object, const_lvalue_reference);
+	CHECK(const_plan.is_valid);
+	CHECK(const_plan.rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode qualified_pointer = pointer_object;
+	qualified_pointer.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	TypeSpecifierNode qualified_reference = qualified_pointer;
+	qualified_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const ConversionPlan qualified_plan =
+		buildConversionPlan(lvalue_argument, qualified_reference);
+	CHECK(qualified_plan.is_valid);
+	CHECK(qualified_plan.rank == ConversionRank::QualificationAdjustment);
+
+	TypeSpecifierNode rvalue_reference = pointer_object;
+	rvalue_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::rvalueReference());
+	const ConversionPlan rvalue_plan =
+		buildConversionPlan(prvalue, rvalue_reference);
+	CHECK(rvalue_plan.is_valid);
+	CHECK(rvalue_plan.rank == ConversionRank::ExactMatch);
+	CHECK_FALSE(buildConversionPlan(lvalue_argument, rvalue_reference).is_valid);
+
+	TypeSpecifierNode mismatched = lvalue_reference;
+	mismatched.set_ordered_declarator({
+		DeclaratorComponent::lvalueReference(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	CHECK_FALSE(buildConversionPlan(lvalue_argument, mismatched).is_valid);
+}
+
 TEST_CASE("Ordered function objects decay to pointers") {
 	TypeSpecifierNode parameter(
 		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);

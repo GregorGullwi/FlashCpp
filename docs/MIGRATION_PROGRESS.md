@@ -81,9 +81,16 @@ from the cold signature after the return spine, parameter function types decay
 to pointers, and export keeps the single component while the original signature
 stays on `CanonicalTypeDesc`. A second function component, member-function
 cv/ref on this path, and mangling of a `Function` component stay deferred.
-Derived-to-base, ordered reference binding, and further callable-component
+Derived-to-base and further callable-component
 conversion stay deferred and fail closed as an ordinary no-match instead of
-aborting compilation. Ordered pointer objects
+aborting compilation. An ordered reference whose referred-to type is a
+non-projectable pointer/array interleaving binds through the ordered spine
+([dcl.init.ref]): the structural parser records `&`/`&&` as prefixes on the
+frame stack, rejects pointer/array/reference to reference, and the conversion
+plan peels the outermost reference before comparing the referred-to shapes.
+Projectable reference-to-array and reference-to-function forms stay on the
+legacy path. Ordered references lower as address-sized storage; ordered
+array/callable outer wrappers stay fail-closed. Ordered pointer objects
 now lower as pointer-sized values: `TypeSpecifierNode::runtime_pointer_depth`
 reports the flat pointer depth for projectable declarators and the leading
 `Pointer` wrapper count for a non-projectable spine, and the declaration
@@ -115,13 +122,11 @@ component.
 increased `TypeSpecifierNode` to 520 bytes in the canonical architecture
 probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
 5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
-frames and does not increase native call depth. The next slices are ordered
-reference binding, deletion of the `Parser::get_expression_type`
-ordered-pointer peel once semantic analysis owns call-argument typing,
-remaining qualified-name spellings (template-id qualifiers), and removal of
-the flat pointer/array reads. Array-object IR storage stays fail-closed.
-Ordered reference binding is unreachable until interleaved-reference
-declarators parse.
+frames and does not increase native call depth. The next slices are deletion
+of the `Parser::get_expression_type` ordered-pointer peel once semantic
+analysis owns call-argument typing, remaining qualified-name spellings
+(template-id qualifiers), and removal of the flat pointer/array reads.
+Array-object IR storage stays fail-closed.
 Pointer-to-member-to-bool remains a documented gap
 ([known issues](KNOWN_ISSUES.md)); its null value is ABI-defined, not zero.
 
@@ -614,8 +619,9 @@ during concrete alias materialization. This fixes forwarded aliases such as
   projectable types; the plan reports `BooleanConversion` and
   `emitNonZeroBoolValue` tests the decoded address against zero. A single
   ordered function object decays to a pointer to that function ([conv.func]);
-  derived-to-base, ordered reference binding, and further callable-component
-  conversion remain deferred. Ordered pointer objects also
+  an ordered reference binds through the referred-to ordered spine
+  ([dcl.init.ref]); derived-to-base and further callable-component conversion
+  remain deferred. Ordered pointer objects and ordered references also
   lower as pointer-sized values:
   the shared `TypeSpecifierNode::runtime_pointer_depth` accessor feeds
   declaration storage, the global-fast-path identifier load, and the
@@ -633,8 +639,7 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `TemplateAliasNode`, so their identity no longer depends on the registry
   spelling key.   The full dependent-alias behavior, alias partials, and
   class-instantiation alias re-registration deletion remain deferred. The next
-  still-Unmigrated 3A slice is ordered reference binding (unreachable until
-  interleaved-reference declarators parse), then deletion of the
+  still-Unmigrated 3A slice is deletion of the
   `Parser::get_expression_type` ordered-pointer peel once semantic analysis
   owns call-argument typing, and qualified-name spellings such as template-id
   qualifiers, before the flat pointer/array reads are removed, or a bound
@@ -733,6 +738,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Projectable array/pointer boolean conversion | `Projectable pointer and array conversions reach bool` doctest, `test_projectable_pointer_array_to_bool_conversion_ret42` |
 | Conditional array-to-pointer decay | `test_ordered_array_conditional_decay_ret42` |
 | Ordered function-to-pointer decay | `Ordered function objects decay to pointers` doctest, `test_ordered_function_to_pointer_decay_ret42` |
+| Ordered reference binding | `Ordered references bind to ordered pointer objects` doctest, `test_ordered_reference_binding_ret42` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
@@ -805,9 +811,9 @@ Advanced, not completed:
   non-projectable array lvalue, `[conv.array]` followed by `[conv.bool]`
   (with direct array/pointer-to-bool) for ordered and projectable types in
   initialization, assignment, and function arguments, and `[conv.func]` decay
-  of one ordered function object to a pointer to that function (derived-to-base,
-  ordered reference binding, and further callable-component conversion
-  still fail closed;
+  of one ordered function object to a pointer to that function, and
+  [dcl.init.ref] binding through an outermost ordered reference (derived-to-base
+  and further callable-component conversion still fail closed;
   `Parser::get_expression_type` still peels the ordered pointer until
   semantic analysis owns call-argument typing), ordered pointer
   objects lowering as pointer-sized values through the shared
