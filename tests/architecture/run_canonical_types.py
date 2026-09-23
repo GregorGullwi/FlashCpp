@@ -6,10 +6,13 @@ to FlashCpp's source-language test runner.
 """
 
 import argparse
+import concurrent.futures
+import os
 import pathlib
 import re
 import subprocess
 import sys
+import threading
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -17,6 +20,20 @@ SOURCE = ROOT / "tests/architecture/canonical_types_ret0.cpp"
 HEADER = ROOT / "src/CanonicalTypes.h"
 IMPL = ROOT / "src/CanonicalTypes.cpp"
 OUTPUT = ROOT / "x64/canonical-types"
+
+# Files copied into every mutation directory. The list is also what decides
+# whether a translation unit can reuse the pristine object: a mutation that
+# leaves a TU's inputs byte-identical cannot change that TU's object.
+PROJECT_FILES = ("CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
+                 "ArenaAccounting.h", "TemplateDeclTable.h")
+# The regression source includes the adapter and template tables; the
+# implementation only includes CanonicalTypes.h (which pulls ArenaAccounting.h).
+TEST_TU_INPUTS = ("CanonicalTypes.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h",
+                  "TemplateDeclTable.h")
+IMPL_TU_INPUTS = ("CanonicalTypes.h", "CanonicalTypes.cpp", "ArenaAccounting.h")
+OBJECT_SUFFIX = ".obj" if sys.platform == "win32" else ".o"
+
+PRINT_LOCK = threading.Lock()
 
 
 def deindent(text):
@@ -48,29 +65,99 @@ def check_guards():
             raise RuntimeError("telemetry bridge still uses canonical TypeId")
 
 
-def build_and_run(name, include, expected):
+def compile_tu(source, include, obj, cwd):
+    """Compile one translation unit to an object against the given headers."""
+    if sys.platform == "win32":
+        command = ["clang-cl", "/nologo", "/std:c++20", "/EHsc", "/W4", "/WX",
+                   "/I" + str(include), "/I" + str(ROOT / "src"),
+                   "/c", str(source), "/Fo" + str(obj), "/clang:-fstack-usage"]
+    else:
+        command = ["clang++", "-std=c++20", "-Wall", "-Wextra", "-Werror",
+                   "-I" + str(include), "-I" + str(ROOT / "src"),
+                   "-c", str(source), "-fstack-usage", "-o", str(obj)]
+    subprocess.run(command, cwd=cwd, check=True)
+
+
+def link_executable(objects, executable):
+    if sys.platform == "win32":
+        command = ["clang-cl", "/nologo", *(str(obj) for obj in objects),
+                   "/Fe" + str(executable), "/link", "/STACK:1048576"]
+    else:
+        command = ["clang++", *(str(obj) for obj in objects), "-o", str(executable)]
+    subprocess.run(command, cwd=executable.parent, check=True)
+
+
+def changed_project_files(include):
+    """Names of project files whose copy under include differs from src/.
+
+    Files are compared as text so CRLF copies (write_text on Windows) match the
+    LF originals, and a file missing from include resolves through the fallback
+    -I to the pristine src/ copy, so it is not a change either.
+    """
+    changed = set()
+    for name in PROJECT_FILES:
+        candidate = include / name
+        if candidate.exists() and candidate.read_text() != (ROOT / "src" / name).read_text():
+            changed.add(name)
+    return changed
+
+
+def build_pristine():
+    """Compile both translation units once against the untouched headers.
+
+    Mutations that leave a TU's inputs byte-identical reuse these objects, so
+    the 5s regression TU is not rebuilt for every implementation mutation.
+    """
+    cache = OUTPUT / "_objcache"
+    cache.mkdir(parents=True, exist_ok=True)
+    test_obj = cache / ("canonical_types_ret0" + OBJECT_SUFFIX)
+    impl_obj = cache / ("CanonicalTypes" + OBJECT_SUFFIX)
+    compile_tu(SOURCE, ROOT / "src", test_obj, cache)
+    compile_tu(ROOT / "src/CanonicalTypes.cpp", ROOT / "src", impl_obj, cache)
+    return {"test": test_obj, "impl": impl_obj}
+
+
+def build_and_run(name, include, expected, pristine):
     directory = OUTPUT / name
     directory.mkdir(parents=True, exist_ok=True)
     executable = directory / ("test.exe" if sys.platform == "win32" else "test")
-    implementation = include / "CanonicalTypes.cpp"
-    if sys.platform == "win32":
-        command = ["clang-cl", "/nologo", "/std:c++20", "/EHsc", "/W4", "/WX",
-                   "/I" + str(include), "/I" + str(ROOT / "src"), str(SOURCE),
-                   str(implementation),
-                   "/Fo" + str(directory) + "\\", "/Fe" + str(executable),
-                   "/clang:-fstack-usage", "/link", "/STACK:1048576"]
+    changed = changed_project_files(include)
+    if changed & set(TEST_TU_INPUTS):
+        test_obj = directory / ("canonical_types_ret0" + OBJECT_SUFFIX)
+        compile_tu(SOURCE, include, test_obj, directory)
     else:
-        command = ["clang++", "-std=c++20", "-Wall", "-Wextra", "-Werror",
-                   "-I" + str(include), "-I" + str(ROOT / "src"), str(SOURCE),
-                   str(implementation),
-                   "-fstack-usage", "-o", str(executable)]
-    subprocess.run(command, cwd=directory, check=True)
+        test_obj = pristine["test"]
+    if changed & set(IMPL_TU_INPUTS):
+        impl_obj = directory / ("CanonicalTypes" + OBJECT_SUFFIX)
+        compile_tu(include / "CanonicalTypes.cpp", include, impl_obj, directory)
+    else:
+        impl_obj = pristine["impl"]
+    link_executable((test_obj, impl_obj), executable)
     result = subprocess.run([str(executable)], cwd=ROOT, capture_output=True, text=True)
     # Neither a crash nor a compiler error counts as a rejected mutation.
     if result.returncode != expected:
         raise RuntimeError(f"{name}: exit {result.returncode}, expected {expected}\n"
                            + result.stdout + result.stderr)
-    print(name + ": " + (result.stdout.strip() or result.stderr.strip()))
+    with PRINT_LOCK:
+        print(name + ": " + (result.stdout.strip() or result.stderr.strip()))
+
+
+def run_jobs(jobs, pristine, workers):
+    if workers <= 1:
+        for name, include, expected in jobs:
+            build_and_run(name, include, expected, pristine)
+        return
+    failures = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(build_and_run, name, include, expected, pristine): name
+                   for name, include, expected in jobs}
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                future.result()
+            except Exception as error:
+                failures.append(f"{futures[future]}: {error}")
+    if failures:
+        raise RuntimeError("mutation builds failed:\n" + "\n".join(sorted(failures)))
 
 
 def run_template_owner_tag_mutation():
@@ -91,7 +178,8 @@ def run_template_owner_tag_mutation():
         if sibling == "TemplateDeclTable.h":
             text = text.replace(before, after)
         (directory / sibling).write_text(text)
-    build_and_run(name, directory, 1)
+    return (name, directory, 1)
+
 
 def run_adapter_order_mutation(name, before, after):
     directory = OUTPUT / name
@@ -105,30 +193,36 @@ def run_adapter_order_mutation(name, before, after):
                 raise RuntimeError("mutation anchor changed: " + name)
             text = text.replace(before, after)
         (directory / sibling).write_text(text)
-    build_and_run(name, directory, 1)
+    return (name, directory, 1)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mutations", action="store_true")
     parser.add_argument("--template-owner-tag-mutation", action="store_true")
+    parser.add_argument("--jobs", type=int, default=0,
+                        help="parallel mutation builds (0 = logical CPUs - 1)")
     options = parser.parse_args()
     check_guards()
-    build_and_run("baseline", ROOT / "src", 0)
+    pristine = build_pristine()
+    build_and_run("baseline", ROOT / "src", 0, pristine)
+    workers = options.jobs if options.jobs > 0 else max(1, (os.cpu_count() or 2) - 1)
     if options.template_owner_tag_mutation:
-        run_template_owner_tag_mutation()
+        run_jobs([run_template_owner_tag_mutation()], pristine, workers)
         return
     if options.mutations:
-        run_adapter_order_mutation(
-            "reversed_declarator_import",
-            "for (size_t index = components.size(); index-- > 0;) {",
-            "for (size_t index = 0; index < components.size(); ++index) {")
-        run_adapter_order_mutation(
-            "skipped_declarator_export",
-            "result.components.push_back(\n"
-            "\t\t\t\tDeclaratorComponent::pointer(pending_pointer_cv));",
-            "if (false) result.components.push_back(\n"
-            "\t\t\t\tDeclaratorComponent::pointer(pending_pointer_cv));")
+        jobs = [
+            run_adapter_order_mutation(
+                "reversed_declarator_import",
+                "for (size_t index = components.size(); index-- > 0;) {",
+                "for (size_t index = 0; index < components.size(); ++index) {"),
+            run_adapter_order_mutation(
+                "skipped_declarator_export",
+                "result.components.push_back(\n"
+                "\t\t\t\tDeclaratorComponent::pointer(pending_pointer_cv));",
+                "if (false) result.components.push_back(\n"
+                "\t\t\t\tDeclaratorComponent::pointer(pending_pointer_cv));"),
+        ]
         original = IMPL.read_text()
         mutations = {
             "lost_dependent_qualifier": (
@@ -414,7 +508,7 @@ def main():
                             "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
                 (directory / sibling).write_text((ROOT / "src" / sibling).read_text())
             (directory / IMPL.name).write_text(original.replace(before, after))
-            build_and_run(name, directory, 1)
+            jobs.append((name, directory, 1))
         for name, header, before, after in (
             ("adapter_dependent_name", "CanonicalTypeAdapter.h",
              "if (syntax.has_dependent_name_type()) {",
@@ -508,9 +602,10 @@ def main():
                         raise RuntimeError("mutation anchor changed: " + name)
                     text = text.replace(before, after)
                 (directory / sibling).write_text(text)
-            build_and_run(name, directory, 1)
+            jobs.append((name, directory, 1))
 
-        run_template_owner_tag_mutation()
+        jobs.append(run_template_owner_tag_mutation())
+        run_jobs(jobs, pristine, workers)
 
 
 if __name__ == "__main__":
