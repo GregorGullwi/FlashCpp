@@ -38,7 +38,8 @@ ExprResult AstToIr::emitNonZeroBoolValue(ExprResult operand, const Token& source
 		? makeTypedValue(TypeCategory::UnsignedLongLong, test_size_bits, toIrValue(operand.value))
 		: toTypedValue(operand);
 	TypedValue rhs = use_integer_pointer_rep
-		? makeTypedValue(TypeCategory::UnsignedLongLong, test_size_bits, 0ULL)
+		? makeTypedValue(TypeCategory::UnsignedLongLong, test_size_bits,
+			operand.effectiveIrType() == IrType::MemberObjectPointer ? ~0ULL : 0ULL)
 		: makeTypedValue(operand.typeEnum(), test_size_bits, 0ULL);
 
 	TempVar result_var = var_counter.next();
@@ -57,6 +58,11 @@ ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCateg
 }
 
 ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, StandardConversionKind cast_kind, const Token& source_token) {
+	if (toType == TypeCategory::MemberObjectPointer &&
+		(fromType == TypeCategory::Nullptr || operands.category() == TypeCategory::Nullptr)) {
+		return makeExprResult(nativeTypeIndex(TypeCategory::MemberObjectPointer),
+			SizeInBits{64}, IrOperand{~0ULL}, PointerDepth{}, ValueStorage::ContainsData);
+	}
 	// C++20 [conv.bool] with a sema cast kind: the cast kind is the authority,
 	// so an object pointer converts correctly even though its operand metadata
 	// (Struct category, Struct IR type, pointer depth 0) matches a struct
@@ -71,32 +77,32 @@ ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCateg
 		if (toType == TypeCategory::Bool &&
 			cast_kind == StandardConversionKind::BooleanConversion &&
 			!is_floating_point_type(bool_source)) {
-			return emitNonZeroBoolValue(operands, source_token);
+			ExprResult source = operands;
+			if (fromType == TypeCategory::MemberObjectPointer)
+				source.ir_type = IrType::MemberObjectPointer;
+			return emitNonZeroBoolValue(source, source_token);
 		}
 	}
 	// C++20 [conv.bool]: every non-floating arithmetic, enum, pointer, or
-	// pointer-to-member scalar converts to bool by comparing against zero.
+	// pointer-to-member scalar converts to bool by comparing against its null value.
 	// Routing all such conversions through the shared zero-test keeps array
 	// lvalues (whose value is their address) and ValueStorage::ContainsAddress
 	// results correct without each conversion consumer materializing the
 	// address or truncating through the element type. Pointer-to-member is
-	// excluded: its null value is ABI-defined (-1 for data members on Itanium),
-	// not zero. Floating-point sources use the float comparison path below.
+	// Floating-point sources use the float comparison path below.
 	{
 		const TypeCategory resolved_source =
 			resolveEnumUnderlyingTypeCategory(operands.type_index);
 		const TypeCategory source_type =
 			resolved_source != TypeCategory::Invalid ? resolved_source : fromType;
-		const IrType source_ir_type = operands.effectiveIrType();
-		const bool is_member_pointer =
-			source_ir_type == IrType::MemberFunctionPointer ||
-			source_ir_type == IrType::MemberObjectPointer;
 		if (toType == TypeCategory::Bool &&
 			source_type != TypeCategory::Struct &&
 			source_type != TypeCategory::Invalid &&
-			!is_floating_point_type(source_type) &&
-			!is_member_pointer) {
-			return emitNonZeroBoolValue(operands, source_token);
+			!is_floating_point_type(source_type)) {
+			ExprResult source = operands;
+			if (fromType == TypeCategory::MemberObjectPointer)
+				source.ir_type = IrType::MemberObjectPointer;
+			return emitNonZeroBoolValue(source, source_token);
 		}
 	}
 
@@ -1675,7 +1681,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
-						return makeExprResult(member_result.member->type_index.withCategory(member_result.member->memberType()), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::MemberObjectPointer), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -2958,6 +2964,8 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 			// full-width scalar as an already-materialized bool.
 			if (cast_info.cast_kind == StandardConversionKind::BooleanConversion ||
 				cast_info.cast_kind == StandardConversionKind::PointerConversion) {
+				if (sema_.isMemberObjectPointerType(cast_info.source_type_id))
+					condition.ir_type = IrType::MemberObjectPointer;
 				return emitNonZeroBoolValue(std::move(condition), source_token);
 			}
 				// Phase 23: Struct → bool via user-defined operator bool().
@@ -2993,6 +3001,11 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 	// Integer, enum, pointer-like, and other scalar truthiness cases normalize
 	// through != 0 so every contextual-bool consumer receives bool8.
 	if (condition.category() != TypeCategory::Struct) {
+		if (cond_node.is<ExpressionNode>()) {
+			const CanonicalTypeId type_id = sema_.canonicalExpressionType(cond_node);
+			if (sema_.isMemberObjectPointerType(type_id))
+				condition.ir_type = IrType::MemberObjectPointer;
+		}
 		return emitNonZeroBoolValue(std::move(condition), source_token);
 	}
 	// Note 2026-04-29: the codegen-side struct → bool conversion-operator fallback
