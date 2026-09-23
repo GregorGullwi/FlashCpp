@@ -933,11 +933,16 @@ Start with:
 2. builtin unary and binary operators;
 3. assignment and initialization;
 4. conditional expressions;
-5. calls.
+5. calls;
+6. lambda expressions, closure types, and the captureless conversion to a
+   function pointer.
+
+Generic lambdas stay with architecture boundaries 6 and 8A. This family is
+not part of boundary 3A.
 
 Implements: [conv.prom], [expr.arith.conv], [conv.qual], [dcl.init.ref],
 [dcl.init.list], [expr.cond], [expr.ass], [expr.call], [over.best.ics],
-[expr.const].
+[expr.prim.lambda], [expr.const].
 
 Use shadow comparison before switching each expression family.
 
@@ -950,7 +955,10 @@ Exit criteria:
 - duplicate arithmetic-conversion implementations are deleted;
 - scalar AST-to-IR performs no type reconstruction;
 - promotion, narrowing, constexpr-width, `auto`, and deduction regressions use
-  the new path.
+  the new path;
+- lambda expressions, closure types, and the captureless conversion to a
+  function pointer use this boundary's expression result. A lambda path that
+  still produces a separate flat function pointer leaves boundary 4 open.
 
 ## Architecture boundary 5: lookup, overload resolution, and access control
 
@@ -1009,6 +1017,8 @@ Deliver:
 - one immutable substitution environment;
 - declaration-keyed instantiation and specialization caches;
 - identity-correct class, function, alias, and variable template registries;
+- generic lambdas as function templates; their closure type and captureless
+  conversion remain boundary 4;
 - adapters from old representations with named deletion architecture
   boundaries.
 
@@ -1073,7 +1083,7 @@ Migration order:
 1. class templates with data members and aliases;
 2. class-template member functions;
 3. partial specializations;
-4. function templates;
+4. function templates, including generic lambdas;
 5. variable and alias templates;
 6. deduction guides and explicit instantiations;
 7. out-of-line and lazy members.

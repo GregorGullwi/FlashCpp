@@ -757,7 +757,7 @@ on; shipping configuration remains a follow-up.
 
 ## Criteria completion
 
-Explicit exit criteria: **9/78 complete (11.5%)**. The nine completed criteria are:
+Explicit exit criteria: **9/79 complete (11.4%)**. The nine completed criteria are:
 
 | Boundary | Completed criteria |
 |----------|--------------------|
@@ -928,6 +928,10 @@ must not increase an implementation percentage.
   [known issues](KNOWN_ISSUES.md).
 - Blanket member-function `noexcept` stays deferred until boundaries 5–8 narrow
   exception paths to invariants.
+- Lambda expressions, closure types, and the captureless conversion to a
+  function pointer are architecture boundary 4, not the next 3A slice. Generic
+  lambdas stay with architecture boundaries 6 and 8A. Boundary 4 stays open
+  while a lambda path still produces a separate flat function pointer.
 
 ## Active findings
 
