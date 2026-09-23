@@ -36,9 +36,14 @@ immediate pointee is an array, and the existing dereference lowering reads
 that flag instead of the syntax spine. A call argument whose value is already
 that address uses one `ArrayToPointer` lowering for both projectable and
 ordered pointer-to-array dereferences; an array identifier stays on the
-direct-argument path. Function decay, derived-to-base,
-ordered reference binding, and callable-component conversion stay deferred and
-fail closed as an ordinary no-match instead of aborting compilation. Ordered pointer objects
+direct-argument path. `Parser::get_expression_type` still peels that ordered
+pointer for argument typing; semantic analysis already peels the same pointer
+from the structural `TypeId`. Remove the parser peel when overload resolution
+no longer types call arguments in the parser. A destination that is not a
+pointer object, including `bool` after array-to-pointer ([conv.bool]), fails
+closed. Function decay, derived-to-base, ordered reference binding, and
+callable-component conversion stay deferred and fail closed as an ordinary
+no-match instead of aborting compilation. Ordered pointer objects
 now lower as pointer-sized values: `TypeSpecifierNode::runtime_pointer_depth`
 reports the flat pointer depth for projectable declarators and the leading
 `Pointer` wrapper count for a non-projectable spine, and the declaration
@@ -71,10 +76,12 @@ probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
 5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
 frames and does not increase native call depth. The next slices are the
 remaining conversion families (function-to-pointer decay, then ordered
-reference binding), remaining qualified-name spellings (template-id
-qualifiers), and removal of the flat pointer/array reads. Array-object IR
-storage stays fail-closed; this decay slice only lowers an array that is the
-pointee of an ordered pointer.
+reference binding, then array-to-pointer followed by a boolean conversion),
+deletion of the `Parser::get_expression_type` ordered-pointer peel once
+semantic analysis owns call-argument typing, remaining qualified-name
+spellings (template-id qualifiers), and removal of the flat pointer/array
+reads. Array-object IR storage stays fail-closed; this decay slice only
+lowers an array that is the pointee of an ordered pointer.
 
 Immediately before this slice, direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
@@ -743,8 +750,10 @@ Advanced, not completed:
   consuming the ordered declarator spine for same-shape interleaved identity,
   `[conv.qual]` qualification, `cv void*` conversion, and
   `[conv.array]` decay of a non-projectable array lvalue (function decay,
-  derived-to-base, ordered reference binding, and callable-component
-  conversion still fail closed), ordered pointer
+  derived-to-base, ordered reference binding, callable-component conversion,
+  and array-to-pointer followed by a boolean conversion still fail closed;
+  `Parser::get_expression_type` still peels the ordered pointer until
+  semantic analysis owns call-argument typing), ordered pointer
   objects lowering as pointer-sized values through the shared
   `runtime_pointer_depth` accessor (with ordered array/callable outer wrappers
   failing closed), namespace-scope qualified identifiers carrying their
