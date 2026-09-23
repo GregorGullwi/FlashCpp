@@ -1378,6 +1378,14 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 								return_type.set_ordered_declarator(
 									std::move(return_components));
 							}
+							// A projectable return is already a flat function
+							// pointer. Recording a Function component here puts
+							// an ordered callable into a parameter type, and
+							// name mangling does not materialize that component.
+							if (return_type.ordered_declarator_has_legacy_projection()) {
+								failed = true;
+								break;
+							}
 							FunctionSignature signature;
 							signature.setReturnType(
 								makeFunctionTypeFromSpecifier(return_type));
