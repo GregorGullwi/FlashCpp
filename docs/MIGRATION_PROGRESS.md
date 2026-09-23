@@ -67,9 +67,21 @@ flat path previously rejected `bool b = arr;` with
 are accepted by `buildConversionPlan` before its function-pointer and
 user-defined arms. `std::nullptr_t` deliberately does not convert ([conv.bool]
 excludes it), and pointer-to-member stays out until its ABI null value is read.
-Function decay, derived-to-base, ordered reference binding, and
-callable-component conversion stay deferred and fail closed as an ordinary
-no-match instead of aborting compilation. Ordered pointer objects
+A function object whose return spine is a non-projectable pointer/array
+interleaving decays to a pointer to that function ([conv.func]): the plan
+prepends an unqualified `Pointer` and re-enters the ordered conversion. The
+structural parser records exactly one `Function` component when a parameter
+clause appears on the ordered frame stack; the components inside that wrapper
+are the return type, and a function declaration stores that return spine
+without the `Function` component. An array of functions or a function returning
+an array fails the structural parse. Canonical import builds the function node
+from the cold signature after the return spine, parameter function types decay
+to pointers, and export keeps the single component while the original signature
+stays on `CanonicalTypeDesc`. A second function component, member-function
+cv/ref on this path, and mangling of a `Function` component stay deferred.
+Derived-to-base, ordered reference binding, and further callable-component
+conversion stay deferred and fail closed as an ordinary no-match instead of
+aborting compilation. Ordered pointer objects
 now lower as pointer-sized values: `TypeSpecifierNode::runtime_pointer_depth`
 reports the flat pointer depth for projectable declarators and the leading
 `Pointer` wrapper count for a non-projectable spine, and the declaration
@@ -92,25 +104,22 @@ pointer target reports pointer size and depth, so an ordered pointer value now
 round-trips through a local, a global, a static member, or an explicit cast.
 An ordered spine whose
 outermost wrapper is an array or callable is not a
-pointer object and stays fail-closed. Callable and member-pointer components are
-named by the spine format, but their cold `FunctionSignature`/owner payload
-export and the remaining template, traits, constexpr, and IR consumers are not
-migrated.
+pointer object and stays fail-closed. One `Function` component now round-trips
+with its cold `FunctionSignature`. Member-pointer owner payload, a second
+function component, and the remaining template, traits, constexpr, and IR
+consumers of callables are not migrated. Mangling still rejects a `Function`
+component.
 `DeclaratorComponent` is 16 bytes; the cold vector plus projection-state field
 increased `TypeSpecifierNode` to 520 bytes in the canonical architecture
 probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
 5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
-frames and does not increase native call depth. The next slices are the
-remaining conversion families (function-to-pointer decay, then ordered
-reference binding), deletion of the `Parser::get_expression_type`
+frames and does not increase native call depth. The next slices are ordered
+reference binding, deletion of the `Parser::get_expression_type`
 ordered-pointer peel once semantic analysis owns call-argument typing,
 remaining qualified-name spellings (template-id qualifiers), and removal of
-the flat pointer/array reads. Array-object IR storage stays fail-closed; this
-decay slice only lowers an array that is the pointee of an ordered pointer.
-Function decay over the ordered spine is unreachable until the parser produces
-`DeclaratorComponentKind::Function` for a function object, and ordered
-reference binding is unreachable until interleaved-reference declarators parse,
-so array/pointer-to-bool is the first reachable conversion family in that list.
+the flat pointer/array reads. Array-object IR storage stays fail-closed.
+Ordered reference binding is unreachable until interleaved-reference
+declarators parse.
 Pointer-to-member-to-bool remains a documented gap
 ([known issues](KNOWN_ISSUES.md)); its null value is ABI-defined, not zero.
 
@@ -601,9 +610,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
   projection guard. An array or object/function pointer also converts to `bool`
   through [conv.array] decay where needed plus [conv.bool], for both ordered and
   projectable types; the plan reports `BooleanConversion` and
-  `emitNonZeroBoolValue` tests the decoded address against zero. Function decay,
-  derived-to-base, ordered reference binding, and callable-component conversion
-  remain deferred. Ordered pointer objects also
+  `emitNonZeroBoolValue` tests the decoded address against zero. A single
+  ordered function object decays to a pointer to that function ([conv.func]);
+  derived-to-base, ordered reference binding, and further callable-component
+  conversion remain deferred. Ordered pointer objects also
   lower as pointer-sized values:
   the shared `TypeSpecifierNode::runtime_pointer_depth` accessor feeds
   declaration storage, the global-fast-path identifier load, and the
@@ -619,11 +629,13 @@ during concrete alias materialization. This fixes forwarded aliases such as
   declaration-layer identity: `parse_alias_template` publishes a
   `TemplateDeclId` under the namespace-mapped `OwnerId` and anchors the
   `TemplateAliasNode`, so their identity no longer depends on the registry
-  spelling key. The full dependent-alias behavior, alias partials, and
+  spelling key.   The full dependent-alias behavior, alias partials, and
   class-instantiation alias re-registration deletion remain deferred. The next
-  still-Unmigrated 3A slice is the remaining conversion families and
-  qualified-name spellings such as template-id qualifiers, before the flat
-  pointer/array reads are removed, or a bound
+  still-Unmigrated 3A slice is ordered reference binding (unreachable until
+  interleaved-reference declarators parse), then deletion of the
+  `Parser::get_expression_type` ordered-pointer peel once semantic analysis
+  owns call-argument typing, and qualified-name spellings such as template-id
+  qualifiers, before the flat pointer/array reads are removed, or a bound
   dependent/template adapter family. Stop here
   for review before starting another family, 3B, or the parallel frontend
   experiment.
@@ -718,6 +730,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Ordered array/pointer boolean conversion | `Ordered pointer and array conversions reach bool` doctest, `test_ordered_array_to_bool_conversion_ret42` |
 | Projectable array/pointer boolean conversion | `Projectable pointer and array conversions reach bool` doctest, `test_projectable_pointer_array_to_bool_conversion_ret42` |
 | Conditional array-to-pointer decay | `test_ordered_array_conditional_decay_ret42` |
+| Ordered function-to-pointer decay | `Ordered function objects decay to pointers` doctest, `test_ordered_function_to_pointer_decay_ret42` |
 
 The owner-alias tests also cover dependent/non-Type arguments and incomplete
 owner environments failing closed. Member class-template friend access
@@ -742,7 +755,7 @@ All 64 fixed-corpus entries remain within baseline. Aggregate values:
 | `dollar_identity` | 0 / 0 |
 | `outside_engine` | 0 / 0 |
 | `post_parse_typing` | 0 / 0 |
-| `template_old_engine` | 59 / 59 |
+| `template_old_engine` | 58 / 58 |
 | `token_replay` | 382 / 382 |
 | Static dollar inventory | 17 / 17 |
 
@@ -787,10 +800,11 @@ Advanced, not completed:
   primary identity publication, general overload/conversion resolution
   consuming the ordered declarator spine for same-shape interleaved identity,
   `[conv.qual]` qualification, `cv void*` conversion, `[conv.array]` decay of a
-  non-projectable array lvalue, and `[conv.array]` followed by `[conv.bool]`
+  non-projectable array lvalue, `[conv.array]` followed by `[conv.bool]`
   (with direct array/pointer-to-bool) for ordered and projectable types in
-  initialization, assignment, and function arguments (function decay,
-  derived-to-base, ordered reference binding, and callable-component conversion
+  initialization, assignment, and function arguments, and `[conv.func]` decay
+  of one ordered function object to a pointer to that function (derived-to-base,
+  ordered reference binding, and further callable-component conversion
   still fail closed;
   `Parser::get_expression_type` still peels the ordered pointer until
   semantic analysis owns call-argument typing), ordered pointer

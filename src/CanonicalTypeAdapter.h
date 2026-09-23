@@ -63,6 +63,24 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 	CanonicalTypeTable& table,
 	const FunctionSignature& signature);
 
+inline CanonicalTypeImport importCanonicalFunctionTypeComponent(
+	CanonicalTypeTable& table,
+	const FunctionType& type,
+	CanonicalTypeImportContext context);
+
+inline CanonicalTypeImport importCanonicalFunctionComponentFromProjection(
+	CanonicalTypeTable& table,
+	TypeIndex type_index,
+	int pointer_depth,
+	ReferenceQualifier reference_qualifier,
+	CanonicalTypeImportContext context);
+
+inline CVQualifier functionSignatureCV(const FunctionSignature& signature);
+
+inline CanonicalCallingConvention toCanonicalCallingConvention(CallingConvention convention);
+
+inline CanonicalDllLinkage toCanonicalDllLinkage(Linkage linkage);
+
 inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	CanonicalTypeTable& table,
 	TypeId base,
@@ -96,8 +114,85 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 		case DeclaratorComponentKind::UnknownBoundArray:
 			id = table.arrayOfUnknownBound(id);
 			break;
-		case DeclaratorComponentKind::Function:
-			return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+		case DeclaratorComponentKind::Function: {
+			// One cold signature per declarator. The components inside this
+			// wrapper are the return type (`id` has already been built from
+			// them); parameters come from that signature.
+			if (!syntax.has_function_signature()) {
+				return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+			}
+			size_t function_count = 0;
+			for (const DeclaratorComponent& other : components) {
+				if (other.kind == DeclaratorComponentKind::Function) {
+					++function_count;
+				}
+			}
+			if (function_count != 1) {
+				return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
+			}
+			const FunctionSignature& signature = syntax.function_signature();
+			if (signature.class_name.isValid() ||
+				(signature.noexcept_expression.has_value() && !signature.dependent_noexcept) ||
+				(signature.is_noexcept && signature.dependent_noexcept)) {
+				return {{}, signature.class_name.isValid()
+					? CanonicalTypeImportStatus::UnmigratedCallable
+					: CanonicalTypeImportStatus::Unresolved};
+			}
+			std::vector<TypeId> parameters;
+			if (signature.hasStructuredTypes()) {
+				const std::span<const FunctionType> structured_parameters =
+					signature.parameter_types();
+				parameters.reserve(structured_parameters.size());
+				for (const FunctionType& parameter : structured_parameters) {
+					const CanonicalTypeImport imported_parameter =
+						importCanonicalFunctionTypeComponent(
+							table, parameter, CanonicalTypeImportContext::FunctionParameter);
+					if (imported_parameter.status != CanonicalTypeImportStatus::Supported) {
+						return imported_parameter;
+					}
+					TypeId parameter_type = imported_parameter.type;
+					if (table.node(parameter_type).kind == CanonicalTypeKind::Function) {
+						parameter_type = table.pointer(parameter_type);
+					}
+					parameters.push_back(parameter_type);
+				}
+			} else {
+				parameters.reserve(signature.parameter_type_indices.size());
+				for (const TypeIndex parameter_type_index : signature.parameter_type_indices) {
+					const CanonicalTypeImport imported_parameter =
+						importCanonicalFunctionComponentFromProjection(
+							table,
+							parameter_type_index,
+							0,
+							ReferenceQualifier::None,
+							CanonicalTypeImportContext::FunctionParameter);
+					if (imported_parameter.status != CanonicalTypeImportStatus::Supported) {
+						return imported_parameter;
+					}
+					TypeId parameter_type = imported_parameter.type;
+					if (table.node(parameter_type).kind == CanonicalTypeKind::Function) {
+						parameter_type = table.pointer(parameter_type);
+					}
+					parameters.push_back(parameter_type);
+				}
+			}
+			const CanonicalTypeNode return_node = table.node(id);
+			if (return_node.kind == CanonicalTypeKind::Function ||
+				return_node.kind == CanonicalTypeKind::Array) {
+				return {{}, CanonicalTypeImportStatus::Invalid};
+			}
+			id = table.function(
+				id,
+				parameters,
+				signature.is_variadic,
+				functionSignatureCV(signature),
+				signature.function_reference_qualifier,
+				signature.is_noexcept,
+				toCanonicalCallingConvention(signature.calling_convention),
+				toCanonicalDllLinkage(signature.linkage),
+				signature.dependent_noexcept);
+			break;
+		}
 		case DeclaratorComponentKind::MemberObjectPointer:
 			if (index != components.size() - 1 || !component.member_owner ||
 				static_cast<uint8_t>(component.cv_qualifier) > 3) {
@@ -582,6 +677,21 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 // Free-function and function-pointer shapes.
 inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
+	if (syntax.has_ordered_declarator()) {
+		// The ordered spine, not the flattened signature return type, is the
+		// function's structure. Drop the signature only on the base import so
+		// this arm does not recurse, then wrap that base with the spine.
+		TypeSpecifierNode base = syntax;
+		base.clear_ordered_declarator();
+		base.clear_function_signature();
+		const CanonicalTypeImport imported_base = importCanonicalTypeImpl(
+			table, base, CanonicalTypeImportContext::Exact);
+		if (imported_base.status != CanonicalTypeImportStatus::Supported) {
+			return imported_base;
+		}
+		return applyCanonicalOrderedDeclarator(
+			table, imported_base.type, syntax, context);
+	}
 	if (syntax.has_member_class() ||
 		syntax.category() == TypeCategory::MemberFunctionPointer ||
 		syntax.category() == TypeCategory::MemberObjectPointer) {
@@ -935,6 +1045,7 @@ inline CanonicalDeclaratorExport exportCanonicalDeclarator(
 	TypeId type) {
 	CanonicalDeclaratorExport result{type, {}, CanonicalTypeImportStatus::Supported};
 	CVQualifier pending_pointer_cv = CVQualifier::None;
+	bool saw_function = false;
 	for (;;) {
 		const CanonicalTypeNode node = table.node(type);
 		if (node.kind == CanonicalTypeKind::Qualified) {
@@ -972,6 +1083,16 @@ inline CanonicalDeclaratorExport exportCanonicalDeclarator(
 			type = node.child;
 			break;
 		case CanonicalTypeKind::Function:
+			// A second function type has no second cold signature to recover.
+			if (saw_function) {
+				result.base = type;
+				result.status = CanonicalTypeImportStatus::UnmigratedCallable;
+				return result;
+			}
+			saw_function = true;
+			result.components.push_back(DeclaratorComponent::function());
+			type = node.child;
+			break;
 		case CanonicalTypeKind::MemberObjectPointer:
 		case CanonicalTypeKind::MemberFunctionPointer:
 			result.base = type;
