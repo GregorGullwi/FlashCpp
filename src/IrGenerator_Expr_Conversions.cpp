@@ -2999,13 +2999,11 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 		return emitFloatNonZeroTest(condition);
 	}
 	// Integer, enum, pointer-like, and other scalar truthiness cases normalize
-	// through != 0 so every contextual-bool consumer receives bool8.
+	// through != 0 so every contextual-bool consumer receives bool8. The value's
+	// IR type already encodes its ABI representation; a member-object pointer is
+	// recognized at its production site, so lowering does not re-infer the
+	// semantic type here.
 	if (condition.category() != TypeCategory::Struct) {
-		if (cond_node.is<ExpressionNode>()) {
-			const CanonicalTypeId type_id = sema_.canonicalExpressionType(cond_node);
-			if (sema_.isMemberObjectPointerType(type_id))
-				condition.ir_type = IrType::MemberObjectPointer;
-		}
 		return emitNonZeroBoolValue(std::move(condition), source_token);
 	}
 	// Note 2026-04-29: the codegen-side struct → bool conversion-operator fallback
