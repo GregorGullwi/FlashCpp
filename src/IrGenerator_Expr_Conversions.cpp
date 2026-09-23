@@ -15,11 +15,48 @@ void markAddressOnlyResult(TempVar result_var, TypeIndex value_type_index, SizeI
 }
 }
 
+ExprResult AstToIr::emitNonZeroBoolValue(ExprResult operand, const Token& source_token) {
+	const bool use_integer_pointer_rep =
+		operand.pointer_depth.is_pointer() ||
+		operand.effectiveIrType() == IrType::FunctionPointer ||
+		operand.effectiveIrType() == IrType::MemberFunctionPointer ||
+		operand.effectiveIrType() == IrType::MemberObjectPointer ||
+		operand.effectiveIrType() == IrType::Nullptr;
+
+	TypedValue lhs = use_integer_pointer_rep
+		? makeTypedValue(TypeCategory::UnsignedLongLong, operand.size_in_bits, toIrValue(operand.value))
+		: toTypedValue(operand);
+	TypedValue rhs = use_integer_pointer_rep
+		? makeTypedValue(TypeCategory::UnsignedLongLong, operand.size_in_bits, 0ULL)
+		: makeTypedValue(operand.typeEnum(), operand.size_in_bits, 0ULL);
+
+	TempVar result_var = var_counter.next();
+	BinaryOp bin_op{
+		.lhs = lhs,
+		.rhs = rhs,
+		.result = result_var,
+	};
+	ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), source_token));
+	return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+}
+
 ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token) {
 		// Pointer values are always 64-bit addresses on x64. Numeric type conversion
 		// must never change their size (e.g. truncate 64→32). Only update the type
 		// metadata if needed; the value representation stays the same.
 	if (operands.pointer_depth.value > 0) {
+		// C++20 [conv.bool]: a pointer prvalue converts to bool by testing the
+		// address against zero. Re-tagging the pointer would pass a 64-bit value
+		// where the callee reads a bool8 (correct only when the low byte happens
+		// to be non-zero). Pointer-to-member is excluded: its null value is
+		// ABI-defined (-1 for data members on Itanium), not zero.
+		const IrType pointer_ir_type = operands.effectiveIrType();
+		const bool is_member_pointer =
+			pointer_ir_type == IrType::MemberFunctionPointer ||
+			pointer_ir_type == IrType::MemberObjectPointer;
+		if (toType == TypeCategory::Bool && !is_member_pointer) {
+			return emitNonZeroBoolValue(operands, source_token);
+		}
 		if (operands.category() == toType) {
 			return operands;
 		}
@@ -2839,31 +2876,6 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 		return condition;
 	}
 
-	auto emitNonZeroBoolTest = [&](ExprResult cond) -> ExprResult {
-		const bool use_integer_pointer_rep =
-			cond.pointer_depth.is_pointer() ||
-			cond.effectiveIrType() == IrType::FunctionPointer ||
-			cond.effectiveIrType() == IrType::MemberFunctionPointer ||
-			cond.effectiveIrType() == IrType::MemberObjectPointer ||
-			cond.effectiveIrType() == IrType::Nullptr;
-
-		TypedValue lhs = use_integer_pointer_rep
-			? makeTypedValue(TypeCategory::UnsignedLongLong, cond.size_in_bits, toIrValue(cond.value))
-			: toTypedValue(cond);
-		TypedValue rhs = use_integer_pointer_rep
-			? makeTypedValue(TypeCategory::UnsignedLongLong, cond.size_in_bits, 0ULL)
-			: makeTypedValue(cond.typeEnum(), cond.size_in_bits, 0ULL);
-
-		TempVar result_var = var_counter.next();
-		BinaryOp bin_op{
-			.lhs = lhs,
-			.rhs = rhs,
-			.result = result_var,
-		};
-		ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), source_token));
-		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
-	};
-
 	auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
 		// Materialize a 0.0 constant with the same float type as the condition.
 		// The caller guarantees cond.typeEnum() is Float or Double.
@@ -2899,7 +2911,7 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 			// full-width scalar as an already-materialized bool.
 			if (cast_info.cast_kind == StandardConversionKind::BooleanConversion ||
 				cast_info.cast_kind == StandardConversionKind::PointerConversion) {
-				return emitNonZeroBoolTest(condition);
+				return emitNonZeroBoolValue(std::move(condition), source_token);
 			}
 				// Phase 23: Struct → bool via user-defined operator bool().
 				// Sema annotates as UserDefined; call emitConversionOperatorCall.
@@ -2934,7 +2946,7 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 	// Integer, enum, pointer-like, and other scalar truthiness cases normalize
 	// through != 0 so every contextual-bool consumer receives bool8.
 	if (condition.category() != TypeCategory::Struct) {
-		return emitNonZeroBoolTest(condition);
+		return emitNonZeroBoolValue(std::move(condition), source_token);
 	}
 	// Note 2026-04-29: the codegen-side struct → bool conversion-operator fallback
 	// previously located here was probed across the full 2243-test corpus with a

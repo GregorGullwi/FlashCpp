@@ -330,6 +330,10 @@ private:
 											ExpressionContext context);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
 	ExprResult generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token);
+	// Materialize a normalized bool8 prvalue from an integer/pointer-like value
+	// by testing it against zero (C++20 [conv.bool]). Shared by the contextual
+	// bool path and by pointer/array-to-bool standard conversions.
+	ExprResult emitNonZeroBoolValue(ExprResult operand, const Token& source_token);
 	// Apply sema-annotated contextual bool conversion to a condition expression.
 	// If the sema pass annotated the condition with BooleanConversion (e.g. float→bool),
 	// emit the proper type conversion.  Falls back to a local conversion for

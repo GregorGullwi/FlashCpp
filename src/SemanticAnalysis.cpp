@@ -8129,6 +8129,35 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	if (from_desc.category() == to_desc.category())
 		return false;
 
+	// C++20 [conv.bool]: an object pointer or function pointer prvalue converts
+	// to bool, and an array lvalue reaches bool through [conv.array] decay
+	// first. Codegen tests the decoded address against zero; this must not fall
+	// through to the pointer/array rejection guards below. std::nullptr_t is not
+	// a [conv.bool] source, and pointer-to-member is excluded because its null
+	// value is ABI-defined (-1 for data members on Itanium), not zero.
+	const bool boolean_target =
+		to_desc.category() == TypeCategory::Bool &&
+		to_desc.pointer_levels.empty() && to_desc.array_dimensions.empty();
+	const bool boolean_convertible_source =
+		!from_desc.pointer_levels.empty() ||
+		!from_desc.array_dimensions.empty() ||
+		from_desc.category() == TypeCategory::FunctionPointer;
+	if (boolean_target && boolean_convertible_source) {
+		ImplicitCastInfo cast_info;
+		cast_info.source_type_id = expr_type_id;
+		cast_info.target_type_id = target_type_id;
+		cast_info.cast_kind = StandardConversionKind::BooleanConversion;
+		cast_info.value_category_after = ValueCategory::PRValue;
+		const CastInfoIndex idx = allocateCastInfo(cast_info);
+		SemanticSlot slot;
+		slot.type_id = target_type_id;
+		slot.cast_info_index = idx;
+		slot.value_category = ValueCategory::PRValue;
+		setSlot(getExpressionKey(expr_node), slot);
+		stats_.slots_filled++;
+		return true;
+	}
+
 	// Bail out if either side is not a plain primitive scalar (or enum/struct source).
 	// Enum source types are allowed: C++20 permits implicit enum->primitive conversions
 	// (integral promotion, integral/floating conversion, boolean conversion).

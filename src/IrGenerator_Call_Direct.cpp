@@ -1454,6 +1454,25 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						arg_type_index = argumentIrOperands.type_index;
 						return true;
 					}
+					if (cast_info.cast_kind == StandardConversionKind::BooleanConversion &&
+						param_type != nullptr &&
+						param_type->category() == TypeCategory::Bool &&
+						param_type->pointer_depth() == 0) {
+						// C++20 [conv.bool]: materialize a real bool8 from the
+						// pointer/array address. The source category may be Struct
+						// for an object pointer, so this must not fall through to
+						// the struct user-defined arm.
+						const TypeCategory source_type =
+							sema_.typeContext().get(cast_info.source_type_id).category();
+						argumentIrOperands = generateTypeConversion(
+							argumentIrOperands,
+							source_type,
+							TypeCategory::Bool,
+							callExprNode.called_from());
+						arg_type = argumentIrOperands.typeEnum();
+						arg_type_index = argumentIrOperands.type_index;
+						return true;
+					}
 					TypeCategory from_type =
 						sema_.typeContext().get(cast_info.source_type_id).category();
 					const TypeCategory to_type =
