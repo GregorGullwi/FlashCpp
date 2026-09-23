@@ -1050,7 +1050,9 @@ inline CanonicalDeclaratorExport exportCanonicalDeclarator(
 		const CanonicalTypeNode node = table.node(type);
 		if (node.kind == CanonicalTypeKind::Qualified) {
 			const CanonicalTypeNode child = table.node(node.child);
-			if (child.kind != CanonicalTypeKind::Pointer) {
+			if (child.kind != CanonicalTypeKind::Pointer &&
+				child.kind != CanonicalTypeKind::MemberObjectPointer &&
+				child.kind != CanonicalTypeKind::MemberFunctionPointer) {
 				result.base = type;
 				return result;
 			}
@@ -1093,11 +1095,35 @@ inline CanonicalDeclaratorExport exportCanonicalDeclarator(
 			result.components.push_back(DeclaratorComponent::function());
 			type = node.child;
 			break;
-		case CanonicalTypeKind::MemberObjectPointer:
-		case CanonicalTypeKind::MemberFunctionPointer:
-			result.base = type;
-			result.status = CanonicalTypeImportStatus::UnmigratedCallable;
+		case CanonicalTypeKind::MemberObjectPointer: {
+			const EntityId owner = table.recordEntity(table.memberPointerOwner(type));
+			if (!owner) {
+				result.base = type;
+				result.status = CanonicalTypeImportStatus::UnmigratedCallable;
+				return result;
+			}
+			result.components.push_back(
+				DeclaratorComponent::memberPointer(owner, false, pending_pointer_cv));
+			pending_pointer_cv = CVQualifier::None;
+			type = node.child;
+			break;
+		}
+		case CanonicalTypeKind::MemberFunctionPointer: {
+			const EntityId owner = table.recordEntity(table.memberPointerOwner(type));
+			if (!owner) {
+				result.base = type;
+				result.status = CanonicalTypeImportStatus::UnmigratedCallable;
+				return result;
+			}
+			result.components.push_back(
+				DeclaratorComponent::memberPointer(owner, true, pending_pointer_cv));
+			pending_pointer_cv = CVQualifier::None;
+			// The function payload is carried out-of-band by
+			// CanonicalTypeDesc::function_signature; stop at the function type so
+			// no extra Function component is emitted.
+			result.base = node.child;
 			return result;
+		}
 		default:
 			result.base = type;
 			return result;

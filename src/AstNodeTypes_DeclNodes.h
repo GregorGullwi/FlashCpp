@@ -2072,15 +2072,21 @@ public:
 	bool is_function_pointer() const { return type_index_.category() == TypeCategory::FunctionPointer; }
 	bool is_member_function_pointer() const { return type_index_.category() == TypeCategory::MemberFunctionPointer; }
 	bool is_member_object_pointer() const { return type_index_.category() == TypeCategory::MemberObjectPointer; }
-	// Pointer-to-data-member in either representation: the MemberObjectPointer
-	// category (cast/NTTP forms) or the flat declarator projection, where the
-	// pointee category, a single pointer level, and a member class stand in for
-	// the lost `Class::*` shape.
+	// Pointer-to-data-member in any representation: the MemberObjectPointer
+	// category (cast/NTTP forms), the flat declarator projection (pointee
+	// category, a single pointer level, and a member class), or an ordered
+	// declarator whose outermost component is the member pointer.
 	bool is_member_object_pointer_type() const {
-		return type_index_.category() == TypeCategory::MemberObjectPointer ||
-			(has_member_class() &&
-			 type_index_.category() != TypeCategory::MemberFunctionPointer &&
-			 runtime_pointer_depth() == 1);
+		if (type_index_.category() == TypeCategory::MemberObjectPointer) {
+			return true;
+		}
+		if (has_ordered_declarator() && !declarator_components_.empty()) {
+			return declarator_components_.front().kind ==
+				DeclaratorComponentKind::MemberObjectPointer;
+		}
+		return has_member_class() &&
+			type_index_.category() != TypeCategory::MemberFunctionPointer &&
+			runtime_pointer_depth() == 1;
 	}
 	void clear_function_signature() { function_signature_.reset(); }
 	void set_function_signature(const FunctionSignature& sig) {
