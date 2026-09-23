@@ -1119,8 +1119,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 
 // Bounded ordered-declarator conversion path: a null pointer constant to an
 // ordered pointer, array-to-pointer decay, an ordered object pointer to
-// `cv void*`, and same-shape qualification conversions. Function decay,
-// derived-to-base, ordered reference binding, and callable-component
+// `cv void*`, array-to-pointer followed by a boolean conversion, an ordered
+// pointer object to `bool`, and same-shape qualification conversions. Function
+// decay, derived-to-base, ordered reference binding, and callable-component
 // conversions stay deferred and fail closed instead of reaching the flat
 // projection guard.
 inline ConversionPlan buildOrderedDeclaratorConversionPlan(
@@ -1148,6 +1149,22 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 			return ConversionPlan::no_match();
 		}
 		return {plan.rank, StandardConversionKind::ArrayToPointer, true};
+	}
+	// C++20 [conv.bool]: a non-projectable pointer object converts to bool, and
+	// an array object reaches bool through [conv.array] decay first. The decoded
+	// address is tested against zero by the boolean conversion.
+	if (to.category() == TypeCategory::Bool && !to.is_reference() &&
+		to.pointer_depth() == 0 && !to.has_ordered_declarator() &&
+		to.array_dimensions().empty()) {
+		TypeSpecifierNode converted_from = from_value;
+		if (orderedDeclaratorIsArrayObject(converted_from)) {
+			decayOrderedArrayToPointer(converted_from);
+		}
+		if (orderedDeclaratorIsPointerObject(converted_from)) {
+			return {ConversionRank::Conversion,
+				StandardConversionKind::BooleanConversion, true};
+		}
+		return ConversionPlan::no_match();
 	}
 	if (!from_value.has_ordered_declarator()) {
 		return ConversionPlan::no_match();

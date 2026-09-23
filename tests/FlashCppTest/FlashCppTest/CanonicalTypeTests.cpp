@@ -68,6 +68,41 @@ TEST_CASE("Ordered declarator array conversion preserves the element spine") {
 	CHECK_FALSE(buildConversionPlan(source, mismatched).is_valid);
 }
 
+TEST_CASE("Ordered pointer and array conversions reach bool") {
+	TypeSpecifierNode bool_target(
+		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+
+	TypeSpecifierNode array_object(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	array_object.set_ordered_declarator({
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	const ConversionPlan array_plan = buildConversionPlan(array_object, bool_target);
+	CHECK(array_plan.is_valid);
+	CHECK(array_plan.kind == StandardConversionKind::BooleanConversion);
+
+	TypeSpecifierNode pointer_object(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_object.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	const ConversionPlan pointer_plan = buildConversionPlan(pointer_object, bool_target);
+	CHECK(pointer_plan.is_valid);
+	CHECK(pointer_plan.kind == StandardConversionKind::BooleanConversion);
+
+	TypeSpecifierNode member_object(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	member_object.set_ordered_declarator({
+		DeclaratorComponent::memberPointer(EntityId{}, false, CVQualifier::None),
+	});
+	CHECK_FALSE(buildConversionPlan(member_object, bool_target).is_valid);
+}
+
 TEST_CASE("Semantic peak excludes nonoverlapping allocations") {
 	FrontendContext context;
 	auto& builder = context.declarationBuilder();
