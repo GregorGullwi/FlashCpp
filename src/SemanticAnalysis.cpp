@@ -5211,6 +5211,23 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 				"semantic canonicalization rejected ordered declarator");
 		}
 		desc.structural_type_id = imported.type;
+		// [dcl.ptr]/1: a pointer whose immediate pointee is an array designates
+		// that array object. Publish the same flat flag the projectable
+		// pointer-to-array form already carries, so dereference lowering does
+		// not walk the syntax spine.
+		CanonicalTypeNode outer = canonical_types.node(imported.type);
+		if (outer.kind == CanonicalTypeKind::Qualified && outer.child) {
+			outer = canonical_types.node(outer.child);
+		}
+		if (outer.kind == CanonicalTypeKind::Pointer && outer.child) {
+			CanonicalTypeNode pointee = canonical_types.node(outer.child);
+			if (pointee.kind == CanonicalTypeKind::Qualified && pointee.child) {
+				pointee = canonical_types.node(pointee.child);
+			}
+			if (pointee.kind == CanonicalTypeKind::Array) {
+				desc.pointee_array_declarator = true;
+			}
+		}
 	}
 
 	// C++20 [temp.local]: inside a class template (and members of its
