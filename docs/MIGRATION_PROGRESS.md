@@ -722,6 +722,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Owner-capturing and nested member aliases | `checkMemberAliasOwnerEnvironmentFailClosed`, `checkMemberAliasOwnerNestedTarget`, `test_canonical_member_alias_nested_target_ret42` |
 | Alias `<` disambiguation | `test_canonical_gate_alias_arm_dependent_member_ret0`, `test_less_in_base_class_ret0` |
 | Namespace/global alias identity | `Namespace and global alias templates publish declaration identity` doctest |
+| Direct builtin alias defaults | `alias_defaulted_value_init_ret42`, `alias_default_nested_depth_ret42` |
 | Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
 | Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |
@@ -896,8 +897,13 @@ must not increase an implementation percentage.
   `RecursiveAliasTemplateInstantiation` (1814), each covered by an exact-ID
   negative test. Alias uses with too few required or too many fixed arguments
   report `AliasTemplateArityMismatch` (1815); defaults and packs are accepted.
-  TODO: investigate value initialization through a defaulted alias (`J<> z = 42`),
-  which compiles but currently yields an incorrect runtime value.
+  Direct builtin type defaults on namespace/global alias uses now bind before
+  concrete alias materialization, so `J<> z = 42` preserves the `int` target
+  and value for both unqualified and global-qualified uses. The binding checks
+  the default through `CanonicalTypeTable` and leaves compound or dependent
+  defaults for a separate substitution slice. A record default such as
+  `template<class T = Box> using S = T; S<> box{2};` still reaches lowering
+  with a `T` placeholder and fails internally; see [known issues](KNOWN_ISSUES.md).
   Indirect alias recursion is bounded by a logical-depth guard on
   alias materialization that reports `AliasInstantiationDepthExceeded` (3002)
   rather than overflowing the native stack. Latest architecture validation: the

@@ -34,6 +34,40 @@ AliasTemplateArity aliasTemplateArity(const TemplateParameterVector& parameters)
 	return arity;
 }
 
+// Bind direct builtin defaults before a direct alias target is materialized.
+// Compound and dependent defaults need their own substitution path.
+void appendBuiltinAliasTypeDefaults(
+	CanonicalTypeTable& table,
+	const TemplateAliasNode& alias,
+	TemplateArgumentVector& arguments) {
+	const TemplateParameterVector& parameters = alias.template_parameters();
+	if (arguments.size() >= parameters.size()) {
+		return;
+	}
+	const size_t first_default = arguments.size();
+	for (size_t index = arguments.size(); index < parameters.size(); ++index) {
+		const TemplateParameterNode& parameter = parameters[index];
+		if (parameter.is_variadic() || parameter.kind() != TemplateParameterKind::Type ||
+			!parameter.has_default() || !parameter.default_value().is<TypeSpecifierNode>()) {
+			return;
+		}
+		const TypeSpecifierNode& default_type =
+			parameter.default_value().as<TypeSpecifierNode>();
+		const CanonicalTypeImport imported = importCanonicalType(table, default_type);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return;
+		}
+		const CanonicalTypeKind kind = table.node(imported.type).kind;
+		if (kind != CanonicalTypeKind::Builtin) {
+			return;
+		}
+	}
+	for (size_t index = first_default; index < parameters.size(); ++index) {
+		arguments.emplace_back(
+			parameters[index].default_value().as<TypeSpecifierNode>());
+	}
+}
+
 struct DependentMemberSegmentInfo {
 	bool has_template_keyword = false;
 	std::optional<TemplateArgInfoVector> template_args;
@@ -1339,6 +1373,10 @@ ParseResult Parser::parse_type_specifier() {
 							"Alias template '{}' expects {} to {} arguments, got {}",
 							type_name, arity.required, arity.fixed, template_args->size());
 					}
+					appendBuiltinAliasTypeDefaults(
+						requireFrontendContext().canonicalTypes(),
+						alias_template_opt->as<TemplateAliasNode>(),
+						*template_args);
 					AliasTemplateMaterializationResult materialized_alias =
 						materializeAliasTemplateInstantiation(type_name, *template_args);
 					const TypeInfo* resolved_type_info = nullptr;
@@ -2198,6 +2236,8 @@ ParseResult Parser::parse_type_specifier() {
 							"Alias template '{}' expects {} to {} arguments, got {}",
 							type_name, arity.required, arity.fixed, template_args->size());
 					}
+					appendBuiltinAliasTypeDefaults(
+						requireFrontendContext().canonicalTypes(), alias_node, *template_args);
 					const TypeSpecifierNode& alias_target_type_spec = alias_node.target_type_node();
 					const bool alias_target_preserves_surface =
 						alias_target_type_spec.cv_qualifier() != CVQualifier::None ||

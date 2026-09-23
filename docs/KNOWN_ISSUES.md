@@ -1,5 +1,14 @@
 # Known Issues
 
+## Record defaults on alias templates retain a placeholder
+
+`struct Box { int value; }; template<class T = Box> using S = T;` followed by
+`S<> box{2};` compiles the alias use but reaches IR generation with the
+unresolved `T` placeholder. The compiler reports `struct type info not found`
+instead of materializing the `Box` object. A separate boundary-3A alias
+substitution slice must bind record and other compound defaults through
+canonical `TypeId` before declaration storage is selected.
+
 ## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
 
 A namespace/global function-template body that declares a local class and is
