@@ -1440,11 +1440,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					}
 					const ImplicitCastInfo& cast_info =
 						sema_.castInfoTable()[slot.cast_info_index.value - 1];
-					if (cast_info.cast_kind == StandardConversionKind::ArrayToPointer &&
-						sema_.typeContext().get(cast_info.source_type_id).structural_type_id) {
-						// Projectable arrays stay on the identifier argument path.
-						// An ordered array lvalue from a pointer-to-array
-						// dereference already holds the decayed pointer address.
+					if (cast_info.cast_kind == StandardConversionKind::ArrayToPointer) {
+						// An array identifier is lowered by the direct-argument
+						// path. A pointer-to-array dereference already holds the
+						// array address, so decay is that address used as a pointer.
 						if (argumentIrOperands.storage != ValueStorage::ContainsAddress) {
 							return false;
 						}

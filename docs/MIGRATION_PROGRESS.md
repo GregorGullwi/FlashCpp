@@ -31,8 +31,12 @@ void's cv; a const inner pointer therefore reaches `const void*` but not
 type ([conv.array]): overload resolution replaces the outermost array wrapper
 with an unqualified pointer and re-enters the ordered plan, argument typing
 peels an ordered pointer so the array object is the conversion source, and
-the dereference of a pointer whose pointee is an ordered array copies the
-pointer value instead of loading through it. Function decay, derived-to-base,
+canonicalization publishes `pointee_array_declarator` when that pointer's
+immediate pointee is an array, and the existing dereference lowering reads
+that flag instead of the syntax spine. A call argument whose value is already
+that address uses one `ArrayToPointer` lowering for both projectable and
+ordered pointer-to-array dereferences; an array identifier stays on the
+direct-argument path. Function decay, derived-to-base,
 ordered reference binding, and callable-component conversion stay deferred and
 fail closed as an ordinary no-match instead of aborting compilation. Ordered pointer objects
 now lower as pointer-sized values: `TypeSpecifierNode::runtime_pointer_depth`
