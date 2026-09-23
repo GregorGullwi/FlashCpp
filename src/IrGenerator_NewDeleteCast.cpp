@@ -878,10 +878,9 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	TypeCategory source_type = expr_operands.typeEnum();
 	int source_size = expr_operands.size_in_bits.value;
 	TypeIndex source_type_index = expr_operands.type_index;
-	if (const CanonicalTypeId source_id = sema_.canonicalExpressionType(staticCastNode.expr());
-		sema_.isMemberObjectPointerType(source_id)) {
-		expr_operands.ir_type = IrType::MemberObjectPointer;
-	}
+	// The operand's IR type already carries its ABI representation, so a
+	// member-pointer source is tested against its null sentinel without
+	// re-inferring the semantic type here.
 	if (target_type == TypeCategory::Bool &&
 		(expr_operands.effectiveIrType() == IrType::MemberObjectPointer ||
 		 expr_operands.effectiveIrType() == IrType::MemberFunctionPointer)) {

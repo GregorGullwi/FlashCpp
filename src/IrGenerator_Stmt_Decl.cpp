@@ -1422,8 +1422,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		ExprResult result = visitExpressionNode(
 			initializer,
 			binds_reference ? ExpressionContext::LValueAddress : ExpressionContext::Load);
-		if ((type_node.category() == TypeCategory::MemberObjectPointer ||
-			 (type_node.has_member_class() && type_node.runtime_pointer_depth() == 1)) &&
+		if (type_node.is_member_object_pointer_type() &&
 			result.category() == TypeCategory::Nullptr) {
 			result = generateTypeConversion(result, TypeCategory::Nullptr,
 				TypeCategory::MemberObjectPointer, decl.identifier_token());
@@ -1555,7 +1554,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = decl.is_array_object();
-				if (type_node.category() == TypeCategory::MemberObjectPointer &&
+				if (type_node.is_member_object_pointer_type() &&
 					init_list.initializers().empty()) {
 					decl_op.initializer = makeTypedValue(
 						TypeCategory::MemberObjectPointer, SizeInBits{64}, ~0ULL);

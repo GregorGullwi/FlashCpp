@@ -442,9 +442,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			std::move(value),
 			carries_type_index ? type_node.type_index() : TypeIndex{},
 			pointer_depth);
-		if (type_node.has_member_class() &&
-			type_node.category() != TypeCategory::MemberFunctionPointer &&
-			type_node.runtime_pointer_depth() == 1) {
+		if (type_node.is_member_object_pointer_type()) {
 			result.ir_type = IrType::MemberObjectPointer;
 		}
 		return result;
@@ -1491,7 +1489,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
 				// - Otherwise return 0
-			return makeIdentifierResult(
+			ExprResult result = makeIdentifierResult(
 				result_type,
 				size_bits,
 				StringTable::getOrInternStringHandle(identifierNode.name()),
@@ -1501,6 +1499,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				PointerDepth{isIrStructType(toIrType(result_type))
 								 ? 0
 								 : static_cast<int>(type_node.runtime_pointer_depth())});
+			if (type_node.is_member_object_pointer_type()) {
+				result.ir_type = IrType::MemberObjectPointer;
+			}
+			return result;
 		}
 	}
 
