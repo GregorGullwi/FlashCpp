@@ -209,6 +209,10 @@ public:
 	// Public bridge for codegen/helper paths that need the same canonical type
 	// identity as sema while keeping the primary canonicalizeType helper private.
 	CanonicalTypeId canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type);
+	CanonicalTypeId canonicalExpressionType(const ASTNode& node) {
+		return inferExpressionType(node);
+	}
+	bool isMemberObjectPointerType(CanonicalTypeId type_id) const;
 	// Build the type/category view used specifically for overload-resolution arguments.
 	// Unlike getExpressionType(), this preserves overload-sensitive lvalue/xvalue details
 	// such as prvalue member access becoming an xvalue.
@@ -298,6 +302,7 @@ public:
 		enum class Kind : uint8_t {
 			Symbol,
 			StaticMember,
+			NonStaticDataMember,
 			EnumConstant,
 		};
 
@@ -310,6 +315,7 @@ public:
 		unsigned long long constant_value = 0;
 		bool is_global = false;
 		TypeIndex enum_owner_type_index{};  // For EnumConstant kind: TypeIndex of the owning enum type
+		TypeIndex member_owner_type_index{};
 	};
 	struct MemberContext {
 		TypeIndex type_index{};
@@ -606,7 +612,7 @@ private:
 	bool tryResolveMemberAccessInfo(const MemberAccessNode& member_access,
 								   ResolvedMemberAccessInfo& out_info);
 	std::optional<ResolvedIdentifierMemberInfo> tryResolveIdentifierMember(const IdentifierNode& identifier) const;
-	std::optional<ResolvedQualifiedIdentifierInfo> tryResolveQualifiedIdentifier(const QualifiedIdentifierNode& qualified_identifier);
+	std::optional<ResolvedQualifiedIdentifierInfo> tryResolveQualifiedIdentifier(const QualifiedIdentifierNode& qualified_identifier, bool allow_nonstatic_data_member);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);

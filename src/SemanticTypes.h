@@ -124,6 +124,7 @@ struct CanonicalTypeDesc {
 	// Bridge identity for declarator shapes that cannot be projected into the
 	// legacy pointer/array fields. Zero means the descriptor is wholly legacy.
 	TypeId structural_type_id{};
+	EntityId member_pointer_owner{}; // Published owner of a flat data-member-pointer declarator
 	std::optional<FunctionSignature> function_signature;
 
 	bool operator==(const CanonicalTypeDesc& other) const;
@@ -157,6 +158,7 @@ struct hash<CanonicalTypeDesc> {
 		h = combine(h, static_cast<size_t>(d.pointee_array_declarator));
 		h = combine(h, static_cast<size_t>(d.flags));
 		h = combine(h, d.structural_type_id.value);
+		h = combine(h, d.member_pointer_owner.value);
 		if (d.function_signature) {
 			h = combine(
 				h,

@@ -1090,6 +1090,8 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 		return false;
 	if (structural_type_id != other.structural_type_id)
 		return false;
+	if (member_pointer_owner != other.member_pointer_owner)
+		return false;
 	if (pointer_levels.size() != other.pointer_levels.size())
 		return false;
 	for (size_t i = 0; i < pointer_levels.size(); ++i) {
@@ -5055,7 +5057,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					resolved_identifier_member_table_.erase(&e);
 				}
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
-				if (auto resolved = tryResolveQualifiedIdentifier(e); resolved.has_value()) {
+				if (auto resolved = tryResolveQualifiedIdentifier(e, false); resolved.has_value()) {
 					resolved_qualified_identifier_table_[&e] = *resolved;
 					if (resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
 						SemanticSlot slot = getSlot(static_cast<const void*>(&expr)).value_or(SemanticSlot{});
@@ -5267,6 +5269,13 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			}
 		}
 	}
+	if (!type.has_ordered_declarator() && type.has_member_class() &&
+		type.category() != TypeCategory::MemberFunctionPointer &&
+		type.runtime_pointer_depth() == 1) {
+		TypeSpecifierNode syntax = type;
+		tryBindPublishedMemberClassEntity(syntax);
+		desc.member_pointer_owner = syntax.member_class_entity();
+	}
 
 	// C++20 [temp.local]: inside a class template (and members of its
 	// specializations), the injected-class-name denotes the current
@@ -5318,6 +5327,23 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 
 CanonicalTypeId SemanticAnalysis::canonicalizeTypeForImplicitConversion(const TypeSpecifierNode& type) {
 	return canonicalizeType(type);
+}
+
+bool SemanticAnalysis::isMemberObjectPointerType(CanonicalTypeId type_id) const {
+	if (!type_id)
+		return false;
+	const CanonicalTypeDesc& desc = type_context_.get(type_id);
+	if (desc.category() == TypeCategory::MemberObjectPointer)
+		return true;
+	if (desc.member_pointer_owner)
+		return true;
+	if (!desc.structural_type_id)
+		return false;
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeNode node = table.node(desc.structural_type_id);
+	while (node.kind == CanonicalTypeKind::Qualified && node.child)
+		node = table.node(node.child);
+	return node.kind == CanonicalTypeKind::MemberObjectPointer;
 }
 
 std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
@@ -6055,7 +6081,7 @@ std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::
 }
 
 std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysis::tryResolveQualifiedIdentifier(
-	const QualifiedIdentifierNode& qualified_identifier) {
+	const QualifiedIdentifierNode& qualified_identifier, bool allow_nonstatic_data_member) {
 	const NamespaceHandle ns_handle = qualified_identifier.namespace_handle();
 	const StringHandle name_handle = qualified_identifier.nameHandle();
 
@@ -6212,6 +6238,22 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 								.commit());
 						resolved.type = typeSpecifierFromStaticMember(*static_member, qualified_identifier.identifier_token());
 						return resolved;
+					}
+					if (allow_nonstatic_data_member) {
+						if (auto member = FlashCpp::gLazyMemberResolver.resolve(
+								owner_type_info->registeredTypeIndex(), name_handle)) {
+							ResolvedQualifiedIdentifierInfo resolved;
+							resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember;
+							resolved.member_owner_type_index = owner_type_info->registeredTypeIndex();
+							resolved.type = TypeSpecifierNode(
+								member.member->type_index.withCategory(member.member->memberType()),
+								SizeInBits{static_cast<int>(member.member->size * 8)},
+								qualified_identifier.identifier_token(),
+								CVQualifier::None,
+								member.member->reference_qualifier);
+							resolved.type.add_pointer_levels(member.member->pointer_depth);
+							return resolved;
+						}
 					}
 					for (TypeIndex nested_enum_index : struct_info->getNestedEnumIndices()) {
 						const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
@@ -6907,6 +6949,31 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							return {};
 						}
 					}
+					if (e.get_operand().is<ExpressionNode>()) {
+						const ExpressionNode& operand_expr = e.get_operand().as<ExpressionNode>();
+						if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&operand_expr)) {
+							// A qualified-id naming a non-static data member is only
+							// valid here as the operand of `&`, so ask the resolver to
+							// consider data members instead of trusting the cached
+							// value resolution (which classifies `S::member` as a
+							// generic symbol and would hide the member-pointer type).
+							auto resolved = tryResolveQualifiedIdentifier(*qualified, true);
+							if (resolved.has_value() &&
+								resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember) {
+								const TypeInfo* owner = tryGetTypeInfo(resolved->member_owner_type_index);
+								if (!owner)
+									return {};
+								TypeSpecifierNode member_pointer(
+									nativeTypeIndex(TypeCategory::MemberObjectPointer), SizeInBits{64},
+									qualified->identifier_token(), CVQualifier::None,
+									ReferenceQualifier::None);
+								member_pointer.set_member_class_name(owner->name());
+								tryBindPublishedMemberClassEntity(member_pointer);
+								member_pointer.set_member_object_pointee(&resolved->type);
+								return canonicalizeType(member_pointer);
+							}
+						}
+					}
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
 					if (!operand_id)
 						return {};
@@ -7284,7 +7351,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				auto resolved = getResolvedQualifiedIdentifier(&e);
 				if (!resolved.has_value()) {
-					resolved = tryResolveQualifiedIdentifier(e);
+					resolved = tryResolveQualifiedIdentifier(e, false);
 				}
 				if (resolved.has_value()) {
 					switch (resolved->kind) {
@@ -7935,8 +8002,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
 	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member
-	// pointer type. The null value is already represented as zero in the IR, so
-	// sema only needs to preserve the target pointer type for codegen.
+	// pointer type. Lowering selects the target representation of the null value.
 	if ((from_desc.category() == TypeCategory::Nullptr ||
 		 isIntegerLiteralZeroNullPointerConstant(expr_node)) &&
 		(!to_desc.pointer_levels.empty() ||
@@ -8195,17 +8261,17 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 
 	// C++20 [conv.bool]: an object pointer or function pointer prvalue converts
 	// to bool, and an array lvalue reaches bool through [conv.array] decay
-	// first. Codegen tests the decoded address against zero; this must not fall
-	// through to the pointer/array rejection guards below. std::nullptr_t is not
-	// a [conv.bool] source, and pointer-to-member is excluded because its null
-	// value is ABI-defined (-1 for data members on Itanium), not zero.
+	// first. The target representation determines the null comparison. nullptr_t
+	// itself is not a [conv.bool] source.
 	const bool boolean_target =
 		to_desc.category() == TypeCategory::Bool &&
 		to_desc.pointer_levels.empty() && to_desc.array_dimensions.empty();
 	const bool boolean_convertible_source =
 		!from_desc.pointer_levels.empty() ||
 		!from_desc.array_dimensions.empty() ||
-		from_desc.category() == TypeCategory::FunctionPointer;
+		from_desc.category() == TypeCategory::FunctionPointer ||
+		isMemberObjectPointerType(expr_type_id) ||
+		from_desc.category() == TypeCategory::MemberFunctionPointer;
 	if (boolean_target && boolean_convertible_source) {
 		ImplicitCastInfo cast_info;
 		cast_info.source_type_id = expr_type_id;
@@ -9104,7 +9170,9 @@ void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
 		return;
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const bool is_enum = (from_desc.category() == TypeCategory::Enum);
-	const bool is_pointer = !from_desc.pointer_levels.empty();
+	const bool is_pointer = !from_desc.pointer_levels.empty() ||
+		isMemberObjectPointerType(expr_type_id) ||
+		from_desc.category() == TypeCategory::MemberFunctionPointer;
 	if (!is_enum && !is_pointer)
 		return;
 

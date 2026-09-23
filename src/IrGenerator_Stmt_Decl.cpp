@@ -1422,6 +1422,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		ExprResult result = visitExpressionNode(
 			initializer,
 			binds_reference ? ExpressionContext::LValueAddress : ExpressionContext::Load);
+		if ((type_node.category() == TypeCategory::MemberObjectPointer ||
+			 (type_node.has_member_class() && type_node.runtime_pointer_depth() == 1)) &&
+			result.category() == TypeCategory::Nullptr) {
+			result = generateTypeConversion(result, TypeCategory::Nullptr,
+				TypeCategory::MemberObjectPointer, decl.identifier_token());
+		}
 		if (binds_reference &&
 			isExprResultLValue(result) &&
 			!exprResultAlreadyHoldsRuntimeAddress(result)) {
@@ -1549,6 +1555,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = decl.is_array_object();
+				if (type_node.category() == TypeCategory::MemberObjectPointer &&
+					init_list.initializers().empty()) {
+					decl_op.initializer = makeTypedValue(
+						TypeCategory::MemberObjectPointer, SizeInBits{64}, ~0ULL);
+				}
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 					// Check if this struct has a constructor
@@ -2179,6 +2190,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const ImplicitCastInfo& bool_init_cast =
 							sema_.castInfoTable()[bool_init_slot->cast_info_index.value - 1];
 						if (bool_init_cast.cast_kind == StandardConversionKind::BooleanConversion) {
+							if (sema_.isMemberObjectPointerType(bool_init_cast.source_type_id))
+								init_operands.ir_type = IrType::MemberObjectPointer;
 							init_operands = generateTypeConversion(
 								init_operands,
 								sema_.typeContext().get(bool_init_cast.source_type_id).category(),

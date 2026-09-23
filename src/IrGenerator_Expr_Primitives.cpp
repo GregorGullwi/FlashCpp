@@ -436,12 +436,18 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		TypeCategory semantic_type = resolve_type_alias(type_node.type_index());
 		const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
 		const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.runtime_pointer_depth()) : 0};
-		return makeIdentifierResult(
+		ExprResult result = makeIdentifierResult(
 			result_type,
 			size_bits,
 			std::move(value),
 			carries_type_index ? type_node.type_index() : TypeIndex{},
 			pointer_depth);
+		if (type_node.has_member_class() &&
+			type_node.category() != TypeCategory::MemberFunctionPointer &&
+			type_node.runtime_pointer_depth() == 1) {
+			result.ir_type = IrType::MemberObjectPointer;
+		}
+		return result;
 	};
 	// Check if this is a captured variable in a lambda.
 	// Explicit captures ([x], [&x]) have binding set at parse time.

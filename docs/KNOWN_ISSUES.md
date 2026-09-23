@@ -120,18 +120,19 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
-## Pointer-to-member-to-bool conversion tests the wrong null value
+## Runtime member-function-pointer address-of is not lowered
 
-C++20 [conv.bool] allows a pointer-to-member prvalue to convert to `bool`, but
-the null pointer-to-member value is ABI-defined (`-1` for data members on
-Itanium), not zero. Object-pointer, function-pointer, and array-to-bool
-conversions now materialize a real `bool` by testing the address against zero
-(`emitNonZeroBoolValue`); pointer-to-member is deliberately left out of that
-path. `bool b = &S::member;` currently compiles but yields a wrong result when
-the member offset is zero. Supporting it requires reading the target ABI's null
-member-pointer representation (or comparing against it) instead of zero; the
-member-pointer adapter and mangler already carry the owner/pointee identity this
-needs.
+`int (S::*p)() = &S::f;` does not materialize the member function's address.
+The unary `&` path only resolves non-static data members through
+`LazyMemberResolver`, so a member function falls through to a generic
+`addressof %f` instruction. `handleAddressOf` then misses `f` in the local
+scope, stubs the target register with zero, and returns without storing the
+result temp, leaving the variable's slot uninitialized. Whether such a pointer
+compares non-null therefore depends on unrelated stack layout. Null
+member-function pointers and their `[conv.bool]` conversions are unaffected;
+only taking the address of a member function (including `bool b = &S::f;`) is.
+A proper fix must emit the member function's address with its mangled name and
+account for virtual member functions.
 
 ## Static-member template initializer replay still re-parses source text
 

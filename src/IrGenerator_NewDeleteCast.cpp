@@ -878,6 +878,15 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	TypeCategory source_type = expr_operands.typeEnum();
 	int source_size = expr_operands.size_in_bits.value;
 	TypeIndex source_type_index = expr_operands.type_index;
+	if (const CanonicalTypeId source_id = sema_.canonicalExpressionType(staticCastNode.expr());
+		sema_.isMemberObjectPointerType(source_id)) {
+		expr_operands.ir_type = IrType::MemberObjectPointer;
+	}
+	if (target_type == TypeCategory::Bool &&
+		(expr_operands.effectiveIrType() == IrType::MemberObjectPointer ||
+		 expr_operands.effectiveIrType() == IrType::MemberFunctionPointer)) {
+		return emitNonZeroBoolValue(expr_operands, staticCastNode.cast_token());
+	}
 	auto source_has_semantic_identity = [&]() {
 		if (!source_type_index.is_valid() || source_type_index.index() >= getTypeInfoCount()) {
 			return false;
