@@ -1673,6 +1673,11 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 							return emitQualifiedGlobalLoad(resolved->type, resolved->type.is_array(), resolved->storage_name);
 						}
 						break;
+					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember:
+						// A non-static data member is only named as a value through
+						// `&Class::member`; the address-of path handles that form, so
+						// a plain qualified-id value has no lowering here.
+						break;
 				}
 			}
 
