@@ -2161,6 +2161,27 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 				}
 
+					// C++20 [conv.array] + [conv.bool]: a projectable array lvalue
+					// initializing bool must contribute its address, not a truncated
+					// element value. Ordered arrays already arrive as their address.
+				if (type_node.category() == TypeCategory::Bool &&
+					!init_operands.pointer_depth.is_pointer() &&
+					init_operands.storage != ValueStorage::ContainsAddress) {
+					const void* init_key = static_cast<const void*>(&init_node.as<ExpressionNode>());
+					const auto init_slot = sema_.getSlot(init_key);
+					if (init_slot.has_value() && init_slot->has_cast()) {
+						const ImplicitCastInfo& bool_cast =
+							sema_.castInfoTable()[init_slot->cast_info_index.value - 1];
+						if (bool_cast.cast_kind == StandardConversionKind::BooleanConversion &&
+							!sema_.typeContext().get(bool_cast.source_type_id).array_dimensions.empty()) {
+							init_operands = materializeAddressResult(
+								init_node.as<ExpressionNode>(),
+								std::move(init_operands),
+								decl.identifier_token());
+						}
+					}
+				}
+
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 				{
