@@ -1825,6 +1825,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		const ImplicitCastInfo& ci = sema_.castInfoTable()[slot->cast_info_index.value - 1];
 		TypeCategory from_t = sema_.typeContext().get(ci.source_type_id).category();
 		const TypeCategory to_t = sema_.typeContext().get(ci.target_type_id).category();
+		// [conv.bool]: the cast kind is authoritative, so a struct-pointer
+		// source (indistinguishable from a struct object by operand metadata)
+		// is still zero-tested instead of falling through the Struct guards.
+		if (ci.cast_kind == StandardConversionKind::BooleanConversion) {
+			expr = generateTypeConversion(
+				expr, from_t, to_t, ci.cast_kind, binaryOperatorNode.get_token());
+			return true;
+		}
 		if (from_t == TypeCategory::Struct || to_t == TypeCategory::Struct)
 			return false;
 		if (expected_cat != TypeCategory::Invalid && to_t != expected_cat)

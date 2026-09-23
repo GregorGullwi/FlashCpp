@@ -357,7 +357,19 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						sema_.castInfoTable()[slot->cast_info_index.value - 1];
 					const TypeCategory annotated_source_type = sema_.typeContext().get(cast_info.source_type_id).category();
 					const TypeCategory to_type = sema_.typeContext().get(cast_info.target_type_id).category();
-					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+					if (cast_info.cast_kind == StandardConversionKind::BooleanConversion) {
+						// [conv.bool]: the cast kind is authoritative, so a
+						// struct-pointer return source (Struct category, like a
+						// struct object) is zero-tested rather than passed to
+						// the struct-without-conversion-operator fallback.
+						operands = generateTypeConversion(
+							operands,
+							annotated_source_type,
+							to_type,
+							cast_info.cast_kind,
+							node.return_token());
+						sema_applied_conversion = true;
+					} else if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 						annotated_source_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 						TypeIndex source_type_idx = sema_.typeContext().get(cast_info.source_type_id).type_index;

@@ -42,16 +42,21 @@ from the structural `TypeId`. Remove the parser peel when overload resolution
 no longer types call arguments in the parser. An array or object/function
 pointer now reaches `bool` through [conv.array] decay where needed followed by
 [conv.bool], for both non-projectable ordered declarators and projectable flat
-types. The plan returns `BooleanConversion`, and `generateTypeConversion`
-routes every non-floating arithmetic/pointer/enum source to the shared
-`emitNonZeroBoolValue`, which tests the value against zero at pointer width
-when the operand is a pointer or a `ValueStorage::ContainsAddress` array
-address. This is the single conversion choke point, so initialization,
-assignment, return, and function arguments materialize a real `bool8` without
-each consumer knowing whether the source is an array; a projectable array
-symbol already carries its address, and an ordered dereference carries
-`ContainsAddress` with the element size, which the zero test sizes to
-`POINTER_SIZE_BITS`. The ordered dereference type previously kept a stale
+types. The plan returns `BooleanConversion`, and `generateTypeConversion` has a
+cast-kind overload whose authority is the sema cast kind: it routes
+`BooleanConversion` to the shared `emitNonZeroBoolValue`, which tests the value
+against zero at pointer width when the operand is a pointer or a
+`ValueStorage::ContainsAddress` array address. The cast kind is required
+because an object pointer is otherwise indistinguishable from a struct object
+in codegen (`Struct` category, `Struct` IR type, pointer depth 0, 64-bit
+size); struct objects with `operator bool` annotate `UserDefined`, never
+`BooleanConversion`. That single conversion choke point, plus the argument,
+initializer, assignment, and return consumers passing their cast kind,
+materializes a real `bool8` without each consumer knowing whether the source is
+an array; a projectable array symbol already carries its address, and an
+ordered dereference carries `ContainsAddress` with the element size, which the
+zero test sizes to `POINTER_SIZE_BITS`. Floating-point sources keep their
+comparison path. The ordered dereference type previously kept a stale
 `pointee_array_declarator` from the pointer operand, which hid the array object
 from [conv.array]; `inferExpressionType` now clears it. Conditional
 expressions apply [expr.cond]/3 array-to-pointer decay to their branches (flat

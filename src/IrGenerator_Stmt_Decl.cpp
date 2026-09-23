@@ -2161,6 +2161,30 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 				}
 
+					// C++20 [conv.bool]: the sema cast kind is authoritative, so
+					// a struct-pointer initializer (Struct category, Struct IR
+					// type, pointer depth 0, exactly like a struct object) is
+					// zero-tested instead of being left to the struct
+					// conversion-operator path. Struct objects with operator
+					// bool annotate UserDefined and are not captured here.
+				if (type_node.category() == TypeCategory::Bool &&
+					init_node.is<ExpressionNode>()) {
+					const void* bool_init_key = static_cast<const void*>(&init_node.as<ExpressionNode>());
+					const auto bool_init_slot = sema_.getSlot(bool_init_key);
+					if (bool_init_slot.has_value() && bool_init_slot->has_cast()) {
+						const ImplicitCastInfo& bool_init_cast =
+							sema_.castInfoTable()[bool_init_slot->cast_info_index.value - 1];
+						if (bool_init_cast.cast_kind == StandardConversionKind::BooleanConversion) {
+							init_operands = generateTypeConversion(
+								init_operands,
+								sema_.typeContext().get(bool_init_cast.source_type_id).category(),
+								TypeCategory::Bool,
+								bool_init_cast.cast_kind,
+								decl.identifier_token());
+						}
+					}
+				}
+
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 				{

@@ -1461,12 +1461,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						// C++20 [conv.bool]: materialize a real bool8 from the
 						// pointer/array address. The source category may be Struct
 						// for an object pointer, so this must not fall through to
-						// the struct user-defined arm. generateTypeConversion
-						// centralizes the array-lvalue address handling.
+						// the struct user-defined arm. The cast kind is passed so
+						// generateTypeConversion selects the zero test for a
+						// struct-pointer source.
 						argumentIrOperands = generateTypeConversion(
 							argumentIrOperands,
 							sema_.typeContext().get(cast_info.source_type_id).category(),
 							TypeCategory::Bool,
+							cast_info.cast_kind,
 							callExprNode.called_from());
 						arg_type = argumentIrOperands.typeEnum();
 						arg_type_index = argumentIrOperands.type_index;
