@@ -52,6 +52,28 @@ ExprResult AstToIr::emitNonZeroBoolValue(ExprResult operand, const Token& source
 }
 
 ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token) {
+	return generateTypeConversion(
+		operands, fromType, toType, StandardConversionKind::None, source_token);
+}
+
+ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, StandardConversionKind cast_kind, const Token& source_token) {
+	// C++20 [conv.bool] with a sema cast kind: the cast kind is the authority,
+	// so an object pointer converts correctly even though its operand metadata
+	// (Struct category, Struct IR type, pointer depth 0) matches a struct
+	// object. Struct objects with operator bool are annotated UserDefined, not
+	// BooleanConversion, so this cannot capture them. Floating-point sources
+	// keep their comparison-based path below.
+	{
+		const TypeCategory resolved_source =
+			resolveEnumUnderlyingTypeCategory(operands.type_index);
+		const TypeCategory bool_source =
+			resolved_source != TypeCategory::Invalid ? resolved_source : fromType;
+		if (toType == TypeCategory::Bool &&
+			cast_kind == StandardConversionKind::BooleanConversion &&
+			!is_floating_point_type(bool_source)) {
+			return emitNonZeroBoolValue(operands, source_token);
+		}
+	}
 	// C++20 [conv.bool]: every non-floating arithmetic, enum, pointer, or
 	// pointer-to-member scalar converts to bool by comparing against zero.
 	// Routing all such conversions through the shared zero-test keeps array

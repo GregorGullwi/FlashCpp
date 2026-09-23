@@ -330,6 +330,11 @@ private:
 											ExpressionContext context);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
 	ExprResult generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token);
+	// Variant that carries the sema cast kind. [conv.bool] is routed to the
+	// shared zero test from the cast kind rather than from operand metadata,
+	// because an object pointer is otherwise indistinguishable from a struct
+	// object (both Struct category, Struct IR type, pointer depth 0).
+	ExprResult generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, StandardConversionKind cast_kind, const Token& source_token);
 	// Materialize a normalized bool8 prvalue from an integer/pointer-like value
 	// by testing it against zero (C++20 [conv.bool]). Shared by the contextual
 	// bool path and by pointer/array-to-bool standard conversions.
