@@ -43,9 +43,15 @@ no longer types call arguments in the parser. An array or object/function
 pointer now reaches `bool` through [conv.array] decay where needed followed by
 [conv.bool], for both non-projectable ordered declarators and projectable flat
 types; the plan returns `BooleanConversion` and `emitNonZeroBoolValue` tests
-the decoded address against zero, so initialization, assignment, and function
-arguments materialize a real `bool8` instead of re-tagging the 64-bit address
-(which only happened to work when its low byte was non-zero). The projectable
+the decoded address against zero at pointer width, so initialization,
+assignment, and function arguments materialize a real `bool8` instead of
+re-tagging or numerically truncating the address (both of which only happened
+to work when its low byte was non-zero). An ordered array dereference carries
+`ValueStorage::ContainsAddress` with the element size, so the zero test
+overrides the recorded size to `POINTER_SIZE_BITS`; a projectable array source
+is materialized to its address (`materializeAddressResult`) before the test
+when the argument or initializer path sees a `BooleanConversion` whose source
+descriptor still has array dimensions. The projectable
 flat path previously rejected `bool b = arr;` with
 `InvalidArrayToScalarInitialization` (1612) and failed `bool b = ptr;` with a
 "missed variable init conversion" internal error; struct and function pointers

@@ -37,17 +37,24 @@ int main() {
 	bool assigned_true = false;
 	assigned_true = rows;
 
+	// A projectable pointer-to-array dereference yields an array lvalue whose
+	// address is the pointer value; its low byte is zero here.
+	int (*array_rows)[3] = reinterpret_cast<int (*)[3]>(0x100);
+	const bool pointed_array_true = *array_rows;
+
 	const bool pointer_argument_true = consume_bool(value_ptr) == 1;
 	const bool payload_argument_true = consume_bool(payload_ptr) == 1;
 	const bool array_argument_true = consume_bool(rows) == 1;
+	const bool pointed_array_argument_true = consume_bool(*array_rows) == 1;
 	const bool null_argument_false = consume_bool(static_cast<int*>(nullptr)) == 0;
 
 	if (!int_pointer_true || !payload_pointer_true || !array_true ||
 		!literal_true || !low_byte_zero_true || null_false ||
 		!function_pointer_true || null_function_pointer_false ||
-		assigned_false || !assigned_true ||
+		assigned_false || !assigned_true || !pointed_array_true ||
 		!pointer_argument_true || !payload_argument_true ||
-		!array_argument_true || !null_argument_false) {
+		!array_argument_true || !pointed_array_argument_true ||
+		!null_argument_false) {
 		return 1;
 	}
 	return 42;

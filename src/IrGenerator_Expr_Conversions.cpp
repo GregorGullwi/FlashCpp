@@ -16,19 +16,30 @@ void markAddressOnlyResult(TempVar result_var, TypeIndex value_type_index, SizeI
 }
 
 ExprResult AstToIr::emitNonZeroBoolValue(ExprResult operand, const Token& source_token) {
+	// An array lvalue reaches here as a ContainsAddress result whose recorded
+	// size is the array object size, not the pointer width. The slot holds a
+	// 64-bit address, so the zero test must use pointer width rather than
+	// truncating through the element type.
+	const bool address_only = operand.storage == ValueStorage::ContainsAddress;
 	const bool use_integer_pointer_rep =
 		operand.pointer_depth.is_pointer() ||
+		address_only ||
 		operand.effectiveIrType() == IrType::FunctionPointer ||
 		operand.effectiveIrType() == IrType::MemberFunctionPointer ||
 		operand.effectiveIrType() == IrType::MemberObjectPointer ||
 		operand.effectiveIrType() == IrType::Nullptr;
+	const SizeInBits test_size_bits =
+		(operand.pointer_depth.is_pointer() || address_only) &&
+				operand.size_in_bits.value < POINTER_SIZE_BITS
+			? SizeInBits{POINTER_SIZE_BITS}
+			: operand.size_in_bits;
 
 	TypedValue lhs = use_integer_pointer_rep
-		? makeTypedValue(TypeCategory::UnsignedLongLong, operand.size_in_bits, toIrValue(operand.value))
+		? makeTypedValue(TypeCategory::UnsignedLongLong, test_size_bits, toIrValue(operand.value))
 		: toTypedValue(operand);
 	TypedValue rhs = use_integer_pointer_rep
-		? makeTypedValue(TypeCategory::UnsignedLongLong, operand.size_in_bits, 0ULL)
-		: makeTypedValue(operand.typeEnum(), operand.size_in_bits, 0ULL);
+		? makeTypedValue(TypeCategory::UnsignedLongLong, test_size_bits, 0ULL)
+		: makeTypedValue(operand.typeEnum(), test_size_bits, 0ULL);
 
 	TempVar result_var = var_counter.next();
 	BinaryOp bin_op{
@@ -41,6 +52,14 @@ ExprResult AstToIr::emitNonZeroBoolValue(ExprResult operand, const Token& source
 }
 
 ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token) {
+		// An array lvalue reaches a bool conversion as a ContainsAddress result
+		// (the array's address) whose recorded size is the array object size.
+		// Test the 64-bit address against zero instead of numerically truncating
+		// it through the element type.
+	if (toType == TypeCategory::Bool &&
+		operands.storage == ValueStorage::ContainsAddress) {
+		return emitNonZeroBoolValue(operands, source_token);
+	}
 		// Pointer values are always 64-bit addresses on x64. Numeric type conversion
 		// must never change their size (e.g. truncate 64→32). Only update the type
 		// metadata if needed; the value representation stays the same.
