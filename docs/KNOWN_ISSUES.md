@@ -120,6 +120,21 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
+## Projectable pointer/array-to-bool conversion is incomplete on the legacy flat path
+
+`bool b = a;` and `consume_bool(a)` for a projectable `T a[N]` are valid C++20
+([conv.array] followed by [conv.bool]) but the legacy flat path reports
+`InvalidArrayToScalarInitialization` (1612) in
+`SemanticAnalysis::tryAnnotateConversion`, and `bool b = p;` for a flat `T* p`
+fails IR generation with "sema missed variable init conversion". The ordered
+(non-projectable) array/pointer-to-bool conversion now works through
+`buildOrderedDeclaratorConversionPlan`; the projectable path still needs the
+same [conv.array]+[conv.bool] modelling, with codegen testing the decoded
+address against zero instead of reinterpreting the element type. Do not fix
+this by special-casing `bool` in the array-to-scalar diagnostic without an
+end-to-end lowering; the boolean value must be materialized, not passed as a
+full-width address.
+
 ## Variable-template initializer replay removed; static-member replay clones remain
 
 RESOLVED for variable templates (2026-08-22, branch `opencode/alias-capture-identity`):
