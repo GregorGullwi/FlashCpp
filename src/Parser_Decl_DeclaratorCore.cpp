@@ -9,6 +9,31 @@ namespace {
 
 constexpr int kFunctionPointerSizeBits = 64; // x64 target: always 8 bytes
 
+// [dcl.ref]/5: no references to references, no arrays of references, and no
+// pointers to references. The ordered spine records those shapes; reject them
+// here instead of importing a type the language forbids.
+bool orderedReferenceComponentIsIllFormed(
+	std::span<const DeclaratorComponent> components) {
+	for (size_t index = 0; index + 1 < components.size(); ++index) {
+		const DeclaratorComponentKind outer = components[index].kind;
+		const DeclaratorComponentKind inner = components[index + 1].kind;
+		const bool inner_is_reference =
+			inner == DeclaratorComponentKind::LValueReference ||
+			inner == DeclaratorComponentKind::RValueReference;
+		if (!inner_is_reference) {
+			continue;
+		}
+		if (outer == DeclaratorComponentKind::Pointer ||
+			outer == DeclaratorComponentKind::Array ||
+			outer == DeclaratorComponentKind::UnknownBoundArray ||
+			outer == DeclaratorComponentKind::LValueReference ||
+			outer == DeclaratorComponentKind::RValueReference) {
+			return true;
+		}
+	}
+	return false;
+}
+
 // [dcl.fct]/1 forbids an array of functions and a function returning an array.
 // The ordered spine records those shapes; reject them here instead of importing
 // a type the canonical table cannot represent.
@@ -1146,6 +1171,10 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
 					skip_noop_gnu_qualifiers();
 					candidate = peek() == "("_tok;
+				} else if (peek() == "&"_tok || peek() == "&&"_tok) {
+					advance();
+					skip_noop_gnu_qualifiers();
+					candidate = peek() == "("_tok || peek().is_identifier();
 				} else if (peek().is_identifier()) {
 					advance();
 					candidate = consume("::"_tok) && consume("*"_tok);
@@ -1188,12 +1217,31 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				while (!frames.empty() && !failed) {
 					DeclaratorFrame &frame = frames.back();
 					if (!frame.after_direct) {
-						while (peek() == "*"_tok) {
-							advance();
-							CVQualifier pointer_cv = parse_cv_qualifiers();
-							skip_noop_gnu_qualifiers();
-							pointer_cv |= parse_cv_qualifiers();
-							frame.prefixes.push_back(DeclaratorComponent::pointer(pointer_cv));
+						while (true) {
+							if (peek() == "*"_tok) {
+								advance();
+								CVQualifier pointer_cv = parse_cv_qualifiers();
+								skip_noop_gnu_qualifiers();
+								pointer_cv |= parse_cv_qualifiers();
+								frame.prefixes.push_back(
+									DeclaratorComponent::pointer(pointer_cv));
+								continue;
+							}
+							if (peek() == "&&"_tok) {
+								advance();
+								skip_noop_gnu_qualifiers();
+								frame.prefixes.push_back(
+									DeclaratorComponent::rvalueReference());
+								continue;
+							}
+							if (peek() == "&"_tok) {
+								advance();
+								skip_noop_gnu_qualifiers();
+								frame.prefixes.push_back(
+									DeclaratorComponent::lvalueReference());
+								continue;
+							}
+							break;
 						}
 						if (peek().is_identifier()) {
 							SaveHandle member_pointer_start = save_token_position();
@@ -1354,6 +1402,10 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					frames.pop_back();
 					if (frames.empty()) {
 						if (!has_identifier || peek() == "("_tok) {
+							failed = true;
+							break;
+						}
+						if (orderedReferenceComponentIsIllFormed(completed)) {
 							failed = true;
 							break;
 						}

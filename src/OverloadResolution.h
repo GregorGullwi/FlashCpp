@@ -1131,15 +1131,47 @@ inline void decayOrderedFunctionToPointer(TypeSpecifierNode& spec) {
 		DeclaratorComponent::pointer(CVQualifier::None));
 }
 
+inline bool orderedDeclaratorIsLvalueReference(
+	const TypeSpecifierNode& type) {
+	if (!type.has_ordered_declarator() || type.declarator_components().empty()) {
+		return false;
+	}
+	return type.declarator_components().front().kind ==
+		DeclaratorComponentKind::LValueReference;
+}
+
+inline bool orderedDeclaratorIsRvalueReference(
+	const TypeSpecifierNode& type) {
+	if (!type.has_ordered_declarator() || type.declarator_components().empty()) {
+		return false;
+	}
+	return type.declarator_components().front().kind ==
+		DeclaratorComponentKind::RValueReference;
+}
+
+inline bool orderedDeclaratorIsReference(const TypeSpecifierNode& type) {
+	return orderedDeclaratorIsLvalueReference(type) ||
+		orderedDeclaratorIsRvalueReference(type);
+}
+
+// Peel an outermost ordered reference and the flat reference qualifier so the
+// remaining spine is the referred-to type.
+inline void stripOrderedReference(TypeSpecifierNode& spec) {
+	if (orderedDeclaratorIsReference(spec)) {
+		spec.remove_outermost_ordered_declarator_component();
+	}
+	spec.set_reference_qualifier(ReferenceQualifier::None);
+}
+
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
 
 // Bounded ordered-declarator conversion path: a null pointer constant to an
-// ordered pointer, array-to-pointer decay, function-to-pointer decay, an
-// ordered object pointer to `cv void*`, array-to-pointer or function-to-pointer
-// followed by a boolean conversion, an ordered pointer object to `bool`, and
-// same-shape qualification conversions. Derived-to-base, ordered reference
-// binding, and further callable-component conversions stay deferred and fail
-// closed instead of reaching the flat projection guard.
+// ordered pointer, array-to-pointer decay, function-to-pointer decay, ordered
+// reference binding, an ordered object pointer to `cv void*`, array-to-pointer
+// or function-to-pointer followed by a boolean conversion, an ordered pointer
+// object to `bool`, and same-shape qualification conversions. Derived-to-base
+// and further callable-component conversions stay deferred and fail closed
+// instead of reaching the flat projection guard.
 inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	if (from.category() == TypeCategory::Nullptr) {
@@ -1151,11 +1183,42 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 		}
 		return ConversionPlan::no_match();
 	}
+	// C++20 [dcl.init.ref]: bind through the outermost ordered reference, then
+	// compare the referred-to ordered spines. Derived-to-base stays deferred.
+	if (orderedDeclaratorIsReference(to)) {
+		const bool to_is_rvalue = orderedDeclaratorIsRvalueReference(to);
+		const bool from_is_lvalue = from.is_lvalue_reference() ||
+			orderedDeclaratorIsLvalueReference(from);
+		const bool from_is_rvalue = from.is_rvalue_reference() ||
+			orderedDeclaratorIsRvalueReference(from);
+		TypeSpecifierNode referent = to;
+		stripOrderedReference(referent);
+		TypeSpecifierNode from_value = from;
+		stripOrderedReference(from_value);
+		if (!to_is_rvalue) {
+			if (!to.is_const() && !from_is_lvalue) {
+				return ConversionPlan::no_match();
+			}
+			const ConversionPlan plan = buildConversionPlan(from_value, referent);
+			if (!plan.is_valid) {
+				return ConversionPlan::no_match();
+			}
+			return plan;
+		}
+		if (from_is_lvalue && !from_is_rvalue) {
+			return ConversionPlan::no_match();
+		}
+		const ConversionPlan plan = buildConversionPlan(from_value, referent);
+		if (!plan.is_valid) {
+			return ConversionPlan::no_match();
+		}
+		return plan;
+	}
 	if (to.is_reference()) {
 		return ConversionPlan::no_match();
 	}
 	TypeSpecifierNode from_value = from;
-	from_value.set_reference_qualifier(ReferenceQualifier::None);
+	stripOrderedReference(from_value);
 	if (orderedDeclaratorIsArrayObject(from_value) &&
 		orderedDeclaratorIsPointerObject(to)) {
 		TypeSpecifierNode decayed_from = from_value;
