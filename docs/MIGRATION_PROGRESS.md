@@ -137,8 +137,10 @@ the accessor's compatibility projection. Unary, variadic, and binary type-trait
 operands now use `consume_type_id_abstract_declarators`, replacing duplicated
 pointer/reference and single-array parsing and accepting nested direct abstract
 declarators such as `__is_pointer(int (*(*)[3])[4])`. The focused regression is
-`type_trait_ordered_pointer_ret42.cpp`; broader type-trait migration and other
-flat pointer/array reads remain open.
+`type_trait_ordered_pointer_ret42.cpp`; the malformed array-suffix regression
+`type_trait_abstract_declarator_array_bound_e1003_e1051.cpp` verifies the
+existing missing-bracket diagnostic and matching-opening-bracket note. Broader
+type-trait migration and other flat pointer/array reads remain open.
 
 Immediately before this slice, direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
@@ -773,7 +775,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Deep nested-class bodies | `deep_nested_class_body_ret42` |
 | Member class template-id qualifier | `member_class_template_id_qualifier_ret42` |
 | Nested class inside a member class template | `member_template_nested_class_ret42` |
-| Ordered declarator pointer trait | `type_trait_ordered_pointer_ret42` |
+| Ordered declarator pointer trait and diagnostics | `type_trait_ordered_pointer_ret42`, `type_trait_abstract_declarator_array_bound_e1003_e1051` |
 | Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
 | Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |
