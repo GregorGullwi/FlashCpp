@@ -8352,15 +8352,53 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	std::vector<ASTNode> instantiated_nested_class_nodes;
 	instantiated_nested_class_nodes.reserve(class_decl.nested_classes().size());
 
-	// Copy nested classes from the template with template parameter substitution
+	// Instantiate the template's nested classes, and each nested class's own
+	// nested classes, with template parameter substitution. An explicit worklist
+	// keeps source-controlled nesting off the native call stack and lets a
+	// qualified type-id such as `Owner<int>::Level1::Level2` publish the deep
+	// class body. `instantiated_name` remains the class-template instantiation;
+	// only the nested owner name and StructTypeInfo change per level.
+	struct PendingNestedClass {
+		const StructDeclarationNode* pattern;
+		StringHandle qualified_name;
+		StructTypeInfo* owner_struct_info;
+		std::string_view pattern_owner_name;
+		StructDeclarationNode* parent_ast_node;
+	};
+	std::vector<PendingNestedClass> pending_nested_classes;
 	for (const auto& nested_class : class_decl.nested_classes()) {
-		if (nested_class.is<StructDeclarationNode>()) {
-			const StructDeclarationNode& nested_struct = nested_class.as<StructDeclarationNode>();
-			if (nested_struct.is_local_class()) {
-				continue;
-			}
-			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
-
+		if (!nested_class.is<StructDeclarationNode>()) {
+			continue;
+		}
+		const StructDeclarationNode& nested_pattern =
+			nested_class.as<StructDeclarationNode>();
+		if (nested_pattern.is_local_class()) {
+			continue;
+		}
+		pending_nested_classes.push_back(PendingNestedClass{
+			&nested_pattern,
+			StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(instantiated_name)
+					.append("::"sv)
+					.append(nested_pattern.name())),
+			struct_info,
+			template_name,
+			nullptr});
+	}
+	// Depth-first, source order: the stack is seeded reversed so the first
+	// source nested class is processed first and its children precede its
+	// siblings, matching a recursive expansion.
+	std::reverse(pending_nested_classes.begin(), pending_nested_classes.end());
+	while (!pending_nested_classes.empty()) {
+		const PendingNestedClass pending = pending_nested_classes.back();
+		pending_nested_classes.pop_back();
+		const StructDeclarationNode& nested_struct = *pending.pattern;
+		StringHandle qualified_name = pending.qualified_name;
+		StructTypeInfo* const owner_struct_info = pending.owner_struct_info;
+		const std::string_view pattern_owner_name = pending.pattern_owner_name;
+		StructDeclarationNode* const parent_ast_node = pending.parent_ast_node;
+		{
 			// Register the nested semantic owner before producing members and signatures.
 			// Constructor current-instantiation substitution requires both the pattern
 			// and instantiated owner TypeIndex values to be canonical at this point.
@@ -8802,7 +8840,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			};
 
 			StringBuilder original_nested_name_builder;
-			original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
+			original_nested_name_builder.append(pattern_owner_name).append("::"sv).append(nested_struct.name());
 			std::string_view original_nested_name = original_nested_name_builder.commit();
 			auto nested_out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(original_nested_name);
 			auto original_nested_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(original_nested_name));
@@ -9314,7 +9352,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_type_info.fallback_size_bits_ = nested_type_info.getStructInfo()->sizeInBits().value;
 			}
 
-			struct_info->addNestedClass(nested_type_info.getStructInfo());
+			owner_struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Trace, "Registered nested class: ", StringTable::getStringView(qualified_name));
 			if (shouldCommitTemplateInstantiationArtifacts()) {
 				OuterTemplateBinding nested_alias_outer_binding;
@@ -9464,7 +9502,43 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 			}
-			instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
+			if (parent_ast_node != nullptr) {
+				// A nested class of a nested class: attach it to the instantiated
+				// parent node so reachability/codegen see the deep owner chain.
+				instantiated_nested_struct_ref.set_enclosing_class(parent_ast_node);
+				parent_ast_node->add_nested_class(instantiated_nested_struct);
+			} else {
+				// Direct nested class: the top-level instantiated node is created
+				// later, so defer the attachment through the collected list.
+				instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
+			}
+			StringBuilder child_pattern_owner_name_builder;
+			child_pattern_owner_name_builder
+				.append(pattern_owner_name)
+				.append("::"sv)
+				.append(nested_struct.name());
+			const std::string_view child_pattern_owner_name =
+				child_pattern_owner_name_builder.commit();
+			for (const auto& child_class : nested_struct.nested_classes()) {
+				if (!child_class.is<StructDeclarationNode>()) {
+					continue;
+				}
+				const StructDeclarationNode& child_pattern =
+					child_class.as<StructDeclarationNode>();
+				if (child_pattern.is_local_class()) {
+					continue;
+				}
+				pending_nested_classes.push_back(PendingNestedClass{
+					&child_pattern,
+					StringTable::getOrInternStringHandle(
+						StringBuilder()
+							.append(StringTable::getStringView(qualified_name))
+							.append("::")
+							.append(child_pattern.name())),
+					nested_struct_info,
+					child_pattern_owner_name,
+					&instantiated_nested_struct_ref});
+			}
 		}
 	}
 
