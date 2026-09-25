@@ -733,6 +733,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Namespace/global alias identity | `Namespace and global alias templates publish declaration identity` doctest |
 | Direct builtin alias defaults | `alias_defaulted_value_init_ret42`, `alias_default_nested_depth_ret42` |
 | Direct nominal alias defaults | `alias_template_record_default_ret42` |
+| Namespace-scope record pointer null comparison | `global_record_pointer_null_compare_ret42` |
 | Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
 | Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |
