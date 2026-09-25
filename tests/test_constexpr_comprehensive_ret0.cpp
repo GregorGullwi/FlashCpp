@@ -75,8 +75,11 @@ static_assert(not_test, "!false should be true");
 constexpr int complex1 = (10 + 5) * 2 - 3;
 static_assert(complex1 == 27, "(10 + 5) * 2 - 3 should be 27");
 
-constexpr bool complex2 = (5 > 3) && (10 < 20) || false;
+constexpr bool complex2 = (5 > 3) && (10 < 20);
 static_assert(complex2, "complex boolean expression should be true");
+
+constexpr bool complex2_with_or = (5 > 3) && (10 < 20) || false;
+static_assert(complex2_with_or, "mixed && and || expression should be true");
 
 constexpr int complex3 = ((8 << 1) + 4) / 5;
 static_assert(complex3 == 4, "((8 << 1) + 4) / 5 should be 4");
@@ -176,6 +179,7 @@ static_assert(!c_style_from_int, "(bool)0 should be false");
 // - sizeof operator
 // - Type conversions using static_cast and C-style casts
 // - Various literal formats (decimal, hex, binary, negative)
+// - Zero values and edge cases
 
 int main() {
 	// If this compiles and links, all constexpr tests passed!

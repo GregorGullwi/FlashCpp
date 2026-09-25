@@ -1,21 +1,20 @@
-// Test non-type template parameters in expressions
-// Currently non-type params only work for array sizes
-// This test will verify they work in all expression contexts
+// Exercise non-type template parameters in array extents, arithmetic,
+// comparisons, and a Boolean condition.
 
 template <int N>
 struct Container {
-	int data[N];	 // ✅ This already works
+	int data[N];
 
 	int get_size() {
-		return N;  // ❌ Need to make this work
+		return N;
 	}
 
 	int double_size() {
-		return N * 2;  // ❌ Arithmetic with N
+		return N * 2;
 	}
 
 	bool is_large() {
-		return N > 10;  // ❌ Comparison with N
+		return N > 10;
 	}
 };
 
@@ -30,7 +29,7 @@ struct Math {
 template <bool B>
 struct Conditional {
 	int get_value() {
-		if (B) {	 // ❌ Use bool in if condition
+		if (B) {
 			return 100;
 		} else {
 			return 200;
