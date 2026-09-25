@@ -8313,6 +8313,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.is_constexpr);
 		}
 	}
+	// A primary instantiation with unresolved template arguments must not
+	// publish member aliases (direct or nested): their targets would be
+	// placeholder-dependent spellings rather than canonical types.
+	const bool has_unresolved_primary_template_args =
+		std::ranges::any_of(
+			template_args_to_use,
+			[](const TemplateTypeArg& template_arg) {
+				auto lacksConcreteTypeIdentity = [](TypeIndex type_index) {
+					if (!type_index.is_valid()) {
+						if (TypeIndex native_index = nativeTypeIndex(type_index.category()); native_index.is_valid()) {
+							return false;
+						}
+						return true;
+					}
+					if (typeIndexContainsDependentPlaceholder(type_index)) {
+						return true;
+					}
+					return false;
+				};
+				if (template_arg.is_template_template_arg) {
+					return !template_arg.template_name_handle.isValid();
+				}
+				const bool is_dependent = template_arg.is_dependent ||
+					template_arg.dependent_name.isValid() ||
+					template_arg.dependent_expr.has_value();
+				if (is_dependent) {
+					return true;
+				}
+				if (template_arg.is_value) {
+					return false;
+				}
+				TypeIndex arg_type_index =
+					template_arg.type_index.withCategory(template_arg.typeEnum());
+				return lacksConcreteTypeIdentity(arg_type_index);
+			});
+
 	std::vector<ASTNode> instantiated_nested_class_nodes;
 	instantiated_nested_class_nodes.reserve(class_decl.nested_classes().size());
 
@@ -9307,6 +9343,101 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 			}
+
+			// Publish the nested class's own member typedefs under the
+			// instantiated nested owner. The owner's direct aliases are handled
+			// later in this function, but a nested class's aliases previously
+			// stayed under the uninstantiated pattern spelling, so a qualified
+			// type-id such as `Owner<int>::Nested::type` could not resolve.
+			// Mirrors instantiate_full_specialization's nested-alias registration.
+			// Member alias templates and deeper nesting stay deferred.
+			for (const auto& nested_type_alias : nested_struct.type_aliases()) {
+				if (has_unresolved_primary_template_args) {
+					break;
+				}
+				if (!nested_type_alias.type_node.is<TypeSpecifierNode>()) {
+					continue;
+				}
+				const TypeSpecifierNode& nested_alias_spec =
+					nested_type_alias.type_node.as<TypeSpecifierNode>();
+				TypeCategory nested_substituted_type = nested_alias_spec.type();
+				TypeIndex nested_substituted_index = nested_alias_spec.type_index();
+				int nested_substituted_size = nested_alias_spec.size_in_bits();
+
+				trySubstituteIntrinsicTypeAlias(
+					nested_alias_spec,
+					effective_template_params,
+					effective_template_args,
+					nested_substituted_type,
+					nested_substituted_index,
+					nested_substituted_size);
+
+				if (nested_alias_spec.type_index().is_valid()) {
+					const TypeIndex substituted_parameter_index = substitute_template_parameter(
+						nested_alias_spec,
+						effective_template_params,
+						effective_template_args);
+					if (substituted_parameter_index.category() != nested_alias_spec.type() ||
+						substituted_parameter_index != nested_alias_spec.type_index()) {
+						nested_substituted_type = substituted_parameter_index.category();
+						nested_substituted_index = substituted_parameter_index;
+						nested_substituted_size = get_type_size_bits(nested_substituted_type);
+					}
+				}
+
+				if (nested_substituted_size == 0 && is_primitive_type(nested_substituted_type)) {
+					nested_substituted_size = get_type_size_bits(nested_substituted_type);
+				}
+				if (is_primitive_type(nested_substituted_type) &&
+					nested_substituted_index.category() != nested_substituted_type) {
+					nested_substituted_index = nested_substituted_index.withCategory(nested_substituted_type);
+				}
+
+				const TypeInfo* nested_alias_semantic_source =
+					tryGetTypeInfo(TypeIndex{nested_substituted_index});
+				if (!isConcreteAliasSemanticSource(nested_alias_semantic_source)) {
+					nested_alias_semantic_source = nullptr;
+				}
+
+				std::optional<TypeSpecifierNode> nested_substituted_alias_spec =
+					buildSubstitutedTypeAliasSpecifier(
+						nested_type_alias,
+						TypeIndex{nested_substituted_index},
+						nested_substituted_type,
+						effective_template_params,
+						effective_template_args,
+						instantiated_name);
+				TypeSpecifierNode nested_alias_registration_spec =
+					nested_substituted_alias_spec.has_value()
+						? *nested_substituted_alias_spec
+						: nested_alias_spec;
+				const TypeIndex nested_alias_registration_source_index =
+					selectAliasRegistrationSourceIndex(
+						nested_substituted_index,
+						nested_substituted_alias_spec,
+						nested_alias_registration_spec);
+
+				StringHandle nested_alias_name = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(StringTable::getStringView(qualified_name))
+						.append("::")
+						.append(nested_type_alias.alias_name)
+						.commit());
+				TypeInfo& nested_alias_info =
+					nested_alias_semantic_source != nullptr
+						? add_type_alias_copy(
+							  nested_alias_name,
+							  nested_alias_registration_source_index,
+							  nested_substituted_size,
+							  nested_alias_registration_spec,
+							  *nested_alias_semantic_source)
+						: add_type_alias_copy(
+							  nested_alias_name,
+							  nested_alias_registration_source_index,
+							  nested_substituted_size,
+							  nested_alias_registration_spec);
+				getTypesByNameMap().insert_or_assign(nested_alias_name, &nested_alias_info);
+			}
 			instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
 		}
 	}
@@ -9521,38 +9652,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Copy type aliases from the template with template parameter substitution
-	const bool has_unresolved_primary_template_args =
-		std::ranges::any_of(
-			template_args_to_use,
-			[](const TemplateTypeArg& template_arg) {
-				auto lacksConcreteTypeIdentity = [](TypeIndex type_index) {
-					if (!type_index.is_valid()) {
-						if (TypeIndex native_index = nativeTypeIndex(type_index.category()); native_index.is_valid()) {
-							return false;
-						}
-						return true;
-					}
-					if (typeIndexContainsDependentPlaceholder(type_index)) {
-						return true;
-					}
-					return false;
-				};
-				if (template_arg.is_template_template_arg) {
-					return !template_arg.template_name_handle.isValid();
-				}
-				const bool is_dependent = template_arg.is_dependent ||
-					template_arg.dependent_name.isValid() ||
-					template_arg.dependent_expr.has_value();
-				if (is_dependent) {
-					return true;
-				}
-				if (template_arg.is_value) {
-					return false;
-				}
-				TypeIndex arg_type_index =
-					template_arg.type_index.withCategory(template_arg.typeEnum());
-				return lacksConcreteTypeIdentity(arg_type_index);
-			});
 	for (const auto& type_alias : class_decl.type_aliases()) {
 		if (has_unresolved_primary_template_args) {
 			continue;
