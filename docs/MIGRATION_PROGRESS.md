@@ -652,9 +652,17 @@ during concrete alias materialization. This fixes forwarded aliases such as
   sema resolution falls back to `findViableTargetByArgCount` and accepts the
   shape mismatch that the parser currently rejects with
   `NoViableFunctionCall` (1704). The peel stays until sema owns overload
-  diagnosis (boundary 4). Qualified-name spellings such as template-id
-  qualifiers remain the unblocked next 3A family. Stop here for review before
-  starting another family, 3B, or the parallel frontend experiment.
+  diagnosis (boundary 4). The unblocked qualified-name spelling family has
+  started: a primary class-template instantiation now publishes each nested
+  class's member typedefs under the instantiated nested owner
+  (`Owner<int>::Nested::type`) by substituting the enclosing template bindings,
+  reusing `buildSubstitutedTypeAliasSpecifier` and the full-specialization
+  nested-alias registration shape, so a concrete or template-parameter-
+  dependent nested member type resolves through the existing qualified type-id
+  lookup. Namespace-qualified owners (`n::Owner<int>::Nested::type`), nested
+  classes of nested classes, and member alias templates declared inside nested
+  classes remain deferred. Stop here for review before starting another family,
+  3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -734,6 +742,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Direct builtin alias defaults | `alias_defaulted_value_init_ret42`, `alias_default_nested_depth_ret42` |
 | Direct nominal alias defaults | `alias_template_record_default_ret42` |
 | Namespace-scope record pointer null comparison | `global_record_pointer_null_compare_ret42` |
+| Nested-class member type through a template-id owner | `nested_class_template_member_type_ret42` |
 | Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
 | Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |
