@@ -491,7 +491,6 @@ function Invoke-TestOneFile {
 					$resultLine = "LINKER_DRIVER_FAIL|$fileName|successful linker status produced no executable"
 				} elseif ($linkExitCode -eq 0 -and (Test-Path $exeFile)) {
 					$exePath = (Get-Item $exeFile).FullName
-					$cmdArgs = '/d /c ""' + $exePath + '""'
 					# Runtime timeout policy (mirrors runner_common.sh): generous
 					# window for parallel-load inflation, one retry so a transient
 					# host stall cannot fail an instant-return program.
@@ -499,7 +498,7 @@ function Invoke-TestOneFile {
 					$runtimeTimedOut = $false
 					while ($true) {
 						$proc = New-Object System.Diagnostics.Process
-						$proc.StartInfo = New-Object System.Diagnostics.ProcessStartInfo("cmd.exe", $cmdArgs)
+						$proc.StartInfo = New-Object System.Diagnostics.ProcessStartInfo($exePath)
 						$proc.StartInfo.UseShellExecute = $false
 						$proc.StartInfo.CreateNoWindow = $true
 						$proc.StartInfo.WorkingDirectory = $repoRoot
