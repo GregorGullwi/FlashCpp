@@ -6748,6 +6748,38 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				continue;
 			}
+			// Handle a named nested class/struct/union declaration. The enclosing
+			// member template pattern must retain it so instantiation can publish
+			// the nested owner. A member of a known struct type (`struct Name v;`)
+			// is restored and handled by ordinary member parsing.
+			if (keyword == "struct" || keyword == "class" || keyword == "union") {
+				SaveHandle nested_saved_pos = save_token_position();
+				advance(); // consume the class-key
+				skip_cpp_attributes();
+				bool is_nested_declaration = false;
+				if (peek().is_identifier()) {
+					advance(); // consume the nested class name
+					is_nested_declaration = peek() == "{"_tok ||
+						peek() == ";"_tok || peek() == ":"_tok;
+				}
+				if (is_nested_declaration) {
+					restore_token_position(nested_saved_pos);
+					auto saved_delayed_bodies = std::move(delayed_function_bodies_);
+					delayed_function_bodies_.clear();
+					auto nested_result = parse_struct_declaration();
+					delayed_function_bodies_ = std::move(saved_delayed_bodies);
+					if (nested_result.is_error()) {
+						return nested_result;
+					}
+					if (auto nested_node = nested_result.node()) {
+						auto& nested_struct = nested_node->as<StructDeclarationNode>();
+						nested_struct.set_enclosing_class(&member_struct_ref);
+						member_struct_ref.add_nested_class(*nested_node);
+					}
+					continue;
+				}
+				restore_token_position(nested_saved_pos);
+			}
 			// Handle static members (including static constexpr with initializers)
 			if (keyword == "static") {
 				advance(); // consume 'static'

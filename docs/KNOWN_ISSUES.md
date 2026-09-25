@@ -1,20 +1,21 @@
 # Known Issues
 
-## Nested classes inside member class templates do not parse
+## Member class template dependent bases are not instantiated
 
-A class template nested inside another class template parses and can be named,
-but a further `struct`/`class` declaration nested inside that member template
-fails at its definition with `Expected identifier token`:
+A member class template whose base is one of its own type parameters does not
+inherit the base when the member template is instantiated:
 
 ```cpp
-template <class T> struct A { template <class U> struct B { struct Inner { U v; }; }; };
+struct Payload { int v; };
+template <class T> struct A { template <class U> struct B : U { }; };
+A<int>::B<Payload> b;   // error: member 'v' not found in struct 'B$<hash>'
 ```
 
-`A<int>::B<char>::Inner` therefore cannot resolve even though the member
-template-id qualifier itself now resolves (`A<int>::B<char>::type` works). This
-is a definition-parsing gap in member class templates, independent of the
-qualified-name resolution path, and needs the member-template body parser to
-accept nested class declarations.
+A concrete base works, and a dependent base in a nested class of a class
+template works, so the gap is the member template's own parameter not being
+substituted into its base list. A class nested inside a member class template
+with a dependent base (`struct Inner : U { };`) reaches the same path. This is
+independent of nested-class parsing, which now works.
 
 ## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
 
