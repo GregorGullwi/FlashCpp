@@ -998,6 +998,16 @@ must not increase an implementation percentage.
   the address itself. Sema owns the conversion and the conditional branch now
   consumes the cast kind, but the shared conversion lowering is architecture
   boundary 9; the per-consumer address materialization is deleted when it lands.
+- Deep nested-class bodies are not instantiated. Member typedefs of classes at
+  any nesting depth now resolve
+  (`deep_nested_class_template_member_type_ret42`), but naming the deep class
+  itself (`Owner<int>::Level1::Level2`) or using its non-static member functions
+  still fails, because `try_instantiate_class_template` only materializes the
+  owner's direct nested classes. Extract its nested-class member-production loop
+  into a recursive routine parameterized by `(owner instantiated name, owner
+  `StructTypeInfo`*, pattern-owner spelling, pattern node)` and propagate the
+  loop's failure escapes; see [known issues](KNOWN_ISSUES.md) for the reduced
+  cases and the loop's phase map.
 
 ## Active findings
 
