@@ -3266,6 +3266,108 @@ int main() {
 		CHECK(builder.declaration(second.decl_id).previous_decl_id == first.decl_id);
 	}
 
+	TEST_CASE("Forward-declared published nominal parameters import by EntityId") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		const std::string code =
+			"struct IncompleteRecord;\n"
+			"enum class IncompleteEnum : unsigned short;\n"
+			"int inspect_incomplete_record_pointer(IncompleteRecord* value);\n"
+			"int inspect_incomplete_record_reference(IncompleteRecord& value);\n"
+			"int inspect_incomplete_enum_pointer(IncompleteEnum* value);\n"
+			"int inspect_incomplete_enum_reference(IncompleteEnum& value);\n";
+		CompileContext test_context;
+		test_context.setInputFile("forward_declared_published_nominal_identity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto record_type_info = getTypesByNameMap().find(
+			StringTable::getOrInternStringHandle("IncompleteRecord"));
+		REQUIRE(record_type_info != getTypesByNameMap().end());
+		REQUIRE(record_type_info->second->isStruct());
+		const StructTypeInfo* struct_info = record_type_info->second->getStructInfo();
+		REQUIRE(struct_info != nullptr);
+		REQUIRE(struct_info->declaration_node != nullptr);
+		const StructDeclarationNode& record_declaration = *struct_info->declaration_node;
+		REQUIRE(record_declaration.is_forward_declaration());
+		REQUIRE(record_declaration.has_entity_id());
+		const EntityId record_entity = record_declaration.entity_id();
+
+		const auto enum_type_info = getTypesByNameMap().find(
+			StringTable::getOrInternStringHandle("IncompleteEnum"));
+		REQUIRE(enum_type_info != getTypesByNameMap().end());
+		const EnumTypeInfo* enum_info = enum_type_info->second->getEnumInfo();
+		REQUIRE(enum_info != nullptr);
+		REQUIRE(enum_info->declaration_node != nullptr);
+		const EnumDeclarationNode& enum_declaration = *enum_info->declaration_node;
+		REQUIRE(enum_declaration.is_forward_declaration());
+		REQUIRE(enum_declaration.has_entity_id());
+		const EntityId enum_entity = enum_declaration.entity_id();
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		CHECK_FALSE(table.hasRecordLayout(record_entity));
+		CHECK_FALSE(table.hasEnumLayout(enum_entity));
+
+		const uint64_t canonical_requests_before_import =
+			context.declarationBuilder().canonicalDeclaratorRequests();
+		CHECK(canonical_requests_before_import >= 4u);
+		CHECK(context.declarationBuilder().unmigratedDeclaratorRequests() == 0u);
+		const auto import_parameter = [&](std::string_view function_name,
+			CanonicalTypeKind wrapper_kind, CanonicalTypeKind nominal_kind,
+			EntityId expected_entity) {
+			const std::vector<ASTNode> declarations = gSymbolTable.lookup_all(function_name);
+			REQUIRE(declarations.size() == 1u);
+			REQUIRE(declarations[0].is<FunctionDeclarationNode>());
+			const std::span<const ASTNode> parameters =
+				declarations[0].as<FunctionDeclarationNode>().parameter_nodes();
+			REQUIRE(parameters.size() == 1u);
+			REQUIRE(parameters[0].is<DeclarationNode>());
+			TypeSpecifierNode parameter_type =
+				parameters[0].as<DeclarationNode>().type_specifier_node();
+			tryBindPublishedTypeEntity(parameter_type);
+			REQUIRE(parameter_type.has_type_entity());
+			CHECK(parameter_type.type_entity() == expected_entity);
+			const size_t node_count_before_import = table.size();
+			const CanonicalTypeImport imported =
+				importCanonicalFunctionParameterType(table, parameter_type);
+			REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+			CHECK(table.size() == node_count_before_import);
+			REQUIRE(table.node(imported.type).kind == wrapper_kind);
+			const TypeId nominal_type = table.node(imported.type).child;
+			CHECK(table.node(nominal_type).kind == nominal_kind);
+			if (nominal_kind == CanonicalTypeKind::Record) {
+				CHECK(table.recordEntity(nominal_type) == expected_entity);
+			} else {
+				CHECK(table.enumEntity(nominal_type) == expected_entity);
+			}
+		};
+		import_parameter(
+			"inspect_incomplete_record_pointer",
+			CanonicalTypeKind::Pointer,
+			CanonicalTypeKind::Record,
+			record_entity);
+		import_parameter(
+			"inspect_incomplete_record_reference",
+			CanonicalTypeKind::LValueReference,
+			CanonicalTypeKind::Record,
+			record_entity);
+		import_parameter(
+			"inspect_incomplete_enum_pointer",
+			CanonicalTypeKind::Pointer,
+			CanonicalTypeKind::Enum,
+			enum_entity);
+		import_parameter(
+			"inspect_incomplete_enum_reference",
+			CanonicalTypeKind::LValueReference,
+			CanonicalTypeKind::Enum,
+			enum_entity);
+	}
+
 	TEST_CASE("Member pointer parameters bind published class EntityId at parse") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
