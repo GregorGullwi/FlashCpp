@@ -490,7 +490,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
   parser also publishes ordered member schemas (`TypeId`, offset, size, access,
   bitfield / `no_unique_address` flags) and base schemas (`EntityId`, offset,
   access, virtual flag). Fixed-bound arrays of those complete published nominal
-  types import canonically; aliases, unpublished/incomplete nominal forms,
+  types import canonically. Forward-declared classes and fixed-underlying
+  scoped enums also import as EntityId-rooted `Record` / `Enum` leaves through
+  pointer and lvalue-reference parameters without layout snapshots; a parser
+  regression checks all four shapes. Aliases, unpublished nominal forms,
   unknown nominal bounds, anonymous-union groups, and unpublished-base schemas
   stay deferred. Function types carry `CanonicalCallingConvention` in the
   Function node's builtin byte and dllimport/dllexport as flag bits. Dependent
@@ -904,9 +907,10 @@ Advanced, not completed:
   removal from type-trait consumers.
   The landed-family inventory
   lives in `Current boundary and handoff`. Spec-rooted dependent stamping inside
-  nested class-template patterns now has a targeted regression; unpublished /
-  incomplete nominal, anonymous-union, and unpublished-base forms, the
-  remaining dependent/template arguments, and deletion of the flat
+  nested class-template patterns and forward-declared class / fixed-underlying
+  scoped-enum pointer and lvalue-reference identity now have targeted
+  regressions. Unpublished nominal forms, anonymous-union and unpublished-base
+  forms, the remaining dependent/template arguments, and deletion of the flat
   representation remain open and keep the criterion incomplete.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
