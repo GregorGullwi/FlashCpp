@@ -3291,26 +3291,40 @@ ParseResult Parser::parse_type_specifier() {
 					auto buildQualifiedTypeName = [&](std::string_view parent_name) {
 						StringBuilder qualified_type_name_builder;
 						qualified_type_name_builder.append(parent_name);
+						const std::string_view terminal_name =
+							qualified_node.identifier_token().value();
+						auto append_member_suffix = [&](std::string_view member_path) {
+							// The qualified parser can include the terminal identifier in
+							// its namespace handle. It is appended below, so retain only
+							// genuine intermediate components here.
+							if (member_path == terminal_name) {
+								return;
+							}
+							qualified_type_name_builder.append("::").append(member_path);
+						};
 						// If there are additional namespace parts beyond the template, append them
 						// The namespace handle might include parts beyond just the template name
 						if (!ns_qualified.empty() && ns_qualified != type_name) {
 							// Check if ns_qualified starts with type_name:: - if so, append the rest
 							if (ns_qualified.starts_with(type_name) && ns_qualified.size() > type_name.size() + 2 &&
 								ns_qualified.substr(type_name.size(), 2) == "::") {
-								const std::string_view namespace_suffix =
-									ns_qualified.substr(type_name.size());
-								const std::string_view terminal_name =
-									qualified_node.identifier_token().value();
-								// The qualified parser can include the terminal identifier in
-								// its namespace handle. It is appended below, so retain only
-								// genuine intermediate components here.
-								if (namespace_suffix.size() != terminal_name.size() + 2 ||
-									namespace_suffix.substr(2) != terminal_name) {
-									qualified_type_name_builder.append(namespace_suffix);
+								append_member_suffix(ns_qualified.substr(type_name.size() + 2));
+							} else if (const size_t owner_scope = type_name.rfind("::");
+									   owner_scope != std::string_view::npos) {
+								// Namespace-qualified owner: the qualified parser reports the
+								// member chain relative to the enclosing namespace (for example
+								// `n::Inner` for `n::Outer<int>::Inner::type`), so strip that
+								// namespace prefix before appending the member path.
+								const std::string_view namespace_prefix =
+									type_name.substr(0, owner_scope + 2);
+								if (ns_qualified.starts_with(namespace_prefix) &&
+									ns_qualified.size() > namespace_prefix.size()) {
+									append_member_suffix(
+										ns_qualified.substr(namespace_prefix.size()));
 								}
 							}
 						}
-						return qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value()).commit();
+						return qualified_type_name_builder.append("::").append(terminal_name).commit();
 					};
 					auto buildResolvedTypeNode = [&](const TypeInfo& resolved_type_info) -> ASTNode {
 						if (resolved_type_info.isStruct() && !resolved_type_info.isTypeAlias()) {

@@ -1,18 +1,17 @@
 # Known Issues
 
-## Qualified nested member types only resolve for global owners
+## Deeper nested-class member types remain unresolved
 
-A nested-class member typedef behind a template-id owner now resolves when the
-owner is unqualified (`Outer<int>::Inner::type`), but the same use through a
-namespace-qualified owner still fails. The inline form
-`n::Outer<int>::Inner::type x;` reports `Unknown nested type:
-Outer$<hash>::type` (the `::Inner` segment is dropped from the constructed
-qualified name), while `using X = n::Outer<int>::Inner::type;` reports
-`Expected type or namespace name`. Nested classes of nested classes
-(`Outer<int>::Inner::Deep`) are also unresolved. Closing this needs the
-qualified type-id path to build and resolve the full owner chain rather than
-only the first member segment. Regression coverage for the working global case
-is `tests/nested_class_template_member_type_ret42.cpp`.
+A nested-class member typedef behind a template-id owner now resolves for both
+unqualified and namespace-qualified owners (`Outer<int>::Inner::type`,
+`n::Outer<int>::Inner::type`). A member type of a class nested two levels deep
+still fails: `Outer<int>::Inner::Deep` reports `Unknown nested type:
+Outer$<hash>::Inner::Deep`, because primary instantiation publishes only the
+owner's direct nested classes, not the nested classes of those nested classes,
+and member alias templates declared inside a nested class are not published
+either. Closing this needs nested-class instantiation to register its own
+nested classes and member aliases recursively. Regression coverage for the
+resolved one-level case is `tests/nested_class_template_member_type_ret42.cpp`.
 
 ## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
 

@@ -659,10 +659,12 @@ during concrete alias materialization. This fixes forwarded aliases such as
   reusing `buildSubstitutedTypeAliasSpecifier` and the full-specialization
   nested-alias registration shape, so a concrete or template-parameter-
   dependent nested member type resolves through the existing qualified type-id
-  lookup. Namespace-qualified owners (`n::Owner<int>::Nested::type`), nested
-  classes of nested classes, and member alias templates declared inside nested
-  classes remain deferred. Stop here for review before starting another family,
-  3B, or the parallel frontend experiment.
+  lookup. Qualified type-name construction now also strips the enclosing
+  namespace prefix for a namespace-qualified owner, so `n::Owner<int>::Nested::
+  type` no longer drops the `Nested` segment. Nested classes of nested classes
+  and member alias templates declared inside nested classes remain deferred.
+  Stop here for review before starting another family, 3B, or the parallel
+  frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
