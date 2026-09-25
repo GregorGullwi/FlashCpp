@@ -1,17 +1,21 @@
 # Known Issues
 
-## Deeper nested-class member types remain unresolved
+## Deeply nested class bodies are not instantiated
 
-A nested-class member typedef behind a template-id owner now resolves for both
-unqualified and namespace-qualified owners (`Outer<int>::Inner::type`,
-`n::Outer<int>::Inner::type`). A member type of a class nested two levels deep
-still fails: `Outer<int>::Inner::Deep` reports `Unknown nested type:
-Outer$<hash>::Inner::Deep`, because primary instantiation publishes only the
-owner's direct nested classes, not the nested classes of those nested classes,
-and member alias templates declared inside a nested class are not published
-either. Closing this needs nested-class instantiation to register its own
-nested classes and member aliases recursively. Regression coverage for the
-resolved one-level case is `tests/nested_class_template_member_type_ret42.cpp`.
+Member typedefs of a class nested several levels deep now resolve under the
+instantiated owner chain (`Owner<int>::Level1::Level2::type`), including
+template-parameter-dependent and record targets and namespace-qualified owners;
+deep member alias templates resolve through the alias-template registry, and
+deep static-member expressions lower. Naming the deep class itself still fails:
+`O<int>::I::D d;` reports `Unknown nested type: O$<hash>::I::D`, and calling a
+non-static member function of it (`O<int>::I::D::f()`) reports no matching
+function. Primary instantiation still materializes only the owner's direct
+nested class bodies and never recurses into a nested class's own
+`nested_classes()`. Closing this needs nested-class instantiation to recurse
+with the instantiated nested owner; the member-production loop in
+`try_instantiate_class_template` already keys off the pattern node and could be
+extracted into a recursive routine. Regression coverage for the resolved
+member-type case is `tests/deep_nested_class_template_member_type_ret42.cpp`.
 
 ## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
 

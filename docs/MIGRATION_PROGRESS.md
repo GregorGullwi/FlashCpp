@@ -661,10 +661,15 @@ during concrete alias materialization. This fixes forwarded aliases such as
   dependent nested member type resolves through the existing qualified type-id
   lookup. Qualified type-name construction now also strips the enclosing
   namespace prefix for a namespace-qualified owner, so `n::Owner<int>::Nested::
-  type` no longer drops the `Nested` segment. Nested classes of nested classes
-  and member alias templates declared inside nested classes remain deferred.
-  Stop here for review before starting another family, 3B, or the parallel
-  frontend experiment.
+  type` no longer drops the `Nested` segment. Member typedefs of classes nested
+  at any depth are walked iteratively under the instantiated owner chain
+  (`Owner<int>::Level1::Level2::type`), so those qualified member types resolve;
+  deep member alias templates already resolved through the alias-template
+  registry. Deep nested class *bodies* are still not instantiated: naming the
+  class itself (`Owner<int>::Level1::Level2`) or using its non-static member
+  functions remains deferred to a recursive-instantiation slice. Stop here for
+  review before starting another family, 3B, or the parallel frontend
+  experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -745,6 +750,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Direct nominal alias defaults | `alias_template_record_default_ret42` |
 | Namespace-scope record pointer null comparison | `global_record_pointer_null_compare_ret42` |
 | Nested-class member type through a template-id owner | `nested_class_template_member_type_ret42` |
+| Deep nested-class member typedefs | `deep_nested_class_template_member_type_ret42` |
 | Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
 | Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |
