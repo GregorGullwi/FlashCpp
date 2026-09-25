@@ -3368,6 +3368,101 @@ int main() {
 			enum_entity);
 	}
 
+	TEST_CASE("Function-local record identity is owned by its lexical scope") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		const std::string code =
+			"void first_local_record() {\n"
+			"  struct LocalIdentity;\n"
+			"  struct LocalIdentity* before;\n"
+			"  struct LocalIdentity { int value; };\n"
+			"  struct LocalIdentity* after;\n"
+			"}\n"
+			"void second_local_record() {\n"
+			"  struct LocalIdentity { double value; };\n"
+			"}\n";
+		CompileContext test_context;
+		test_context.setInputFile("function_local_record_identity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const StringHandle local_name =
+			StringTable::getOrInternStringHandle("LocalIdentity");
+		std::vector<const TypeInfo*> local_type_infos;
+		for (const auto& [lookup_name, type_info] : getTypesByNameMap()) {
+			(void)lookup_name;
+			if (type_info == nullptr || !type_info->isStruct()) {
+				continue;
+			}
+			const StructTypeInfo* struct_info = type_info->getStructInfo();
+			if (struct_info == nullptr || struct_info->declaration_node == nullptr ||
+				struct_info->declaration_node->name() != local_name ||
+				!struct_info->declaration_node->is_local_class()) {
+				continue;
+			}
+			if (std::find(local_type_infos.begin(), local_type_infos.end(), type_info) ==
+				local_type_infos.end()) {
+				local_type_infos.push_back(type_info);
+			}
+		}
+		REQUIRE(local_type_infos.size() == 2u);
+
+		CanonicalTypeTable& canonical_types = context.canonicalTypes();
+		std::array<EntityId, 2> entities{};
+		for (std::size_t index = 0; index < local_type_infos.size(); ++index) {
+			const TypeInfo& type_info = *local_type_infos[index];
+			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			REQUIRE(struct_info != nullptr);
+			REQUIRE(struct_info->declaration_node != nullptr);
+			const StructDeclarationNode& declaration = *struct_info->declaration_node;
+			REQUIRE(declaration.has_entity_id());
+			REQUIRE(declaration.has_lexical_scope_id());
+			const EntityRecord& entity =
+				context.declarationBuilder().entity(declaration.entity_id());
+			REQUIRE(isLocalScopeOwnedOwnerId(entity.owner_id));
+			CHECK(localScopeFromOwnerId(entity.owner_id) == declaration.lexical_scope_id());
+			entities[index] = declaration.entity_id();
+
+			TypeSpecifierNode syntax(
+				type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+				type_info.sizeInBits(),
+				Token{},
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			tryBindPublishedTypeEntity(syntax);
+			REQUIRE(syntax.has_type_entity());
+			CHECK(syntax.type_entity() == declaration.entity_id());
+			const CanonicalTypeImport imported =
+				importCanonicalType(canonical_types, syntax);
+			REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+			CHECK(canonical_types.node(imported.type).kind == CanonicalTypeKind::Record);
+			CHECK(canonical_types.recordEntity(imported.type) == declaration.entity_id());
+
+			TypeSpecifierNode pointer_syntax = syntax;
+			pointer_syntax.add_pointer_level();
+			const CanonicalTypeImport pointer_import =
+				importCanonicalType(canonical_types, pointer_syntax);
+			REQUIRE(pointer_import.status == CanonicalTypeImportStatus::Supported);
+			REQUIRE(canonical_types.node(pointer_import.type).kind == CanonicalTypeKind::Pointer);
+			CHECK(canonical_types.node(pointer_import.type).child == imported.type);
+
+			TypeSpecifierNode reference_syntax = syntax;
+			reference_syntax.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			const CanonicalTypeImport reference_import =
+				importCanonicalType(canonical_types, reference_syntax);
+			REQUIRE(reference_import.status == CanonicalTypeImportStatus::Supported);
+			REQUIRE(canonical_types.node(reference_import.type).kind ==
+				CanonicalTypeKind::LValueReference);
+			CHECK(canonical_types.node(reference_import.type).child == imported.type);
+		}
+		CHECK(entities[0] != entities[1]);
+	}
+
 	TEST_CASE("Member pointer parameters bind published class EntityId at parse") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

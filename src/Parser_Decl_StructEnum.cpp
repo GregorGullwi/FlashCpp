@@ -705,6 +705,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	auto struct_name = name_token.handle();
 	const bool is_local_class_declaration = current_function_ != nullptr;
+	const bool can_publish_local_class_identity =
+		is_local_class_declaration &&
+		!parsing_template_class_ &&
+		!current_function_->is_template_pattern() &&
+		!current_function_->has_outer_template_bindings();
+	bool owns_published_local_class_identity =
+		can_publish_local_class_identity && struct_parsing_context_stack_.empty();
 	bool owns_replayed_local_class_identity =
 		replaying_template_member_local_classes_ &&
 		is_local_class_declaration &&
@@ -743,7 +750,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			break;
 		}
 	}
-	if (owns_replayed_local_class_identity &&
+	if ((owns_replayed_local_class_identity || owns_published_local_class_identity) &&
 		peek() != "{"_tok &&
 		peek() != ":"_tok &&
 		peek() != "final"_tok &&
@@ -752,6 +759,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// An elaborated type specifier such as `struct Point value` refers to
 		// an existing type; it does not declare a new block-scope class.
 		owns_replayed_local_class_identity = false;
+		owns_published_local_class_identity = false;
 	}
 	// Register the struct type in the global type system EARLY
 	// This allows member functions (like constructors) to reference the struct type
@@ -829,6 +837,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		type_name = StringTable::getOrInternStringHandle(local_identity.commit());
 		qualified_struct_name = type_name;
 		full_qualified_name = type_name;
+	} else if (owns_published_local_class_identity) {
+		// The legacy TypeInfo map is keyed by names, so qualify only that lookup
+		// key with the lexical scope. DeclarationBuilder owns semantic identity
+		// through the ScopeId-tagged OwnerId below.
+		StringBuilder local_identity;
+		local_identity
+			.append("$local$")
+			.append(static_cast<int64_t>(gSymbolTable.currentScopeId().value))
+			.append("::")
+			.append(struct_name);
+		type_name = StringTable::getOrInternStringHandle(local_identity.commit());
+		qualified_struct_name = type_name;
+		full_qualified_name = type_name;
 	}
 	TypeInfo& struct_type_info = add_struct_type(type_name, current_namespace_handle);
 
@@ -845,7 +866,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		true,
 		true,
 		!parsing_template_class_);
-	if (owns_replayed_local_class_identity) {
+	if (owns_replayed_local_class_identity || owns_published_local_class_identity) {
 		getTypesByNameMap().insert_or_assign(struct_name, &struct_type_info);
 	} else if (replaying_template_member_local_classes_ && is_nested_class) {
 		bool nested_in_replayed_local_class = false;
@@ -886,7 +907,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		active_template_decl_id_ = template_decl;
 		bindCurrentUnpublishedTemplateParameters(template_decl);
 	}
-	const auto stampStructLexicalScope = [&struct_node, this, is_nested_class]() {
+	const auto stampStructLexicalScope = [
+		&struct_node, this, is_nested_class,
+		can_publish_local_class_identity, owns_published_local_class_identity]() {
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(
 			struct_node, gSymbolTable.currentScopeId());
 		StructDeclarationNode& stamped = struct_node.as<StructDeclarationNode>();
@@ -895,6 +918,25 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// stack supplies the enclosing class- or template-owned OwnerId, and the
 			// definition flag merges through the same nested identity.
 			tryPublishNestedClassIdentity(stamped, !stamped.is_forward_declaration());
+			return;
+		}
+		if (stamped.is_local_class()) {
+			if (!can_publish_local_class_identity ||
+				!owns_published_local_class_identity) {
+				return;
+			}
+			FrontendContext& front_end = requireFrontendContext();
+			const PublishResult published = commitParserClassPublication(
+				front_end.declarationBuilder(),
+				stamped,
+				gSymbolTable.currentScopeId(),
+				ownerIdFromLocalScope(gSymbolTable.currentScopeId()),
+				!stamped.is_forward_declaration(),
+				gSymbolTable);
+			if (published.status == PublishStatus::Created ||
+				published.status == PublishStatus::MergedRedeclaration) {
+				recordDeclarationBuilderPublish();
+			}
 			return;
 		}
 		if (!shouldPublishParserClass(
@@ -908,6 +950,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			front_end.declarationBuilder(),
 			stamped,
 			gSymbolTable.currentScopeId(),
+			OwnerId{},
 			!stamped.is_forward_declaration(),
 			gSymbolTable);
 		if (published.status == PublishStatus::Created ||
@@ -915,7 +958,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			recordDeclarationBuilderPublish();
 		}
 	};
-	if (owns_replayed_local_class_identity) {
+	if (owns_replayed_local_class_identity || owns_published_local_class_identity) {
 		struct_ref.set_semantic_name(type_name);
 	}
 
@@ -1468,8 +1511,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Publish EntityId before body parse so member primary class templates and
 	// member function templates can use class-owned OwnerIds during the body.
 	// Stamp as a non-definition first; stampStructLexicalScope at the
-	// complete-definition epoch merges the definition flag. Template / local
-	// forms stay unpublished here. Nested classes publish through the context
+	// complete-definition epoch merges the definition flag. Direct non-template
+	// local classes use their lexical ScopeId as owner; template-local forms stay
+	// deferred. Nested classes publish through the context
 	// stack (is_nested_class): enclosing_class() is not set until after the
 	// nested parse returns, and class bodies do not enter a Class ScopeType, so
 	// shouldPublishParserClass alone would wrongly publish nested "Inner" as a
@@ -1480,6 +1524,21 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	if (!struct_ref.has_entity_id()) {
 		if (is_nested_class) {
 			tryPublishNestedClassIdentity(struct_ref, false);
+		} else if (struct_ref.is_local_class() &&
+			can_publish_local_class_identity &&
+			owns_published_local_class_identity) {
+			FrontendContext& front_end = requireFrontendContext();
+			const PublishResult published = commitParserClassPublication(
+				front_end.declarationBuilder(),
+				struct_ref,
+				gSymbolTable.currentScopeId(),
+				ownerIdFromLocalScope(gSymbolTable.currentScopeId()),
+				false,
+				gSymbolTable);
+			if (published.status == PublishStatus::Created ||
+				published.status == PublishStatus::MergedRedeclaration) {
+				recordDeclarationBuilderPublish();
+			}
 		} else if (shouldPublishParserClass(
 					   struct_ref,
 					   gSymbolTable.get_current_scope_type(),
@@ -1489,6 +1548,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				front_end.declarationBuilder(),
 				struct_ref,
 				gSymbolTable.currentScopeId(),
+				OwnerId{},
 				false,
 				gSymbolTable);
 			if (published.status == PublishStatus::Created ||

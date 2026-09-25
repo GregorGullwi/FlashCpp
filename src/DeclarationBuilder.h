@@ -146,7 +146,7 @@ struct ClassDeclRequest {
 	bool is_definition;
 	DeclKind kind = DeclKind::Class;
 	// When set, publish under this owner instead of resolving a namespace owner
-	// from lexical_scope_id (nested classes owned by enclosing EntityId).
+	// from lexical_scope_id (class/template owners or the matching local scope).
 	OwnerId owner_id{};
 };
 
@@ -518,10 +518,13 @@ PublishResult commitParserFreeFunctionPublication(
 	bool is_definition,
 	const SymbolTable& symbol_table);
 
+// owner_id empty resolves a namespace owner; local-scope owners must match
+// lexical_scope_id. Class- and template-owned owners are explicit as well.
 PublishResult commitParserClassPublication(
 	DeclarationBuilder& builder,
 	StructDeclarationNode& struct_decl,
 	ScopeId lexical_scope_id,
+	OwnerId owner_id,
 	bool is_definition,
 	const SymbolTable& symbol_table);
 

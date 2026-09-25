@@ -478,8 +478,10 @@ during concrete alias materialization. This fixes forwarded aliases such as
   (`ownerIdFromClassEntity`) for member class primaries under published
   non-template enclosing classes, or template-owned
   (`ownerIdFromTemplateDecl`) for direct member primaries under published class
-  templates. Distinct free function-template overloads publish distinct
-  signature indices rather than sharing OwnerId+name.
+  templates. Direct non-template local class declarations use their lexical
+  `ScopeId` as the `EntityId` owner; the scope-qualified spelling remains a
+  legacy `TypeInfo` lookup key only. Distinct free function-template overloads
+  publish distinct signature indices rather than sharing OwnerId+name.
 - Published global/namespace structs and enums bind `type_entity` / injected-
   class metadata at declarator intern time so `Struct` and `Enum` declarators
   import as opaque `Record(EntityId)` and `Enum(EntityId)` nodes (with
@@ -495,7 +497,12 @@ during concrete alias materialization. This fixes forwarded aliases such as
   pointer and lvalue-reference parameters without layout snapshots; a parser
   regression checks all four shapes. Aliases, unpublished nominal forms,
   unknown nominal bounds, anonymous-union groups, and unpublished-base schemas
-  stay deferred. Function types carry `CanonicalCallingConvention` in the
+  stay deferred. Direct named classes in function and block scopes now merge
+  forward declarations with their definitions under the lexical scope owner,
+  while same-spelled classes in separate scopes retain distinct identities;
+  their `Record` wrappers import without layout snapshots. Function-template
+  replay local classes, local enums, and local aliases remain deferred. Function
+  types carry `CanonicalCallingConvention` in the
   Function node's builtin byte and dllimport/dllexport as flag bits. Dependent
   `noexcept(expr)` packs an `ExprId` beside the parameter-list link and sets
   `DependentNoexceptFunction`. Namespace/global primary class templates publish
@@ -907,10 +914,12 @@ Advanced, not completed:
   removal from type-trait consumers.
   The landed-family inventory
   lives in `Current boundary and handoff`. Spec-rooted dependent stamping inside
-  nested class-template patterns and forward-declared class / fixed-underlying
-  scoped-enum pointer and lvalue-reference identity now have targeted
-  regressions. Unpublished nominal forms, anonymous-union and unpublished-base
-  forms, the remaining dependent/template arguments, and deletion of the flat
+  nested class-template patterns, forward-declared class / fixed-underlying
+  scoped-enum pointer and lvalue-reference identity, and direct named
+  non-template function/block-local class identity now have targeted
+  regressions. Function-template replay local classes, local enums and aliases,
+  unpublished nominal forms, anonymous-union and unpublished-base forms, the
+  remaining dependent/template arguments, and deletion of the flat
   representation remain open and keep the criterion incomplete.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.

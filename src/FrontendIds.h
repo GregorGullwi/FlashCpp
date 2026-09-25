@@ -82,12 +82,20 @@ struct TemplateDeclId {
 };
 
 // OwnerId carries a compact tagged semantic owner. Namespace owners occupy the
-// untagged range; class entities and primary class templates use disjoint tags.
-// The payload is an EntityId or TemplateDeclId, never a spelling or address.
+// untagged range; local scopes, class entities, and primary class templates use
+// disjoint tags. The payload is a semantic ID, never a spelling or address.
 inline constexpr uint32_t kOwnerIdKindMask = 0xC0000000u;
+inline constexpr uint32_t kLocalScopeOwnerIdTag = 0x40000000u;
 inline constexpr uint32_t kClassOwnerIdTag = 0x80000000u;
 inline constexpr uint32_t kTemplateOwnerIdTag = 0xC0000000u;
 inline constexpr uint32_t kOwnerIdPayloadMask = 0x3FFFFFFFu;
+
+inline constexpr OwnerId ownerIdFromLocalScope(ScopeId scope_id) {
+	if (!scope_id || (scope_id.value & ~kOwnerIdPayloadMask) != 0u) {
+		return OwnerId{};
+	}
+	return OwnerId{scope_id.value | kLocalScopeOwnerIdTag};
+}
 
 inline constexpr OwnerId ownerIdFromClassEntity(EntityId enclosing) {
 	if (!enclosing || (enclosing.value & ~kOwnerIdPayloadMask) != 0u) {
@@ -107,12 +115,23 @@ inline constexpr bool isClassOwnedOwnerId(OwnerId owner_id) {
 	return owner_id && (owner_id.value & kOwnerIdKindMask) == kClassOwnerIdTag;
 }
 
+inline constexpr bool isLocalScopeOwnedOwnerId(OwnerId owner_id) {
+	return owner_id && (owner_id.value & kOwnerIdKindMask) == kLocalScopeOwnerIdTag;
+}
+
 inline constexpr bool isTemplateOwnedOwnerId(OwnerId owner_id) {
 	return owner_id && (owner_id.value & kOwnerIdKindMask) == kTemplateOwnerIdTag;
 }
 
 inline constexpr bool isClassOrTemplateOwnedOwnerId(OwnerId owner_id) {
 	return isClassOwnedOwnerId(owner_id) || isTemplateOwnedOwnerId(owner_id);
+}
+
+inline constexpr ScopeId localScopeFromOwnerId(OwnerId owner_id) {
+	if (!isLocalScopeOwnedOwnerId(owner_id)) {
+		return ScopeId{};
+	}
+	return ScopeId{owner_id.value & kOwnerIdPayloadMask};
 }
 
 inline constexpr EntityId classEntityFromOwnerId(OwnerId owner_id) {
@@ -137,9 +156,11 @@ static_assert(sizeof(ExprId) == 4);
 static_assert(sizeof(TypeId) == 4);
 static_assert(sizeof(TelemetryTypeId) == 4);
 static_assert(sizeof(TemplateDeclId) == 4);
+static_assert(isLocalScopeOwnedOwnerId(ownerIdFromLocalScope(ScopeId{1})));
 static_assert(isClassOwnedOwnerId(ownerIdFromClassEntity(EntityId{1})));
 static_assert(isTemplateOwnedOwnerId(ownerIdFromTemplateDecl(TemplateDeclId{1})));
 static_assert(isClassOrTemplateOwnedOwnerId(ownerIdFromTemplateDecl(TemplateDeclId{1})));
+static_assert(localScopeFromOwnerId(ownerIdFromLocalScope(ScopeId{7})) == ScopeId{7});
 static_assert(classEntityFromOwnerId(ownerIdFromClassEntity(EntityId{7})) == EntityId{7});
 static_assert(templateDeclFromOwnerId(ownerIdFromTemplateDecl(TemplateDeclId{7})) == TemplateDeclId{7});
 static_assert(ownerIdFromClassEntity(EntityId{1}) != ownerIdFromTemplateDecl(TemplateDeclId{1}));
