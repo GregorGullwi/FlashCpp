@@ -328,8 +328,15 @@ retroactively stamp their declared Type-kind parameters through the existing
 publication helpers; the lazy
 enclosing-epoch path stays as fallback when parse-time publication is
 unavailable. Local and anonymous classes, and template-nested classes whose
-enclosing primary has no published identity, still fail closed there. Primary
-member alias templates publish identity and
+enclosing primary has no published identity, still fail closed there.
+
+A nested-class member-template regression now also verifies that
+`TemplateOwner<Owner>::Inner::Box<Value>` publishes `Box` under `Inner`'s
+EntityId and stamps `Root<Value>::template Rebind<Value>::type` as a structural
+`TemplateSpecialization`, `DependentTemplateMember`, and `DependentName` chain,
+with `Value` rooted in `Box`'s published `TemplateDeclId`.
+
+Primary member alias templates publish identity and
 direct canonical targets the same way: `parse_member_template_alias` publishes a `TemplateDeclId`
 (`TemplateDeclTable` `PrimaryKind::Alias`) under the class-owned OwnerId from
 the enclosing parse-time EntityId, or a template-owned OwnerId for direct
@@ -897,10 +904,10 @@ Advanced, not completed:
   removal from type-trait consumers.
   The landed-family inventory
   lives in `Current boundary and handoff`. Spec-rooted dependent stamping inside
-  nested class-template patterns still needs a targeted regression, as do
-  unpublished/incomplete nominal, anonymous-union, and unpublished-base forms,
-  the remaining dependent/template arguments, and deletion of the flat
-  representation; these keep the criterion open.
+  nested class-template patterns now has a targeted regression; unpublished /
+  incomplete nominal, anonymous-union, and unpublished-base forms, the
+  remaining dependent/template arguments, and deletion of the flat
+  representation remain open and keep the criterion incomplete.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser

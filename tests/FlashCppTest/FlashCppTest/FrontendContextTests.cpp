@@ -881,6 +881,87 @@ TEST_SUITE("FrontendContext") {
 		CHECK(inner_type.dependent_name_type() == table.dependentName(inner_rebind, "type"));
 	}
 
+	TEST_CASE("Nested-class member template stamps Spec-rooted dependent members") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename RootValue> struct Root {\n"
+			"  template<typename Value> struct Rebind { using type = Value; };\n"
+			"};\n"
+			"template<typename Owner> struct TemplateOwner {\n"
+			"  struct Inner {\n"
+			"    template<typename Value> struct Box {\n"
+			"      typename Root<Value>::template Rebind<Value>::type value;\n"
+			"    };\n"
+			"  };\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("nested_class_member_template_spec_root_stamp_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto owner_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("TemplateOwner"));
+		REQUIRE(owner_opt.has_value());
+		REQUIRE(owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& owner = owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(owner.has_template_decl_id());
+		REQUIRE(owner.class_decl_node().nested_classes().size() == 1u);
+		REQUIRE(owner.class_decl_node().nested_classes()[0].is<StructDeclarationNode>());
+		const StructDeclarationNode& inner =
+			owner.class_decl_node().nested_classes()[0].as<StructDeclarationNode>();
+		REQUIRE(inner.has_entity_id());
+		CHECK(context.declarationBuilder().entity(inner.entity_id()).owner_id ==
+			  ownerIdFromTemplateDecl(owner.template_decl_id()));
+
+		const auto box_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("Inner::Box"));
+		REQUIRE(box_opt.has_value());
+		REQUIRE(box_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& box = box_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(box.has_template_decl_id());
+		CHECK(context.templateDecls().findPrimaryClassTemplate(
+			  ownerIdFromClassEntity(inner.entity_id()),
+			  StringTable::getOrInternStringHandle("Box")) == box.template_decl_id());
+
+		const auto& box_members = box.class_decl_node().members();
+		REQUIRE(box_members.size() == 1u);
+		REQUIRE(box_members[0].declaration.is<DeclarationNode>());
+		const TypeSpecifierNode& value_type =
+			box_members[0].declaration.as<DeclarationNode>().type_specifier_node();
+		REQUIRE(value_type.has_dependent_name_type());
+
+		const auto root_opt = gTemplateRegistry.lookupTemplate(
+			StringTable::getOrInternStringHandle("Root"));
+		REQUIRE(root_opt.has_value());
+		REQUIRE(root_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& root = root_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(root.has_template_decl_id());
+
+		CanonicalTypeTable& table = context.canonicalTypes();
+		const TypeId value_parameter = table.templateParameter(box.template_decl_id(), 0u);
+		const std::array<TypeId, 1> root_args = {value_parameter};
+		const TypeId root_spec = table.templateSpecialization(
+			root.template_decl_id(), std::span<const TypeId>(root_args));
+		const std::array<TypeId, 1> rebind_args = {value_parameter};
+		const TypeId rebind = table.dependentTemplateMember(
+			root_spec, "Rebind", std::span<const TypeId>(rebind_args));
+		const TypeId value_type_id = value_type.dependent_name_type();
+		REQUIRE(table.node(value_type_id).kind == CanonicalTypeKind::DependentName);
+		const TypeId member_template_id = table.node(value_type_id).child;
+		REQUIRE(table.node(member_template_id).kind == CanonicalTypeKind::DependentTemplateMember);
+		CHECK(table.dependentNameIdentifier(member_template_id) == "Rebind");
+		CHECK(table.node(member_template_id).child == root_spec);
+		CHECK(member_template_id == rebind);
+		CHECK(value_type_id == table.dependentName(rebind, "type"));
+	}
+
 	TEST_CASE("Member function template under published class template publishes TemplateDeclId") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
