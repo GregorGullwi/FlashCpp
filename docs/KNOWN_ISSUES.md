@@ -1,25 +1,5 @@
 # Known Issues
 
-## Namespace-scope record pointer comparison against `nullptr` crashes
-
-A namespace-scope pointer to a record initialized to `nullptr` and compared
-with `nullptr` (`==` or `!=`) fails IR generation with the internal assertion
-`IrOperand does not contain a value type compatible with IrValue`
-(`src/IROperandHelpers.h`). A local pointer with the same comparison lowers
-correctly, and boolean conversion of the same global pointer (`p ? ... : ...`)
-also works, so the defect is in comparison lowering for a global pointer whose
-flat type is a record pointer, not in pointer identity. Reproduced on
-`bcb5cb31` and is pre-existing:
-
-```cpp
-struct S { int value; };
-S* p = nullptr;
-int main() { return p == nullptr ? 42 : 1; }
-```
-
-This is unrelated to alias defaults. It needs one sema-owned pointer/canonical
-type for the global load and comparison instead of a lowering-time recovery.
-
 ## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
 
 A namespace/global function-template body that declares a local class and is

@@ -3141,12 +3141,21 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// are rewritten to compare that result against zero when no direct overload matched.
 	FLASH_LOG_FORMAT(Codegen, Debug, "Binary operator check: op='{}', lhsType={}", op, static_cast<int>(lhsCat));
 
+	// Only a struct object takes the spaceship rewrite ([over.match.oper]); a
+	// pointer-to-struct comparison is a built-in pointer comparison. The
+	// operand of the latter may be absent from the codegen symbol table (for
+	// example a namespace-scope pointer), so treating it as a struct lookup
+	// would leave the comparison without a result.
+	const bool lhs_is_struct_object =
+		lhs_has_user_defined_identity &&
+		!lhsExprResult.pointer_depth.is_pointer();
+
 	if (op == "<=>" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=") {
 		FLASH_LOG_FORMAT(Codegen, Debug, "Spaceship operator detected: lhsType={}, is_struct={}",
 						 static_cast<int>(lhsCat), lhsCat == TypeCategory::Struct);
 
 		// Check if LHS is a struct type
-		if (lhsCat == TypeCategory::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+		if (lhs_is_struct_object && lhsCat == TypeCategory::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 
 			// Get the LHS value - can be an identifier, member access, or other expression
