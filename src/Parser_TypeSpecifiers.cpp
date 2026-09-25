@@ -34,17 +34,29 @@ AliasTemplateArity aliasTemplateArity(const TemplateParameterVector& parameters)
 	return arity;
 }
 
-// Whether a canonical type is a builtin/record/enum value reachable through at
-// most a cv wrapper. Pointer, reference, array, specialization, and dependent
-// defaults keep their own substitution path.
+// Whether a canonical type is a builtin/record/enum value wrapped only by cv,
+// pointer, or reference nodes. Arrays, specializations, callable types, and
+// dependent defaults keep their own substitution path.
 bool canonicalTypeIsBindableAliasDefault(const CanonicalTypeTable& table, TypeId type) {
+	bool saw_pointer = false;
+	bool saw_reference = false;
 	for (;;) {
 		const CanonicalTypeNode node = table.node(type);
 		switch (node.kind) {
 		case CanonicalTypeKind::Qualified:
+		case CanonicalTypeKind::Pointer:
 			if (!node.child) {
 				return false;
 			}
+			saw_pointer |= node.kind == CanonicalTypeKind::Pointer;
+			type = node.child;
+			continue;
+		case CanonicalTypeKind::LValueReference:
+		case CanonicalTypeKind::RValueReference:
+			if (!node.child || saw_pointer || saw_reference) {
+				return false;
+			}
+			saw_reference = true;
 			type = node.child;
 			continue;
 		case CanonicalTypeKind::Builtin:

@@ -860,7 +860,9 @@ Advanced, not completed:
   templates, cast/NTTP member object pointer pointee recovery
   (`MemberObjectPointer` adapter family), namespace/global alias-template
   primary identity publication, direct nominal alias-default binding through
-  published identity (builtin/record/enum with cv; wrappers deferred), general
+  published identity for builtin/record/enum defaults wrapped by cv, pointer,
+  and reference declarators; array, specialization, and dependent defaults are
+  deferred from this slice, general
   overload/conversion resolution
   consuming the ordered declarator spine for same-shape interleaved identity,
   `[conv.qual]` qualification, `cv void*` conversion, `[conv.array]` decay of a
@@ -962,11 +964,14 @@ must not increase an implementation percentage.
   now bind before concrete alias materialization. The binding stamps each
   default's published `EntityId` through `tryBindPublishedTypeEntity` and
   accepts it only when it imports through `CanonicalTypeTable` as a
-  builtin/record/enum reachable through at most a cv wrapper, so `J<> z = 42`
-  preserves the `int` target and value and `S<> box{2}` materializes the `Box`
-  object instead of a `T` placeholder. Pointer, reference, array,
-  specialization, and dependent defaults remain deferred to their own
-  substitution slices.
+  builtin/record/enum wrapped by cv, pointer, or reference nodes, preserving
+  wrapper structure and nominal identity. This lets `J<> z = 42` preserve the
+  `int` target and value, `S<> box{2}` materialize the `Box` object instead of
+  a `T` placeholder, and direct pointer/reference defaults retain their
+  declarator shape. Arrays, specializations, and dependent defaults remain on
+  their existing substitution paths. Invalid pointer-to-reference defaults
+  stop at the source declarator with `PointerToReferenceType` (1001), covered
+  by `test_alias_template_pointer_to_reference_default_e1001`.
   Indirect alias recursion is bounded by a logical-depth guard on
   alias materialization that reports `AliasInstantiationDepthExceeded` (3002)
   rather than overflowing the native stack. Latest architecture validation: the
