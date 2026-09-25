@@ -971,7 +971,11 @@ must not increase an implementation percentage.
   declarator shape. Arrays, specializations, and dependent defaults remain on
   their existing substitution paths. Invalid pointer-to-reference defaults
   stop at the source declarator with `PointerToReferenceType` (1001), covered
-  by `test_alias_template_pointer_to_reference_default_e1001`.
+  by `test_alias_template_pointer_to_reference_default_e1001`. Pointer and
+  reference regressions distinguish same-spelling records from separate
+  namespaces to verify that published nominal identity survives wrapper
+  binding. A globally qualified use of a namespace-scoped pointer alias
+  exercises the dedicated global-qualification parser path as well.
   Indirect alias recursion is bounded by a logical-depth guard on
   alias materialization that reports `AliasInstantiationDepthExceeded` (3002)
   rather than overflowing the native stack. Latest architecture validation: the
