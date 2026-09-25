@@ -1,4 +1,4 @@
-// Minimal test for perfect forwarding symbol generation
+// Verify that an lvalue selects the lvalue-reference overload.
 
 extern "C" int printf(const char*, ...);
 
