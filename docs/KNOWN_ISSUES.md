@@ -1,13 +1,24 @@
 # Known Issues
 
-## Record defaults on alias templates retain a placeholder
+## Namespace-scope record pointer comparison against `nullptr` crashes
 
-`struct Box { int value; }; template<class T = Box> using S = T;` followed by
-`S<> box{2};` compiles the alias use but reaches IR generation with the
-unresolved `T` placeholder. The compiler reports `struct type info not found`
-instead of materializing the `Box` object. A separate boundary-3A alias
-substitution slice must bind record and other compound defaults through
-canonical `TypeId` before declaration storage is selected.
+A namespace-scope pointer to a record initialized to `nullptr` and compared
+with `nullptr` (`==` or `!=`) fails IR generation with the internal assertion
+`IrOperand does not contain a value type compatible with IrValue`
+(`src/IROperandHelpers.h`). A local pointer with the same comparison lowers
+correctly, and boolean conversion of the same global pointer (`p ? ... : ...`)
+also works, so the defect is in comparison lowering for a global pointer whose
+flat type is a record pointer, not in pointer identity. Reproduced on
+`bcb5cb31` and is pre-existing:
+
+```cpp
+struct S { int value; };
+S* p = nullptr;
+int main() { return p == nullptr ? 42 : 1; }
+```
+
+This is unrelated to alias defaults. It needs one sema-owned pointer/canonical
+type for the global load and comparison instead of a lowering-time recovery.
 
 ## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
 
