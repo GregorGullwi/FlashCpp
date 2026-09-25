@@ -11,8 +11,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 class ASTNode;
+class TemplateDeclTableTransaction;
 
 // Context-local publication of primary class-, function-, and alias-template
 // identity for boundary 3A. TemplateDeclId is keyed by OwnerId + spelling +
@@ -112,6 +114,7 @@ public:
 		if (!id || !hasPrimary(id)) {
 			throw InternalError("template decl: attach pattern for unpublished TemplateDeclId");
 		}
+		recordPatternMutation(MutationKind::ClassPattern, id.value, primary_class_patterns_);
 		primary_class_patterns_.insert_or_assign(id.value, pattern);
 	}
 
@@ -131,6 +134,7 @@ public:
 		if (!id || !hasPrimary(id)) {
 			throw InternalError("template decl: attach alias pattern for unpublished TemplateDeclId");
 		}
+		recordPatternMutation(MutationKind::AliasPattern, id.value, primary_alias_patterns_);
 		primary_alias_patterns_.insert_or_assign(id.value, pattern);
 	}
 
@@ -150,6 +154,7 @@ public:
 		if (!id || !hasPrimary(id)) {
 			throw InternalError("template decl: attach variable pattern for unpublished TemplateDeclId");
 		}
+		recordPatternMutation(MutationKind::VariablePattern, id.value, primary_variable_patterns_);
 		primary_variable_patterns_.insert_or_assign(id.value, pattern);
 	}
 
@@ -182,6 +187,14 @@ public:
 	}
 
 private:
+	friend class TemplateDeclTableTransaction;
+	enum class MutationKind : uint8_t {
+		PrimaryInsertion,
+		ClassPattern,
+		AliasPattern,
+		VariablePattern,
+	};
+
 	bool hasConflictingMemberOwnedPrimary(
 		PrimaryKind kind,
 		StringHandle name,
@@ -236,6 +249,13 @@ private:
 		}
 	};
 
+	struct Mutation {
+		MutationKind kind = MutationKind::PrimaryInsertion;
+		Key key{};
+		uint32_t id = 0;
+		std::optional<ASTNode> previous_pattern;
+	};
+
 	TemplateDeclId publishPrimary(
 		OwnerId owner,
 		StringHandle name,
@@ -260,9 +280,93 @@ private:
 		}
 		const uint32_t raw = static_cast<uint32_t>(ids_by_key_.size() + 1u);
 		const TemplateDeclId id{raw};
+		if (!transaction_marks_.empty()) {
+			Mutation mutation;
+			mutation.kind = MutationKind::PrimaryInsertion;
+			mutation.key = key;
+			mutation.id = raw;
+			transaction_log_.push_back(std::move(mutation));
+		}
 		ids_by_key_.emplace(key, id);
 		published_ids_.insert(raw);
 		return id;
+	}
+
+	template <typename PatternMap>
+	void recordPatternMutation(
+		MutationKind kind,
+		uint32_t id,
+		const PatternMap& patterns) {
+		if (transaction_marks_.empty()) {
+			return;
+		}
+		Mutation mutation;
+		mutation.kind = kind;
+		mutation.id = id;
+		const auto found = patterns.find(id);
+		if (found != patterns.end()) {
+			mutation.previous_pattern = found->second;
+		}
+		transaction_log_.push_back(std::move(mutation));
+	}
+
+	size_t beginTransaction() {
+		transaction_marks_.push_back(transaction_log_.size());
+		return transaction_marks_.size();
+	}
+
+	void commitTransaction(size_t depth) {
+		validateTransactionDepth(depth);
+		transaction_marks_.pop_back();
+		if (transaction_marks_.empty()) {
+			transaction_log_.clear();
+		}
+	}
+
+	void rollbackTransaction(size_t depth) {
+		validateTransactionDepth(depth);
+		const size_t mark = transaction_marks_.back();
+		for (size_t index = transaction_log_.size(); index > mark; --index) {
+			undoMutation(transaction_log_[index - 1]);
+		}
+		transaction_log_.resize(mark);
+		transaction_marks_.pop_back();
+		if (transaction_marks_.empty()) {
+			transaction_log_.clear();
+		}
+	}
+
+	void validateTransactionDepth(size_t depth) const {
+		if (transaction_marks_.empty() || transaction_marks_.size() != depth) {
+			throw InternalError("template decl: transactions must close in nesting order");
+		}
+	}
+
+	void undoMutation(const Mutation& mutation) {
+		switch (mutation.kind) {
+		case MutationKind::PrimaryInsertion:
+			ids_by_key_.erase(mutation.key);
+			published_ids_.erase(mutation.id);
+			break;
+		case MutationKind::ClassPattern:
+			restorePattern(primary_class_patterns_, mutation);
+			break;
+		case MutationKind::AliasPattern:
+			restorePattern(primary_alias_patterns_, mutation);
+			break;
+		case MutationKind::VariablePattern:
+			restorePattern(primary_variable_patterns_, mutation);
+			break;
+		}
+	}
+
+	template <typename PatternMap>
+	void restorePattern(PatternMap& patterns, const Mutation& mutation) {
+		if (mutation.previous_pattern.has_value()) {
+			patterns.insert_or_assign(mutation.id, *mutation.previous_pattern);
+		} else {
+			patterns.erase(mutation.id);
+		}
 	}
 
 	std::optional<TemplateDeclId> findPrimary(
@@ -294,4 +398,40 @@ private:
 	std::unordered_map<uint32_t, ASTNode> primary_class_patterns_;
 	std::unordered_map<uint32_t, ASTNode> primary_alias_patterns_;
 	std::unordered_map<uint32_t, ASTNode> primary_variable_patterns_;
+	std::vector<size_t> transaction_marks_;
+	std::vector<Mutation> transaction_log_;
+};
+
+// Frontend scratch transactions also cover template identity and its syntax
+// anchors. Journal rollback preserves nested probe semantics, including
+// forward-to-definition pattern replacement.
+class TemplateDeclTableTransaction {
+public:
+	explicit TemplateDeclTableTransaction(TemplateDeclTable& table)
+		: table_(table), depth_(table.beginTransaction()) {}
+	~TemplateDeclTableTransaction() {
+		if (active_) {
+			table_.rollbackTransaction(depth_);
+		}
+	}
+	TemplateDeclTableTransaction(const TemplateDeclTableTransaction&) = delete;
+	TemplateDeclTableTransaction& operator=(const TemplateDeclTableTransaction&) = delete;
+
+	void commit() {
+		if (active_) {
+			table_.commitTransaction(depth_);
+			active_ = false;
+		}
+	}
+	void rollback() {
+		if (active_) {
+			table_.rollbackTransaction(depth_);
+			active_ = false;
+		}
+	}
+
+private:
+	TemplateDeclTable& table_;
+	size_t depth_ = 0;
+	bool active_ = true;
 };

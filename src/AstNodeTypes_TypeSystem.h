@@ -1440,6 +1440,7 @@ struct NormalizedInitializer {
 struct StructStaticMember {
 	StringHandle name;
 	TypeIndex type_index;	  // Index into gTypeInfo for complex types; category encodes Type
+	TypeId canonical_type_id{};	  // Exact declared type when its ordered declarator is published
 	size_t size;			 // Size in bytes
 	size_t alignment;		  // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)

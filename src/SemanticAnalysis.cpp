@@ -975,6 +975,12 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 	desc.type_index = member.type_index.withCategory(member.memberType());
 	desc.base_cv = member.cv_qualifier;
 	desc.ref_qualifier = member.reference_qualifier;
+	if (orderedTypeFromStaticMemberDeclaration(member).has_value()) {
+		if (!member.canonical_type_id) {
+			throw InternalError("ordered static member has no canonical type id");
+		}
+		desc.structural_type_id = member.canonical_type_id;
+	}
 	if (member.pointee_array_declarator) {
 		// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator
 		// belong to the pointee; the member object is a scalar pointer.
@@ -990,9 +996,18 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 }
 
 TypeSpecifierNode typeSpecifierFromStaticMember(const StructStaticMember& member, const Token& token) {
-	if (std::optional<TypeSpecifierNode> ordered_type =
-			orderedTypeFromStaticMemberDeclaration(member);
-		ordered_type.has_value()) {
+	std::optional<TypeSpecifierNode> ordered_type =
+		orderedTypeFromStaticMemberDeclaration(member);
+	if (ordered_type.has_value()) {
+		if (!member.canonical_type_id) {
+			throw InternalError("ordered static member has no canonical type id");
+		}
+		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
+			requireFrontendContext().canonicalTypes(), member.canonical_type_id);
+		if (exported.status != CanonicalTypeImportStatus::Supported) {
+			throw InternalError("static member canonical type export rejected ordered declarator");
+		}
+		ordered_type->set_ordered_declarator(exported.components);
 		return *ordered_type;
 	}
 	TypeSpecifierNode type(
@@ -8001,6 +8016,206 @@ static bool structHasConversionOperatorTo(
 	return false;
 }
 
+ConversionPlan buildCanonicalStructuralConversionPlan(
+	CanonicalTypeTable& table,
+	TypeId source_type,
+	TypeId target_type) {
+	if (!source_type || !target_type) {
+		return ConversionPlan::no_match();
+	}
+	if (source_type == target_type) {
+		return ConversionPlan::exact_match();
+	}
+
+	auto stripTopCv = [&table](TypeId type) {
+		CanonicalTypeNode node = table.node(type);
+		CVQualifier qualifiers = CVQualifier::None;
+		while (node.kind == CanonicalTypeKind::Qualified) {
+			qualifiers |= node.qualifiers;
+			type = node.child;
+			node = table.node(type);
+		}
+		return std::pair<TypeId, CVQualifier>{type, qualifiers};
+	};
+	auto isBuiltin = [&table, &stripTopCv](TypeId type, CanonicalBuiltinKind builtin) {
+		const TypeId unqualified = stripTopCv(type).first;
+		const CanonicalTypeNode node = table.node(unqualified);
+		return node.kind == CanonicalTypeKind::Builtin && node.builtin == builtin;
+	};
+	while (table.node(source_type).kind == CanonicalTypeKind::LValueReference ||
+		table.node(source_type).kind == CanonicalTypeKind::RValueReference) {
+		source_type = table.node(source_type).child;
+	}
+	while (table.node(target_type).kind == CanonicalTypeKind::LValueReference ||
+		table.node(target_type).kind == CanonicalTypeKind::RValueReference) {
+		// Reference binding needs value-category and materialization facts that
+		// are not represented by this TypeId-only structural conversion slice.
+		return ConversionPlan::no_match();
+	}
+	if (source_type == target_type) {
+		return ConversionPlan::exact_match();
+	}
+
+	if (isBuiltin(source_type, CanonicalBuiltinKind::Nullptr)) {
+		const CanonicalTypeNode target = table.node(stripTopCv(target_type).first);
+		if (target.kind == CanonicalTypeKind::Pointer ||
+			target.kind == CanonicalTypeKind::MemberObjectPointer ||
+			target.kind == CanonicalTypeKind::MemberFunctionPointer) {
+			return {ConversionRank::Conversion,
+				StandardConversionKind::PointerConversion, true};
+		}
+	}
+
+	if (isBuiltin(target_type, CanonicalBuiltinKind::Bool)) {
+		const CanonicalTypeNode source = table.node(stripTopCv(source_type).first);
+		if (source.kind == CanonicalTypeKind::Pointer ||
+			source.kind == CanonicalTypeKind::MemberObjectPointer ||
+			source.kind == CanonicalTypeKind::MemberFunctionPointer ||
+			source.kind == CanonicalTypeKind::Array ||
+			source.kind == CanonicalTypeKind::Function) {
+			return {ConversionRank::Conversion,
+				StandardConversionKind::BooleanConversion, true};
+		}
+	}
+
+	const CanonicalTypeNode unqualified_source_node =
+		table.node(stripTopCv(source_type).first);
+	const CanonicalTypeNode unqualified_target_node =
+		table.node(stripTopCv(target_type).first);
+	if (unqualified_source_node.kind == CanonicalTypeKind::Builtin &&
+		unqualified_target_node.kind == CanonicalTypeKind::Builtin) {
+		const std::optional<TypeCategory> source_category =
+			canonicalBuiltinToTypeCategory(unqualified_source_node.builtin);
+		const std::optional<TypeCategory> target_category =
+			canonicalBuiltinToTypeCategory(unqualified_target_node.builtin);
+		if (source_category.has_value() && target_category.has_value()) {
+			const ConversionPlan arithmetic_plan = buildConversionPlan(
+				*source_category, *target_category);
+			if (arithmetic_plan.is_valid) {
+				return arithmetic_plan;
+			}
+		}
+	}
+
+	StandardConversionKind decay_kind = StandardConversionKind::None;
+	const auto [unqualified_source, source_qualifiers] = stripTopCv(source_type);
+	const CanonicalTypeNode source_node = table.node(unqualified_source);
+	if (source_node.kind == CanonicalTypeKind::Array) {
+		TypeId element_type = source_node.child;
+		if (source_qualifiers != CVQualifier::None) {
+			element_type = table.qualify(element_type, source_qualifiers);
+		}
+		source_type = table.pointer(element_type);
+		decay_kind = StandardConversionKind::ArrayToPointer;
+	} else if (source_node.kind == CanonicalTypeKind::Function) {
+		source_type = table.pointer(unqualified_source);
+		decay_kind = StandardConversionKind::FunctionToPointer;
+	}
+
+	const CanonicalTypeNode source_pointer = table.node(stripTopCv(source_type).first);
+	const CanonicalTypeNode target_pointer = table.node(stripTopCv(target_type).first);
+	if (source_pointer.kind == CanonicalTypeKind::Pointer &&
+		target_pointer.kind == CanonicalTypeKind::Pointer) {
+		const auto [source_pointee, source_pointee_cv] = stripTopCv(source_pointer.child);
+		const auto [target_pointee, target_pointee_cv] = stripTopCv(target_pointer.child);
+		const CanonicalTypeNode source_pointee_node = table.node(source_pointee);
+		const CanonicalTypeNode target_pointee_node = table.node(target_pointee);
+		if (source_pointee_node.kind != CanonicalTypeKind::Function &&
+			target_pointee_node.kind == CanonicalTypeKind::Builtin &&
+			target_pointee_node.builtin == CanonicalBuiltinKind::Void &&
+			(static_cast<uint8_t>(source_pointee_cv) &
+				~static_cast<uint8_t>(target_pointee_cv)) == 0) {
+			return {ConversionRank::Conversion,
+				decay_kind == StandardConversionKind::None
+					? StandardConversionKind::PointerConversion
+					: decay_kind,
+				true};
+		}
+	}
+
+	std::vector<CVQualifier> target_intermediate_pointer_cv;
+	size_t pointer_depth = 0;
+	bool qualification_changed = false;
+	TypeId from = source_type;
+	TypeId to = target_type;
+	for (;;) {
+		const auto [from_unqualified, from_cv] = stripTopCv(from);
+		const auto [to_unqualified, to_cv] = stripTopCv(to);
+		const CanonicalTypeNode from_node = table.node(from_unqualified);
+		const CanonicalTypeNode to_node = table.node(to_unqualified);
+		if (pointer_depth != 0) {
+			const bool added_qualification =
+				(static_cast<uint8_t>(from_cv) &
+					~static_cast<uint8_t>(to_cv)) == 0;
+			if (!added_qualification) {
+				return ConversionPlan::no_match();
+			}
+			if (from_cv != to_cv) {
+				qualification_changed = true;
+				for (size_t index = 0; index + 1 < pointer_depth; ++index) {
+					if ((static_cast<uint8_t>(target_intermediate_pointer_cv[index]) &
+						static_cast<uint8_t>(CVQualifier::Const)) == 0) {
+						return ConversionPlan::no_match();
+					}
+				}
+			}
+		}
+		if (from_node.kind != to_node.kind) {
+			return ConversionPlan::no_match();
+		}
+		switch (from_node.kind) {
+		case CanonicalTypeKind::Pointer:
+			if (pointer_depth != 0) {
+				target_intermediate_pointer_cv.push_back(to_cv);
+			}
+			++pointer_depth;
+			from = from_node.child;
+			to = to_node.child;
+			break;
+		case CanonicalTypeKind::Array:
+			if (from_node.array_extent != to_node.array_extent ||
+				from_node.flags != to_node.flags) {
+				return ConversionPlan::no_match();
+			}
+			from = from_node.child;
+			to = to_node.child;
+			break;
+		case CanonicalTypeKind::Builtin:
+			if (from_node.builtin != to_node.builtin) {
+				return ConversionPlan::no_match();
+			}
+			if (decay_kind != StandardConversionKind::None) {
+				return {ConversionRank::Conversion, decay_kind, true};
+			}
+			return qualification_changed
+				? ConversionPlan::qualification_adjustment()
+				: ConversionPlan::exact_match();
+		case CanonicalTypeKind::Record:
+		case CanonicalTypeKind::Enum:
+		case CanonicalTypeKind::TemplateParameter:
+			if (from_node.array_extent != to_node.array_extent) {
+				return ConversionPlan::no_match();
+			}
+			if (decay_kind != StandardConversionKind::None) {
+				return {ConversionRank::Conversion, decay_kind, true};
+			}
+			return qualification_changed
+				? ConversionPlan::qualification_adjustment()
+				: ConversionPlan::exact_match();
+		default:
+			// Function, member-pointer, and dependent/template composite
+			// payloads need their own TypeId conversion rules before this slice
+			// can safely compare them structurally.
+			return from_unqualified == to_unqualified &&
+				decay_kind == StandardConversionKind::None
+				? ConversionPlan::exact_match()
+				: decay_kind != StandardConversionKind::None
+					? ConversionPlan{ConversionRank::Conversion, decay_kind, true}
+					: ConversionPlan::no_match();
+		}
+	}
+}
+
 // --- Core conversion annotation helper ---
 
 bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
@@ -8046,18 +8261,25 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// fields. Resolve the conversion from the exported spine so array decay
 	// and qualification are not mistaken for a primitive identity conversion.
 	if (from_desc.structural_type_id || to_desc.structural_type_id) {
-		TypeSpecifierNode from_syntax = materializeTypeSpecifier(from_desc);
-		TypeSpecifierNode to_syntax = materializeTypeSpecifier(to_desc);
-		if (!from_syntax.is_reference() &&
-			from_desc.ref_qualifier != ReferenceQualifier::None) {
-			from_syntax.set_reference_qualifier(from_desc.ref_qualifier);
-		}
-		if (!to_syntax.is_reference() &&
-			to_desc.ref_qualifier != ReferenceQualifier::None) {
-			to_syntax.set_reference_qualifier(to_desc.ref_qualifier);
-		}
-		const ConversionPlan structural_plan =
-			buildConversionPlan(from_syntax, to_syntax);
+		CanonicalTypeTable& canonical_types =
+			requireFrontendContext().canonicalTypes();
+		auto getStructuralTypeId = [&canonical_types](const CanonicalTypeDesc& desc) {
+			if (desc.structural_type_id) {
+				return desc.structural_type_id;
+			}
+			TypeSpecifierNode syntax = materializeTypeSpecifier(desc);
+			const CanonicalTypeImport imported =
+				importCanonicalType(canonical_types, syntax);
+			return imported.status == CanonicalTypeImportStatus::Supported
+				? imported.type
+				: TypeId{};
+		};
+		const TypeId from_type = getStructuralTypeId(from_desc);
+		const TypeId to_type = getStructuralTypeId(to_desc);
+		const ConversionPlan structural_plan = from_type && to_type
+			? buildCanonicalStructuralConversionPlan(
+				canonical_types, from_type, to_type)
+			: ConversionPlan::no_match();
 		if (!structural_plan.is_valid ||
 			structural_plan.kind == StandardConversionKind::None) {
 			return false;

@@ -21,21 +21,36 @@
 
 class SymbolTable;
 
-// A frontend probe covers both scratch storage and semantic registries. Nested
-// publication commits remain provisional until the outer frontend probe commits.
+// A frontend probe covers scratch storage, declaration publication, and
+// template identity publication. SymbolTable publication remains outside this
+// transaction until its mutation journal is integrated. Nested commits remain
+// provisional until the outer frontend probe commits.
 class FrontendScratchTransaction {
 public:
-	FrontendScratchTransaction(MonotonicScratchArena& arena, ScratchProbeRegistry& registry, DeclarationBuilder& builder)
-		: scratch_(arena, registry), publication_(builder) {}
+	FrontendScratchTransaction(
+		MonotonicScratchArena& arena,
+		ScratchProbeRegistry& registry,
+		DeclarationBuilder& builder,
+		TemplateDeclTable& template_decls)
+		: scratch_(arena, registry), publication_(builder), templates_(template_decls) {}
 	FrontendScratchTransaction(const FrontendScratchTransaction&) = delete;
 	FrontendScratchTransaction& operator=(const FrontendScratchTransaction&) = delete;
-	void commit() { publication_.commit(); scratch_.commit(); }
-	void rollback() { publication_.rollback(); scratch_.rollback(); }
+	void commit() {
+		publication_.commit();
+		templates_.commit();
+		scratch_.commit();
+	}
+	void rollback() {
+		templates_.rollback();
+		publication_.rollback();
+		scratch_.rollback();
+	}
 	MonotonicScratchArena& arena() { return scratch_.arena(); }
 	ScratchProbeRegistry& registry() { return scratch_.registry(); }
 private:
 	ScratchTransaction scratch_;
 	PublicationTransaction publication_;
+	TemplateDeclTableTransaction templates_;
 };
 
 // Per-translation-unit front-end shell. Active-context lookup uses a thread-local
@@ -73,7 +88,8 @@ public:
 	}
 
 	FrontendScratchTransaction beginScratchTransaction() {
-		return FrontendScratchTransaction(scratch_arena_, scratch_registry_, declaration_builder_);
+		return FrontendScratchTransaction(
+			scratch_arena_, scratch_registry_, declaration_builder_, template_decls_);
 	}
 
 	DiagnosticEngine& diagnostics() {

@@ -4,6 +4,8 @@
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
+#include "CanonicalTypeAdapter.h"
+#include "FrontendContext.h"
 #include "MemberFunctionLookupShared.h"
 #include <span>
 #include <unordered_map>
@@ -3912,6 +3914,48 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						}
 					}
 					return member_type;
+				}
+
+				// Static data members may be named through an object expression.
+				// Preserve their published canonical declarator when parser-side
+				// overload resolution asks for the member expression's type.
+				const StringHandle static_member_name =
+					StringTable::getOrInternStringHandle(member_name);
+				if (const TypeInfo* type_info = tryGetTypeInfo(TypeIndex{struct_type_index})) {
+					if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+						instantiateLazyStaticMember(struct_info->name, static_member_name);
+						const StructStaticMember* static_member =
+							struct_info->findStaticMemberRecursive(static_member_name).first;
+						if (static_member != nullptr) {
+							std::optional<TypeSpecifierNode> ordered_type =
+								orderedTypeFromStaticMemberDeclaration(*static_member);
+							if (ordered_type.has_value()) {
+								if (!static_member->canonical_type_id) {
+									throw InternalError(
+										"ordered static member has no canonical type id");
+								}
+								const CanonicalDeclaratorExport exported =
+									exportCanonicalDeclarator(
+										requireFrontendContext().canonicalTypes(),
+										static_member->canonical_type_id);
+								if (exported.status != CanonicalTypeImportStatus::Supported) {
+									throw InternalError(
+										"static member canonical type export rejected ordered declarator");
+								}
+								ordered_type->set_ordered_declarator(exported.components);
+								return *ordered_type;
+							}
+							TypeSpecifierNode member_type(
+								static_member->memberType(), TypeQualifier::None,
+								static_member->size * 8, Token{}, CVQualifier::None);
+							member_type.set_type_index(static_member->type_index);
+							member_type.set_cv_qualifier(static_member->cv_qualifier);
+							applyMemberDeclaratorShape(member_type, *static_member);
+							member_type.set_reference_qualifier(
+								static_member->reference_qualifier);
+							return member_type;
+						}
+					}
 				}
 			}
 		}

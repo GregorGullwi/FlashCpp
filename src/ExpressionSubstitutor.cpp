@@ -5108,42 +5108,21 @@ CanonicalTipProjectionStatus tryProjectCanonicalTipOntoTypeSpecifier(
 	const CanonicalTypeNode node = table.node(cursor);
 	switch (node.kind) {
 	case CanonicalTypeKind::Builtin: {
-		TypeCategory category = TypeCategory::Invalid;
-		switch (node.builtin) {
-		case CanonicalBuiltinKind::Void: category = TypeCategory::Void; break;
-		case CanonicalBuiltinKind::Bool: category = TypeCategory::Bool; break;
-		case CanonicalBuiltinKind::Char: category = TypeCategory::Char; break;
-		case CanonicalBuiltinKind::SignedChar: category = TypeCategory::Char; break;
-		case CanonicalBuiltinKind::UnsignedChar: category = TypeCategory::UnsignedChar; break;
-		case CanonicalBuiltinKind::WChar: category = TypeCategory::WChar; break;
-		case CanonicalBuiltinKind::Char8: category = TypeCategory::Char8; break;
-		case CanonicalBuiltinKind::Char16: category = TypeCategory::Char16; break;
-		case CanonicalBuiltinKind::Char32: category = TypeCategory::Char32; break;
-		case CanonicalBuiltinKind::Short: category = TypeCategory::Short; break;
-		case CanonicalBuiltinKind::UnsignedShort: category = TypeCategory::UnsignedShort; break;
-		case CanonicalBuiltinKind::Int: category = TypeCategory::Int; break;
-		case CanonicalBuiltinKind::UnsignedInt: category = TypeCategory::UnsignedInt; break;
-		case CanonicalBuiltinKind::Long: category = TypeCategory::Long; break;
-		case CanonicalBuiltinKind::UnsignedLong: category = TypeCategory::UnsignedLong; break;
-		case CanonicalBuiltinKind::LongLong: category = TypeCategory::LongLong; break;
-		case CanonicalBuiltinKind::UnsignedLongLong: category = TypeCategory::UnsignedLongLong; break;
-		case CanonicalBuiltinKind::Float: category = TypeCategory::Float; break;
-		case CanonicalBuiltinKind::Double: category = TypeCategory::Double; break;
-		case CanonicalBuiltinKind::LongDouble: category = TypeCategory::LongDouble; break;
-		case CanonicalBuiltinKind::Nullptr: category = TypeCategory::Nullptr; break;
-		case CanonicalBuiltinKind::Count:
+		const std::optional<TypeCategory> category =
+			canonicalBuiltinToTypeCategory(node.builtin);
+		if (!category.has_value()) {
 			throw InternalError("canonical tip projection: invalid builtin kind");
 		}
-		const TypeIndex index = nativeTypeIndex(category);
+		const TypeIndex index = nativeTypeIndex(*category);
 		if (!index.is_valid()) {
 			throw InternalError("canonical tip projection: missing native TypeIndex");
 		}
-		syntax.set_type_index(index.withCategory(category));
-		syntax.set_category(category);
+		syntax.set_type_index(index.withCategory(*category));
+		syntax.set_category(*category);
 		syntax.clear_type_entity();
 		syntax.set_injected_class_declaration(nullptr);
 		syntax.set_cv_qualifier(tip_cv);
-		syntax.set_size_in_bits(static_cast<int>(get_type_size_bits(category)));
+		syntax.set_size_in_bits(static_cast<int>(get_type_size_bits(*category)));
 		return CanonicalTipProjectionStatus::Applied;
 	}
 	case CanonicalTypeKind::Record: {

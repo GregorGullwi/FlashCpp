@@ -423,19 +423,45 @@ TEST_CASE("Canonical adapter preserves supported identity and defers entire unsu
 TEST_CASE("Frontend scratch rolls back nested declaration and canonical registries together") {
 	FrontendContext context;
 	auto& builder = context.declarationBuilder();
+	auto& template_decls = context.templateDecls();
 	const auto stable = context.canonicalTypes().builtin(CanonicalBuiltinKind::Double);
 	const TypeSpecifierNode integer(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	const OwnerId template_owner{1};
+	const StringHandle template_name =
+		StringTable::getOrInternStringHandle("ScratchTemplate");
+	const OwnerId stable_template_owner{2};
+	const StringHandle stable_template_name =
+		StringTable::getOrInternStringHandle("StableTemplate");
+	const TemplateDeclId stable_template = template_decls.publishPrimaryClassTemplate(
+		stable_template_owner, stable_template_name);
+	TypeSpecifierNode stable_pattern(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode tentative_pattern(
+		TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	template_decls.attachPrimaryClassTemplatePattern(
+		stable_template, ASTNode(&stable_pattern));
 	{
 		auto outer = context.beginScratchTransaction();
 		{
 			auto inner = context.beginScratchTransaction();
 			builder.internDeclaratorType(integer);
+			template_decls.publishPrimaryClassTemplate(template_owner, template_name);
+			template_decls.attachPrimaryClassTemplatePattern(
+				stable_template, ASTNode(&tentative_pattern));
 			inner.commit();
 		}
 		CHECK(builder.telemetryDeclaratorInternCount() == 1);
+		CHECK(template_decls.findPrimaryClassTemplate(
+			template_owner, template_name).has_value());
+		CHECK(template_decls.primaryClassTemplatePattern(
+			stable_template)->raw_pointer() == &tentative_pattern);
 		outer.rollback();
 	}
 	CHECK(builder.telemetryDeclaratorInternCount() == 0);
+	CHECK_FALSE(template_decls.findPrimaryClassTemplate(
+		template_owner, template_name).has_value());
+	CHECK(template_decls.primaryClassTemplatePattern(
+		stable_template)->raw_pointer() == &stable_pattern);
 	CHECK(context.canonicalTypes().size() == 1);
 	CHECK(context.canonicalTypes().builtin(CanonicalBuiltinKind::Double) == stable);
 	CHECK(builder.internDeclaratorType(integer).value == 1);
