@@ -3987,25 +3987,47 @@ ParseResult Parser::parse_type_specifier() {
 								member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_instantiated_name));
 							}
 
-							if (member_type_it != getTypesByNameMap().end()) {
-								const TypeInfo* member_type_info = member_type_it->second;
-								int member_type_size = 0;
-								if (member_type_info->isStruct()) {
-									if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo()) {
-										member_type_size = static_cast<int>(member_struct_info->sizeInBits().value);
-									}
+							// The instantiated member template body publishes its own
+							// nested classes and member typedefs under the instantiated
+							// name. Consume a trailing non-template member chain such as
+							// `Outer<int>::Inner<int>::type` so the qualified type-id
+							// resolves instead of leaving `::type` unparsed.
+							while (peek() == "::"_tok) {
+								SaveHandle trailing_save = save_token_position();
+								advance(); // consume '::'
+								if (peek() == "template"_tok) {
+									advance(); // consume disambiguating 'template'
 								}
-								auto type_spec = emplace_node<TypeSpecifierNode>(
-									member_type_info->type_index_.withCategory(
-										member_type_info->typeEnum()),
-									member_type_size,
-									type_name_token,
-									cv_qualifier,
-									ReferenceQualifier::None);
-								bindInjectedClassIdentity(
-									type_spec.as<TypeSpecifierNode>(),
-									*member_type_info);
-								return ParseResult::success(type_spec);
+								if (!peek().is_identifier()) {
+									restore_token_position(trailing_save);
+									break;
+								}
+								Token trailing_member_tok = peek_info();
+								advance(); // consume the member name
+								StringBuilder trailing_builder;
+								std::string_view trailing_name = trailing_builder
+									.append(member_instantiated_name)
+									.append("::")
+									.append(trailing_member_tok.value())
+									.commit();
+								auto trailing_it = getTypesByNameMap().find(
+									StringTable::getOrInternStringHandle(trailing_name));
+								if (trailing_it == getTypesByNameMap().end()) {
+									restore_token_position(trailing_save);
+									break;
+								}
+								discard_saved_token(trailing_save);
+								member_instantiated_name = trailing_name;
+								member_type_it = trailing_it;
+							}
+
+							if (member_type_it != getTypesByNameMap().end()) {
+								// Resolve aliases the same way the ordinary qualified
+								// type-id path does, so a member template-id qualifier
+								// ending in a typedef yields the aliased type (with its
+								// size and modifiers) instead of the alias entry itself.
+								return ParseResult::success(
+									buildResolvedTypeNode(*member_type_it->second));
 							}
 							return ParseResult::error("Failed to resolve instantiated member class template type", type_name_token);
 						}

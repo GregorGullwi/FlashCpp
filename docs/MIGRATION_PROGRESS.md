@@ -669,9 +669,13 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `nested_classes()` through an explicit worklist keyed by the instantiated
   owner, so a deep class body is published with its data members, nested types,
   and non-static member functions: `Owner<int>::Level1::Level2`, its nested
-  `Level1::Level2::Level3`, and a namespace-qualified owner all resolve. Stop
-  here for review before starting another family, 3B, or the parallel frontend
-  experiment.
+  `Level1::Level2::Level3`, and a namespace-qualified owner all resolve. A
+  member class template-id used as a nested-name-specifier for a further member
+  now resolves as well: `Owner<int>::Rebind<char>::type`, its explicit
+  `template` form, a member template nested in a member template, and a member
+  typedef terminal are consumed and routed through the ordinary alias-resolving
+  qualified type-id path. Stop here for review before starting another family,
+  3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -754,6 +758,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Nested-class member type through a template-id owner | `nested_class_template_member_type_ret42` |
 | Deep nested-class member typedefs | `deep_nested_class_template_member_type_ret42` |
 | Deep nested-class bodies | `deep_nested_class_body_ret42` |
+| Member class template-id qualifier | `member_class_template_id_qualifier_ret42` |
 | Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
 | Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |

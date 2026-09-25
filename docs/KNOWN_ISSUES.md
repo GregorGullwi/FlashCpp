@@ -1,5 +1,21 @@
 # Known Issues
 
+## Nested classes inside member class templates do not parse
+
+A class template nested inside another class template parses and can be named,
+but a further `struct`/`class` declaration nested inside that member template
+fails at its definition with `Expected identifier token`:
+
+```cpp
+template <class T> struct A { template <class U> struct B { struct Inner { U v; }; }; };
+```
+
+`A<int>::B<char>::Inner` therefore cannot resolve even though the member
+template-id qualifier itself now resolves (`A<int>::B<char>::type` works). This
+is a definition-parsing gap in member class templates, independent of the
+qualified-name resolution path, and needs the member-template body parser to
+accept nested class declarations.
+
 ## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
 
 A namespace/global function-template body that declares a local class and is
