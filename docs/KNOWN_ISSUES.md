@@ -146,6 +146,26 @@ scalar), and `exportCanonicalDeclarator` round-trips that node back to an
 ordered spine. The flat pointer level remains only as the compatibility
 projection until the flat fields are deleted.
 
+Some ordered static-member types still cannot be imported into the canonical
+type arena. When `importCanonicalType` reports an unsupported or unresolved
+type for an ordered static-member declaration, the parser now emits
+`UnsupportedCanonicalStaticMemberType` (1020) instead of a generic parse error.
+This diagnostic is a boundary guard, not completion of the feature: remaining
+canonical importer families must be supported before every valid static-member
+type can carry its `TypeId`. Simple aliases such as `using Integer = int` are
+already accepted and are not examples of this gap.
+
+## Frontend scratch rollback does not include symbol publication
+
+`FrontendScratchTransaction` rolls back frontend scratch state,
+`DeclarationBuilder`, and `TemplateDeclTable`, but it does not journal
+`SymbolTable` scope/name entries or namespace publication. Production parsing
+also does not yet use this transaction for tentative declaration work. A
+failed speculative parse can therefore leave symbol or namespace registry
+state behind even when its frontend scratch state is rolled back. Close this
+boundary before routing more tentative parsing or template publication through
+the transaction.
+
 ## Runtime member-function-pointer address-of is not lowered
 
 `int (S::*p)() = &S::f;` does not materialize the member function's address.

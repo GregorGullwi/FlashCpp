@@ -27,7 +27,13 @@ converts to an ordered pointer, and `[conv.qual]` qualification is decided over
 the pointer chain. An ordered object pointer also converts to `cv void*` when
 its outer pointee cv (arrays are transparent) is a subset of the destination
 void's cv; a const inner pointer therefore reaches `const void*` but not
-`void*`. A non-projectable array lvalue decays to a pointer to its element
+`void*`. The TypeId conversion path checks the complete callable signature
+before function-to-pointer decay and reads object cv through array wrappers for
+`void*` conversions. TypeId is not yet the only conversion authority:
+`CanonicalTypeDesc` and the syntax-facing conversion planner remain in use, so
+new conversion rules should be added to the structural planner before migrating
+the remaining callers and deleting the compatibility bridge. A non-projectable
+array lvalue decays to a pointer to its element
 type ([conv.array]): overload resolution replaces the outermost array wrapper
 with an unqualified pointer and re-enters the ordered plan, argument typing
 peels an ordered pointer so the array object is the conversion source, and
@@ -104,8 +110,11 @@ non-projectable ordered declarator recover that spine from the member's stored
 declaration AST (`orderedTypeFromStaticMemberDeclaration`), since
 `StructStaticMember` only keeps the flat projection; the qualified-lookup
 static arm, the semantic static-member type, and both static storage
-emission sites use it, so the object is pointer-sized. Assignment to such a
-member stores through the global symbol: the pointer-assignment fast path used
+emission sites use it, so the object is pointer-sized. Template materialization
+reimports ordered static-member declarations after substitution and stores the
+resulting `TypeId` on each published `StructStaticMember`, including the
+partial-specialization and nested-class copy paths. Assignment to such a member
+stores through the global symbol: the pointer-assignment fast path used
 to overwrite the loaded temp and drop the store for a qualified lvalue carrying
 Global metadata. Local ordered pointer reads and the global/static binding
 sizes also consume `runtime_pointer_depth`, and `reinterpret_cast` to an ordered
@@ -928,9 +937,11 @@ Advanced, not completed:
   telemetry/ownership remain open. `PublicationTransaction` covers builder
   declaration/entity arenas, and `FrontendScratchTransaction` now also rolls
   back `TemplateDeclTable` identity and pattern mutations through a per-change
-  journal. `SymbolTable` scope/name maps and namespace publication remain
-  outside that transaction. Scratch rollback is proven in doctests, not
-  integrated across production probes.
+  journal. The open symbol-publication rollback boundary is that
+  `FrontendScratchTransaction` does not journal `SymbolTable` scope/name maps
+  or namespace publication, and production parser probes are not yet integrated
+  with this transaction. Scratch rollback is proven in doctests. See
+  [known issues](KNOWN_ISSUES.md).
 - Persistent-scope ownership and lexical-ID stamping are deliverables, not
   additional explicit criteria. Initial shadow tests cover reopened namespace
   lexical scopes sharing an owner/entity, plus inline and definition state.

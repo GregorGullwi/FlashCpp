@@ -269,6 +269,62 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FLASHCPP_PARSER_RUNTIME_PHASE(ClassTemplateInstantiation);
 #endif
 	PROFILE_TEMPLATE_INSTANTIATION(template_name);
+	auto canonicalStaticMemberTypeAfterSubstitution = [this](
+		TypeId original_type,
+		TypeIndex& published_type_index,
+		const std::optional<ASTNode>& declaration,
+		std::span<const TemplateParameterNode> parameters,
+		std::span<const TemplateTypeArg> arguments,
+		TypeIndex owner_type_index) -> TypeId {
+		if (!declaration.has_value()) {
+			return original_type;
+		}
+		const ASTNode& declaration_node = *declaration;
+		const TypeSpecifierNode* original_type_spec = nullptr;
+		if (declaration_node.is<DeclarationNode>()) {
+			original_type_spec = &declaration_node.as<DeclarationNode>()
+								 .type_specifier_node();
+		} else if (declaration_node.is<VariableDeclarationNode>()) {
+			original_type_spec = &declaration_node.as<VariableDeclarationNode>()
+								 .declaration()
+								 .type_specifier_node();
+		}
+		if (original_type_spec == nullptr ||
+			!original_type_spec->has_ordered_declarator()) {
+			return original_type;
+		}
+
+		ASTNode substituted_type_node = substituteTemplateParameters(
+			ASTNode::emplace_node<TypeSpecifierNode>(*original_type_spec),
+			parameters,
+			arguments,
+			owner_type_index,
+			false);
+		if (!substituted_type_node.is<TypeSpecifierNode>()) {
+			throw InternalError(
+				"template static member declarator substitution did not produce a type");
+		}
+		TypeSpecifierNode substituted_type =
+			substituted_type_node.as<TypeSpecifierNode>();
+		substituted_type.set_ordered_declarator(std::vector<DeclaratorComponent>(
+			original_type_spec->declarator_components().begin(),
+			original_type_spec->declarator_components().end()));
+		tryBindPublishedTypeEntity(substituted_type);
+		tryBindPublishedMemberClassEntity(substituted_type);
+		const CanonicalTypeImport imported = importCanonicalType(
+			requireFrontendContext().canonicalTypes(), substituted_type);
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::UnsupportedCanonicalStaticMemberType,
+				DiagnosticSeverity::Error,
+				lexer_.getSourceLocation(original_type_spec->token()),
+				"unsupported canonical static member type after template substitution",
+				{});
+		}
+		published_type_index = substituted_type.type_index();
+		return imported.type;
+	};
 
 	// Resolve template template parameter aliases: when inside a template function body
 	// re-parse, "Container" may be a template template parameter bound to a concrete
@@ -3115,6 +3171,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							static_member.initializer_position,
 							static_member.initializerDefinitionLookupContext(),
 							static_member.is_constexpr);
+						StructStaticMember& copied_static_member =
+							struct_info->static_members.back();
+						copied_static_member.canonical_type_id =
+							canonicalStaticMemberTypeAfterSubstitution(
+								static_member.canonical_type_id,
+								copied_static_member.type_index,
+								static_member.declaration,
+								std::span<const TemplateParameterNode>(
+									template_params.data(), template_params.size()),
+								template_args_for_member_copy,
+								struct_type_info.registeredTypeIndex().withCategory(
+									TypeCategory::Struct));
 					}
 				}
 			}
@@ -3401,6 +3469,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.initializer_position,
 						static_member.initializerDefinitionLookupContext(),
 						static_member.is_constexpr);
+					StructStaticMember& copied_static_member =
+						struct_info->static_members.back();
+					copied_static_member.canonical_type_id =
+						canonicalStaticMemberTypeAfterSubstitution(
+							{},
+							copied_static_member.type_index,
+							static_member.declaration,
+							std::span<const TemplateParameterNode>(
+								effective_member_copy_template_params.data(),
+								effective_member_copy_template_params.size()),
+							effective_member_copy_template_args,
+							struct_type_info.registeredTypeIndex().withCategory(
+								TypeCategory::Struct));
 				}
 			}
 
@@ -8209,6 +8290,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.initializer_position,
 					static_member.initializerDefinitionLookupContext(),
 					static_member.is_constexpr);
+				StructStaticMember& copied_static_member =
+					struct_info->static_members.back();
+				copied_static_member.canonical_type_id =
+					canonicalStaticMemberTypeAfterSubstitution(
+						static_member.canonical_type_id,
+						copied_static_member.type_index,
+						static_member.declaration,
+						std::span<const TemplateParameterNode>(
+							effective_template_params.data(),
+							effective_template_params.size()),
+						std::span<const TemplateTypeArg>(
+							effective_template_args_vector.data(),
+							effective_template_args_vector.size()),
+						struct_type_info.registeredTypeIndex().withCategory(
+							TypeCategory::Struct));
 
 				continue; // Skip the eager processing below
 			}
@@ -8262,6 +8358,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.initializer_position,
 				static_member.initializerDefinitionLookupContext(),
 				static_member.is_constexpr);
+			StructStaticMember& copied_static_member =
+				struct_info->static_members.back();
+			copied_static_member.canonical_type_id =
+				canonicalStaticMemberTypeAfterSubstitution(
+					static_member.canonical_type_id,
+					copied_static_member.type_index,
+					static_member.declaration,
+					std::span<const TemplateParameterNode>(
+						effective_template_params.data(),
+						effective_template_params.size()),
+					std::span<const TemplateTypeArg>(
+						effective_template_args_vector.data(),
+						effective_template_args_vector.size()),
+					struct_type_info.registeredTypeIndex().withCategory(
+						TypeCategory::Struct));
 			if (normalized_initializer.has_value()) {
 				if (StructStaticMember* instantiated_static_member =
 						struct_info->findStaticMember(static_member.getName())) {
@@ -8311,6 +8422,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.initializer_position,
 				static_member.initializerDefinitionLookupContext(),
 				static_member.is_constexpr);
+			StructStaticMember& copied_static_member =
+				struct_info->static_members.back();
+			copied_static_member.canonical_type_id =
+				canonicalStaticMemberTypeAfterSubstitution(
+					{},
+					copied_static_member.type_index,
+					static_member.declaration,
+					std::span<const TemplateParameterNode>(
+						effective_template_params.data(),
+						effective_template_params.size()),
+					std::span<const TemplateTypeArg>(
+						effective_template_args_vector.data(),
+						effective_template_args_vector.size()),
+					struct_type_info.registeredTypeIndex().withCategory(
+						TypeCategory::Struct));
 		}
 	}
 	// A primary instantiation with unresolved template arguments must not
@@ -8820,6 +8946,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.initializer_position,
 						static_member.initializerDefinitionLookupContext(),
 						static_member.is_constexpr);
+					StructStaticMember& copied_static_member =
+						nested_struct_info->static_members.back();
+					copied_static_member.canonical_type_id =
+						canonicalStaticMemberTypeAfterSubstitution(
+							static_member.canonical_type_id,
+							copied_static_member.type_index,
+							static_member.declaration,
+							std::span<const TemplateParameterNode>(
+								template_params.data(), template_params.size()),
+							template_args_to_use,
+							nested_type_info.registeredTypeIndex().withCategory(
+								TypeCategory::Struct));
 					instantiated_nested_struct_ref.addStaticMember(
 						static_member.getName(),
 						substituted_type_index,
@@ -12992,6 +13130,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				if (out_of_line_var.declaration.has_value()) {
 					existing_member->setDeclaration(*out_of_line_var.declaration);
+					existing_member->canonical_type_id =
+						canonicalStaticMemberTypeAfterSubstitution(
+							existing_member->canonical_type_id,
+							existing_member->type_index,
+							out_of_line_var.declaration,
+							std::span<const TemplateParameterNode>(
+								effective_template_params.data(),
+								effective_template_params.size()),
+							std::span<const TemplateTypeArg>(
+								effective_template_args_vector.data(),
+								effective_template_args_vector.size()),
+							struct_type_info.registeredTypeIndex().withCategory(
+								TypeCategory::Struct));
 				}
 				if (out_of_line_var.initializer_position.has_value()) {
 					existing_member->setInitializerPosition(*out_of_line_var.initializer_position);
@@ -13029,6 +13180,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					out_of_line_var.initializer_position,
 					out_of_line_var.definition_lookup_context,
 					out_of_line_is_constexpr);
+				StructStaticMember& copied_static_member =
+					struct_info_ptr->static_members.back();
+				copied_static_member.canonical_type_id =
+					canonicalStaticMemberTypeAfterSubstitution(
+						{},
+						copied_static_member.type_index,
+						out_of_line_var.declaration,
+						std::span<const TemplateParameterNode>(
+							effective_template_params.data(),
+							effective_template_params.size()),
+						std::span<const TemplateTypeArg>(
+							effective_template_args_vector.data(),
+							effective_template_args_vector.size()),
+						struct_type_info.registeredTypeIndex().withCategory(
+							TypeCategory::Struct));
 
 				FLASH_LOG(Templates, Trace, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
@@ -13282,6 +13448,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						existing_member->initializer = substituted_initializer;
 						if (static_member.declaration.has_value()) {
 							existing_member->setDeclaration(*static_member.declaration);
+							existing_member->canonical_type_id =
+								canonicalStaticMemberTypeAfterSubstitution(
+									existing_member->canonical_type_id,
+									existing_member->type_index,
+									static_member.declaration,
+									std::span<const TemplateParameterNode>(
+										effective_template_params.data(),
+										effective_template_params.size()),
+									std::span<const TemplateTypeArg>(
+										effective_template_args_vector.data(),
+										effective_template_args_vector.size()),
+									struct_type_info.registeredTypeIndex().withCategory(
+										TypeCategory::Struct));
 						}
 						if (static_member.initializer_position.has_value()) {
 							existing_member->setInitializerPosition(*static_member.initializer_position);
@@ -13308,6 +13487,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.initializer_position,
 						static_member.initializerDefinitionLookupContext(),
 						static_member.is_constexpr);
+					StructStaticMember& copied_static_member =
+						struct_info_ptr->static_members.back();
+					copied_static_member.canonical_type_id =
+						canonicalStaticMemberTypeAfterSubstitution(
+							static_member.canonical_type_id,
+							copied_static_member.type_index,
+							static_member.declaration,
+							std::span<const TemplateParameterNode>(
+								effective_template_params.data(),
+								effective_template_params.size()),
+							std::span<const TemplateTypeArg>(
+								effective_template_args_vector.data(),
+								effective_template_args_vector.size()),
+							struct_type_info.registeredTypeIndex().withCategory(
+								TypeCategory::Struct));
 				}
 			}
 		}
