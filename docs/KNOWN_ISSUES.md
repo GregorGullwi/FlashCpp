@@ -22,9 +22,12 @@ independent of nested-class parsing, which now works.
 A namespace/global function-template body that declares a local class and is
 then instantiated can reach IR collection with the internal error
 `Sema-ready class entity has inconsistent TypeInfo ownership`. The same replay
-path works for local typedefs. This is a local-class entity/TypeInfo ownership
-defect, not a canonical template-parameter stamping fallback; defer it until
-the member/local-class ownership work has a bounded authoritative owner.
+path works for local typedefs. Direct local classes in non-template functions
+now have lexical-scope-owned EntityIds and distinct TypeInfo lookup keys, but
+that owner does not identify a local class across function-template
+specializations. The remaining replay defect needs an owner that includes the
+concrete specialization identity; a transient replay ScopeId or type spelling
+is not sufficient.
 
 ## Boundary 2F removed unsupported legacy negative fixtures
 

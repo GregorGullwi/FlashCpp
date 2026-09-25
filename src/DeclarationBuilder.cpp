@@ -525,7 +525,16 @@ PreparedClassPublication DeclarationBuilder::prepareClassPublication(
 
 	OwnerId owner_id{};
 	if (request.owner_id) {
-		if (!isClassOrTemplateOwnedOwnerId(request.owner_id)) {
+		if (isLocalScopeOwnedOwnerId(request.owner_id)) {
+			const ScopeMetadataView metadata =
+				readScopeMetadata(symbol_table, request.lexical_scope_id);
+			if (localScopeFromOwnerId(request.owner_id) != request.lexical_scope_id ||
+				(metadata.scope_type != ScopeType::Function &&
+					metadata.scope_type != ScopeType::Block)) {
+				return PreparedClassPublication(
+					PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
+			}
+		} else if (!isClassOrTemplateOwnedOwnerId(request.owner_id)) {
 			return PreparedClassPublication(
 				PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
 		}
@@ -965,10 +974,12 @@ PublishResult commitParserClassPublication(
 	DeclarationBuilder& builder,
 	StructDeclarationNode& struct_decl,
 	ScopeId lexical_scope_id,
+	OwnerId owner_id,
 	bool is_definition,
 	const SymbolTable& symbol_table) {
 	ClassDeclRequest request{};
 	request.lexical_scope_id = lexical_scope_id;
+	request.owner_id = owner_id;
 	request.name = struct_decl.name();
 	request.is_definition = is_definition;
 	request.kind = DeclKind::Class;

@@ -1667,7 +1667,7 @@ public:
 
 private:
 	StringHandle name_;	// Points directly into source text from lexer token
-	StringHandle semantic_name_; // Canonical identity for replayed local classes
+	StringHandle semantic_name_; // Lookup-qualified TypeInfo name for local classes
 	const StructDeclarationNode* injected_class_pattern_declaration_ = nullptr;
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
