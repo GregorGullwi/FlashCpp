@@ -5,7 +5,7 @@ Current state for the authoritative
 Keep completed work concise; earlier implementation and validation details are
 recoverable from git history. Replace stale state rather than appending history.
 
-Last updated: 2026-09-23. Boundary 3A now has an outermost-to-innermost
+Last updated: 2026-09-25. Boundary 3A now has an outermost-to-innermost
 `DeclaratorComponent` spine on `TypeSpecifierNode`. Named and abstract
 pointer/array declarators use an explicit frame stack, so forms including
 `int (*(*p)[3])[4]`, deeper pointer/array alternation, and pointer cv at each
@@ -123,8 +123,8 @@ increased `TypeSpecifierNode` to 520 bytes in the canonical architecture
 probe. Clang stack-usage reports `parse_declarator` at 5,160 bytes versus
 5,000 bytes on `origin/main`; nested declarator depth is carried by heap-backed
 frames and does not increase native call depth. The next slices are deletion
-of the `Parser::get_expression_type` ordered-pointer peel once semantic
-analysis owns call-argument typing, remaining qualified-name spellings
+of the `Parser::get_expression_type` ordered-pointer peel (blocked until
+sema owns overload diagnosis), remaining qualified-name spellings
 (template-id qualifiers), and removal of the flat pointer/array reads.
 Array-object IR storage stays fail-closed.
 Pointer-to-member-to-bool remains a documented gap
@@ -638,14 +638,23 @@ during concrete alias materialization. This fixes forwarded aliases such as
   `TemplateDeclId` under the namespace-mapped `OwnerId` and anchors the
   `TemplateAliasNode`, so their identity no longer depends on the registry
   spelling key.   The full dependent-alias behavior, alias partials, and
-  class-instantiation alias re-registration deletion remain deferred. The next
-  still-Unmigrated 3A slice is deletion of the
-  `Parser::get_expression_type` ordered-pointer peel once semantic analysis
-  owns call-argument typing, and qualified-name spellings such as template-id
-  qualifiers, before the flat pointer/array reads are removed, or a bound
-  dependent/template adapter family. Stop here
-  for review before starting another family, 3B, or the parallel frontend
-  experiment.
+  class-instantiation alias re-registration deletion remain deferred. Direct
+  nominal alias defaults now bind through published type identity: a default
+  that imports as a builtin/record/enum reachable through at most a cv wrapper
+  is stamped with its `EntityId` via `tryBindPublishedTypeEntity` before the
+  direct alias target materializes, so
+  `struct Box; template<class T = Box> using S = T; S<> box;` names `Box`
+  instead of an unresolved `T` placeholder. Pointer, reference, array,
+  specialization, and dependent defaults stay deferred. The next
+  still-Unmigrated 3A slice is removal of the `Parser::get_expression_type`
+  ordered-pointer peel, but that is blocked: deleting the peel routes an
+  ordered `*p` call argument through the deferred ordinary-call path, whose
+  sema resolution falls back to `findViableTargetByArgCount` and accepts the
+  shape mismatch that the parser currently rejects with
+  `NoViableFunctionCall` (1704). The peel stays until sema owns overload
+  diagnosis (boundary 4). Qualified-name spellings such as template-id
+  qualifiers remain the unblocked next 3A family. Stop here for review before
+  starting another family, 3B, or the parallel frontend experiment.
 
 The shallow native probe measures 80 nodes. Nodes are 16 bytes; member and base
 schema records are 16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on
@@ -723,6 +732,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Alias `<` disambiguation | `test_canonical_gate_alias_arm_dependent_member_ret0`, `test_less_in_base_class_ret0` |
 | Namespace/global alias identity | `Namespace and global alias templates publish declaration identity` doctest |
 | Direct builtin alias defaults | `alias_defaulted_value_init_ret42`, `alias_default_nested_depth_ret42` |
+| Direct nominal alias defaults | `alias_template_record_default_ret42` |
 | Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
 | Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |
@@ -806,7 +816,9 @@ Advanced, not completed:
   `parse_type_specifier` `<` gate known-template test including alias
   templates, cast/NTTP member object pointer pointee recovery
   (`MemberObjectPointer` adapter family), namespace/global alias-template
-  primary identity publication, general overload/conversion resolution
+  primary identity publication, direct nominal alias-default binding through
+  published identity (builtin/record/enum with cv; wrappers deferred), general
+  overload/conversion resolution
   consuming the ordered declarator spine for same-shape interleaved identity,
   `[conv.qual]` qualification, `cv void*` conversion, `[conv.array]` decay of a
   non-projectable array lvalue, `[conv.array]` followed by `[conv.bool]`
@@ -897,13 +909,15 @@ must not increase an implementation percentage.
   `RecursiveAliasTemplateInstantiation` (1814), each covered by an exact-ID
   negative test. Alias uses with too few required or too many fixed arguments
   report `AliasTemplateArityMismatch` (1815); defaults and packs are accepted.
-  Direct builtin type defaults on namespace/global alias uses now bind before
-  concrete alias materialization, so `J<> z = 42` preserves the `int` target
-  and value for both unqualified and global-qualified uses. The binding checks
-  the default through `CanonicalTypeTable` and leaves compound or dependent
-  defaults for a separate substitution slice. A record default such as
-  `template<class T = Box> using S = T; S<> box{2};` still reaches lowering
-  with a `T` placeholder and fails internally; see [known issues](KNOWN_ISSUES.md).
+  Direct builtin, record, and enum type defaults on namespace/global alias uses
+  now bind before concrete alias materialization. The binding stamps each
+  default's published `EntityId` through `tryBindPublishedTypeEntity` and
+  accepts it only when it imports through `CanonicalTypeTable` as a
+  builtin/record/enum reachable through at most a cv wrapper, so `J<> z = 42`
+  preserves the `int` target and value and `S<> box{2}` materializes the `Box`
+  object instead of a `T` placeholder. Pointer, reference, array,
+  specialization, and dependent defaults remain deferred to their own
+  substitution slices.
   Indirect alias recursion is bounded by a logical-depth guard on
   alias materialization that reports `AliasInstantiationDepthExceeded` (3002)
   rather than overflowing the native stack. Latest architecture validation: the

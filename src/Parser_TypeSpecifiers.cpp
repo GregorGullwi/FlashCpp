@@ -34,9 +34,34 @@ AliasTemplateArity aliasTemplateArity(const TemplateParameterVector& parameters)
 	return arity;
 }
 
-// Bind direct builtin defaults before a direct alias target is materialized.
-// Compound and dependent defaults need their own substitution path.
-void appendBuiltinAliasTypeDefaults(
+// Whether a canonical type is a builtin/record/enum value reachable through at
+// most a cv wrapper. Pointer, reference, array, specialization, and dependent
+// defaults keep their own substitution path.
+bool canonicalTypeIsBindableAliasDefault(const CanonicalTypeTable& table, TypeId type) {
+	for (;;) {
+		const CanonicalTypeNode node = table.node(type);
+		switch (node.kind) {
+		case CanonicalTypeKind::Qualified:
+			if (!node.child) {
+				return false;
+			}
+			type = node.child;
+			continue;
+		case CanonicalTypeKind::Builtin:
+		case CanonicalTypeKind::Record:
+		case CanonicalTypeKind::Enum:
+			return true;
+		default:
+			return false;
+		}
+	}
+}
+
+// Bind direct type defaults before a direct alias target is materialized.
+// Each default is bound to its published type identity first so nominal
+// defaults import as Record/Enum rather than a spelling placeholder. Dependent
+// and callable defaults keep their own substitution path.
+void appendAliasTypeDefaults(
 	CanonicalTypeTable& table,
 	const TemplateAliasNode& alias,
 	TemplateArgumentVector& arguments) {
@@ -51,20 +76,20 @@ void appendBuiltinAliasTypeDefaults(
 			!parameter.has_default() || !parameter.default_value().is<TypeSpecifierNode>()) {
 			return;
 		}
-		const TypeSpecifierNode& default_type =
+		TypeSpecifierNode bound_default =
 			parameter.default_value().as<TypeSpecifierNode>();
-		const CanonicalTypeImport imported = importCanonicalType(table, default_type);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
-			return;
-		}
-		const CanonicalTypeKind kind = table.node(imported.type).kind;
-		if (kind != CanonicalTypeKind::Builtin) {
+		tryBindPublishedTypeEntity(bound_default);
+		const CanonicalTypeImport imported = importCanonicalType(table, bound_default);
+		if (imported.status != CanonicalTypeImportStatus::Supported ||
+			!canonicalTypeIsBindableAliasDefault(table, imported.type)) {
 			return;
 		}
 	}
 	for (size_t index = first_default; index < parameters.size(); ++index) {
-		arguments.emplace_back(
-			parameters[index].default_value().as<TypeSpecifierNode>());
+		TypeSpecifierNode bound_default =
+			parameters[index].default_value().as<TypeSpecifierNode>();
+		tryBindPublishedTypeEntity(bound_default);
+		arguments.emplace_back(std::move(bound_default));
 	}
 }
 
@@ -1373,7 +1398,7 @@ ParseResult Parser::parse_type_specifier() {
 							"Alias template '{}' expects {} to {} arguments, got {}",
 							type_name, arity.required, arity.fixed, template_args->size());
 					}
-					appendBuiltinAliasTypeDefaults(
+					appendAliasTypeDefaults(
 						requireFrontendContext().canonicalTypes(),
 						alias_template_opt->as<TemplateAliasNode>(),
 						*template_args);
@@ -2236,7 +2261,7 @@ ParseResult Parser::parse_type_specifier() {
 							"Alias template '{}' expects {} to {} arguments, got {}",
 							type_name, arity.required, arity.fixed, template_args->size());
 					}
-					appendBuiltinAliasTypeDefaults(
+					appendAliasTypeDefaults(
 						requireFrontendContext().canonicalTypes(), alias_node, *template_args);
 					const TypeSpecifierNode& alias_target_type_spec = alias_node.target_type_node();
 					const bool alias_target_preserves_surface =
