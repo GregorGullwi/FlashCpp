@@ -129,6 +129,13 @@ sema owns overload diagnosis), remaining qualified-name spellings
 Array-object IR storage stays fail-closed.
 Pointer-to-member-to-bool remains a documented gap
 ([known issues](KNOWN_ISSUES.md)); its null value is ABI-defined, not zero.
+The shared type-trait evaluator now uses
+`TypeSpecifierNode::runtime_pointer_depth` for `__is_pointer`, so it reads the
+leading ordered declarator wrapper for interleaved pointer/array types instead
+of losing that shape through the flat projection. Legacy-only type nodes retain
+the accessor's compatibility projection. The focused regression is
+`type_trait_ordered_pointer_ret42.cpp`; broader type-trait migration and other
+flat pointer/array reads remain open.
 
 Immediately before this slice, direct member alias targets that capture an enclosing
 class-template parameter can publish with separate owner and alias declaration
@@ -763,6 +770,7 @@ Completed validation anchors remain in the source and architecture suites:
 | Deep nested-class bodies | `deep_nested_class_body_ret42` |
 | Member class template-id qualifier | `member_class_template_id_qualifier_ret42` |
 | Nested class inside a member class template | `member_template_nested_class_ret42` |
+| Ordered declarator pointer trait | `type_trait_ordered_pointer_ret42` |
 | Member-object pointer adapter | `checkAdapter`, `test_canonical_member_object_pointer_decltype_ret0` |
 | Instantiated-owner member variable and alias identities | `test_canonical_instantiated_owner_member_variable_template_identity_collision_ret0`, `test_canonical_instantiated_owner_member_alias_identity_collision_ret0` |
 | Template-friend member identity | `test_template_friend_member_identity_ret0` |
@@ -869,6 +877,10 @@ Advanced, not completed:
   reads plus global/static binding sizes consuming the runtime pointer depth,
   and `reinterpret_cast` to an ordered pointer target carrying pointer size and
   depth.
+  The `__is_pointer` type-trait adapter also reads ordered runtime pointer depth,
+  so a non-projectable interleaved declarator is classified by its leading
+  pointer wrapper. This advances, but does not complete, flat representation
+  removal from type-trait consumers.
   The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
   dependent stamping, unpublished/incomplete nominal, anonymous-union, and

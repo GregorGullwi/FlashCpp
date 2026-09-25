@@ -787,7 +787,7 @@ TypeTraitResult evaluateTypeTrait(
 		type_spec.is_reference(),
 		type_spec.is_rvalue_reference(),
 		type_spec.is_lvalue_reference(),
-		type_spec.pointer_depth(),
+		type_spec.runtime_pointer_depth(),
 		type_spec.cv_qualifier(),
 		type_spec.is_array(),
 		type_spec.array_size(),
