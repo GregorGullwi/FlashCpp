@@ -111,6 +111,10 @@ inline constexpr bool isTemplateOwnedOwnerId(OwnerId owner_id) {
 	return owner_id && (owner_id.value & kOwnerIdKindMask) == kTemplateOwnerIdTag;
 }
 
+inline constexpr bool isClassOrTemplateOwnedOwnerId(OwnerId owner_id) {
+	return isClassOwnedOwnerId(owner_id) || isTemplateOwnedOwnerId(owner_id);
+}
+
 inline constexpr EntityId classEntityFromOwnerId(OwnerId owner_id) {
 	if (!isClassOwnedOwnerId(owner_id)) {
 		return EntityId{};
@@ -135,6 +139,7 @@ static_assert(sizeof(TelemetryTypeId) == 4);
 static_assert(sizeof(TemplateDeclId) == 4);
 static_assert(isClassOwnedOwnerId(ownerIdFromClassEntity(EntityId{1})));
 static_assert(isTemplateOwnedOwnerId(ownerIdFromTemplateDecl(TemplateDeclId{1})));
+static_assert(isClassOrTemplateOwnedOwnerId(ownerIdFromTemplateDecl(TemplateDeclId{1})));
 static_assert(classEntityFromOwnerId(ownerIdFromClassEntity(EntityId{7})) == EntityId{7});
 static_assert(templateDeclFromOwnerId(ownerIdFromTemplateDecl(TemplateDeclId{7})) == TemplateDeclId{7});
 static_assert(ownerIdFromClassEntity(EntityId{1}) != ownerIdFromTemplateDecl(TemplateDeclId{1}));

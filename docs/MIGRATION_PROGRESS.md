@@ -309,23 +309,27 @@ primary's ID. Direct member function templates in those class-template bodies
 use the same template-owned owner with a structural signature key; their
 forward declarations merge with definitions, overloads remain distinct, and
 their declared Type-kind parameter specifiers stamp with the child function ID.
-Nested classes of published namespace/global non-template classes now publish
-their EntityId at parse time: `tryPublishNestedClassIdentity` resolves the
-immediate enclosing class from the struct-parsing context stack (back() is the
-current class, the owner candidate sits at size-2; `enclosing_class()` is not
-set until after the nested parse returns, and class bodies do not enter a Class
-ScopeType) and publishes the nested class as a non-definition under the
-enclosing class-owned `OwnerId` before the nested body parse, merging the
-definition flag at the nested complete-definition epoch. Nested forward
-declarations merge into the later definition's EntityId, and same-spelling
-nested classes no longer publish at namespace level, so
-`Outer::Inner` never conflates with a namespace `Inner` entity. Direct member
-class templates and member function templates inside those nested classes then
-publish `TemplateDeclId`s during the nested body and retroactively stamp their
-declared Type-kind parameters through the existing publication helpers; the
-lazy enclosing-epoch path stays as fallback for nested classes whose enclosing
-lacked an EntityId at parse time (template-nested, local, and anonymous forms
-still fail closed there). Primary member alias templates publish identity and
+Named nested classes of published namespace/global non-template classes and
+primary class-template patterns now publish their EntityId at parse time:
+`tryPublishNestedClassIdentity` resolves the immediate enclosing class from the
+struct-parsing context stack (back() is the current class, the owner candidate
+sits at size-2; `enclosing_class()` is not set until after the nested parse
+returns, and class bodies do not enter a Class ScopeType) and publishes the
+nested class as a non-definition under the enclosing class- or template-owned
+`OwnerId` before its body parse, merging the definition flag at the nested
+complete-definition epoch. Nested forward declarations merge into the later
+definition's EntityId, and same-spelling nested classes under different owner
+identities stay distinct. The focused FrontendContext regression verifies
+template-owned nested identities, same-spelling separation, nested `Box`
+publication under its class EntityId, and its template-parameter stamp. Direct
+member class and function templates inside those nested classes then publish
+`TemplateDeclId`s under the nested class EntityId during its body and
+retroactively stamp their declared Type-kind parameters through the existing
+publication helpers; the lazy
+enclosing-epoch path stays as fallback when parse-time publication is
+unavailable. Local and anonymous classes, and template-nested classes whose
+enclosing primary has no published identity, still fail closed there. Primary
+member alias templates publish identity and
 direct canonical targets the same way: `parse_member_template_alias` publishes a `TemplateDeclId`
 (`TemplateDeclTable` `PrimaryKind::Alias`) under the class-owned OwnerId from
 the enclosing parse-time EntityId, or a template-owned OwnerId for direct
@@ -590,13 +594,14 @@ during concrete alias materialization. This fixes forwarded aliases such as
   unchanged. No StringHandle identity or SymbolTable. Complete published namespace/global records fail-closed publish Supported nested
   typedef/using RHS TypeIds and nested classes under class-owned OwnerIds
   (`ownerIdFromClassEntity`, tagged so they cannot collide with namespace-mapped
-  owners). Nested EntityIds now publish at nested parse time under the enclosing
-  class-owned OwnerId (non-definition before nested body parse; definition
-  merged at the nested complete-definition epoch; nested forward declarations
-  merge into the definition EntityId); the enclosing-epoch path publishes
-  nested and enclosing named type-member schemas and remains the fallback when
-  parse-time publication was unavailable.
-  Local/anonymous/template-nested classes remain omitted. ExpressionSubstitutor
+  owners). Nested EntityIds publish at nested parse time under the enclosing
+  class-owned or primary-template-owned `OwnerId` (non-definition before nested
+  body parse; definition merged at the nested complete-definition epoch; nested
+  forward declarations merge into the definition EntityId); the enclosing-epoch
+  path publishes nested and enclosing named type-member schemas and remains the
+  fallback when parse-time publication is unavailable. Local and anonymous
+  classes, and template-nested classes without a published primary owner, remain
+  omitted. ExpressionSubstitutor
   restamp runs `tryResolveDependentTip` (Set DependentName-family / Clear on
   collapse with Builtin/Record/Enum TypeId→TypeIndex projection). Nodes remain
   16 bytes; `sizeof(CanonicalTypeTable)` is 2,680 bytes on Linux clang++.
@@ -891,10 +896,11 @@ Advanced, not completed:
   array type-ids. This advances, but does not complete, flat representation
   removal from type-trait consumers.
   The landed-family inventory
-  lives in `Current boundary and handoff`. Nested member-template Spec-rooted
-  dependent stamping, unpublished/incomplete nominal, anonymous-union, and
-  unpublished-base forms, the remaining dependent/template arguments, and
-  deletion of the flat representation keep the criterion open.
+  lives in `Current boundary and handoff`. Spec-rooted dependent stamping inside
+  nested class-template patterns still needs a targeted regression, as do
+  unpublished/incomplete nominal, anonymous-union, and unpublished-base forms,
+  the remaining dependent/template arguments, and deletion of the flat
+  representation; these keep the criterion open.
 - **0:** complete mutation-validated coverage or tracked expected failures for
   every architectural defect remains open.
 - **1:** full template-facade coverage, full merge rules, transactional parser

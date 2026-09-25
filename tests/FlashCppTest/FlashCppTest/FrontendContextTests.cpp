@@ -736,6 +736,80 @@ TEST_SUITE("FrontendContext") {
 		CHECK(value_import.type == table.templateParameter(box.template_decl_id(), 0u));
 	}
 
+	TEST_CASE("Nested class in a class template publishes under template identity") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+
+		const std::string code =
+			"template<typename OwnerValue> struct TemplateOwner {\n"
+			"  struct Inner {\n"
+			"    template<typename Value> struct Box { Value value; };\n"
+			"  };\n"
+			"};\n"
+			"template<typename OwnerValue> struct OtherTemplateOwner {\n"
+			"  struct Inner { int other; };\n"
+			"};\n";
+		FrontendContext context;
+		CompileContext test_context;
+		test_context.setInputFile("nested_class_in_class_template_identity_test.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto owner_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("TemplateOwner"));
+		REQUIRE(owner_opt.has_value());
+		REQUIRE(owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& owner = owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(owner.has_template_decl_id());
+		REQUIRE(owner.class_decl_node().nested_classes().size() == 1u);
+		REQUIRE(owner.class_decl_node().nested_classes()[0].is<StructDeclarationNode>());
+		const StructDeclarationNode& inner =
+			owner.class_decl_node().nested_classes()[0].as<StructDeclarationNode>();
+		REQUIRE(inner.has_entity_id());
+
+		const auto other_owner_opt = gTemplateRegistry.lookupTemplate(
+			StringTable::getOrInternStringHandle("OtherTemplateOwner"));
+		REQUIRE(other_owner_opt.has_value());
+		REQUIRE(other_owner_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& other_owner =
+			other_owner_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(other_owner.has_template_decl_id());
+		REQUIRE(other_owner.class_decl_node().nested_classes().size() == 1u);
+		REQUIRE(other_owner.class_decl_node().nested_classes()[0].is<StructDeclarationNode>());
+		const StructDeclarationNode& other_inner =
+			other_owner.class_decl_node().nested_classes()[0].as<StructDeclarationNode>();
+		REQUIRE(other_inner.has_entity_id());
+		CHECK(inner.entity_id() != other_inner.entity_id());
+
+		const EntityRecord& inner_record = context.declarationBuilder().entity(inner.entity_id());
+		CHECK(inner_record.owner_id == ownerIdFromTemplateDecl(owner.template_decl_id()));
+
+		const auto box_opt =
+			gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle("Inner::Box"));
+		REQUIRE(box_opt.has_value());
+		REQUIRE(box_opt->is<TemplateClassDeclarationNode>());
+		const TemplateClassDeclarationNode& box = box_opt->as<TemplateClassDeclarationNode>();
+		REQUIRE(box.has_template_decl_id());
+		const auto published_box = context.templateDecls().findPrimaryClassTemplate(
+			ownerIdFromClassEntity(inner.entity_id()),
+			StringTable::getOrInternStringHandle("Box"));
+		REQUIRE(published_box.has_value());
+		CHECK(*published_box == box.template_decl_id());
+
+		const auto& box_members = box.class_decl_node().members();
+		REQUIRE(box_members.size() == 1u);
+		REQUIRE(box_members[0].declaration.is<DeclarationNode>());
+		const TypeSpecifierNode& value_type =
+			box_members[0].declaration.as<DeclarationNode>().type_specifier_node();
+		REQUIRE(value_type.has_template_parameter_decl());
+		CHECK(value_type.template_decl_id() == box.template_decl_id());
+		CHECK(value_type.template_parameter_index() == 0u);
+	}
+
 	TEST_CASE("Nested member class template stamps Spec-rooted dependent members by owner") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
