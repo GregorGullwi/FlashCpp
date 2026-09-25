@@ -1,14 +1,5 @@
 # Known Issues
 
-## Pointer type trait rejects direct abstract declarators
-
-The intrinsic parser rejects a direct abstract declarator such as
-`__is_pointer(int (*(*)[3])[4])` with `Expected ')' after type trait argument`
-before type-trait evaluation. Declaring the same ordered type and querying it
-through `__is_pointer(decltype(value))` reaches evaluation. This parser grammar
-gap is separate from the ordered pointer classification fixed in the current
-3A slice.
-
 ## Member class template dependent bases are not instantiated
 
 A member class template whose base is one of its own type parameters does not

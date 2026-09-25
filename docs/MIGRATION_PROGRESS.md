@@ -133,7 +133,10 @@ The shared type-trait evaluator now uses
 `TypeSpecifierNode::runtime_pointer_depth` for `__is_pointer`, so it reads the
 leading ordered declarator wrapper for interleaved pointer/array types instead
 of losing that shape through the flat projection. Legacy-only type nodes retain
-the accessor's compatibility projection. The focused regression is
+the accessor's compatibility projection. Unary, variadic, and binary type-trait
+operands now use `consume_type_id_abstract_declarators`, replacing duplicated
+pointer/reference and single-array parsing and accepting nested direct abstract
+declarators such as `__is_pointer(int (*(*)[3])[4])`. The focused regression is
 `type_trait_ordered_pointer_ret42.cpp`; broader type-trait migration and other
 flat pointer/array reads remain open.
 
@@ -879,7 +882,9 @@ Advanced, not completed:
   depth.
   The `__is_pointer` type-trait adapter also reads ordered runtime pointer depth,
   so a non-projectable interleaved declarator is classified by its leading
-  pointer wrapper. This advances, but does not complete, flat representation
+  pointer wrapper. Unary, variadic, and binary type-trait operands also route
+  through shared abstract-declarator parsing, including direct nested pointer /
+  array type-ids. This advances, but does not complete, flat representation
   removal from type-trait consumers.
   The landed-family inventory
   lives in `Current boundary and handoff`. Nested member-template Spec-rooted
