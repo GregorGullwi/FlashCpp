@@ -3,6 +3,37 @@
 #include "AstNodeTypes.h"
 #include "CanonicalTypes.h"
 
+#include <optional>
+
+inline std::optional<TypeCategory> canonicalBuiltinToTypeCategory(
+	CanonicalBuiltinKind builtin) {
+	switch (builtin) {
+	case CanonicalBuiltinKind::Void: return TypeCategory::Void;
+	case CanonicalBuiltinKind::Bool: return TypeCategory::Bool;
+	case CanonicalBuiltinKind::Char:
+	case CanonicalBuiltinKind::SignedChar: return TypeCategory::Char;
+	case CanonicalBuiltinKind::UnsignedChar: return TypeCategory::UnsignedChar;
+	case CanonicalBuiltinKind::WChar: return TypeCategory::WChar;
+	case CanonicalBuiltinKind::Char8: return TypeCategory::Char8;
+	case CanonicalBuiltinKind::Char16: return TypeCategory::Char16;
+	case CanonicalBuiltinKind::Char32: return TypeCategory::Char32;
+	case CanonicalBuiltinKind::Short: return TypeCategory::Short;
+	case CanonicalBuiltinKind::UnsignedShort: return TypeCategory::UnsignedShort;
+	case CanonicalBuiltinKind::Int: return TypeCategory::Int;
+	case CanonicalBuiltinKind::UnsignedInt: return TypeCategory::UnsignedInt;
+	case CanonicalBuiltinKind::Long: return TypeCategory::Long;
+	case CanonicalBuiltinKind::UnsignedLong: return TypeCategory::UnsignedLong;
+	case CanonicalBuiltinKind::LongLong: return TypeCategory::LongLong;
+	case CanonicalBuiltinKind::UnsignedLongLong: return TypeCategory::UnsignedLongLong;
+	case CanonicalBuiltinKind::Float: return TypeCategory::Float;
+	case CanonicalBuiltinKind::Double: return TypeCategory::Double;
+	case CanonicalBuiltinKind::LongDouble: return TypeCategory::LongDouble;
+	case CanonicalBuiltinKind::Nullptr: return TypeCategory::Nullptr;
+	case CanonicalBuiltinKind::Count: return std::nullopt;
+	}
+	return std::nullopt;
+}
+
 enum class CanonicalTypeImportStatus : uint8_t {
 	Supported, UnmigratedArray, UnmigratedCallable, UnmigratedNominal, Unresolved, Invalid,
 };

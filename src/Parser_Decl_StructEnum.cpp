@@ -2518,6 +2518,24 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					? *initializer_definition_lookup_context
 					: TemplateDefinitionLookupContext{},
 				is_static_constexpr);
+			StructStaticMember& static_member = struct_info->static_members.back();
+			const std::optional<TypeSpecifierNode> ordered_static_type =
+				orderedTypeFromStaticMemberDeclaration(static_member);
+			TypeSpecifierNode canonical_static_type =
+				ordered_static_type.value_or(type_spec);
+			tryBindPublishedTypeEntity(canonical_static_type);
+			tryBindPublishedMemberClassEntity(canonical_static_type);
+			const CanonicalTypeImport canonical_static_type_result = importCanonicalType(
+				requireFrontendContext().canonicalTypes(), canonical_static_type);
+			if (ordered_static_type.has_value() &&
+				canonical_static_type_result.status != CanonicalTypeImportStatus::Supported) {
+				return ParseResult::error(
+					"unsupported canonical static member type",
+					decl.identifier_token());
+			}
+			if (canonical_static_type_result.status == CanonicalTypeImportStatus::Supported) {
+				static_member.canonical_type_id = canonical_static_type_result.type;
+			}
 			if (static_pointee_array_declarator) {
 				struct_info->static_members.back().pointee_array_declarator = true;
 			}

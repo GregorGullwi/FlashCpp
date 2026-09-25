@@ -926,8 +926,11 @@ Advanced, not completed:
 - **1:** full template-facade coverage, full merge rules, transactional parser
   probes that leave all committed registries unchanged, and complete arena
   telemetry/ownership remain open. `PublicationTransaction` covers builder
-  declaration/entity arenas, not every parser publication family. Scratch
-  rollback is proven in doctests, not integrated across production probes.
+  declaration/entity arenas, and `FrontendScratchTransaction` now also rolls
+  back `TemplateDeclTable` identity and pattern mutations through a per-change
+  journal. `SymbolTable` scope/name maps and namespace publication remain
+  outside that transaction. Scratch rollback is proven in doctests, not
+  integrated across production probes.
 - Persistent-scope ownership and lexical-ID stamping are deliverables, not
   additional explicit criteria. Initial shadow tests cover reopened namespace
   lexical scopes sharing an owner/entity, plus inline and definition state.

@@ -19,6 +19,18 @@ int consumes_int(int (*(*)[3])[4]) { return 7; }
 int consumes_double(double (*(*)[2])[3]) { return 9; }
 int consumes_cv(char (* const (*)[3])[4]) { return 11; }
 
+struct MemberAccessProbe {
+	static inline int (*(*value)[3])[4] = nullptr;
+
+	int unqualified_type() {
+		return consumes_int(value);
+	}
+
+	int object_qualified_type() {
+		return consumes_int(this->value);
+	}
+};
+
 int main() {
 	int (*(*local)[3])[4] = Holder::int_value;
 	if (sizeof(Holder::int_value) != sizeof(void*)) {
@@ -44,6 +56,13 @@ int main() {
 	}
 	if (Holder::plain_value != 5) {
 		return 8;
+	}
+	MemberAccessProbe probe;
+	if (probe.unqualified_type() != 7) {
+		return 9;
+	}
+	if (probe.object_qualified_type() != 7) {
+		return 10;
 	}
 	return 42;
 }
