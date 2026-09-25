@@ -437,8 +437,10 @@ bool mustBeMemberOperator(OverloadableOperator operator_kind) {
 // runs before the nested body parse so in-body member class/function templates
 // can publish under this identity during the nested body; the nested
 // complete-definition epoch passes is_definition=true to merge the definition
-// flag. Fail-closed: without a published enclosing EntityId the node stays
-// unpublished and the lazy enclosing-epoch fallback remains the authority.
+// flag. A primary class template owns a nested class through its TemplateDeclId
+// until the nested class has its own EntityId. Fail-closed: without either
+// published owner identity the node stays unpublished and the lazy
+// enclosing-epoch fallback remains the authority.
 void Parser::tryPublishNestedClassIdentity(StructDeclarationNode& nested, bool is_definition) {
 	if (struct_parsing_context_stack_.size() < 2u) {
 		return;
@@ -446,14 +448,23 @@ void Parser::tryPublishNestedClassIdentity(StructDeclarationNode& nested, bool i
 	const StructParsingContext& enclosing_context =
 		struct_parsing_context_stack_[struct_parsing_context_stack_.size() - 2u];
 	const StructDeclarationNode* enclosing = enclosing_context.struct_node;
-	if (enclosing == nullptr || !enclosing->has_entity_id()) {
+	if (enclosing == nullptr) {
+		return;
+	}
+	OwnerId enclosing_owner_id{};
+	if (enclosing->has_entity_id()) {
+		enclosing_owner_id = ownerIdFromClassEntity(enclosing->entity_id());
+	} else if (enclosing->has_template_decl_id()) {
+		enclosing_owner_id = ownerIdFromTemplateDecl(enclosing->template_decl_id());
+	}
+	if (!enclosing_owner_id) {
 		return;
 	}
 	FrontendContext& front_end = requireFrontendContext();
 	const PublishResult published = commitParserNestedClassPublication(
 		front_end.declarationBuilder(),
 		nested,
-		ownerIdFromClassEntity(enclosing->entity_id()),
+		enclosing_owner_id,
 		is_definition,
 		gSymbolTable);
 	if (published.status == PublishStatus::Created ||
@@ -881,7 +892,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		StructDeclarationNode& stamped = struct_node.as<StructDeclarationNode>();
 		if (is_nested_class) {
 			// Nested classes must not publish at namespace level: the context
-			// stack supplies the enclosing class-owned OwnerId, and the
+			// stack supplies the enclosing class- or template-owned OwnerId, and the
 			// definition flag merges through the same nested identity.
 			tryPublishNestedClassIdentity(stamped, !stamped.is_forward_declaration());
 			return;

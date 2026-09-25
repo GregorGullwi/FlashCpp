@@ -11,11 +11,11 @@
 namespace {
 
 // Publish TemplateDeclId for a primary member class template when its immediate
-// enclosing class has either a published EntityId (namespace/global
-// non-template classes) or a published primary TemplateDeclId (direct members
-// of namespace/global class templates). Nested classes assign EntityIds at the
-// enclosing complete-definition epoch, and nested member templates remain
-// deferred. Spelling is a lookup key only and is never TypeId identity.
+// enclosing class has a published EntityId, or is itself a published primary
+// class template. Named nested classes in a primary class-template pattern now
+// publish EntityIds under their enclosing TemplateDeclId, so their direct
+// member templates can publish under the nested class identity. Spelling is a
+// lookup key only and is never TypeId identity.
 std::optional<TemplateDeclId> tryPublishMemberPrimaryClassTemplate(
 	StructDeclarationNode& enclosing,
 	StructDeclarationNode& member,

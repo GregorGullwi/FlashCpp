@@ -525,7 +525,7 @@ PreparedClassPublication DeclarationBuilder::prepareClassPublication(
 
 	OwnerId owner_id{};
 	if (request.owner_id) {
-		if (!isClassOwnedOwnerId(request.owner_id)) {
+		if (!isClassOrTemplateOwnedOwnerId(request.owner_id)) {
 			return PreparedClassPublication(
 				PublishStatus::Rejected, EntityId{}, ScopeId{}, OwnerId{}, StringHandle{}, DeclKind::Class, 0);
 		}
@@ -994,7 +994,7 @@ PublishResult commitParserNestedClassPublication(
 	OwnerId enclosing_owner_id,
 	bool is_definition,
 	const SymbolTable& symbol_table) {
-	if (!isClassOwnedOwnerId(enclosing_owner_id)) {
+	if (!isClassOrTemplateOwnedOwnerId(enclosing_owner_id)) {
 		return PublishResult{PublishStatus::Rejected, DeclId{}, EntityId{}};
 	}
 	if (!struct_decl.has_lexical_scope_id() || !struct_decl.name().isValid()) {

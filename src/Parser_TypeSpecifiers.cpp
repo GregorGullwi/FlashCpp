@@ -5427,8 +5427,8 @@ void Parser::tryStampDependentMemberChain(
 	const TypeInfo::DependentQualifiedNameRecord& record,
 	std::span<const TypeSpecifierNode> member_template_arg_syntax) {
 	// No published primary class template yet (parameter-list parse, function
-	// templates, member templates under unpublished enclosing classes, and
-	// nested-class-nested member templates). Stamping is a no-op there.
+	// templates, or member templates under unpublished enclosing classes).
+	// Stamping is a no-op there.
 	if (!active_template_decl_id_) {
 		return;
 	}

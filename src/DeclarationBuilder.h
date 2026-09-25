@@ -525,9 +525,9 @@ PublishResult commitParserClassPublication(
 	bool is_definition,
 	const SymbolTable& symbol_table);
 
-// Nested class publication under an enclosing class EntityId. owner_id must be
-// class-owned (ownerIdFromClassEntity). Lexical ScopeId comes from the nested
-// declaration node (already stamped during parse).
+// Nested class publication under an enclosing class EntityId or primary class
+// TemplateDeclId. owner_id must be class- or template-owned. Lexical ScopeId
+// comes from the nested declaration node (already stamped during parse).
 PublishResult commitParserNestedClassPublication(
 	DeclarationBuilder& builder,
 	StructDeclarationNode& struct_decl,
