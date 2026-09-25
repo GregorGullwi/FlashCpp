@@ -3942,6 +3942,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 									throw InternalError(
 										"static member canonical type export rejected ordered declarator");
 								}
+								ordered_type->set_type_index(static_member->type_index);
+								ordered_type->set_cv_qualifier(static_member->cv_qualifier);
 								ordered_type->set_ordered_declarator(exported.components);
 								return *ordered_type;
 							}

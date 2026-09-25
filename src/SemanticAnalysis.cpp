@@ -1007,6 +1007,8 @@ TypeSpecifierNode typeSpecifierFromStaticMember(const StructStaticMember& member
 		if (exported.status != CanonicalTypeImportStatus::Supported) {
 			throw InternalError("static member canonical type export rejected ordered declarator");
 		}
+		ordered_type->set_type_index(member.type_index);
+		ordered_type->set_cv_qualifier(member.cv_qualifier);
 		ordered_type->set_ordered_declarator(exported.components);
 		return *ordered_type;
 	}
@@ -8037,6 +8039,54 @@ ConversionPlan buildCanonicalStructuralConversionPlan(
 		}
 		return std::pair<TypeId, CVQualifier>{type, qualifiers};
 	};
+	auto topObjectCvThroughArrays = [&table, &stripTopCv](TypeId type) {
+		CVQualifier qualifiers = CVQualifier::None;
+		for (;;) {
+			const auto [unqualified, top_cv] = stripTopCv(type);
+			qualifiers |= top_cv;
+			const CanonicalTypeNode node = table.node(unqualified);
+			if (node.kind != CanonicalTypeKind::Array) {
+				return qualifiers;
+			}
+			type = node.child;
+		}
+	};
+	auto compatibleFunctionPointerTarget = [&table](TypeId source, TypeId target) {
+		const CanonicalTypeNode source_function = table.node(source);
+		const CanonicalTypeNode target_function = table.node(target);
+		if (source_function.kind != CanonicalTypeKind::Function ||
+			target_function.kind != CanonicalTypeKind::Function ||
+			source_function.child != target_function.child ||
+			source_function.builtin != target_function.builtin ||
+			source_function.qualifiers != target_function.qualifiers) {
+			return false;
+		}
+		const uint8_t source_flags = static_cast<uint8_t>(source_function.flags);
+		const uint8_t target_flags = static_cast<uint8_t>(target_function.flags);
+		const uint8_t noexcept_flag =
+			static_cast<uint8_t>(CanonicalTypeNodeFlags::NoexceptFunction);
+		const bool source_is_noexcept = (source_flags & noexcept_flag) != 0;
+		const bool target_is_noexcept = (target_flags & noexcept_flag) != 0;
+		if (target_is_noexcept && !source_is_noexcept) {
+			return false;
+		}
+		if ((source_flags & ~noexcept_flag) != (target_flags & ~noexcept_flag) ||
+			table.functionDependentNoexcept(source) !=
+				table.functionDependentNoexcept(target)) {
+			return false;
+		}
+		TypeId source_parameter = table.functionParameters(source);
+		TypeId target_parameter = table.functionParameters(target);
+		while (source_parameter && target_parameter) {
+			if (table.functionParameterType(source_parameter) !=
+				table.functionParameterType(target_parameter)) {
+				return false;
+			}
+			source_parameter = table.functionParameterNext(source_parameter);
+			target_parameter = table.functionParameterNext(target_parameter);
+		}
+		return !source_parameter && !target_parameter;
+	};
 	auto isBuiltin = [&table, &stripTopCv](TypeId type, CanonicalBuiltinKind builtin) {
 		const TypeId unqualified = stripTopCv(type).first;
 		const CanonicalTypeNode node = table.node(unqualified);
@@ -8116,14 +8166,16 @@ ConversionPlan buildCanonicalStructuralConversionPlan(
 	const CanonicalTypeNode target_pointer = table.node(stripTopCv(target_type).first);
 	if (source_pointer.kind == CanonicalTypeKind::Pointer &&
 		target_pointer.kind == CanonicalTypeKind::Pointer) {
-		const auto [source_pointee, source_pointee_cv] = stripTopCv(source_pointer.child);
+		const TypeId source_pointee = stripTopCv(source_pointer.child).first;
 		const auto [target_pointee, target_pointee_cv] = stripTopCv(target_pointer.child);
 		const CanonicalTypeNode source_pointee_node = table.node(source_pointee);
 		const CanonicalTypeNode target_pointee_node = table.node(target_pointee);
+		const CVQualifier source_object_cv =
+			topObjectCvThroughArrays(source_pointer.child);
 		if (source_pointee_node.kind != CanonicalTypeKind::Function &&
 			target_pointee_node.kind == CanonicalTypeKind::Builtin &&
 			target_pointee_node.builtin == CanonicalBuiltinKind::Void &&
-			(static_cast<uint8_t>(source_pointee_cv) &
+			(static_cast<uint8_t>(source_object_cv) &
 				~static_cast<uint8_t>(target_pointee_cv)) == 0) {
 			return {ConversionRank::Conversion,
 				decay_kind == StandardConversionKind::None
@@ -8206,12 +8258,22 @@ ConversionPlan buildCanonicalStructuralConversionPlan(
 			// Function, member-pointer, and dependent/template composite
 			// payloads need their own TypeId conversion rules before this slice
 			// can safely compare them structurally.
-			return from_unqualified == to_unqualified &&
-				decay_kind == StandardConversionKind::None
-				? ConversionPlan::exact_match()
-				: decay_kind != StandardConversionKind::None
-					? ConversionPlan{ConversionRank::Conversion, decay_kind, true}
-					: ConversionPlan::no_match();
+			if (from_unqualified == to_unqualified) {
+				if (decay_kind != StandardConversionKind::None) {
+					return {ConversionRank::Conversion, decay_kind, true};
+				}
+				return qualification_changed
+					? ConversionPlan::qualification_adjustment()
+					: ConversionPlan::exact_match();
+			}
+			if (from_node.kind == CanonicalTypeKind::Function &&
+				to_node.kind == CanonicalTypeKind::Function &&
+				decay_kind == StandardConversionKind::FunctionToPointer &&
+				compatibleFunctionPointerTarget(from_unqualified, to_unqualified)) {
+				return {ConversionRank::Conversion,
+					StandardConversionKind::FunctionToPointer, true};
+			}
+			return ConversionPlan::no_match();
 		}
 	}
 }

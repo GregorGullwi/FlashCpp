@@ -2529,9 +2529,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				requireFrontendContext().canonicalTypes(), canonical_static_type);
 			if (ordered_static_type.has_value() &&
 				canonical_static_type_result.status != CanonicalTypeImportStatus::Supported) {
-				return ParseResult::error(
-					"unsupported canonical static member type",
-					decl.identifier_token());
+				return error(
+					DiagnosticId::UnsupportedCanonicalStaticMemberType,
+					decl.identifier_token(),
+					"unsupported canonical static member type");
 			}
 			if (canonical_static_type_result.status == CanonicalTypeImportStatus::Supported) {
 				static_member.canonical_type_id = canonical_static_type_result.type;
