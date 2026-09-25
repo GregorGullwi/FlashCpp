@@ -9344,99 +9344,125 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			// Publish the nested class's own member typedefs under the
-			// instantiated nested owner. The owner's direct aliases are handled
-			// later in this function, but a nested class's aliases previously
-			// stayed under the uninstantiated pattern spelling, so a qualified
-			// type-id such as `Owner<int>::Nested::type` could not resolve.
-			// Mirrors instantiate_full_specialization's nested-alias registration.
-			// Member alias templates and deeper nesting stay deferred.
-			for (const auto& nested_type_alias : nested_struct.type_aliases()) {
-				if (has_unresolved_primary_template_args) {
-					break;
-				}
-				if (!nested_type_alias.type_node.is<TypeSpecifierNode>()) {
-					continue;
-				}
-				const TypeSpecifierNode& nested_alias_spec =
-					nested_type_alias.type_node.as<TypeSpecifierNode>();
-				TypeCategory nested_substituted_type = nested_alias_spec.type();
-				TypeIndex nested_substituted_index = nested_alias_spec.type_index();
-				int nested_substituted_size = nested_alias_spec.size_in_bits();
+			// Publish member typedefs of this nested class and of every class
+			// nested inside it under the instantiated owner chain. The owner's
+			// direct aliases are handled later in this function, but nested
+			// aliases previously stayed under the uninstantiated pattern
+			// spelling, so a qualified type-id such as
+			// `Owner<int>::Nested::Deeper::type` could not resolve. An explicit
+			// stack keeps the walk iterative; only typedefs are published here
+			// (nested class bodies, member alias templates, and member functions
+			// of deeper nested classes keep their own paths).
+			if (!has_unresolved_primary_template_args) {
+				std::vector<std::pair<StringHandle, const StructDeclarationNode*>>
+					pending_alias_owners;
+				pending_alias_owners.emplace_back(qualified_name, &nested_struct);
+				while (!pending_alias_owners.empty()) {
+					const auto [owner_qualified_name, pattern_struct] =
+						pending_alias_owners.back();
+					pending_alias_owners.pop_back();
+					for (const auto& nested_type_alias : pattern_struct->type_aliases()) {
+						if (!nested_type_alias.type_node.is<TypeSpecifierNode>()) {
+							continue;
+						}
+						const TypeSpecifierNode& nested_alias_spec =
+							nested_type_alias.type_node.as<TypeSpecifierNode>();
+						TypeCategory nested_substituted_type = nested_alias_spec.type();
+						TypeIndex nested_substituted_index = nested_alias_spec.type_index();
+						int nested_substituted_size = nested_alias_spec.size_in_bits();
 
-				trySubstituteIntrinsicTypeAlias(
-					nested_alias_spec,
-					effective_template_params,
-					effective_template_args,
-					nested_substituted_type,
-					nested_substituted_index,
-					nested_substituted_size);
+						trySubstituteIntrinsicTypeAlias(
+							nested_alias_spec,
+							effective_template_params,
+							effective_template_args,
+							nested_substituted_type,
+							nested_substituted_index,
+							nested_substituted_size);
 
-				if (nested_alias_spec.type_index().is_valid()) {
-					const TypeIndex substituted_parameter_index = substitute_template_parameter(
-						nested_alias_spec,
-						effective_template_params,
-						effective_template_args);
-					if (substituted_parameter_index.category() != nested_alias_spec.type() ||
-						substituted_parameter_index != nested_alias_spec.type_index()) {
-						nested_substituted_type = substituted_parameter_index.category();
-						nested_substituted_index = substituted_parameter_index;
-						nested_substituted_size = get_type_size_bits(nested_substituted_type);
+						if (nested_alias_spec.type_index().is_valid()) {
+							const TypeIndex substituted_parameter_index = substitute_template_parameter(
+								nested_alias_spec,
+								effective_template_params,
+								effective_template_args);
+							if (substituted_parameter_index.category() != nested_alias_spec.type() ||
+								substituted_parameter_index != nested_alias_spec.type_index()) {
+								nested_substituted_type = substituted_parameter_index.category();
+								nested_substituted_index = substituted_parameter_index;
+								nested_substituted_size = get_type_size_bits(nested_substituted_type);
+							}
+						}
+
+						if (nested_substituted_size == 0 && is_primitive_type(nested_substituted_type)) {
+							nested_substituted_size = get_type_size_bits(nested_substituted_type);
+						}
+						if (is_primitive_type(nested_substituted_type) &&
+							nested_substituted_index.category() != nested_substituted_type) {
+							nested_substituted_index = nested_substituted_index.withCategory(nested_substituted_type);
+						}
+
+						const TypeInfo* nested_alias_semantic_source =
+							tryGetTypeInfo(TypeIndex{nested_substituted_index});
+						if (!isConcreteAliasSemanticSource(nested_alias_semantic_source)) {
+							nested_alias_semantic_source = nullptr;
+						}
+
+						std::optional<TypeSpecifierNode> nested_substituted_alias_spec =
+							buildSubstitutedTypeAliasSpecifier(
+								nested_type_alias,
+								TypeIndex{nested_substituted_index},
+								nested_substituted_type,
+								effective_template_params,
+								effective_template_args,
+								instantiated_name);
+						TypeSpecifierNode nested_alias_registration_spec =
+							nested_substituted_alias_spec.has_value()
+								? *nested_substituted_alias_spec
+								: nested_alias_spec;
+						const TypeIndex nested_alias_registration_source_index =
+							selectAliasRegistrationSourceIndex(
+								nested_substituted_index,
+								nested_substituted_alias_spec,
+								nested_alias_registration_spec);
+
+						StringHandle nested_alias_name = StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(StringTable::getStringView(owner_qualified_name))
+								.append("::")
+								.append(nested_type_alias.alias_name)
+								.commit());
+						TypeInfo& nested_alias_info =
+							nested_alias_semantic_source != nullptr
+								? add_type_alias_copy(
+									  nested_alias_name,
+									  nested_alias_registration_source_index,
+									  nested_substituted_size,
+									  nested_alias_registration_spec,
+									  *nested_alias_semantic_source)
+								: add_type_alias_copy(
+									  nested_alias_name,
+									  nested_alias_registration_source_index,
+									  nested_substituted_size,
+									  nested_alias_registration_spec);
+						getTypesByNameMap().insert_or_assign(nested_alias_name, &nested_alias_info);
+					}
+					for (const auto& child_class : pattern_struct->nested_classes()) {
+						if (!child_class.is<StructDeclarationNode>()) {
+							continue;
+						}
+						const StructDeclarationNode& child_struct =
+							child_class.as<StructDeclarationNode>();
+						if (child_struct.is_local_class()) {
+							continue;
+						}
+						StringHandle child_qualified_name = StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(StringTable::getStringView(owner_qualified_name))
+								.append("::")
+								.append(child_struct.name())
+								.commit());
+						pending_alias_owners.emplace_back(child_qualified_name, &child_struct);
 					}
 				}
-
-				if (nested_substituted_size == 0 && is_primitive_type(nested_substituted_type)) {
-					nested_substituted_size = get_type_size_bits(nested_substituted_type);
-				}
-				if (is_primitive_type(nested_substituted_type) &&
-					nested_substituted_index.category() != nested_substituted_type) {
-					nested_substituted_index = nested_substituted_index.withCategory(nested_substituted_type);
-				}
-
-				const TypeInfo* nested_alias_semantic_source =
-					tryGetTypeInfo(TypeIndex{nested_substituted_index});
-				if (!isConcreteAliasSemanticSource(nested_alias_semantic_source)) {
-					nested_alias_semantic_source = nullptr;
-				}
-
-				std::optional<TypeSpecifierNode> nested_substituted_alias_spec =
-					buildSubstitutedTypeAliasSpecifier(
-						nested_type_alias,
-						TypeIndex{nested_substituted_index},
-						nested_substituted_type,
-						effective_template_params,
-						effective_template_args,
-						instantiated_name);
-				TypeSpecifierNode nested_alias_registration_spec =
-					nested_substituted_alias_spec.has_value()
-						? *nested_substituted_alias_spec
-						: nested_alias_spec;
-				const TypeIndex nested_alias_registration_source_index =
-					selectAliasRegistrationSourceIndex(
-						nested_substituted_index,
-						nested_substituted_alias_spec,
-						nested_alias_registration_spec);
-
-				StringHandle nested_alias_name = StringTable::getOrInternStringHandle(
-					StringBuilder()
-						.append(StringTable::getStringView(qualified_name))
-						.append("::")
-						.append(nested_type_alias.alias_name)
-						.commit());
-				TypeInfo& nested_alias_info =
-					nested_alias_semantic_source != nullptr
-						? add_type_alias_copy(
-							  nested_alias_name,
-							  nested_alias_registration_source_index,
-							  nested_substituted_size,
-							  nested_alias_registration_spec,
-							  *nested_alias_semantic_source)
-						: add_type_alias_copy(
-							  nested_alias_name,
-							  nested_alias_registration_source_index,
-							  nested_substituted_size,
-							  nested_alias_registration_spec);
-				getTypesByNameMap().insert_or_assign(nested_alias_name, &nested_alias_info);
 			}
 			instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
 		}
