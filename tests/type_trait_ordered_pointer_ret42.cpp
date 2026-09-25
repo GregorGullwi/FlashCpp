@@ -9,6 +9,9 @@ int (*(*interleaved)[3])[4] = nullptr;
 long values[2]{};
 
 int main() {
+	if (!__is_pointer(int (*(*)[3])[4])) {
+		return 4;
+	}
 	if (!__is_pointer(decltype(interleaved))) {
 		return 1;
 	}

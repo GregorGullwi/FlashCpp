@@ -4169,40 +4169,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::error(message, trait_token);
 				}
 
-				// Parse pointer/reference modifiers after the base type (ptr-operator in C++20 grammar)
-				// e.g., int* or int&& in type trait arguments
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				consume_pointer_ref_modifiers(type_spec);
-
-				// Parse array specifications ([N] or [])
-				if (peek() == "["_tok) {
-					advance();  // consume '['
-
-					// Check for array size expression or empty brackets
-					std::optional<size_t> array_size_val;
-					if (!peek().is_eof() && peek() != "]"_tok) {
-						// Parse array size expression
-						ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (size_result.is_error()) {
-							return ParseResult::error("Expected array size expression", current_token_);
-						}
-
-						// Try to evaluate the array size as a constant expression
-						if (size_result.node().has_value()) {
-							ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
-							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-							if (eval_result.success()) {
-								array_size_val = static_cast<size_t>(eval_result.as_int());
-							}
-						}
-					}
-
-					if (!consume("]"_tok)) {
-						return ParseResult::error("Expected ']' after array size", current_token_);
-					}
-
-					type_spec.set_array(true, array_size_val);
-				}
+				consume_type_id_abstract_declarators(type_spec);
 
 				// Check for pack expansion (...) after the first type argument
 				if (peek() == "..."_tok) {
@@ -4220,35 +4188,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							return ParseResult::error("Expected type argument in variadic type trait", current_token_);
 						}
 
-						// Parse pointer/reference modifiers for additional type arguments (ptr-operator in C++20 grammar)
 						TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
-						consume_pointer_ref_modifiers(arg_type_spec);
-
-						// Parse array specifications ([N] or []) for variadic trait additional args
-						std::optional<size_t> array_size_val;
-						if (peek() == "["_tok) {
-							advance();  // consume '['
-
-							if (!peek().is_eof() && peek() != "]"_tok) {
-								ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-								if (size_result.is_error()) {
-									return ParseResult::error("Expected array size expression", current_token_);
-								}
-								if (size_result.node().has_value()) {
-									ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
-									auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-									if (eval_result.success()) {
-										array_size_val = static_cast<size_t>(eval_result.as_int());
-									}
-								}
-							}
-
-							if (!consume("]"_tok)) {
-								return ParseResult::error("Expected ']' after array size", current_token_);
-							}
-
-							arg_type_spec.set_array(true, array_size_val);
-						}
+						consume_type_id_abstract_declarators(arg_type_spec);
 
 						// Check for pack expansion (...) after the type argument
 						if (peek() == "..."_tok) {
@@ -4276,35 +4217,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::error("Expected second type in binary type trait", current_token_);
 					}
 
-					// Parse pointer/reference modifiers for second type (ptr-operator in C++20 grammar)
 					TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
-					consume_pointer_ref_modifiers(second_type_spec);
-
-					// Parse array specifications ([N] or []) for binary trait second type
-					std::optional<size_t> array_size_val;
-					if (peek() == "["_tok) {
-						advance();  // consume '['
-
-						if (!peek().is_eof() && peek() != "]"_tok) {
-							ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (size_result.is_error()) {
-								return ParseResult::error("Expected array size expression", current_token_);
-							}
-							if (size_result.node().has_value()) {
-								ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
-								auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-								if (eval_result.success()) {
-									array_size_val = static_cast<size_t>(eval_result.as_int());
-								}
-							}
-						}
-
-						if (!consume("]"_tok)) {
-							return ParseResult::error("Expected ']' after array size", current_token_);
-						}
-
-						second_type_spec.set_array(true, array_size_val);
-					}
+					consume_type_id_abstract_declarators(second_type_spec);
 
 					if (!consume(")"_tok)) {
 						return ParseResult::error("Expected ')' after type trait arguments", current_token_);
