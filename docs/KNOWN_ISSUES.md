@@ -150,7 +150,10 @@ is declared as `OuterFunction* (*value)[3]`. The general flat conversion-
 descriptor path still rejects ordered declarators over aliases with callable,
 array, reference, or member-pointer wrappers. This is the remaining consumer
 migration gap; the static-member identity remains published and must not be
-flattened to bypass it.
+flattened to bypass it. Expression sizing can now follow a static member's
+canonical pointer/array identity through dereference and built-in subscript,
+so `sizeof(*Holder::value)` and `sizeof(Holder::value[0])` retain the array
+extent even when nested callable aliases prevent a flat declarator export.
 
 Flat data-member-pointer declarators now publish the structural
 `MemberObjectPointer` node (the owner travels in the node, not a parallel
