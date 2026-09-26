@@ -972,15 +972,37 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 
 CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& member) {
 	CanonicalTypeDesc desc;
+	if (member.canonical_type_id) {
+		const TypeSpecifierNode materialized = materializeStaticMemberTypeSpecifier(
+			requireFrontendContext().canonicalTypes(),
+			member,
+			Token{});
+		desc.type_index = materialized.type_index();
+		desc.base_cv = materialized.cv_qualifier();
+		desc.ref_qualifier = materialized.reference_qualifier();
+		for (const PointerLevel& pointer : materialized.pointer_levels()) {
+			desc.pointer_levels.push_back(pointer);
+		}
+		desc.pointee_array_declarator =
+			materialized.has_pointee_array_declarator();
+		if (materialized.is_array() || desc.pointee_array_declarator) {
+			for (const size_t dimension : materialized.array_dimensions()) {
+				desc.array_dimensions.push_back(dimension);
+			}
+		}
+		if (materialized.has_ordered_declarator() &&
+			!materialized.ordered_declarator_has_legacy_projection()) {
+			desc.structural_type_id = member.canonical_type_id;
+		}
+		if (materialized.has_function_signature()) {
+			desc.function_signature = materialized.function_signature();
+			desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
+		}
+		return desc;
+	}
 	desc.type_index = member.type_index.withCategory(member.memberType());
 	desc.base_cv = member.cv_qualifier;
 	desc.ref_qualifier = member.reference_qualifier;
-	if (orderedTypeFromStaticMemberDeclaration(member).has_value()) {
-		if (!member.canonical_type_id) {
-			throw InternalError("ordered static member has no canonical type id");
-		}
-		desc.structural_type_id = member.canonical_type_id;
-	}
 	if (member.pointee_array_declarator) {
 		// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator
 		// belong to the pointee; the member object is a scalar pointer.
@@ -993,36 +1015,6 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 		desc.pointer_levels.push_back(PointerLevel{});
 	}
 	return desc;
-}
-
-TypeSpecifierNode typeSpecifierFromStaticMember(const StructStaticMember& member, const Token& token) {
-	std::optional<TypeSpecifierNode> ordered_type =
-		orderedTypeFromStaticMemberDeclaration(member);
-	if (ordered_type.has_value()) {
-		if (!member.canonical_type_id) {
-			throw InternalError("ordered static member has no canonical type id");
-		}
-		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
-			requireFrontendContext().canonicalTypes(), member.canonical_type_id);
-		if (exported.status != CanonicalTypeImportStatus::Supported) {
-			throw InternalError("static member canonical type export rejected ordered declarator");
-		}
-		ordered_type->set_type_index(member.type_index);
-		ordered_type->set_cv_qualifier(member.cv_qualifier);
-		ordered_type->set_ordered_declarator(exported.components);
-		return *ordered_type;
-	}
-	TypeSpecifierNode type(
-		member.type_index.withCategory(member.memberType()),
-		SizeInBits{static_cast<int>(member.size * 8)},
-		token,
-		member.cv_qualifier,
-		member.reference_qualifier);
-	type.add_pointer_levels(member.pointer_depth);
-	if (member.is_array) {
-		type.set_array_dimensions(member.array_dimensions);
-	}
-	return type;
 }
 
 CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateArgInfo& arg) {
@@ -1095,6 +1087,11 @@ TypeInfo* findStructTypeInfoForDeclaration(const StructDeclarationNode& declarat
 // --- CanonicalTypeDesc::operator== ---
 
 bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
+	if (structural_type_id || other.structural_type_id) {
+		return structural_type_id &&
+			structural_type_id == other.structural_type_id &&
+			flags == other.flags;
+	}
 	if (type_index.category() != other.type_index.category())
 		return false;
 	if (type_index != other.type_index)
@@ -1104,8 +1101,6 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 	if (ref_qualifier != other.ref_qualifier)
 		return false;
 	if (flags != other.flags)
-		return false;
-	if (structural_type_id != other.structural_type_id)
 		return false;
 	if (pointer_levels.size() != other.pointer_levels.size())
 		return false;
@@ -5265,7 +5260,9 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			throw InternalError(
 				"semantic canonicalization rejected ordered declarator");
 		}
-		desc.structural_type_id = imported.type;
+		if (!resolved_syntax.ordered_declarator_has_legacy_projection()) {
+			desc.structural_type_id = imported.type;
+		}
 		// [dcl.ptr]/1: a pointer whose immediate pointee is an array designates
 		// that array object. Publish the same flat flag the projectable
 		// pointer-to-array form already carries, so dereference lowering does
@@ -5344,7 +5341,12 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			}
 		}
 	}
-
+	// Parser-built native types can carry a category-only TypeIndex until they
+	// cross this semantic boundary. Canonical interning needs the same native
+	// identity used by imported canonical declarators and static-member TypeIds.
+	if (!desc.type_index.is_valid()) {
+		desc.type_index = nativeTypeIndex(desc.type_index.category());
+	}
 	auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
@@ -6259,7 +6261,10 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 								.append("::"sv)
 								.append(name_handle)
 								.commit());
-						resolved.type = typeSpecifierFromStaticMember(*static_member, qualified_identifier.identifier_token());
+						resolved.type = materializeStaticMemberTypeSpecifier(
+							requireFrontendContext().canonicalTypes(),
+							*static_member,
+							qualified_identifier.identifier_token());
 						return resolved;
 					}
 					if (allow_nonstatic_data_member) {

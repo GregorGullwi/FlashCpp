@@ -289,10 +289,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								 .declaration()
 								 .type_specifier_node();
 		}
-		if (original_type_spec == nullptr ||
-			!original_type_spec->has_ordered_declarator()) {
+		if (original_type_spec == nullptr) {
 			return original_type;
 		}
+		const bool has_ordered_declarator =
+			original_type_spec->has_ordered_declarator();
 
 		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
 			parameters,
@@ -320,12 +321,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		TypeSpecifierNode substituted_type =
 			substitutor.substituteTypeSpecifier(*original_type_spec);
-		substituted_type.set_ordered_declarator(std::vector<DeclaratorComponent>(
-			original_type_spec->declarator_components().begin(),
-			original_type_spec->declarator_components().end()));
+		const bool substituted_base_changed =
+			substituted_type.category() != original_type_spec->category() ||
+			substituted_type.type_index() != original_type_spec->type_index() ||
+			substituted_type.cv_qualifier() != original_type_spec->cv_qualifier();
+		if (has_ordered_declarator) {
+			substituted_type.set_ordered_declarator(std::vector<DeclaratorComponent>(
+				original_type_spec->declarator_components().begin(),
+				original_type_spec->declarator_components().end()));
+		} else if (original_type_spec->has_pointee_array_declarator()) {
+			// ExpressionSubstitutor's compatibility modifier path appends array
+			// dimensions as an array object. Restore the legacy projection for a
+			// pointer-to-array declarator after replacing its dependent base.
+			substituted_type.set_array(false, std::nullopt);
+			substituted_type.set_pointee_array_declarator(true);
+			substituted_type.set_pointee_array_dimensions(
+				original_type_spec->array_dimensions());
+		}
 		const std::optional<TypeId> imported_type =
 			tryImportCanonicalStaticMemberType(substituted_type);
 		if (!imported_type.has_value()) {
+			if (!has_ordered_declarator ||
+				substituted_type.ordered_declarator_has_legacy_projection()) {
+				published_type_index = substituted_type.type_index();
+				return substituted_base_changed ? TypeId{} : original_type;
+			}
 			throw makeStructuredCompileError(
 				context_.diagnostics(),
 				DiagnosticId::UnsupportedStaticMemberType,

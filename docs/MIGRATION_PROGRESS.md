@@ -16,12 +16,15 @@ mixed forms such as `int (*(*p)[3])[4]`. Legacy pointer/array fields are
 projected only when the shape is exactly representable.
 
 `CanonicalTypeTable` interns and substitutes structural types, including
-ordered pointer/array wrappers and one function component. `TypeId` is not yet
-the sole semantic authority: `CanonicalTypeDesc` still carries a structural
-bridge, and some conversion planning still uses syntax-facing types. Ordered
-pointer objects use `runtime_pointer_depth`, but template, trait, constexpr,
-and IR consumers still read flat fields. Array and callable outer wrappers
-remain guarded where their consumers are not migrated.
+ordered pointer/array wrappers and one function component. Descriptors whose
+shape needs the structural spine compare by `TypeId`; projectable types still
+use flat fields in many semantic operations. Static-member parser lookup uses
+the published `TypeId` through one adapter, while sema materializes its flat
+projection where legacy conversion code still needs it. Conversion planning
+still has syntax-facing callers. Ordered pointer objects use
+`runtime_pointer_depth`, but template, trait, constexpr, and IR consumers
+still read flat fields. Array and callable outer wrappers remain guarded where
+their consumers are not migrated.
 
 Semantic conversion support covers ordered shape identity, pointer
 qualification, object-pointer-to-`cv void*`, array/function decay, boolean
@@ -31,9 +34,13 @@ conversions remain deferred. `Parser::get_expression_type` still peels an
 ordered pointer for call-argument typing; remove that peel after sema owns
 argument typing and overload diagnosis.
 
-Ordered static-member declarations retain their canonical `TypeId` through
-publication and the covered template-copy/substitution paths, including full
-specializations. A valid static-member type with a nested callable alias can
+Static-member `TypeId`s are recomputed after template substitution when the
+canonical importer supports the substituted type, including projectable
+pointer-to-array types. Other projectable types retain their substituted flat
+projection until their importer family is available. Qualified lookup and
+object-member access read a published identity through the same adapter.
+The copy/substitution paths, including full specializations, still need an
+inventory audit. A valid static-member type with a nested callable alias can
 still exceed the importer and receives `UnsupportedStaticMemberType` (1020).
 This is an implementation gap, not a C++ restriction. Undeduced `auto` or
 `decltype(auto)` without an initializer is separately diagnosed as
@@ -58,9 +65,11 @@ Continue boundary 3A in this order:
    diagnostics. Retain regressions for ordered pointer/array arguments and
    mismatched callable signatures.
 2. **Make `TypeId` the conversion currency.** Move remaining conversion rules
-   and callers to the structural planner. Remove duplicate flat and syntax-
-   facing authorities only as each caller migrates. Preserve full callable
-   comparison, nested cv, array decay, and value-category behavior.
+   and callers to the structural planner. Then make projectable semantic
+   descriptors use structural identity too, and replace flat-field reads with
+   a single compatibility materializer at each remaining legacy boundary.
+   Preserve full callable comparison, nested cv, array decay, and
+   value-category behavior.
 3. **Migrate remaining flat consumers.** Prioritize type-trait operands,
    template argument/substitution storage, constexpr type queries, and IR
    layout/subscript paths. Add reduced non-library regressions for language

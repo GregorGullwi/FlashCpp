@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "SemanticTypes.h"
+#include "CanonicalTypeAdapter.h"
 #include "SymbolTable.h"
 #include "CompileContext.h"
 #include "ChunkedString.h"
@@ -916,25 +917,114 @@ inline void applyMemberDeclaratorShape(TypeSpecifierNode& member_type, const Mem
 // the original declaration AST. Recover a non-projectable ordered declarator
 // from it so a static member's exact interleaved shape survives into overload
 // resolution and lowering.
-inline std::optional<TypeSpecifierNode> orderedTypeFromStaticMemberDeclaration(
+inline const TypeSpecifierNode* staticMemberDeclaredType(
 	const StructStaticMember& member) {
 	if (!member.declaration.has_value()) {
-		return std::nullopt;
+		return nullptr;
 	}
 	const ASTNode& declaration = *member.declaration;
-	const TypeSpecifierNode* declared_type = nullptr;
 	if (declaration.is<DeclarationNode>()) {
-		declared_type = &declaration.as<DeclarationNode>().type_specifier_node();
-	} else if (declaration.is<VariableDeclarationNode>()) {
-		declared_type = &declaration.as<VariableDeclarationNode>()
-					 .declaration()
-					 .type_specifier_node();
+		return &declaration.as<DeclarationNode>().type_specifier_node();
 	}
+	if (declaration.is<VariableDeclarationNode>()) {
+		return &declaration.as<VariableDeclarationNode>()
+				.declaration()
+				.type_specifier_node();
+	}
+	return nullptr;
+}
+
+inline std::optional<TypeSpecifierNode> orderedTypeFromStaticMemberDeclaration(
+	const StructStaticMember& member) {
+	const TypeSpecifierNode* declared_type = staticMemberDeclaredType(member);
 	if (declared_type == nullptr || !declared_type->has_ordered_declarator() ||
 		declared_type->ordered_declarator_has_legacy_projection()) {
 		return std::nullopt;
 	}
 	return *declared_type;
+}
+
+// Materialize the single parser-facing compatibility type for a static member.
+// Published TypeId owns the declarator shape; the TypeIndex is retained only
+// for legacy consumers that still require a base-type projection.
+inline TypeSpecifierNode materializeStaticMemberTypeSpecifier(
+	const CanonicalTypeTable& canonical_types,
+	const StructStaticMember& member,
+	const Token& token) {
+	if (member.canonical_type_id) {
+		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
+			canonical_types,
+			member.canonical_type_id);
+		if (exported.status != CanonicalTypeImportStatus::Supported) {
+			throw InternalError(
+				"static member published TypeId cannot be materialized for parser lookup");
+		}
+
+		TypeId base_type_id = exported.base;
+		CVQualifier base_cv = CVQualifier::None;
+		CanonicalTypeNode base_node = canonical_types.node(base_type_id);
+		while (base_node.kind == CanonicalTypeKind::Qualified) {
+			base_cv |= base_node.qualifiers;
+			base_type_id = base_node.child;
+			base_node = canonical_types.node(base_type_id);
+		}
+
+		TypeCategory base_category = member.memberType();
+		TypeIndex base_type_index = member.type_index.withCategory(base_category);
+		if (base_node.kind == CanonicalTypeKind::Builtin) {
+			const std::optional<TypeCategory> builtin_category =
+				canonicalBuiltinToTypeCategory(base_node.builtin);
+			if (!builtin_category.has_value()) {
+				throw InternalError("static member TypeId has an invalid builtin base");
+			}
+			base_category = *builtin_category;
+			base_type_index = nativeTypeIndex(base_category);
+		} else if (base_node.kind == CanonicalTypeKind::Record ||
+			base_node.kind == CanonicalTypeKind::Enum) {
+			const EntityId entity = base_node.kind == CanonicalTypeKind::Record
+				? canonical_types.recordEntity(base_type_id)
+				: canonical_types.enumEntity(base_type_id);
+			const TypeInfo* base_type_info = tryFindTypeInfoByEntityId(entity);
+			if (base_type_info == nullptr) {
+				throw InternalError("static member TypeId nominal base has no TypeInfo");
+			}
+			base_category = base_node.kind == CanonicalTypeKind::Record
+				? TypeCategory::Struct
+				: TypeCategory::Enum;
+			base_type_index = base_type_info->registeredTypeIndex()
+				.withCategory(base_category);
+		}
+
+		TypeSpecifierNode type(
+			base_type_index,
+			static_cast<int>(member.size * 8),
+			token,
+			base_cv,
+			ReferenceQualifier::None);
+		type.set_ordered_declarator(exported.components);
+		if (const TypeSpecifierNode* declared_type = staticMemberDeclaredType(member);
+			declared_type != nullptr && declared_type->has_function_signature()) {
+			type.set_function_signature(declared_type->function_signature());
+		}
+		return type;
+	}
+
+	if (std::optional<TypeSpecifierNode> ordered_type =
+			orderedTypeFromStaticMemberDeclaration(member);
+		ordered_type.has_value()) {
+		return *ordered_type;
+	}
+
+	TypeSpecifierNode type(
+		member.memberType(),
+		TypeQualifier::None,
+		static_cast<int>(member.size * 8),
+		token,
+		member.cv_qualifier);
+	type.set_type_index(member.type_index);
+	applyMemberDeclaratorShape(type, member);
+	type.set_reference_qualifier(member.reference_qualifier);
+	return type;
 }
 
 // A non-projectable ordered declarator cannot be flattened into the legacy
