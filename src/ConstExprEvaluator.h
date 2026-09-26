@@ -60,6 +60,13 @@ struct ConstAwareMemberCandidateSet;
 namespace ConstExpr {
 
 inline std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNode& type_spec) {
+	if (type_spec.has_ordered_declarator()) {
+		const int size_bits = getTypeSpecSizeBits(type_spec);
+		if (size_bits <= 0) {
+			return std::nullopt;
+		}
+		return static_cast<size_t>(size_bits) / 8;
+	}
 	if (type_spec.is_array()) {
 		const std::span<const size_t> dimensions = type_spec.array_dimensions();
 		TypeSpecifierNode element_type = type_spec;
