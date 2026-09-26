@@ -294,36 +294,55 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return original_type;
 		}
 
-		ASTNode substituted_type_node = substituteTemplateParameters(
-			ASTNode::emplace_node<TypeSpecifierNode>(*original_type_spec),
+		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
 			parameters,
 			arguments,
-			owner_type_index,
-			false);
-		if (!substituted_type_node.is<TypeSpecifierNode>()) {
-			throw InternalError(
-				"template static member declarator substitution did not produce a type");
+			nullptr);
+		ExpressionSubstitutor substitutor(
+			substitution_environment,
+			*this,
+			parameters,
+			arguments);
+		if (owner_type_index.is_valid()) {
+			const TypeInfo* owner_type_info = tryGetTypeInfo(owner_type_index);
+			if (owner_type_info == nullptr) {
+				throw InternalError(
+					"Canonical static member substitution references unregistered owner TypeIndex " +
+					std::to_string(owner_type_index.index()));
+			}
+			substitutor.setCurrentOwnerTypeName(owner_type_info->name());
+			if (const StructTypeInfo* owner_struct_info =
+					owner_type_info->getStructInfo();
+				owner_struct_info != nullptr) {
+				substitutor.setCurrentOwnerDeclaration(
+					owner_struct_info->declaration_node);
+			}
 		}
 		TypeSpecifierNode substituted_type =
-			substituted_type_node.as<TypeSpecifierNode>();
+			substitutor.substituteTypeSpecifier(*original_type_spec);
 		substituted_type.set_ordered_declarator(std::vector<DeclaratorComponent>(
 			original_type_spec->declarator_components().begin(),
 			original_type_spec->declarator_components().end()));
-		tryBindPublishedTypeEntity(substituted_type);
-		tryBindPublishedMemberClassEntity(substituted_type);
-		const CanonicalTypeImport imported = importCanonicalType(
-			requireFrontendContext().canonicalTypes(), substituted_type);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> imported_type =
+			tryImportCanonicalStaticMemberType(substituted_type);
+		if (!imported_type.has_value()) {
 			throw makeStructuredCompileError(
 				context_.diagnostics(),
-				DiagnosticId::UnsupportedCanonicalStaticMemberType,
+				DiagnosticId::UnsupportedStaticMemberType,
 				DiagnosticSeverity::Error,
 				lexer_.getSourceLocation(original_type_spec->token()),
-				"unsupported canonical static member type after template substitution",
+				describeUnsupportedStaticMemberType(
+					substituted_type,
+					declaration_node.is<DeclarationNode>()
+						? declaration_node.as<DeclarationNode>().identifier_token().value()
+						: declaration_node.as<VariableDeclarationNode>()
+							  .declaration()
+							  .identifier_token()
+							  .value()),
 				{});
 		}
 		published_type_index = substituted_type.type_index();
-		return imported.type;
+		return *imported_type;
 	};
 
 	// Resolve template template parameter aliases: when inside a template function body

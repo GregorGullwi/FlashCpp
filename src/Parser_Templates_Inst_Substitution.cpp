@@ -1,7 +1,8 @@
+#include <span>
+
 #include "Parser.h"
 #include "FrontendContext.h"
 #include "ConstExprEvaluator.h"
-#include <span>
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -6331,6 +6332,40 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				static_member.initializer_position,
 				static_member.initializerDefinitionLookupContext(),
 				static_member.is_constexpr);
+			StructStaticMember& copied_static_member =
+				struct_info->static_members.back();
+			if (static_member.declaration.has_value()) {
+				const ASTNode& declaration = *static_member.declaration;
+				const TypeSpecifierNode* declared_type = nullptr;
+				if (declaration.is<DeclarationNode>()) {
+					declared_type = &declaration.as<DeclarationNode>()
+									 .type_specifier_node();
+				} else if (declaration.is<VariableDeclarationNode>()) {
+					declared_type = &declaration.as<VariableDeclarationNode>()
+									 .declaration()
+									 .type_specifier_node();
+				}
+				if (declared_type != nullptr) {
+					TypeSpecifierNode canonical_static_type = *declared_type;
+					const std::optional<TypeId> imported_type =
+						tryImportCanonicalStaticMemberType(canonical_static_type);
+					if (canonical_static_type.has_ordered_declarator() &&
+						!imported_type.has_value()) {
+						throw makeStructuredCompileError(
+							context_.diagnostics(),
+							DiagnosticId::UnsupportedStaticMemberType,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(canonical_static_type.token()),
+							describeUnsupportedStaticMemberType(
+								canonical_static_type,
+								StringTable::getStringView(static_member.name)),
+							{});
+					}
+					if (imported_type.has_value()) {
+						copied_static_member.canonical_type_id = *imported_type;
+					}
+				}
+			}
 		}
 	} else {
 		// Fall back to the specialization's StructTypeInfo when the AST does not

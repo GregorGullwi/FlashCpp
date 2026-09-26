@@ -2152,6 +2152,9 @@ ParseResult Parser::parse_static_member_block(
 
 	// Register the static member
 	StringHandle static_member_name_handle = decl.identifier_token().handle();
+	StructTypeInfo* published_struct_info = use_struct_type_info
+		? nullptr
+		: struct_info;
 
 	// Determine the access specifier to use
 	AccessSpecifier access = current_access;
@@ -2160,7 +2163,8 @@ ParseResult Parser::parse_static_member_block(
 		// We need to get it from the global map
 		auto type_it = getTypesByNameMap().find(struct_name_handle);
 		if (type_it != getTypesByNameMap().end() && type_it->second->getStructInfo()) {
-			type_it->second->getStructInfo()->addStaticMember(
+			published_struct_info = type_it->second->getStructInfo();
+			published_struct_info->addStaticMember(
 				static_member_name_handle,
 				type_spec.type_index(),
 				member_size,
@@ -2193,6 +2197,26 @@ ParseResult Parser::parse_static_member_block(
 			/* declaration */ *type_and_name.node(),
 			initializer_position,
 			is_static_constexpr);
+	}
+	if (published_struct_info != nullptr) {
+		StructStaticMember& published_member =
+			published_struct_info->static_members.back();
+		TypeSpecifierNode canonical_static_type = type_spec;
+		const std::optional<TypeId> imported_type =
+			tryImportCanonicalStaticMemberType(canonical_static_type);
+		if (canonical_static_type.has_ordered_declarator() &&
+			!isDependentTemplateContext() &&
+			!imported_type.has_value()) {
+			return error(
+				DiagnosticId::UnsupportedStaticMemberType,
+				decl.identifier_token(),
+				describeUnsupportedStaticMemberType(
+					canonical_static_type,
+					decl.identifier_token().value()));
+		}
+		if (imported_type.has_value()) {
+			published_member.canonical_type_id = *imported_type;
+		}
 	}
 
 	return ParseResult::success();  // Signal caller to continue

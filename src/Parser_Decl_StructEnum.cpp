@@ -2497,6 +2497,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					}
 				}
 			}
+			if (!init_expr_opt.has_value() &&
+				(type_spec.category() == TypeCategory::Auto ||
+					type_spec.category() == TypeCategory::DeclTypeAuto)) {
+				const std::string message = std::string(StringBuilder()
+					.append("Cannot determine the type of static member '")
+					.append(decl.identifier_token().value())
+					.append("' because it has no initializer.")
+					.commit());
+				return error(
+					DiagnosticId::AutoTypeDeductionFailure,
+					decl.identifier_token(),
+					message);
+			}
 
 			// Add to struct's static members
 			StringHandle static_member_name_handle = decl.identifier_token().handle();
@@ -2523,19 +2536,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				orderedTypeFromStaticMemberDeclaration(static_member);
 			TypeSpecifierNode canonical_static_type =
 				ordered_static_type.value_or(type_spec);
-			tryBindPublishedTypeEntity(canonical_static_type);
-			tryBindPublishedMemberClassEntity(canonical_static_type);
-			const CanonicalTypeImport canonical_static_type_result = importCanonicalType(
-				requireFrontendContext().canonicalTypes(), canonical_static_type);
+			const std::optional<TypeId> canonical_static_member_type =
+				tryImportCanonicalStaticMemberType(canonical_static_type);
 			if (ordered_static_type.has_value() &&
-				canonical_static_type_result.status != CanonicalTypeImportStatus::Supported) {
+				!canonical_static_member_type.has_value()) {
 				return error(
-					DiagnosticId::UnsupportedCanonicalStaticMemberType,
+					DiagnosticId::UnsupportedStaticMemberType,
 					decl.identifier_token(),
-					"unsupported canonical static member type");
+					describeUnsupportedStaticMemberType(
+						canonical_static_type,
+						decl.identifier_token().value()));
 			}
-			if (canonical_static_type_result.status == CanonicalTypeImportStatus::Supported) {
-				static_member.canonical_type_id = canonical_static_type_result.type;
+			if (canonical_static_member_type.has_value()) {
+				static_member.canonical_type_id = *canonical_static_member_type;
 			}
 			if (static_pointee_array_declarator) {
 				struct_info->static_members.back().pointee_array_declarator = true;
