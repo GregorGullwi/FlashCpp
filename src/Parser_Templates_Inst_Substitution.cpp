@@ -10,6 +10,18 @@
 #include "ParserTemplateHelpers.h"
 #include "TypeTraitEvaluator.h"
 
+[[noreturn]] static void throwUnresolvedAliasTemplateArrayBound(
+	DiagnosticEngine& diagnostics,
+	SourceLocation location) {
+	throw makeStructuredCompileError(
+		diagnostics,
+		DiagnosticId::AliasTemplateArrayBoundUnresolved,
+		DiagnosticSeverity::Error,
+		location,
+		"Alias template array bound must be a positive constant expression",
+		{});
+}
+
 static bool hasComplexDeferredMemberChain(const TemplateAliasNode& node) {
 	const auto segments = node.targetMemberTemplateSegments();
 	if (segments.size() > 1) {
@@ -2451,7 +2463,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 						}
 						return static_cast<size_t>(bound->value);
 					})) {
-				return std::nullopt;
+				throwUnresolvedAliasTemplateArrayBound(
+					context_.diagnostics(),
+					lexer_.getSourceLocation(current_token_));
 			}
 		}
 		return resolveTypeInfoToTypeSpec(
@@ -2862,7 +2876,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				}
 			}
 			if (!has_dependent_alias_args) {
-				(void)resolveOrderedDeclaratorArrayBounds(
+				const bool bounds_resolved = resolveOrderedDeclaratorArrayBounds(
 					substituted_alias_target_type_spec,
 					alias_node->arrayBoundExpressions(),
 					[&](const ASTNode& bound_expression) -> std::optional<size_t> {
@@ -2875,6 +2889,11 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 						}
 						return static_cast<size_t>(bound->value);
 					});
+				if (!bounds_resolved) {
+					throwUnresolvedAliasTemplateArrayBound(
+						context_.diagnostics(),
+						lexer_.getSourceLocation(current_token_));
+				}
 			}
 		}
 		TypeSpecifierNode alias_registration_type_spec =

@@ -97,6 +97,10 @@ so `T (*)[][N]` keeps pointer-sized layout, row `sizeof`, and row-major
 subscript behavior after instantiation. The regressions are
 `tests/test_alias_template_dependent_pointer_to_unknown_outer_array_bounds_ret0.cpp`
 and `tests/test_alias_template_forwarded_pointer_to_array_bounds_ret0.cpp`.
+The negative regression
+`tests/test_alias_template_forwarded_pointer_to_array_invalid_bound_e1817.cpp`
+checks that concrete nonpositive bounds still diagnose through nested alias
+forwarding.
 
 The explicit declarator frame stack keeps nested declarator depth off the native
 call stack. The recorded Clang stack-usage probe measured `parse_declarator` at
