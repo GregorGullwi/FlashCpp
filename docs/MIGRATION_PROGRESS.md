@@ -26,9 +26,11 @@ imports, while compatibility paths still materialize flat types for unmigrated
 families. Parser-side overload ranking and other syntax-facing conversion
 callers still use `TypeSpecifierNode`. Ordered pointer objects use
 `runtime_pointer_depth`; `__is_same` compares canonical `TypeId`s for supported
-operands, while other traits and template, constexpr, and IR consumers still
-read flat fields. Array and callable outer wrappers remain guarded where their
-consumers are not migrated.
+operands, and shared/constant-evaluation `__is_pointer` and `__is_array` now
+classify the canonical outer wrapper for supported imports. Other traits,
+lazy-constraint trait evaluation, and template, constexpr, and IR consumers
+still read flat fields. Array and callable outer wrappers remain guarded where
+their consumers are not migrated.
 
 Semantic conversion support covers ordered shape identity, pointer
 qualification, object-pointer-to-`cv void*`, array/function decay, boolean
@@ -104,12 +106,12 @@ Continue boundary 3A in this order:
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
    nested cv, array decay, and value-category behavior.
-2. **Migrate remaining flat consumers.** Extend structural type identity from
-   `__is_same` to the other type traits, then prioritize template
-   argument/substitution storage, constexpr type queries, and IR
-   layout/subscript paths. Add reduced non-library regressions for language
-   rules. Keep unsupported shapes fail-closed until their consumers are
-   structural.
+2. **Migrate remaining flat consumers.** Extend canonical classification from
+   `__is_pointer` and `__is_array` to the other type traits and lazy constraints,
+   then prioritize template argument/substitution storage, constexpr type
+   queries, and IR layout/subscript paths. Add reduced non-library regressions
+   for language rules. Keep unsupported shapes fail-closed until their
+   consumers are structural.
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
    alias array, reference, and member-pointer wrappers. Keep member `TypeId`s

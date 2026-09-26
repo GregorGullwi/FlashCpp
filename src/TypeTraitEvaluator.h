@@ -71,6 +71,13 @@ TypeTraitResult evaluateTypeTrait(
 
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr);
 
+// Evaluates unary traits whose answer depends on the outermost canonical
+// declarator component. An empty result allows compatibility evaluation for an
+// unmigrated projectable operand; unsupported non-projectable operands fail.
+std::optional<TypeTraitResult> tryEvaluateCanonicalDeclaratorTrait(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& type_spec);
+
 // True when any type-trait operand is still a template-dependent type, including
 // leftover pack expansions that have not been expanded to TypeSpecifierNode yet.
 bool typeTraitHasDependentOperands(const TypeTraitExprNode& trait_expr);
