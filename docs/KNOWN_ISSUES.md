@@ -367,7 +367,7 @@ member cv metadata through parsing and template substitution, then make the
 sema-owned implicit default-constructor record decide this case. Do not recreate
 the decision in IR from type spellings.
 
-## Recursive class-template constant chains can overflow the native stack
+## Recursive class-template chains can overflow the native stack
 
 A generated benchmark probe using a recursively specialized class template
 whose static constant references `DepthValue<N - 1>::value` overflowed the
@@ -377,6 +377,13 @@ producing an implementation-limit diagnostic. The throughput corpus avoids
 this construct; the query benchmark retains a separate 1,025-level logical
 dependency probe. Architecture boundary 7 must move the real instantiation and
 substitution path onto small arena-owned frames before this issue can be closed.
+
+A separate probe using recursively inherited `Deep<N> : Deep<N - 1>` classes
+overflowed the shipping Windows compiler stack at depth 96. Its crash trace
+repeated `try_instantiate_class_template`, base-template registration, and
+lookup materialization. This is the same native-recursion boundary, but a
+different instantiation trigger; cover both paths when moving class-template
+instantiation and substitution onto an explicit worklist.
 
 ## SemanticAnalysis query-state doctest fails on a clean tree
 
