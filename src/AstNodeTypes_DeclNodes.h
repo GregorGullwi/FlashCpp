@@ -1198,6 +1198,7 @@ struct TypeInfo {
 		bool is_value;		   // true if this is a non-type argument
 		bool is_pack;
 		bool is_array;
+		bool pointee_array_declarator = false;
 		TemplateVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 		TemplateVector<StringHandle, 2> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
@@ -2718,6 +2719,8 @@ inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_
 	type.reference_qualifier = type_spec.reference_qualifier();
 	type.array_dimensions.assign(
 		type_spec.array_dimensions().begin(), type_spec.array_dimensions().end());
+	type.pointee_array_declarator =
+		type_spec.has_pointee_array_declarator();
 	type.has_unsized_outer_array_dimension =
 		type_spec.has_unsized_outer_array_dimension();
 	type.is_pack_expansion = type_spec.is_pack_expansion();
@@ -2780,13 +2783,16 @@ struct ResolvedAliasTypeInfo {
 	CVQualifier cv_qualifier = CVQualifier::None;
 	size_t pointer_depth = 0;
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
+	bool pointee_array_declarator = false;
 	std::optional<FunctionSignature> function_signature;
 	std::optional<StringHandle> member_class_name;
 	std::vector<size_t> array_dimensions;
 	const TypeInfo* terminal_type_info = nullptr;
 
 	TypeCategory typeEnum() const { return type_index.category(); }
-	bool isArray() const { return !array_dimensions.empty(); }
+	bool isArray() const {
+		return !pointee_array_declarator && !array_dimensions.empty();
+	}
 };
 
 // Follow a TypeAlias chain until a non-alias terminal type is reached while
@@ -2828,10 +2834,13 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 				if (!resolved.function_signature.has_value() && alias_type_spec->has_function_signature()) {
 					resolved.function_signature = alias_type_spec->function_signature();
 				}
+				resolved.pointee_array_declarator |=
+					alias_type_spec->has_pointee_array_declarator();
 				if (!resolved.member_class_name.has_value() && alias_type_spec->has_member_class()) {
 					resolved.member_class_name = alias_type_spec->member_class_name();
 				}
-				if (alias_type_spec->is_array()) {
+				if (alias_type_spec->is_array() ||
+					alias_type_spec->has_pointee_array_declarator()) {
 					appendArrayDimensions(resolved.array_dimensions, alias_type_spec->array_dimensions());
 				}
 			}

@@ -1286,6 +1286,8 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			arg.ref_qualifier = arg_info.ref_qualifier;
 			arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
 			arg.is_array = arg_info.is_array;
+			arg.pointee_array_declarator =
+				arg_info.pointee_array_declarator;
 			arg.array_dimensions.assign(arg_info.array_dimensions.begin(), arg_info.array_dimensions.end());
 			arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
 			arg.dependent_name = arg_info.dependent_name;

@@ -1147,6 +1147,7 @@ struct FunctionType {
 	std::vector<DeclaratorComponent> ordered_declarator_components;
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
 	std::vector<size_t> array_dimensions;
+	bool pointee_array_declarator = false;
 	bool has_unsized_outer_array_dimension = false;
 	bool is_pack_expansion = false;
 	StringHandle template_parameter_name;

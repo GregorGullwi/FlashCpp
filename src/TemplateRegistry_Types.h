@@ -165,6 +165,7 @@ struct TemplateTypeArg {
 	TemplateVector<CVQualifier, 4> pointer_cv_qualifiers;	// CV for each pointer level
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
 	bool is_array;
+	bool pointee_array_declarator = false;
 	std::vector<size_t> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 	TemplateParamNameVector array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
 	MemberPointerKind member_pointer_kind;
@@ -265,7 +266,7 @@ struct TemplateTypeArg {
 		: type_index(TypeIndex{}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), injected_class_declaration(nullptr), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), dependent_name(), is_template_template_arg(false), template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), member_class_name(type_spec.has_member_class() ? type_spec.member_class_name() : StringHandle{}), injected_class_declaration(type_spec.injected_class_declaration()), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
+		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), pointee_array_declarator(type_spec.has_pointee_array_declarator()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), member_class_name(type_spec.has_member_class() ? type_spec.member_class_name() : StringHandle{}), injected_class_declaration(type_spec.injected_class_declaration()), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
@@ -416,6 +417,9 @@ struct TemplateTypeArg {
 		h ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (pointee_array_declarator) {
+			h ^= std::hash<uint8_t>{}(1) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		h ^= std::hash<size_t>{}(array_dimensions.size()) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		for (size_t dim : array_dimensions) {
 			h ^= std::hash<size_t>{}(dim) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -473,6 +477,7 @@ struct TemplateTypeArg {
 			  pointer_cv_qualifiers == other.pointer_cv_qualifiers &&
 			  cv_qualifier == other.cv_qualifier &&
 			  is_array == other.is_array &&
+			  pointee_array_declarator == other.pointee_array_declarator &&
 			  array_dimensions == other.array_dimensions &&
 			  (!is_dependent || array_dimension_parameter_names == other.array_dimension_parameter_names) &&
 			  member_pointer_kind == other.member_pointer_kind &&
@@ -655,6 +660,19 @@ inline TypeSpecifierNode typeSpecifierFromTemplateTypeArgProjection(
 	type_spec.set_reference_qualifier(arg.ref_qualifier);
 	for (const CVQualifier pointer_qualifier : arg.pointer_cv_qualifiers) {
 		type_spec.add_pointer_level(pointer_qualifier);
+	}
+	if (arg.pointee_array_declarator) {
+		type_spec.set_pointee_array_declarator(true);
+		type_spec.set_pointee_array_dimensions(arg.array_dimensions);
+	} else if (arg.is_array) {
+		if (arg.array_dimensions.empty()) {
+			type_spec.set_array(true, std::nullopt);
+		} else {
+			type_spec.set_array_dimensions(arg.array_dimensions);
+		}
+	}
+	if (arg.injected_class_declaration != nullptr) {
+		type_spec.set_injected_class_declaration(arg.injected_class_declaration);
 	}
 	if (arg.function_signature.has_value()) {
 		type_spec.set_function_signature(*arg.function_signature);
@@ -1016,6 +1034,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));
 	// Include array info - critical for differentiating T[] from T[N] from T
 	result.is_array = arg.is_array;
+	result.pointee_array_declarator = arg.pointee_array_declarator;
 	result.array_sizes.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	result.function_signature = arg.function_signature;
 	result.is_dependent =
@@ -1216,7 +1235,10 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 			: CVQualifier::None;
 		substituted_spec.add_pointer_level(pointer_cv);
 	}
-	if (arg.is_array) {
+	if (arg.pointee_array_declarator) {
+		substituted_spec.set_pointee_array_declarator(true);
+		substituted_spec.set_pointee_array_dimensions(arg.array_dimensions);
+	} else if (arg.is_array) {
 		if (arg.array_dimensions.empty()) {
 			substituted_spec.set_array(true, std::nullopt);
 		} else {
@@ -1254,6 +1276,8 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	materialized.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
 	materialized.cv_qualifier = arg_info.cv_qualifier;
 	materialized.is_array = arg_info.is_array;
+	materialized.pointee_array_declarator =
+		arg_info.pointee_array_declarator;
 	materialized.array_dimensions.assign(arg_info.array_dimensions.begin(), arg_info.array_dimensions.end());
 	materialized.function_signature = arg_info.function_signature();
 
@@ -1269,7 +1293,10 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 			: CVQualifier::None;
 		substituted_spec.add_pointer_level(pointer_cv);
 	}
-	if (arg_info.is_array) {
+	if (arg_info.pointee_array_declarator) {
+		substituted_spec.set_pointee_array_declarator(true);
+		substituted_spec.set_pointee_array_dimensions(arg_info.array_dimensions);
+	} else if (arg_info.is_array) {
 		if (arg_info.array_dimensions.empty() || arg_info.array_dimensions[0] == 0) {
 			substituted_spec.set_array(true, std::nullopt);
 		} else {
@@ -1321,6 +1348,8 @@ inline TemplateTypeArg makeTemplateTypeArgFromResolvedAlias(
 	resolved_arg.ref_qualifier = resolved_alias.reference_qualifier;
 	resolved_arg.cv_qualifier = resolved_alias.cv_qualifier;
 	resolved_arg.is_array = resolved_alias.isArray();
+	resolved_arg.pointee_array_declarator =
+		resolved_alias.pointee_array_declarator;
 	resolved_arg.array_dimensions = resolved_alias.array_dimensions;
 	resolved_arg.function_signature = resolved_alias.function_signature;
 	return resolved_arg;
@@ -1344,6 +1373,8 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 		dependent_pattern.array_dimension_parameter_names.begin(),
 		dependent_pattern.array_dimension_parameter_names.end());
 	pattern_arg.is_array = dependent_pattern.is_array;
+	pattern_arg.pointee_array_declarator =
+		dependent_pattern.pointee_array_declarator;
 	pattern_arg.function_signature = dependent_pattern.function_signature();
 	pattern_arg.injected_class_declaration =
 		dependent_pattern.injected_class_declaration;

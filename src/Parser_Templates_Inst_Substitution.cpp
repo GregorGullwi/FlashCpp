@@ -711,6 +711,8 @@ namespace {
 			concrete_arg.ref_qualifier = resolved_alias_arg.ref_qualifier;
 			concrete_arg.cv_qualifier = resolved_alias_arg.cv_qualifier;
 			concrete_arg.is_array = resolved_alias_arg.is_array;
+			concrete_arg.pointee_array_declarator =
+				resolved_alias_arg.pointee_array_declarator;
 			concrete_arg.array_dimensions = std::move(resolved_alias_arg.array_dimensions);
 			concrete_arg.function_signature = resolved_alias_arg.function_signature;
 			if (resolved_arg_alias.member_class_name.has_value()) {

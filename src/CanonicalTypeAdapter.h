@@ -339,7 +339,10 @@ inline TypeSpecifierNode typeSpecifierFromFunctionType(const FunctionType& type)
 	for (const CVQualifier pointer_cv : type.pointer_qualifiers) {
 		spec.add_pointer_level(pointer_cv);
 	}
-	if (!type.array_dimensions.empty()) {
+	if (type.pointee_array_declarator) {
+		spec.set_pointee_array_declarator(true);
+		spec.set_pointee_array_dimensions(type.array_dimensions);
+	} else if (!type.array_dimensions.empty()) {
 		spec.set_array_dimensions(type.array_dimensions);
 	}
 	if (!type.ordered_declarator_components.empty()) {
