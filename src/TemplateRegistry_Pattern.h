@@ -178,6 +178,8 @@ struct TemplatePattern {
 			deduced.ref_qualifier = c.ref_qualifier;
 			deduced.pointer_cv_qualifiers = c.pointer_cv_qualifiers;
 			deduced.is_array = c.is_array;
+			deduced.pointee_array_declarator =
+				c.pointee_array_declarator;
 			deduced.array_dimensions.assign(
 				c.array_dimensions.begin(),
 				c.array_dimensions.end());

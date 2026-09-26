@@ -436,6 +436,7 @@ void copyTemplateArgInfoScalarFields(TypeInfo::TemplateArgInfo& dst, const TypeI
 	dst.is_value = src.is_value;
 	dst.is_pack = src.is_pack;
 	dst.is_array = src.is_array;
+	dst.pointee_array_declarator = src.pointee_array_declarator;
 	dst.array_dimensions = src.array_dimensions;
 	dst.array_dimension_parameter_names = src.array_dimension_parameter_names;
 	dst.dependent_name = src.dependent_name;
@@ -462,6 +463,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo()
 	  is_value(false),
 	  is_pack(false),
 	  is_array(false),
+	  pointee_array_declarator(false),
 	  is_template_template_arg(false),
 	  member_pointer_kind(MemberPointerKind::None),
 	  member_class_name(),
@@ -479,6 +481,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(const TemplateArgInfo& other)
 	  is_value(other.is_value),
 	  is_pack(other.is_pack),
 	  is_array(other.is_array),
+	  pointee_array_declarator(other.pointee_array_declarator),
 	  array_dimensions(other.array_dimensions),
 	  array_dimension_parameter_names(other.array_dimension_parameter_names),
 	  dependent_name(other.dependent_name),
@@ -504,6 +507,7 @@ TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
 	  is_value(other.is_value),
 	  is_pack(other.is_pack),
 	  is_array(other.is_array),
+	  pointee_array_declarator(other.pointee_array_declarator),
 	  array_dimensions(std::move(other.array_dimensions)),
 	  array_dimension_parameter_names(std::move(other.array_dimension_parameter_names)),
 	  dependent_name(other.dependent_name),

@@ -1,6 +1,8 @@
 #include "CompilerIncludes.h"
 #include <fstream>
 #include "doctest.h"
+#include "CanonicalTypeAdapter.h"
+#include "ParserTemplateClassShared.h"
 #include "../../architecture/CanonicalTypeTests.h"
 
 TEST_CASE("Canonical types participate in scratch rollback") {
@@ -285,6 +287,98 @@ TEST_CASE("Function signatures preserve non-projectable return declarators") {
 		makeFunctionTypeFromSpecifier(different_return);
 	CHECK_FALSE(FlashCpp::equalFunctionTypeIdentity(
 		function_return, mismatched_function_return));
+}
+
+TEST_CASE("Template substitution composes ordered callable return declarators") {
+	FrontendContext frontend;
+	const StringHandle template_name =
+		StringTable::getOrInternStringHandle("T");
+	const Token template_token(
+		Token::Type::Identifier, std::string_view("T"), 0, 0, 0);
+	std::vector<TemplateParameterNode> template_params;
+	template_params.emplace_back(template_name, template_token);
+
+	TypeSpecifierNode argument_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	argument_type.add_pointer_level(CVQualifier::None);
+	TemplateArgumentVector template_args;
+	template_args.push_back(TemplateTypeArg(argument_type));
+
+	FunctionType return_pattern;
+	return_pattern.type_index = nativeTypeIndex(TypeCategory::Int);
+	return_pattern.template_parameter_name = template_name;
+	return_pattern.ordered_declarator_components = {
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	};
+	FunctionSignature signature;
+	signature.setReturnType(return_pattern);
+
+	const FunctionSignature substituted = substituteTemplateFunctionSignatureTypes(
+		signature, template_params, template_args);
+	const std::vector<DeclaratorComponent> expected_components = {
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	};
+	const FunctionType& substituted_return = substituted.return_type();
+	CHECK(substituted_return.type_index.category() == TypeCategory::Int);
+	CHECK(substituted_return.ordered_declarator_components == expected_components);
+
+	const TypeSpecifierNode substituted_type =
+		typeSpecifierFromFunctionType(substituted_return);
+	const CanonicalTypeImport imported = importCanonicalType(
+		frontend.canonicalTypes(), substituted_type);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
+		frontend.canonicalTypes(), imported.type);
+	CHECK(exported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(exported.components == expected_components);
+
+	TypeSpecifierNode pointer_to_array(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_to_array.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+	});
+	const TemplateTypeArg pointer_to_array_arg(pointer_to_array);
+	const TypeInfo::TemplateArgInfo stored_arg =
+		toTemplateArgInfo(pointer_to_array_arg);
+	const TemplateTypeArg restored_arg = toTemplateTypeArg(stored_arg);
+	CHECK(restored_arg.pointee_array_declarator);
+	const TypeSpecifierNode restored_arg_type =
+		typeSpecifierFromTemplateTypeArgProjection(restored_arg);
+	CHECK(restored_arg_type.has_pointee_array_declarator());
+	CHECK(std::ranges::equal(
+		restored_arg_type.array_dimensions(),
+		pointer_to_array.array_dimensions()));
+
+	constexpr size_t nested_callable_depth = 2048;
+	FunctionSignature deep_signature = signature;
+	for (size_t depth = 0; depth < nested_callable_depth; ++depth) {
+		FunctionType nested_callable;
+		nested_callable.type_index = nativeTypeIndex(TypeCategory::FunctionPointer);
+		nested_callable.callable_signature =
+			std::make_shared<FunctionSignature>(std::move(deep_signature));
+		FunctionSignature outer_signature;
+		outer_signature.setReturnType(std::move(nested_callable));
+		deep_signature = std::move(outer_signature);
+	}
+	const FunctionSignature substituted_deep_signature =
+		substituteTemplateFunctionSignatureTypes(
+			deep_signature, template_params, template_args);
+	const FunctionType* deepest_return =
+		&substituted_deep_signature.return_type();
+	for (size_t depth = 0; depth < nested_callable_depth; ++depth) {
+		REQUIRE(deepest_return->callable_signature != nullptr);
+		deepest_return =
+			&deepest_return->callable_signature->return_type();
+	}
+	CHECK(deepest_return->ordered_declarator_components == expected_components);
 }
 
 TEST_CASE("Ordered pointer and array conversions reach bool") {

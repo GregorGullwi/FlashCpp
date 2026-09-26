@@ -36,6 +36,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.ref_qualifier = arg.ref_qualifier;
 	info.cv_qualifier = arg.cv_qualifier;
 	info.is_array = arg.is_array;
+	info.pointee_array_declarator = arg.pointee_array_declarator;
 	info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	info.array_dimension_parameter_names.assign(
 		arg.array_dimension_parameter_names.begin(),
@@ -83,6 +84,7 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.ref_qualifier = arg.ref_qualifier;
 	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
 	ta.is_array = arg.is_array;
+	ta.pointee_array_declarator = arg.pointee_array_declarator;
 	ta.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	ta.array_dimension_parameter_names.assign(
 		arg.array_dimension_parameter_names.begin(),

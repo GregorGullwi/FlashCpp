@@ -85,6 +85,7 @@ inline bool equalFunctionTypeIdentity(const FunctionType& lhs, const FunctionTyp
 			rhs.ordered_declarator_components ||
 		lhs.reference_qualifier != rhs.reference_qualifier ||
 		lhs.array_dimensions != rhs.array_dimensions ||
+		lhs.pointee_array_declarator != rhs.pointee_array_declarator ||
 		lhs.has_unsized_outer_array_dimension != rhs.has_unsized_outer_array_dimension ||
 		lhs.is_pack_expansion != rhs.is_pack_expansion ||
 		lhs.template_parameter_name != rhs.template_parameter_name ||
@@ -131,6 +132,9 @@ inline size_t hashFunctionTypeIdentity(const FunctionType& type) {
 		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier)));
 	for (size_t dimension : type.array_dimensions) {
 		combineFunctionTypeIdentityHash(hash, std::hash<size_t>{}(dimension));
+	}
+	if (type.pointee_array_declarator) {
+		combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(1));
 	}
 	combineFunctionTypeIdentityHash(
 		hash, std::hash<bool>{}(type.has_unsized_outer_array_dimension));
@@ -265,6 +269,7 @@ struct TypeIndexArg {
 
 	// Array information - critical for differentiating T[], T[N], and T
 	bool is_array = false;
+	bool pointee_array_declarator = false;
 	TemplateVector<size_t, 2> array_sizes;  // Empty for T, full dimension list for arrays
 	std::optional<FunctionSignature> function_signature; // Needed for function pointer identity
 	bool is_dependent = false;
@@ -281,6 +286,7 @@ struct TypeIndexArg {
 			   ref_qualifier == other.ref_qualifier &&
 			   pointer_depth == other.pointer_depth &&
 			   is_array == other.is_array &&
+			   pointee_array_declarator == other.pointee_array_declarator &&
 			   array_sizes == other.array_sizes &&
 			   function_signature.has_value() == other.function_signature.has_value() &&
 			   (!function_signature.has_value() ||
@@ -301,6 +307,9 @@ struct TypeIndexArg {
 		h ^= std::hash<uint8_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		// Include array info in hash - critical for differentiating T[] from T[N] from T
 		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (pointee_array_declarator) {
+			h ^= std::hash<uint8_t>{}(1) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		for (size_t array_size : array_sizes) {
 			h ^= std::hash<size_t>{}(array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}

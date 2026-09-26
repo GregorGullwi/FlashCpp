@@ -36,8 +36,10 @@ Semantic conversion support covers ordered shape identity, pointer
 qualification, object-pointer-to-`cv void*`, array/function decay, boolean
 conversion, and outermost ordered-reference binding. Function signatures retain
 non-projectable declarator spines, and function decay compares the complete
-callable type including ordered returns. Derived-to-base and further callable-component
-conversions remain deferred. For dereferences whose result has an
+callable type including ordered returns. Template-signature substitution now
+composes substituted pointer and array wrappers with retained callable
+declarator spines before canonical import. Derived-to-base and further
+callable-component conversions remain deferred. For dereferences whose result has an
 unprojectable ordered declarator, parser typing leaves the expression
 unresolved and defers overload selection to sema. Sema uses the canonical
 argument type for selection and reports ambiguous or non-viable calls at the
@@ -112,8 +114,10 @@ Continue boundary 3A in this order:
    `__is_pointer` and `__is_array` to the other type traits and lazy constraints,
    then prioritize template argument/substitution storage, constexpr type
    queries, and IR layout/subscript paths. Add reduced non-library regressions
-   for language rules. Keep unsupported shapes fail-closed until their
-   consumers are structural.
+   for language rules. Make callable `TypeId`s authoritative through signature
+   substitution so each `FunctionType` no longer carries a duplicate ordered
+   spine beside its flat projections. Keep unsupported shapes fail-closed until
+   their consumers are structural.
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
    alias array, reference, and member-pointer wrappers. Keep member `TypeId`s
