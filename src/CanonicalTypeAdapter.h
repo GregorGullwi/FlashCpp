@@ -120,6 +120,24 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 	TypeId id = base;
 	const std::span<const DeclaratorComponent> components =
 		syntax.declarator_components();
+	auto arrayElementStatus = [&table](TypeId element) {
+		const CanonicalTypeNode node = table.node(
+			table.withoutTopLevelQualifiers(element));
+		if (node.kind == CanonicalTypeKind::Function) {
+			return CanonicalTypeImportStatus::UnmigratedCallable;
+		}
+		if (node.kind == CanonicalTypeKind::Array &&
+			node.flags != CanonicalTypeNodeFlags::KnownArrayBound) {
+			return CanonicalTypeImportStatus::UnmigratedArray;
+		}
+		if (node.kind == CanonicalTypeKind::LValueReference ||
+			node.kind == CanonicalTypeKind::RValueReference ||
+			(node.kind == CanonicalTypeKind::Builtin &&
+				node.builtin == CanonicalBuiltinKind::Void)) {
+			return CanonicalTypeImportStatus::Invalid;
+		}
+		return CanonicalTypeImportStatus::Supported;
+	};
 	for (size_t index = components.size(); index-- > 0;) {
 		const DeclaratorComponent& component = components[index];
 		switch (component.kind) {
@@ -140,9 +158,17 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 				component.payload > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
+			if (const CanonicalTypeImportStatus status = arrayElementStatus(id);
+				status != CanonicalTypeImportStatus::Supported) {
+				return {{}, status};
+			}
 			id = table.array(id, static_cast<size_t>(component.payload));
 			break;
 		case DeclaratorComponentKind::UnknownBoundArray:
+			if (const CanonicalTypeImportStatus status = arrayElementStatus(id);
+				status != CanonicalTypeImportStatus::Supported) {
+				return {{}, status};
+			}
 			id = table.arrayOfUnknownBound(id);
 			break;
 		case DeclaratorComponentKind::Function: {
