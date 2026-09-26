@@ -2717,6 +2717,39 @@ inline void promoteDeclaratorShapeToOrdered(TypeSpecifierNode& type) {
 	type.set_ordered_declarator(std::move(components));
 }
 
+inline void promoteDeclaratorShapeToOrdered(
+	TypeSpecifierNode& type,
+	std::span<const ASTNode> array_bound_expressions) {
+	if (type.has_ordered_declarator()) {
+		return;
+	}
+	std::vector<DeclaratorComponent> components;
+	components.reserve(type.pointer_depth() + type.array_dimensions().size() + 1);
+	appendDeclaratorShapeForSubstitution(type, components);
+	if (!array_bound_expressions.empty()) {
+		size_t dimension_index = 0;
+		for (DeclaratorComponent& component : components) {
+			if (component.kind != DeclaratorComponentKind::Array &&
+				component.kind != DeclaratorComponentKind::UnknownBoundArray) {
+				continue;
+			}
+			if (dimension_index < type.array_dimensions().size() &&
+				type.array_dimensions()[dimension_index] == 0 &&
+				dimension_index < array_bound_expressions.size()) {
+				component = DeclaratorComponent::array(0);
+			}
+			if (dimension_index < type.array_dimensions().size()) {
+				++dimension_index;
+			}
+		}
+	}
+	if (components.empty()) {
+		return;
+	}
+	type.clear_declarator_shape();
+	type.set_ordered_declarator(std::move(components));
+}
+
 inline void applyOuterDeclaratorShapeForSubstitution(
 	TypeSpecifierNode& target,
 	const TypeSpecifierNode& pattern) {

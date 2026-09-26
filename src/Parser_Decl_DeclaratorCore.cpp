@@ -1154,6 +1154,13 @@ std::optional<CVQualifier> Parser::scan_parenthesized_pointer_group(
 
 // NEW: Parse declarators (handles function pointers, arrays, etc.)
 ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linkage) {
+	return parse_declarator(base_type, linkage, nullptr);
+}
+
+ParseResult Parser::parse_declarator(
+	TypeSpecifierNode& base_type,
+	Linkage linkage,
+	std::vector<ASTNode>* array_bound_expressions) {
 	auto tryStructuralPointerArrayDeclarator =
 			[&]() -> std::optional<ParseResult> {
 		// Parse the pointer/array-only recursive declarator grammar with an
@@ -1187,6 +1194,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					std::vector<DeclaratorComponent> prefixes;
 					std::vector<DeclaratorComponent> child;
 					std::vector<DeclaratorComponent> suffixes;
+					std::vector<ASTNode> child_array_bound_expressions;
+					std::vector<ASTNode> suffix_array_bound_expressions;
 					bool delimited = false;
 					bool after_direct = false;
 				};
@@ -1263,7 +1272,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 						}
 						if (peek() == "("_tok) {
 							advance();
-							frames.push_back(DeclaratorFrame{{}, {}, {}, true, false});
+							frames.emplace_back();
+							frames.back().delimited = true;
 							continue;
 						}
 						if (peek() == ")"_tok && !has_identifier && frame.delimited &&
@@ -1300,12 +1310,18 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 							break;
 						}
 						const auto value = try_evaluate_constant_expression(*bound.node());
-						if (!value.has_value() || value->value <= 0) {
+						const bool has_concrete_bound =
+							value.has_value() && value->value > 0;
+						if (!has_concrete_bound &&
+							(array_bound_expressions == nullptr ||
+								!isDependentTemplateContext())) {
 							failed = true;
 							break;
 						}
-						frame.suffixes.push_back(
-								DeclaratorComponent::array(static_cast<size_t>(value->value)));
+						frame.suffixes.push_back(has_concrete_bound
+							? DeclaratorComponent::array(static_cast<size_t>(value->value))
+							: DeclaratorComponent::array(0));
+						frame.suffix_array_bound_expressions.push_back(*bound.node());
 						if (!consume("]"_tok)) {
 							failed = true;
 							break;
@@ -1387,8 +1403,14 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					}
 
 					std::vector<DeclaratorComponent> completed = std::move(frame.child);
+					std::vector<ASTNode> completed_array_bound_expressions =
+						std::move(frame.child_array_bound_expressions);
 					completed.insert(completed.end(), frame.suffixes.begin(),
-													 frame.suffixes.end());
+										 frame.suffixes.end());
+					completed_array_bound_expressions.insert(
+						completed_array_bound_expressions.end(),
+						frame.suffix_array_bound_expressions.begin(),
+						frame.suffix_array_bound_expressions.end());
 					for (auto pointer = frame.prefixes.rbegin();
 							 pointer != frame.prefixes.rend(); ++pointer) {
 						DeclaratorComponent component = *pointer;
@@ -1494,6 +1516,12 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 							if (identifier.value().empty()) {
 								base_type = structural_type;
 							}
+							if (array_bound_expressions != nullptr) {
+								array_bound_expressions->insert(
+									array_bound_expressions->end(),
+									completed_array_bound_expressions.begin(),
+									completed_array_bound_expressions.end());
+							}
 							discard_saved_token(structural_start);
 							return ParseResult::success(emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(structural_type),
@@ -1553,6 +1581,12 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 						if (identifier.value().empty()) {
 							base_type = structural_type;
 						}
+						if (array_bound_expressions != nullptr) {
+							array_bound_expressions->insert(
+								array_bound_expressions->end(),
+								completed_array_bound_expressions.begin(),
+								completed_array_bound_expressions.end());
+						}
 						discard_saved_token(structural_start);
 						return ParseResult::success(emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(structural_type), identifier));
@@ -1562,6 +1596,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 						break;
 					}
 					frames.back().child = std::move(completed);
+					frames.back().child_array_bound_expressions =
+						std::move(completed_array_bound_expressions);
 					frames.back().after_direct = true;
 				}
 				restore_token_position(structural_start);
@@ -1612,7 +1648,9 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 			}
 			base_type.add_pointer_level(ptr_cv);
 			if (peek() == "["_tok) {
-				consume_array_type_id_modifiers(base_type);
+				consume_array_type_id_modifiers(
+					base_type,
+					array_bound_expressions);
 				// C++20 [dcl.ptr]/1: the array suffix of a parenthesized
 				// declarator binds inside the pointer.
 				base_type.set_pointee_array_declarator(true);

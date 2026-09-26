@@ -2610,6 +2610,34 @@ ParseResult Parser::parse_type_specifier() {
 							"Alias template array bound must be a positive constant expression");
 					}
 					const std::vector<size_t>& resolved_alias_dimensions = *resolved_dimensions;
+					TypeSpecifierNode resolved_alias_target_type_spec = alias_target_type_spec;
+					if (alias_target_type_spec.has_ordered_declarator()) {
+						std::vector<DeclaratorComponent> resolved_components(
+							alias_target_type_spec.declarator_components().begin(),
+							alias_target_type_spec.declarator_components().end());
+						size_t array_dimension_index = 0;
+						for (DeclaratorComponent& component : resolved_components) {
+							if (component.kind != DeclaratorComponentKind::Array) {
+								continue;
+							}
+							if (array_dimension_index >= resolved_alias_dimensions.size()) {
+								throw InternalError(
+									"ordered alias array component has no projected extent");
+							}
+							if (component.payload == 0 &&
+								resolved_alias_dimensions[array_dimension_index] != 0) {
+								component.payload = static_cast<uint64_t>(
+									resolved_alias_dimensions[array_dimension_index]);
+							}
+							++array_dimension_index;
+						}
+						if (array_dimension_index != resolved_alias_dimensions.size()) {
+							throw InternalError(
+								"ordered alias array extents do not match its components");
+						}
+						resolved_alias_target_type_spec.set_ordered_declarator(
+							std::move(resolved_components));
+					}
 					const std::optional<TemplateTypeArg> direct_rebound_alias_arg =
 						!has_dependent_alias_args
 							? tryRebindAliasTargetTemplateArg(alias_node, *template_args)
@@ -2673,7 +2701,12 @@ ParseResult Parser::parse_type_specifier() {
 							if (substituted_alias_target.is<TypeSpecifierNode>()) {
 								TypeSpecifierNode& substituted_target =
 									substituted_alias_target.as<TypeSpecifierNode>();
-								if (alias_target_type_spec.is_array()) {
+								if (alias_target_type_spec.has_ordered_declarator()) {
+									substituted_target.set_ordered_declarator(
+										std::vector<DeclaratorComponent>(
+											resolved_alias_target_type_spec.declarator_components().begin(),
+											resolved_alias_target_type_spec.declarator_components().end()));
+								} else if (alias_target_type_spec.is_array()) {
 									substituted_target.set_array_dimensions(resolved_alias_dimensions);
 								}
 								if (!typeSpecStillUsesDependentPlaceholder(substituted_target) &&
@@ -2730,7 +2763,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (alias_target_type_spec.has_ordered_declarator()) {
 							applyOuterDeclaratorShapeForSubstitution(
 								instantiated_type,
-								alias_target_type_spec);
+								resolved_alias_target_type_spec);
 						} else if (alias_target_type_spec.is_array()) {
 							// rebindDependentTemplateTypeArg merges cv/pointer/reference
 							// surface but not array dimensions, so apply the alias
