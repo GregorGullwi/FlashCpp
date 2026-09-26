@@ -46,11 +46,11 @@ Conditional pointer common-type selection now compares imported structural
 `TypeId`s through the shared descriptor adapter. Derived-to-base, reference
 binding, and user-defined conversions remain on specialized paths.
 Parser-side overload ranking now uses the structural planner for non-projectable
-ordered pairs plus supported projectable pointer pairs, array decay, and
-pointer/array-to-`bool` conversions. These imports are limited to builtin,
-record, or enum bases. Speculative imports roll back; reference binding,
-callable/template types, structural no-matches needing specialized rules, and
-other syntax-facing callers still use the compatibility planner.
+ordered pairs plus scalar builtin conversions and supported projectable pointer
+pairs, array decay, and pointer/array-to-`bool` conversions. Imports stay within
+builtin, record, or enum base types. Speculative imports roll back; reference
+binding, callable/template types, structural no-matches needing specialized
+rules, and other syntax-facing callers still use the compatibility planner.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
