@@ -1595,6 +1595,54 @@ inline std::optional<ConversionPlan> tryBuildCanonicalOrderedConversionPlan(
 		table, from_import.type, to_import.type);
 }
 
+// Use canonical identity for successful conversions between projectable
+// object-pointer types during parser-side overload ranking. No-match stays on the
+// compatibility path because it may need derived-to-base or other specialized
+// conversion rules that are not part of the structural planner yet.
+inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerConversionPlan(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to) {
+	if (from.is_reference() || from.is_rvalue_reference() ||
+		to.is_reference() || to.is_rvalue_reference() ||
+		!from.is_pointer() || !to.is_pointer()) {
+		return std::nullopt;
+	}
+	FrontendContext* const context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport from_import = importCanonicalType(table, from);
+	if (from_import.status == CanonicalTypeImportStatus::Invalid) {
+		return ConversionPlan::no_match();
+	}
+	if (from_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeImport to_import = importCanonicalType(table, to);
+	if (to_import.status == CanonicalTypeImportStatus::Invalid) {
+		return ConversionPlan::no_match();
+	}
+	if (to_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeKind from_kind = table.node(
+		table.withoutTopLevelQualifiers(from_import.type)).kind;
+	const CanonicalTypeKind to_kind = table.node(
+		table.withoutTopLevelQualifiers(to_import.type)).kind;
+	if (from_kind != CanonicalTypeKind::Pointer ||
+		to_kind != CanonicalTypeKind::Pointer) {
+		return std::nullopt;
+	}
+	const ConversionPlan plan = buildCanonicalStructuralConversionPlan(
+		table, from_import.type, to_import.type);
+	if (!plan.is_valid) {
+		return std::nullopt;
+	}
+	return plan;
+}
+
 // Bounded ordered-declarator conversion path: a null pointer constant to an
 // ordered pointer, array-to-pointer decay, function-to-pointer decay, ordered
 // reference binding, an ordered object pointer to `cv void*`, array-to-pointer
@@ -1759,6 +1807,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		(to.has_ordered_declarator() &&
 			!to.ordered_declarator_has_legacy_projection())) {
 		return buildOrderedDeclaratorConversionPlan(from, to);
+	}
+	if (const std::optional<ConversionPlan> canonical_plan =
+			tryBuildCanonicalProjectablePointerConversionPlan(from, to);
+		canonical_plan.has_value()) {
+		return *canonical_plan;
 	}
 	auto isOrderedPointer = [](const TypeSpecifierNode& type) {
 		return type.has_ordered_declarator() &&
