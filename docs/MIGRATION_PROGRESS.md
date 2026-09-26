@@ -43,13 +43,10 @@ type view where needed.
 Conditional pointer common-type selection now compares imported structural
 `TypeId`s through the shared descriptor adapter. Derived-to-base, reference
 binding, and user-defined conversions remain on specialized paths.
-Parser-side overload ranking now sends non-projectable ordered argument and
-parameter types through the structural conversion planner. Candidate imports
-run in a `CanonicalTypeTransaction`, so speculative ranking does not publish
-temporary type IDs. Ordered-reference binding and types the importer has not
-migrated still use the syntax compatibility path. This is a bounded slice:
-projectable candidate pairs and other syntax-facing conversion callers still
-use `TypeSpecifierNode`.
+Parser-side overload ranking now uses the structural planner for non-projectable
+ordered pairs and supported projectable object-pointer conversions. Speculative
+imports roll back; reference binding, structural no-matches needing specialized
+rules, and other syntax-facing callers still use the compatibility planner.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
