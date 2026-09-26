@@ -146,14 +146,18 @@ scalar), and `exportCanonicalDeclarator` round-trips that node back to an
 ordered spine. The flat pointer level remains only as the compatibility
 projection until the flat fields are deleted.
 
-Some ordered static-member types still cannot be imported into the canonical
-type arena. When `importCanonicalType` reports an unsupported or unresolved
-type for an ordered static-member declaration, the parser now emits
-`UnsupportedCanonicalStaticMemberType` (1020) instead of a generic parse error.
+Some ordered static-member types still cannot be imported into the compiler's
+type system. For example, a static member that points to an array of pointers
+to a function type alias can contain nested callable layers that the current
+importer cannot represent. The compiler reports this as
+`UnsupportedStaticMemberType` (1020), with the static member name and type
+shape at the source location.
 This diagnostic is a boundary guard, not completion of the feature: remaining
 canonical importer families must be supported before every valid static-member
 type can carry its `TypeId`. Simple aliases such as `using Integer = int` are
-already accepted and are not examples of this gap.
+already accepted and are not examples of this gap. A static member with an
+undeduced `auto` type and no initializer is a separate language error and now
+reports `AutoTypeDeductionFailure` (1014).
 
 ## Frontend scratch rollback does not include symbol publication
 

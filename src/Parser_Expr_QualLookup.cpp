@@ -4760,5 +4760,76 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 	return result;
 }
 
+std::string Parser::describeUnsupportedStaticMemberType(
+	const TypeSpecifierNode& type,
+	std::string_view member_name) const {
+	TypeSpecifierNode base_type = type;
+	base_type.clear_declarator_shape();
+	StringBuilder message;
+	if (member_name.empty()) {
+		message.append("The compiler does not yet support this static member type: '");
+	} else {
+		message.append("The compiler does not yet support the type of static member '")
+			.append(member_name)
+			.append("': '");
+	}
+	if (type.has_ordered_declarator()) {
+		for (const DeclaratorComponent& component : type.declarator_components()) {
+			switch (component.kind) {
+			case DeclaratorComponentKind::Pointer:
+				if (static_cast<uint8_t>(component.cv_qualifier) &
+					static_cast<uint8_t>(CVQualifier::Const)) {
+					message.append("const ");
+				}
+				if (static_cast<uint8_t>(component.cv_qualifier) &
+					static_cast<uint8_t>(CVQualifier::Volatile)) {
+					message.append("volatile ");
+				}
+				message.append("pointer to ");
+				break;
+			case DeclaratorComponentKind::LValueReference:
+				message.append("lvalue reference to ");
+				break;
+			case DeclaratorComponentKind::RValueReference:
+				message.append("rvalue reference to ");
+				break;
+			case DeclaratorComponentKind::Array:
+				message.append("array[").append(component.payload).append("] of ");
+				break;
+			case DeclaratorComponentKind::UnknownBoundArray:
+				message.append("array of unknown size of ");
+				break;
+			case DeclaratorComponentKind::Function:
+				message.append("function returning ");
+				break;
+			case DeclaratorComponentKind::MemberObjectPointer:
+				message.append("pointer to a member object of ");
+				break;
+			case DeclaratorComponentKind::MemberFunctionPointer:
+				message.append("pointer to a member function of ");
+				break;
+			}
+		}
+		message.append(type_to_string(base_type));
+	} else {
+		message.append(type_to_string(type));
+	}
+	message.append("'.");
+	return std::string(message.commit());
+}
+
+std::optional<TypeId> Parser::tryImportCanonicalStaticMemberType(
+	TypeSpecifierNode& type) {
+	tryBindPublishedTypeEntity(type);
+	tryBindPublishedMemberClassEntity(type);
+	const CanonicalTypeImport imported = importCanonicalType(
+		requireFrontendContext().canonicalTypes(),
+		type);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return imported.type;
+}
+
 // Note: Type size lookup is now unified in ::get_type_size_bits() from AstNodeTypes.h
 // This ensures consistent handling of target-dependent types like 'long' (LLP64 vs LP64)

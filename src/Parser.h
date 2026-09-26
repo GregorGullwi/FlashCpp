@@ -3962,6 +3962,11 @@ private:	 // Resume private methods
 	void process_deferred_lambda_deductions();  // Process deferred lambda return type deductions
 	bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;	 // Check if two types are compatible
 	std::string type_to_string(const TypeSpecifierNode& type) const;	 // Convert type to string for error messages
+	std::string describeUnsupportedStaticMemberType(
+		const TypeSpecifierNode& type,
+		std::string_view member_name) const;
+	std::optional<TypeId> tryImportCanonicalStaticMemberType(
+		TypeSpecifierNode& type);
 	// Note: Use global ::get_type_size_bits() from AstNodeTypes.h for type sizes
 	int getStructTypeSizeBits(TypeIndex type_index) const;
 
