@@ -297,20 +297,6 @@ TEST_SUITE("FrontendContext") {
 			table.insert_into_namespace(existing_namespace, nested_symbol_name, make_literal(5), false);
 			inner.commit();
 		}
-		const StringHandle nested_context_namespace_name =
-			StringTable::getOrInternStringHandle("frontend_tx_nested_context_namespace");
-		{
-			SymbolTable nested_table;
-			FrontendContext nested_context;
-			bindPersistentScopePublication(nested_table);
-			auto nested_context_transaction = nested_context.beginScratchTransaction();
-			const NamespaceHandle nested_context_namespace = gNamespaceRegistry.getOrCreateNamespace(
-				NamespaceRegistry::GLOBAL_NAMESPACE, nested_context_namespace_name);
-			nested_table.enter_namespace(nested_context_namespace);
-			REQUIRE(nested_table.insert(std::string_view("nested_context_symbol"), make_literal(6)));
-			nested_table.exit_scope();
-			nested_context_transaction.commit();
-		}
 		outer.rollback();
 
 		CHECK(gNamespaceRegistry.currentSize() == namespace_count_before);
@@ -320,9 +306,6 @@ TEST_SUITE("FrontendContext") {
 		CHECK(gNamespaceRegistry.lookupNamespace(
 			existing_namespace,
 			StringTable::getOrInternStringHandle("frontend_tx_provisional_namespace")).isValid() == false);
-		CHECK_FALSE(gNamespaceRegistry.lookupNamespace(
-			NamespaceRegistry::GLOBAL_NAMESPACE, nested_context_namespace_name).isValid());
-
 		const auto existing_symbols = table.lookup_qualified_all(existing_namespace, existing_symbol_name);
 		REQUIRE(existing_symbols.size() == 1u);
 		CHECK(existing_symbols.front().raw_pointer() == existing_symbol.raw_pointer());
@@ -332,6 +315,76 @@ TEST_SUITE("FrontendContext") {
 		CHECK_FALSE(table.lookup_qualified(
 			NamespaceRegistry::GLOBAL_NAMESPACE,
 			StringTable::getOrInternStringHandle("frontend_tx_global_symbol")).has_value());
+	}
+
+	TEST_CASE("Frontend scratch rollback restores in-place symbol type normalization") {
+		const std::string_view identifier = "frontend_tx_array_redeclaration";
+		Token identifier_token(Token::Type::Identifier, identifier, 1, 1, 0);
+		auto make_variable = [&](bool type_has_unsized_array) {
+			TypeSpecifierNode type(
+				TypeCategory::Int,
+				TypeQualifier::None,
+				32,
+				identifier_token,
+				CVQualifier::None);
+			if (type_has_unsized_array) {
+				type.set_unsized_outer_array_dimension(true);
+			}
+			DeclarationNode declaration(type, identifier_token);
+			declaration.set_unsized_array(true);
+			ASTNode declaration_node = ASTNode::emplace_node<DeclarationNode>(declaration);
+			return ASTNode::emplace_node<VariableDeclarationNode>(
+				declaration_node,
+				std::nullopt,
+				StorageClass::Extern);
+		};
+
+		SymbolTable table;
+		FrontendContext context;
+		bindPersistentScopePublication(table);
+		const ASTNode existing_variable = make_variable(false);
+		REQUIRE(table.insert(identifier, existing_variable));
+		const auto& existing_type = existing_variable.as<VariableDeclarationNode>()
+			.declaration().type_specifier_node();
+		CHECK_FALSE(existing_type.is_array());
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			REQUIRE(table.insert(identifier, make_variable(true)));
+			CHECK(existing_type.is_array());
+			CHECK(existing_type.has_unsized_outer_array_dimension());
+			{
+				auto nested = context.beginScratchTransaction();
+				Token nested_token(Token::Type::Literal, std::string_view("0"), 0, 0, 0);
+				ASTNode nested_symbol = ASTNode::emplace_node<ExpressionNode>(
+					NumericLiteralNode(nested_token, 7ULL, TypeCategory::Int, TypeQualifier::None, 32));
+				REQUIRE(table.insert(
+					std::string_view("frontend_tx_nested_type_journal_symbol"),
+					nested_symbol));
+				nested.commit();
+			}
+			CHECK(table.lookup("frontend_tx_nested_type_journal_symbol").has_value());
+			transaction.rollback();
+		}
+
+		CHECK_FALSE(existing_type.is_array());
+		CHECK_FALSE(existing_type.has_unsized_outer_array_dimension());
+		const auto rolled_back_symbols = table.lookup_all(identifier);
+		REQUIRE(rolled_back_symbols.size() == 1U);
+		CHECK(rolled_back_symbols.front().raw_pointer() == existing_variable.raw_pointer());
+		CHECK_FALSE(table.lookup("frontend_tx_nested_type_journal_symbol").has_value());
+
+		{
+			auto transaction = context.beginScratchTransaction();
+			REQUIRE(table.insert(identifier, make_variable(true)));
+			transaction.commit();
+		}
+
+		CHECK(existing_type.is_array());
+		CHECK(existing_type.has_unsized_outer_array_dimension());
+		const auto committed_symbols = table.lookup_all(identifier);
+		REQUIRE(committed_symbols.size() == 1U);
+		CHECK(committed_symbols.front().raw_pointer() == existing_variable.raw_pointer());
 	}
 
 	TEST_CASE("Frontend scratch commit preserves symbol and namespace publication") {

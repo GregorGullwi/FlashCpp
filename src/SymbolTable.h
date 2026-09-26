@@ -293,6 +293,7 @@ public:
 		publication_transaction_marks_.pop_back();
 		if (publication_transaction_marks_.empty()) {
 			publication_mutations_.clear();
+			previous_type_specifier_states_.clear();
 		}
 	}
 
@@ -306,6 +307,7 @@ public:
 		publication_transaction_marks_.pop_back();
 		if (publication_transaction_marks_.empty()) {
 			publication_mutations_.clear();
+			previous_type_specifier_states_.clear();
 		}
 	}
 
@@ -452,6 +454,7 @@ public:
 					// Early insertion historically leaves object-array bounds in the
 					// DeclarationNode only. Preserve that declaration as an unknown
 					// bound until a redeclaration supplies a complete type.
+					recordTypeSpecifierArrayNormalization(existing_type);
 					existing_type.set_array(true, std::nullopt);
 					existing_type.set_unsized_outer_array_dimension(true);
 				}
@@ -1851,6 +1854,7 @@ private:
 		UsingDirectiveAppend,
 		UsingDeclaration,
 		NamespaceAlias,
+		TypeSpecifierArrayNormalization,
 	};
 
 	struct PublicationMutation {
@@ -1867,6 +1871,26 @@ private:
 		std::pair<NamespaceHandle, std::string_view> previous_using_declaration{};
 		NamespaceHandle previous_namespace_alias{};
 	};
+
+	// TypeSpecifierNode is much larger than a normal journal entry, so keep its
+	// occasional full snapshot in a side vector and let the ordered mutation log
+	// retain only the node handle. This mutation shares the same undo order as
+	// symbol-map changes that may happen during the same redeclaration.
+	void recordTypeSpecifierArrayNormalization(TypeSpecifierNode& type) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		previous_type_specifier_states_.push_back(type);
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::TypeSpecifierArrayNormalization;
+		mutation.previous_node = ASTNode(&type);
+		try {
+			recordPublicationMutation(std::move(mutation));
+		} catch (...) {
+			previous_type_specifier_states_.pop_back();
+			throw;
+		}
+	}
 
 	void recordPublicationMutation(PublicationMutation mutation) {
 		if (!publication_transaction_marks_.empty()) {
@@ -2106,6 +2130,14 @@ private:
 			}
 			break;
 		}
+		case PublicationMutationKind::TypeSpecifierArrayNormalization:
+			if (previous_type_specifier_states_.empty()) {
+				throw InternalError("SymbolTable: type normalization rollback state is missing");
+			}
+			mutation.previous_node.as<TypeSpecifierNode>() =
+				std::move(previous_type_specifier_states_.back());
+			previous_type_specifier_states_.pop_back();
+			break;
 		}
 	}
 
@@ -2212,6 +2244,7 @@ private:
 	std::unordered_set<StringHandle> adl_only_function_names_;
 	std::vector<size_t> publication_transaction_marks_;
 	std::vector<PublicationMutation> publication_mutations_;
+	std::vector<TypeSpecifierNode> previous_type_specifier_states_;
 
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table
