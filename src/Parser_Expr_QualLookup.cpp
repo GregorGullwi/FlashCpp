@@ -3571,21 +3571,14 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// Handle dereference operator: *ptr -> removes one level of pointer/reference
 		if (op == "*") {
 			if (operand_type.has_ordered_declarator() &&
+				!operand_type.ordered_declarator_has_legacy_projection() &&
 				!operand_type.declarator_components().empty() &&
 				operand_type.declarator_components().front().kind ==
 					DeclaratorComponentKind::Pointer) {
-				// Non-projectable pointers have no flat pointer levels. Peel the
-				// outermost ordered pointer so the pointee, including an array
-				// object, reaches overload resolution ([expr.unary.op]/1).
-				TypeSpecifierNode result = operand_type;
-				result.set_reference_qualifier(ReferenceQualifier::None);
-				result.remove_outermost_ordered_declarator_component();
-				result.set_reference_qualifier(ReferenceQualifier::LValueReference);
-				if (const int pointee_size_bits = getTypeSpecSizeBits(result);
-					pointee_size_bits > 0) {
-					result.set_size_in_bits(pointee_size_bits);
-				}
-				return result;
+				// Do not synthesize a flattened pointee for parser-time overload
+				// selection. Sema owns the canonical dereference and can select the
+				// call from its structural argument type.
+				return std::nullopt;
 			}
 			if (operand_type.is_reference()) {
 				// Dereferencing a reference gives the underlying type

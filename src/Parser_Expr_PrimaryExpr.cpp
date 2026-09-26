@@ -1601,6 +1601,33 @@ ExpressionNode Parser::makeDeferredOrdinaryDirectCallExpr(
 	const ASTNode& resolved_decl,
 	ChunkedVector<ASTNode>&& arguments,
 	Token called_from_token) {
+	auto has_unprojectable_ordered_dereference_argument = [&]() {
+		for (const ASTNode& argument : arguments) {
+			if (!argument.is<ExpressionNode>()) {
+				continue;
+			}
+			const auto* dereference =
+				std::get_if<UnaryOperatorNode>(&argument.as<ExpressionNode>());
+			if (dereference == nullptr || dereference->op() != "*") {
+				continue;
+			}
+			const std::optional<TypeSpecifierNode> operand_type =
+				get_expression_type(dereference->get_operand());
+			if (!operand_type.has_value() ||
+				!operand_type->has_ordered_declarator() ||
+				operand_type->ordered_declarator_has_legacy_projection() ||
+				operand_type->declarator_components().empty() ||
+				operand_type->declarator_components().front().kind !=
+					DeclaratorComponentKind::Pointer) {
+				continue;
+			}
+			return true;
+		}
+		return false;
+	};
+	const bool defer_ordered_overload_resolution =
+		has_unprojectable_ordered_dereference_argument();
+
 	if (resolved_decl.is<FunctionDeclarationNode>()) {
 		const FunctionDeclarationNode& func_decl =
 			resolved_decl.as<FunctionDeclarationNode>();
@@ -1616,6 +1643,9 @@ ExpressionNode Parser::makeDeferredOrdinaryDirectCallExpr(
 			placeholder_decl.as<DeclarationNode>(),
 			std::move(arguments),
 			called_from_token);
+		if (defer_ordered_overload_resolution) {
+			std::get<CallExprNode>(call_expr).set_deferred_overload_resolution();
+		}
 		setCallParserReturnTypeHint(
 			call_expr,
 			func_decl.decl_node().type_specifier_node());
@@ -1623,17 +1653,25 @@ ExpressionNode Parser::makeDeferredOrdinaryDirectCallExpr(
 	}
 
 	if (resolved_decl.is<DeclarationNode>()) {
-		return makeDirectCallExpr(
+		CallExprNode call_expr = makeDirectCallExpr(
 			resolved_decl.as<DeclarationNode>(),
 			std::move(arguments),
 			called_from_token);
+		if (defer_ordered_overload_resolution) {
+			call_expr.set_deferred_overload_resolution();
+		}
+		return ExpressionNode(std::move(call_expr));
 	}
 
 	if (resolved_decl.is<VariableDeclarationNode>()) {
-		return makeDirectCallExpr(
+		CallExprNode call_expr = makeDirectCallExpr(
 			resolved_decl.as<VariableDeclarationNode>().declaration(),
 			std::move(arguments),
 			called_from_token);
+		if (defer_ordered_overload_resolution) {
+			call_expr.set_deferred_overload_resolution();
+		}
+		return ExpressionNode(std::move(call_expr));
 	}
 
 	if (resolved_decl.is<TemplateFunctionDeclarationNode>()) {
@@ -7714,7 +7752,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				bool all_arg_types_known = true;
 				for (const auto& arg : args_ref) {
 					auto arg_type = get_expression_type(arg);
-					if (!arg_type.has_value()) {
+					if (!arg_type.has_value() ||
+						arg_type->category() == TypeCategory::Invalid) {
 						all_arg_types_known = false;
 						break;
 					}

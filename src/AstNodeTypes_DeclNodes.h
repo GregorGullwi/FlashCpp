@@ -4293,6 +4293,12 @@ public:
 	bool has_parser_return_type_hint() const {
 		return parser_return_type_hint_.has_value();
 	}
+	void set_deferred_overload_resolution() {
+		call_flags_ |= kDeferredOverloadResolution;
+	}
+	bool defers_overload_resolution() const {
+		return (call_flags_ & kDeferredOverloadResolution) != 0;
+	}
 
 	// --- Definition-context lookup record ---
 	void set_definition_lookup_record(const FunctionCallDefinitionLookupRecord& record) {
@@ -4326,6 +4332,7 @@ public:
 	}
 
 private:
+	static constexpr uint8_t kDeferredOverloadResolution = 1u << 0;
 	CalleeDescriptor callee_;
 	ASTNode receiver_;                   // Object for member-style calls (empty when absent)
 	ChunkedVector<ASTNode> arguments_;
@@ -4337,6 +4344,7 @@ private:
 	std::optional<FunctionCallDefinitionLookupRecord> definition_lookup_record_;
 	std::optional<DependentUnqualifiedCallLookupRecord> dependent_unqualified_lookup_record_;
 	uint32_t dependent_qualified_lookup_record_index_ = TypeInfo::kNoDependentQualifiedName;
+	uint8_t call_flags_ = 0;
 };
 
 // Constructor call node - represents constructor calls like T(args)

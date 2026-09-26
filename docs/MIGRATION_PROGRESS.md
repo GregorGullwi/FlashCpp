@@ -30,9 +30,12 @@ Semantic conversion support covers ordered shape identity, pointer
 qualification, object-pointer-to-`cv void*`, array/function decay, boolean
 conversion, and outermost ordered-reference binding. Function decay compares
 the complete callable type. Derived-to-base and further callable-component
-conversions remain deferred. `Parser::get_expression_type` still peels an
-ordered pointer for call-argument typing; remove that peel after sema owns
-argument typing and overload diagnosis.
+conversions remain deferred. For dereferences whose result has an
+unprojectable ordered declarator, parser typing leaves the expression
+unresolved and defers overload selection to sema. Sema uses the canonical
+argument type for selection and reports ambiguous or non-viable calls at the
+call site. Other parse-time expression queries still use the compatibility
+type view where needed.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -60,26 +63,22 @@ estimated reliably.
 
 Continue boundary 3A in this order:
 
-1. **Move call-argument typing to sema.** Remove the ordered-pointer peel from
-   `Parser::get_expression_type` after sema can type arguments and own overload
-   diagnostics. Retain regressions for ordered pointer/array arguments and
-   mismatched callable signatures.
-2. **Make `TypeId` the conversion currency.** Move remaining conversion rules
+1. **Make `TypeId` the conversion currency.** Move remaining conversion rules
    and callers to the structural planner. Then make projectable semantic
    descriptors use structural identity too, and replace flat-field reads with
    a single compatibility materializer at each remaining legacy boundary.
    Preserve full callable comparison, nested cv, array decay, and
    value-category behavior.
-3. **Migrate remaining flat consumers.** Prioritize type-trait operands,
+2. **Migrate remaining flat consumers.** Prioritize type-trait operands,
    template argument/substitution storage, constexpr type queries, and IR
    layout/subscript paths. Add reduced non-library regressions for language
    rules. Keep unsupported shapes fail-closed until their consumers are
    structural.
-4. **Complete importer and declarator coverage.** Add canonical import support
+3. **Complete importer and declarator coverage.** Add canonical import support
    for valid ordered forms still rejected at a boundary, including nested
    callable aliases used by static members. Preserve member `TypeId`s through
    every AST copy and substitution route.
-5. **Close and mutation-validate the 3A exit criteria.** Prove independence
+4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;
    and remove flat pointer-level and array-dimension fields from migrated
