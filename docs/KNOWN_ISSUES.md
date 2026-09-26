@@ -143,13 +143,14 @@ deleted.
 
 Static-member import now publishes a canonical `TypeId` for callable aliases
 inside ordered pointer/array declarators, including a function alias whose
-return type is another function pointer. A remaining sema compatibility
-consumer still cannot use that shape: `sizeof(Holder::value)` for a static
-member such as `OuterFunction* (*value)[3]` fails in
-`canonicalTypeDescFromTypeSpecifier` with the internal error
-`ordered declarator over a non-pointer alias wrapper is not migrated`. This is
-the deferred conversion-planner/flat-alias-consumer gap; the static-member
-identity remains published and must not be flattened to bypass it.
+return type is another function pointer. Qualified static-member type queries
+carry the published semantic identity and retain the declaration syntax for
+parser-facing consumers, so `sizeof(Holder::value)` now works when the member
+is declared as `OuterFunction* (*value)[3]`. The general flat conversion-
+descriptor path still rejects ordered declarators over aliases with callable,
+array, reference, or member-pointer wrappers. This is the remaining consumer
+migration gap; the static-member identity remains published and must not be
+flattened to bypass it.
 
 Flat data-member-pointer declarators now publish the structural
 `MemberObjectPointer` node (the owner travels in the node, not a parallel

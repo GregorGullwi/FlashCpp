@@ -6,5 +6,5 @@ struct Holder {
 };
 
 int main() {
-	return 0;
+	return sizeof(Holder::value) == sizeof(void*) ? 42 : 0;
 }
