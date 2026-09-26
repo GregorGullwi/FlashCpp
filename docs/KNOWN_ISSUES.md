@@ -74,12 +74,6 @@ The per-file recovery map is indexed in
 
 ## Pointer-to-array declarator coverage gaps
 
-Alias-template targets with a parenthesized pointer-to-array declarator, such
-as `template<class T> using P = T(*)[3];`, remain unsupported. The parser
-reports `UnsupportedAliasTemplateTargetDeclarator` (1816) instead of a
-semicolon error. Supporting the target requires preserving the pointee array
-declarator and its bounds through alias-template substitution.
-
 Concrete multidimensional array parameters now preserve inner bounds through
 parameter adjustment and flatten pointer-row subscripts. Dependent inner
 bounds in a function template (`template<int N> int f(int a[2][N])`) are
@@ -109,15 +103,12 @@ Cast type-ids also accept parenthesized abstract-declarator groups:
 group through `parse_declarator` via `consume_cast_type_id_paren_declarator`,
 so the pointee shape matches the named spelling `int (*p)[3]`
 (tests/test_ptr_to_array_cast_type_id_ret0.cpp).
-Remaining gaps in the same area:
 
-- Indexing through a class-template-instantiated pointer-to-array member
-  (`Box<int> b; b.cells = &arr; (*b.cells)[i][j];`) crashes at runtime. The
-  non-template struct path is fully working
-  (tests/test_ptr_to_array_member_subscript_ret0.cpp); the instantiated-
-  member case loses the pointee bounds somewhere in template substitution /
-  lazy member resolution and falls back to non-flattened subscripting with a
-  bad base.
+Alias-template targets with a parenthesized pointer-to-array declarator, such
+as `template<class T> using P = T(*)[3];`, remain unsupported. The parser
+reports `UnsupportedAliasTemplateTargetDeclarator` (1816). Supporting the
+target requires preserving the pointee array declarator and its bounds through
+alias-template substitution.
 
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 

@@ -77,6 +77,12 @@ consumption of alias wrappers remains open; see
 `UnsupportedStaticMemberType` (1020) remains a fail-closed guard for canonical
 type families not yet imported.
 
+Class-template substitution now carries dependent pointer-to-array member
+bounds onto the instantiated pointee type while preserving pointer-sized
+member layout. Regression coverage checks size, reads, and writes across
+different element types and bounds in
+`tests/test_template_ptr_to_array_member_subscript_ret0.cpp`.
+
 The explicit declarator frame stack keeps nested declarator depth off the native
 call stack. The recorded Clang stack-usage probe measured `parse_declarator` at
 5,160 bytes versus 5,000 bytes on `origin/main`; repeat the comparison when
