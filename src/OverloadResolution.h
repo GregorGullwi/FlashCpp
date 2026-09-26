@@ -1595,11 +1595,11 @@ inline std::optional<ConversionPlan> tryBuildCanonicalOrderedConversionPlan(
 		table, from_import.type, to_import.type);
 }
 
-// Use canonical identity for successful conversions between projectable object
-// pointers with non-recursive base types. No-match stays on the compatibility
-// path because it may need derived-to-base or other specialized conversion
-// rules that are not part of the structural planner yet.
-inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerConversionPlan(
+// Use canonical identity for supported projectable pointer/array conversions
+// with non-recursive base types. No-match stays on the compatibility path
+// because it may need derived-to-base or other specialized conversion rules
+// that are not part of the structural planner yet.
+inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerArrayConversionPlan(
 	const TypeSpecifierNode& from,
 	const TypeSpecifierNode& to) {
 	auto hasNonRecursiveBaseType = [](const TypeSpecifierNode& type) {
@@ -1620,11 +1620,18 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerConversi
 		return is_builtin_type(category) || category == TypeCategory::Struct ||
 			category == TypeCategory::Enum;
 	};
+	const bool may_be_pointer_pair = from.is_pointer() && to.is_pointer();
+	const bool may_be_array_decay = from.is_array() && to.is_pointer();
+	const bool may_be_boolean_conversion =
+		(from.is_pointer() || from.is_array()) &&
+		to.category() == TypeCategory::Bool &&
+		!to.is_pointer() && !to.is_array();
 	if (from.is_reference() || from.is_rvalue_reference() ||
 		to.is_reference() || to.is_rvalue_reference() ||
 		orderedDeclaratorIsReference(from) ||
 		orderedDeclaratorIsReference(to) ||
-		!from.is_pointer() || !to.is_pointer() ||
+		(!may_be_pointer_pair && !may_be_array_decay &&
+			!may_be_boolean_conversion) ||
 		!hasNonRecursiveBaseType(from) || !hasNonRecursiveBaseType(to)) {
 		return std::nullopt;
 	}
@@ -1648,12 +1655,20 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerConversi
 	if (to_import.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;
 	}
-	const CanonicalTypeKind from_kind = table.node(
-		table.withoutTopLevelQualifiers(from_import.type)).kind;
-	const CanonicalTypeKind to_kind = table.node(
-		table.withoutTopLevelQualifiers(to_import.type)).kind;
-	if (from_kind != CanonicalTypeKind::Pointer ||
-		to_kind != CanonicalTypeKind::Pointer) {
+	const CanonicalTypeNode from_node = table.node(
+		table.withoutTopLevelQualifiers(from_import.type));
+	const CanonicalTypeNode to_node = table.node(
+		table.withoutTopLevelQualifiers(to_import.type));
+	const bool is_pointer_pair = from_node.kind == CanonicalTypeKind::Pointer &&
+		to_node.kind == CanonicalTypeKind::Pointer;
+	const bool is_array_decay = from_node.kind == CanonicalTypeKind::Array &&
+		to_node.kind == CanonicalTypeKind::Pointer;
+	const bool is_boolean_conversion =
+		to_node.kind == CanonicalTypeKind::Builtin &&
+		to_node.builtin == CanonicalBuiltinKind::Bool &&
+		(from_node.kind == CanonicalTypeKind::Pointer ||
+			from_node.kind == CanonicalTypeKind::Array);
+	if (!is_pointer_pair && !is_array_decay && !is_boolean_conversion) {
 		return std::nullopt;
 	}
 	const ConversionPlan plan = buildCanonicalStructuralConversionPlan(
@@ -1830,7 +1845,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		return buildOrderedDeclaratorConversionPlan(from, to);
 	}
 	if (const std::optional<ConversionPlan> canonical_plan =
-			tryBuildCanonicalProjectablePointerConversionPlan(from, to);
+			tryBuildCanonicalProjectablePointerArrayConversionPlan(from, to);
 		canonical_plan.has_value()) {
 		return *canonical_plan;
 	}
