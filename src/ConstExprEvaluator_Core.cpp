@@ -2218,6 +2218,13 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 		const auto& expr_node = sizeof_expr.type_or_expr();
 		if (expr_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+			if (context.sema != nullptr) {
+				if (const std::optional<size_t> canonical_size =
+						context.sema->getExpressionSizeBytes(expr_node);
+					canonical_size.has_value()) {
+					return EvalResult::from_int(static_cast<long long>(*canonical_size));
+				}
+			}
 
 			// Handle identifier - get type from its declaration
 			if (std::holds_alternative<IdentifierNode>(expr)) {

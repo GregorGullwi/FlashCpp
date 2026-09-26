@@ -69,8 +69,11 @@ not yet rebuild nested callable payloads, after confirming it imports to the
 published `TypeId`. Qualified static-member semantic slots now carry the
 interned descriptor directly, and parser-facing type queries reuse the resolved
 declaration syntax when a structural export is unavailable. This covers
-`sizeof` on a qualified static member with a nested callable alias. General
-conversion-descriptor consumption of alias wrappers remains open; see
+`sizeof` on a qualified static member with a nested callable alias, including
+the pointee array reached by dereference or built-in subscript. Expression
+`sizeof` now reads object size from the resulting canonical type instead of
+requiring a lossy parser-facing type export. General conversion-descriptor
+consumption of alias wrappers remains open; see
 [known issues](KNOWN_ISSUES.md).
 `UnsupportedStaticMemberType` (1020) remains a fail-closed guard for canonical
 type families not yet imported.

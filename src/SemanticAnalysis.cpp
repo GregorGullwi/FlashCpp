@@ -40,6 +40,105 @@ bool isTemplateDerivedFreeFunctionTarget(const FunctionDeclarationNode* func_dec
 		(func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
 }
 
+std::optional<size_t> tryGetCanonicalObjectSizeBytes(
+	const CanonicalTypeTable& canonical_types,
+	TypeId type_id) {
+	size_t array_count = 1;
+	while (type_id) {
+		const CanonicalTypeNode node = canonical_types.node(type_id);
+		switch (node.kind) {
+		case CanonicalTypeKind::Qualified:
+		case CanonicalTypeKind::LValueReference:
+		case CanonicalTypeKind::RValueReference:
+			type_id = node.child;
+			break;
+		case CanonicalTypeKind::Pointer: {
+			const size_t pointer_size = static_cast<size_t>(get_type_size_bits(TypeCategory::FunctionPointer)) / 8;
+			if (pointer_size == 0 || array_count > std::numeric_limits<size_t>::max() / pointer_size) {
+				return std::nullopt;
+			}
+			return array_count * pointer_size;
+		}
+		case CanonicalTypeKind::Array: {
+			if (!hasCanonicalTypeNodeFlag(node.flags, CanonicalTypeNodeFlags::KnownArrayBound) ||
+				node.array_extent == 0 ||
+				node.array_extent > std::numeric_limits<size_t>::max() / array_count) {
+				return std::nullopt;
+			}
+			array_count *= static_cast<size_t>(node.array_extent);
+			type_id = node.child;
+			break;
+		}
+		case CanonicalTypeKind::Builtin: {
+			const std::optional<TypeCategory> category = canonicalBuiltinToTypeCategory(node.builtin);
+			if (!category.has_value()) {
+				return std::nullopt;
+			}
+			const int size_bits = get_type_size_bits(*category);
+			if (size_bits <= 0) {
+				return std::nullopt;
+			}
+			const size_t element_size = static_cast<size_t>(size_bits) / 8;
+			if (element_size == 0 || array_count > std::numeric_limits<size_t>::max() / element_size) {
+				return std::nullopt;
+			}
+			return array_count * element_size;
+		}
+		case CanonicalTypeKind::Record: {
+			const EntityId entity = canonical_types.recordEntity(type_id);
+			if (!canonical_types.hasRecordLayout(entity)) {
+				return std::nullopt;
+			}
+			const size_t element_size = canonical_types.recordLayout(entity).size_bytes;
+			if (element_size == 0 || array_count > std::numeric_limits<size_t>::max() / element_size) {
+				return std::nullopt;
+			}
+			return array_count * element_size;
+		}
+		case CanonicalTypeKind::Enum: {
+			const EntityId entity = canonical_types.enumEntity(type_id);
+			if (!canonical_types.hasEnumLayout(entity)) {
+				return std::nullopt;
+			}
+			const size_t element_size = canonical_types.enumLayout(entity).size_bytes;
+			if (element_size == 0 || array_count > std::numeric_limits<size_t>::max() / element_size) {
+				return std::nullopt;
+			}
+			return array_count * element_size;
+		}
+		default:
+			return std::nullopt;
+		}
+	}
+	return std::nullopt;
+}
+
+bool isCanonicalArrayOrPointer(
+	const CanonicalTypeTable& canonical_types,
+	TypeId type_id) {
+	while (type_id) {
+		const CanonicalTypeNode node = canonical_types.node(type_id);
+		if (node.kind == CanonicalTypeKind::Qualified ||
+			node.kind == CanonicalTypeKind::LValueReference ||
+			node.kind == CanonicalTypeKind::RValueReference) {
+			type_id = node.child;
+			continue;
+		}
+		return node.kind == CanonicalTypeKind::Array ||
+			node.kind == CanonicalTypeKind::Pointer;
+	}
+	return false;
+}
+
+bool isCanonicalSubscriptIndex(
+	const CanonicalTypeTable& canonical_types,
+	const CanonicalTypeDesc& desc) {
+	return !isCanonicalArrayOrPointer(canonical_types, desc.structural_type_id) &&
+		desc.pointer_levels.empty() &&
+		desc.array_dimensions.empty() &&
+		(isIntegralType(desc.category()) || desc.category() == TypeCategory::Enum);
+}
+
 bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candidate, size_t argument_count) {
 	const size_t min_required = countMinRequiredArgs(candidate);
 	const size_t max_accepted = candidate.is_variadic()
@@ -5492,6 +5591,24 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	return query.hasValue() ? query.type : std::nullopt;
 }
 
+std::optional<size_t> SemanticAnalysis::getExpressionSizeBytes(const ASTNode& node) const {
+	if (!node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+	const void* key = getExpressionKey(node);
+	const auto slot = getSlot(key);
+	if (!slot.has_value() || !slot->has_type()) {
+		return std::nullopt;
+	}
+	const CanonicalTypeDesc& desc = type_context_.get(slot->type_id);
+	if (!desc.structural_type_id) {
+		return std::nullopt;
+	}
+	return tryGetCanonicalObjectSizeBytes(
+		requireFrontendContext().canonicalTypes(),
+		desc.structural_type_id);
+}
+
 std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallReceiverType(const ASTNode& receiver_node) const {
 	const TypeSpecifierQueryResult receiver_type_query = getExpressionTypeQuery(receiver_node);
 	if (receiver_type_query.state != TypeSpecifierQueryResult::State::Available ||
@@ -6407,6 +6524,7 @@ std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperan
 	const CanonicalTypeId second_operand_type_id = inferExpressionType(subscript_node.index_expr());
 	if (!first_operand_type_id || !second_operand_type_id)
 		return std::nullopt;
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 
 	const auto get_struct_pointer_conversion_target_type = [this](const CanonicalTypeDesc& desc) -> std::optional<CanonicalTypeId> {
 		if (desc.category() != TypeCategory::Struct)
@@ -6437,17 +6555,14 @@ std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperan
 	const auto is_array_or_pointer = [&](const CanonicalTypeDesc& desc) -> bool {
 		if (!desc.array_dimensions.empty() || !desc.pointer_levels.empty())
 			return true;
+		if (isCanonicalArrayOrPointer(canonical_types, desc.structural_type_id))
+			return true;
 		return get_struct_pointer_conversion_target_type(desc).has_value();
 	};
-	const auto is_subscript_index = [](const CanonicalTypeDesc& desc) -> bool {
-		return desc.pointer_levels.empty() &&
-			   desc.array_dimensions.empty() &&
-			   (isIntegralType(desc.category()) || desc.category() == TypeCategory::Enum);
-	};
-
 	const CanonicalTypeDesc& first_operand_desc = type_context_.get(first_operand_type_id);
 	const CanonicalTypeDesc& second_operand_desc = type_context_.get(second_operand_type_id);
-	if (is_subscript_index(first_operand_desc) && is_array_or_pointer(second_operand_desc)) {
+	if (isCanonicalSubscriptIndex(canonical_types, first_operand_desc) &&
+		is_array_or_pointer(second_operand_desc)) {
 		const std::optional<CanonicalTypeId> pointer_conversion_target_type_id =
 			get_struct_pointer_conversion_target_type(second_operand_desc);
 		// ArraySubscriptNode stores operands as (array, index). For built-in
@@ -6459,7 +6574,7 @@ std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperan
 			subscript_node.bracket_token());
 		return pointer_conversion_target_type_id;
 	}
-	if (is_subscript_index(second_operand_desc)) {
+	if (isCanonicalSubscriptIndex(canonical_types, second_operand_desc)) {
 		return get_struct_pointer_conversion_target_type(first_operand_desc);
 	}
 	return std::nullopt;
@@ -6953,17 +7068,59 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!first_type_id || !second_type_id)
 					return {};
 				const auto& first_desc = type_context_.get(first_type_id);
-				const auto& second_desc = type_context_.get(second_type_id);
-				if (first_desc.structural_type_id ||
-					second_desc.structural_type_id) {
-					throw InternalError(
-						"interleaved declarator reached unmigrated subscript semantics");
-				}
-				const bool first_is_index = first_desc.pointer_levels.empty() &&
-					first_desc.array_dimensions.empty() &&
-					(isIntegralType(first_desc.category()) || first_desc.category() == TypeCategory::Enum);
+				CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+				const bool first_is_index =
+					isCanonicalSubscriptIndex(canonical_types, first_desc);
 				const CanonicalTypeId array_type_id = first_is_index ? second_type_id : first_type_id;
 				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
+				if (array_desc.structural_type_id) {
+					TypeId element_type_id = array_desc.structural_type_id;
+					CVQualifier array_cv = CVQualifier::None;
+					bool found_element_type = false;
+					while (element_type_id) {
+						const CanonicalTypeNode canonical_node = canonical_types.node(element_type_id);
+						if (canonical_node.kind == CanonicalTypeKind::Qualified) {
+							const CanonicalTypeNode child = canonical_types.node(canonical_node.child);
+							if (child.kind == CanonicalTypeKind::Pointer) {
+								element_type_id = child.child;
+								found_element_type = true;
+								break;
+							}
+							array_cv |= canonical_node.qualifiers;
+							element_type_id = canonical_node.child;
+							continue;
+						}
+						if (canonical_node.kind == CanonicalTypeKind::LValueReference ||
+							canonical_node.kind == CanonicalTypeKind::RValueReference) {
+							element_type_id = canonical_node.child;
+							continue;
+						}
+						if (canonical_node.kind == CanonicalTypeKind::Pointer) {
+							element_type_id = canonical_node.child;
+							found_element_type = true;
+							break;
+						}
+						if (canonical_node.kind == CanonicalTypeKind::Array) {
+							element_type_id = canonical_node.child;
+							if (array_cv != CVQualifier::None) {
+								element_type_id = canonical_types.qualify(element_type_id, array_cv);
+							}
+							found_element_type = true;
+							break;
+						}
+						return {};
+					}
+					if (found_element_type) {
+						CanonicalTypeDesc element_desc = array_desc;
+						element_desc.structural_type_id = element_type_id;
+						element_desc.pointer_levels.clear();
+						element_desc.array_dimensions.clear();
+						element_desc.pointee_array_declarator = false;
+						element_desc.ref_qualifier = ReferenceQualifier::None;
+						return type_context_.intern(element_desc);
+					}
+					return {};
+				}
 				// If it has array dimensions, strip one to get element type.
 				if (!array_desc.array_dimensions.empty()) {
 					CanonicalTypeDesc elem_desc = array_desc;
@@ -7729,7 +7886,19 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 			}
 		}
 		if (!has_resolved_static_member_type) {
-			arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
+			const CanonicalTypeDesc& inferred_desc = type_context_.get(inferred_id);
+			if (inferred_desc.structural_type_id) {
+				const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
+					requireFrontendContext().canonicalTypes(),
+					inferred_desc.structural_type_id);
+				if (exported.status != CanonicalTypeImportStatus::Supported) {
+					// Keep the canonical identity available to semantic consumers that
+					// do not require a parser-facing flat type. Do not fail normalization
+					// merely because this expression's type has multiple callable nodes.
+					return std::nullopt;
+				}
+			}
+			arg_type = materializeTypeSpecifier(inferred_desc);
 		}
 		applyExpressionValueCategory(arg_type);
 		storeArgType(arg_type);
