@@ -42,6 +42,13 @@ type view where needed.
 Conditional pointer common-type selection now compares imported structural
 `TypeId`s through the shared descriptor adapter. Derived-to-base, reference
 binding, and user-defined conversions remain on specialized paths.
+Parser-side overload ranking now sends non-projectable ordered argument and
+parameter types through the structural conversion planner. Candidate imports
+run in a `CanonicalTypeTransaction`, so speculative ranking does not publish
+temporary type IDs. Ordered-reference binding and types the importer has not
+migrated still use the syntax compatibility path. This is a bounded slice:
+projectable candidate pairs and other syntax-facing conversion callers still
+use `TypeSpecifierNode`.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -82,12 +89,12 @@ estimated reliably.
 
 Continue boundary 3A in this order:
 
-1. **Make `TypeId` the conversion currency.** Migrate parser-side overload
-   ranking and remaining syntax-facing callers to the structural planner. Then
-   make projectable semantic descriptors use structural identity too, and
-   replace flat-field reads with a single compatibility materializer at each
-   remaining legacy boundary. Preserve full callable comparison, nested cv,
-   array decay, and value-category behavior.
+1. **Make `TypeId` the conversion currency.** Finish migrating parser-side
+   overload ranking and remaining syntax-facing callers to the structural
+   planner. Then make projectable semantic descriptors use structural identity
+   too, and replace flat-field reads with a single compatibility materializer
+   at each remaining legacy boundary. Preserve full callable comparison,
+   nested cv, array decay, and value-category behavior.
 2. **Migrate remaining flat consumers.** Prioritize type-trait operands,
    template argument/substitution storage, constexpr type queries, and IR
    layout/subscript paths. Add reduced non-library regressions for language
