@@ -183,6 +183,7 @@ struct CallInfo {
 	const std::optional<DependentUnqualifiedCallLookupRecord>* dependent_unqualified_lookup_record;
 	const TypeInfo::DependentQualifiedNameRecord* dependent_qualified_lookup_record;
 	bool is_indirect;
+	bool defers_overload_resolution;
 
 	// --- Factory helpers ---------------------------------------------------
 
@@ -204,6 +205,7 @@ struct CallInfo {
 		info.dependent_qualified_lookup_record =
 			node.dependent_qualified_lookup_record();
 		info.is_indirect           = node.callee().is_indirect();
+		info.defers_overload_resolution = node.defers_overload_resolution();
 		return info;
 	}
 
@@ -267,6 +269,9 @@ inline void copyCallMetadataFromInfo(
 		source.dependent_qualified_lookup_record != nullptr) {
 		target.set_dependent_qualified_lookup_record(
 			*source.dependent_qualified_lookup_record);
+	}
+	if (source.defers_overload_resolution) {
+		target.set_deferred_overload_resolution();
 	}
 }
 

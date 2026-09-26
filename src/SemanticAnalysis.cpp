@@ -10918,6 +10918,20 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
+		if (call_info.defers_overload_resolution &&
+			call_info.dependent_qualified_lookup_record == nullptr &&
+			(call_info.dependent_unqualified_lookup_record == nullptr ||
+			 !call_info.dependent_unqualified_lookup_record->has_value())) {
+			const std::string message = std::string("No matching function for call to '") +
+				std::string(decl.identifier_token().value()) + "'";
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::NoViableFunctionCall,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(decl.identifier_token()),
+				message,
+				{});
+		}
 		if (is_direct_free_call) {
 			++stats_.direct_call_unresolved_after_lookup;
 		}
@@ -10933,6 +10947,36 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				return resolved_candidate;
 			}
 		}
+		if (call_info.defers_overload_resolution &&
+			call_info.dependent_qualified_lookup_record == nullptr &&
+			(call_info.dependent_unqualified_lookup_record == nullptr ||
+			 !call_info.dependent_unqualified_lookup_record->has_value())) {
+			const DiagnosticId diagnostic_id = result.is_ambiguous
+				? DiagnosticId::AmbiguousFunctionCall
+				: DiagnosticId::NoViableFunctionCall;
+			const std::string message = result.is_ambiguous
+				? std::string("Ambiguous call to overloaded function '") +
+					std::string(decl.identifier_token().value()) + "'"
+				: std::string("No matching function for call to '") +
+					std::string(decl.identifier_token().value()) + "'";
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				diagnostic_id,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(decl.identifier_token()),
+				message,
+				{});
+		}
+	}
+	if (call_info.defers_overload_resolution && !arg_types_collected &&
+		call_info.dependent_qualified_lookup_record == nullptr &&
+		(call_info.dependent_unqualified_lookup_record == nullptr ||
+		 !call_info.dependent_unqualified_lookup_record->has_value())) {
+		throw InternalError(
+			"Semantic analysis could not type arguments for a deferred direct call");
+	}
+	if (call_info.defers_overload_resolution) {
+		return nullptr;
 	}
 	if (normalized_call) {
 		if (is_direct_free_call) {
