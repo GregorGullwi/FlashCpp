@@ -1595,11 +1595,11 @@ inline std::optional<ConversionPlan> tryBuildCanonicalOrderedConversionPlan(
 		table, from_import.type, to_import.type);
 }
 
-// Use canonical identity for supported projectable pointer/array conversions
-// with non-recursive base types. No-match stays on the compatibility path
-// because it may need derived-to-base or other specialized conversion rules
-// that are not part of the structural planner yet.
-inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerArrayConversionPlan(
+// Use canonical identity for scalar builtin conversions and supported
+// projectable pointer/array conversions. Imports stay within non-recursive
+// base-type families. No-match remains on the compatibility path for derived-
+// to-base and other specialized conversion rules.
+inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	const TypeSpecifierNode& from,
 	const TypeSpecifierNode& to) {
 	auto hasNonRecursiveBaseType = [](const TypeSpecifierNode& type) {
@@ -1626,12 +1626,16 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerArrayCon
 		(from.is_pointer() || from.is_array()) &&
 		to.category() == TypeCategory::Bool &&
 		!to.is_pointer() && !to.is_array();
+	const bool may_be_builtin_conversion =
+		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
+		!from.is_pointer() && !from.is_array() &&
+		!to.is_pointer() && !to.is_array();
 	if (from.is_reference() || from.is_rvalue_reference() ||
 		to.is_reference() || to.is_rvalue_reference() ||
 		orderedDeclaratorIsReference(from) ||
 		orderedDeclaratorIsReference(to) ||
 		(!may_be_pointer_pair && !may_be_array_decay &&
-			!may_be_boolean_conversion) ||
+			!may_be_boolean_conversion && !may_be_builtin_conversion) ||
 		!hasNonRecursiveBaseType(from) || !hasNonRecursiveBaseType(to)) {
 		return std::nullopt;
 	}
@@ -1668,7 +1672,11 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerArrayCon
 		to_node.builtin == CanonicalBuiltinKind::Bool &&
 		(from_node.kind == CanonicalTypeKind::Pointer ||
 			from_node.kind == CanonicalTypeKind::Array);
-	if (!is_pointer_pair && !is_array_decay && !is_boolean_conversion) {
+	const bool is_builtin_conversion =
+		from_node.kind == CanonicalTypeKind::Builtin &&
+		to_node.kind == CanonicalTypeKind::Builtin;
+	if (!is_pointer_pair && !is_array_decay && !is_boolean_conversion &&
+		!is_builtin_conversion) {
 		return std::nullopt;
 	}
 	const ConversionPlan plan = buildCanonicalStructuralConversionPlan(
@@ -1845,7 +1853,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		return buildOrderedDeclaratorConversionPlan(from, to);
 	}
 	if (const std::optional<ConversionPlan> canonical_plan =
-			tryBuildCanonicalProjectablePointerArrayConversionPlan(from, to);
+			tryBuildCanonicalProjectableConversionPlan(from, to);
 		canonical_plan.has_value()) {
 		return *canonical_plan;
 	}
