@@ -1622,6 +1622,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerConversi
 	};
 	if (from.is_reference() || from.is_rvalue_reference() ||
 		to.is_reference() || to.is_rvalue_reference() ||
+		orderedDeclaratorIsReference(from) ||
+		orderedDeclaratorIsReference(to) ||
 		!from.is_pointer() || !to.is_pointer() ||
 		!hasNonRecursiveBaseType(from) || !hasNonRecursiveBaseType(to)) {
 		return std::nullopt;
