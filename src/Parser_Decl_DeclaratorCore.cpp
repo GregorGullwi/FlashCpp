@@ -1177,7 +1177,8 @@ ParseResult Parser::parse_declarator(
 					advance();
 					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
 					skip_noop_gnu_qualifiers();
-					candidate = peek() == "("_tok;
+					candidate = peek() == "("_tok ||
+						(peek() == ")"_tok && peek(1) == "["_tok);
 				} else if (peek() == "&"_tok || peek() == "&&"_tok) {
 					advance();
 					skip_noop_gnu_qualifiers();
@@ -1299,7 +1300,8 @@ ParseResult Parser::parse_declarator(
 						advance();
 						if (peek() == "]"_tok) {
 							frame.suffixes.push_back(
-									DeclaratorComponent::unknownBoundArray());
+								DeclaratorComponent::unknownBoundArray());
+							frame.suffix_array_bound_expressions.emplace_back();
 							advance();
 							continue;
 						}
@@ -1566,6 +1568,12 @@ ParseResult Parser::parse_declarator(
 								}
 							}
 						} else {
+							const bool has_unknown_bound_array = std::ranges::any_of(
+								completed,
+								[](const DeclaratorComponent& component) {
+									return component.kind ==
+										DeclaratorComponentKind::UnknownBoundArray;
+								});
 							structural_type.set_ordered_declarator(std::move(completed));
 							if (member_function_signature.has_value()) {
 								structural_type.set_type_index(
@@ -1573,7 +1581,9 @@ ParseResult Parser::parse_declarator(
 								structural_type.set_size_in_bits(kFunctionPointerSizeBits);
 								structural_type.set_function_signature(*member_function_signature);
 							}
-							if (structural_type.ordered_declarator_has_legacy_projection()) {
+							if (structural_type.ordered_declarator_has_legacy_projection() &&
+								!(array_bound_expressions != nullptr &&
+									has_unknown_bound_array)) {
 								failed = true;
 								break;
 							}

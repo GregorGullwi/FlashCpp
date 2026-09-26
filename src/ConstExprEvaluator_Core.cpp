@@ -2240,6 +2240,20 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 		const auto& expr_node = sizeof_expr.type_or_expr();
 		if (expr_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+			std::optional<TypeSpecifierNode> expression_type =
+				tryGetConstexprExpressionTypeForTypeTraits(expr_node, context);
+			if (expression_type.has_value() &&
+				(expression_type->has_ordered_declarator() ||
+				 expression_type->is_array() ||
+				 expression_type->has_pointee_array_declarator() ||
+				 expression_type->has_unsized_outer_array_dimension())) {
+				if (auto size_in_bytes =
+						tryGetConstexprTypeSizeBytes(*expression_type);
+					size_in_bytes.has_value()) {
+					return EvalResult::from_int(
+						static_cast<long long>(*size_in_bytes));
+				}
+			}
 			if (context.sema != nullptr) {
 				if (const std::optional<size_t> canonical_size =
 						context.sema->getExpressionSizeBytes(expr_node);

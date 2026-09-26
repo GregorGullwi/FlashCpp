@@ -145,6 +145,15 @@ void appendArrayDimensions(TypeSpecifierNode& target, std::span<const size_t> pr
 }
 
 void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasTypeInfo& resolved_alias) {
+	if (resolved_alias.has_ordered_declarator) {
+		target.set_ordered_declarator(resolved_alias.ordered_declarator);
+		target.add_cv_qualifier(resolved_alias.cv_qualifier);
+		if (resolved_alias.function_signature.has_value() &&
+			!target.has_function_signature()) {
+			target.set_function_signature(*resolved_alias.function_signature);
+		}
+		return;
+	}
 	if (resolved_alias.cv_qualifier != CVQualifier::None) {
 		target.add_cv_qualifier(resolved_alias.cv_qualifier);
 	}
@@ -5440,18 +5449,20 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 						alias_entry->is<TemplateAliasNode>()) {
 						const TemplateAliasNode& alias_node =
 							alias_entry->as<TemplateAliasNode>();
-						if (std::optional<TemplateTypeArg> rebound_arg =
+						if (!alias_node.target_type_node().has_ordered_declarator() ||
+							alias_node.target_type_node().ordered_declarator_has_legacy_projection()) {
+							std::optional<TemplateTypeArg> rebound_arg =
 								parser_.tryRebindAliasTargetTemplateArg(
 									alias_node,
-									materialized_args.args);
-							rebound_arg.has_value() &&
-							!rebound_arg->is_value) {
-							TypeSpecifierNode substituted_type =
-								makeTypeSpecifierFromTemplateTypeArg(
-									*rebound_arg,
-									type.token());
-							applyOuterTypeModifiers(substituted_type, type);
-							return substituted_type;
+								materialized_args.args);
+							if (rebound_arg.has_value() && !rebound_arg->is_value) {
+								TypeSpecifierNode substituted_type =
+									makeTypeSpecifierFromTemplateTypeArg(
+										*rebound_arg,
+										type.token());
+								applyOuterTypeModifiers(substituted_type, type);
+								return substituted_type;
+							}
 						}
 						TypeSpecifierNode substituted_type =
 							substituteInType(alias_node.target_type_node());

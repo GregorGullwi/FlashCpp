@@ -867,15 +867,20 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 								auto struct_it = getTypesByNameMap().find(tok_handle);
 								if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
 									is_complete_type = false;
-								} else {
-									// If the identifier is a known variable in the symbol table (not a type),
-									// fall through to expression parsing so sizeof yields the variable's type
-									// size (C++20 [basic.scope.pdecl] point-of-declaration semantics).
-									auto sym_opt = gSymbolTable.lookup(tok_handle);
-									if (sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) {
-										is_complete_type = false;
-									}
 								}
+							}
+						}
+						// If the parsed type token names an object, the operand is an
+						// expression even when its resolved type category is itself a
+						// valid type-id (for example `sizeof(*pointer_to_array)`).
+						// Check the active scope as well as globals so local declarations
+						// participate in the type-id/expression disambiguation.
+						if (type_spec.token().type() == Token::Type::Identifier) {
+							StringHandle tok_handle = type_spec.token().handle();
+							auto sym_opt = lookup_symbol(tok_handle);
+							if (sym_opt.has_value() &&
+								sym_opt->is<VariableDeclarationNode>()) {
+								is_complete_type = false;
 							}
 						}
 					}
