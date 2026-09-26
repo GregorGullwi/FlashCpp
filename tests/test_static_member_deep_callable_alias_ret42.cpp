@@ -31,9 +31,46 @@ using Callable29 = Callable28*(int);
 using Callable30 = Callable29*(int);
 using Callable31 = Callable30*(int);
 using Callable32 = Callable31*(int);
+using Callable33 = Callable32*(int);
+using Callable34 = Callable33*(int);
+using Callable35 = Callable34*(int);
+using Callable36 = Callable35*(int);
+using Callable37 = Callable36*(int);
+using Callable38 = Callable37*(int);
+using Callable39 = Callable38*(int);
+using Callable40 = Callable39*(int);
+using Callable41 = Callable40*(int);
+using Callable42 = Callable41*(int);
+using Callable43 = Callable42*(int);
+using Callable44 = Callable43*(int);
+using Callable45 = Callable44*(int);
+using Callable46 = Callable45*(int);
+using Callable47 = Callable46*(int);
+using Callable48 = Callable47*(int);
+using Callable49 = Callable48*(int);
+using Callable50 = Callable49*(int);
+using Callable51 = Callable50*(int);
+using Callable52 = Callable51*(int);
+using Callable53 = Callable52*(int);
+using Callable54 = Callable53*(int);
+using Callable55 = Callable54*(int);
+using Callable56 = Callable55*(int);
+using Callable57 = Callable56*(int);
+using Callable58 = Callable57*(int);
+using Callable59 = Callable58*(int);
+using Callable60 = Callable59*(int);
+using Callable61 = Callable60*(int);
+using Callable62 = Callable61*(int);
+using Callable63 = Callable62*(int);
+using Callable64 = Callable63*(int);
 struct DeepStaticCallable {
 	static Callable32* (*callbacks)[2];
 };
+static_assert(__is_same(Callable64, Callable64));
+static_assert(!__is_same(Callable64, Callable63));
 int main() {
-	return 42;
+	return __is_same(Callable64, Callable64) &&
+			!__is_same(Callable64, Callable63)
+		? 42
+		: 1;
 }
