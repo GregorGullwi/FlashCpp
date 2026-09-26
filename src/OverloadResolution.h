@@ -5,6 +5,7 @@
 #include "CanonicalTypeAdapter.h"
 #include "SymbolTable.h"
 #include "CompileContext.h"
+#include "FrontendContext.h"
 #include "ChunkedString.h"
 #include "TemplateExpressionEquivalence.h"
 #include "TemplateTypes.h" // For FunctionSignatureKey
@@ -1546,6 +1547,54 @@ inline void stripOrderedReference(TypeSpecifierNode& spec) {
 
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
 
+// Try the structural planner for an ordered overload conversion. Imports are
+// speculative: overload candidate checks must not publish temporary TypeIds.
+// A null result means the importer or reference-binding rules still need the
+// syntax compatibility path; a returned no-match is authoritative for a
+// supported non-reference canonical type pair.
+inline std::optional<ConversionPlan> tryBuildCanonicalOrderedConversionPlan(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to) {
+	if (from.is_reference() || from.is_rvalue_reference() ||
+		to.is_reference() || to.is_rvalue_reference() ||
+		orderedDeclaratorIsReference(from) ||
+		orderedDeclaratorIsReference(to)) {
+		return std::nullopt;
+	}
+	FrontendContext* const context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport from_import = importCanonicalType(table, from);
+	if (from_import.status == CanonicalTypeImportStatus::Invalid) {
+		return ConversionPlan::no_match();
+	}
+	if (from_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeImport to_import = importCanonicalType(table, to);
+	if (to_import.status == CanonicalTypeImportStatus::Invalid) {
+		return ConversionPlan::no_match();
+	}
+	if (to_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeKind from_kind = table.node(
+		table.withoutTopLevelQualifiers(from_import.type)).kind;
+	const CanonicalTypeKind to_kind = table.node(
+		table.withoutTopLevelQualifiers(to_import.type)).kind;
+	if (from_kind == CanonicalTypeKind::LValueReference ||
+		from_kind == CanonicalTypeKind::RValueReference ||
+		to_kind == CanonicalTypeKind::LValueReference ||
+		to_kind == CanonicalTypeKind::RValueReference) {
+		return std::nullopt;
+	}
+	return buildCanonicalStructuralConversionPlan(
+		table, from_import.type, to_import.type);
+}
+
 // Bounded ordered-declarator conversion path: a null pointer constant to an
 // ordered pointer, array-to-pointer decay, function-to-pointer decay, ordered
 // reference binding, an ordered object pointer to `cv void*`, array-to-pointer
@@ -1553,7 +1602,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 // object to `bool`, and same-shape qualification conversions. Derived-to-base
 // and further callable-component conversions stay deferred and fail closed
 // instead of reaching the flat projection guard.
-inline ConversionPlan buildOrderedDeclaratorConversionPlan(
+inline ConversionPlan buildOrderedDeclaratorCompatibilityPlan(
 	const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	if (from.category() == TypeCategory::Nullptr) {
 		if (!to.declarator_components().empty() &&
@@ -1679,6 +1728,17 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 		return ConversionPlan::no_match();
 	}
 	return orderedDeclaratorCvConversionPlan(from_value, to);
+}
+
+inline ConversionPlan buildOrderedDeclaratorConversionPlan(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to) {
+	if (const std::optional<ConversionPlan> canonical_plan =
+			tryBuildCanonicalOrderedConversionPlan(from, to);
+		canonical_plan.has_value()) {
+		return *canonical_plan;
+	}
+	return buildOrderedDeclaratorCompatibilityPlan(from, to);
 }
 
 // Build a unified conversion plan for full TypeSpecifierNode-level conversions.
