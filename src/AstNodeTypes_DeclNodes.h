@@ -2653,6 +2653,111 @@ public:
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
 
+inline void appendDeclaratorShapeForSubstitution(
+	const TypeSpecifierNode& type,
+	std::vector<DeclaratorComponent>& components) {
+	if (type.has_ordered_declarator()) {
+		components.insert(
+			components.end(),
+			type.declarator_components().begin(),
+			type.declarator_components().end());
+		return;
+	}
+	if (type.has_member_class() && type.pointer_depth() != 0) {
+		throw InternalError(
+			"cannot compose an ordered alias target with a flat member-pointer argument");
+	}
+	if (type.reference_qualifier() == ReferenceQualifier::LValueReference) {
+		components.push_back(DeclaratorComponent::lvalueReference());
+	} else if (type.reference_qualifier() == ReferenceQualifier::RValueReference) {
+		components.push_back(DeclaratorComponent::rvalueReference());
+	}
+	auto append_arrays = [&]() {
+		if (type.array_dimensions().empty()) {
+			if (type.is_array() || type.has_pointee_array_declarator() ||
+				type.has_unsized_outer_array_dimension()) {
+				components.push_back(DeclaratorComponent::unknownBoundArray());
+			}
+			return;
+		}
+		for (const size_t extent : type.array_dimensions()) {
+			components.push_back(extent == 0
+				? DeclaratorComponent::unknownBoundArray()
+				: DeclaratorComponent::array(extent));
+		}
+	};
+	auto append_pointers = [&]() {
+		for (size_t index = type.pointer_levels().size(); index-- > 0;) {
+			components.push_back(DeclaratorComponent::pointer(
+				type.pointer_levels()[index].cv_qualifier));
+		}
+	};
+	if (type.has_pointee_array_declarator()) {
+		append_pointers();
+		append_arrays();
+	} else {
+		if (type.is_array() || type.has_unsized_outer_array_dimension()) {
+			append_arrays();
+		}
+		append_pointers();
+	}
+}
+
+inline void promoteDeclaratorShapeToOrdered(TypeSpecifierNode& type) {
+	if (type.has_ordered_declarator()) {
+		return;
+	}
+	std::vector<DeclaratorComponent> components;
+	components.reserve(type.pointer_depth() + type.array_dimensions().size() + 1);
+	appendDeclaratorShapeForSubstitution(type, components);
+	if (components.empty()) {
+		return;
+	}
+	type.clear_declarator_shape();
+	type.set_ordered_declarator(std::move(components));
+}
+
+inline void applyOuterDeclaratorShapeForSubstitution(
+	TypeSpecifierNode& target,
+	const TypeSpecifierNode& pattern) {
+	std::vector<DeclaratorComponent> components;
+	components.reserve(
+		pattern.declarator_components().size() +
+		target.declarator_components().size() +
+		target.pointer_depth() + target.array_dimensions().size() + 1);
+	appendDeclaratorShapeForSubstitution(pattern, components);
+	std::vector<DeclaratorComponent> substituted_components;
+	substituted_components.reserve(components.capacity());
+	appendDeclaratorShapeForSubstitution(target, substituted_components);
+	components.insert(
+		components.end(),
+		substituted_components.begin(),
+		substituted_components.end());
+	while (components.size() > 1 &&
+		(components[0].kind == DeclaratorComponentKind::LValueReference ||
+		 components[0].kind == DeclaratorComponentKind::RValueReference) &&
+		(components[1].kind == DeclaratorComponentKind::LValueReference ||
+		 components[1].kind == DeclaratorComponentKind::RValueReference)) {
+		if (components[0].kind == DeclaratorComponentKind::LValueReference ||
+			components[1].kind == DeclaratorComponentKind::LValueReference) {
+			components[0] = DeclaratorComponent::lvalueReference();
+		} else {
+			components[0] = DeclaratorComponent::rvalueReference();
+		}
+		components.erase(components.begin() + 1);
+	}
+	target.clear_declarator_shape();
+	target.set_ordered_declarator(std::move(components));
+	target.add_cv_qualifier(pattern.cv_qualifier());
+	if (pattern.has_injected_class_declaration()) {
+		target.set_injected_class_declaration(
+			pattern.injected_class_declaration());
+	}
+	if (pattern.has_function_signature() && !target.has_function_signature()) {
+		target.set_function_signature(pattern.function_signature());
+	}
+}
+
 inline TypeSpecifierNode typeSpecifierFromStructMemberProjection(
 	const StructMember& member) {
 	TypeSpecifierNode type_spec(

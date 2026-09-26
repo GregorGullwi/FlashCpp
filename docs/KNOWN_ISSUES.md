@@ -72,13 +72,19 @@ diagnostic contract without adding recovery solely to empty the old inventory.
 The per-file recovery map is indexed in
 `tests/unsupported_boundary_2f/README.md`.
 
-## Pointer-to-array alias-template targets remain unsupported
+## Dependent bounds in pointer-to-array alias templates are not substituted
 
-Alias-template targets with a parenthesized pointer-to-array declarator, such
-as `template<class T> using P = T(*)[3];`, remain unsupported. The parser
-reports `UnsupportedAliasTemplateTargetDeclarator` (1816). Supporting the
-target requires preserving the pointee array declarator and its bounds through
-alias-template substitution (`tests/alias_template_pointer_array_target_e1816.cpp`).
+Fixed-bound pointer-to-array alias targets such as
+`template<class T> using P = T(*)[3];` now retain their ordered declarator
+through alias substitution. `tests/test_alias_template_pointer_to_array_ret0.cpp`
+checks builtin element types; `tests/test_alias_template_pointer_to_array_record_ret0.cpp`
+also checks a record element. Both verify pointer classification, pointer-sized
+layout, dereference, and subscript. A dependent bound such as
+`template<class T, int N> using P = T(*)[N];` is still parsed with a zero extent
+and does not retain the bound expression on its ordered array component.
+Instantiation can therefore lose the required pointee extent. Preserve and
+substitute dependent bounds on ordered declarator components before removing
+this issue.
 
 ## Friend declarations do not enforce private access
 
