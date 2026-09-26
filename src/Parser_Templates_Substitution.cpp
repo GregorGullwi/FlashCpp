@@ -483,6 +483,35 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
 				substituted_spec.add_pointer_level(pointer_level.cv_qualifier);
 			}
+			if (type_spec.has_pointee_array_declarator() ||
+				type_spec.is_array() ||
+				type_spec.has_unsized_outer_array_dimension()) {
+				// Replacing a dependent base type must retain the declarator that
+				// surrounds it. In particular, T (*member)[N] remains a scalar
+				// pointer member after substituting T; its bounds belong to the
+				// pointee and must not turn the member into an array object.
+				std::vector<size_t> composed_array_dimensions(
+					type_spec.array_dimensions().begin(),
+					type_spec.array_dimensions().end());
+				composed_array_dimensions.insert(
+					composed_array_dimensions.end(),
+					substituted_spec.array_dimensions().begin(),
+					substituted_spec.array_dimensions().end());
+				if (type_spec.has_pointee_array_declarator()) {
+					substituted_spec.set_pointee_array_dimensions(
+						composed_array_dimensions);
+					substituted_spec.set_pointee_array_declarator(true);
+				} else {
+					if (!composed_array_dimensions.empty()) {
+						substituted_spec.set_array_dimensions(composed_array_dimensions);
+					} else {
+						substituted_spec.set_array(true, std::nullopt);
+					}
+					if (type_spec.has_unsized_outer_array_dimension()) {
+						substituted_spec.set_unsized_outer_array_dimension(true);
+					}
+				}
+			}
 			substituted_spec.add_cv_qualifier(type_spec.cv_qualifier());
 			substituted_spec.set_reference_qualifier(collapseReferenceQualifiers(
 				arg.ref_qualifier,
