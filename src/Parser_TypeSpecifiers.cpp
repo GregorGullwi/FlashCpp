@@ -2714,14 +2714,28 @@ ParseResult Parser::parse_type_specifier() {
 								{});
 							return ParseResult::error("Non-type template arguments not supported in alias templates", type_name_token);
 						}
+						const TemplateTypeArg* base_argument = &rebound_arg;
+						if (alias_target_type_spec.has_ordered_declarator()) {
+							const std::optional<size_t> target_parameter_index =
+								findAliasTargetTemplateParamIndex(alias_node, *template_args);
+							if (!target_parameter_index.has_value()) {
+								throw InternalError(
+									"ordered direct alias target lost its template parameter index");
+							}
+							base_argument = &(*template_args)[*target_parameter_index];
+						}
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
-							rebound_arg,
+							*base_argument,
 							Token());
-						// rebindDependentTemplateTypeArg merges cv/pointer/reference
-						// surface but not array dimensions, so apply the alias
-						// target's array wrapper (outer dims) around any element dims
-						// the rebind already carried.
-						if (alias_target_type_spec.is_array()) {
+						if (alias_target_type_spec.has_ordered_declarator()) {
+							applyOuterDeclaratorShapeForSubstitution(
+								instantiated_type,
+								alias_target_type_spec);
+						} else if (alias_target_type_spec.is_array()) {
+							// rebindDependentTemplateTypeArg merges cv/pointer/reference
+							// surface but not array dimensions, so apply the alias
+							// target's array wrapper (outer dims) around any element dims
+							// the rebind already carried.
 							std::vector<size_t> combined(
 								resolved_alias_dimensions.begin(),
 								resolved_alias_dimensions.end());
