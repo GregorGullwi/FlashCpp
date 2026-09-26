@@ -948,7 +948,7 @@ inline std::optional<TypeSpecifierNode> orderedTypeFromStaticMemberDeclaration(
 // Published TypeId owns the declarator shape; the TypeIndex is retained only
 // for legacy consumers that still require a base-type projection.
 inline TypeSpecifierNode materializeStaticMemberTypeSpecifier(
-	const CanonicalTypeTable& canonical_types,
+	CanonicalTypeTable& canonical_types,
 	const StructStaticMember& member,
 	const Token& token) {
 	if (member.canonical_type_id) {
@@ -956,6 +956,17 @@ inline TypeSpecifierNode materializeStaticMemberTypeSpecifier(
 			canonical_types,
 			member.canonical_type_id);
 		if (exported.status != CanonicalTypeImportStatus::Supported) {
+			const TypeSpecifierNode* declared_type = staticMemberDeclaredType(member);
+			if (exported.status == CanonicalTypeImportStatus::UnmigratedCallable &&
+				declared_type != nullptr && declared_type->has_function_signature()) {
+				const CanonicalTypeImport imported_declaration = importCanonicalType(
+					canonical_types,
+					*declared_type);
+				if (imported_declaration.status == CanonicalTypeImportStatus::Supported &&
+					imported_declaration.type == member.canonical_type_id) {
+					return *declared_type;
+				}
+			}
 			throw InternalError(
 				"static member published TypeId cannot be materialized for parser lookup");
 		}

@@ -8305,8 +8305,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					nullptr);
 				lazy_info.needs_substitution = true;
 
-				LazyStaticMemberRegistry::getInstance().registerLazyStaticMember(lazy_info);
-
 				// Still add the member to struct_info for name lookup, but without initializer
 				// Type substitution is still done eagerly (for sizeof, alignof, etc.)
 				auto [substituted_type_index, substituted_size, substituted_alignment, is_array_member, resolved_array_dimensions] =
@@ -8344,6 +8342,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							effective_template_args_vector.size()),
 						struct_type_info.registeredTypeIndex().withCategory(
 							TypeCategory::Struct));
+				lazy_info.canonical_type_id = copied_static_member.canonical_type_id;
+				LazyStaticMemberRegistry::getInstance().registerLazyStaticMember(lazy_info);
 
 				continue; // Skip the eager processing below
 			}

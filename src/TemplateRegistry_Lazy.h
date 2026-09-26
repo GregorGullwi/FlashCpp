@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FrontendIds.h"
 #include "TemplateRegistry.h"
 #include <algorithm>
 #include <cstdint>
@@ -714,6 +715,7 @@ struct LazyStaticMemberInfo {
 	StringHandle instantiated_class_name;	  // Instantiated class name (e.g., "integral_constant_bool_true")
 	StringHandle member_name;				  // Static member name (e.g., "value")
 	TypeIndex type_index;					  // Type index; category encodes Type
+	TypeId canonical_type_id{};                 // Substituted identity carried into the lazy fallback path
 	size_t size;							   // Size in bytes
 	size_t alignment;						  // Alignment requirement
 	AccessSpecifier access;					// Access specifier

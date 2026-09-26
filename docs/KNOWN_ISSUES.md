@@ -141,24 +141,21 @@ boundary guards rather than being reordered or truncated. Remove this entry
 when those consumers migrate and the compatibility projection fields are
 deleted.
 
+Static-member import now publishes a canonical `TypeId` for callable aliases
+inside ordered pointer/array declarators, including a function alias whose
+return type is another function pointer. A remaining sema compatibility
+consumer still cannot use that shape: `sizeof(Holder::value)` for a static
+member such as `OuterFunction* (*value)[3]` fails in
+`canonicalTypeDescFromTypeSpecifier` with the internal error
+`ordered declarator over a non-pointer alias wrapper is not migrated`. This is
+the deferred conversion-planner/flat-alias-consumer gap; the static-member
+identity remains published and must not be flattened to bypass it.
+
 Flat data-member-pointer declarators now publish the structural
 `MemberObjectPointer` node (the owner travels in the node, not a parallel
 scalar), and `exportCanonicalDeclarator` round-trips that node back to an
 ordered spine. The flat pointer level remains only as the compatibility
 projection until the flat fields are deleted.
-
-Some ordered static-member types still cannot be imported into the compiler's
-type system. For example, a static member that points to an array of pointers
-to a function type alias can contain nested callable layers that the current
-importer cannot represent. The compiler reports this as
-`UnsupportedStaticMemberType` (1020), with the static member name and type
-shape at the source location.
-This diagnostic is a boundary guard, not completion of the feature: remaining
-canonical importer families must be supported before every valid static-member
-type can carry its `TypeId`. Simple aliases such as `using Integer = int` are
-already accepted and are not examples of this gap. A static member with an
-undeduced `auto` type and no initializer is a separate language error and now
-reports `AutoTypeDeductionFailure` (1014).
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
