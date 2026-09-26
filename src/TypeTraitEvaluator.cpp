@@ -226,6 +226,54 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalIsSame(
 		: TypeTraitResult::success_false();
 }
 
+} // namespace
+
+std::optional<TypeTraitResult> tryEvaluateCanonicalDeclaratorTrait(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& type_spec) {
+	if (kind != TypeTraitKind::IsPointer && kind != TypeTraitKind::IsArray) {
+		return std::nullopt;
+	}
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport imported_type = importCanonicalType(table, type_spec);
+	if (imported_type.status == CanonicalTypeImportStatus::Invalid) {
+		return TypeTraitResult::failure();
+	}
+	if (imported_type.status != CanonicalTypeImportStatus::Supported) {
+		if (type_spec.has_ordered_declarator() &&
+			!type_spec.ordered_declarator_has_legacy_projection()) {
+			return TypeTraitResult::failure();
+		}
+		return std::nullopt;
+	}
+
+	TypeId outer_type = imported_type.type;
+	while (outer_type) {
+		const CanonicalTypeNode node = table.node(outer_type);
+		if (node.kind == CanonicalTypeKind::Qualified) {
+			// Top-level cv does not change the pointer/array classification.
+			outer_type = node.child;
+			continue;
+		}
+		const bool matches =
+			kind == TypeTraitKind::IsPointer
+				? node.kind == CanonicalTypeKind::Pointer
+				: node.kind == CanonicalTypeKind::Array;
+		return matches
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+	return TypeTraitResult::failure();
+}
+
+namespace {
+
 std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const ExpressionNode& expr, const SymbolTable& symbols) {
 	if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
 		return ctor_call->type_node().type_index();
@@ -807,6 +855,11 @@ TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec,
 	const StructTypeInfo* struct_info) {
+	if (const std::optional<TypeTraitResult> canonical_result =
+			tryEvaluateCanonicalDeclaratorTrait(kind, type_spec);
+		canonical_result.has_value()) {
+		return *canonical_result;
+	}
 	return evaluateTypeTrait(
 		kind,
 		type_spec.type_index(),
@@ -989,6 +1042,11 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		trait_expr.type_node().as<TypeSpecifierNode>();
 	if (isDependentTypeTraitOperand(raw_type_spec)) {
 		return TypeTraitResult::failure();
+	}
+	if (const std::optional<TypeTraitResult> canonical_result =
+			tryEvaluateCanonicalDeclaratorTrait(trait_expr.kind(), raw_type_spec);
+		canonical_result.has_value()) {
+		return *canonical_result;
 	}
 	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(raw_type_spec);
 	if (trait_expr.is_variadic_trait()) {

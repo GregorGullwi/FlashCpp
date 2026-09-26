@@ -72,43 +72,20 @@ diagnostic contract without adding recovery solely to empty the old inventory.
 The per-file recovery map is indexed in
 `tests/unsupported_boundary_2f/README.md`.
 
-## Pointer-to-array declarator coverage gaps
-
-Concrete multidimensional array parameters now preserve inner bounds through
-parameter adjustment and flatten pointer-row subscripts. Dependent inner
-bounds in a function template (`template<int N> int f(int a[2][N])`) are
-retained on the parameter declaration and substituted at instantiation so
-the adjusted pointer-to-array type matches a directly written `int a[2][3]`.
-A bound that cannot be resolved to a positive constant reports
-`FunctionTemplateArrayBoundUnresolved` (1818).
-
-Member class-template friend declarations parse and retain distinct owner
-identities, but private access through such a friend is not enforced: the
-compiler reports the private member and still exits successfully. This also
-occurs for a concrete non-template friend form.
-
-`sizeof`/`alignof` type-ids with pointer-to-array declarators (`int(*)[3]`,
-`const int(*)[3]`, `int(*const)[3]`) parse through the shared
-abstract-declarator machinery; named multi-bound declarators
-(`long (*table)[2][4]`) parse in every context (global, local, member,
-parameter, function return); indexing through a pointer-to-array object or a
-pointer-to-array struct member (`(*t)[i][j]`, `(*g.member)[i][j]`) lowers as
-flattened row-major element access; and member/static-member registration,
-canonical typing, constexpr sizing, and global bindings all preserve the
-pointee shape via the `pointee_array_declarator` flag on `StructMember`,
-`StaticMemberDecl`, `StructStaticMember`, and `CanonicalTypeDesc`.
-Cast type-ids also accept parenthesized abstract-declarator groups:
-`static_cast<int(*)[3]>(v)`, `static_cast<const int(*)[3]>(v)`,
-`reinterpret_cast<long(*)[2][4]>(v)` and the C-style `(int(*)[3])v` route the
-group through `parse_declarator` via `consume_cast_type_id_paren_declarator`,
-so the pointee shape matches the named spelling `int (*p)[3]`
-(tests/test_ptr_to_array_cast_type_id_ret0.cpp).
+## Pointer-to-array alias-template targets remain unsupported
 
 Alias-template targets with a parenthesized pointer-to-array declarator, such
 as `template<class T> using P = T(*)[3];`, remain unsupported. The parser
 reports `UnsupportedAliasTemplateTargetDeclarator` (1816). Supporting the
 target requires preserving the pointee array declarator and its bounds through
-alias-template substitution.
+alias-template substitution (`tests/alias_template_pointer_array_target_e1816.cpp`).
+
+## Friend declarations do not enforce private access
+
+Member class-template friend declarations parse and retain distinct owner
+identities, but private access through such a friend is not enforced: the
+compiler reports the private member and still exits successfully. This also
+occurs for a concrete non-template friend form.
 
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
@@ -124,8 +101,10 @@ pointer level; its architecture test checks the resulting canonical type.
 Boundary 3A is not complete: descriptors use `structural_type_id` for shapes
 that the flat fields cannot represent, but projectable types still use those
 fields as semantic identity. Template argument and substitution storage,
-traits, and general IR layout/subscript consumers also read parallel
-pointer/array fields, so they remain vulnerable to projection drift.
+general IR layout/subscript consumers, and lazy-constraint trait evaluation
+still read parallel flat pointer/array fields, so they remain vulnerable to
+projection drift. Shared and constant-evaluation paths now classify
+`__is_pointer` and `__is_array` from the imported canonical outer wrapper.
 Ordered declarators over alias array, reference, function, or member-pointer
 wrappers remain unsupported. Non-projectable spines are rejected at migrated
 boundary guards rather than being reordered or truncated. Remove this entry
