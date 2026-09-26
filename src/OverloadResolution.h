@@ -1595,16 +1595,35 @@ inline std::optional<ConversionPlan> tryBuildCanonicalOrderedConversionPlan(
 		table, from_import.type, to_import.type);
 }
 
-// Use canonical identity for successful conversions between projectable
-// object-pointer types during parser-side overload ranking. No-match stays on the
-// compatibility path because it may need derived-to-base or other specialized
-// conversion rules that are not part of the structural planner yet.
+// Use canonical identity for successful conversions between projectable object
+// pointers with non-recursive base types. No-match stays on the compatibility
+// path because it may need derived-to-base or other specialized conversion
+// rules that are not part of the structural planner yet.
 inline std::optional<ConversionPlan> tryBuildCanonicalProjectablePointerConversionPlan(
 	const TypeSpecifierNode& from,
 	const TypeSpecifierNode& to) {
+	auto hasNonRecursiveBaseType = [](const TypeSpecifierNode& type) {
+		if (type.has_function_signature() || type.has_template_specialization() ||
+			type.has_dependent_name_type() || type.has_template_parameter_identity() ||
+			type.has_template_parameter_decl() || type.has_member_class() ||
+			type.has_concept_constraint() || type.is_pack_expansion()) {
+			return false;
+		}
+		for (const DeclaratorComponent& component : type.declarator_components()) {
+			if (component.kind == DeclaratorComponentKind::Function ||
+				component.kind == DeclaratorComponentKind::MemberObjectPointer ||
+				component.kind == DeclaratorComponentKind::MemberFunctionPointer) {
+				return false;
+			}
+		}
+		const TypeCategory category = type.category();
+		return is_builtin_type(category) || category == TypeCategory::Struct ||
+			category == TypeCategory::Enum;
+	};
 	if (from.is_reference() || from.is_rvalue_reference() ||
 		to.is_reference() || to.is_rvalue_reference() ||
-		!from.is_pointer() || !to.is_pointer()) {
+		!from.is_pointer() || !to.is_pointer() ||
+		!hasNonRecursiveBaseType(from) || !hasNonRecursiveBaseType(to)) {
 		return std::nullopt;
 	}
 	FrontendContext* const context = FrontendContext::active();
