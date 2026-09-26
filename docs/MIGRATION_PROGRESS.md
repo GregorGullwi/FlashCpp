@@ -20,8 +20,11 @@ ordered pointer/array wrappers and one function component. Descriptors whose
 shape needs the structural spine compare by `TypeId`; projectable types still
 use flat fields in many semantic operations. Static-member parser lookup uses
 the published `TypeId` through one adapter, while sema materializes its flat
-projection where legacy conversion code still needs it. Conversion planning
-still has syntax-facing callers. Ordered pointer objects use
+projection where legacy conversion code still needs it. Standard conversion
+annotation now uses a shared structural planner for supported canonical
+imports, while compatibility paths still materialize flat types for unmigrated
+families. Parser-side overload ranking and other syntax-facing conversion
+callers still use `TypeSpecifierNode`. Ordered pointer objects use
 `runtime_pointer_depth`, but template, trait, constexpr, and IR consumers
 still read flat fields. Array and callable outer wrappers remain guarded where
 their consumers are not migrated.
@@ -37,10 +40,8 @@ argument type for selection and reports ambiguous or non-viable calls at the
 call site. Other parse-time expression queries still use the compatibility
 type view where needed.
 Conditional pointer common-type selection now compares imported structural
-`TypeId`s through the shared descriptor adapter. Conversion annotation and
-other syntax-facing planner callers still need migration; derived-to-base,
-reference binding, and user-defined conversions remain on their existing
-specialized paths.
+`TypeId`s through the shared descriptor adapter. Derived-to-base, reference
+binding, and user-defined conversions remain on specialized paths.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -68,12 +69,12 @@ estimated reliably.
 
 Continue boundary 3A in this order:
 
-1. **Make `TypeId` the conversion currency.** Move conversion annotation and
-   remaining syntax-facing callers to the structural planner. Then make
-   projectable semantic descriptors use structural identity too, and replace
-   flat-field reads with a single compatibility materializer at each remaining
-   legacy boundary. Preserve full callable comparison, nested cv, array decay,
-   and value-category behavior.
+1. **Make `TypeId` the conversion currency.** Migrate parser-side overload
+   ranking and remaining syntax-facing callers to the structural planner. Then
+   make projectable semantic descriptors use structural identity too, and
+   replace flat-field reads with a single compatibility materializer at each
+   remaining legacy boundary. Preserve full callable comparison, nested cv,
+   array decay, and value-category behavior.
 2. **Migrate remaining flat consumers.** Prioritize type-trait operands,
    template argument/substitution storage, constexpr type queries, and IR
    layout/subscript paths. Add reduced non-library regressions for language
