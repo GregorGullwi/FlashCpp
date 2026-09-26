@@ -167,6 +167,7 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 }
 
 TEST_CASE("Ordered function objects decay to pointers") {
+	FrontendContext frontend;
 	TypeSpecifierNode parameter(
 		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	TypeSpecifierNode other_parameter(
@@ -202,6 +203,12 @@ TEST_CASE("Ordered function objects decay to pointers") {
 	CHECK(plan.is_valid);
 	CHECK(plan.rank == ConversionRank::ExactMatch);
 	CHECK(plan.kind == StandardConversionKind::FunctionToPointer);
+	const std::optional<ConversionPlan> canonical_plan =
+		tryBuildCanonicalOrderedConversionPlan(function_object, function_pointer);
+	REQUIRE(canonical_plan.has_value());
+	CHECK(canonical_plan->is_valid);
+	CHECK(canonical_plan->rank == ConversionRank::ExactMatch);
+	CHECK(canonical_plan->kind == StandardConversionKind::FunctionToPointer);
 
 	TypeSpecifierNode qualified_pointer = function_pointer;
 	qualified_pointer.set_ordered_declarator({
@@ -229,6 +236,10 @@ TEST_CASE("Ordered function objects decay to pointers") {
 	});
 	mismatched_extent.set_function_signature(signature);
 	CHECK_FALSE(buildConversionPlan(function_object, mismatched_extent).is_valid);
+	const std::optional<ConversionPlan> mismatched_canonical_plan =
+		tryBuildCanonicalOrderedConversionPlan(function_object, mismatched_extent);
+	REQUIRE(mismatched_canonical_plan.has_value());
+	CHECK_FALSE(mismatched_canonical_plan->is_valid);
 
 	TypeSpecifierNode mismatched_parameter = function_pointer;
 	mismatched_parameter.set_function_signature(other_signature);
@@ -239,6 +250,41 @@ TEST_CASE("Ordered function objects decay to pointers") {
 	const ConversionPlan bool_plan = buildConversionPlan(function_object, bool_target);
 	CHECK(bool_plan.is_valid);
 	CHECK(bool_plan.kind == StandardConversionKind::BooleanConversion);
+}
+
+TEST_CASE("Function signatures preserve non-projectable return declarators") {
+	TypeSpecifierNode ordered_return(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	ordered_return.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(2),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	REQUIRE_FALSE(ordered_return.ordered_declarator_has_legacy_projection());
+
+	const FunctionType function_return = makeFunctionTypeFromSpecifier(ordered_return);
+	CHECK(std::ranges::equal(
+		function_return.ordered_declarator_components,
+		ordered_return.declarator_components()));
+	const TypeSpecifierNode restored_return =
+		typeSpecifierFromFunctionType(function_return);
+	CHECK(restored_return.has_ordered_declarator());
+	CHECK(std::ranges::equal(
+		restored_return.declarator_components(),
+		ordered_return.declarator_components()));
+
+	TypeSpecifierNode different_return = ordered_return;
+	different_return.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	const FunctionType mismatched_function_return =
+		makeFunctionTypeFromSpecifier(different_return);
+	CHECK_FALSE(FlashCpp::equalFunctionTypeIdentity(
+		function_return, mismatched_function_return));
 }
 
 TEST_CASE("Ordered pointer and array conversions reach bool") {
@@ -271,7 +317,7 @@ TEST_CASE("Ordered pointer and array conversions reach bool") {
 	TypeSpecifierNode member_object(
 		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	member_object.set_ordered_declarator({
-		DeclaratorComponent::memberPointer(EntityId{}, false, CVQualifier::None),
+		DeclaratorComponent::memberPointer(EntityId{1}, false, CVQualifier::None),
 	});
 	const ConversionPlan member_pointer_plan =
 		buildConversionPlan(member_object, bool_target);

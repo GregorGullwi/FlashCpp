@@ -1824,68 +1824,6 @@ struct PointerLevel {
 	explicit PointerLevel(CVQualifier cv) : cv_qualifier(cv) {}
 };
 
-// Syntax-owned declarator wrappers in declared-type order (outermost first).
-// The canonical adapter applies this sequence in reverse around the base TypeId.
-// Function and member-pointer payloads continue to live in the existing cold
-// fields during the bridge; the component records their exact position.
-enum class DeclaratorComponentKind : uint8_t {
-	Pointer,
-	LValueReference,
-	RValueReference,
-	Array,
-	UnknownBoundArray,
-	Function,
-	MemberObjectPointer,
-	MemberFunctionPointer,
-};
-
-struct DeclaratorComponent {
-	uint64_t payload = 0; // Array extent, or zero for non-array wrappers.
-	EntityId member_owner{};
-	DeclaratorComponentKind kind = DeclaratorComponentKind::Pointer;
-	CVQualifier cv_qualifier = CVQualifier::None;
-	uint16_t reserved = 0;
-
-	static DeclaratorComponent pointer(CVQualifier cv) {
-		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Pointer, cv, 0};
-	}
-	static DeclaratorComponent lvalueReference() {
-		return DeclaratorComponent{0, {}, DeclaratorComponentKind::LValueReference,
-			CVQualifier::None, 0};
-	}
-	static DeclaratorComponent rvalueReference() {
-		return DeclaratorComponent{0, {}, DeclaratorComponentKind::RValueReference,
-			CVQualifier::None, 0};
-	}
-	static DeclaratorComponent array(size_t extent) {
-		return DeclaratorComponent{static_cast<uint64_t>(extent), {},
-			DeclaratorComponentKind::Array, CVQualifier::None, 0};
-	}
-	static DeclaratorComponent unknownBoundArray() {
-		return DeclaratorComponent{0, {}, DeclaratorComponentKind::UnknownBoundArray,
-			CVQualifier::None, 0};
-	}
-	static DeclaratorComponent function() {
-		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Function,
-			CVQualifier::None, 0};
-	}
-	static DeclaratorComponent memberPointer(EntityId owner, bool is_function,
-		CVQualifier cv) {
-		return DeclaratorComponent{
-			0,
-			owner,
-			is_function
-				? DeclaratorComponentKind::MemberFunctionPointer
-				: DeclaratorComponentKind::MemberObjectPointer,
-			cv,
-			0};
-	}
-
-	friend bool operator==(DeclaratorComponent, DeclaratorComponent) = default;
-};
-
-static_assert(sizeof(DeclaratorComponent) == 16);
-
 class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
@@ -2791,6 +2729,12 @@ inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_
 	type.pointer_qualifiers.reserve(type_spec.pointer_levels().size());
 	for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
 		type.pointer_qualifiers.push_back(pointer_level.cv_qualifier);
+	}
+	if (type_spec.has_ordered_declarator() &&
+		!type_spec.ordered_declarator_has_legacy_projection()) {
+		type.ordered_declarator_components.assign(
+			type_spec.declarator_components().begin(),
+			type_spec.declarator_components().end());
 	}
 	if (type_spec.has_member_class()) {
 		type.member_class_name = type_spec.member_class_name();

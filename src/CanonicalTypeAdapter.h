@@ -342,6 +342,9 @@ inline TypeSpecifierNode typeSpecifierFromFunctionType(const FunctionType& type)
 	if (!type.array_dimensions.empty()) {
 		spec.set_array_dimensions(type.array_dimensions);
 	}
+	if (!type.ordered_declarator_components.empty()) {
+		spec.set_ordered_declarator(type.ordered_declarator_components);
+	}
 	if (type.has_unsized_outer_array_dimension) {
 		spec.set_unsized_outer_array_dimension(true);
 	}

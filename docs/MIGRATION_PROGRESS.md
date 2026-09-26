@@ -34,8 +34,9 @@ their consumers are not migrated.
 
 Semantic conversion support covers ordered shape identity, pointer
 qualification, object-pointer-to-`cv void*`, array/function decay, boolean
-conversion, and outermost ordered-reference binding. Function decay compares
-the complete callable type. Derived-to-base and further callable-component
+conversion, and outermost ordered-reference binding. Function signatures retain
+non-projectable declarator spines, and function decay compares the complete
+callable type including ordered returns. Derived-to-base and further callable-component
 conversions remain deferred. For dereferences whose result has an
 unprojectable ordered declarator, parser typing leaves the expression
 unresolved and defers overload selection to sema. Sema uses the canonical
@@ -145,6 +146,9 @@ start them.
 - **Compiler bugs and bounded unsupported cases:** consult
   [known issues](KNOWN_ISSUES.md) before selecting adjacent work. Add newly
   found bugs there; keep this file focused on migration work still ahead.
+- **Callable ABI mangling:** MSVC name mangling still throws an internal error
+  for function declarations with non-projectable ordered callable parameters;
+  address this at boundary 3B after canonical type migration.
 - **Negative tests:** encode the exact expected diagnostic ID multiset in the
   filename (for example, `_e1001.cpp` or `_e1003_e1051.cpp`). `_fail.cpp` is
   reserved for the immutable legacy inventory.

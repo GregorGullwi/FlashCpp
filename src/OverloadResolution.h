@@ -539,11 +539,24 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 	const CanonicalTypeNode target_pointer = table.node(stripTopCv(target_type).first);
 	if (source_pointer.kind == CanonicalTypeKind::Pointer &&
 		target_pointer.kind == CanonicalTypeKind::Pointer) {
+		const CVQualifier source_pointer_cv = stripTopCv(source_type).second;
+		const CVQualifier target_pointer_cv = stripTopCv(target_type).second;
 		const TypeId source_function = stripTopCv(source_pointer.child).first;
 		const TypeId target_function = stripTopCv(target_pointer.child).first;
 		if (table.node(source_function).kind == CanonicalTypeKind::Function &&
 			table.node(target_function).kind == CanonicalTypeKind::Function &&
 			compatibleFunctionPointerTarget(source_function, target_function)) {
+			if (decay_kind != StandardConversionKind::None) {
+				const bool needs_qualification_adjustment =
+					source_function != target_function ||
+					source_pointer_cv != target_pointer_cv;
+				return {
+					needs_qualification_adjustment
+						? ConversionRank::QualificationAdjustment
+						: ConversionRank::ExactMatch,
+					decay_kind,
+					true};
+			}
 			return ConversionPlan::qualification_adjustment();
 		}
 		const TypeId source_pointee = stripTopCv(source_pointer.child).first;
@@ -617,7 +630,12 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 				return ConversionPlan::no_match();
 			}
 			if (decay_kind != StandardConversionKind::None) {
-				return {ConversionRank::Conversion, decay_kind, true};
+				return {
+					qualification_changed
+						? ConversionRank::QualificationAdjustment
+						: ConversionRank::ExactMatch,
+					decay_kind,
+					true};
 			}
 			return qualification_changed
 				? ConversionPlan::qualification_adjustment()
@@ -625,11 +643,17 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 		case CanonicalTypeKind::Record:
 		case CanonicalTypeKind::Enum:
 		case CanonicalTypeKind::TemplateParameter:
-			if (from_node.array_extent != to_node.array_extent) {
+			if (from_unqualified != to_unqualified ||
+				from_node.array_extent != to_node.array_extent) {
 				return ConversionPlan::no_match();
 			}
 			if (decay_kind != StandardConversionKind::None) {
-				return {ConversionRank::Conversion, decay_kind, true};
+				return {
+					qualification_changed
+						? ConversionRank::QualificationAdjustment
+						: ConversionRank::ExactMatch,
+					decay_kind,
+					true};
 			}
 			return qualification_changed
 				? ConversionPlan::qualification_adjustment()
@@ -640,7 +664,12 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 			// can safely compare them structurally.
 			if (from_unqualified == to_unqualified) {
 				if (decay_kind != StandardConversionKind::None) {
-					return {ConversionRank::Conversion, decay_kind, true};
+					return {
+						qualification_changed
+							? ConversionRank::QualificationAdjustment
+							: ConversionRank::ExactMatch,
+						decay_kind,
+						true};
 				}
 				return qualification_changed
 					? ConversionPlan::qualification_adjustment()
@@ -1724,11 +1753,20 @@ inline ConversionPlan buildOrderedDeclaratorCompatibilityPlan(
 		stripOrderedReference(referent);
 		TypeSpecifierNode from_value = from;
 		stripOrderedReference(from_value);
+		auto plan_referent_conversion = [&]() {
+			if (from_value.has_ordered_declarator() &&
+				referent.has_ordered_declarator() &&
+				sameOrderedDeclaratorShapeIgnoringCv(from_value, referent) &&
+				orderedDeclaratorBaseTypeMatches(from_value, referent)) {
+				return orderedDeclaratorCvConversionPlan(from_value, referent);
+			}
+			return buildConversionPlan(from_value, referent);
+		};
 		if (!to_is_rvalue) {
 			if (!to.is_const() && !from_is_lvalue) {
 				return ConversionPlan::no_match();
 			}
-			const ConversionPlan plan = buildConversionPlan(from_value, referent);
+			const ConversionPlan plan = plan_referent_conversion();
 			if (!plan.is_valid) {
 				return ConversionPlan::no_match();
 			}
@@ -1737,7 +1775,7 @@ inline ConversionPlan buildOrderedDeclaratorCompatibilityPlan(
 		if (from_is_lvalue && !from_is_rvalue) {
 			return ConversionPlan::no_match();
 		}
-		const ConversionPlan plan = buildConversionPlan(from_value, referent);
+		const ConversionPlan plan = plan_referent_conversion();
 		if (!plan.is_valid) {
 			return ConversionPlan::no_match();
 		}

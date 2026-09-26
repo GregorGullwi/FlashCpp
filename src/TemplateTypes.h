@@ -81,6 +81,8 @@ inline bool equalFunctionTypeIdentity(const FunctionType& lhs, const FunctionTyp
 	if (!type_identity_matches ||
 		lhs.cv_qualifier != rhs.cv_qualifier ||
 		lhs.pointer_qualifiers != rhs.pointer_qualifiers ||
+		lhs.ordered_declarator_components !=
+			rhs.ordered_declarator_components ||
 		lhs.reference_qualifier != rhs.reference_qualifier ||
 		lhs.array_dimensions != rhs.array_dimensions ||
 		lhs.has_unsized_outer_array_dimension != rhs.has_unsized_outer_array_dimension ||
@@ -109,6 +111,21 @@ inline size_t hashFunctionTypeIdentity(const FunctionType& type) {
 	for (CVQualifier qualifier : type.pointer_qualifiers) {
 		combineFunctionTypeIdentityHash(
 			hash, std::hash<uint8_t>{}(static_cast<uint8_t>(qualifier)));
+	}
+	for (const DeclaratorComponent& component :
+		type.ordered_declarator_components) {
+		combineFunctionTypeIdentityHash(
+			hash,
+			std::hash<uint8_t>{}(static_cast<uint8_t>(component.kind)));
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint64_t>{}(component.payload));
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint32_t>{}(component.member_owner.value));
+		combineFunctionTypeIdentityHash(
+			hash,
+			std::hash<uint8_t>{}(static_cast<uint8_t>(component.cv_qualifier)));
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint16_t>{}(component.reserved));
 	}
 	combineFunctionTypeIdentityHash(
 		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier)));
