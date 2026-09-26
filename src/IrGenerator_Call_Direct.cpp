@@ -91,7 +91,7 @@ int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signatu
 	if (return_type.type() == TypeCategory::Void) {
 		return 0;
 	}
-	return (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
+	return (return_type.runtime_pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 		? 64
 		: requireConcreteAliasResolvedTypeSizeBits(return_type, "indirect call signature return size");
 }
@@ -126,7 +126,7 @@ void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& r
 	const TypeSpecifierNode normalized_return_type = normalizeCallReturnType(return_type);
 	call_op.return_type_index = getCallReturnTypeIndex(normalized_return_type);
 	call_op.return_size_in_bits = SizeInBits{
-		(normalized_return_type.pointer_depth() > 0 ||
+		(normalized_return_type.runtime_pointer_depth() > 0 ||
 		 normalized_return_type.is_reference() ||
 		 normalized_return_type.is_rvalue_reference())
 			? POINTER_SIZE_BITS
@@ -236,7 +236,7 @@ ExprResult AstToIr::buildCallReturnResult(
 		}
 
 		if (context != ExpressionContext::LValueAddress) {
-			const PointerDepth return_pointer_depth{static_cast<int>(normalized_return_type.pointer_depth())};
+			const PointerDepth return_pointer_depth{static_cast<int>(normalized_return_type.runtime_pointer_depth())};
 			if (isIrStructType(toIrType(normalized_return_type.type())) && normalized_return_type.type_index().is_valid()) {
 				return makeExprResult(
 					normalized_return_type.type_index().withCategory(normalized_return_type.type()),
@@ -248,7 +248,7 @@ ExprResult AstToIr::buildCallReturnResult(
 
 			TypeCategory pointee_type = getRuntimeValueType(normalized_return_type.type_index().withCategory(normalized_return_type.type()), return_pointer_depth);
 			int pointee_size_bits = getRuntimeValueSizeBits(normalized_return_type.type_index(), referenced_size_bits, return_pointer_depth);
-			int dereference_pointer_depth = normalized_return_type.pointer_depth() > 0 ? static_cast<int>(normalized_return_type.pointer_depth()) : 1;
+			int dereference_pointer_depth = normalized_return_type.runtime_pointer_depth() > 0 ? static_cast<int>(normalized_return_type.runtime_pointer_depth()) : 1;
 			TempVar loaded_value = emitDereference(pointee_type, pointee_size_bits, dereference_pointer_depth, IrValue(ret_var), source_token);
 			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			auto metadata = normalized_return_type.is_rvalue_reference()
@@ -265,7 +265,7 @@ ExprResult AstToIr::buildCallReturnResult(
 	}
 
 	// ── Non-reference (or LValueAddress context for references) ───────────
-	int result_size = (normalized_return_type.pointer_depth() > 0 || normalized_return_type.is_reference() || normalized_return_type.is_rvalue_reference())
+	int result_size = (normalized_return_type.runtime_pointer_depth() > 0 || normalized_return_type.is_reference() || normalized_return_type.is_rvalue_reference())
 						  ? 64
 						  : static_cast<int>(normalized_return_type.size_in_bits());
 	TypeIndex type_index_result = isIrStructType(toIrType(normalized_return_type.type()))
@@ -278,7 +278,7 @@ ExprResult AstToIr::buildCallReturnResult(
 		type_index_result.withCategory(normalized_return_type.type()),
 		SizeInBits{result_size},
 		IrOperand{ret_var},
-		PointerDepth{static_cast<int>(normalized_return_type.pointer_depth())},
+		PointerDepth{static_cast<int>(normalized_return_type.runtime_pointer_depth())},
 		st);
 	if (normalized_return_type.is_member_object_pointer_type()) {
 		result.ir_type = IrType::MemberObjectPointer;
@@ -1461,7 +1461,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					if (cast_info.cast_kind == StandardConversionKind::BooleanConversion &&
 						param_type != nullptr &&
 						param_type->category() == TypeCategory::Bool &&
-						param_type->pointer_depth() == 0) {
+						param_type->runtime_pointer_depth() == 0) {
 						// C++20 [conv.bool]: materialize a real bool8 from the
 						// pointer/array address. The source category may be Struct
 						// for an object pointer, so this must not fall through to
@@ -1486,7 +1486,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						from_type == TypeCategory::Struct &&
 						to_type == TypeCategory::Struct &&
 						param_ref_qualifier == CVReferenceQualifier::None &&
-						param_type->pointer_depth() == 0) {
+						param_type->runtime_pointer_depth() == 0) {
 						throw InternalError(
 							"Sema selected a derived-to-base object conversion without materializing its constructor");
 					}
@@ -1494,7 +1494,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						from_type == TypeCategory::Struct &&
 						to_type == TypeCategory::Struct &&
 						param_ref_qualifier == CVReferenceQualifier::None &&
-						param_type->pointer_depth() > 0) {
+						param_type->runtime_pointer_depth() > 0) {
 						const CanonicalTypeDesc& source_desc =
 							sema_.typeContext().get(cast_info.source_type_id);
 						const CanonicalTypeDesc& target_desc =
@@ -1580,7 +1580,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			// sema should annotate all resolved standard argument conversions.
 			if (!sema_applied_arg_conversion &&
 				param_ref_qualifier == CVReferenceQualifier::None &&
-				param_type->pointer_depth() == 0 &&
+				param_type->runtime_pointer_depth() == 0 &&
 				arg_type != param_base_type) {
 				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
 				if (standard_conversion.is_valid &&
@@ -1596,7 +1596,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 			// Check if argument type doesn't match parameter type and parameter expects struct
 			// This handles implicit conversions via converting constructors
-			if (arg_type != param_base_type && param_base_type == TypeCategory::Struct && param_type->pointer_depth() == 0) {
+			if (arg_type != param_base_type && param_base_type == TypeCategory::Struct && param_type->runtime_pointer_depth() == 0) {
 				TypeIndex param_type_index = param_type->type_index();
 
 				if (const TypeInfo* target_type_info = tryGetTypeInfo(param_type_index)) {
@@ -1667,7 +1667,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 
 			// Check if argument is struct type and parameter expects different type
-			if (arg_type == TypeCategory::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
+			if (arg_type == TypeCategory::Struct && arg_type != param_base_type && param_type->runtime_pointer_depth() == 0) {
 				if (const TypeInfo* source_type_info = tryGetTypeInfo(arg_type_index)) {
 					const int param_size = static_cast<int>(param_type->size_in_bits());
 

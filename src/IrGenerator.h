@@ -215,7 +215,7 @@ inline bool returnsStructByValue(TypeCategory type, int pointer_depth, bool is_r
 
 inline bool returnsStructByValue(const TypeSpecifierNode& return_type) {
 	return returnsStructByValue(
-		return_type.type(), return_type.pointer_depth(), return_type.is_reference());
+		return_type.type(), static_cast<int>(return_type.runtime_pointer_depth()), return_type.is_reference());
 }
 
 inline ReturnAbiDisposition planAggregateReturnDisposition(
@@ -265,7 +265,7 @@ inline ReturnAbiDisposition planAggregateReturnDisposition(
 	return planAggregateReturnDisposition(
 		return_type.type_index(),
 		return_type.type(),
-		return_type.pointer_depth(),
+		static_cast<int>(return_type.runtime_pointer_depth()),
 		return_type.is_reference(),
 		getTypeSpecSizeBits(return_type),
 		is_llp64);
@@ -296,7 +296,7 @@ inline bool needsHiddenReturnParam(const TypeSpecifierNode& return_type, bool is
 	return needsHiddenReturnParam(
 		return_type.type_index(),
 		return_type.type(),
-		return_type.pointer_depth(),
+		static_cast<int>(return_type.runtime_pointer_depth()),
 		return_type.is_reference(),
 		getTypeSpecSizeBits(return_type),
 		is_llp64);

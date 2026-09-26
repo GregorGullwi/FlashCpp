@@ -88,7 +88,7 @@ bool AstToIr::shouldPreferExpressionReturnType(
 		decl_type.category() != expr_type.category()) {
 		return false;
 	}
-	if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
+	if (decl_type.runtime_pointer_depth() > expr_type.runtime_pointer_depth()) {
 		return false;
 	}
 	if ((decl_type.is_reference() || decl_type.is_rvalue_reference()) &&
@@ -3213,7 +3213,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 	const TypeSpecifierNode& return_type = template_decl.type_specifier_node();
 	func_decl_op.return_type_index = return_type.type_index();
 	func_decl_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
-	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.pointer_depth())};
+	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.runtime_pointer_depth())};
 
 	// Add function name and struct name
 	func_decl_op.function_name = full_func_name;
@@ -3247,7 +3247,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 				const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
 				func_param.type_index = param_type.type_index();
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
-				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.runtime_pointer_depth())};
 			}
 
 			// Handle empty parameter names

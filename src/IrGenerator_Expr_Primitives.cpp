@@ -425,7 +425,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		if (isPlaceholderAutoType(result_type)) {
 			result_type = resolveCodegenTypeCategory(type_node, "identifier lowering");
 		}
-		const bool is_enum_pointer = type_node.category() == TypeCategory::Enum && type_node.pointer_depth() > 0;
+		const bool is_enum_pointer = type_node.category() == TypeCategory::Enum && type_node.runtime_pointer_depth() > 0;
 		if (!is_enum_pointer && type_node.category() == TypeCategory::Enum) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 				type_info && type_info->getEnumInfo()) {
@@ -1169,7 +1169,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			TempVar result_temp = var_counter.next();
 				// For arrays, result is a pointer (64-bit address)
 			bool is_array_type = decl_node.is_array_object() || type_node.is_array();
-			int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
+			int size_bits = (type_node.runtime_pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.setType(type_node.category());
 			op.result.ir_type = toIrType(type_node.type());
@@ -1294,7 +1294,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			pointee_size = getRuntimeValueSizeBits(
 				type_node.type_index(), pointee_size, PointerDepth{});
 
-			int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
+			int ptr_depth = type_node.runtime_pointer_depth() > 0 ? static_cast<int>(type_node.runtime_pointer_depth()) : 1;
 			TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
 												  StringTable::getOrInternStringHandle(identifierNode.name()));
 
@@ -1463,7 +1463,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				TypeCategory pointee_type = type_node.type();
 				int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference variable load lowering");
 
-				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
+				int ptr_depth = type_node.runtime_pointer_depth() > 0 ? static_cast<int>(type_node.runtime_pointer_depth()) : 1;
 				TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
 													  StringTable::getOrInternStringHandle(identifierNode.name()));
 

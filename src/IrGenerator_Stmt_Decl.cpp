@@ -1827,7 +1827,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												if (param_type.category() == TypeCategory::Struct &&
 													!param_type.is_reference() &&
 													!param_type.is_rvalue_reference() &&
-													param_type.pointer_depth() == 0) {
+									param_type.runtime_pointer_depth() == 0) {
 													candidate_is_shape_compatible = false;
 													break;
 												}
