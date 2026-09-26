@@ -1074,6 +1074,68 @@ struct DeferredTemplateBaseClassSpecifier {
 	SaveHandle replayPosition() const { return *replay_position; }
 };
 
+// Syntax-owned declarator wrappers in declared-type order (outermost first).
+// The canonical adapter applies this sequence in reverse around the base TypeId.
+// Function and member-pointer payloads continue to live in the existing cold
+// fields during the bridge; the component records their exact position.
+enum class DeclaratorComponentKind : uint8_t {
+	Pointer,
+	LValueReference,
+	RValueReference,
+	Array,
+	UnknownBoundArray,
+	Function,
+	MemberObjectPointer,
+	MemberFunctionPointer,
+};
+
+struct DeclaratorComponent {
+	uint64_t payload = 0; // Array extent, or zero for non-array wrappers.
+	EntityId member_owner{};
+	DeclaratorComponentKind kind = DeclaratorComponentKind::Pointer;
+	CVQualifier cv_qualifier = CVQualifier::None;
+	uint16_t reserved = 0;
+
+	static DeclaratorComponent pointer(CVQualifier cv) {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Pointer, cv, 0};
+	}
+	static DeclaratorComponent lvalueReference() {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::LValueReference,
+			CVQualifier::None, 0};
+	}
+	static DeclaratorComponent rvalueReference() {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::RValueReference,
+			CVQualifier::None, 0};
+	}
+	static DeclaratorComponent array(size_t extent) {
+		return DeclaratorComponent{static_cast<uint64_t>(extent), {},
+			DeclaratorComponentKind::Array, CVQualifier::None, 0};
+	}
+	static DeclaratorComponent unknownBoundArray() {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::UnknownBoundArray,
+			CVQualifier::None, 0};
+	}
+	static DeclaratorComponent function() {
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Function,
+			CVQualifier::None, 0};
+	}
+	static DeclaratorComponent memberPointer(EntityId owner, bool is_function,
+		CVQualifier cv) {
+		return DeclaratorComponent{
+			0,
+			owner,
+			is_function
+				? DeclaratorComponentKind::MemberFunctionPointer
+				: DeclaratorComponentKind::MemberObjectPointer,
+			cv,
+			0};
+	}
+
+	friend bool operator==(DeclaratorComponent, DeclaratorComponent) = default;
+};
+
+static_assert(sizeof(DeclaratorComponent) == 16);
+
 struct FunctionSignature;
 
 // Complete type-id used by a function signature component. Function parameter
@@ -1082,6 +1144,7 @@ struct FunctionType {
 	TypeIndex type_index{};
 	CVQualifier cv_qualifier = CVQualifier::None;
 	std::vector<CVQualifier> pointer_qualifiers;
+	std::vector<DeclaratorComponent> ordered_declarator_components;
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
 	std::vector<size_t> array_dimensions;
 	bool has_unsized_outer_array_dimension = false;
