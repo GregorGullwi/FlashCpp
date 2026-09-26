@@ -709,12 +709,20 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context) {
 	if (syntax.has_ordered_declarator()) {
-		// The ordered spine, not the flattened signature return type, is the
-		// function's structure. Drop the signature only on the base import so
-		// this arm does not recurse, then wrap that base with the spine.
+		// A function component owns the signature on this specifier. If the
+		// ordered declarator only wraps a callable alias (for example, a pointer
+		// to an array of function pointers), the signature instead describes the
+		// base and must be imported before applying the outer spine.
+		bool has_function_component = false;
+		for (const DeclaratorComponent& component : syntax.declarator_components()) {
+			has_function_component = has_function_component ||
+				component.kind == DeclaratorComponentKind::Function;
+		}
 		TypeSpecifierNode base = syntax;
 		base.clear_ordered_declarator();
-		base.clear_function_signature();
+		if (has_function_component) {
+			base.clear_function_signature();
+		}
 		const CanonicalTypeImport imported_base = importCanonicalTypeImpl(
 			table, base, CanonicalTypeImportContext::Exact);
 		if (imported_base.status != CanonicalTypeImportStatus::Supported) {

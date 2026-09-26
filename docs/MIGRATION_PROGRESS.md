@@ -47,12 +47,21 @@ canonical importer supports the substituted type, including projectable
 pointer-to-array types. Other projectable types retain their substituted flat
 projection until their importer family is available. Qualified lookup and
 object-member access read a published identity through the same adapter.
-The copy/substitution paths, including full specializations, still need an
-inventory audit. A valid static-member type with a nested callable alias can
-still exceed the importer and receives `UnsupportedStaticMemberType` (1020).
-This is an implementation gap, not a C++ restriction. Undeduced `auto` or
-`decltype(auto)` without an initializer is separately diagnosed as
-`AutoTypeDeductionFailure` (1014).
+Callable aliases can now be imported as the base of ordered pointer/array
+declarators, including static members whose type is a pointer to an array of
+function pointers, as well as nested callable aliases. Static-member copy and
+substitution routes have been audited: direct semantic copies retain their
+`TypeId`, substituted members re-import from their substituted declaration,
+explicit-specialization copies reuse an already published exact identity when
+needed, and the lazy fallback carries the substituted identity with its
+registry entry. AST-only `StaticMemberDecl` copies retain the declaration type
+and rebuild the semantic identity when materialized. Parser-side materialization
+can retain the declared callable signature when the canonical exporter does
+not yet rebuild nested callable payloads, after confirming it imports to the
+published `TypeId`. Sema conversion-descriptor consumption of an ordered
+callable alias remains open; see [known issues](KNOWN_ISSUES.md).
+`UnsupportedStaticMemberType` (1020) remains a fail-closed guard for canonical
+type families not yet imported.
 
 The explicit declarator frame stack keeps nested declarator depth off the native
 call stack. The recorded Clang stack-usage probe measured `parse_declarator` at
@@ -80,9 +89,10 @@ Continue boundary 3A in this order:
    rules. Keep unsupported shapes fail-closed until their consumers are
    structural.
 3. **Complete importer and declarator coverage.** Add canonical import support
-   for valid ordered forms still rejected at a boundary, including nested
-   callable aliases used by static members. Preserve member `TypeId`s through
-   every AST copy and substitution route.
+   for remaining valid ordered forms still rejected at a boundary, including
+   alias array, reference, and member-pointer wrappers. Keep member `TypeId`s
+   preserved through every AST copy and substitution route as those paths
+   migrate.
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;

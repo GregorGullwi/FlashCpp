@@ -1599,6 +1599,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			lazy_info.initializer_position,
 			lazy_info.definition_lookup_context,
 			lazy_info.is_constexpr);
+		struct_info->static_members.back().canonical_type_id =
+			lazy_info.canonical_type_id;
 	}
 
 	// Mark as instantiated (remove from lazy registry)

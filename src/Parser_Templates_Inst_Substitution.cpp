@@ -6366,6 +6366,24 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 					}
 				}
 			}
+			if (!copied_static_member.canonical_type_id) {
+				// This is a concrete full specialization, so a published semantic
+				// identity is already exact and can be carried over when its AST
+				// declaration is unavailable to the importer.
+				const auto spec_type_it = getTypesByNameMap().find(spec_struct.name());
+				if (spec_type_it != getTypesByNameMap().end()) {
+					const StructTypeInfo* spec_struct_info =
+						spec_type_it->second->getStructInfo();
+					if (spec_struct_info != nullptr) {
+						const StructStaticMember* published_member =
+							spec_struct_info->findStaticMember(static_member.name);
+						if (published_member != nullptr) {
+							copied_static_member.canonical_type_id =
+								published_member->canonical_type_id;
+						}
+					}
+				}
+			}
 		}
 	} else {
 		// Fall back to the specialization's StructTypeInfo when the AST does not
