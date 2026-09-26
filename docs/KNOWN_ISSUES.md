@@ -88,8 +88,11 @@ general IR layout/subscript consumers, and lazy-constraint trait evaluation
 still read parallel flat pointer/array fields, so they remain vulnerable to
 projection drift.
 Ordered declarators over alias array, reference, function, or member-pointer
-wrappers remain unsupported; longer alias-template forwarding chains can still
-lose a pointee array extent even when a single forwarding alias preserves it.
+wrappers remain unsupported. A three-hop alias-template forwarding chain can
+lose the pointee array extent even when one forwarding alias preserves it:
+`A0<T, N> = T (*)[N]`, `A1<T, N> = A0<T, N>`, `A2<T, N> = A1<T, N>`, and
+`A3<T, N> = A2<T, N>` make `sizeof(*p)` fail to retain the full array size
+for `A3<T, 3> p`; a 64-hop probe reported `sizeof(T)` instead.
 Non-projectable spines are rejected at migrated boundary guards rather than
 being reordered or truncated. Remove this entry when those consumers migrate
 and the compatibility projection fields are deleted.
