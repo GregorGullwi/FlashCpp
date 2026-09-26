@@ -1626,6 +1626,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		(from.is_pointer() || from.is_array()) &&
 		to.category() == TypeCategory::Bool &&
 		!to.is_pointer() && !to.is_array();
+	const bool may_be_nullptr_pointer_conversion =
+		from.category() == TypeCategory::Nullptr && to.is_pointer();
 	const bool may_be_builtin_conversion =
 		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
 		!from.is_pointer() && !from.is_array() &&
@@ -1635,7 +1637,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		orderedDeclaratorIsReference(from) ||
 		orderedDeclaratorIsReference(to) ||
 		(!may_be_pointer_pair && !may_be_array_decay &&
-			!may_be_boolean_conversion && !may_be_builtin_conversion) ||
+			!may_be_boolean_conversion && !may_be_nullptr_pointer_conversion &&
+			!may_be_builtin_conversion) ||
 		!hasNonRecursiveBaseType(from) || !hasNonRecursiveBaseType(to)) {
 		return std::nullopt;
 	}
@@ -1675,8 +1678,12 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	const bool is_builtin_conversion =
 		from_node.kind == CanonicalTypeKind::Builtin &&
 		to_node.kind == CanonicalTypeKind::Builtin;
+	const bool is_nullptr_pointer_conversion =
+		from_node.kind == CanonicalTypeKind::Builtin &&
+		from_node.builtin == CanonicalBuiltinKind::Nullptr &&
+		to_node.kind == CanonicalTypeKind::Pointer;
 	if (!is_pointer_pair && !is_array_decay && !is_boolean_conversion &&
-		!is_builtin_conversion) {
+		!is_builtin_conversion && !is_nullptr_pointer_conversion) {
 		return std::nullopt;
 	}
 	const ConversionPlan plan = buildCanonicalStructuralConversionPlan(

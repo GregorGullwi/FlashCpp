@@ -2124,6 +2124,10 @@ public:
 			has_unsized_outer_array_dimension_ = false;
 		}
 	}
+	void markPointeeArrayAsArrayObject() {
+		pointee_array_declarator_ = false;
+		is_array_ = true;
+	}
 	// Stores the pointee bounds carried by a pointer-to-array declarator
 	// without changing the object-ness of the declared entity.
 	void set_pointee_array_dimensions(std::span<const size_t> dims) {

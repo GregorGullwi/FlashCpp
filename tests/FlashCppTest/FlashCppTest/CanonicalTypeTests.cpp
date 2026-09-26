@@ -313,6 +313,33 @@ TEST_CASE("Projectable pointer and array conversions reach bool") {
 	CHECK_FALSE(buildConversionPlan(null_pointer, bool_target).is_valid);
 }
 
+TEST_CASE("Projectable nullptr conversions use canonical pointer rules") {
+	FrontendContext context;
+	TypeSpecifierNode null_pointer(
+		TypeCategory::Nullptr, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	TypeSpecifierNode integer_pointer(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	integer_pointer.add_pointer_level(CVQualifier::None);
+	const size_t initial_type_count = context.canonicalTypes().size();
+
+	const std::optional<ConversionPlan> canonical_plan =
+		tryBuildCanonicalProjectableConversionPlan(null_pointer, integer_pointer);
+	REQUIRE(canonical_plan.has_value());
+	CHECK(canonical_plan->is_valid);
+	CHECK(canonical_plan->rank == ConversionRank::Conversion);
+	CHECK(canonical_plan->kind == StandardConversionKind::PointerConversion);
+	CHECK(context.canonicalTypes().size() == initial_type_count);
+
+	const ConversionPlan parser_plan = buildConversionPlan(null_pointer, integer_pointer);
+	CHECK(parser_plan.is_valid);
+	CHECK(parser_plan.kind == StandardConversionKind::PointerConversion);
+	CHECK_FALSE(buildConversionPlan(integer_pointer, null_pointer).is_valid);
+
+	TypeSpecifierNode bool_target(
+		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	CHECK_FALSE(buildConversionPlan(null_pointer, bool_target).is_valid);
+}
+
 TEST_CASE("Semantic peak excludes nonoverlapping allocations") {
 	FrontendContext context;
 	auto& builder = context.declarationBuilder();
