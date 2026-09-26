@@ -2602,10 +2602,6 @@ inline void appendDeclaratorShapeForSubstitution(
 			type.declarator_components().end());
 		return;
 	}
-	if (type.has_member_class() && type.pointer_depth() != 0) {
-		throw InternalError(
-			"cannot compose an ordered alias target with a flat member-pointer argument");
-	}
 	if (type.reference_qualifier() == ReferenceQualifier::LValueReference) {
 		components.push_back(DeclaratorComponent::lvalueReference());
 	} else if (type.reference_qualifier() == ReferenceQualifier::RValueReference) {
@@ -2626,6 +2622,23 @@ inline void appendDeclaratorShapeForSubstitution(
 		}
 	};
 	auto append_pointers = [&]() {
+		if (type.has_member_class() && type.pointer_depth() != 0) {
+			TypeSpecifierNode member_pointer_type = type;
+			tryBindPublishedMemberClassEntity(member_pointer_type);
+			if (!member_pointer_type.has_member_class_entity()) {
+				throw InternalError(
+					"member-pointer substitution has no published owner identity");
+			}
+			const CVQualifier member_pointer_cv =
+				member_pointer_type.pointer_levels().empty()
+					? CVQualifier::None
+					: member_pointer_type.pointer_levels().front().cv_qualifier;
+			components.push_back(DeclaratorComponent::memberPointer(
+				member_pointer_type.member_class_entity(),
+				member_pointer_type.category() == TypeCategory::MemberFunctionPointer,
+				member_pointer_cv));
+			return;
+		}
 		for (size_t index = type.pointer_levels().size(); index-- > 0;) {
 			components.push_back(DeclaratorComponent::pointer(
 				type.pointer_levels()[index].cv_qualifier));
@@ -2687,6 +2700,52 @@ inline void promoteDeclaratorShapeToOrdered(
 	}
 	type.clear_declarator_shape();
 	type.set_ordered_declarator(std::move(components));
+}
+
+template <typename BoundEvaluator>
+inline bool resolveOrderedDeclaratorArrayBounds(
+	TypeSpecifierNode& type,
+	std::span<const ASTNode> array_bound_expressions,
+	BoundEvaluator&& evaluate_bound) {
+	if (!type.has_ordered_declarator()) {
+		throw InternalError(
+			"ordered array bound resolution requires an ordered declarator");
+	}
+	std::vector<DeclaratorComponent> components(
+		type.declarator_components().begin(),
+		type.declarator_components().end());
+	size_t array_component_index = 0;
+	for (DeclaratorComponent& component : components) {
+		if (component.kind != DeclaratorComponentKind::Array &&
+			component.kind != DeclaratorComponentKind::UnknownBoundArray) {
+			continue;
+		}
+		if (array_component_index >= array_bound_expressions.size()) {
+			throw InternalError(
+				"ordered alias array component has no bound record");
+		}
+		const ASTNode& bound_expression =
+			array_bound_expressions[array_component_index++];
+		if (component.kind != DeclaratorComponentKind::Array ||
+			component.payload != 0) {
+			continue;
+		}
+		if (!bound_expression.has_value()) {
+			throw InternalError(
+				"dependent ordered alias array component has no bound expression");
+		}
+		const std::optional<size_t> bound = evaluate_bound(bound_expression);
+		if (!bound.has_value() || *bound == 0) {
+			return false;
+		}
+		component.payload = static_cast<uint64_t>(*bound);
+	}
+	if (array_component_index != array_bound_expressions.size()) {
+		throw InternalError(
+			"ordered alias array bound records do not match its components");
+	}
+	type.set_ordered_declarator(std::move(components));
+	return true;
 }
 
 inline void applyOuterDeclaratorShapeForSubstitution(
@@ -2817,6 +2876,8 @@ struct ResolvedAliasTypeInfo {
 	size_t pointer_depth = 0;
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
 	bool pointee_array_declarator = false;
+	bool has_ordered_declarator = false;
+	std::vector<DeclaratorComponent> ordered_declarator;
 	std::optional<FunctionSignature> function_signature;
 	std::optional<StringHandle> member_class_name;
 	std::vector<size_t> array_dimensions;
@@ -2837,6 +2898,15 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 	if (!type_index.is_valid()) {
 		return resolved;
 	}
+	std::vector<DeclaratorComponent> alias_declarator_components;
+	bool has_ordered_alias_declarator = false;
+	auto finalize = [&]() {
+		if (has_ordered_alias_declarator) {
+			resolved.has_ordered_declarator = true;
+			resolved.ordered_declarator = std::move(alias_declarator_components);
+		}
+		return resolved;
+	};
 
 	auto appendArrayDimensions = [](std::vector<size_t>& dims, std::span<const size_t> suffix) {
 		if (suffix.empty()) {
@@ -2856,6 +2926,11 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		resolved.terminal_type_info = type_info;
 		if (type_info->isTypeAlias()) {
 			if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
+				has_ordered_alias_declarator |=
+					alias_type_spec->has_ordered_declarator();
+				appendDeclaratorShapeForSubstitution(
+					*alias_type_spec,
+					alias_declarator_components);
 				resolved.cv_qualifier |= alias_type_spec->cv_qualifier();
 				resolved.pointer_depth += alias_type_spec->pointer_depth();
 				if (alias_type_spec->reference_qualifier() == ReferenceQualifier::LValueReference) {
@@ -2937,7 +3012,7 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 			} else {
 				resolved.type_index = current_type_index.withCategory(type_info->typeEnum());
 			}
-			return resolved;
+			return finalize();
 		}
 
 		current_type_index = next_type_index;
@@ -2947,7 +3022,7 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		resolved.terminal_type_info = type_info;
 		resolved.type_index = current_type_index.withCategory(type_info->typeEnum());
 	}
-	return resolved;
+	return finalize();
 }
 
 inline CVQualifier TypeSpecifierNode::pointee_cv_for_pointer_conversion() const {

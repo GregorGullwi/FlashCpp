@@ -1505,6 +1505,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			advance(); // consume '['
 			if (peek() == "]"_tok) {
 				type_spec.set_array(true);
+				alias_array_bound_expressions.emplace_back();
 				advance(); // consume ']'
 			} else {
 				auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);

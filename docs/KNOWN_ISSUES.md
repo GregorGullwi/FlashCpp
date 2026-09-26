@@ -81,47 +81,23 @@ occurs for a concrete non-template friend form.
 
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
-The AST and canonical adapter now preserve arbitrary pointer/array
-interleaving in an ordered declarator spine, including
-`int (*(*p)[3])[4]`, deeper alternation, abstract declarators, and per-pointer
-cv. The migrated size/dereference path consumes that structure. Signature and
-placeholder-return comparisons distinguish ordered shapes and compare
-projectable ordered shapes with legacy shapes. Canonicalization composes
-pointer-alias layers with ordered declarators while preserving cv on each
-pointer level; its architecture test checks the resulting canonical type.
-
 Boundary 3A is not complete: descriptors use `structural_type_id` for shapes
 that the flat fields cannot represent, but projectable types still use those
 fields as semantic identity. Template argument and substitution storage,
 general IR layout/subscript consumers, and lazy-constraint trait evaluation
 still read parallel flat pointer/array fields, so they remain vulnerable to
-projection drift. Shared and constant-evaluation paths now classify
-`__is_pointer` and `__is_array` from the imported canonical outer wrapper.
+projection drift.
 Ordered declarators over alias array, reference, function, or member-pointer
-wrappers remain unsupported. Non-projectable spines are rejected at migrated
-boundary guards rather than being reordered or truncated. Remove this entry
-when those consumers migrate and the compatibility projection fields are
-deleted.
+wrappers remain unsupported; longer alias-template forwarding chains can still
+lose a pointee array extent even when a single forwarding alias preserves it.
+Non-projectable spines are rejected at migrated boundary guards rather than
+being reordered or truncated. Remove this entry when those consumers migrate
+and the compatibility projection fields are deleted.
 
-Static-member import now publishes a canonical `TypeId` for callable aliases
-inside ordered pointer/array declarators, including a function alias whose
-return type is another function pointer. Qualified static-member type queries
-carry the published semantic identity and retain the declaration syntax for
-parser-facing consumers, so `sizeof(Holder::value)` now works when the member
-is declared as `OuterFunction* (*value)[3]`. The general flat conversion-
-descriptor path still rejects ordered declarators over aliases with callable,
-array, reference, or member-pointer wrappers. This is the remaining consumer
-migration gap; the static-member identity remains published and must not be
-flattened to bypass it. Expression sizing can now follow a static member's
-canonical pointer/array identity through dereference and built-in subscript,
-so `sizeof(*Holder::value)` and `sizeof(Holder::value[0])` retain the array
-extent even when nested callable aliases prevent a flat declarator export.
-
-Flat data-member-pointer declarators now publish the structural
-`MemberObjectPointer` node (the owner travels in the node, not a parallel
-scalar), and `exportCanonicalDeclarator` round-trips that node back to an
-ordered spine. The flat pointer level remains only as the compatibility
-projection until the flat fields are deleted.
+The general flat conversion-descriptor path also rejects ordered declarators
+over aliases with callable, array, reference, or member-pointer wrappers. Static
+member semantic identity must remain canonical and must not be flattened to
+bypass this consumer migration gap.
 
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 

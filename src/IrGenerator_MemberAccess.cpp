@@ -375,7 +375,8 @@ AstToIr::MultiDimPointeeDerefArrayAccess AstToIr::collectMultiDimPointeeDerefInd
 	if (!desc.pointee_array_declarator ||
 		desc.pointer_levels.size() != 1 ||
 		desc.array_dimensions.empty() ||
-		desc.array_dimensions.size() < indices_reversed.size() ||
+		desc.array_dimensions.size() +
+			static_cast<size_t>(desc.has_unsized_outer_array_dimension) < indices_reversed.size() ||
 		indices_reversed.size() <= 1) {
 		return result;
 	}
@@ -459,7 +460,20 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			if (element_size_bits <= 0) {
 				throw InternalError("Pointer-to-array subscript could not resolve element size");
 			}
-			const TemplateVector<size_t, 4>& dim_sizes = pointee_desc.array_dimensions;
+			std::vector<size_t> dim_sizes;
+			dim_sizes.reserve(
+				pointee_desc.array_dimensions.size() +
+				static_cast<size_t>(pointee_desc.has_unsized_outer_array_dimension));
+			if (pointee_desc.has_unsized_outer_array_dimension) {
+				// The unknown outer extent affects the number of rows, but not the
+				// stride within a row. Zero is safe here because stride calculation
+				// only multiplies extents following the current dimension.
+				dim_sizes.push_back(0);
+			}
+			dim_sizes.insert(
+				dim_sizes.end(),
+				pointee_desc.array_dimensions.begin(),
+				pointee_desc.array_dimensions.end());
 
 			// Materialize the base address: the dereferenced pointer's VALUE
 			// is the address of the pointee array object ([dcl.ptr]/1), so no

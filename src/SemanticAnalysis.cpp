@@ -642,9 +642,61 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	type_node.set_cv_qualifier(desc.base_cv);
 	if (desc.structural_type_id) {
 		const CanonicalDeclaratorExport exported = exportCanonicalDeclarator(
-			requireFrontendContext().canonicalTypes(),
+				requireFrontendContext().canonicalTypes(),
 			desc.structural_type_id);
 		if (exported.status != CanonicalTypeImportStatus::Supported) {
+			if (exported.status == CanonicalTypeImportStatus::UnmigratedCallable) {
+				// Nested callable returns may outgrow the single-signature flat export.
+				// Keep the alias syntax as the base and export only wrappers outside it;
+				// the round-trip check prevents substituting an approximate legacy shape.
+				CanonicalTypeTable& canonical_types =
+					requireFrontendContext().canonicalTypes();
+				const TypeInfo* base_type_info = tryGetTypeInfo(desc.type_index);
+				const TypeSpecifierNode* base_alias_spec =
+					base_type_info != nullptr && base_type_info->isTypeAlias()
+						? base_type_info->aliasTypeSpecifier()
+						: nullptr;
+				if (base_alias_spec != nullptr) {
+					const CanonicalTypeImport imported_alias =
+						importCanonicalType(canonical_types, *base_alias_spec);
+					if (imported_alias.status == CanonicalTypeImportStatus::Supported) {
+						const CanonicalDeclaratorExport outer_declarator =
+							exportCanonicalDeclaratorUntil(
+								canonical_types,
+								desc.structural_type_id,
+								imported_alias.type);
+						if (outer_declarator.status ==
+							CanonicalTypeImportStatus::Supported) {
+							TypeSpecifierNode alias_type = *base_alias_spec;
+							alias_type.add_cv_qualifier(desc.base_cv);
+							if (!alias_type.has_function_signature() &&
+								desc.function_signature.has_value()) {
+								alias_type.set_function_signature(
+									*desc.function_signature);
+							}
+							TypeSpecifierNode outer_type(
+								desc.type_index,
+								0,
+								Token{},
+								CVQualifier::None,
+								ReferenceQualifier::None);
+							outer_type.set_ordered_declarator(
+								outer_declarator.components);
+							applyOuterDeclaratorShapeForSubstitution(
+								alias_type,
+								outer_type);
+							const CanonicalTypeImport verified_alias_type =
+								importCanonicalType(canonical_types, alias_type);
+							if (verified_alias_type.status ==
+									CanonicalTypeImportStatus::Supported &&
+								verified_alias_type.type == desc.structural_type_id) {
+								setMaterializedTypeSpecifierSize(alias_type);
+								return alias_type;
+							}
+						}
+					}
+				}
+			}
 			throw InternalError(
 				"semantic materialization rejected ordered declarator");
 		}
@@ -1240,6 +1292,8 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 			return false;
 	}
 	if (array_dimensions != other.array_dimensions)
+		return false;
+	if (has_unsized_outer_array_dimension != other.has_unsized_outer_array_dimension)
 		return false;
 	if (pointee_array_declarator != other.pointee_array_declarator)
 		return false;
@@ -5272,6 +5326,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			desc.array_dimensions.push_back(dim);
 		}
 	}
+	desc.has_unsized_outer_array_dimension = type.has_unsized_outer_array_dimension();
 
 	// Function signature. Alias-backed function pointer/reference types can
 	// materialize as the underlying return category plus pointer/reference

@@ -90,6 +90,14 @@ member layout. Regression coverage checks size, reads, and writes across
 different element types and bounds in
 `tests/test_template_ptr_to_array_member_subscript_ret0.cpp`.
 
+Alias-template substitution now retains ordered pointer/array wrappers and
+their bound records through nested forwarding aliases. Canonical type
+descriptors also preserve an unknown outer bound alongside known inner extents,
+so `T (*)[][N]` keeps pointer-sized layout, row `sizeof`, and row-major
+subscript behavior after instantiation. The regressions are
+`tests/test_alias_template_dependent_pointer_to_unknown_outer_array_bounds_ret0.cpp`
+and `tests/test_alias_template_forwarded_pointer_to_array_bounds_ret0.cpp`.
+
 The explicit declarator frame stack keeps nested declarator depth off the native
 call stack. The recorded Clang stack-usage probe measured `parse_declarator` at
 5,160 bytes versus 5,000 bytes on `origin/main`; repeat the comparison when

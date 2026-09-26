@@ -1401,25 +1401,39 @@ inline TemplateTypeArg resolveTypeInfoToTemplateArg(
 		TemplateTypeArg(outer_spec));
 }
 
-// A member type alias such as `using type = T;` instantiated with `T = int*`
-// stores the terminal type (`int`) in its TypeIndex while keeping the pointer,
-// reference, cv, array, or function-signature indirection in its aliasTypeSpecifier.
-// Collapsing such an alias to its terminal type would silently drop those surface
-// modifiers, so callers that resolve dependent member aliases must keep the alias
-// itself whenever this returns true.
+inline bool typeSpecifierPreservesSurfaceModifiers(
+	const TypeSpecifierNode& type_spec) {
+	return type_spec.has_ordered_declarator() ||
+		type_spec.pointer_depth() != 0 ||
+		type_spec.reference_qualifier() != ReferenceQualifier::None ||
+		type_spec.cv_qualifier() != CVQualifier::None ||
+		type_spec.is_array() ||
+		type_spec.has_pointee_array_declarator() ||
+		type_spec.has_unsized_outer_array_dimension() ||
+		type_spec.has_function_signature();
+}
+
+// An alias can keep its surface wrappers in its registered TypeSpecifierNode,
+// or expose them after following one or more aliases. Both forms must survive
+// type resolution rather than collapsing to the terminal TypeIndex.
+inline bool typeAliasPreservesSurfaceModifiers(
+	const ResolvedAliasTypeInfo& resolved_alias) {
+	return resolved_alias.has_ordered_declarator ||
+		resolved_alias.cv_qualifier != CVQualifier::None ||
+		resolved_alias.pointer_depth != 0 ||
+		resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+		resolved_alias.function_signature.has_value() ||
+		resolved_alias.member_class_name.has_value() ||
+		!resolved_alias.array_dimensions.empty();
+}
+
 inline bool typeAliasPreservesSurfaceModifiers(const TypeInfo& type_info) {
 	if (!type_info.isTypeAlias()) {
 		return false;
 	}
 	const TypeSpecifierNode* alias_spec = type_info.aliasTypeSpecifier();
-	if (alias_spec == nullptr) {
-		return false;
-	}
-	return alias_spec->pointer_depth() != 0 ||
-		   alias_spec->reference_qualifier() != ReferenceQualifier::None ||
-		   alias_spec->cv_qualifier() != CVQualifier::None ||
-		   alias_spec->is_array() ||
-		   alias_spec->has_function_signature();
+	return alias_spec != nullptr &&
+		typeSpecifierPreservesSurfaceModifiers(*alias_spec);
 }
 
 // A TypeInfo is a concrete alias semantic source when it resolves to a fully
@@ -1454,9 +1468,23 @@ inline bool isConcreteAliasSemanticSource(const TypeInfo* type_info) {
 inline TypeSpecifierNode resolveTypeInfoToTypeSpec(
 	const TypeInfo& type_info,
 	const TypeSpecifierNode& outer_spec) {
-	return makeTypeSpecifierFromTemplateTypeArg(
+	const TypeSpecifierNode resolved_type = makeTypeSpecifierFromTemplateTypeArg(
 		resolveTypeInfoToTemplateArg(type_info, outer_spec),
 		Token());
+	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+		type_info.registeredTypeIndex().withCategory(type_info.typeEnum()));
+	if (resolved_alias.has_ordered_declarator ||
+		outer_spec.has_ordered_declarator()) {
+		TypeSpecifierNode ordered_type = resolved_type;
+		ordered_type.clear_declarator_shape();
+		if (resolved_alias.has_ordered_declarator) {
+			ordered_type.set_ordered_declarator(
+				std::move(resolved_alias.ordered_declarator));
+		}
+		applyOuterDeclaratorShapeForSubstitution(ordered_type, outer_spec);
+		return ordered_type;
+	}
+	return resolved_type;
 }
 
 // Convert a TypeInfo::TemplateArgInfo to a TemplateTypeArg, optionally substituting

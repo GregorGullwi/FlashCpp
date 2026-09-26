@@ -2276,12 +2276,9 @@ ParseResult Parser::parse_type_specifier() {
 					appendAliasTypeDefaults(
 						requireFrontendContext().canonicalTypes(), alias_node, *template_args);
 					const TypeSpecifierNode& alias_target_type_spec = alias_node.target_type_node();
-					const bool alias_target_preserves_surface =
-						alias_target_type_spec.cv_qualifier() != CVQualifier::None ||
-						alias_target_type_spec.reference_qualifier() != ReferenceQualifier::None ||
-						alias_target_type_spec.pointer_depth() != 0 ||
-						alias_target_type_spec.has_function_signature() ||
-						alias_target_type_spec.is_array();
+					const bool alias_target_preserves_surface_modifiers =
+						typeSpecifierPreservesSurfaceModifiers(
+							alias_target_type_spec);
 
 					// Check for recursion: if we're already resolving this alias, return error
 					if (resolving_aliases_.find(type_name) != resolving_aliases_.end()) {
@@ -2431,6 +2428,20 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						if (resolved_function_signature.has_value()) {
 							type_node.as<TypeSpecifierNode>().set_function_signature(*resolved_function_signature);
+						}
+						if (resolve_aliases || type_info.isTypeAlias()) {
+							const ResolvedAliasTypeInfo resolved_alias =
+								resolveAliasTypeInfo(type_info.registeredTypeIndex());
+							if (resolved_alias.has_ordered_declarator) {
+								TypeSpecifierNode resolved_type_specifier =
+									type_node.as<TypeSpecifierNode>();
+								resolved_type_specifier.set_ordered_declarator(
+									resolved_alias.ordered_declarator);
+								if (!resolved_type_specifier.ordered_declarator_has_legacy_projection()) {
+									type_node.as<TypeSpecifierNode>().set_ordered_declarator(
+										resolved_alias.ordered_declarator);
+								}
+							}
 						}
 						return ParseResult::success(type_node);
 					};
@@ -2582,7 +2593,29 @@ ParseResult Parser::parse_type_specifier() {
 					};
 					const bool has_dependent_alias_args =
 						aliasTemplateArgsStillDependent(*template_args);
-					auto resolveAliasDimensions = [&]() -> std::optional<std::vector<size_t>> {
+					auto resolveAliasDeclarator = [&]() -> std::optional<TypeSpecifierNode> {
+						TypeSpecifierNode resolved_type = alias_target_type_spec;
+						if (resolved_type.has_ordered_declarator()) {
+							const auto bound_expressions = alias_node.arrayBoundExpressions();
+							if (!has_dependent_alias_args &&
+								!resolveOrderedDeclaratorArrayBounds(
+									resolved_type,
+									bound_expressions,
+									[&](const ASTNode& bound_expression) -> std::optional<size_t> {
+										auto bound = evaluateDependentNTTPExpression(
+											bound_expression,
+											alias_node.template_parameters(),
+											*template_args);
+										if (!bound.has_value() || !bound->is_value || bound->value <= 0) {
+											return std::nullopt;
+										}
+										return static_cast<size_t>(bound->value);
+									})) {
+								return std::nullopt;
+							}
+							return resolved_type;
+						}
+
 						std::vector<size_t> dimensions(
 							alias_target_type_spec.array_dimensions().begin(),
 							alias_target_type_spec.array_dimensions().end());
@@ -2600,44 +2633,22 @@ ParseResult Parser::parse_type_specifier() {
 								dimensions[i] = static_cast<size_t>(bound->value);
 							}
 						}
-						return dimensions;
+						resolved_type.set_array_dimensions(dimensions);
+						return resolved_type;
 					};
-					std::optional<std::vector<size_t>> resolved_dimensions = resolveAliasDimensions();
-					if (!resolved_dimensions.has_value()) {
+					std::optional<TypeSpecifierNode> resolved_alias_target =
+						resolveAliasDeclarator();
+					if (!resolved_alias_target.has_value()) {
 						return error(
 							DiagnosticId::AliasTemplateArrayBoundUnresolved,
 							type_name_token,
 							"Alias template array bound must be a positive constant expression");
 					}
-					const std::vector<size_t>& resolved_alias_dimensions = *resolved_dimensions;
-					TypeSpecifierNode resolved_alias_target_type_spec = alias_target_type_spec;
-					if (alias_target_type_spec.has_ordered_declarator()) {
-						std::vector<DeclaratorComponent> resolved_components(
-							alias_target_type_spec.declarator_components().begin(),
-							alias_target_type_spec.declarator_components().end());
-						size_t array_dimension_index = 0;
-						for (DeclaratorComponent& component : resolved_components) {
-							if (component.kind != DeclaratorComponentKind::Array) {
-								continue;
-							}
-							if (array_dimension_index >= resolved_alias_dimensions.size()) {
-								throw InternalError(
-									"ordered alias array component has no projected extent");
-							}
-							if (component.payload == 0 &&
-								resolved_alias_dimensions[array_dimension_index] != 0) {
-								component.payload = static_cast<uint64_t>(
-									resolved_alias_dimensions[array_dimension_index]);
-							}
-							++array_dimension_index;
-						}
-						if (array_dimension_index != resolved_alias_dimensions.size()) {
-							throw InternalError(
-								"ordered alias array extents do not match its components");
-						}
-						resolved_alias_target_type_spec.set_ordered_declarator(
-							std::move(resolved_components));
-					}
+					TypeSpecifierNode resolved_alias_target_type_spec =
+						std::move(*resolved_alias_target);
+					const std::vector<size_t> resolved_alias_dimensions(
+						resolved_alias_target_type_spec.array_dimensions().begin(),
+						resolved_alias_target_type_spec.array_dimensions().end());
 					const std::optional<TemplateTypeArg> direct_rebound_alias_arg =
 						!has_dependent_alias_args
 							? tryRebindAliasTargetTemplateArg(alias_node, *template_args)
@@ -2692,7 +2703,7 @@ ParseResult Parser::parse_type_specifier() {
 									findTypeByName(StringTable::getOrInternStringHandle(materialized_alias.instantiated_name));
 							}
 						}
-						if (alias_target_preserves_surface &&
+						if (alias_target_preserves_surface_modifiers &&
 							materialized_alias.resolved_type_info != nullptr) {
 							ASTNode substituted_alias_target = substituteTemplateParameters(
 								ASTNode::emplace_node<TypeSpecifierNode>(alias_node.target_type_node()),
@@ -2714,6 +2725,23 @@ ParseResult Parser::parse_type_specifier() {
 									return ParseResult::success(
 										emplace_node<TypeSpecifierNode>(substituted_target));
 								}
+							}
+						}
+						if (materialized_alias.resolved_type_specifier.has_value() &&
+							materialized_alias.resolved_type_specifier->has_ordered_declarator() &&
+							peek() != "::"_tok) {
+							TypeSpecifierNode resolved_alias_type =
+								*materialized_alias.resolved_type_specifier;
+							resolved_alias_type.add_cv_qualifier(cv_qualifier);
+							if (!typeSpecStillUsesDependentPlaceholder(resolved_alias_type) &&
+								resolved_alias_type.type() != TypeCategory::Template) {
+								if (const int resolved_size_bits =
+										getTypeSpecSizeBits(resolved_alias_type);
+								resolved_size_bits > 0) {
+									resolved_alias_type.set_size_in_bits(resolved_size_bits);
+								}
+								return ParseResult::success(
+									emplace_node<TypeSpecifierNode>(resolved_alias_type));
 							}
 						}
 						if (std::optional<ParseResult> finalized_alias =

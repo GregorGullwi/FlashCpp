@@ -751,7 +751,7 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 				component.kind == DeclaratorComponentKind::Function;
 		}
 		TypeSpecifierNode base = syntax;
-		base.clear_ordered_declarator();
+		base.clear_declarator_shape();
 		if (has_function_component) {
 			base.clear_function_signature();
 		}
@@ -1065,6 +1065,20 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		(builtin == CanonicalBuiltinKind::Void && !syntax.is_pointer() && syntax.is_reference())) {
 		return {{}, CanonicalTypeImportStatus::Invalid};
 	}
+	if (syntax.has_ordered_declarator()) {
+		CanonicalTypeTransaction transaction(table);
+		TypeId id = table.builtin(builtin);
+		id = table.qualify(id, syntax.cv_qualifier());
+		CanonicalTypeImport imported = applyCanonicalOrderedDeclarator(
+			table,
+			id,
+			syntax,
+			context);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			transaction.commit();
+		}
+		return imported;
+	}
 	for (const auto& pointer : syntax.pointer_levels()) {
 		if (static_cast<uint8_t>(pointer.cv_qualifier) > 3) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
@@ -1111,13 +1125,20 @@ inline CanonicalTypeImport importCanonicalFunctionParameterType(CanonicalTypeTab
 // Iteratively decompose the canonical wrapper chain into syntax order. The
 // returned base retains base cv qualification. Callable/member-pointer export
 // remains fail-closed until their AST payloads migrate from FunctionSignature.
-inline CanonicalDeclaratorExport exportCanonicalDeclarator(
+// Supplying stop_at_base preserves a semantic alias as the base when nested
+// callable nodes cannot be represented by one top-level declarator signature.
+inline CanonicalDeclaratorExport exportCanonicalDeclaratorUntil(
 	const CanonicalTypeTable& table,
-	TypeId type) {
+	TypeId type,
+	TypeId stop_at_base) {
 	CanonicalDeclaratorExport result{type, {}, CanonicalTypeImportStatus::Supported};
 	CVQualifier pending_pointer_cv = CVQualifier::None;
 	bool saw_function = false;
 	for (;;) {
+		if (stop_at_base && type == stop_at_base) {
+			result.base = type;
+			return result;
+		}
 		const CanonicalTypeNode node = table.node(type);
 		if (node.kind == CanonicalTypeKind::Qualified) {
 			const CanonicalTypeNode child = table.node(node.child);
@@ -1125,6 +1146,9 @@ inline CanonicalDeclaratorExport exportCanonicalDeclarator(
 				child.kind != CanonicalTypeKind::MemberObjectPointer &&
 				child.kind != CanonicalTypeKind::MemberFunctionPointer) {
 				result.base = type;
+				if (stop_at_base) {
+					result.status = CanonicalTypeImportStatus::Unresolved;
+				}
 				return result;
 			}
 			pending_pointer_cv |= node.qualifiers;
@@ -1193,11 +1217,23 @@ inline CanonicalDeclaratorExport exportCanonicalDeclarator(
 			// CanonicalTypeDesc::function_signature; stop at the function type so
 			// no extra Function component is emitted.
 			result.base = node.child;
+			if (stop_at_base && node.child != stop_at_base) {
+				result.status = CanonicalTypeImportStatus::Unresolved;
+			}
 			return result;
 		}
 		default:
 			result.base = type;
+			if (stop_at_base) {
+				result.status = CanonicalTypeImportStatus::Unresolved;
+			}
 			return result;
 		}
 	}
+}
+
+inline CanonicalDeclaratorExport exportCanonicalDeclarator(
+	const CanonicalTypeTable& table,
+	TypeId type) {
+	return exportCanonicalDeclaratorUntil(table, type, TypeId{});
 }
