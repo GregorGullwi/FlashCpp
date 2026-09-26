@@ -38,7 +38,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 	TypeCategory type_cat = type_spec.category();
 	const TypeCategory allocated_type_enum = type_spec.type();
 	int size_in_bits = static_cast<int>(type_spec.size_in_bits());
-	int pointer_depth = static_cast<int>(type_spec.pointer_depth());
+	int pointer_depth = static_cast<int>(type_spec.runtime_pointer_depth());
 
 		// Create a temporary variable for the result (pointer to allocated memory)
 	TempVar result_var = var_counter.next();
@@ -861,7 +861,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	int target_size = target_type_node.is_reference()
 		? getTypeSpecSizeBits(target_type_node)
 		: static_cast<int>(target_type_node.size_in_bits());
-	size_t target_pointer_depth = target_type_node.pointer_depth();
+	size_t target_pointer_depth = target_type_node.runtime_pointer_depth();
 	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
 
 		// For reference casts (both lvalue and rvalue), we need the address of the expression,
@@ -1422,7 +1422,7 @@ ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode
 		// Get result type and size for metadata and return value
 	TypeCategory result_type = target_type_node.type_index().category();
 	int result_size = static_cast<int>(target_type_node.size_in_bits());
-	PointerDepth result_pointer_depth{static_cast<int>(target_type_node.pointer_depth())};
+	PointerDepth result_pointer_depth{static_cast<int>(target_type_node.runtime_pointer_depth())};
 
 		// For reference types, the result is a pointer (64 bits), not the struct size
 	bool is_reference_cast = target_type_node.is_reference() || target_type_node.is_rvalue_reference();
@@ -1450,7 +1450,7 @@ ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 	const auto& target_type_node = constCastNode.target_type();
 	TypeCategory target_type = target_type_node.type();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
-	size_t target_pointer_depth = target_type_node.pointer_depth();
+	size_t target_pointer_depth = target_type_node.runtime_pointer_depth();
 	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
 
 		// Reference casts operate on the referred-to object, not a loaded copy.

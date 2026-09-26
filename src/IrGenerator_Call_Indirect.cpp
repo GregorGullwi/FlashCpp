@@ -1307,7 +1307,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr; // Not used downstream; consistent with all other MemberLoadOp sites
 					member_load.is_pointer_to_member = object_decl &&
-													   (object_decl->type_specifier_node().pointer_depth() > 0 ||
+													   (object_decl->type_specifier_node().runtime_pointer_depth() > 0 ||
 														object_decl->type_specifier_node().is_reference() ||
 														object_decl->type_specifier_node().is_rvalue_reference());
 
@@ -1387,12 +1387,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		vcall_op.result.ir_type = toIrType(return_type.type());
 		// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 		// Also handle reference return types as pointers (64 bits)
-		FLASH_LOG(Codegen, Debug, "VirtualCall return_type: ptr_depth=", return_type.pointer_depth(),
+		FLASH_LOG(Codegen, Debug, "VirtualCall return_type: ptr_depth=", return_type.runtime_pointer_depth(),
 				  " is_ptr=", return_type.is_pointer(),
 				  " is_ref=", return_type.is_reference(),
 				  " is_rref=", return_type.is_rvalue_reference(),
 				  " size_bits=", return_type.size_in_bits());
-		if (return_type.pointer_depth() > 0 || return_type.is_pointer() || return_type.is_reference() || return_type.is_rvalue_reference()) {
+		if (return_type.runtime_pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) {
 			vcall_op.result.size_in_bits = SizeInBits{64};
 		} else {
 			vcall_op.result.size_in_bits = SizeInBits{return_type.size_in_bits()};
@@ -1416,7 +1416,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// Set is_pointer_access based on whether the object is accessed through a pointer (ptr->method)
 		// or through a reference (ref.method()). References are implemented as pointers internally,
 		// so they need the same treatment as pointer access for virtual dispatch.
-		vcall_op.is_pointer_access = (object_type.pointer_depth() > 0) || object_type.is_reference() || object_type.is_rvalue_reference();
+		vcall_op.is_pointer_access = (object_type.runtime_pointer_depth() > 0) || object_type.is_reference() || object_type.is_rvalue_reference();
 
 		// Generate IR for function arguments through the same semantic conversion
 		// path as direct and non-virtual calls. Virtual dispatch changes only the
@@ -1864,7 +1864,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		IrValue this_arg_value;
 		bool this_arg_is_pointer_value = false;
 		ValueStorage this_arg_storage = ValueStorage::ContainsData;
-		bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
+		bool object_is_pointer_like = object_type.runtime_pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
 		bool object_is_lambda_captured_this = false;
 		bool object_is_lambda_capture = false;
 		bool object_is_lambda_capture_by_reference = false;
@@ -2000,7 +2000,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				addr_op.operand.setType(object_type.category());
 				addr_op.operand.ir_type = toIrType(object_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
-				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
+				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.runtime_pointer_depth())};
 				addr_op.operand.value = obj_temp;
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 				this_arg_value = IrValue(this_addr);
@@ -2046,7 +2046,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			addr_op.operand.setType(object_type.category());
 			addr_op.operand.ir_type = toIrType(object_type.type());
 			addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
-			addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
+			addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.runtime_pointer_depth())};
 			addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 			this_arg_value = IrValue(this_addr);

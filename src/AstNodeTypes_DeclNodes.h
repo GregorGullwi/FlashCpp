@@ -1936,7 +1936,8 @@ public:
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
-	// Pointer support
+	// Legacy flat-projection queries. Use runtime_pointer_depth() for runtime
+	// value representation and declarator_components() for exact declarator shape.
 	bool is_pointer() const { return !pointer_levels_.empty(); }
 	size_t pointer_depth() const { return pointer_levels_.empty() ? 0 : pointer_levels_.size(); }
 	std::span<const PointerLevel> pointer_levels() const { return pointer_levels_; }

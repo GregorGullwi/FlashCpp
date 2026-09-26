@@ -1970,7 +1970,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					auto symbol = symbol_table.lookup(identifier.name());
 					const DeclarationNode* decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
 					if (decl) {
-						pointer_depth = decl->type_specifier_node().pointer_depth();
+						pointer_depth = static_cast<int>(decl->type_specifier_node().runtime_pointer_depth());
 					}
 				}
 			}
@@ -3173,7 +3173,7 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 	}
 
 	// sema must annotate all standard constructor arg conversions.
-	if (!sema_applied && param_type.pointer_depth() == 0 &&
+	if (!sema_applied && param_type.runtime_pointer_depth() == 0 &&
 		arg_result.typeEnum() != param_base_type) {
 		TypeConversionResult conv = can_convert_type(arg_result.typeEnum(), param_base_type);
 		if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
@@ -3558,7 +3558,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	// get the correct direct-bind vs temporary-materialization/address-of handling.
 	TypedValue init_arg = buildConstructorArgumentValue(source_result, source_expr, &param_type, source_token);
 
-	init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+	init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type.runtime_pointer_depth())};
 	if (param_type.is_pointer() && !param_type.pointer_levels().empty()) {
 		if (!init_arg.is_reference()) {
 			init_arg.cv_qualifier = param_type.cv_qualifier();

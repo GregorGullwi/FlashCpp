@@ -87,7 +87,7 @@ void requireFunctionTypeReadyForCodegen(
 	if (resolved_size_bits <= 0) {
 		const bool size_required =
 			type_spec.type() != TypeCategory::Void &&
-			type_spec.pointer_depth() == 0 &&
+			type_spec.runtime_pointer_depth() == 0 &&
 			!type_spec.is_reference() &&
 			!type_spec.is_function_pointer() &&
 			!type_spec.has_function_signature();
@@ -115,7 +115,7 @@ bool typeSpecHasRuntimeLoweringShape(const TypeSpecifierNode& type_spec) {
 	if (isPlaceholderAutoType(type_spec.type())) {
 		return false;
 	}
-	if (type_spec.pointer_depth() > 0 ||
+	if (type_spec.runtime_pointer_depth() > 0 ||
 		type_spec.is_reference() ||
 		type_spec.is_rvalue_reference() ||
 		type_spec.is_function_pointer() ||
@@ -229,7 +229,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	// Set current function return type and size for type checking in return statements
 	const TypeSpecifierNode& ret_type_spec = func_decl.type_specifier_node();
 	current_function_return_value_mode_ = ReturnValueMode::None;
-	if (ret_type_spec.pointer_depth() > 0) {
+	if (ret_type_spec.runtime_pointer_depth() > 0) {
 		current_function_return_value_mode_ |= ReturnValueMode::Pointer;
 	}
 	if (ret_type_spec.is_reference()) {
@@ -321,13 +321,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	// used the unresolved ret_type_spec, which could be 0 for self-referential types.
 	int actual_ret_size = getTypeSpecSizeBits(resolved_ret_type);
 	requireFunctionTypeReadyForCodegen(func_name_view, "return", resolved_ret_type, actual_ret_size);
-	current_function_return_size_ = (resolved_ret_type.pointer_depth() > 0 || resolved_ret_type.is_reference() || currentFunctionReturnsFunctionPointer())
+	current_function_return_size_ = (resolved_ret_type.runtime_pointer_depth() > 0 || resolved_ret_type.is_reference() || currentFunctionReturnsFunctionPointer())
 										? 64
 										: actual_ret_size;
 
 	if (FLASH_LOG_ENABLED(Codegen, Debug)) {
 		FLASH_LOG(Codegen, Debug, "===== CODEGEN visitFunctionDeclarationNode: ", func_decl.identifier_token().value(), " =====");
-		FLASH_LOG(Codegen, Debug, "  return_type: ", (int)resolved_ret_type.type(), " size: ", (int)resolved_ret_type.size_in_bits(), " ptr_depth: ", resolved_ret_type.pointer_depth(), " is_ref: ", resolved_ret_type.is_reference(), " is_rvalue_ref: ", resolved_ret_type.is_rvalue_reference());
+		FLASH_LOG(Codegen, Debug, "  return_type: ", (int)resolved_ret_type.type(), " size: ", (int)resolved_ret_type.size_in_bits(), " ptr_depth: ", resolved_ret_type.runtime_pointer_depth(), " is_ref: ", resolved_ret_type.is_reference(), " is_rvalue_ref: ", resolved_ret_type.is_rvalue_reference());
 		FLASH_LOG(Codegen, Debug, "  is_member_function: ", node.is_member_function());
 		if (node.is_member_function()) {
 			FLASH_LOG(Codegen, Debug, "  parent_struct_name: ", node.parent_struct_name());
@@ -338,7 +338,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			if (param.is<DeclarationNode>()) {
 				const DeclarationNode& param_decl = param.as<DeclarationNode>();
 				TypeSpecifierNode param_type = resolve_param_type_for_codegen(param_decl);
-				FLASH_LOG(Codegen, Debug, "  param[", i, "]: name='", param_decl.identifier_token().value(), "' type=", (int)param_type.type(), " type_index=", param_type.type_index(), " size=", (int)param_type.size_in_bits(), " ptr_depth=", param_type.pointer_depth(), " base_cv=", (int)param_type.cv_qualifier(), " is_ref=", param_type.is_reference(), " is_rvalue_ref=", param_type.is_rvalue_reference());
+				FLASH_LOG(Codegen, Debug, "  param[", i, "]: name='", param_decl.identifier_token().value(), "' type=", (int)param_type.type(), " type_index=", param_type.type_index(), " size=", (int)param_type.size_in_bits(), " ptr_depth=", param_type.runtime_pointer_depth(), " base_cv=", (int)param_type.cv_qualifier(), " is_ref=", param_type.is_reference(), " is_rvalue_ref=", param_type.is_rvalue_reference());
 				for (size_t j = 0; j < param_type.pointer_levels().size(); ++j) {
 					FLASH_LOG(Codegen, Debug, " ptr[", j, "]_cv=", (int)param_type.pointer_levels()[j].cv_qualifier);
 				}
@@ -364,10 +364,10 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	// For pointer return types, use 64-bit size (pointer size on x64)
 	// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
 	// but we display it as the base type with a reference qualifier)
-	func_decl_op.return_size_in_bits = SizeInBits{(ret_type.pointer_depth() > 0 || ret_type.is_function_pointer() || ret_type.has_function_signature())
+	func_decl_op.return_size_in_bits = SizeInBits{(ret_type.runtime_pointer_depth() > 0 || ret_type.is_function_pointer() || ret_type.has_function_signature())
 													  ? 64
 													  : actual_return_size};
-	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(ret_type.pointer_depth())};
+	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(ret_type.runtime_pointer_depth())};
 	func_decl_op.returns_reference = ret_type.is_reference();
 	func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
 
@@ -509,7 +509,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		param_info.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 
 			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
-		int pointer_depth = static_cast<int>(param_type.pointer_depth());
+		int pointer_depth = static_cast<int>(param_type.runtime_pointer_depth());
 		if (param_type.is_lvalue_reference()) {
 			pointer_depth += 1;	// Add 1 for lvalue reference (ABI treats it as an additional pointer level)
 		}
@@ -1896,7 +1896,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		FunctionParam func_param;
 		func_param.type_index = param_type.type_index();
 		func_param.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
-		func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+		func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.runtime_pointer_depth())};
 
 			// Handle empty parameter names (e.g., from defaulted constructors)
 		std::string_view param_name = param_decl.identifier_token().value();
@@ -1977,7 +1977,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			arg.type_index = param_type.type_index();
 			arg.setType(param_type.type());
 			arg.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
-			arg.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+			arg.pointer_depth = PointerDepth{static_cast<int>(param_type.runtime_pointer_depth())};
 			arg.ref_qualifier = param_type.reference_qualifier();
 			arg.cv_qualifier = param_type.cv_qualifier();
 			arg.value = ctor_param_names[i];
@@ -3591,9 +3591,9 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
-	if (type_spec.pointer_depth() > 0) {
+	if (type_spec.runtime_pointer_depth() > 0) {
 		const PointerDepth pointer_depth{
-			static_cast<int>(type_spec.pointer_depth())};
+			static_cast<int>(type_spec.runtime_pointer_depth())};
 		const SizeInBits pointer_size_bits{64};
 		if (num_args == 0) {
 			return makeExprResult(

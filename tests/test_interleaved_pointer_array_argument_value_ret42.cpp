@@ -15,6 +15,9 @@ int double_pointer_is_null(double (*(*param)[2])[3]) {
 int main() {
 	int (*(*local_int_pointer)[3])[4] = int_pointer;
 	double (*(*local_double_pointer)[2])[3] = double_pointer;
+	using DoubleArray3 = double[3];
+	DoubleArray3* double_pointer_targets[2] = {};
+	double (*(*non_null_double_pointer)[2])[3] = &double_pointer_targets;
 	if (int_pointer_is_null(int_pointer) != 1) {
 		return 1;
 	}
@@ -26,6 +29,9 @@ int main() {
 	}
 	if (double_pointer_is_null(local_double_pointer) != 1) {
 		return 4;
+	}
+	if (double_pointer_is_null(non_null_double_pointer) != 0) {
+		return 5;
 	}
 	return 42;
 }

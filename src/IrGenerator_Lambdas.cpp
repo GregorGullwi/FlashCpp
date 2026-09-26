@@ -144,7 +144,7 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
 		info.return_type_index = ret_type_node.type_index().withCategory(ret_type_node.type());
 		info.return_size = ret_type_node.size_in_bits();
-		if (ret_type_node.pointer_depth() > 0) {
+		if (ret_type_node.runtime_pointer_depth() > 0) {
 			info.return_value_mode |= ReturnValueMode::Pointer;
 		}
 		if (ret_type_node.is_reference()) {
@@ -173,7 +173,7 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 			info.parameters.emplace_back(
 				param_type.type(),
 				param_type.size_in_bits(),
-				static_cast<int>(param_type.pointer_levels().size()),
+				static_cast<int>(param_type.runtime_pointer_depth()),
 				std::string(param_decl.identifier_token().value()));
 			info.parameter_nodes.push_back(param);
 		}
@@ -793,7 +793,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
 
-			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.runtime_pointer_depth())};
 
 			if (isPlaceholderAutoType(param_type.type())) {
 				throw InternalError("Unresolved generic lambda parameter reached operator() lowering");
@@ -940,7 +940,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
 
-			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.runtime_pointer_depth())};
 
 			if (isPlaceholderAutoType(param_type.type())) {
 				throw InternalError("Unresolved generic lambda parameter reached __invoke lowering");

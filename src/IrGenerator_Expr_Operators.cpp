@@ -565,7 +565,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node) {
 	value.setType(type_node.type());
 	value.ir_type = toIrType(type_node.type());
-	if (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference() || type_node.is_function_pointer() || type_node.is_member_function_pointer() || type_node.is_member_object_pointer()) {
+	if (type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference() || type_node.is_function_pointer() || type_node.is_member_function_pointer() || type_node.is_member_object_pointer()) {
 		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 	} else if (type_node.category() == TypeCategory::Struct && type_node.type_index().is_valid()) {
 		const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_node.type_index());
@@ -581,7 +581,7 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 		}
 	}
 	value.type_index = type_node.type_index();
-	value.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+	value.pointer_depth = PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())};
 	value.cv_qualifier = type_node.cv_qualifier();
 	if (type_node.is_rvalue_reference()) {
 		value.ref_qualifier = ReferenceQualifier::RValueReference;
@@ -1002,12 +1002,12 @@ TypedValue AstToIr::buildDirectIdentifierCallArgument(
 			IrValue(deref_var));
 	}
 
-	if (type_node.pointer_depth() > 0) {
+	if (type_node.runtime_pointer_depth() > 0) {
 		TypedValue arg = makeTypedValue(
 			type_node.type_index().withCategory(type_node.type()),
 			SizeInBits{POINTER_SIZE_BITS},
 			IrValue(identifier_name));
-		arg.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
+		arg.pointer_depth = PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())};
 		return arg;
 	}
 
@@ -2294,7 +2294,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	};
 
 	auto requiresUserDefinedBinaryOperator = [](const TypeSpecifierNode& type_spec) {
-		if (type_spec.pointer_depth() > 0 || type_spec.is_function_pointer() || type_spec.is_member_function_pointer() || type_spec.is_member_object_pointer()) {
+		if (type_spec.runtime_pointer_depth() > 0 || type_spec.is_function_pointer() || type_spec.is_member_function_pointer() || type_spec.is_member_object_pointer()) {
 			return false;
 		}
 		TypeCategory base_type = resolve_type_alias(type_spec.type_index());
@@ -2588,7 +2588,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	};
 	auto typeSpecRequiresUserDefinedOperator = [&](const TypeSpecifierNode& raw_type_spec) {
 		const TypeSpecifierNode type_spec = normalizeSyntaxTypeSpec(raw_type_spec);
-		if (type_spec.pointer_depth() > 0) {
+		if (type_spec.runtime_pointer_depth() > 0) {
 			return false;
 		}
 		TypeCategory semantic_type = resolve_type_alias(type_spec.type_index());
@@ -3519,7 +3519,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				const auto& var_decl = symbol->as<VariableDeclarationNode>();
 				const auto& decl = var_decl.declaration();
 				const auto& type_node = decl.type_specifier_node();
-				lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				lhs_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 				// Arrays decay to pointers in expressions - treat them as pointer_depth == 1
 				if (decl.is_array() && lhs_pointer_depth == 0) {
 					lhs_pointer_depth = 1;
@@ -3528,7 +3528,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			} else if (symbol && symbol->is<DeclarationNode>()) {
 				const auto& decl = symbol->as<DeclarationNode>();
 				const auto& type_node = decl.type_specifier_node();
-				lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				lhs_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 				// Arrays decay to pointers in expressions - treat them as pointer_depth == 1
 				if (decl.is_array() && lhs_pointer_depth == 0) {
 					lhs_pointer_depth = 1;
@@ -3547,7 +3547,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		TypeSpecifierQueryResult lhs_type_query = sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(binaryOperatorNode.get_lhs());
 		if (lhs_type_query.state == TypeSpecifierQueryResult::State::Available &&
 			lhs_type_query.type.has_value()) {
-			lhs_pointer_depth = static_cast<int>(lhs_type_query.type->pointer_depth());
+			lhs_pointer_depth = static_cast<int>(lhs_type_query.type->runtime_pointer_depth());
 		}
 	}
 
@@ -3564,12 +3564,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				const auto& var_decl = symbol->as<VariableDeclarationNode>();
 				const auto& decl = var_decl.declaration();
 				const auto& type_node = decl.type_specifier_node();
-				rhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				rhs_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 				rhs_type_node = &type_node;
 			} else if (symbol && symbol->is<DeclarationNode>()) {
 				const auto& decl = symbol->as<DeclarationNode>();
 				const auto& type_node = decl.type_specifier_node();
-				rhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				rhs_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 				rhs_type_node = &type_node;
 			}
 		}
@@ -3581,20 +3581,20 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		TypeSpecifierQueryResult rhs_type_query = sema_.parserSemanticServices().getExpressionTypeQueryFromLowering(binaryOperatorNode.get_rhs());
 		if (rhs_type_query.state == TypeSpecifierQueryResult::State::Available &&
 			rhs_type_query.type.has_value()) {
-			rhs_pointer_depth = static_cast<int>(rhs_type_query.type->pointer_depth());
+			rhs_pointer_depth = static_cast<int>(rhs_type_query.type->runtime_pointer_depth());
 		}
 	}
 	if (auto binary_type_specs = tryGetBinaryOperatorTypeSpecs(); binary_type_specs.has_value()) {
-		if (lhs_pointer_depth == 0 && binary_type_specs->first.pointer_depth() > 0) {
+		if (lhs_pointer_depth == 0 && binary_type_specs->first.runtime_pointer_depth() > 0) {
 			lhs_fallback_type_node = binary_type_specs->first;
-			lhs_pointer_depth = static_cast<int>(lhs_fallback_type_node->pointer_depth());
+			lhs_pointer_depth = static_cast<int>(lhs_fallback_type_node->runtime_pointer_depth());
 			if (!lhs_type_node) {
 				lhs_type_node = &*lhs_fallback_type_node;
 			}
 		}
-		if (rhs_pointer_depth == 0 && binary_type_specs->second.pointer_depth() > 0) {
+		if (rhs_pointer_depth == 0 && binary_type_specs->second.runtime_pointer_depth() > 0) {
 			rhs_fallback_type_node = binary_type_specs->second;
-			rhs_pointer_depth = static_cast<int>(rhs_fallback_type_node->pointer_depth());
+			rhs_pointer_depth = static_cast<int>(rhs_fallback_type_node->runtime_pointer_depth());
 			if (!rhs_type_node) {
 				rhs_type_node = &*rhs_fallback_type_node;
 			}
@@ -4215,7 +4215,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	}
 
 	// Check if we're dealing with floating-point operations
-	bool is_floating_point_op = is_floating_point_type(commonType);
+	bool is_floating_point_op = !is_pointer_comparison && is_floating_point_type(commonType);
 
 	// Create a temporary variable for the result
 	TempVar result_var = var_counter.next();
@@ -4726,7 +4726,7 @@ ExprResult AstToIr::generateBuiltinBitCastIntrinsic(const CallExprNode& callExpr
 	}
 
 	ExprResult source = visitExpressionNode(callExprNode.arguments()[1].as<ExpressionNode>());
-	int target_size_bits = target_type.pointer_depth() > 0
+	int target_size_bits = target_type.runtime_pointer_depth() > 0
 		? POINTER_SIZE_BITS
 		: queryConcreteAliasResolvedTypeSizeBits(target_type).size_bits;
 	if (target_size_bits <= 0) {
@@ -4746,7 +4746,7 @@ ExprResult AstToIr::generateBuiltinBitCastIntrinsic(const CallExprNode& callExpr
 		target_type_index,
 		SizeInBits{target_size_bits},
 		source.value,
-		PointerDepth{static_cast<int>(target_type.pointer_depth())},
+		PointerDepth{static_cast<int>(target_type.runtime_pointer_depth())},
 		ValueStorage::ContainsData);
 }
 
@@ -4829,11 +4829,11 @@ bool AstToIr::isVaListPointerType(const ASTNode& arg, const ExprResult& ir_resul
 		if (auto sym = symbol_table.lookup(id.name())) {
 			if (sym->is<DeclarationNode>()) {
 				const auto& ty = sym->as<DeclarationNode>().type_specifier_node();
-				if (ty.pointer_depth() > 0)
+				if (ty.runtime_pointer_depth() > 0)
 					return true;
 			} else if (sym->is<VariableDeclarationNode>()) {
 				const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_specifier_node();
-				if (ty.pointer_depth() > 0)
+				if (ty.runtime_pointer_depth() > 0)
 					return true;
 			}
 		}
@@ -5685,7 +5685,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 			addr_op.operand.setType(param_type.category());
 			addr_op.operand.ir_type = toIrType(param_type.type());
 			addr_op.operand.size_in_bits = SizeInBits{param_type.size_in_bits()};
-			addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+			addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(param_type.runtime_pointer_depth())};
 			addr_op.operand.value = StringTable::getOrInternStringHandle(last_param_name);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 

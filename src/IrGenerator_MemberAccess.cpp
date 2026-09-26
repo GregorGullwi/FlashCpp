@@ -81,7 +81,7 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 	// aligned entity on x64, whatever its pointee.  The parser-set
 	// size_in_bits() and any alias/struct resolution describe the base type
 	// before declarator postfixes were applied.
-	if (aligned_type.pointer_depth() > 0 ||
+	if (aligned_type.runtime_pointer_depth() > 0 ||
 		aligned_type.reference_qualifier() != ReferenceQualifier::None) {
 		return 8;
 	}
@@ -312,7 +312,7 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 			const TypeSpecifierNode& base_type = result.base_decl->type_specifier_node();
 			const bool pointer_to_array_rows =
 				base_type.has_pointee_array_declarator() &&
-				base_type.pointer_depth() == 1 &&
+				base_type.runtime_pointer_depth() == 1 &&
 				base_type.array_dimensions().size() + 1 == result.indices.size();
 			result.is_valid = result.indices.size() > 1 &&
 				(getEffectiveArrayDimensionCountForCodegen(*result.base_decl) == result.indices.size() ||
@@ -729,7 +729,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// Get all dimension sizes
 			std::vector<size_t> dim_sizes = getEffectiveArrayDimensionsForCodegen(*multi_dim.base_decl);
 			const bool pointer_to_array_rows =
-				type_node.has_pointee_array_declarator() && type_node.pointer_depth() == 1 &&
+				type_node.has_pointee_array_declarator() && type_node.runtime_pointer_depth() == 1 &&
 				type_node.array_dimensions().size() + 1 == multi_dim.indices.size();
 			if (pointer_to_array_rows) {
 				dim_sizes.clear();
@@ -1177,10 +1177,10 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 			// For pointer types or reference types (not arrays), get the pointee size
 			// BUT: Skip this if we already handled an array of pointers above (decl_ptr->is_array() case)
-			else if (!decl_ptr->is_array() && (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference())) {
-				if (type_node.pointer_depth() > 1) {
+			else if (!decl_ptr->is_array() && (type_node.runtime_pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference())) {
+				if (type_node.runtime_pointer_depth() > 1) {
 					element_size_bits = POINTER_SIZE_BITS;
-					element_pointer_depth = static_cast<int>(type_node.pointer_depth() - 1);
+					element_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth() - 1);
 				} else {
 					// Single-level pointer/reference indexing yields the base object.
 					element_size_bits = static_cast<int>(type_node.size_in_bits());
@@ -1420,7 +1420,7 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 	// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
 	// For pointers, the type might be Void with pointer_depth > 0 and type_index pointing to struct
 	bool is_valid_for_member_access = is_struct_type(object_type.category()) ||
-									  (object_type.pointer_depth() > 0 && object_type.type_index().is_valid());
+									  (object_type.runtime_pointer_depth() > 0 && object_type.type_index().is_valid());
 	if (!is_valid_for_member_access) {
 		FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
 		return false;
@@ -1432,7 +1432,7 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 	// Check if this is a pointer to struct (e.g., P* pp) or a reference to struct (e.g., P& pr)
 	// In this case, member access like pp->member or pr.member should be treated as pointer dereference
 	// References are implemented as pointers internally, so they need the same treatment
-	if (object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference()) {
+	if (object_type.runtime_pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference()) {
 		is_pointer_dereference = true;
 	}
 
@@ -1694,7 +1694,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
 
 				// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
-				if (return_type.pointer_depth() > 0) {
+				if (return_type.runtime_pointer_depth() > 0) {
 					base_object = ptr_result;
 					base_type_index = return_type.type_index();
 					is_pointer_dereference = true;
@@ -1883,7 +1883,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			}, base_object);
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
 
-			if (return_type.pointer_depth() > 0) {
+			if (return_type.runtime_pointer_depth() > 0) {
 				base_object = ptr_result;
 				base_type_index = return_type.type_index();
 				is_pointer_dereference = true;

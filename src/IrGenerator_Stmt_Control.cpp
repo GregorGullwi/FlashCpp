@@ -727,7 +727,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 
 		// C++ standard: pointers are NOT valid range expressions (no size information)
 		// Only arrays and types with begin()/end() are allowed
-	if (range_type.pointer_depth() > 0 && !range_decl.is_array()) {
+	if (range_type.runtime_pointer_depth() > 0 && !range_decl.is_array()) {
 		FLASH_LOG(Codegen, Error, "Cannot use pointer in range-based for loop; use array or type with begin()/end()");
 		return;
 	}
@@ -1142,7 +1142,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		// value and reference loop variables. The iterator is always dereferenced.
 		// For struct iterators, reinterpret as pointer to element type, then dereference.
 	ASTNode init_expr;
-	if (begin_return_type.pointer_depth() > 0) {
+	if (begin_return_type.runtime_pointer_depth() > 0) {
 		auto deref_begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		sema_.registerCodegenSynthesizedOverloadArgType(deref_begin_ident_expr, begin_type_spec);
 		auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
