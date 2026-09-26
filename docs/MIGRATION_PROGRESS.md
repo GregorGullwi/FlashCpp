@@ -58,8 +58,12 @@ registry entry. AST-only `StaticMemberDecl` copies retain the declaration type
 and rebuild the semantic identity when materialized. Parser-side materialization
 can retain the declared callable signature when the canonical exporter does
 not yet rebuild nested callable payloads, after confirming it imports to the
-published `TypeId`. Sema conversion-descriptor consumption of an ordered
-callable alias remains open; see [known issues](KNOWN_ISSUES.md).
+published `TypeId`. Qualified static-member semantic slots now carry the
+interned descriptor directly, and parser-facing type queries reuse the resolved
+declaration syntax when a structural export is unavailable. This covers
+`sizeof` on a qualified static member with a nested callable alias. General
+conversion-descriptor consumption of alias wrappers remains open; see
+[known issues](KNOWN_ISSUES.md).
 `UnsupportedStaticMemberType` (1020) remains a fail-closed guard for canonical
 type families not yet imported.
 

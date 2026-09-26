@@ -307,6 +307,7 @@ public:
 		ASTNode symbol;
 		StringHandle storage_name{};
 		TypeSpecifierNode type;
+		CanonicalTypeId semantic_type_id{};
 		TypeCategory constant_type = TypeCategory::Invalid;
 		SizeInBits constant_size{0};
 		unsigned long long constant_value = 0;

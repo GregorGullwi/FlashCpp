@@ -5096,7 +5096,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					resolved_qualified_identifier_table_[&e] = *resolved;
 					if (resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
 						SemanticSlot slot = getSlot(static_cast<const void*>(&expr)).value_or(SemanticSlot{});
-						slot.type_id = canonicalizeType(resolved->type);
+						slot.type_id = resolved->semantic_type_id;
 						slot.value_category = ValueCategory::LValue;
 						setSlot(static_cast<const void*>(&expr), slot);
 					}
@@ -5618,7 +5618,26 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 		return {TypeSpecifierQueryResult::State::NotYetAnalyzed, std::nullopt};
 	}
 
-	TypeSpecifierNode type = materializeTypeSpecifier(type_context_.get(slot->type_id));
+	TypeSpecifierNode type;
+	bool has_resolved_static_member_type = false;
+	const ExpressionNode& expr = node.as<ExpressionNode>();
+	const QualifiedIdentifierNode* qualified_identifier =
+		std::get_if<QualifiedIdentifierNode>(&expr);
+	if (qualified_identifier != nullptr) {
+		const auto resolved = getResolvedQualifiedIdentifier(qualified_identifier);
+		if (resolved.has_value() &&
+			resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
+			// The canonical descriptor carries the exact structural identity, but
+			// some callable alias shapes cannot yet be exported back into a flat
+			// TypeSpecifierNode. Keep the already-resolved declaration syntax for
+			// parser-facing type queries such as sizeof.
+			type = resolved->type;
+			has_resolved_static_member_type = true;
+		}
+	}
+	if (!has_resolved_static_member_type) {
+		type = materializeTypeSpecifier(type_context_.get(slot->type_id));
+	}
 	switch (slot->value_category) {
 		case ValueCategory::LValue:
 			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
@@ -6290,6 +6309,8 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 							requireFrontendContext().canonicalTypes(),
 							*static_member,
 							qualified_identifier.identifier_token());
+						resolved.semantic_type_id = type_context_.intern(
+							canonicalTypeDescFromStaticMember(*static_member));
 						return resolved;
 					}
 					if (allow_nonstatic_data_member) {
@@ -7425,7 +7446,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						case ResolvedQualifiedIdentifierInfo::Kind::Symbol:
 							return inferResolvedSymbolType(resolved->symbol);
 						case ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
-							return canonicalizeType(resolved->type);
+							return resolved->semantic_type_id;
 						case ResolvedQualifiedIdentifierInfo::Kind::EnumConstant: {
 							// Fast path: use the stored enum owner TypeIndex if available.
 							if (resolved->enum_owner_type_index.is_valid()) {
@@ -7686,7 +7707,23 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 	if (const CanonicalTypeId inferred_id = inferExpressionType(arg)) {
 		if (inferred_type_id)
 			*inferred_type_id = inferred_id;
-		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
+		TypeSpecifierNode arg_type;
+		bool has_resolved_static_member_type = false;
+		if (arg.is<ExpressionNode>()) {
+			const ExpressionNode& expr = arg.as<ExpressionNode>();
+			if (const QualifiedIdentifierNode* qualified_identifier =
+					std::get_if<QualifiedIdentifierNode>(&expr)) {
+				const auto resolved = getResolvedQualifiedIdentifier(qualified_identifier);
+				if (resolved.has_value() &&
+					resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
+					arg_type = resolved->type;
+					has_resolved_static_member_type = true;
+				}
+			}
+		}
+		if (!has_resolved_static_member_type) {
+			arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
+		}
 		applyExpressionValueCategory(arg_type);
 		storeArgType(arg_type);
 		return arg_type;
