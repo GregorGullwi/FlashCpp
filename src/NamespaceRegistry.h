@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "CompileError.h"
 #include "InlineVector.h"
 #include "StringBuilder.h"
 #include "StringTable.h"
@@ -100,6 +101,10 @@ public:
 		entry.qualified_name = buildQualifiedIdentifier(parent_handle, name);
 
 		NamespaceHandle new_handle{static_cast<uint16_t>(entries_.size())};
+		recordMutation(Mutation{
+			.kind = MutationKind::NamespaceInsertion,
+			.key = key,
+			.handle = new_handle});
 		entries_.push_back(entry);
 		namespace_map_[key] = new_handle;
 
@@ -296,7 +301,12 @@ public:
 	// Mark a namespace as explicitly declared (via namespace { } block)
 	void markDeclared(NamespaceHandle handle) {
 		if (handle.isValid() && !handle.isGlobal()) {
-			declared_namespaces_.insert(handle);
+			if (declared_namespaces_.find(handle) == declared_namespaces_.end()) {
+				recordMutation(Mutation{
+					.kind = MutationKind::DeclaredInsertion,
+					.handle = handle});
+				declared_namespaces_.insert(handle);
+			}
 		}
 	}
 
@@ -315,9 +325,14 @@ public:
 		if (!ns.isValid() || ns.isGlobal())
 			return;
 		// insert returns false if ns was already marked inline; avoid double-recording the child.
-		if (!inline_namespaces_.insert(ns).second)
+		if (inline_namespaces_.find(ns) != inline_namespaces_.end())
 			return;
 		NamespaceHandle parent = getParent(ns);
+		recordMutation(Mutation{
+			.kind = MutationKind::InlineInsertion,
+			.handle = ns,
+			.parent = parent});
+		inline_namespaces_.insert(ns);
 		if (parent.isValid())
 			inline_children_[parent].push_back(ns);
 	}
@@ -402,6 +417,9 @@ public:
 	}
 
 	void clear() {
+		if (!transaction_marks_.empty()) {
+			throw InternalError("namespace registry: clear during publication transaction");
+		}
 		entries_.resize(1); // Keep global namespace
 		namespace_map_.clear();
 		declared_namespaces_.clear();
@@ -410,7 +428,89 @@ public:
 		max_size_reached_ = 1;
 	}
 
+	// Namespace identity, explicit declaration state, and inline relationships
+	// share the frontend publication transaction's nested journal semantics.
+	size_t beginPublicationTransaction() {
+		transaction_marks_.push_back(transaction_log_.size());
+		return transaction_marks_.size();
+	}
+
+	void commitPublicationTransaction(size_t depth) {
+		validatePublicationTransactionDepth(depth);
+		transaction_marks_.pop_back();
+		if (transaction_marks_.empty()) {
+			transaction_log_.clear();
+		}
+	}
+
+	void rollbackPublicationTransaction(size_t depth) {
+		validatePublicationTransactionDepth(depth);
+		const size_t mark = transaction_marks_.back();
+		for (size_t index = transaction_log_.size(); index > mark; --index) {
+			undoMutation(transaction_log_[index - 1U]);
+		}
+		transaction_log_.resize(mark);
+		transaction_marks_.pop_back();
+		if (transaction_marks_.empty()) {
+			transaction_log_.clear();
+		}
+	}
+
 private:
+	enum class MutationKind : uint8_t {
+		NamespaceInsertion,
+		DeclaredInsertion,
+		InlineInsertion,
+	};
+
+	struct Mutation {
+		MutationKind kind = MutationKind::NamespaceInsertion;
+		std::pair<NamespaceHandle, StringHandle> key{};
+		NamespaceHandle handle{};
+		NamespaceHandle parent{};
+	};
+
+	void recordMutation(Mutation mutation) {
+		if (!transaction_marks_.empty()) {
+			transaction_log_.push_back(std::move(mutation));
+		}
+	}
+
+	void validatePublicationTransactionDepth(size_t depth) const {
+		if (transaction_marks_.empty() || transaction_marks_.size() != depth) {
+			throw InternalError("namespace registry: transactions must close in nesting order");
+		}
+	}
+
+	void undoMutation(const Mutation& mutation) {
+		switch (mutation.kind) {
+		case MutationKind::NamespaceInsertion:
+			namespace_map_.erase(mutation.key);
+			if (entries_.size() != static_cast<size_t>(mutation.handle.index) + 1U) {
+				throw InternalError("namespace registry: namespace insertion rollback order is invalid");
+			}
+			entries_.pop_back();
+			break;
+		case MutationKind::DeclaredInsertion:
+			declared_namespaces_.erase(mutation.handle);
+			break;
+		case MutationKind::InlineInsertion: {
+			inline_namespaces_.erase(mutation.handle);
+			auto children = inline_children_.find(mutation.parent);
+			if (children != inline_children_.end()) {
+				auto child = std::find(children->second.begin(), children->second.end(), mutation.handle);
+				if (child != children->second.end()) {
+					children->second.erase(child);
+				}
+				if (children->second.empty()) {
+					inline_children_.erase(children);
+				}
+			}
+			break;
+		}
+		}
+	}
+
 	std::vector<NamespaceEntry> entries_;
 	size_t max_size_reached_ = 0;
 	std::unordered_map<std::pair<NamespaceHandle, StringHandle>, NamespaceHandle,
@@ -419,6 +519,8 @@ private:
 	std::unordered_set<NamespaceHandle> declared_namespaces_;
 	std::unordered_set<NamespaceHandle> inline_namespaces_;
 	std::unordered_map<NamespaceHandle, std::vector<NamespaceHandle>> inline_children_;
+	std::vector<size_t> transaction_marks_;
+	std::vector<Mutation> transaction_log_;
 };
 
 extern NamespaceRegistry gNamespaceRegistry;

@@ -280,6 +280,35 @@ public:
 		return scopes_.size();
 	}
 
+	// The frontend transaction coordinates these table-local journal marks with
+	// namespace-registry publication. Tables use the same nested mark/log model
+	// as the existing declaration and template publication transactions.
+	size_t beginPublicationTransaction() {
+		publication_transaction_marks_.push_back(publication_mutations_.size());
+		return publication_transaction_marks_.size();
+	}
+
+	void commitPublicationTransaction(size_t depth) {
+		validatePublicationTransactionDepth(depth);
+		publication_transaction_marks_.pop_back();
+		if (publication_transaction_marks_.empty()) {
+			publication_mutations_.clear();
+		}
+	}
+
+	void rollbackPublicationTransaction(size_t depth) {
+		validatePublicationTransactionDepth(depth);
+		const size_t mark = publication_transaction_marks_.back();
+		for (size_t index = publication_mutations_.size(); index > mark; --index) {
+			undoPublicationMutation(publication_mutations_[index - 1U]);
+		}
+		publication_mutations_.resize(mark);
+		publication_transaction_marks_.pop_back();
+		if (publication_transaction_marks_.empty()) {
+			publication_mutations_.clear();
+		}
+	}
+
 	void enablePersistentScopePublication();
 
 	void clearPersistentScopePublicationBinding();
@@ -354,7 +383,7 @@ public:
 		StringHandle ns_key{};
 		if (ns_scope) {
 			ns_handle = get_current_namespace_handle();
-			auto& ns_symbols = namespace_symbols_[ns_handle];
+			auto& ns_symbols = namespaceSymbolBucket(ns_handle);
 			ns_key = StringTable::getOrInternStringHandle(identifier);
 			auto ns_it = ns_symbols.find(ns_key);
 			if (ns_it != ns_symbols.end()) {
@@ -373,10 +402,12 @@ public:
 				// Namespace scopes store members only in namespace_symbols_; do not
 				// mirror into scope.symbols (namespace-scope using-declarations also
 				// merge into namespace_symbols_; see materialize_using_declaration_symbols).
-				namespace_symbols_[ns_handle][ns_key] = std::vector<ASTNode>{node};
+				recordNamespaceSymbolsMutation(ns_handle, ns_key);
+				namespaceSymbolBucket(ns_handle)[ns_key] = std::vector<ASTNode>{node};
 				return true;
 			}
 			std::string_view key = intern_string(identifier);
+			recordScopeSymbolsMutation(current_scope_index_, key);
 			current_scope.symbols[key] = std::vector<ASTNode>{node};
 			if (global_scope) {
 				ns_handle = get_current_namespace_handle();
@@ -384,11 +415,13 @@ public:
 				/* Global scope keys existence off scope.symbols, so namespace_symbols_ can
 				   in principle already hold entries this scope never saw. Append rather than
 				   assign so such entries are never silently dropped. */
-				auto& ns_symbols = namespace_symbols_[ns_handle];
+				auto& ns_symbols = namespaceSymbolBucket(ns_handle);
 				auto ns_it = ns_symbols.find(ns_key);
 				if (ns_it == ns_symbols.end()) {
+					recordNamespaceSymbolsMutation(ns_handle, ns_key);
 					ns_symbols[ns_key] = std::vector<ASTNode>{node};
 				} else {
+					recordNamespaceSymbolsMutation(ns_handle, ns_key);
 					ns_it->second.push_back(node);
 				}
 			}
@@ -494,12 +527,17 @@ public:
 							// Same signature found - replace forward declaration with definition if needed
 							// If the new one has a definition and the existing one doesn't, replace it
 							if (new_func->is_materialized() && !existing_func->is_materialized()) {
+								if (ns_scope) {
+									recordNamespaceSymbolReplacement(ns_handle, ns_key, i);
+								} else {
+									recordScopeSymbolReplacement(current_scope_index_, identifier, i);
+								}
 								existing_nodes[i] = node;
 
 								if (global_scope) {
 									// Global still uses scope.symbols as primary; mirror into namespace_symbols_
 									NamespaceHandle mirror_ns = get_current_namespace_handle();
-									auto& ns_symbols = namespace_symbols_[mirror_ns];
+									auto& ns_symbols = namespaceSymbolBucket(mirror_ns);
 									StringHandle key = StringTable::getOrInternStringHandle(identifier);
 
 									auto ns_it = ns_symbols.find(key);
@@ -522,6 +560,7 @@ public:
 														}
 													}
 													if (params_match) {
+														recordNamespaceSymbolReplacement(mirror_ns, key, k);
 														ns_it->second[k] = node;
 														break;
 													}
@@ -541,6 +580,11 @@ public:
 		}
 
 		// No matching signature found - add as new overload
+		if (ns_scope) {
+			recordNamespaceSymbolsMutation(ns_handle, ns_key);
+		} else {
+			recordScopeSymbolsMutation(current_scope_index_, identifier);
+		}
 		existing_nodes.push_back(node);
 
 		if (ns_scope) {
@@ -551,13 +595,15 @@ public:
 		// Global scope: also add to the persistent namespace map
 		if (global_scope) {
 			NamespaceHandle mirror_ns = get_current_namespace_handle();
-			auto& ns_symbols = namespace_symbols_[mirror_ns];
+			auto& ns_symbols = namespaceSymbolBucket(mirror_ns);
 			StringHandle key = StringTable::getOrInternStringHandle(identifier);
 
 			auto ns_it = ns_symbols.find(key);
 			if (ns_it == ns_symbols.end()) {
+				recordNamespaceSymbolsMutation(mirror_ns, key);
 				ns_symbols[key] = std::vector<ASTNode>{node};
 			} else {
+				recordNamespaceSymbolsMutation(mirror_ns, key);
 				ns_it->second.push_back(node);
 			}
 		}
@@ -691,13 +737,22 @@ public:
 			(!new_is_definition && !existing_is_definition &&
 				existing_has_unknown_outer_bound && new_has_known_outer_bound)) {
 			const void* existing_raw_pointer = existing_ptr->front().raw_pointer();
+			if (metadata.scope_type == ScopeType::Namespace) {
+				recordNamespaceSymbolReplacement(namespace_handle, key, 0);
+			} else {
+				recordScopeSymbolReplacement(current_scope_index_, identifier, 0);
+			}
 			existing_ptr->front() = node;
 			if (metadata.scope_type == ScopeType::Global) {
-				auto& mirrored_symbols = namespace_symbols_[get_current_namespace_handle()];
-				auto mirrored_it = mirrored_symbols.find(StringTable::getOrInternStringHandle(identifier));
+				const NamespaceHandle mirror_namespace = get_current_namespace_handle();
+				const StringHandle mirror_key = StringTable::getOrInternStringHandle(identifier);
+				auto& mirrored_symbols = namespaceSymbolBucket(mirror_namespace);
+				auto mirrored_it = mirrored_symbols.find(mirror_key);
 				if (mirrored_it != mirrored_symbols.end()) {
-					for (ASTNode& mirrored_node : mirrored_it->second) {
+					for (std::size_t index = 0; index < mirrored_it->second.size(); ++index) {
+						ASTNode& mirrored_node = mirrored_it->second[index];
 						if (mirrored_node.raw_pointer() == existing_raw_pointer) {
+							recordNamespaceSymbolReplacement(mirror_namespace, mirror_key, index);
 							mirrored_node = node;
 							break;
 						}
@@ -730,6 +785,7 @@ public:
 			if (is_function_or_template_function(it->second[0])) {
 				return false;
 			}
+			recordNamespaceSymbolReplacement(ns_handle, key, 0);
 			it->second[0] = new_node;
 			return true;
 		}
@@ -740,6 +796,7 @@ public:
 		if (is_function_or_template_function(it->second[0])) {
 			return false;
 		}
+		recordScopeSymbolReplacement(current_scope_index_, identifier, 0);
 		it->second[0] = new_node;
 		return true;
 	}
@@ -760,6 +817,7 @@ public:
 		// If this is a new identifier, intern it and create a new vector
 		if (it == global_scope.symbols.end()) {
 			std::string_view key = intern_string(identifier);
+			recordScopeSymbolsMutation(0, key);
 			global_scope.symbols[key] = std::vector<ASTNode>{node};
 			return true;
 		}
@@ -1059,14 +1117,23 @@ public:
 	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node, bool adl_only) {
 		if (!ns.isValid())
 			return;
-		auto& target = adl_only ? adl_only_symbols_[ns] : namespace_symbols_[ns];
+		auto& target = adl_only ? adlOnlySymbolBucket(ns) : namespaceSymbolBucket(ns);
 		auto it = target.find(name_handle);
+		if (adl_only) {
+			recordAdlOnlySymbolsMutation(ns, name_handle);
+		} else {
+			recordNamespaceSymbolsMutation(ns, name_handle);
+		}
 		if (it == target.end()) {
 			target[name_handle] = std::vector<ASTNode>{node};
 		} else {
 			it->second.push_back(node);
 		}
-		if (adl_only) {
+		if (adl_only && adl_only_function_names_.find(name_handle) == adl_only_function_names_.end()) {
+			PublicationMutation mutation;
+			mutation.kind = PublicationMutationKind::AdlOnlyNameInsertion;
+			mutation.namespace_key = name_handle;
+			recordPublicationMutation(std::move(mutation));
 			adl_only_function_names_.insert(name_handle);
 		}
 	}
@@ -1437,6 +1504,7 @@ public:
 		Scope& current_scope = scopes_[current_scope_index_];
 		NamespaceHandle namespace_handle = resolve_namespace_handle_impl(namespace_path);
 		if (namespace_handle.isValid()) {
+			recordUsingDirectiveAppend(current_scope_index_);
 			current_scope.using_directive_paths.push_back(namespace_handle);
 		}
 	}
@@ -1448,6 +1516,7 @@ public:
 			return;
 
 		Scope& current_scope = scopes_[current_scope_index_];
+		recordUsingDirectiveAppend(current_scope_index_);
 		current_scope.using_directive_paths.push_back(namespace_handle);
 	}
 
@@ -1465,6 +1534,7 @@ public:
 			FLASH_LOG(Symbols, Error, "Using declaration handle creation failed for '", local_name, "' (invalid namespace path)");
 			return;
 		}
+		recordUsingDeclarationMutation(current_scope_index_, key);
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
 		// Materialize the referenced declaration(s) into the current scope so they
@@ -1483,6 +1553,7 @@ public:
 		Scope& current_scope = scopes_[current_scope_index_];
 		std::string_view key = intern_string(local_name);
 		std::string_view orig_name = intern_string(original_name);
+		recordUsingDeclarationMutation(current_scope_index_, key);
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
 		// Materialize the referenced declaration(s) into the current scope so they
@@ -1515,6 +1586,7 @@ public:
 			FLASH_LOG(Symbols, Error, "Namespace alias handle creation failed for '", alias, "' -> '", target_name.commit(), "'");
 			return;
 		}
+		recordNamespaceAliasMutation(current_scope_index_, key);
 		update_or_insert(current_scope.namespace_aliases, key, target_handle);
 	}
 
@@ -1526,6 +1598,7 @@ public:
 
 		Scope& current_scope = scopes_[current_scope_index_];
 		std::string_view key = intern_string(alias);
+		recordNamespaceAliasMutation(current_scope_index_, key);
 		update_or_insert(current_scope.namespace_aliases, key, target_namespace);
 	}
 
@@ -1731,6 +1804,9 @@ public:
 	}
 
 	void clear() {
+		if (!publication_transaction_marks_.empty()) {
+			throw InternalError("SymbolTable: clear during publication transaction");
+		}
 		scopes_.clear();
 		scope_metadata_.clear();
 		scopes_.emplace_back();
@@ -1765,6 +1841,310 @@ public:
 	}
 
 private:
+	enum class PublicationMutationKind : uint8_t {
+		ScopeSymbols,
+		NamespaceSymbols,
+		AdlOnlySymbols,
+		NamespaceBucketInsertion,
+		AdlOnlyBucketInsertion,
+		AdlOnlyNameInsertion,
+		UsingDirectiveAppend,
+		UsingDeclaration,
+		NamespaceAlias,
+	};
+
+	struct PublicationMutation {
+		PublicationMutationKind kind = PublicationMutationKind::ScopeSymbols;
+		std::size_t scope_index = 0;
+		NamespaceHandle namespace_handle{};
+		std::string_view scope_key;
+		StringHandle namespace_key{};
+		bool existed = false;
+		std::size_t previous_size = 0;
+		bool replaced_node = false;
+		std::size_t node_index = 0;
+		ASTNode previous_node;
+		std::pair<NamespaceHandle, std::string_view> previous_using_declaration{};
+		NamespaceHandle previous_namespace_alias{};
+	};
+
+	void recordPublicationMutation(PublicationMutation mutation) {
+		if (!publication_transaction_marks_.empty()) {
+			publication_mutations_.push_back(std::move(mutation));
+		}
+	}
+
+	void recordScopeSymbolsMutation(std::size_t scope_index, std::string_view key) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::ScopeSymbols;
+		mutation.scope_index = scope_index;
+		mutation.scope_key = key;
+		const auto found = scopes_[scope_index].symbols.find(key);
+		if (found != scopes_[scope_index].symbols.end()) {
+			mutation.existed = true;
+			mutation.previous_size = found->second.size();
+		}
+		recordPublicationMutation(std::move(mutation));
+	}
+
+	void recordScopeSymbolReplacement(
+		std::size_t scope_index,
+		std::string_view key,
+		std::size_t node_index) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::ScopeSymbols;
+		mutation.scope_index = scope_index;
+		mutation.scope_key = key;
+		auto found = scopes_[scope_index].symbols.find(key);
+		if (found == scopes_[scope_index].symbols.end() || node_index >= found->second.size()) {
+			throw InternalError("SymbolTable: cannot journal replacement of missing scope symbol");
+		}
+		mutation.existed = true;
+		mutation.previous_size = found->second.size();
+		mutation.replaced_node = true;
+		mutation.node_index = node_index;
+		mutation.previous_node = found->second[node_index];
+		recordPublicationMutation(std::move(mutation));
+	}
+
+	void recordNamespaceSymbolsMutation(NamespaceHandle namespace_handle, StringHandle key) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::NamespaceSymbols;
+		mutation.namespace_handle = namespace_handle;
+		mutation.namespace_key = key;
+		const auto namespace_it = namespace_symbols_.find(namespace_handle);
+		if (namespace_it != namespace_symbols_.end()) {
+			const auto found = namespace_it->second.find(key);
+			if (found != namespace_it->second.end()) {
+				mutation.existed = true;
+				mutation.previous_size = found->second.size();
+			}
+		}
+		recordPublicationMutation(std::move(mutation));
+	}
+
+	void recordNamespaceSymbolReplacement(
+		NamespaceHandle namespace_handle,
+		StringHandle key,
+		std::size_t node_index) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::NamespaceSymbols;
+		mutation.namespace_handle = namespace_handle;
+		mutation.namespace_key = key;
+		auto namespace_it = namespace_symbols_.find(namespace_handle);
+		if (namespace_it == namespace_symbols_.end()) {
+			throw InternalError("SymbolTable: cannot journal replacement in missing namespace");
+		}
+		auto found = namespace_it->second.find(key);
+		if (found == namespace_it->second.end() || node_index >= found->second.size()) {
+			throw InternalError("SymbolTable: cannot journal replacement of missing namespace symbol");
+		}
+		mutation.existed = true;
+		mutation.previous_size = found->second.size();
+		mutation.replaced_node = true;
+		mutation.node_index = node_index;
+		mutation.previous_node = found->second[node_index];
+		recordPublicationMutation(std::move(mutation));
+	}
+
+	void recordAdlOnlySymbolsMutation(NamespaceHandle namespace_handle, StringHandle key) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::AdlOnlySymbols;
+		mutation.namespace_handle = namespace_handle;
+		mutation.namespace_key = key;
+		const auto namespace_it = adl_only_symbols_.find(namespace_handle);
+		if (namespace_it != adl_only_symbols_.end()) {
+			const auto found = namespace_it->second.find(key);
+			if (found != namespace_it->second.end()) {
+				mutation.existed = true;
+				mutation.previous_size = found->second.size();
+			}
+		}
+		recordPublicationMutation(std::move(mutation));
+	}
+
+	std::unordered_map<StringHandle, std::vector<ASTNode>>& namespaceSymbolBucket(NamespaceHandle namespace_handle) {
+		auto found = namespace_symbols_.find(namespace_handle);
+		if (found == namespace_symbols_.end()) {
+			PublicationMutation mutation;
+			mutation.kind = PublicationMutationKind::NamespaceBucketInsertion;
+			mutation.namespace_handle = namespace_handle;
+			recordPublicationMutation(std::move(mutation));
+			found = namespace_symbols_.try_emplace(namespace_handle).first;
+		}
+		return found->second;
+	}
+
+	std::unordered_map<StringHandle, std::vector<ASTNode>>& adlOnlySymbolBucket(NamespaceHandle namespace_handle) {
+		auto found = adl_only_symbols_.find(namespace_handle);
+		if (found == adl_only_symbols_.end()) {
+			PublicationMutation mutation;
+			mutation.kind = PublicationMutationKind::AdlOnlyBucketInsertion;
+			mutation.namespace_handle = namespace_handle;
+			recordPublicationMutation(std::move(mutation));
+			found = adl_only_symbols_.try_emplace(namespace_handle).first;
+		}
+		return found->second;
+	}
+
+	void recordUsingDirectiveAppend(std::size_t scope_index) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::UsingDirectiveAppend;
+		mutation.scope_index = scope_index;
+		mutation.previous_size = scopes_[scope_index].using_directive_paths.size();
+		recordPublicationMutation(std::move(mutation));
+	}
+
+	void recordUsingDeclarationMutation(std::size_t scope_index, std::string_view key) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::UsingDeclaration;
+		mutation.scope_index = scope_index;
+		mutation.scope_key = key;
+		const auto found = scopes_[scope_index].using_declarations_handles.find(key);
+		if (found != scopes_[scope_index].using_declarations_handles.end()) {
+			mutation.existed = true;
+			mutation.previous_using_declaration = found->second;
+		}
+		recordPublicationMutation(std::move(mutation));
+	}
+
+	void recordNamespaceAliasMutation(std::size_t scope_index, std::string_view key) {
+		if (publication_transaction_marks_.empty()) {
+			return;
+		}
+		PublicationMutation mutation;
+		mutation.kind = PublicationMutationKind::NamespaceAlias;
+		mutation.scope_index = scope_index;
+		mutation.scope_key = key;
+		const auto found = scopes_[scope_index].namespace_aliases.find(key);
+		if (found != scopes_[scope_index].namespace_aliases.end()) {
+			mutation.existed = true;
+			mutation.previous_namespace_alias = found->second;
+		}
+		recordPublicationMutation(std::move(mutation));
+	}
+
+	void validatePublicationTransactionDepth(size_t depth) const {
+		if (publication_transaction_marks_.empty() || publication_transaction_marks_.size() != depth) {
+			throw InternalError("SymbolTable: transactions must close in nesting order");
+		}
+	}
+
+	void undoPublicationMutation(PublicationMutation& mutation) {
+		switch (mutation.kind) {
+		case PublicationMutationKind::ScopeSymbols:
+			restoreSymbolEntry(scopes_[mutation.scope_index].symbols, mutation.scope_key, mutation);
+			break;
+		case PublicationMutationKind::NamespaceSymbols:
+			restoreNamespaceSymbolEntry(namespace_symbols_, mutation);
+			break;
+		case PublicationMutationKind::AdlOnlySymbols:
+			restoreNamespaceSymbolEntry(adl_only_symbols_, mutation);
+			break;
+		case PublicationMutationKind::NamespaceBucketInsertion: {
+			auto found = namespace_symbols_.find(mutation.namespace_handle);
+			if (found != namespace_symbols_.end()) {
+				if (!found->second.empty()) {
+					throw InternalError("SymbolTable: namespace bucket rollback order is invalid");
+				}
+				namespace_symbols_.erase(found);
+			}
+			break;
+		}
+		case PublicationMutationKind::AdlOnlyBucketInsertion: {
+			auto found = adl_only_symbols_.find(mutation.namespace_handle);
+			if (found != adl_only_symbols_.end()) {
+				if (!found->second.empty()) {
+					throw InternalError("SymbolTable: ADL-only bucket rollback order is invalid");
+				}
+				adl_only_symbols_.erase(found);
+			}
+			break;
+		}
+		case PublicationMutationKind::AdlOnlyNameInsertion:
+			adl_only_function_names_.erase(mutation.namespace_key);
+			break;
+		case PublicationMutationKind::UsingDirectiveAppend:
+			scopes_[mutation.scope_index].using_directive_paths.resize(mutation.previous_size);
+			break;
+		case PublicationMutationKind::UsingDeclaration: {
+			auto& declarations = scopes_[mutation.scope_index].using_declarations_handles;
+			if (mutation.existed) {
+				declarations.find(mutation.scope_key)->second = mutation.previous_using_declaration;
+			} else {
+				declarations.erase(mutation.scope_key);
+			}
+			break;
+		}
+		case PublicationMutationKind::NamespaceAlias: {
+			auto& aliases = scopes_[mutation.scope_index].namespace_aliases;
+			if (mutation.existed) {
+				aliases.find(mutation.scope_key)->second = mutation.previous_namespace_alias;
+			} else {
+				aliases.erase(mutation.scope_key);
+			}
+			break;
+		}
+		}
+	}
+
+	void restoreNamespaceSymbolEntry(
+		std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>>& symbols,
+		PublicationMutation& mutation) {
+		auto namespace_it = symbols.find(mutation.namespace_handle);
+		if (namespace_it == symbols.end()) {
+			if (mutation.existed) {
+				throw InternalError("SymbolTable: published namespace symbol disappeared before rollback");
+			}
+			return;
+		}
+		restoreSymbolEntry(namespace_it->second, mutation.namespace_key, mutation);
+	}
+
+	template <typename Map, typename Key>
+	void restoreSymbolEntry(Map& symbols, const Key& key, PublicationMutation& mutation) {
+		auto found = symbols.find(key);
+		if (mutation.existed) {
+			if (found == symbols.end()) {
+				throw InternalError("SymbolTable: published symbol disappeared before rollback");
+			}
+			if (mutation.replaced_node) {
+				if (mutation.node_index >= found->second.size()) {
+					throw InternalError("SymbolTable: replaced symbol disappeared before rollback");
+				}
+				found->second[mutation.node_index] = mutation.previous_node;
+			} else {
+				if (found->second.size() < mutation.previous_size) {
+					throw InternalError("SymbolTable: appended symbols disappeared before rollback");
+				}
+				found->second.resize(mutation.previous_size);
+			}
+		} else if (found != symbols.end()) {
+			symbols.erase(found);
+		}
+	}
+
 	ScopeMetadataView scopeMetadataAtIndex(std::size_t scope_index) const {
 		return readScopeMetadata(*this, ScopeId{static_cast<uint32_t>(scope_index + 1)});
 	}
@@ -1830,6 +2210,8 @@ private:
 	std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>> adl_only_symbols_;
 	// Flat set of all ADL-only function name handles for O(1) is_adl_only_function_name() queries.
 	std::unordered_set<StringHandle> adl_only_function_names_;
+	std::vector<size_t> publication_transaction_marks_;
+	std::vector<PublicationMutation> publication_mutations_;
 
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table
@@ -1978,9 +2360,10 @@ private:
 		if (scopeMetadataAtIndex(current_scope_index_).scope_type == ScopeType::Namespace) {
 			NamespaceHandle dest_ns = get_current_namespace_handle();
 			StringHandle ns_key = StringTable::getOrInternStringHandle(key);
-			auto& ns_symbols = namespace_symbols_[dest_ns];
+			auto& ns_symbols = namespaceSymbolBucket(dest_ns);
 			auto ns_it = ns_symbols.find(ns_key);
 			if (ns_it == ns_symbols.end()) {
+				recordNamespaceSymbolsMutation(dest_ns, ns_key);
 				ns_symbols[ns_key] = std::move(resolved_nodes);
 				return;
 			}
@@ -1989,12 +2372,14 @@ private:
 				return;
 			}
 
+			recordNamespaceSymbolsMutation(dest_ns, ns_key);
 			append_unique_function_overloads(ns_it->second, resolved_nodes);
 			return;
 		}
 
 		auto sym_it = current_scope.symbols.find(key);
 		if (sym_it == current_scope.symbols.end()) {
+			recordScopeSymbolsMutation(current_scope_index_, key);
 			current_scope.symbols[key] = std::move(resolved_nodes);
 			return;
 		}
@@ -2003,6 +2388,7 @@ private:
 			return;
 		}
 
+		recordScopeSymbolsMutation(current_scope_index_, key);
 		append_unique_function_overloads(sym_it->second, resolved_nodes);
 	}
 

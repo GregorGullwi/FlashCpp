@@ -20,37 +20,70 @@
 #include <vector>
 
 class SymbolTable;
+class FrontendContext;
 
-// A frontend probe covers scratch storage, declaration publication, and
-// template identity publication. SymbolTable publication remains outside this
-// transaction until its mutation journal is integrated. Nested commits remain
-// provisional until the outer frontend probe commits.
+struct FrontendPublicationJournalMark {
+	size_t context_depth = 0;
+	size_t namespace_depth = 0;
+};
+
+FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context);
+void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark);
+void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark);
+
+// A frontend probe covers scratch storage, declaration publication, template
+// identity, and namespace/symbol publication on tables bound to this context.
+// Scope topology and persistent ScopeRecord changes remain outside the journal.
+// Nested commits remain provisional until the outer frontend probe commits.
 class FrontendScratchTransaction {
 public:
 	FrontendScratchTransaction(
+		FrontendContext& context,
 		MonotonicScratchArena& arena,
 		ScratchProbeRegistry& registry,
 		DeclarationBuilder& builder,
 		TemplateDeclTable& template_decls)
-		: scratch_(arena, registry), publication_(builder), templates_(template_decls) {}
+		: context_(context)
+		, scratch_(arena, registry)
+		, publication_(builder)
+		, templates_(template_decls)
+		, publication_journal_mark_(beginFrontendPublicationJournal(context)) {}
+	~FrontendScratchTransaction() noexcept {
+		if (!completed_) {
+			rollback();
+		}
+	}
 	FrontendScratchTransaction(const FrontendScratchTransaction&) = delete;
 	FrontendScratchTransaction& operator=(const FrontendScratchTransaction&) = delete;
 	void commit() {
+		if (completed_) {
+			return;
+		}
 		publication_.commit();
 		templates_.commit();
 		scratch_.commit();
+		commitFrontendPublicationJournal(context_, publication_journal_mark_);
+		completed_ = true;
 	}
 	void rollback() {
+		if (completed_) {
+			return;
+		}
+		rollbackFrontendPublicationJournal(context_, publication_journal_mark_);
 		templates_.rollback();
 		publication_.rollback();
 		scratch_.rollback();
+		completed_ = true;
 	}
 	MonotonicScratchArena& arena() { return scratch_.arena(); }
 	ScratchProbeRegistry& registry() { return scratch_.registry(); }
 private:
+	FrontendContext& context_;
 	ScratchTransaction scratch_;
 	PublicationTransaction publication_;
 	TemplateDeclTableTransaction templates_;
+	FrontendPublicationJournalMark publication_journal_mark_;
+	bool completed_ = false;
 };
 
 // Per-translation-unit front-end shell. Active-context lookup uses a thread-local
@@ -89,6 +122,7 @@ public:
 
 	FrontendScratchTransaction beginScratchTransaction() {
 		return FrontendScratchTransaction(
+			*this,
 			scratch_arena_, scratch_registry_, declaration_builder_, template_decls_);
 	}
 
@@ -491,6 +525,15 @@ private:
 	ChunkedVector<ScopeRecord, kScopeArenaChunkSize> scope_records_;
 	ScopeId current_scope_id_{1};
 	std::vector<SymbolTable*> persistent_scope_publication_tables_;
+	size_t publication_transaction_depth_ = 0;
+
+	friend FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context);
+	friend void commitFrontendPublicationJournal(
+		FrontendContext& context,
+		FrontendPublicationJournalMark mark);
+	friend void rollbackFrontendPublicationJournal(
+		FrontendContext& context,
+		FrontendPublicationJournalMark mark);
 };
 
 static_assert(!std::is_copy_constructible_v<FrontendContext>);

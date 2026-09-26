@@ -97,11 +97,13 @@ start them.
 
 ## Other open boundaries
 
-- **Scratch rollback and publication:** `FrontendScratchTransaction` rolls
-  back scratch state, `DeclarationBuilder`, and `TemplateDeclTable`, but not
-  `SymbolTable` maps or namespace publication. Production speculative parsing
-  is not integrated with the transaction. Close this before putting more
-  tentative publication behind it; see [known issues](KNOWN_ISSUES.md).
+- **Scratch rollback and publication:** `FrontendScratchTransaction` journals
+  scratch state, `DeclarationBuilder`, `TemplateDeclTable`, bound
+  `SymbolTable` publication maps, and namespace creation/declaration/inline
+  metadata. Nested commits remain provisional until the outer transaction
+  commits. Scope creation, cursor movement, and `ScopeRecord` publication are
+  outside this boundary, and production speculative parsing is not yet
+  integrated with the transaction; see [known issues](KNOWN_ISSUES.md).
 - **Compiler bugs and bounded unsupported cases:** consult
   [known issues](KNOWN_ISSUES.md) before selecting adjacent work. Add newly
   found bugs there; keep this file focused on migration work still ahead.

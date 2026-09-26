@@ -160,16 +160,16 @@ already accepted and are not examples of this gap. A static member with an
 undeduced `auto` type and no initializer is a separate language error and now
 reports `AutoTypeDeductionFailure` (1014).
 
-## Frontend scratch rollback does not include symbol publication
+## Production speculative parsing is not yet integrated with frontend scratch transactions
 
-`FrontendScratchTransaction` rolls back frontend scratch state,
-`DeclarationBuilder`, and `TemplateDeclTable`, but it does not journal
-`SymbolTable` scope/name entries or namespace publication. Production parsing
-also does not yet use this transaction for tentative declaration work. A
-failed speculative parse can therefore leave symbol or namespace registry
-state behind even when its frontend scratch state is rolled back. Close this
-boundary before routing more tentative parsing or template publication through
-the transaction.
+`FrontendScratchTransaction` now journals frontend scratch state,
+`DeclarationBuilder`, `TemplateDeclTable`, namespace registry creation and
+metadata, and publication maps on `SymbolTable`s bound to its `FrontendContext`.
+Nested commits remain provisional until the outer transaction commits. The
+transaction does not roll back scope creation or cursor movement in `SymbolTable`
+or `ScopeRecord`, and production parsing does not yet route tentative declaration
+work through it. Integrate those boundaries before relying on the transaction
+for broad speculative parsing.
 
 ## Runtime member-function-pointer address-of is not lowered
 

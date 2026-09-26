@@ -49,6 +49,58 @@ FrontendContext& requirePersistentScopePublicationContext(const SymbolTable& tab
 	return *context;
 }
 
+FrontendPublicationJournalMark beginFrontendPublicationJournal(FrontendContext& context) {
+	const size_t context_depth = context.publication_transaction_depth_ + 1U;
+	const size_t namespace_depth = gNamespaceRegistry.beginPublicationTransaction();
+
+	size_t opened_tables = 0;
+	try {
+		for (SymbolTable* table : context.persistent_scope_publication_tables_) {
+			const size_t table_depth = table->beginPublicationTransaction();
+			if (table_depth != context_depth) {
+				table->rollbackPublicationTransaction(table_depth);
+				throw InternalError("FrontendContext: symbol publication transaction depth is out of sync");
+			}
+			++opened_tables;
+		}
+	} catch (...) {
+		while (opened_tables > 0) {
+			context.persistent_scope_publication_tables_[--opened_tables]->rollbackPublicationTransaction(context_depth);
+		}
+		gNamespaceRegistry.rollbackPublicationTransaction(namespace_depth);
+		throw;
+	}
+
+	context.publication_transaction_depth_ = context_depth;
+	return FrontendPublicationJournalMark{context_depth, namespace_depth};
+}
+
+void commitFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
+	if (context.publication_transaction_depth_ != mark.context_depth) {
+		throw InternalError("FrontendContext: publication transactions must close in nesting order");
+	}
+	for (auto it = context.persistent_scope_publication_tables_.rbegin();
+		it != context.persistent_scope_publication_tables_.rend();
+		++it) {
+		(*it)->commitPublicationTransaction(mark.context_depth);
+	}
+	gNamespaceRegistry.commitPublicationTransaction(mark.namespace_depth);
+	--context.publication_transaction_depth_;
+}
+
+void rollbackFrontendPublicationJournal(FrontendContext& context, FrontendPublicationJournalMark mark) {
+	if (context.publication_transaction_depth_ != mark.context_depth) {
+		throw InternalError("FrontendContext: publication transactions must close in nesting order");
+	}
+	for (auto it = context.persistent_scope_publication_tables_.rbegin();
+		it != context.persistent_scope_publication_tables_.rend();
+		++it) {
+		(*it)->rollbackPublicationTransaction(mark.context_depth);
+	}
+	gNamespaceRegistry.rollbackPublicationTransaction(mark.namespace_depth);
+	--context.publication_transaction_depth_;
+}
+
 void FrontendContext::registerPersistentScopePublicationTable(SymbolTable& table) {
 	const auto already_registered = std::find(
 		persistent_scope_publication_tables_.begin(),
@@ -58,6 +110,23 @@ void FrontendContext::registerPersistentScopePublicationTable(SymbolTable& table
 		return;
 	}
 	persistent_scope_publication_tables_.push_back(&table);
+	size_t opened_depths = 0;
+	try {
+		while (opened_depths < publication_transaction_depth_) {
+			const size_t table_depth = table.beginPublicationTransaction();
+			if (table_depth != opened_depths + 1U) {
+				table.rollbackPublicationTransaction(table_depth);
+				throw InternalError("FrontendContext: late symbol table registration has invalid transaction depth");
+			}
+			++opened_depths;
+		}
+	} catch (...) {
+		while (opened_depths > 0) {
+			table.rollbackPublicationTransaction(opened_depths--);
+		}
+		persistent_scope_publication_tables_.pop_back();
+		throw;
+	}
 }
 
 void FrontendContext::releasePersistentScopePublicationTables() {
@@ -86,9 +155,9 @@ void SymbolTable::enablePersistentScopePublication() {
 	if (context.scopeRecordCount() != 1) {
 		throw InternalError("SymbolTable: active FrontendContext is not at its initial global scope record");
 	}
+	context.registerPersistentScopePublicationTable(*this);
 	persistent_scope_publication_context_ = &context;
 	publish_persistent_scopes_ = true;
-	context.registerPersistentScopePublicationTable(*this);
 }
 
 FrontendContext* SymbolTable::persistentScopePublicationContext() const {

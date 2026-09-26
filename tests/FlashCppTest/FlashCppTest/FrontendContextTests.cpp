@@ -254,6 +254,112 @@ TEST_SUITE("FrontendContext") {
 		CHECK(registry.registerEntry() == 1);
 	}
 
+	TEST_CASE("Frontend scratch rollback restores symbol and namespace publication") {
+		auto make_literal = [](uint64_t value) {
+			Token token(Token::Type::Literal, std::string_view("0"), 0, 0, 0);
+			return ASTNode::emplace_node<ExpressionNode>(
+				NumericLiteralNode(token, value, TypeCategory::Int, TypeQualifier::None, 32));
+		};
+		SymbolTable table;
+		FrontendContext context;
+		bindPersistentScopePublication(table);
+
+		const StringHandle existing_namespace_name =
+			StringTable::getOrInternStringHandle("frontend_tx_existing_namespace");
+		const NamespaceHandle existing_namespace = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, existing_namespace_name);
+		const NamespaceHandle inline_child = gNamespaceRegistry.getOrCreateNamespace(
+			existing_namespace, StringTable::getOrInternStringHandle("frontend_tx_inline_child"));
+		const StringHandle existing_symbol_name =
+			StringTable::getOrInternStringHandle("frontend_tx_existing_symbol");
+		const StringHandle temporary_symbol_name =
+			StringTable::getOrInternStringHandle("frontend_tx_temporary_symbol");
+		const StringHandle nested_symbol_name =
+			StringTable::getOrInternStringHandle("frontend_tx_nested_symbol");
+		const ASTNode existing_symbol = make_literal(1);
+		table.insert_into_namespace(existing_namespace, existing_symbol_name, existing_symbol, false);
+		const std::size_t namespace_count_before = gNamespaceRegistry.currentSize();
+		REQUIRE_FALSE(gNamespaceRegistry.isDeclared(existing_namespace));
+		REQUIRE_FALSE(gNamespaceRegistry.isInline(inline_child));
+
+		auto outer = context.beginScratchTransaction();
+		gNamespaceRegistry.markDeclared(existing_namespace);
+		gNamespaceRegistry.markInline(inline_child);
+		table.insert_into_namespace(existing_namespace, existing_symbol_name, make_literal(2), false);
+		table.insert_into_namespace(existing_namespace, temporary_symbol_name, make_literal(3), false);
+		REQUIRE(table.insert(std::string_view("frontend_tx_global_symbol"), make_literal(4)));
+		const NamespaceHandle provisional_namespace = gNamespaceRegistry.getOrCreateNamespace(
+			existing_namespace, StringTable::getOrInternStringHandle("frontend_tx_provisional_namespace"));
+		CHECK(provisional_namespace.isValid());
+
+		{
+			auto inner = context.beginScratchTransaction();
+			table.insert_into_namespace(existing_namespace, nested_symbol_name, make_literal(5), false);
+			inner.commit();
+		}
+		const StringHandle nested_context_namespace_name =
+			StringTable::getOrInternStringHandle("frontend_tx_nested_context_namespace");
+		{
+			SymbolTable nested_table;
+			FrontendContext nested_context;
+			bindPersistentScopePublication(nested_table);
+			auto nested_context_transaction = nested_context.beginScratchTransaction();
+			const NamespaceHandle nested_context_namespace = gNamespaceRegistry.getOrCreateNamespace(
+				NamespaceRegistry::GLOBAL_NAMESPACE, nested_context_namespace_name);
+			nested_table.enter_namespace(nested_context_namespace);
+			REQUIRE(nested_table.insert(std::string_view("nested_context_symbol"), make_literal(6)));
+			nested_table.exit_scope();
+			nested_context_transaction.commit();
+		}
+		outer.rollback();
+
+		CHECK(gNamespaceRegistry.currentSize() == namespace_count_before);
+		CHECK_FALSE(gNamespaceRegistry.isDeclared(existing_namespace));
+		CHECK_FALSE(gNamespaceRegistry.isInline(inline_child));
+		CHECK(gNamespaceRegistry.getInlineChildren(existing_namespace).empty());
+		CHECK(gNamespaceRegistry.lookupNamespace(
+			existing_namespace,
+			StringTable::getOrInternStringHandle("frontend_tx_provisional_namespace")).isValid() == false);
+		CHECK_FALSE(gNamespaceRegistry.lookupNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, nested_context_namespace_name).isValid());
+
+		const auto existing_symbols = table.lookup_qualified_all(existing_namespace, existing_symbol_name);
+		REQUIRE(existing_symbols.size() == 1u);
+		CHECK(existing_symbols.front().raw_pointer() == existing_symbol.raw_pointer());
+		CHECK_FALSE(table.lookup_qualified(existing_namespace, temporary_symbol_name).has_value());
+		CHECK_FALSE(table.lookup_qualified(existing_namespace, nested_symbol_name).has_value());
+		CHECK_FALSE(table.lookup("frontend_tx_global_symbol").has_value());
+		CHECK_FALSE(table.lookup_qualified(
+			NamespaceRegistry::GLOBAL_NAMESPACE,
+			StringTable::getOrInternStringHandle("frontend_tx_global_symbol")).has_value());
+	}
+
+	TEST_CASE("Frontend scratch commit preserves symbol and namespace publication") {
+		Token token(Token::Type::Literal, std::string_view("0"), 0, 0, 0);
+		ASTNode symbol = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(token, 9ULL, TypeCategory::Int, TypeQualifier::None, 32));
+		SymbolTable table;
+		FrontendContext context;
+		bindPersistentScopePublication(table);
+		const StringHandle namespace_name =
+			StringTable::getOrInternStringHandle("frontend_tx_committed_namespace");
+		const StringHandle symbol_name =
+			StringTable::getOrInternStringHandle("frontend_tx_committed_symbol");
+
+		auto transaction = context.beginScratchTransaction();
+		const NamespaceHandle namespace_handle = gNamespaceRegistry.getOrCreateNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, namespace_name);
+		table.enter_namespace(namespace_handle);
+		REQUIRE(table.insert(StringTable::getStringView(symbol_name), symbol));
+		table.exit_scope();
+		transaction.commit();
+
+		CHECK(gNamespaceRegistry.lookupNamespace(
+			NamespaceRegistry::GLOBAL_NAMESPACE, namespace_name) == namespace_handle);
+		CHECK(gNamespaceRegistry.isDeclared(namespace_handle));
+		CHECK(table.lookup_qualified(namespace_handle, symbol_name).has_value());
+	}
+
 	TEST_CASE("Scratch arena survives allocations larger than one block") {
 		DiagnosticEngine diagnostics;
 		MonotonicScratchArena arena(diagnostics, FrontendContext::kScratchByteLimit);
