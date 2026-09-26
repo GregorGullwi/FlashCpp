@@ -36,6 +36,11 @@ unresolved and defers overload selection to sema. Sema uses the canonical
 argument type for selection and reports ambiguous or non-viable calls at the
 call site. Other parse-time expression queries still use the compatibility
 type view where needed.
+Conditional pointer common-type selection now compares imported structural
+`TypeId`s through the shared descriptor adapter. Conversion annotation and
+other syntax-facing planner callers still need migration; derived-to-base,
+reference binding, and user-defined conversions remain on their existing
+specialized paths.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -63,12 +68,12 @@ estimated reliably.
 
 Continue boundary 3A in this order:
 
-1. **Make `TypeId` the conversion currency.** Move remaining conversion rules
-   and callers to the structural planner. Then make projectable semantic
-   descriptors use structural identity too, and replace flat-field reads with
-   a single compatibility materializer at each remaining legacy boundary.
-   Preserve full callable comparison, nested cv, array decay, and
-   value-category behavior.
+1. **Make `TypeId` the conversion currency.** Move conversion annotation and
+   remaining syntax-facing callers to the structural planner. Then make
+   projectable semantic descriptors use structural identity too, and replace
+   flat-field reads with a single compatibility materializer at each remaining
+   legacy boundary. Preserve full callable comparison, nested cv, array decay,
+   and value-category behavior.
 2. **Migrate remaining flat consumers.** Prioritize type-trait operands,
    template argument/substitution storage, constexpr type queries, and IR
    layout/subscript paths. Add reduced non-library regressions for language

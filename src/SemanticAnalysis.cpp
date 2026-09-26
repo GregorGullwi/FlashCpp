@@ -24,6 +24,11 @@
 #include <algorithm>
 #include <limits>
 
+static ConversionPlan buildCanonicalStructuralConversionPlan(
+	CanonicalTypeTable& table,
+	TypeId source_type,
+	TypeId target_type);
+
 namespace {
 
 void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const char* operation) {
@@ -589,6 +594,20 @@ TypeSpecifierNode materializeTypeSpecifierWithMaxPointerDepth(
 	return type_node;
 }
 
+std::optional<TypeId> tryGetStructuralTypeId(const CanonicalTypeDesc& desc) {
+	if (desc.structural_type_id) {
+		return desc.structural_type_id;
+	}
+	TypeSpecifierNode syntax = materializeTypeSpecifier(desc);
+	tryBindPublishedTypeEntity(syntax);
+	const CanonicalTypeImport imported = importCanonicalType(
+		requireFrontendContext().canonicalTypes(), syntax);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return imported.type;
+}
+
 // [expr.cond] applies the array-to-pointer conversion before choosing a
 // common pointer result.  Keep this canonical so string literals and ordinary
 // array expressions follow the same path; their parser-facing expression
@@ -681,10 +700,16 @@ std::optional<CanonicalTypeDesc> tryGetConditionalPointerType(
 		return std::nullopt;
 	}
 
-	const TypeSpecifierNode lhs_type = materializeTypeSpecifier(*lhs_pointer);
-	const TypeSpecifierNode rhs_type = materializeTypeSpecifier(*rhs_pointer);
-	const ConversionPlan lhs_to_rhs = buildConversionPlan(lhs_type, rhs_type);
-	const ConversionPlan rhs_to_lhs = buildConversionPlan(rhs_type, lhs_type);
+	const std::optional<TypeId> lhs_type = tryGetStructuralTypeId(*lhs_pointer);
+	const std::optional<TypeId> rhs_type = tryGetStructuralTypeId(*rhs_pointer);
+	if (!lhs_type.has_value() || !rhs_type.has_value()) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	const ConversionPlan lhs_to_rhs = buildCanonicalStructuralConversionPlan(
+		canonical_types, *lhs_type, *rhs_type);
+	const ConversionPlan rhs_to_lhs = buildCanonicalStructuralConversionPlan(
+		canonical_types, *rhs_type, *lhs_type);
 	// The ternary lowering has one branch-cast slot. It can represent array
 	// decay and qualification-only pointer changes, but not a derived-to-base
 	// adjustment that needs a byte offset. Leave those cases unresolved until
@@ -8023,7 +8048,7 @@ static bool structHasConversionOperatorTo(
 	return false;
 }
 
-ConversionPlan buildCanonicalStructuralConversionPlan(
+static ConversionPlan buildCanonicalStructuralConversionPlan(
 	CanonicalTypeTable& table,
 	TypeId source_type,
 	TypeId target_type) {
@@ -8330,22 +8355,12 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	if (from_desc.structural_type_id || to_desc.structural_type_id) {
 		CanonicalTypeTable& canonical_types =
 			requireFrontendContext().canonicalTypes();
-		auto getStructuralTypeId = [&canonical_types](const CanonicalTypeDesc& desc) {
-			if (desc.structural_type_id) {
-				return desc.structural_type_id;
-			}
-			TypeSpecifierNode syntax = materializeTypeSpecifier(desc);
-			const CanonicalTypeImport imported =
-				importCanonicalType(canonical_types, syntax);
-			return imported.status == CanonicalTypeImportStatus::Supported
-				? imported.type
-				: TypeId{};
-		};
-		const TypeId from_type = getStructuralTypeId(from_desc);
-		const TypeId to_type = getStructuralTypeId(to_desc);
-		const ConversionPlan structural_plan = from_type && to_type
+		const std::optional<TypeId> from_type = tryGetStructuralTypeId(from_desc);
+		const std::optional<TypeId> to_type = tryGetStructuralTypeId(to_desc);
+		const ConversionPlan structural_plan = from_type.has_value() &&
+			to_type.has_value()
 			? buildCanonicalStructuralConversionPlan(
-				canonical_types, from_type, to_type)
+				canonical_types, *from_type, *to_type)
 			: ConversionPlan::no_match();
 		if (!structural_plan.is_valid ||
 			structural_plan.kind == StandardConversionKind::None) {
