@@ -134,6 +134,7 @@ void Parser::foldInstantiatedNoexceptSpecification(
 	if (value.success()) {
 		signature.is_noexcept = value.as_bool();
 		signature.noexcept_expression.reset();
+		signature.dependent_noexcept = ExprId{};
 		return;
 	}
 	if (const auto parser_value =
@@ -141,6 +142,7 @@ void Parser::foldInstantiatedNoexceptSpecification(
 		parser_value.has_value()) {
 		signature.is_noexcept = parser_value->value != 0;
 		signature.noexcept_expression.reset();
+		signature.dependent_noexcept = ExprId{};
 		return;
 	}
 	if (value.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {

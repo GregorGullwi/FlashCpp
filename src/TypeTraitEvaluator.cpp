@@ -1,9 +1,11 @@
 #include "TypeTraitEvaluator.h"
 
-#include "ExpressionStructure.h"
-#include "OverloadResolution.h"
-
 #include <ranges>
+
+#include "CanonicalTypeAdapter.h"
+#include "ExpressionStructure.h"
+#include "FrontendContext.h"
+#include "OverloadResolution.h"
 
 namespace TypeTraitEval {
 
@@ -198,6 +200,30 @@ bool areSameTypeTraitOperands(
 		return false;
 	}
 	return true;
+}
+
+std::optional<TypeTraitResult> tryEvaluateCanonicalIsSame(
+	const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs) {
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport lhs_type = importCanonicalType(table, lhs);
+	if (lhs_type.status == CanonicalTypeImportStatus::Invalid) {
+		return TypeTraitResult::failure();
+	}
+	if (lhs_type.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeImport rhs_type = importCanonicalType(table, rhs);
+	if (rhs_type.status == CanonicalTypeImportStatus::Invalid) {
+		return TypeTraitResult::failure();
+	}
+	if (rhs_type.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return lhs_type.type == rhs_type.type
+		? TypeTraitResult::success_true()
+		: TypeTraitResult::success_false();
 }
 
 std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const ExpressionNode& expr, const SymbolTable& symbols) {
@@ -959,12 +985,12 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		return TypeTraitResult::failure();
 	}
 
-	if (isDependentTypeTraitOperand(
-			trait_expr.type_node().as<TypeSpecifierNode>())) {
+	const TypeSpecifierNode& raw_type_spec =
+		trait_expr.type_node().as<TypeSpecifierNode>();
+	if (isDependentTypeTraitOperand(raw_type_spec)) {
 		return TypeTraitResult::failure();
 	}
-	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(
-		trait_expr.type_node().as<TypeSpecifierNode>());
+	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(raw_type_spec);
 	if (trait_expr.is_variadic_trait()) {
 		std::vector<TypeSpecifierNode> additional_types;
 		additional_types.reserve(trait_expr.additional_type_nodes().size());
@@ -1075,14 +1101,20 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		if (!trait_expr.second_type_node().is<TypeSpecifierNode>()) {
 			return TypeTraitResult::failure();
 		}
-		if (isDependentTypeTraitOperand(
-				trait_expr.second_type_node().as<TypeSpecifierNode>())) {
+		const TypeSpecifierNode& raw_second_type_spec =
+			trait_expr.second_type_node().as<TypeSpecifierNode>();
+		if (isDependentTypeTraitOperand(raw_second_type_spec)) {
 			return TypeTraitResult::failure();
 		}
 		const TypeSpecifierNode second_type_spec = normalizeTypeTraitOperand(
-			trait_expr.second_type_node().as<TypeSpecifierNode>());
+			raw_second_type_spec);
 		switch (trait_expr.kind()) {
 		case TypeTraitKind::IsSame:
+			if (const std::optional<TypeTraitResult> canonical_result =
+					tryEvaluateCanonicalIsSame(raw_type_spec, raw_second_type_spec);
+				canonical_result.has_value()) {
+				return *canonical_result;
+			}
 			return areSameTypeTraitOperands(type_spec, second_type_spec)
 				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();

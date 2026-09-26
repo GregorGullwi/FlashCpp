@@ -25,9 +25,10 @@ annotation now uses a shared structural planner for supported canonical
 imports, while compatibility paths still materialize flat types for unmigrated
 families. Parser-side overload ranking and other syntax-facing conversion
 callers still use `TypeSpecifierNode`. Ordered pointer objects use
-`runtime_pointer_depth`, but template, trait, constexpr, and IR consumers
-still read flat fields. Array and callable outer wrappers remain guarded where
-their consumers are not migrated.
+`runtime_pointer_depth`; `__is_same` compares canonical `TypeId`s for supported
+operands, while other traits and template, constexpr, and IR consumers still
+read flat fields. Array and callable outer wrappers remain guarded where their
+consumers are not migrated.
 
 Semantic conversion support covers ordered shape identity, pointer
 qualification, object-pointer-to-`cv void*`, array/function decay, boolean
@@ -98,8 +99,9 @@ Continue boundary 3A in this order:
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
    nested cv, array decay, and value-category behavior.
-2. **Migrate remaining flat consumers.** Prioritize type-trait operands,
-   template argument/substitution storage, constexpr type queries, and IR
+2. **Migrate remaining flat consumers.** Extend structural type identity from
+   `__is_same` to the other type traits, then prioritize template
+   argument/substitution storage, constexpr type queries, and IR
    layout/subscript paths. Add reduced non-library regressions for language
    rules. Keep unsupported shapes fail-closed until their consumers are
    structural.
