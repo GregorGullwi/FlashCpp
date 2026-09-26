@@ -3927,35 +3927,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						const StructStaticMember* static_member =
 							struct_info->findStaticMemberRecursive(static_member_name).first;
 						if (static_member != nullptr) {
-							std::optional<TypeSpecifierNode> ordered_type =
-								orderedTypeFromStaticMemberDeclaration(*static_member);
-							if (ordered_type.has_value()) {
-								if (!static_member->canonical_type_id) {
-									throw InternalError(
-										"ordered static member has no canonical type id");
-								}
-								const CanonicalDeclaratorExport exported =
-									exportCanonicalDeclarator(
-										requireFrontendContext().canonicalTypes(),
-										static_member->canonical_type_id);
-								if (exported.status != CanonicalTypeImportStatus::Supported) {
-									throw InternalError(
-										"static member canonical type export rejected ordered declarator");
-								}
-								ordered_type->set_type_index(static_member->type_index);
-								ordered_type->set_cv_qualifier(static_member->cv_qualifier);
-								ordered_type->set_ordered_declarator(exported.components);
-								return *ordered_type;
-							}
-							TypeSpecifierNode member_type(
-								static_member->memberType(), TypeQualifier::None,
-								static_member->size * 8, Token{}, CVQualifier::None);
-							member_type.set_type_index(static_member->type_index);
-							member_type.set_cv_qualifier(static_member->cv_qualifier);
-							applyMemberDeclaratorShape(member_type, *static_member);
-							member_type.set_reference_qualifier(
-								static_member->reference_qualifier);
-							return member_type;
+							return materializeStaticMemberTypeSpecifier(
+								requireFrontendContext().canonicalTypes(),
+								*static_member,
+								Token{});
 						}
 					}
 				}
@@ -4125,25 +4100,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					// Look for static member
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member && owner_struct) {
-						// Preserve a non-projectable ordered declarator from the
-						// member's declaration; StructStaticMember only keeps the
-						// flat projection.
-						if (std::optional<TypeSpecifierNode> ordered_type =
-								orderedTypeFromStaticMemberDeclaration(*static_member);
-							ordered_type.has_value()) {
-							return *ordered_type;
-						}
-						// Found the static member - return its type
-						TypeSpecifierNode member_type(static_member->memberType(), TypeQualifier::None, static_member->size * 8, Token{}, CVQualifier::None);
-						member_type.set_type_index(static_member->type_index);
-						if (static_member->is_const()) {
-							member_type.set_cv_qualifier(CVQualifier::Const);
-						}
-						applyMemberDeclaratorShape(member_type, *static_member);
-						if (static_member->reference_qualifier != ReferenceQualifier::None) {
-							member_type.set_reference_qualifier(static_member->reference_qualifier);
-						}
-						return member_type;
+						return materializeStaticMemberTypeSpecifier(
+							requireFrontendContext().canonicalTypes(),
+							*static_member,
+							Token{});
 					}
 
 					// In unevaluated operands such as sizeof(Struct::member), accept qualified

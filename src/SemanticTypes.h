@@ -121,8 +121,9 @@ struct CanonicalTypeDesc {
 	// as opposed to an array of pointers (T* p[N]).
 	bool pointee_array_declarator = false;
 	CanonicalTypeFlags flags = CanonicalTypeFlags::None;
-	// Bridge identity for declarator shapes that cannot be projected into the
-	// legacy pointer/array fields. Zero means the descriptor is wholly legacy.
+	// Authoritative identity when the canonical importer supports this type.
+	// Flat fields remain a compatibility projection for unmigrated consumers;
+	// zero marks a type that still uses the legacy-only representation.
 	TypeId structural_type_id{};
 	std::optional<FunctionSignature> function_signature;
 
@@ -144,6 +145,12 @@ struct hash<CanonicalTypeDesc> {
 			return h * 31u + v;
 		};
 		size_t h = 0;
+		if (d.structural_type_id) {
+			h = combine(h, 0x3A);
+			h = combine(h, d.structural_type_id.value);
+			h = combine(h, static_cast<size_t>(d.flags));
+			return h;
+		}
 		h = combine(h, static_cast<size_t>(d.type_index.category()));
 		h = combine(h, d.type_index.index());
 		h = combine(h, static_cast<size_t>(d.base_cv));
@@ -156,7 +163,6 @@ struct hash<CanonicalTypeDesc> {
 			h = combine(h, dim);
 		h = combine(h, static_cast<size_t>(d.pointee_array_declarator));
 		h = combine(h, static_cast<size_t>(d.flags));
-		h = combine(h, d.structural_type_id.value);
 		if (d.function_signature) {
 			h = combine(
 				h,

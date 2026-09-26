@@ -130,10 +130,11 @@ projectable ordered shapes with legacy shapes. Canonicalization composes
 pointer-alias layers with ordered declarators while preserving cv on each
 pointer level; its architecture test checks the resulting canonical type.
 
-Boundary 3A is not complete: `CanonicalTypeDesc` carries a
-`structural_type_id` bridge, but other `TypeContext` operations,
-template argument and substitution storage, traits, and general IR
-layout/subscript consumers still rely on parallel pointer/array fields.
+Boundary 3A is not complete: descriptors use `structural_type_id` for shapes
+that the flat fields cannot represent, but projectable types still use those
+fields as semantic identity. Template argument and substitution storage,
+traits, and general IR layout/subscript consumers also read parallel
+pointer/array fields, so they remain vulnerable to projection drift.
 Ordered declarators over alias array, reference, function, or member-pointer
 wrappers remain unsupported. Non-projectable spines are rejected at migrated
 boundary guards rather than being reordered or truncated. Remove this entry

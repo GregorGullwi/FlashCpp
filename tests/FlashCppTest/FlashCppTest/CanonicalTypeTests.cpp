@@ -14,6 +14,35 @@ TEST_CASE("Canonical types participate in scratch rollback") {
 	CHECK(context.canonicalTypes().size() == before);
 }
 
+TEST_CASE("Structural TypeId controls semantic type descriptor identity") {
+	FrontendContext frontend;
+	CanonicalTypeTable& canonical_types = frontend.canonicalTypes();
+	const TypeId pointer_to_array = canonical_types.pointer(
+		canonical_types.array(canonical_types.builtin(CanonicalBuiltinKind::Int), 3));
+	const TypeId pointer_to_pointer_to_array = canonical_types.pointer(pointer_to_array);
+
+	CanonicalTypeDesc structural;
+	structural.type_index = nativeTypeIndex(TypeCategory::Int);
+	structural.structural_type_id = pointer_to_array;
+
+	CanonicalTypeDesc projected = structural;
+	projected.pointer_levels.push_back(PointerLevel{});
+	projected.array_dimensions.push_back(3);
+	projected.pointee_array_declarator = true;
+
+	TypeContext semantic_types;
+	const CanonicalTypeId structural_id = semantic_types.intern(structural);
+	const CanonicalTypeId projected_id = semantic_types.intern(projected);
+	CanonicalTypeDesc nested_pointer = structural;
+	nested_pointer.structural_type_id = pointer_to_pointer_to_array;
+	const CanonicalTypeId nested_pointer_id = semantic_types.intern(nested_pointer);
+
+	// Pointer wrappers live in the TypeId. Flat fields are compatibility
+	// projections and cannot override that structural identity.
+	CHECK(projected_id == structural_id);
+	CHECK(nested_pointer_id != structural_id);
+}
+
 TEST_CASE("Ordered declarator array conversion preserves the element spine") {
 	TypeSpecifierNode source(
 		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
@@ -244,7 +273,10 @@ TEST_CASE("Ordered pointer and array conversions reach bool") {
 	member_object.set_ordered_declarator({
 		DeclaratorComponent::memberPointer(EntityId{}, false, CVQualifier::None),
 	});
-	CHECK_FALSE(buildConversionPlan(member_object, bool_target).is_valid);
+	const ConversionPlan member_pointer_plan =
+		buildConversionPlan(member_object, bool_target);
+	CHECK(member_pointer_plan.is_valid);
+	CHECK(member_pointer_plan.kind == StandardConversionKind::BooleanConversion);
 }
 
 TEST_CASE("Projectable pointer and array conversions reach bool") {
