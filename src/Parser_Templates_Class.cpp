@@ -1468,17 +1468,23 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		// Discard the saved position since we've consumed the type
 		discard_saved_token(target_type_start_pos);
 
+		std::vector<ASTNode> alias_array_bound_expressions;
 		bool has_structural_alias_declarator = false;
 		if (peek() == "("_tok && peek(1) == "*"_tok) {
 			SaveHandle declarator_start = save_token_position();
 			TypeSpecifierNode structural_target = type_spec;
 			ParseResult declarator_result =
-				parse_declarator(structural_target, Linkage::None);
+				parse_declarator(
+					structural_target,
+					Linkage::None,
+					&alias_array_bound_expressions);
 			if (!declarator_result.is_error() && declarator_result.node().has_value() &&
 				declarator_result.node()->is<DeclarationNode>() &&
 				declarator_result.node()->as<DeclarationNode>().identifier_token().value().empty()) {
 				type_spec = declarator_result.node()->as<DeclarationNode>().type_specifier_node();
-				promoteDeclaratorShapeToOrdered(type_spec);
+				promoteDeclaratorShapeToOrdered(
+					type_spec,
+					alias_array_bound_expressions);
 				has_structural_alias_declarator = true;
 				discard_saved_token(declarator_start);
 			} else {
@@ -1491,7 +1497,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			consume_pointer_ref_modifiers(type_spec);
 		}
 
-		std::vector<ASTNode> alias_array_bound_expressions;
 		// Array dimensions in the alias target: using A = T[3]; or using A = T[N];
 		// The bound may be a concrete constant or a dependent expression (which
 		// stores extent 0 until substitution).

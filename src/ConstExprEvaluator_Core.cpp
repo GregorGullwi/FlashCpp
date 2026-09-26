@@ -288,6 +288,28 @@ std::optional<size_t> tryGetConstexprTypeAlignment(const TypeSpecifierNode& type
 std::optional<TypeSpecifierNode> tryGetConstexprSubscriptResultType(const TypeSpecifierNode& base_type) {
 	TypeSpecifierNode result_type = base_type;
 	result_type.set_reference_qualifier(ReferenceQualifier::None);
+	if (base_type.has_ordered_declarator()) {
+		while (!result_type.declarator_components().empty() &&
+			(result_type.declarator_components().front().kind ==
+				DeclaratorComponentKind::LValueReference ||
+				result_type.declarator_components().front().kind ==
+				DeclaratorComponentKind::RValueReference)) {
+			result_type.remove_outermost_ordered_declarator_component();
+		}
+		if (result_type.declarator_components().empty()) {
+			return std::nullopt;
+		}
+		const DeclaratorComponentKind outer_kind =
+			result_type.declarator_components().front().kind;
+		if (outer_kind != DeclaratorComponentKind::Pointer &&
+			outer_kind != DeclaratorComponentKind::Array &&
+			outer_kind != DeclaratorComponentKind::UnknownBoundArray) {
+			return std::nullopt;
+		}
+		result_type.remove_outermost_ordered_declarator_component();
+		result_type.set_size_in_bits(getTypeSpecSizeBits(result_type));
+		return result_type;
+	}
 
 	if (base_type.is_array()) {
 		const auto& dimensions = base_type.array_dimensions();

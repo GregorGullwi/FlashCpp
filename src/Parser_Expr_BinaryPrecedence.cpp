@@ -1649,6 +1649,12 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 }
 
 void Parser::consume_array_type_id_modifiers(TypeSpecifierNode& type_spec) {
+	consume_array_type_id_modifiers(type_spec, nullptr);
+}
+
+void Parser::consume_array_type_id_modifiers(
+	TypeSpecifierNode& type_spec,
+	std::vector<ASTNode>* array_bound_expressions) {
 	if (!typeSpecCanHaveArrayAbstractDeclarator(type_spec)) {
 		return;
 	}
@@ -1669,6 +1675,9 @@ void Parser::consume_array_type_id_modifiers(TypeSpecifierNode& type_spec) {
 
 		size_t dim_size = 0;
 		if (size_result.node().has_value()) {
+			if (array_bound_expressions != nullptr) {
+				array_bound_expressions->push_back(*size_result.node());
+			}
 			if (auto dim_val = try_evaluate_constant_expression(*size_result.node());
 				dim_val.has_value() && dim_val->value > 0) {
 				dim_size = static_cast<size_t>(dim_val->value);

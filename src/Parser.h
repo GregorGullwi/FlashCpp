@@ -1807,6 +1807,10 @@ private:
 	ParseResult parse_type_and_name(CVQualifier leading_cv_qualifier);
 	ParseResult parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier);  // NEW: Parse structured bindings: auto [a, b] = expr; auto& [x, y] = pair;
 	ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);	 // NEW: Parse declarators (function pointers, arrays, etc.)
+	ParseResult parse_declarator(
+		TypeSpecifierNode& base_type,
+		Linkage linkage,
+		std::vector<ASTNode>* array_bound_expressions);
 	ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators
 	ParseResult parse_postfix_declarator(TypeSpecifierNode& base_type, const Token& identifier, Linkage linkage = Linkage::None);  // NEW: Helper for postfix declarators
 	// Parse the parameter-type-list inside a function pointer declarator.
@@ -4303,6 +4307,9 @@ private:	 // Resume private methods
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
 	void consume_array_type_id_modifiers(TypeSpecifierNode& type_spec); // Consume trailing [N] / [] abstract-declarators on a type-id
+	void consume_array_type_id_modifiers(
+		TypeSpecifierNode& type_spec,
+		std::vector<ASTNode>* array_bound_expressions);
 	void addConstantArrayDimensionsToTypeSpec(TypeSpecifierNode& type_spec, std::span<const ASTNode> dimension_exprs); // Constant-fold parsed "[expr]" bounds and apply all of them to the type-spec when every bound resolves
 	std::optional<CVQualifier> scan_parenthesized_pointer_group(CallingConvention& out_calling_conv, Token& out_pointer_token, Token& out_identifier, bool& out_has_identifier); // Scan "(" [cc] "*" cv-seq? [id] ")" shared by named and abstract declarators
 	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume ptr-operator then array abstract-declarators on a type-id
