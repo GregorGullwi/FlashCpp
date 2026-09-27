@@ -2231,8 +2231,21 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	if (!same_shape_ignoring_cv) {
 		const CanonicalTypeNode unqualified_source_node = table.node(source_type);
 		const CanonicalTypeNode unqualified_target_node = table.node(target_type);
-		if (unqualified_source_node.kind == CanonicalTypeKind::Pointer &&
-			unqualified_target_node.kind == CanonicalTypeKind::Pointer) {
+		const bool pointer_pair =
+			unqualified_source_node.kind == CanonicalTypeKind::Pointer &&
+			unqualified_target_node.kind == CanonicalTypeKind::Pointer;
+		const bool member_object_pointer_pair =
+			unqualified_source_node.kind ==
+				CanonicalTypeKind::MemberObjectPointer &&
+			unqualified_target_node.kind ==
+				CanonicalTypeKind::MemberObjectPointer;
+		const bool member_function_pointer_pair =
+			unqualified_source_node.kind ==
+				CanonicalTypeKind::MemberFunctionPointer &&
+			unqualified_target_node.kind ==
+				CanonicalTypeKind::MemberFunctionPointer;
+		if (pointer_pair || member_object_pointer_pair ||
+			member_function_pointer_pair) {
 			TypeSpecifierNode source_value = from;
 			TypeSpecifierNode target_value = to;
 			stripOrderedReference(source_value);

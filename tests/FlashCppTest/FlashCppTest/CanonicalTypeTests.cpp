@@ -867,6 +867,84 @@ TEST_CASE("Canonical TypeIds compare member object pointer pairs") {
 	CHECK_FALSE(rejected_owner_plan.is_valid);
 }
 
+TEST_CASE("Canonical TypeIds bind member-pointer conversion temporaries to references") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_owner{830};
+	const EntityId derived_owner{831};
+	const std::array<CanonicalRecordBase, 1> derived_bases{
+		CanonicalRecordBase{
+			base_owner, 0, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None, 0, 0}};
+	auto publish_record = [&table](EntityId entity,
+		std::span<const CanonicalRecordBase> bases) {
+		table.publishRecordLayout(CanonicalRecordLayout{
+			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
+			CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(entity,
+			std::span<const CanonicalRecordMember>{}, bases);
+	};
+	publish_record(base_owner, {});
+	publish_record(derived_owner, derived_bases);
+
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	auto make_member_object_pointer = [&int_type](EntityId owner) {
+		TypeSpecifierNode type(TypeCategory::MemberObjectPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_member_object_pointee(&int_type);
+		return type;
+	};
+	TypeSpecifierNode base_member_pointer =
+		make_member_object_pointer(base_owner);
+	base_member_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_derived_member_reference =
+		make_member_object_pointer(derived_owner);
+	const_derived_member_reference.set_cv_qualifier(CVQualifier::Const);
+	const_derived_member_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> member_object_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			base_member_pointer, const_derived_member_reference);
+	REQUIRE(member_object_plan.has_value());
+	CHECK(member_object_plan->is_valid);
+	CHECK(member_object_plan->rank == ConversionRank::Conversion);
+	CHECK(member_object_plan->kind == StandardConversionKind::PointerConversion);
+
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	signature.setParameterTypes(std::move(parameters));
+	auto make_member_function_pointer = [&signature](EntityId owner) {
+		TypeSpecifierNode type(TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	TypeSpecifierNode base_member_function_pointer =
+		make_member_function_pointer(base_owner);
+	base_member_function_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_derived_member_function_reference =
+		make_member_function_pointer(derived_owner);
+	const_derived_member_function_reference.set_cv_qualifier(
+		CVQualifier::Const);
+	const_derived_member_function_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> member_function_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			base_member_function_pointer,
+			const_derived_member_function_reference);
+	REQUIRE(member_function_plan.has_value());
+	CHECK(member_function_plan->is_valid);
+	CHECK(member_function_plan->rank == ConversionRank::Conversion);
+	CHECK(member_function_plan->kind == StandardConversionKind::PointerConversion);
+}
+
 TEST_CASE("Ordered function objects decay to pointers") {
 	FrontendContext frontend;
 	TypeSpecifierNode parameter(
