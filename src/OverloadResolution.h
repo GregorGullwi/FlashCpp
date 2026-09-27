@@ -2388,7 +2388,13 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		return ConversionPlan::no_match();
 	}
 	if (table.node(source_type).kind == CanonicalTypeKind::Array) {
-		bool qualification_changed = source_referent_cv != target_referent_cv;
+		// Adding top-level cv-qualification to the referenced array (or to its
+		// ultimate element) through the binding itself is the identity
+		// conversion ([over.ics.ref]/1); the mutable-vs-const preference is left
+		// to [over.ics.rank]/3.2.6.  Only a structural qualification of an
+		// element type, such as a pointer element gaining pointee cv, is a
+		// qualification conversion.
+		bool qualification_changed = false;
 		TypeId source_element = source_type;
 		TypeId target_element = target_type;
 		for (;;) {
@@ -2400,7 +2406,6 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 				~static_cast<uint8_t>(target_element_cv)) != 0) {
 				return ConversionPlan::no_match();
 			}
-			qualification_changed |= source_element_cv != target_element_cv;
 			const CanonicalTypeNode source_shape_node =
 				table.node(source_element_unqualified);
 			const CanonicalTypeNode target_shape_node =

@@ -304,9 +304,11 @@ TEST_CASE("Canonical TypeIds bind array references without decay") {
 		tryBuildCanonicalReferenceBindingPlan(array_lvalue, const_array_reference);
 	REQUIRE(qualified_array_plan.has_value());
 	CHECK(qualified_array_plan->is_valid);
-	CHECK(qualified_array_plan->rank == ConversionRank::QualificationAdjustment);
-	CHECK(qualified_array_plan->kind ==
-		StandardConversionKind::QualificationAdjustment);
+	// The referenced array differs only by top-level element cv-qualification,
+	// so direct binding is the identity conversion ([over.ics.ref]/1); the
+	// mutable-vs-const preference is applied by [over.ics.rank]/3.2.6.
+	CHECK(qualified_array_plan->rank == ConversionRank::ExactMatch);
+	CHECK(qualified_array_plan->kind == StandardConversionKind::None);
 	const std::optional<ConversionPlan> const_array_xvalue_plan =
 		tryBuildCanonicalReferenceBindingPlan(array_type, const_array_reference);
 	REQUIRE(const_array_xvalue_plan.has_value());

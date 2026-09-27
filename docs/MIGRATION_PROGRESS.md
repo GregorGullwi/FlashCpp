@@ -111,7 +111,11 @@ pointer, which still requires the [conv.fctptr] function pointer conversion
 `T&` and `const T&` for an lvalue is applied by the [over.ics.rank]/3.2.6
 cv-preference tie-break when comparing candidate sequences; the helper that
 compares referenced types ignoring top-level cv now also ignores the outermost
-pointer level's cv. The unit case
+pointer level's cv. Array references follow the same rule: a referenced array
+that differs only by top-level element cv is an identity binding, so
+`int (&)[N]` is preferred over `const int (&)[N]`, while element types that
+require a structural qualification (for example an array of pointers gaining
+pointee cv) remain qualification conversions. The unit case
 `Canonical TypeIds bind function pointer conversions to references` and the
 source regressions
 `tests/test_canonical_noexcept_function_pointer_reference_temp_overload_ret0.cpp`
