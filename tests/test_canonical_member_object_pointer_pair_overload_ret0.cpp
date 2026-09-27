@@ -15,38 +15,40 @@ struct Derived : Base {
 	int own;
 };
 
-int choose(int Owner::*) {
-	return 1;
-}
+struct OwnerIntegerSelection {};
+struct OwnerCharacterSelection {};
+struct OtherOwnerIntegerSelection {};
+struct BaseIntegerSelection {};
+struct DerivedIntegerSelection {};
 
-int choose(char Owner::*) {
-	return 2;
-}
+template <class Left, class Right>
+struct SameType {
+	static constexpr bool value = false;
+};
 
-int choose(int OtherOwner::*) {
-	return 3;
-}
+template <class Type>
+struct SameType<Type, Type> {
+	static constexpr bool value = true;
+};
 
-int choose(int Base::*) {
-	return 4;
-}
+OwnerIntegerSelection choose(int Owner::*);
+OwnerCharacterSelection choose(char Owner::*);
+OtherOwnerIntegerSelection choose(int OtherOwner::*);
+BaseIntegerSelection choose(int Base::*);
+DerivedIntegerSelection choose(int Derived::*);
+DerivedIntegerSelection chooseDerivedOnly(int Derived::*);
 
-int choose(int Derived::*) {
-	return 5;
-}
+int Owner::* ownerInteger;
+char Owner::* ownerCharacter;
+int OtherOwner::* otherOwnerInteger;
+int Base::* baseInteger;
+
+static_assert(SameType<decltype(choose(ownerInteger)), OwnerIntegerSelection>::value);
+static_assert(SameType<decltype(choose(ownerCharacter)), OwnerCharacterSelection>::value);
+static_assert(SameType<decltype(choose(otherOwnerInteger)), OtherOwnerIntegerSelection>::value);
+static_assert(SameType<decltype(choose(baseInteger)), BaseIntegerSelection>::value);
+static_assert(SameType<decltype(chooseDerivedOnly(baseInteger)), DerivedIntegerSelection>::value);
 
 int main() {
-	int Owner::* integer = &Owner::integer;
-	char Owner::* character = &Owner::character;
-	int OtherOwner::* other = &OtherOwner::integer;
-	int Base::* base = &Base::value;
-	if (choose(integer) != 1)
-		return 1;
-	if (choose(character) != 2)
-		return 2;
-	if (choose(other) != 3)
-		return 3;
-	if (choose(base) != 4)
-		return 4;
 	return 0;
 }

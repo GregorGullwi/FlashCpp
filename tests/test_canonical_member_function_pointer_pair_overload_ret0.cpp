@@ -1,40 +1,34 @@
 struct Owner {
-	int noThrow(int value) {
-		return value;
-	}
-
-	int narrow(char value) {
-		return value;
-	}
+	int noThrow(int value);
+	int narrow(char value);
 };
 
 struct OtherOwner {
-	int noThrow(int value) {
-		return value;
-	}
+	int noThrow(int value);
 };
 
-int choose(int (Owner::*)(int)) {
-	return 1;
-}
+struct OwnerIntSelection {};
+struct OwnerCharSelection {};
+struct OtherOwnerIntSelection {};
 
-int choose(int (Owner::*)(char)) {
-	return 2;
-}
+template <class Left, class Right>
+struct SameType {
+	static constexpr bool value = false;
+};
 
-int choose(int (OtherOwner::*)(int)) {
-	return 3;
-}
+template <class Type>
+struct SameType<Type, Type> {
+	static constexpr bool value = true;
+};
+
+OwnerIntSelection choose(int (Owner::*)(int));
+OwnerCharSelection choose(int (Owner::*)(char));
+OtherOwnerIntSelection choose(int (OtherOwner::*)(int));
+
+static_assert(SameType<decltype(choose(&Owner::noThrow)), OwnerIntSelection>::value);
+static_assert(SameType<decltype(choose(&Owner::narrow)), OwnerCharSelection>::value);
+static_assert(SameType<decltype(choose(&OtherOwner::noThrow)), OtherOwnerIntSelection>::value);
 
 int main() {
-	int (Owner::*integer_member)(int) = &Owner::noThrow;
-	int (Owner::*char_member)(char) = &Owner::narrow;
-	int (OtherOwner::*other_member)(int) = &OtherOwner::noThrow;
-	if (choose(integer_member) != 1)
-		return 1;
-	if (choose(char_member) != 2)
-		return 2;
-	if (choose(other_member) != 3)
-		return 3;
 	return 0;
 }
