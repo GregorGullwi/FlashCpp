@@ -2231,6 +2231,23 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		const bool can_bind_conversion_temporary =
 			(target_is_lvalue_reference && target_referent_is_const) ||
 			target_is_rvalue_reference;
+		if (unqualified_source_node.kind == CanonicalTypeKind::Pointer &&
+			unqualified_target_node.kind == CanonicalTypeKind::Pointer) {
+			TypeSpecifierNode source_value = from;
+			TypeSpecifierNode target_value = to;
+			stripOrderedReference(source_value);
+			stripOrderedReference(target_value);
+			const std::optional<ConversionPlan> pointer_conversion_plan =
+				tryBuildCanonicalProjectableConversionPlan(
+					source_value, target_value);
+			if (pointer_conversion_plan.has_value()) {
+				if (!can_bind_conversion_temporary &&
+					pointer_conversion_plan->is_valid) {
+					return ConversionPlan::no_match();
+				}
+				return pointer_conversion_plan;
+			}
+		}
 		if (unqualified_source_node.kind == CanonicalTypeKind::Array &&
 			unqualified_target_node.kind == CanonicalTypeKind::Pointer) {
 			if (!can_bind_conversion_temporary) {

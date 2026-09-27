@@ -441,6 +441,85 @@ TEST_CASE("Canonical TypeIds bind function decay temporaries to pointer referenc
 	CHECK_FALSE(mismatched_signature_plan->is_valid);
 }
 
+TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_entity{828};
+	const EntityId derived_entity{829};
+	const std::array<CanonicalRecordBase, 1> derived_bases{
+		CanonicalRecordBase{
+			base_entity, 0, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None, 0, 0}};
+	auto publish_record = [&table](EntityId entity,
+		std::span<const CanonicalRecordBase> bases) {
+		table.publishRecordLayout(CanonicalRecordLayout{
+			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
+			CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(entity,
+			std::span<const CanonicalRecordMember>{}, bases);
+	};
+	publish_record(base_entity, {});
+	publish_record(derived_entity, derived_bases);
+
+	TypeSpecifierNode derived_pointer(
+		TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	derived_pointer.set_type_entity(derived_entity);
+	derived_pointer.add_pointer_level(CVQualifier::None);
+	TypeSpecifierNode derived_pointer_lvalue = derived_pointer;
+	derived_pointer_lvalue.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+
+	TypeSpecifierNode const_base_pointer(
+		TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::Const);
+	const_base_pointer.set_type_entity(base_entity);
+	const_base_pointer.add_pointer_level(CVQualifier::Const);
+	const_base_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> derived_to_base_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			derived_pointer_lvalue, const_base_pointer);
+	REQUIRE(derived_to_base_plan.has_value());
+	CHECK(derived_to_base_plan->is_valid);
+	CHECK(derived_to_base_plan->rank == ConversionRank::Conversion);
+	CHECK(derived_to_base_plan->kind == StandardConversionKind::DerivedToBase);
+
+	TypeSpecifierNode const_void_pointer(
+		TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::Const);
+	const_void_pointer.add_pointer_level(CVQualifier::Const);
+	const_void_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> object_to_void_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			derived_pointer_lvalue, const_void_pointer);
+	REQUIRE(object_to_void_plan.has_value());
+	CHECK(object_to_void_plan->is_valid);
+	CHECK(object_to_void_plan->rank == ConversionRank::Conversion);
+	CHECK(object_to_void_plan->kind == StandardConversionKind::PointerConversion);
+
+	TypeSpecifierNode mutable_base_pointer(
+		TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	mutable_base_pointer.set_type_entity(base_entity);
+	mutable_base_pointer.add_pointer_level(CVQualifier::None);
+	mutable_base_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> nonconst_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			derived_pointer_lvalue, mutable_base_pointer);
+	REQUIRE(nonconst_lvalue_plan.has_value());
+	CHECK_FALSE(nonconst_lvalue_plan->is_valid);
+
+	TypeSpecifierNode base_pointer_rvalue_reference = mutable_base_pointer;
+	base_pointer_rvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::RValueReference);
+	const std::optional<ConversionPlan> rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			derived_pointer_lvalue, base_pointer_rvalue_reference);
+	REQUIRE(rvalue_reference_plan.has_value());
+	CHECK(rvalue_reference_plan->is_valid);
+	CHECK(rvalue_reference_plan->rank == ConversionRank::Conversion);
+	CHECK(rvalue_reference_plan->kind == StandardConversionKind::DerivedToBase);
+}
+
 TEST_CASE("Canonical TypeIds compare projectable function pointer pairs") {
 	FrontendContext frontend;
 	TypeSpecifierNode int_type(
