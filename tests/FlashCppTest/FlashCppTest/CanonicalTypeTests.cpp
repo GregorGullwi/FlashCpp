@@ -512,6 +512,82 @@ TEST_CASE("Canonical TypeIds compare projectable function pointer pairs") {
 	CHECK_FALSE(mismatched_signature_plan->is_valid);
 }
 
+TEST_CASE("Canonical TypeIds compare same-owner member function pointer pairs") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode char_type(
+		TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	FunctionSignature throwing_signature;
+	throwing_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	throwing_signature.setParameterTypes(std::move(parameters));
+	FunctionSignature noexcept_signature = throwing_signature;
+	noexcept_signature.is_noexcept = true;
+	FunctionSignature mismatched_signature;
+	mismatched_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> mismatched_parameters;
+	mismatched_parameters.push_back(makeFunctionTypeFromSpecifier(char_type));
+	mismatched_signature.setParameterTypes(std::move(mismatched_parameters));
+	auto make_member_function_pointer = [](EntityId owner,
+		const FunctionSignature& signature) {
+		TypeSpecifierNode type(
+			TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	const EntityId owner{805};
+	TypeSpecifierNode noexcept_pointer =
+		make_member_function_pointer(owner, noexcept_signature);
+	TypeSpecifierNode throwing_pointer =
+		make_member_function_pointer(owner, throwing_signature);
+	const std::optional<ConversionPlan> exact_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_pointer, noexcept_pointer);
+	REQUIRE(exact_plan.has_value());
+	CHECK(exact_plan->is_valid);
+	CHECK(exact_plan->rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode noexcept_lvalue = noexcept_pointer;
+	noexcept_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> relaxation_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_lvalue, throwing_pointer);
+	REQUIRE(relaxation_plan.has_value());
+	CHECK(relaxation_plan->is_valid);
+	CHECK(relaxation_plan->rank == ConversionRank::QualificationAdjustment);
+	CHECK(relaxation_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+
+	TypeSpecifierNode throwing_lvalue = throwing_pointer;
+	throwing_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> rejected_relaxation_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			throwing_lvalue, noexcept_pointer);
+	REQUIRE(rejected_relaxation_plan.has_value());
+	CHECK_FALSE(rejected_relaxation_plan->is_valid);
+
+	TypeSpecifierNode mismatched_pointer =
+		make_member_function_pointer(owner, mismatched_signature);
+	const std::optional<ConversionPlan> mismatched_signature_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_pointer, mismatched_pointer);
+	REQUIRE(mismatched_signature_plan.has_value());
+	CHECK_FALSE(mismatched_signature_plan->is_valid);
+
+	TypeSpecifierNode const_noexcept_lvalue = noexcept_lvalue;
+	const_noexcept_lvalue.set_cv_qualifier(CVQualifier::Const);
+	const std::optional<ConversionPlan> top_level_cv_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			const_noexcept_lvalue, noexcept_pointer);
+	REQUIRE(top_level_cv_plan.has_value());
+	CHECK(top_level_cv_plan->is_valid);
+	CHECK(top_level_cv_plan->rank == ConversionRank::ExactMatch);
+}
+
 TEST_CASE("Ordered function objects decay to pointers") {
 	FrontendContext frontend;
 	TypeSpecifierNode parameter(

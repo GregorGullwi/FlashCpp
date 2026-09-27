@@ -101,7 +101,17 @@ and mismatched return or parameter types are rejected; top-level cv on
 by-value pointer arguments is ignored. The unit case
 `Canonical TypeIds compare projectable function pointer pairs` and
 `tests/test_canonical_function_pointer_noexcept_pair_overload_ret0.cpp`
-cover ranking and viability. Member-function-pointer pairs, dependent
+cover ranking and viability.
+Same-owner member-function-pointer pairs now compare the canonical owner and
+full function type, accept `noexcept` relaxation, and reject reverse
+relaxation or signature mismatches. Complete owner schemas also let this path
+reject unrelated, inaccessible, ambiguous, and virtual-base owner pairs;
+valid public non-virtual base-to-derived member-pointer adjustments remain
+deferred to compatibility planning. The unit case
+`Canonical TypeIds compare same-owner member function pointer pairs` checks
+signature ranking, and
+`tests/test_canonical_member_function_pointer_pair_overload_ret0.cpp` checks
+owner and member-signature selection. Member-object-pointer pairs, dependent
 `noexcept`, user-defined conversions, and other unsupported callable or
 template types still use compatibility planning.
 Call lowering does not yet materialize the pointer object required when an
@@ -190,7 +200,7 @@ Continue boundary 3A in this order:
    overload ranking and remaining syntax-facing callers to the structural
    planner, including remaining conversions that require temporary
    materialization and unsupported callable pairs. Regular function-pointer
-   pairs, builtin arithmetic, array-decay,
+   pairs and same-owner member-function-pointer pairs, builtin arithmetic, array-decay,
    null-pointer, and function-decay reference temporaries plus direct
    derived-to-base reference and pointer conversions now use the canonical
    planner and base graph.
