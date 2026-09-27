@@ -151,7 +151,13 @@ conversions; non-const lvalue references still reject that temporary path. The
 unit case `Canonical TypeIds bind pointer conversion temporaries to references`
 checks those plans, and
 `tests/test_canonical_pointer_conversion_reference_overload_ret0.cpp` checks
-compile-time overload selection. `tests/test_canonical_array_decay_reference_overload_ret0.cpp`
+compile-time overload selection. Reference binding also distinguishes cv on
+the pointer object from cv on its pointee: `int*` cannot bind through a
+qualification temporary to `const int*&`, while `const int* const&` can accept
+it. The unit case `Canonical TypeIds reject pointee qualification through
+mutable references` and
+`tests/test_canonical_pointer_cv_reference_binding_overload_ret0.cpp` cover
+that distinction. `tests/test_canonical_array_decay_reference_overload_ret0.cpp`
 checks array-to-pointer temporary binding for const lvalue and rvalue references
 across builtin and record element types; the canonical planner unit test checks
 multidimensional row extents, cv addition/removal, and direct versus temporary
