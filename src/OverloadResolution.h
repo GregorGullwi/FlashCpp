@@ -1776,10 +1776,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalOrderedConversionPlan(
 		table, from_import.type, to_import.type);
 }
 
-// Use canonical identity for scalar builtin conversions and supported
-// projectable pointer/array conversions. Imports stay within non-recursive
-// base-type families. No-match remains on the compatibility path for derived-
-// to-base and other specialized conversion rules.
+// Use canonical identity for scalar builtin and supported projectable
+// pointer/array conversions. Imports stay within non-recursive base-type
+// families; unsupported families remain on their compatibility paths.
 inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	const TypeSpecifierNode& from,
 	const TypeSpecifierNode& to) {
@@ -1844,9 +1843,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		return std::nullopt;
 	}
 	const CanonicalTypeNode from_node = table.node(
-		table.withoutTopLevelQualifiers(from_import.type));
+		stripCanonicalTopCv(table, from_import.type).first);
 	const CanonicalTypeNode to_node = table.node(
-		table.withoutTopLevelQualifiers(to_import.type));
+		stripCanonicalTopCv(table, to_import.type).first);
 	const bool is_pointer_pair = from_node.kind == CanonicalTypeKind::Pointer &&
 		to_node.kind == CanonicalTypeKind::Pointer;
 	const bool is_array_decay = from_node.kind == CanonicalTypeKind::Array &&
@@ -1867,9 +1866,45 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		!is_builtin_conversion && !is_nullptr_pointer_conversion) {
 		return std::nullopt;
 	}
+	if (is_pointer_pair) {
+		const CanonicalTypeNode source_pointer = table.node(
+			stripCanonicalTopCv(table, from_import.type).first);
+		const CanonicalTypeNode target_pointer = table.node(
+			stripCanonicalTopCv(table, to_import.type).first);
+		const auto [source_pointee, source_pointee_cv] =
+			stripCanonicalTopCv(table, source_pointer.child);
+		const auto [target_pointee, target_pointee_cv] =
+			stripCanonicalTopCv(table, target_pointer.child);
+		const CanonicalTypeNode source_pointee_node = table.node(source_pointee);
+		const CanonicalTypeNode target_pointee_node = table.node(target_pointee);
+		if (source_pointee_node.kind == CanonicalTypeKind::Record &&
+			target_pointee_node.kind == CanonicalTypeKind::Record &&
+			source_pointee != target_pointee) {
+			if ((static_cast<uint8_t>(source_pointee_cv) &
+				~static_cast<uint8_t>(target_pointee_cv)) != 0) {
+				return ConversionPlan::no_match();
+			}
+			const EntityId source_entity = table.recordEntity(source_pointee);
+			const EntityId target_entity = table.recordEntity(target_pointee);
+			const std::optional<DerivedBaseConversionKind> base_conversion =
+				classifyCanonicalDerivedBaseConversion(
+					table, source_entity, target_entity);
+			if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+				base_conversion == DerivedBaseConversionKind::PublicVirtual) {
+				return ConversionPlan{ConversionRank::Conversion,
+					StandardConversionKind::DerivedToBase, true};
+			}
+			// A direct pointer-to-record pair has enough canonical identity to
+			// decide viability. Missing hierarchy metadata is fail-closed too.
+			return ConversionPlan::no_match();
+		}
+	}
 	const ConversionPlan plan = buildCanonicalStructuralConversionPlan(
 		table, from_import.type, to_import.type);
 	if (!plan.is_valid) {
+		if (is_pointer_pair) {
+			return plan;
+		}
 		return std::nullopt;
 	}
 	return plan;

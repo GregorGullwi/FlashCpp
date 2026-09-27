@@ -38,21 +38,27 @@ conversion, and outermost ordered-reference binding. Function signatures retain
 non-projectable declarator spines, and function decay compares the complete
 callable type including ordered returns. Template-signature substitution now
 composes substituted pointer and array wrappers with retained callable
-declarator spines before canonical import. Derived-to-base and further
-callable-component conversions remain deferred. For dereferences whose result has an
-unprojectable ordered declarator, parser typing leaves the expression
+declarator spines before canonical import. Derived-to-base conversions through
+non-projectable declarators and callable-component conversions remain deferred.
+For dereferences whose result has an unprojectable
+ordered declarator, parser typing leaves the expression
 unresolved and defers overload selection to sema. Sema uses the canonical
 argument type for selection and reports ambiguous or non-viable calls at the
 call site. Other parse-time expression queries still use the compatibility
 type view where needed.
 Conditional pointer common-type selection now compares imported structural
 `TypeId`s through the shared descriptor adapter. Derived-to-base pointer
-conversions and user-defined conversions remain on specialized paths.
+conversions now classify direct record pointees from canonical base schemas
+keyed by `EntityId`, preserving public unique and virtual bases while rejecting
+inaccessible, ambiguous, and cv-removing conversions. Imported pointer-pair
+no-matches are authoritative, so derived-to-base ranking does not fall through
+to the compatibility `TypeIndex` classifier.
 Parser-side overload ranking now uses the structural planner for non-projectable
 ordered pairs plus scalar builtin conversions, `nullptr`-to-pointer conversion,
-and supported projectable pointer pairs, array decay, and pointer/array-to-`bool`
-conversions. Same-shape reference binding, including exact-shape prvalues that
-materialize for `const` lvalue references, now plans from canonical `TypeId`s
+and supported projectable pointer pairs, including derived-to-base conversion,
+array decay, and pointer/array-to-`bool` conversions. Same-shape reference
+binding, including exact-shape prvalues that materialize for `const` lvalue
+references, now plans from canonical `TypeId`s
 while carrying expression value category separately. Rvalue binding retains
 exact-match rank when it adds top-level cv. Imports stay within builtin, record,
 or enum base types. Speculative imports roll back; standard builtin-to-builtin
@@ -63,9 +69,9 @@ extent mismatches are rejected by the canonical planner. Derived-record to
 base-reference conversions now classify accessibility and ambiguity by
 traversing canonical base schemas keyed by `EntityId`; overload planning no
 longer round-trips those relationships through compatibility `TypeIndex`s.
-User-defined conversions, array-decay temporaries, derived-to-base
-pointer conversions, callable and template types, and structural no-matches
-needing specialized rules still use compatibility planning. Regression coverage in
+User-defined conversions, array-decay temporaries, callable and template types,
+and structural no-matches needing specialized rules still use compatibility
+planning. Regression coverage in
 `tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises
 native, record, substituted, and conversion-required reference parameters, and
 checks that a promotion-ranked overload beats a conversion-ranked reference.
@@ -73,6 +79,13 @@ checks that a promotion-ranked overload beats a conversion-ranked reference.
 selection for exact extents and mutable versus const referents.
 `tests/test_canonical_derived_to_base_reference_overload_ret0.cpp` checks that
 derived-reference candidates rank ahead of their base-reference overloads.
+`tests/test_canonical_derived_to_base_pointer_overload_ret0.cpp` checks direct
+and cv-qualified derived-pointer ranking, including preference for the exact
+derived pointer and the less-qualified base pointer when both require
+derived-to-base conversion. The canonical planner unit test covers virtual,
+inaccessible, ambiguous, and cv-removing base-pointer conversions, and rejects
+derived-to-base conversions through pointer-to-pointer or pointer-to-array
+shapes.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable

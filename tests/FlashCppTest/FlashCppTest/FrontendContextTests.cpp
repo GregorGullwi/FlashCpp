@@ -3527,6 +3527,131 @@ int main() {
 		CHECK_FALSE(cv_removal_plan->is_valid);
 	}
 
+	TEST_CASE("Canonical TypeIds plan derived-to-base pointer conversions") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		const std::string code =
+			"struct CanonicalPointerBase {};\n"
+			"struct CanonicalPointerDerived : public CanonicalPointerBase {};\n"
+			"struct CanonicalPointerPrivateDerived : private CanonicalPointerBase {};\n"
+			"struct CanonicalPointerLeft : public CanonicalPointerBase {};\n"
+			"struct CanonicalPointerRight : public CanonicalPointerBase {};\n"
+			"struct CanonicalPointerAmbiguous : public CanonicalPointerLeft, public CanonicalPointerRight {};\n"
+			"struct CanonicalPointerVirtualLeft : public virtual CanonicalPointerBase {};\n"
+			"struct CanonicalPointerVirtualRight : public virtual CanonicalPointerBase {};\n"
+			"struct CanonicalPointerVirtualDiamond : public CanonicalPointerVirtualLeft, public CanonicalPointerVirtualRight {};\n";
+		CompileContext test_context;
+		test_context.setInputFile("canonical_derived_to_base_pointer_conversion.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		auto find_type_info = [](std::string_view name) -> const TypeInfo& {
+			const auto found = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(name));
+			if (found == getTypesByNameMap().end()) {
+				throw InternalError("canonical pointer conversion test type not found");
+			}
+			return *found->second;
+		};
+		auto make_pointer_type = [](const TypeInfo& info,
+			CVQualifier pointee_cv,
+			size_t pointer_depth) {
+			TypeSpecifierNode type(
+				info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+				info.sizeInBits(), Token{}, pointee_cv,
+				ReferenceQualifier::None);
+			tryBindPublishedTypeEntity(type);
+			type.add_pointer_levels(pointer_depth);
+			return type;
+		};
+
+		const TypeInfo& base_info = find_type_info("CanonicalPointerBase");
+		const TypeSpecifierNode base_pointer = make_pointer_type(
+			base_info, CVQualifier::None, 1);
+		const TypeSpecifierNode const_base_pointer = make_pointer_type(
+			base_info, CVQualifier::Const, 1);
+		const TypeSpecifierNode derived_pointer = make_pointer_type(
+			find_type_info("CanonicalPointerDerived"), CVQualifier::None, 1);
+		const std::optional<ConversionPlan> public_plan =
+			tryBuildCanonicalProjectableConversionPlan(derived_pointer, base_pointer);
+		REQUIRE(public_plan.has_value());
+		CHECK(public_plan->is_valid);
+		CHECK(public_plan->rank == ConversionRank::Conversion);
+		CHECK(public_plan->kind == StandardConversionKind::DerivedToBase);
+
+		const std::optional<ConversionPlan> cv_addition_plan =
+			tryBuildCanonicalProjectableConversionPlan(
+				derived_pointer, const_base_pointer);
+		REQUIRE(cv_addition_plan.has_value());
+		CHECK(cv_addition_plan->is_valid);
+		CHECK(cv_addition_plan->rank == ConversionRank::Conversion);
+		CHECK(cv_addition_plan->kind == StandardConversionKind::DerivedToBase);
+
+		const TypeSpecifierNode const_derived_pointer = make_pointer_type(
+			find_type_info("CanonicalPointerDerived"), CVQualifier::Const, 1);
+		const std::optional<ConversionPlan> cv_removal_plan =
+			tryBuildCanonicalProjectableConversionPlan(
+				const_derived_pointer, base_pointer);
+		REQUIRE(cv_removal_plan.has_value());
+		CHECK_FALSE(cv_removal_plan->is_valid);
+
+		const TypeSpecifierNode private_derived_pointer = make_pointer_type(
+			find_type_info("CanonicalPointerPrivateDerived"), CVQualifier::None, 1);
+		const std::optional<ConversionPlan> private_plan =
+			tryBuildCanonicalProjectableConversionPlan(
+				private_derived_pointer, base_pointer);
+		REQUIRE(private_plan.has_value());
+		CHECK_FALSE(private_plan->is_valid);
+
+		const TypeSpecifierNode ambiguous_derived_pointer = make_pointer_type(
+			find_type_info("CanonicalPointerAmbiguous"), CVQualifier::None, 1);
+		const std::optional<ConversionPlan> ambiguous_plan =
+			tryBuildCanonicalProjectableConversionPlan(
+				ambiguous_derived_pointer, base_pointer);
+		REQUIRE(ambiguous_plan.has_value());
+		CHECK_FALSE(ambiguous_plan->is_valid);
+
+		const TypeSpecifierNode virtual_derived_pointer = make_pointer_type(
+			find_type_info("CanonicalPointerVirtualDiamond"), CVQualifier::None, 1);
+		const std::optional<ConversionPlan> virtual_plan =
+			tryBuildCanonicalProjectableConversionPlan(
+				virtual_derived_pointer, base_pointer);
+		REQUIRE(virtual_plan.has_value());
+		CHECK(virtual_plan->is_valid);
+		CHECK(virtual_plan->rank == ConversionRank::Conversion);
+		CHECK(virtual_plan->kind == StandardConversionKind::DerivedToBase);
+
+		const TypeSpecifierNode derived_pointer_to_pointer = make_pointer_type(
+			find_type_info("CanonicalPointerDerived"), CVQualifier::None, 2);
+		const TypeSpecifierNode base_pointer_to_pointer = make_pointer_type(
+			base_info, CVQualifier::None, 2);
+		const std::optional<ConversionPlan> pointer_to_pointer_plan =
+			tryBuildCanonicalProjectableConversionPlan(
+				derived_pointer_to_pointer, base_pointer_to_pointer);
+		REQUIRE(pointer_to_pointer_plan.has_value());
+		CHECK_FALSE(pointer_to_pointer_plan->is_valid);
+
+		TypeSpecifierNode derived_pointer_to_array = make_pointer_type(
+			find_type_info("CanonicalPointerDerived"), CVQualifier::None, 1);
+		TypeSpecifierNode base_pointer_to_array = make_pointer_type(
+			base_info, CVQualifier::None, 1);
+		const std::array<size_t, 1> pointee_array_extent{3};
+		derived_pointer_to_array.set_pointee_array_declarator(true);
+		derived_pointer_to_array.set_pointee_array_dimensions(pointee_array_extent);
+		base_pointer_to_array.set_pointee_array_declarator(true);
+		base_pointer_to_array.set_pointee_array_dimensions(pointee_array_extent);
+		const std::optional<ConversionPlan> pointer_to_array_plan =
+			tryBuildCanonicalProjectableConversionPlan(
+				derived_pointer_to_array, base_pointer_to_array);
+		REQUIRE(pointer_to_array_plan.has_value());
+		CHECK_FALSE(pointer_to_array_plan->is_valid);
+	}
+
 	TEST_CASE("Forward-declared published nominal parameters import by EntityId") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();
