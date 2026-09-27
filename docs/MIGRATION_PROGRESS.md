@@ -104,10 +104,11 @@ by-value pointer arguments is ignored. The unit case
 cover ranking and viability.
 Same-owner member-function-pointer pairs now compare the canonical owner and
 full function type, accept `noexcept` relaxation, and reject reverse
-relaxation or signature mismatches. Complete owner schemas also let this path
-reject unrelated, inaccessible, ambiguous, and virtual-base owner pairs;
-valid public non-virtual base-to-derived member-function-pointer adjustments
-remain deferred to compatibility planning. Data-member-pointer pairs now
+relaxation or signature mismatches. Complete owner schemas reject unrelated,
+inaccessible, ambiguous, and virtual-base owner conversions. Member-function-
+pointer pairs also support public unambiguous non-virtual base-to-derived owner
+conversion through canonical `TypeId`s, including `noexcept` relaxation, and
+reject mismatched function signatures. Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
 Complete owner schemas reject unrelated, inaccessible, ambiguous, and
@@ -122,8 +123,8 @@ qualification, and owner-mismatch behavior. The source regression
 pointee and owner selection, including base-to-derived ranking. The source
 regression
 `tests/test_canonical_member_function_pointer_pair_overload_ret0.cpp` checks
-member-owner and function-signature selection on MSVC. Itanium end-to-end
-coverage is deferred until boundary 3B supports mangling
+member-owner, function-signature, and base-to-derived selection on MSVC.
+Itanium end-to-end coverage is deferred until boundary 3B supports mangling
 member-function-pointer parameter types. Dependent `noexcept`,
 user-defined conversions, and other unsupported callable or template types
 still use compatibility planning.
@@ -219,8 +220,9 @@ Continue boundary 3A in this order:
    derived-to-base reference and pointer conversions now use the canonical
    planner and base graph. Data-member-pointer pairs now compare owner and
    pointee `TypeId`s and support the public non-virtual base-to-derived owner
-   conversion; member-function-pointer base adjustments and remaining callable
-   pairs are still pending.
+   conversion. Member-function-pointer base adjustments now use canonical owner
+   schemas; dependent `noexcept` and remaining unsupported callable pairs are
+   still pending.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
