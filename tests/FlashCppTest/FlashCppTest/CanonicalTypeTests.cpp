@@ -289,6 +289,59 @@ TEST_CASE("Function signatures preserve non-projectable return declarators") {
 		function_return, mismatched_function_return));
 }
 
+TEST_CASE("Deep callable signature identity and hashing use bounded native stack") {
+	constexpr size_t signature_depth = 8192;
+	const auto make_nested_signature = [](
+		TypeCategory leaf_type, size_t depth_limit) {
+		auto signature = std::make_shared<FunctionSignature>();
+		signature->return_type_index = nativeTypeIndex(leaf_type);
+		for (size_t depth = 0; depth < depth_limit; ++depth) {
+			FunctionType nested_type;
+			nested_type.type_index = nativeTypeIndex(TypeCategory::Int);
+			nested_type.callable_signature = signature;
+
+			FunctionSignature enclosing_signature;
+			if ((depth & 1u) == 0) {
+				enclosing_signature.setReturnType(std::move(nested_type));
+			} else {
+				FunctionType return_type;
+				return_type.type_index = nativeTypeIndex(TypeCategory::Int);
+				enclosing_signature.setReturnType(std::move(return_type));
+				OverloadVector<FunctionType, 4> parameter_types;
+				parameter_types.push_back(std::move(nested_type));
+				enclosing_signature.setParameterTypes(std::move(parameter_types));
+			}
+			signature = std::make_shared<FunctionSignature>(
+				std::move(enclosing_signature));
+		}
+		return signature;
+	};
+
+	const std::shared_ptr<FunctionSignature> lhs =
+		make_nested_signature(TypeCategory::Int, signature_depth);
+	const std::shared_ptr<FunctionSignature> equivalent =
+		make_nested_signature(TypeCategory::Int, signature_depth);
+	const std::shared_ptr<FunctionSignature> different_leaf =
+		make_nested_signature(TypeCategory::Float, signature_depth);
+
+	CHECK(FlashCpp::equalFunctionSignatureIdentity(*lhs, *equivalent));
+	CHECK(
+		FlashCpp::hashFunctionSignatureIdentity(*lhs) ==
+		FlashCpp::hashFunctionSignatureIdentity(*equivalent));
+	CHECK_FALSE(FlashCpp::equalFunctionSignatureIdentity(*lhs, *different_leaf));
+
+	FunctionType lhs_type;
+	lhs_type.type_index = nativeTypeIndex(TypeCategory::Int);
+	lhs_type.callable_signature = lhs;
+	FunctionType equivalent_type;
+	equivalent_type.type_index = nativeTypeIndex(TypeCategory::Int);
+	equivalent_type.callable_signature = equivalent;
+	CHECK(FlashCpp::equalFunctionTypeIdentity(lhs_type, equivalent_type));
+	CHECK(
+		FlashCpp::hashFunctionTypeIdentity(lhs_type) ==
+		FlashCpp::hashFunctionTypeIdentity(equivalent_type));
+}
+
 TEST_CASE("Template substitution composes ordered callable return declarators") {
 	FrontendContext frontend;
 	const StringHandle template_name =

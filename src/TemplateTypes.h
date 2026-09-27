@@ -38,6 +38,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>  // For std::hash
+#include <limits>
 #include <variant>
 #include <vector>
 #include "AstNodeTypes.h"  // For Type, TypeIndex
@@ -73,7 +74,20 @@ inline bool equalFunctionSignatureIdentity(
 	const FunctionSignature& rhs);
 inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig);
 
-inline bool equalFunctionTypeIdentity(const FunctionType& lhs, const FunctionType& rhs) {
+// The maximum child index marks a frame before its signature is initialized.
+inline constexpr size_t uninitializedFunctionSignatureIdentityChild =
+	std::numeric_limits<size_t>::max();
+
+// Keep one pointer/index frame per active signature level so source nesting
+// grows temporary heap storage rather than native call depth.
+struct FunctionSignatureIdentityFrame {
+	const FunctionSignature* lhs;
+	const FunctionSignature* rhs;
+	size_t next_child;
+};
+
+inline bool equalFunctionTypeIdentityShallow(
+	const FunctionType& lhs, const FunctionType& rhs) {
 	const bool type_identity_matches =
 		lhs.callable_signature && rhs.callable_signature
 			? lhs.type_index.category() == rhs.type_index.category()
@@ -94,69 +108,11 @@ inline bool equalFunctionTypeIdentity(const FunctionType& lhs, const FunctionTyp
 		static_cast<bool>(rhs.callable_signature)) {
 		return false;
 	}
-	return !lhs.callable_signature ||
-		equalFunctionSignatureIdentity(
-			*lhs.callable_signature, *rhs.callable_signature);
+	return true;
 }
 
-inline void combineFunctionTypeIdentityHash(size_t& seed, size_t value) {
-	seed ^= value + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-}
-
-inline size_t hashFunctionTypeIdentity(const FunctionType& type) {
-	size_t hash = type.callable_signature
-		? std::hash<int>{}(static_cast<int>(type.type_index.category()))
-		: hashTypeIndexIdentity(type.type_index);
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.cv_qualifier)));
-	for (CVQualifier qualifier : type.pointer_qualifiers) {
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint8_t>{}(static_cast<uint8_t>(qualifier)));
-	}
-	for (const DeclaratorComponent& component :
-		type.ordered_declarator_components) {
-		combineFunctionTypeIdentityHash(
-			hash,
-			std::hash<uint8_t>{}(static_cast<uint8_t>(component.kind)));
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint64_t>{}(component.payload));
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint32_t>{}(component.member_owner.value));
-		combineFunctionTypeIdentityHash(
-			hash,
-			std::hash<uint8_t>{}(static_cast<uint8_t>(component.cv_qualifier)));
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint16_t>{}(component.reserved));
-	}
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier)));
-	for (size_t dimension : type.array_dimensions) {
-		combineFunctionTypeIdentityHash(hash, std::hash<size_t>{}(dimension));
-	}
-	if (type.pointee_array_declarator) {
-		combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(1));
-	}
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(type.has_unsized_outer_array_dimension));
-	combineFunctionTypeIdentityHash(hash, std::hash<bool>{}(type.is_pack_expansion));
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(type.template_parameter_name.isValid()));
-	if (type.template_parameter_name.isValid()) {
-		combineFunctionTypeIdentityHash(hash, type.template_parameter_name.hash());
-	}
-	combineFunctionTypeIdentityHash(
-		hash, std::hash<bool>{}(type.member_class_name.isValid()));
-	if (type.member_class_name.isValid()) {
-		combineFunctionTypeIdentityHash(hash, type.member_class_name.hash());
-	}
-	if (type.callable_signature) {
-		combineFunctionTypeIdentityHash(
-			hash, hashFunctionSignatureIdentity(*type.callable_signature));
-	}
-	return hash;
-}
-
-inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const FunctionSignature& rhs) {
+inline bool equalFunctionSignatureIdentityShallow(
+	const FunctionSignature& lhs, const FunctionSignature& rhs) {
 	if (lhs.linkage != rhs.linkage ||
 		lhs.class_name != rhs.class_name ||
 		lhs.calling_convention != rhs.calling_convention ||
@@ -174,17 +130,8 @@ inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const F
 		return false;
 	}
 	if (lhs_is_structured) {
-		if (!equalFunctionTypeIdentity(lhs.return_type(), rhs.return_type())) {
-			return false;
-		}
 		if (lhs.parameter_types().size() != rhs.parameter_types().size()) {
 			return false;
-		}
-		for (size_t i = 0; i < lhs.parameter_types().size(); ++i) {
-			if (!equalFunctionTypeIdentity(
-					lhs.parameter_types()[i], rhs.parameter_types()[i])) {
-				return false;
-			}
 		}
 	} else {
 		if (!equalTypeIndexIdentity(lhs.return_type_index, rhs.return_type_index) ||
@@ -209,41 +156,313 @@ inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const F
 	return true;
 }
 
-inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
-	size_t h = 0;
-	if (sig.hasStructuredTypes()) {
-		combineFunctionTypeIdentityHash(h, hashFunctionTypeIdentity(sig.return_type()));
-		for (const FunctionType& parameter_type : sig.parameter_types()) {
-			combineFunctionTypeIdentityHash(
-				h, hashFunctionTypeIdentity(parameter_type));
+inline bool processFunctionSignatureIdentityFrames(
+	std::vector<FunctionSignatureIdentityFrame>& frames) {
+	while (!frames.empty()) {
+		FunctionSignatureIdentityFrame& current = frames.back();
+		const FunctionSignature& lhs = *current.lhs;
+		const FunctionSignature& rhs = *current.rhs;
+		if (current.next_child ==
+			uninitializedFunctionSignatureIdentityChild) {
+			if (!equalFunctionSignatureIdentityShallow(lhs, rhs)) {
+				return false;
+			}
+			if (!lhs.hasStructuredTypes()) {
+				frames.pop_back();
+				continue;
+			}
+			current.next_child = 0;
 		}
-	} else {
-		combineFunctionTypeIdentityHash(h, hashTypeIndexIdentity(sig.return_type_index));
-		combineFunctionTypeIdentityHash(h, std::hash<int>{}(sig.return_pointer_depth));
+		const FunctionType* lhs_child = nullptr;
+		const FunctionType* rhs_child = nullptr;
+		if (current.next_child == 0) {
+			current.next_child = 1;
+			lhs_child = &lhs.return_type();
+			rhs_child = &rhs.return_type();
+		} else {
+			const size_t parameter_index = current.next_child - 1;
+			if (parameter_index < lhs.parameter_types().size()) {
+				++current.next_child;
+				lhs_child = &lhs.parameter_types()[parameter_index];
+				rhs_child = &rhs.parameter_types()[parameter_index];
+			} else {
+				frames.pop_back();
+				continue;
+			}
+		}
+		if (!equalFunctionTypeIdentityShallow(*lhs_child, *rhs_child)) {
+			return false;
+		}
+		if (lhs_child->callable_signature) {
+			frames.push_back({
+				lhs_child->callable_signature.get(),
+				rhs_child->callable_signature.get(),
+				uninitializedFunctionSignatureIdentityChild});
+		}
+	}
+	return true;
+}
+
+inline bool equalFunctionTypeIdentity(const FunctionType& lhs, const FunctionType& rhs) {
+	if (!equalFunctionTypeIdentityShallow(lhs, rhs)) {
+		return false;
+	}
+	if (!lhs.callable_signature) {
+		return true;
+	}
+	std::vector<FunctionSignatureIdentityFrame> frames;
+	frames.push_back({
+		lhs.callable_signature.get(),
+		rhs.callable_signature.get(),
+		uninitializedFunctionSignatureIdentityChild});
+	return processFunctionSignatureIdentityFrames(frames);
+}
+
+inline bool equalFunctionSignatureIdentity(
+	const FunctionSignature& lhs,
+	const FunctionSignature& rhs) {
+	if (!equalFunctionSignatureIdentityShallow(lhs, rhs)) {
+		return false;
+	}
+	if (!lhs.hasStructuredTypes()) {
+		return true;
+	}
+	const FunctionType& lhs_return_type = lhs.return_type();
+	const FunctionType& rhs_return_type = rhs.return_type();
+	if (!equalFunctionTypeIdentityShallow(lhs_return_type, rhs_return_type)) {
+		return false;
+	}
+	bool has_nested_callable_signature =
+		static_cast<bool>(lhs_return_type.callable_signature);
+	for (size_t i = 0; i < lhs.parameter_types().size(); ++i) {
+		const FunctionType& lhs_parameter_type = lhs.parameter_types()[i];
+		const FunctionType& rhs_parameter_type = rhs.parameter_types()[i];
+		if (!equalFunctionTypeIdentityShallow(
+				lhs_parameter_type, rhs_parameter_type)) {
+			return false;
+		}
+		has_nested_callable_signature =
+			has_nested_callable_signature ||
+			static_cast<bool>(lhs_parameter_type.callable_signature);
+	}
+	if (!has_nested_callable_signature) {
+		return true;
+	}
+	std::vector<FunctionSignatureIdentityFrame> frames;
+	frames.push_back({
+		&lhs,
+		&rhs,
+		uninitializedFunctionSignatureIdentityChild});
+	return processFunctionSignatureIdentityFrames(frames);
+}
+
+inline void combineFunctionTypeIdentityHash(size_t& seed, size_t value) {
+	seed ^= value + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+// Hash traversal uses the same bounded-depth, pointer-only frame strategy.
+struct FunctionSignatureIdentityHashFrame {
+	const FunctionSignature* signature;
+	size_t next_child;
+};
+
+inline void appendFunctionTypeIdentityHash(
+	size_t& hash, const FunctionType& type) {
+	const bool has_callable_signature =
+		static_cast<bool>(type.callable_signature);
+	combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(1));
+	combineFunctionTypeIdentityHash(
+		hash,
+		has_callable_signature
+			? std::hash<int>{}(static_cast<int>(type.type_index.category()))
+			: hashTypeIndexIdentity(type.type_index));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(has_callable_signature));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.cv_qualifier)));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<size_t>{}(type.pointer_qualifiers.size()));
+	for (CVQualifier qualifier : type.pointer_qualifiers) {
 		combineFunctionTypeIdentityHash(
-			h,
+			hash, std::hash<uint8_t>{}(static_cast<uint8_t>(qualifier)));
+	}
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<size_t>{}(type.ordered_declarator_components.size()));
+	for (const DeclaratorComponent& component :
+		type.ordered_declarator_components) {
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint8_t>{}(static_cast<uint8_t>(component.kind)));
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint64_t>{}(component.payload));
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint32_t>{}(component.member_owner.value));
+		combineFunctionTypeIdentityHash(
+			hash,
+			std::hash<uint8_t>{}(static_cast<uint8_t>(component.cv_qualifier)));
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint16_t>{}(component.reserved));
+	}
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier)));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<size_t>{}(type.array_dimensions.size()));
+	for (size_t dimension : type.array_dimensions) {
+		combineFunctionTypeIdentityHash(hash, std::hash<size_t>{}(dimension));
+	}
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(type.pointee_array_declarator));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(type.has_unsized_outer_array_dimension));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(type.is_pack_expansion));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(type.template_parameter_name.isValid()));
+	if (type.template_parameter_name.isValid()) {
+		combineFunctionTypeIdentityHash(hash, type.template_parameter_name.hash());
+	}
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(type.member_class_name.isValid()));
+	if (type.member_class_name.isValid()) {
+		combineFunctionTypeIdentityHash(hash, type.member_class_name.hash());
+	}
+}
+
+inline void appendFunctionSignatureIdentityHash(
+	size_t& hash, const FunctionSignature& signature) {
+	const bool has_structured_types = signature.hasStructuredTypes();
+	combineFunctionTypeIdentityHash(hash, std::hash<uint8_t>{}(2));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(has_structured_types));
+	if (has_structured_types) {
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<size_t>{}(signature.parameter_types().size()));
+	} else {
+		combineFunctionTypeIdentityHash(
+			hash, hashTypeIndexIdentity(signature.return_type_index));
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<int>{}(signature.return_pointer_depth));
+		combineFunctionTypeIdentityHash(
+			hash,
 			std::hash<uint8_t>{}(
-				static_cast<uint8_t>(sig.return_reference_qualifier)));
-		for (const TypeIndex parameter_type : sig.parameter_type_indices) {
+				static_cast<uint8_t>(signature.return_reference_qualifier)));
+		combineFunctionTypeIdentityHash(
+			hash,
+			std::hash<size_t>{}(signature.parameter_type_indices.size()));
+		for (TypeIndex parameter_type : signature.parameter_type_indices) {
 			combineFunctionTypeIdentityHash(
-				h, hashTypeIndexIdentity(parameter_type));
+				hash, hashTypeIndexIdentity(parameter_type));
 		}
 	}
-	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.linkage)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	h ^= std::hash<bool>{}(sig.class_name.isValid()) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	if (sig.class_name.isValid()) {
-		h ^= sig.class_name.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(signature.linkage)));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(signature.class_name.isValid()));
+	if (signature.class_name.isValid()) {
+		combineFunctionTypeIdentityHash(hash, signature.class_name.hash());
 	}
-	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.calling_convention)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	h ^= std::hash<bool>{}(sig.is_variadic) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	h ^= std::hash<bool>{}(sig.is_const) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	h ^= std::hash<bool>{}(sig.is_volatile) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.function_reference_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	h ^= std::hash<bool>{}(sig.is_noexcept) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	if (sig.noexcept_expression.has_value()) {
-		h ^= hashDependentExpressionIdentity(sig.noexcept_expression->node()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	combineFunctionTypeIdentityHash(
+		hash,
+		std::hash<uint8_t>{}(
+			static_cast<uint8_t>(signature.calling_convention)));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(signature.is_variadic));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(signature.is_const));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(signature.is_volatile));
+	combineFunctionTypeIdentityHash(
+		hash,
+		std::hash<uint8_t>{}(
+			static_cast<uint8_t>(signature.function_reference_qualifier)));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(signature.is_noexcept));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(signature.noexcept_expression.has_value()));
+	if (signature.noexcept_expression.has_value()) {
+		combineFunctionTypeIdentityHash(
+			hash,
+			hashDependentExpressionIdentity(
+				signature.noexcept_expression->node()));
 	}
-	return h;
+}
+
+inline void processFunctionSignatureIdentityHashFrames(
+	size_t& hash,
+	std::vector<FunctionSignatureIdentityHashFrame>& frames) {
+	while (!frames.empty()) {
+		FunctionSignatureIdentityHashFrame& current = frames.back();
+		const FunctionSignature& signature = *current.signature;
+		if (current.next_child ==
+			uninitializedFunctionSignatureIdentityChild) {
+			appendFunctionSignatureIdentityHash(hash, signature);
+			if (!signature.hasStructuredTypes()) {
+				frames.pop_back();
+				continue;
+			}
+			current.next_child = 0;
+		}
+		const FunctionType* child_type = nullptr;
+		if (current.next_child == 0) {
+			current.next_child = 1;
+			child_type = &signature.return_type();
+		} else {
+			const size_t parameter_index = current.next_child - 1;
+			if (parameter_index < signature.parameter_types().size()) {
+				++current.next_child;
+				child_type = &signature.parameter_types()[parameter_index];
+			} else {
+				frames.pop_back();
+				continue;
+			}
+		}
+		appendFunctionTypeIdentityHash(hash, *child_type);
+		if (child_type->callable_signature) {
+			frames.push_back({
+				child_type->callable_signature.get(),
+				uninitializedFunctionSignatureIdentityChild});
+		}
+	}
+}
+
+inline size_t hashFunctionTypeIdentity(const FunctionType& type) {
+	size_t hash = 0;
+	appendFunctionTypeIdentityHash(hash, type);
+	if (type.callable_signature) {
+		std::vector<FunctionSignatureIdentityHashFrame> frames;
+		frames.push_back({
+			type.callable_signature.get(),
+			uninitializedFunctionSignatureIdentityChild});
+		processFunctionSignatureIdentityHashFrames(hash, frames);
+	}
+	return hash;
+}
+
+inline size_t hashFunctionSignatureIdentity(const FunctionSignature& signature) {
+	size_t hash = 0;
+	if (!signature.hasStructuredTypes()) {
+		appendFunctionSignatureIdentityHash(hash, signature);
+		return hash;
+	}
+	const FunctionType& return_type = signature.return_type();
+	bool has_nested_callable_signature =
+		static_cast<bool>(return_type.callable_signature);
+	for (const FunctionType& parameter_type : signature.parameter_types()) {
+		has_nested_callable_signature =
+			has_nested_callable_signature ||
+			static_cast<bool>(parameter_type.callable_signature);
+	}
+	if (!has_nested_callable_signature) {
+		appendFunctionSignatureIdentityHash(hash, signature);
+		appendFunctionTypeIdentityHash(hash, return_type);
+		for (const FunctionType& parameter_type : signature.parameter_types()) {
+			appendFunctionTypeIdentityHash(hash, parameter_type);
+		}
+		return hash;
+	}
+	std::vector<FunctionSignatureIdentityHashFrame> frames;
+	frames.push_back({&signature, uninitializedFunctionSignatureIdentityChild});
+	processFunctionSignatureIdentityHashFrames(hash, frames);
+	return hash;
 }
 
 // ============================================================================
