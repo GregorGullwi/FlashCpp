@@ -2195,6 +2195,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	const bool target_referent_is_const =
 		(static_cast<uint8_t>(target_object_cv) &
 			static_cast<uint8_t>(CVQualifier::Const)) != 0;
+	const bool can_bind_conversion_temporary =
+		(target_is_lvalue_reference && target_referent_is_const) ||
+		target_is_rvalue_reference;
 	if (target_is_lvalue_reference && !source_is_lvalue &&
 		!target_referent_is_const) {
 		return ConversionPlan::no_match();
@@ -2228,9 +2231,6 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	if (!same_shape_ignoring_cv) {
 		const CanonicalTypeNode unqualified_source_node = table.node(source_type);
 		const CanonicalTypeNode unqualified_target_node = table.node(target_type);
-		const bool can_bind_conversion_temporary =
-			(target_is_lvalue_reference && target_referent_is_const) ||
-			target_is_rvalue_reference;
 		if (unqualified_source_node.kind == CanonicalTypeKind::Pointer &&
 			unqualified_target_node.kind == CanonicalTypeKind::Pointer) {
 			TypeSpecifierNode source_value = from;
@@ -2396,6 +2396,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 			source_element = source_shape_node.child;
 			target_element = target_shape_node.child;
 		}
+	}
+	if (source_type != target_type && !can_bind_conversion_temporary) {
+		return ConversionPlan::no_match();
 	}
 	const ConversionPlan referent_plan =
 		buildCanonicalStructuralConversionPlan(table, source_type, target_type);

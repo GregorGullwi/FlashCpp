@@ -520,6 +520,40 @@ TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references")
 	CHECK(rvalue_reference_plan->kind == StandardConversionKind::DerivedToBase);
 }
 
+TEST_CASE("Canonical TypeIds reject pointee qualification through mutable references") {
+	FrontendContext frontend;
+	TypeSpecifierNode integer_pointer(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	integer_pointer.add_pointer_level(CVQualifier::None);
+	TypeSpecifierNode integer_pointer_lvalue = integer_pointer;
+	integer_pointer_lvalue.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+
+	TypeSpecifierNode const_pointee_reference(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	const_pointee_reference.add_pointer_level(CVQualifier::None);
+	const_pointee_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> mutable_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			integer_pointer_lvalue, const_pointee_reference);
+	REQUIRE(mutable_reference_plan.has_value());
+	CHECK_FALSE(mutable_reference_plan->is_valid);
+
+	TypeSpecifierNode const_pointer_reference(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	const_pointer_reference.add_pointer_level(CVQualifier::Const);
+	const_pointer_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> const_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			integer_pointer_lvalue, const_pointer_reference);
+	REQUIRE(const_reference_plan.has_value());
+	CHECK(const_reference_plan->is_valid);
+	CHECK(const_reference_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+}
+
 TEST_CASE("Canonical TypeIds compare projectable function pointer pairs") {
 	FrontendContext frontend;
 	TypeSpecifierNode int_type(
