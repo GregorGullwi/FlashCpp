@@ -94,8 +94,16 @@ before decay. The unit coverage is in
 `tests/test_canonical_function_pointer_reference_decay_overload_ret0.cpp`
 checks const-lvalue and rvalue-reference overload selection from a dereferenced
 function pointer.
-User-defined conversions, callable and template types, and structural
-no-matches needing specialized rules still use compatibility planning.
+Regular function-pointer parameter pairs now compare canonical function
+`TypeId`s, preserving exact signatures and accepting the standard conversion
+from `noexcept` to potentially-throwing pointers. Reverse `noexcept` conversion
+and mismatched return or parameter types are rejected; top-level cv on
+by-value pointer arguments is ignored. The unit case
+`Canonical TypeIds compare projectable function pointer pairs` and
+`tests/test_canonical_function_pointer_noexcept_pair_overload_ret0.cpp`
+cover ranking and viability. Member-function-pointer pairs, dependent
+`noexcept`, user-defined conversions, and other unsupported callable or
+template types still use compatibility planning.
 Call lowering does not yet materialize the pointer object required when an
 array decays to a pointer temporary; see [known issues](KNOWN_ISSUES.md).
 Regression coverage in
@@ -181,7 +189,8 @@ Continue boundary 3A in this order:
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
    planner, including remaining conversions that require temporary
-   materialization and callable pairs. Builtin arithmetic, array-decay,
+   materialization and unsupported callable pairs. Regular function-pointer
+   pairs, builtin arithmetic, array-decay,
    null-pointer, and function-decay reference temporaries plus direct
    derived-to-base reference and pointer conversions now use the canonical
    planner and base graph.

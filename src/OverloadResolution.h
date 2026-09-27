@@ -1776,12 +1776,66 @@ inline std::optional<ConversionPlan> tryBuildCanonicalOrderedConversionPlan(
 		table, from_import.type, to_import.type);
 }
 
-// Use canonical identity for scalar builtin and supported projectable
-// pointer/array conversions. Imports stay within non-recursive base-type
-// families; unsupported families remain on their compatibility paths.
+// Use canonical identity for scalar builtin, projectable pointer/array, and
+// imported function-pointer pair conversions. Unsupported callable families
+// remain on their compatibility paths.
 inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	const TypeSpecifierNode& from,
 	const TypeSpecifierNode& to) {
+	if (from.has_function_signature() && to.has_function_signature()) {
+		if (to.is_reference() || to.is_rvalue_reference() ||
+			orderedDeclaratorIsReference(to)) {
+			return std::nullopt;
+		}
+		FrontendContext* const context = FrontendContext::active();
+		if (context == nullptr) {
+			return std::nullopt;
+		}
+		CanonicalTypeTable& table = context->canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport from_import = importCanonicalType(table, from);
+		if (from_import.status == CanonicalTypeImportStatus::Invalid) {
+			return ConversionPlan::no_match();
+		}
+		if (from_import.status != CanonicalTypeImportStatus::Supported) {
+			return std::nullopt;
+		}
+		const CanonicalTypeImport to_import = importCanonicalType(table, to);
+		if (to_import.status == CanonicalTypeImportStatus::Invalid) {
+			return ConversionPlan::no_match();
+		}
+		if (to_import.status != CanonicalTypeImportStatus::Supported) {
+			return std::nullopt;
+		}
+		TypeId source_type = from_import.type;
+		for (;;) {
+			const CanonicalTypeNode source_node = table.node(source_type);
+			if (source_node.kind != CanonicalTypeKind::LValueReference &&
+				source_node.kind != CanonicalTypeKind::RValueReference) {
+				break;
+			}
+			source_type = source_node.child;
+		}
+		source_type = stripCanonicalTopCv(table, source_type).first;
+		const TypeId target_type =
+			stripCanonicalTopCv(table, to_import.type).first;
+		auto isFunctionPointer = [&table](TypeId type) {
+			const CanonicalTypeNode pointer = table.node(
+				stripCanonicalTopCv(table, type).first);
+			if (pointer.kind != CanonicalTypeKind::Pointer) {
+				return false;
+			}
+			return table.node(
+				stripCanonicalTopCv(table, pointer.child).first).kind ==
+				CanonicalTypeKind::Function;
+		};
+		if (!isFunctionPointer(source_type) ||
+			!isFunctionPointer(target_type)) {
+			return std::nullopt;
+		}
+		return buildCanonicalStructuralConversionPlan(
+			table, source_type, target_type);
+	}
 	auto hasNonRecursiveBaseType = [](const TypeSpecifierNode& type) {
 		if (type.has_function_signature() || type.has_template_specialization() ||
 			type.has_dependent_name_type() || type.has_template_parameter_identity() ||
