@@ -63,15 +63,21 @@ while carrying expression value category separately. Rvalue binding retains
 exact-match rank when it adds top-level cv. Imports stay within builtin, record,
 or enum base types. Speculative imports roll back; standard builtin-to-builtin
 conversions can now bind eligible references through a temporary, such as an
-`int` value converted to `double` for `const double&`. Exact-shape array
-references now preserve extents and nested cv without decaying the array;
-extent mismatches are rejected by the canonical planner. Derived-record to
-base-reference conversions now classify accessibility and ambiguity by
-traversing canonical base schemas keyed by `EntityId`; overload planning no
-longer round-trips those relationships through compatibility `TypeIndex`s.
-User-defined conversions, array-decay temporaries, callable and template types,
-and structural no-matches needing specialized rules still use compatibility
-planning. Regression coverage in
+`int` value converted to `double` for `const double&`; an lvalue converted to
+`double` can also bind to `double&&`. Array lvalues now decay canonically when
+binding pointer temporaries to eligible const lvalue and rvalue references.
+Nested array extents and element cv are retained through decay, and mismatched
+pointer-to-array extents are rejected. Exact-shape array references still
+preserve extents and nested cv without decay. Derived-record to base-reference
+conversions classify accessibility and ambiguity by traversing canonical base
+schemas keyed by `EntityId`; overload planning no longer round-trips those
+relationships through compatibility `TypeIndex`s. Derived-to-base pointer
+conversions now use the same canonical base graph for direct record pointees.
+User-defined conversions, callable and template types, and structural
+no-matches needing specialized rules still use compatibility planning.
+Call lowering does not yet materialize the pointer object required when an
+array decays to a pointer temporary; see [known issues](KNOWN_ISSUES.md).
+Regression coverage in
 `tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises
 native, record, substituted, and conversion-required reference parameters, and
 checks that a promotion-ranked overload beats a conversion-ranked reference.
@@ -85,7 +91,11 @@ derived pointer and the less-qualified base pointer when both require
 derived-to-base conversion. The canonical planner unit test covers virtual,
 inaccessible, ambiguous, and cv-removing base-pointer conversions, and rejects
 derived-to-base conversions through pointer-to-pointer or pointer-to-array
-shapes.
+shapes. `tests/test_canonical_array_decay_reference_overload_ret0.cpp` checks
+array-to-pointer temporary binding for const lvalue and rvalue references
+across builtin and record element types; the canonical planner unit test checks
+multidimensional row extents, cv addition/removal, and direct versus temporary
+rvalue-reference binding.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -150,7 +160,9 @@ Continue boundary 3A in this order:
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
    planner, including remaining conversions that require temporary
-   materialization, derived-to-base pointer conversions, and callable pairs.
+   materialization and callable pairs. Builtin arithmetic and array-decay
+   reference temporaries plus direct derived-to-base reference and pointer
+   conversions now use the canonical planner and base graph.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,

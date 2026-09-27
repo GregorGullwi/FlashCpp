@@ -1911,8 +1911,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 }
 
 // Use canonical TypeIds for reference binding. Value category remains expression
-// metadata; same-shape binding preserves qualification ranking, while builtin
-// conversions may materialize a temporary for an eligible reference.
+// metadata; same-shape binding preserves qualification ranking, while supported
+// standard conversions may materialize a temporary for an eligible reference.
 inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	const TypeSpecifierNode& from,
 	const TypeSpecifierNode& to) {
@@ -1993,9 +1993,6 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		!target_referent_is_const) {
 		return ConversionPlan::no_match();
 	}
-	if (target_is_rvalue_reference && source_is_lvalue && !source_is_rvalue) {
-		return ConversionPlan::no_match();
-	}
 	TypeId source_shape = source_type;
 	TypeId target_shape = target_type;
 	bool same_shape_ignoring_cv = true;
@@ -2025,8 +2022,29 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	if (!same_shape_ignoring_cv) {
 		const CanonicalTypeNode unqualified_source_node = table.node(source_type);
 		const CanonicalTypeNode unqualified_target_node = table.node(target_type);
+		const bool can_bind_conversion_temporary =
+			(target_is_lvalue_reference && target_referent_is_const) ||
+			target_is_rvalue_reference;
+		if (unqualified_source_node.kind == CanonicalTypeKind::Array &&
+			unqualified_target_node.kind == CanonicalTypeKind::Pointer) {
+			if (!can_bind_conversion_temporary) {
+				return ConversionPlan::no_match();
+			}
+			const ConversionPlan array_decay_plan =
+				buildCanonicalStructuralConversionPlan(
+					table, source_type, target_type);
+			if (!array_decay_plan.is_valid ||
+				array_decay_plan.kind != StandardConversionKind::ArrayToPointer) {
+				return ConversionPlan::no_match();
+			}
+			return array_decay_plan;
+		}
 		if (unqualified_source_node.kind == CanonicalTypeKind::Record &&
 			unqualified_target_node.kind == CanonicalTypeKind::Record) {
+			if (target_is_rvalue_reference && source_is_lvalue &&
+				!source_is_rvalue) {
+				return ConversionPlan::no_match();
+			}
 			if ((static_cast<uint8_t>(source_referent_cv) &
 				~static_cast<uint8_t>(target_referent_cv)) != 0) {
 				return ConversionPlan::no_match();
@@ -2056,9 +2074,6 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 			unqualified_target_node.kind == CanonicalTypeKind::Array) {
 			return ConversionPlan::no_match();
 		}
-		const bool can_bind_conversion_temporary =
-			(target_is_lvalue_reference && target_referent_is_const) ||
-			(target_is_rvalue_reference && !source_is_lvalue);
 		if (unqualified_source_node.kind != CanonicalTypeKind::Builtin ||
 			unqualified_target_node.kind != CanonicalTypeKind::Builtin) {
 			return std::nullopt;
@@ -2068,6 +2083,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		}
 		return buildCanonicalStructuralConversionPlan(
 			table, source_type, target_type);
+	}
+	if (target_is_rvalue_reference && source_is_lvalue && !source_is_rvalue) {
+		return ConversionPlan::no_match();
 	}
 	if ((static_cast<uint8_t>(source_referent_cv) &
 			~static_cast<uint8_t>(target_referent_cv)) != 0) {

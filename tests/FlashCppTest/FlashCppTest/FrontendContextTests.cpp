@@ -3498,6 +3498,11 @@ int main() {
 		CHECK(public_rvalue_plan->is_valid);
 		CHECK(public_rvalue_plan->rank == ConversionRank::Conversion);
 		CHECK(public_rvalue_plan->kind == StandardConversionKind::DerivedToBase);
+		const std::optional<ConversionPlan> lvalue_to_base_rvalue_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				derived_lvalue, base_rvalue_reference);
+		REQUIRE(lvalue_to_base_rvalue_plan.has_value());
+		CHECK_FALSE(lvalue_to_base_rvalue_plan->is_valid);
 
 		TypeSpecifierNode private_derived_lvalue = make_reference_type(
 			*private_derived_type_info->second, CVQualifier::None,
@@ -3525,6 +3530,143 @@ int main() {
 				const_derived_lvalue, base_lvalue_reference);
 		REQUIRE(cv_removal_plan.has_value());
 		CHECK_FALSE(cv_removal_plan->is_valid);
+	}
+
+	TEST_CASE("Canonical TypeIds plan standard-conversion reference temporaries") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		TypeSpecifierNode source_array(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const std::array<size_t, 1> extent{3};
+		source_array.set_array_dimensions(extent);
+		source_array.set_reference_qualifier(ReferenceQualifier::LValueReference);
+
+		TypeSpecifierNode mutable_pointer_lvalue_reference(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		mutable_pointer_lvalue_reference.add_pointer_level(CVQualifier::Const);
+		mutable_pointer_lvalue_reference.set_reference_qualifier(
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> mutable_pointer_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				source_array, mutable_pointer_lvalue_reference);
+		REQUIRE(mutable_pointer_plan.has_value());
+		CHECK(mutable_pointer_plan->is_valid);
+		CHECK(mutable_pointer_plan->rank == ConversionRank::ExactMatch);
+		CHECK(mutable_pointer_plan->kind == StandardConversionKind::ArrayToPointer);
+
+		TypeSpecifierNode const_pointer_lvalue_reference(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+		const_pointer_lvalue_reference.add_pointer_level(CVQualifier::Const);
+		const_pointer_lvalue_reference.set_reference_qualifier(
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> const_pointer_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				source_array, const_pointer_lvalue_reference);
+		REQUIRE(const_pointer_plan.has_value());
+		CHECK(const_pointer_plan->is_valid);
+		CHECK(const_pointer_plan->rank == ConversionRank::QualificationAdjustment);
+		CHECK(const_pointer_plan->kind == StandardConversionKind::ArrayToPointer);
+
+		TypeSpecifierNode source_matrix(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		const std::array<size_t, 2> matrix_extents{2, 3};
+		source_matrix.set_array_dimensions(matrix_extents);
+		source_matrix.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		TypeSpecifierNode pointer_to_row_reference(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		pointer_to_row_reference.add_pointer_level(CVQualifier::Const);
+		pointer_to_row_reference.set_pointee_array_declarator(true);
+		const std::array<size_t, 1> row_extent{3};
+		pointer_to_row_reference.set_pointee_array_dimensions(row_extent);
+		pointer_to_row_reference.set_reference_qualifier(
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> matrix_decay_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				source_matrix, pointer_to_row_reference);
+		REQUIRE(matrix_decay_plan.has_value());
+		CHECK(matrix_decay_plan->is_valid);
+		CHECK(matrix_decay_plan->rank == ConversionRank::ExactMatch);
+		CHECK(matrix_decay_plan->kind == StandardConversionKind::ArrayToPointer);
+
+		TypeSpecifierNode wrong_row_reference(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		wrong_row_reference.add_pointer_level(CVQualifier::Const);
+		wrong_row_reference.set_pointee_array_declarator(true);
+		const std::array<size_t, 1> wrong_row_extent{4};
+		wrong_row_reference.set_pointee_array_dimensions(wrong_row_extent);
+		wrong_row_reference.set_reference_qualifier(
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> wrong_matrix_decay_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				source_matrix, wrong_row_reference);
+		REQUIRE(wrong_matrix_decay_plan.has_value());
+		CHECK_FALSE(wrong_matrix_decay_plan->is_valid);
+
+		TypeSpecifierNode rvalue_pointer_reference(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		rvalue_pointer_reference.add_pointer_level(CVQualifier::None);
+		rvalue_pointer_reference.set_reference_qualifier(
+			ReferenceQualifier::RValueReference);
+		const std::optional<ConversionPlan> rvalue_pointer_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				source_array, rvalue_pointer_reference);
+		REQUIRE(rvalue_pointer_plan.has_value());
+		CHECK(rvalue_pointer_plan->is_valid);
+		CHECK(rvalue_pointer_plan->rank == ConversionRank::ExactMatch);
+		CHECK(rvalue_pointer_plan->kind == StandardConversionKind::ArrayToPointer);
+
+		TypeSpecifierNode nonconst_pointer_lvalue_reference(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		nonconst_pointer_lvalue_reference.add_pointer_level(CVQualifier::None);
+		nonconst_pointer_lvalue_reference.set_reference_qualifier(
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> nonconst_pointer_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				source_array, nonconst_pointer_lvalue_reference);
+		REQUIRE(nonconst_pointer_plan.has_value());
+		CHECK_FALSE(nonconst_pointer_plan->is_valid);
+
+		TypeSpecifierNode const_source_array(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+		const_source_array.set_array_dimensions(extent);
+		const_source_array.set_reference_qualifier(
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> cv_removal_array_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				const_source_array, mutable_pointer_lvalue_reference);
+		REQUIRE(cv_removal_array_plan.has_value());
+		CHECK_FALSE(cv_removal_array_plan->is_valid);
+
+		TypeSpecifierNode direct_integer_lvalue(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		direct_integer_lvalue.set_reference_qualifier(
+			ReferenceQualifier::LValueReference);
+		TypeSpecifierNode direct_integer_rvalue_reference(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		direct_integer_rvalue_reference.set_reference_qualifier(
+			ReferenceQualifier::RValueReference);
+		const std::optional<ConversionPlan> direct_rvalue_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				direct_integer_lvalue, direct_integer_rvalue_reference);
+		REQUIRE(direct_rvalue_plan.has_value());
+		CHECK_FALSE(direct_rvalue_plan->is_valid);
+
+		TypeSpecifierNode integer_lvalue(
+			TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+		integer_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		TypeSpecifierNode double_rvalue_reference(
+			TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		double_rvalue_reference.set_reference_qualifier(
+			ReferenceQualifier::RValueReference);
+		const std::optional<ConversionPlan> numeric_rvalue_temporary_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				integer_lvalue, double_rvalue_reference);
+		REQUIRE(numeric_rvalue_temporary_plan.has_value());
+		CHECK(numeric_rvalue_temporary_plan->is_valid);
+		CHECK(numeric_rvalue_temporary_plan->rank == ConversionRank::Conversion);
 	}
 
 	TEST_CASE("Canonical TypeIds plan derived-to-base pointer conversions") {
