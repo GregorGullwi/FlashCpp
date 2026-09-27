@@ -203,6 +203,31 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	CHECK_FALSE(buildConversionPlan(lvalue_argument, mismatched).is_valid);
 }
 
+TEST_CASE("Canonical TypeIds plan prvalue materialization for const references") {
+	FrontendContext frontend;
+	TypeSpecifierNode prvalue(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode const_lvalue_reference(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	const_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+
+	const std::optional<ConversionPlan> canonical_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, const_lvalue_reference);
+	REQUIRE(canonical_plan.has_value());
+	CHECK(canonical_plan->is_valid);
+	CHECK(canonical_plan->rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode nonconst_lvalue_reference(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	nonconst_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> rejected_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, nonconst_lvalue_reference);
+	REQUIRE(rejected_plan.has_value());
+	CHECK_FALSE(rejected_plan->is_valid);
+}
+
 TEST_CASE("Ordered function objects decay to pointers") {
 	FrontendContext frontend;
 	TypeSpecifierNode parameter(

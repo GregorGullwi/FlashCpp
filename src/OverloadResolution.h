@@ -1723,10 +1723,10 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	return plan;
 }
 
-// Use canonical TypeIds for direct reference binding when the referred-to
-// types have the same structural shape. Value category remains expression
-// metadata; temporary materialization and conversions between different
-// referred-to shapes stay on the compatibility path.
+// Use canonical TypeIds for same-shape reference binding. Value category remains
+// expression metadata; exact-shape prvalues may materialize for const lvalue
+// references, while conversions between different referred-to shapes stay on
+// the compatibility path.
 inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	const TypeSpecifierNode& from,
 	const TypeSpecifierNode& to) {
@@ -1802,11 +1802,6 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		!target_referent_is_const) {
 		return ConversionPlan::no_match();
 	}
-	if (target_is_lvalue_reference && !source_is_lvalue && !source_is_rvalue) {
-		// A const lvalue reference may bind to a materialized temporary, but
-		// temporary materialization is not part of this direct-binding slice.
-		return std::nullopt;
-	}
 	if (target_is_rvalue_reference && source_is_lvalue && !source_is_rvalue) {
 		return ConversionPlan::no_match();
 	}
@@ -1858,6 +1853,11 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	}
 	if (source_referent_cv != target_referent_cv &&
 		referent_plan.kind == StandardConversionKind::None) {
+		if (!source_is_lvalue) {
+			// Binding a prvalue or xvalue to a cv-qualified reference remains an
+			// exact-match sequence; keep qualification ranking for lvalue binding.
+			return ConversionPlan::exact_match();
+		}
 		return ConversionPlan::qualification_adjustment();
 	}
 	return referent_plan;

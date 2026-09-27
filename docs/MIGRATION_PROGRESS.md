@@ -51,12 +51,16 @@ binding, and user-defined conversions remain on specialized paths.
 Parser-side overload ranking now uses the structural planner for non-projectable
 ordered pairs plus scalar builtin conversions, `nullptr`-to-pointer conversion,
 and supported projectable pointer pairs, array decay, and pointer/array-to-`bool`
-conversions. Same-shape direct reference binding also plans from canonical
-`TypeId`s while carrying expression value category separately. Imports stay
-within builtin, record, or enum base types. Speculative imports roll back;
-temporary materialization, array referents, derived-to-base binding, callable
-and template types, and structural no-matches needing specialized rules still
-use compatibility planning.
+conversions. Same-shape reference binding, including exact-shape prvalues that
+materialize for `const` lvalue references, now plans from canonical `TypeId`s
+while carrying expression value category separately. Rvalue binding retains
+exact-match rank when it adds top-level cv. Imports stay within builtin, record,
+or enum base types. Speculative imports roll back; conversion-required temporary
+materialization, array referents, derived-to-base binding, callable and template
+types, and structural no-matches needing specialized rules still use
+compatibility planning. Regression coverage in
+`tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises
+native, record, and substituted reference parameters.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -120,7 +124,7 @@ Continue boundary 3A in this order:
 
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
-   planner, including reference conversions that need temporary materialization,
+   planner, including conversions that require temporary materialization,
    array-reference binding, derived-to-base reference binding, and callable
    pairs. Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
