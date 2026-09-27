@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <typeindex>
 #include <memory>
+#include <optional>
 #include <span>
 #include <cstdio>
 #include <stdexcept>
@@ -40,15 +41,23 @@ struct GlobalSymbolTableIsolator : doctest::IReporter {
 	}
 	void test_run_end(const doctest::TestRunStats&) override {
 		isolateGlobalSymbolTable();
+		test_frontend_context_.reset();
 	}
-	void test_case_start(const doctest::TestCaseData&) override {
+	void test_case_start(const doctest::TestCaseData& test_case) override {
+		test_frontend_context_.reset();
 		isolateGlobalSymbolTable();
+		const std::string_view test_name(test_case.m_name);
+		if (test_name != "SymbolTable enter_scope without an active FrontendContext still succeeds" &&
+			test_name != "SymbolTable enablePersistentScopePublication requires an active FrontendContext") {
+			test_frontend_context_.emplace();
+		}
 	}
 	void test_case_reenter(const doctest::TestCaseData&) override {
 		isolateGlobalSymbolTable();
 	}
 	void test_case_end(const doctest::CurrentTestCaseStats&) override {
 		isolateGlobalSymbolTable();
+		test_frontend_context_.reset();
 	}
 	void test_case_exception(const doctest::TestCaseException&) override {}
 	void subcase_start(const doctest::SubcaseSignature&) override {}
@@ -56,13 +65,14 @@ struct GlobalSymbolTableIsolator : doctest::IReporter {
 	void log_assert(const doctest::AssertData&) override {}
 	void log_message(const doctest::MessageData&) override {}
 	void test_case_skipped(const doctest::TestCaseData&) override {}
+
+	std::optional<FrontendContext> test_frontend_context_;
 };
 
 REGISTER_LISTENER("global_symbol_table_isolator", 1, GlobalSymbolTableIsolator);
 } // namespace
 
 static CompileContext compile_context;
-static FrontendContext frontend_context;
 static FileTree file_tree;
 
 SemanticAnalysis& runSemanticAnalysisForTest(Parser& parser, CompileContext& context) {

@@ -36,12 +36,27 @@ inline std::string_view syntaxAstFamilyLabel(SyntaxAstFamily family) {
 	return "unknown";
 }
 
-inline std::string_view demangledTypeLeafName(std::string_view mangled_name) {
+inline std::string_view demangledTypeLeafName(std::string_view type_name) {
+	if (type_name.starts_with("class ")) {
+		type_name.remove_prefix(sizeof("class ") - 1);
+	} else if (type_name.starts_with("struct ")) {
+		type_name.remove_prefix(sizeof("struct ") - 1);
+	} else if (type_name.starts_with("enum ")) {
+		type_name.remove_prefix(sizeof("enum ") - 1);
+	} else if (type_name.starts_with("union ")) {
+		type_name.remove_prefix(sizeof("union ") - 1);
+	}
+
+	const std::size_t scope_separator = type_name.rfind("::");
+	if (scope_separator != std::string_view::npos) {
+		type_name.remove_prefix(scope_separator + 2);
+	}
+
 	std::size_t pos = 0;
-	while (pos < mangled_name.size() && mangled_name[pos] >= '0' && mangled_name[pos] <= '9') {
+	while (pos < type_name.size() && type_name[pos] >= '0' && type_name[pos] <= '9') {
 		++pos;
 	}
-	return mangled_name.substr(pos);
+	return type_name.substr(pos);
 }
 
 inline SyntaxAstFamily classifySyntaxAstFamily(std::type_index type) {

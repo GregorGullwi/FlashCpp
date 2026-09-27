@@ -175,11 +175,6 @@ start them.
 
 ## Active findings
 
-- Two `FrontendContext` doctests have the same failures on clean `36d1b33b` and
-  this branch (two failures, five assertions; neither test is disabled): the
-  persistent-scope publication test expects no active context, and the AST
-  family counter misclassifies `TemplateEnvironmentSnapshotNode` and `BlockNode`
-  with clang-cl. Owner: unit fixture lifecycle and legacy AST classification.
 - Scratch `allocateObject` can construct an object before destructor-vector
   registration throws `bad_alloc`, leaving its destructor unregistered. Fix
   this before production scratch probes use nontrivial objects.

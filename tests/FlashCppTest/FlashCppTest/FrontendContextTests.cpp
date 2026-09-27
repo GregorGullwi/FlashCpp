@@ -2919,6 +2919,7 @@ int main() {
 	}
 
 	TEST_CASE("SymbolTable enter_scope without an active FrontendContext still succeeds") {
+		CHECK(FrontendContext::active() == nullptr);
 		SymbolTable table;
 		table.enter_scope(ScopeType::Block);
 		CHECK(table.currentScopeId().value == 2u);
