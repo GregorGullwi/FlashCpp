@@ -271,6 +271,96 @@ TEST_CASE("Canonical TypeIds plan prvalue materialization for const references")
 	CHECK_FALSE(lvalue_to_rvalue_reference_plan->is_valid);
 }
 
+TEST_CASE("Canonical TypeIds bind array references without decay") {
+	FrontendContext frontend;
+	TypeSpecifierNode array_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	array_type.set_ordered_declarator({DeclaratorComponent::array(3)});
+	TypeSpecifierNode array_lvalue = array_type;
+	array_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	TypeSpecifierNode array_reference = array_type;
+	array_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+
+	const std::optional<ConversionPlan> exact_array_plan =
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, array_reference);
+	REQUIRE(exact_array_plan.has_value());
+	CHECK(exact_array_plan->is_valid);
+	CHECK(exact_array_plan->rank == ConversionRank::ExactMatch);
+	CHECK(exact_array_plan->kind == StandardConversionKind::None);
+
+	TypeSpecifierNode const_array_type = array_type;
+	const_array_type.set_cv_qualifier(CVQualifier::Const);
+	TypeSpecifierNode const_array_reference = const_array_type;
+	const_array_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> qualified_array_plan =
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, const_array_reference);
+	REQUIRE(qualified_array_plan.has_value());
+	CHECK(qualified_array_plan->is_valid);
+	CHECK(qualified_array_plan->rank == ConversionRank::QualificationAdjustment);
+	CHECK(qualified_array_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+	const std::optional<ConversionPlan> const_array_xvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(array_type, const_array_reference);
+	REQUIRE(const_array_xvalue_plan.has_value());
+	CHECK(const_array_xvalue_plan->is_valid);
+	CHECK(const_array_xvalue_plan->rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode pointer_array_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_array_type.set_ordered_declarator({
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	TypeSpecifierNode pointer_array_lvalue = pointer_array_type;
+	pointer_array_lvalue.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_pointee_array_type = pointer_array_type;
+	const_pointee_array_type.set_cv_qualifier(CVQualifier::Const);
+	const_pointee_array_type.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> const_pointee_array_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			pointer_array_lvalue, const_pointee_array_type);
+	REQUIRE(const_pointee_array_plan.has_value());
+	CHECK(const_pointee_array_plan->is_valid);
+	CHECK(const_pointee_array_plan->rank ==
+		ConversionRank::QualificationAdjustment);
+
+	TypeSpecifierNode pointer_to_pointer_array_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_to_pointer_array_type.set_ordered_declarator({
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	TypeSpecifierNode pointer_to_pointer_array_lvalue =
+		pointer_to_pointer_array_type;
+	pointer_to_pointer_array_lvalue.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_nested_pointee_array_type =
+		pointer_to_pointer_array_type;
+	const_nested_pointee_array_type.set_cv_qualifier(CVQualifier::Const);
+	const_nested_pointee_array_type.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> const_nested_pointee_array_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			pointer_to_pointer_array_lvalue,
+			const_nested_pointee_array_type);
+	REQUIRE(const_nested_pointee_array_plan.has_value());
+	CHECK_FALSE(const_nested_pointee_array_plan->is_valid);
+
+	TypeSpecifierNode different_extent = array_type;
+	different_extent.set_ordered_declarator({DeclaratorComponent::array(4)});
+	different_extent.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> extent_mismatch_plan =
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, different_extent);
+	REQUIRE(extent_mismatch_plan.has_value());
+	CHECK_FALSE(extent_mismatch_plan->is_valid);
+}
+
 TEST_CASE("Ordered function objects decay to pointers") {
 	FrontendContext frontend;
 	TypeSpecifierNode parameter(

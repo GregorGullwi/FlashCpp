@@ -57,13 +57,17 @@ while carrying expression value category separately. Rvalue binding retains
 exact-match rank when it adds top-level cv. Imports stay within builtin, record,
 or enum base types. Speculative imports roll back; standard builtin-to-builtin
 conversions can now bind eligible references through a temporary, such as an
-`int` value converted to `double` for `const double&`. User-defined conversions,
-array referents, derived-to-base binding, callable and template types, and
-structural no-matches needing specialized rules still use compatibility
-planning. Regression coverage in
+`int` value converted to `double` for `const double&`. Exact-shape array
+references now preserve extents and nested cv without decaying the array;
+extent mismatches are rejected by the canonical planner. User-defined
+conversions, array-decay temporaries, derived-to-base binding, callable and
+template types, and structural no-matches needing specialized rules still use
+compatibility planning. Regression coverage in
 `tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises
 native, record, substituted, and conversion-required reference parameters, and
 checks that a promotion-ranked overload beats a conversion-ranked reference.
+`tests/test_canonical_array_reference_binding_ret0.cpp` checks array overload
+selection for exact extents and mutable versus const referents.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -128,8 +132,8 @@ Continue boundary 3A in this order:
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
    planner, including remaining conversions that require temporary
-   materialization, array-reference binding, derived-to-base reference binding, and callable
-   pairs. Then make projectable semantic descriptors use structural identity
+   materialization, derived-to-base reference binding, and callable pairs.
+   Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
    nested cv, array decay, and value-category behavior.

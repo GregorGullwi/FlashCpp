@@ -1794,8 +1794,24 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 			: CVQualifier::None;
 	const TypeId source_type = table.withoutTopLevelQualifiers(source_referent);
 	const TypeId target_type = table.withoutTopLevelQualifiers(target_referent);
+	auto objectCvThroughArrays = [&table](TypeId type) {
+		CVQualifier qualifiers = CVQualifier::None;
+		for (;;) {
+			const CanonicalTypeNode node = table.node(type);
+			if (node.kind == CanonicalTypeKind::Qualified) {
+				qualifiers |= node.qualifiers;
+				type = node.child;
+				continue;
+			}
+			if (node.kind != CanonicalTypeKind::Array) {
+				return qualifiers;
+			}
+			type = node.child;
+		}
+	};
+	const CVQualifier target_object_cv = objectCvThroughArrays(target_referent);
 	const bool target_referent_is_const =
-		(static_cast<uint8_t>(target_referent_cv) &
+		(static_cast<uint8_t>(target_object_cv) &
 			static_cast<uint8_t>(CVQualifier::Const)) != 0;
 	if (target_is_lvalue_reference && !source_is_lvalue &&
 		!target_referent_is_const) {
@@ -1831,11 +1847,15 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		target_shape = target_shape_node.child;
 	}
 	if (!same_shape_ignoring_cv) {
+		const CanonicalTypeNode unqualified_source_node = table.node(source_type);
+		const CanonicalTypeNode unqualified_target_node = table.node(target_type);
+		if (unqualified_source_node.kind == CanonicalTypeKind::Array &&
+			unqualified_target_node.kind == CanonicalTypeKind::Array) {
+			return ConversionPlan::no_match();
+		}
 		const bool can_bind_conversion_temporary =
 			(target_is_lvalue_reference && target_referent_is_const) ||
 			(target_is_rvalue_reference && !source_is_lvalue);
-		const CanonicalTypeNode unqualified_source_node = table.node(source_type);
-		const CanonicalTypeNode unqualified_target_node = table.node(target_type);
 		if (unqualified_source_node.kind != CanonicalTypeKind::Builtin ||
 			unqualified_target_node.kind != CanonicalTypeKind::Builtin) {
 			return std::nullopt;
@@ -1851,8 +1871,61 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		return ConversionPlan::no_match();
 	}
 	if (table.node(source_type).kind == CanonicalTypeKind::Array) {
-		// The current structural planner treats an array source as a decay.
-		return std::nullopt;
+		auto stripTopCv = [&table](TypeId type) {
+			CVQualifier qualifiers = CVQualifier::None;
+			CanonicalTypeNode node = table.node(type);
+			while (node.kind == CanonicalTypeKind::Qualified) {
+				qualifiers |= node.qualifiers;
+				type = node.child;
+				node = table.node(type);
+			}
+			return std::pair<TypeId, CVQualifier>{type, qualifiers};
+		};
+		bool qualification_changed = source_referent_cv != target_referent_cv;
+		TypeId source_element = source_type;
+		TypeId target_element = target_type;
+		for (;;) {
+			const auto [source_unqualified, source_cv] = stripTopCv(source_element);
+			const auto [target_unqualified, target_cv] = stripTopCv(target_element);
+			if ((static_cast<uint8_t>(source_cv) &
+				~static_cast<uint8_t>(target_cv)) != 0) {
+				return ConversionPlan::no_match();
+			}
+			qualification_changed |= source_cv != target_cv;
+			const CanonicalTypeNode source_shape_node =
+				table.node(source_unqualified);
+			const CanonicalTypeNode target_shape_node =
+				table.node(target_unqualified);
+			if (source_shape_node.kind != CanonicalTypeKind::Array ||
+				target_shape_node.kind != CanonicalTypeKind::Array) {
+				if (source_shape_node.kind != target_shape_node.kind) {
+					return ConversionPlan::no_match();
+				}
+				if (source_unqualified != target_unqualified) {
+					const ConversionPlan element_plan =
+						buildCanonicalStructuralConversionPlan(
+							table, source_unqualified, target_unqualified);
+					if (!element_plan.is_valid ||
+						(element_plan.kind != StandardConversionKind::None &&
+							element_plan.kind !=
+							StandardConversionKind::QualificationAdjustment)) {
+						return ConversionPlan::no_match();
+					}
+					qualification_changed |= element_plan.kind ==
+						StandardConversionKind::QualificationAdjustment;
+				}
+				if (qualification_changed && source_is_lvalue) {
+					return ConversionPlan::qualification_adjustment();
+				}
+				return ConversionPlan::exact_match();
+			}
+			if (source_shape_node.array_extent != target_shape_node.array_extent ||
+				source_shape_node.flags != target_shape_node.flags) {
+				return ConversionPlan::no_match();
+			}
+			source_element = source_shape_node.child;
+			target_element = target_shape_node.child;
+		}
 	}
 	const ConversionPlan referent_plan =
 		buildCanonicalStructuralConversionPlan(table, source_type, target_type);
