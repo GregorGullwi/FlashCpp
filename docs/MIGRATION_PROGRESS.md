@@ -144,8 +144,15 @@ derived pointer and the less-qualified base pointer when both require
 derived-to-base conversion. The canonical planner unit test covers virtual,
 inaccessible, ambiguous, and cv-removing base-pointer conversions, and rejects
 derived-to-base conversions through pointer-to-pointer or pointer-to-array
-shapes. `tests/test_canonical_array_decay_reference_overload_ret0.cpp` checks
-array-to-pointer temporary binding for const lvalue and rvalue references
+shapes. Object-pointer conversions that create a pointer temporary can now bind
+to eligible const lvalue and rvalue references through the projectable
+canonical planner, including derived-to-base and object-pointer-to-`cv void*`
+conversions; non-const lvalue references still reject that temporary path. The
+unit case `Canonical TypeIds bind pointer conversion temporaries to references`
+checks those plans, and
+`tests/test_canonical_pointer_conversion_reference_overload_ret0.cpp` checks
+compile-time overload selection. `tests/test_canonical_array_decay_reference_overload_ret0.cpp`
+checks array-to-pointer temporary binding for const lvalue and rvalue references
 across builtin and record element types; the canonical planner unit test checks
 multidimensional row extents, cv addition/removal, and direct versus temporary
 rvalue-reference binding.
