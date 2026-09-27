@@ -833,42 +833,13 @@ private:
 		SizeInBits ret_size,
 		const Token& call_token);
 
-	// Helper function to check if access to a member is allowed
-	// Returns true if access is allowed, false otherwise
-	bool checkMemberAccess(const StructMember* member,
-						   const StructTypeInfo* member_owner_struct,
-						   const StructTypeInfo* accessing_struct,
-						   [[maybe_unused]] const BaseClassSpecifier* inheritance_path) const;
-
-	// Friend declarations match resolved type, template, and function identities.
-	bool checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
-								const StructTypeInfo* accessing_struct) const;
-	bool hasCurrentFunctionFriendAccess(
-		const StructTypeInfo* member_owner_struct) const;
-
 	// Helper: compare class identity, including canonical template instantiations.
 	bool isSameClassOrInstantiation(const StructTypeInfo* a, const StructTypeInfo* b) const;
 
-	// Helper to check if accessing_struct is nested within member_owner_struct
-	bool isNestedWithin(const StructTypeInfo* accessing_struct,
-						const StructTypeInfo* member_owner_struct) const;
-
-	// Helper to check if derived_struct can access protected members of base_struct
-	bool isAccessibleThroughInheritance(const StructTypeInfo* derived_struct,
-										const StructTypeInfo* base_struct) const;
-
-	// Get the current struct context (which class we're currently in)
-	const StructTypeInfo* getCurrentStructContext() const;
-
-	// Get the current function name
+	// Get the current function name for codegen diagnostics.
 	std::string_view getCurrentFunctionName() const {
 		return current_function_name_.isValid() ? StringTable::getStringView(current_function_name_) : std::string_view();
 	}
-
-	// Helper function to check if access to a member function is allowed
-	bool checkMemberFunctionAccess(const StructMemberFunction* member_func,
-								   const StructTypeInfo* member_owner_struct,
-								   const StructTypeInfo* accessing_struct) const;
 
 	// Helper function to check if a variable is a reference by looking it up in the symbol table
 	// Returns true if the variable is declared as a reference (&  or &&)

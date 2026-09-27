@@ -809,6 +809,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 							decl_node.as<DeclarationNode>(), owner_qualified_name);
 						func_ref.set_semantic_owner_name(owner_qualified_name);
+						if (!struct_parsing_context_stack_.empty()) {
+							if (StructTypeInfo* owner_struct_info =
+									struct_parsing_context_stack_.back().local_struct_info;
+								owner_struct_info != nullptr &&
+								owner_struct_info->own_type_index_.has_value()) {
+								func_ref.set_access_owner_type_index(
+									*owner_struct_info->own_type_index_);
+							}
+						}
 						for (const auto& param : params.parameters) {
 							func_ref.add_parameter_node(param);
 						}
@@ -893,6 +902,17 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	stampPublishedFunctionTemplateParameters(template_decl);
 	StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
 	func_decl.set_semantic_owner_name(owner_qualified_name);
+	// Record the exact semantic class identity of this member-function template
+	// pattern so access checks and instantiation preserve it as real identity,
+	// not the spelling. The StructParsingContext owns the ClassInfo being built.
+	if (!struct_parsing_context_stack_.empty()) {
+		if (StructTypeInfo* owner_struct_info =
+				struct_parsing_context_stack_.back().local_struct_info;
+			owner_struct_info != nullptr &&
+			owner_struct_info->own_type_index_.has_value()) {
+			func_decl.set_access_owner_type_index(*owner_struct_info->own_type_index_);
+		}
+	}
 
 	// Add to struct as a member function template
 	// First, add to the struct's member functions list so it can be found for inheritance lookup

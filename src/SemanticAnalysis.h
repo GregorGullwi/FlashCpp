@@ -292,6 +292,7 @@ public:
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
 	struct ResolvedIdentifierMemberInfo {
 		const StructMember* member = nullptr;
+		const StructTypeInfo* owner_struct = nullptr;
 		size_t adjusted_offset = 0;
 
 		explicit operator bool() const { return member != nullptr; }
@@ -301,6 +302,7 @@ public:
 			Symbol,
 			StaticMember,
 			NonStaticDataMember,
+			MemberFunction,
 			EnumConstant,
 		};
 
@@ -315,6 +317,10 @@ public:
 		bool is_global = false;
 		TypeIndex enum_owner_type_index{};  // For EnumConstant kind: TypeIndex of the owning enum type
 		TypeIndex member_owner_type_index{};
+		TypeIndex member_class_type_index{};
+		const FunctionDeclarationNode* member_function = nullptr;
+		AccessSpecifier member_access = AccessSpecifier::Public;
+		bool is_static_member_function = false;
 	};
 	struct MemberContext {
 		TypeIndex type_index{};
@@ -614,15 +620,33 @@ private:
 	bool hasFriendClassAccess(const StructTypeInfo& member_owner,
 						  TypeIndex accessing_type_index) const;
 	bool hasCurrentFunctionFriendAccess(const StructTypeInfo& member_owner) const;
-	void checkPrivateMemberAccess(const StructMember& member,
-							  const StructTypeInfo& member_owner,
-							  const Token& access_token,
-							  StringHandle member_name) const;
-	void checkPrivateMemberFunctionAccess(const CallExprNode& call);
-	void checkPrivateMemberAccess(AccessSpecifier access,
-							  const StructTypeInfo& member_owner,
-							  const Token& access_token,
-							  StringHandle member_name) const;
+	void checkMemberAccess(const StructMember& member,
+						   const StructTypeInfo& member_owner,
+						   const Token& access_token,
+						   TypeIndex object_type_index,
+						   TypeIndex pointer_member_class_type_index) const;
+	void checkMemberAccess(const StructStaticMember& member,
+						   const StructTypeInfo& member_owner,
+						   const Token& access_token) const;
+	void checkMemberAccess(AccessSpecifier access,
+						   const StructTypeInfo& member_owner,
+						   const Token& access_token,
+						   StringHandle member_name,
+						   bool is_static,
+						   TypeIndex object_type_index,
+						   TypeIndex pointer_member_class_type_index) const;
+	void checkMemberFunctionAccess(const CallExprNode& call);
+	void checkMemberFunctionAddressAccess(
+		const ResolvedQualifiedIdentifierInfo& member_function,
+		const Token& access_token) const;
+	void checkMemberFunctionAddressAccessForTarget(
+		const ASTNode& expression,
+		CanonicalTypeId target_type_id);
+	void checkAccessControlInTemplatePattern(
+		const FunctionDeclarationNode& function);
+	bool isDerivedFrom(TypeIndex derived_type_index,
+				   TypeIndex base_type_index,
+				   bool require_accessible_path) const;
 	std::optional<ResolvedIdentifierMemberInfo> tryResolveIdentifierMember(const IdentifierNode& identifier) const;
 	std::optional<ResolvedQualifiedIdentifierInfo> tryResolveQualifiedIdentifier(const QualifiedIdentifierNode& qualified_identifier, bool allow_nonstatic_data_member);
 
@@ -737,6 +761,8 @@ private:
 	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
 	std::unordered_set<const void*> analyzed_member_access_queries_;
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
+	std::unordered_set<const void*> access_checked_template_pattern_bodies_;
+	bool access_check_in_template_pattern_ = false;
 	std::unordered_map<const QualifiedIdentifierNode*, ResolvedQualifiedIdentifierInfo> resolved_qualified_identifier_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
 	std::unordered_map<StringHandle, CanonicalTypeId> codegen_synthesized_local_types_;

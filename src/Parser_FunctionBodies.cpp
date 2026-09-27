@@ -599,6 +599,13 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 void Parser::copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src) {
 	dest.set_namespace_handle(src.namespace_handle());
 	dest.set_semantic_owner_name(src.semantic_owner_name());
+	// Preserve an already-resolved access owner. Instantiation stamps the exact
+	// instantiated class identity before copying pattern properties; overwriting
+	// it with the pattern owner would lose specialization identity.
+	if (!dest.access_owner_type_index().is_valid() &&
+		src.access_owner_type_index().is_valid()) {
+		dest.set_access_owner_type_index(src.access_owner_type_index());
+	}
 	dest.set_is_constexpr(src.is_constexpr());
 	dest.set_is_consteval(src.is_consteval());
 	dest.set_is_constinit(src.is_constinit());

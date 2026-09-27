@@ -1599,11 +1599,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (template_result.is_error()) {
 					return template_result;
 				}
-				// Register template friend classes (e.g., template<typename T> friend struct Foo;)
-				if (auto result_node = template_result.node()) {
-					if (result_node->is<FriendDeclarationNode>()) {
-					}
-				}
 				continue;
 			}
 
@@ -3110,6 +3105,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Use qualified_struct_name for nested classes so the member function references the correct type
 			auto [member_func_node, member_func_ref] =
 				emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_struct_name);
+			if (struct_info->own_type_index_.has_value()) {
+				member_func_ref.set_access_owner_type_index(
+					*struct_info->own_type_index_);
+			}
 
 			// Set namespace handle from the current struct context
 			if (!struct_parsing_context_stack_.empty()) {
