@@ -1365,6 +1365,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	// Compute effective return type early to ensure VirtualCallOp/CallOp creation and ABI metadata
 	// use the same resolved type that buildCallReturnResult will eventually use.
 	std::optional<TypeSpecifierNode> expression_return_type = getCallExpressionReturnType(ASTNode(&callExprNode));
+	auto resolve_member_call_return_type = [&](TypeSpecifierNode return_type) {
+		if (struct_info != nullptr && struct_info->own_type_index_.has_value()) {
+			resolveSelfReferentialType(return_type, *struct_info->own_type_index_);
+		}
+		return return_type;
+	};
 
 	if (is_virtual_call && vtable_index >= 0) {
 		// Generate virtual function call using VirtualCallOp
@@ -1374,10 +1380,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const TypeSpecifierNode& declared_return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 									  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
 									  : func_decl_node.type_specifier_node();
-		const TypeSpecifierNode& return_type =
+		const TypeSpecifierNode& selected_return_type =
 			expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
 				? *expression_return_type
 				: declared_return_type;
+		const TypeSpecifierNode return_type =
+			resolve_member_call_return_type(selected_return_type);
 		if (needsHiddenReturnParam(return_type, context_->isLLP64())) {
 				// The aggregate is returned through a hidden slot pointer in argument
 				// position zero on both ABIs; 'this' shifts to position one.
@@ -1823,10 +1831,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
 				? *expression_return_type
 				: declared_return_type;
-		TypeSpecifierNode return_type = selected_return_type;
-		if (struct_info != nullptr && struct_info->own_type_index_.has_value()) {
-			resolveSelfReferentialType(return_type, *struct_info->own_type_index_);
-		}
+		TypeSpecifierNode return_type =
+			resolve_member_call_return_type(selected_return_type);
 		CallOp call_op = createCallOp(ret_var, function_name, return_type, true, false);
 
 		// Get the actual function declaration to check if it's variadic
@@ -2202,10 +2208,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			: (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 					  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_specifier_node()
 					  : func_decl_node.type_specifier_node();
-	const auto& return_type =
+	const TypeSpecifierNode& selected_return_type =
 		expression_return_type.has_value() && shouldPreferExpressionReturnType(*expression_return_type, declared_return_type)
 			? *expression_return_type
 			: declared_return_type;
+	const TypeSpecifierNode return_type =
+		resolve_member_call_return_type(selected_return_type);
 	return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
 }
 
