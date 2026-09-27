@@ -2043,28 +2043,29 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		TypeId source_element = source_type;
 		TypeId target_element = target_type;
 		for (;;) {
-			const auto [source_unqualified, source_cv] =
+			const auto [source_element_unqualified, source_element_cv] =
 				stripCanonicalTopCv(table, source_element);
-			const auto [target_unqualified, target_cv] =
+			const auto [target_element_unqualified, target_element_cv] =
 				stripCanonicalTopCv(table, target_element);
-			if ((static_cast<uint8_t>(source_cv) &
-				~static_cast<uint8_t>(target_cv)) != 0) {
+			if ((static_cast<uint8_t>(source_element_cv) &
+				~static_cast<uint8_t>(target_element_cv)) != 0) {
 				return ConversionPlan::no_match();
 			}
-			qualification_changed |= source_cv != target_cv;
+			qualification_changed |= source_element_cv != target_element_cv;
 			const CanonicalTypeNode source_shape_node =
-				table.node(source_unqualified);
+				table.node(source_element_unqualified);
 			const CanonicalTypeNode target_shape_node =
-				table.node(target_unqualified);
+				table.node(target_element_unqualified);
 			if (source_shape_node.kind != CanonicalTypeKind::Array ||
 				target_shape_node.kind != CanonicalTypeKind::Array) {
 				if (source_shape_node.kind != target_shape_node.kind) {
 					return ConversionPlan::no_match();
 				}
-				if (source_unqualified != target_unqualified) {
+				if (source_element_unqualified != target_element_unqualified) {
 					const ConversionPlan element_plan =
 						buildCanonicalStructuralConversionPlan(
-							table, source_unqualified, target_unqualified);
+							table, source_element_unqualified,
+							target_element_unqualified);
 					if (!element_plan.is_valid ||
 						(element_plan.kind != StandardConversionKind::None &&
 							element_plan.kind !=
