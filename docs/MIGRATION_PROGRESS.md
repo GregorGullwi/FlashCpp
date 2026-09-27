@@ -106,14 +106,25 @@ Same-owner member-function-pointer pairs now compare the canonical owner and
 full function type, accept `noexcept` relaxation, and reject reverse
 relaxation or signature mismatches. Complete owner schemas also let this path
 reject unrelated, inaccessible, ambiguous, and virtual-base owner pairs;
-valid public non-virtual base-to-derived member-pointer adjustments remain
-deferred to compatibility planning. The unit case
+valid public non-virtual base-to-derived member-function-pointer adjustments
+remain deferred to compatibility planning. Data-member-pointer pairs now
+compare canonical owner and pointee types, preserve same-owner qualification,
+and allow a public unambiguous non-virtual base-to-derived owner conversion.
+Complete owner schemas reject unrelated, inaccessible, ambiguous, and
+virtual-base conversions. Function declaration matching also retains the
+member-owner `EntityId`, so overloads with distinct data-member-pointer owners
+remain separate candidates. The unit case
 `Canonical TypeIds compare same-owner member function pointer pairs` checks
-signature ranking, and
+signature ranking. The unit case
+`Canonical TypeIds compare member object pointer pairs` checks exact owner,
+qualification, and owner-mismatch behavior. The source regression
+`tests/test_canonical_member_object_pointer_pair_overload_ret0.cpp` checks
+pointee and owner selection, including base-to-derived ranking. The source
+regression
 `tests/test_canonical_member_function_pointer_pair_overload_ret0.cpp` checks
-owner and member-signature selection. Member-object-pointer pairs, dependent
-`noexcept`, user-defined conversions, and other unsupported callable or
-template types still use compatibility planning.
+member-owner and function-signature selection. Dependent `noexcept`,
+user-defined conversions, and other unsupported callable or template types
+still use compatibility planning.
 Call lowering does not yet materialize the pointer object required when an
 array decays to a pointer temporary; see [known issues](KNOWN_ISSUES.md).
 Regression coverage in
@@ -188,9 +199,10 @@ call stack. The recorded Clang stack-usage probe measured `parse_declarator` at
 changing recursive parser paths. `TypeSpecifierNode` measured 520 bytes in the
 canonical architecture probe.
 
-The explicit-criteria rollup is **9/79 complete**. Passing tests or the breadth
-of landed code do not complete boundary 3A. Implementation effort is not yet
-estimated reliably.
+The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
+that pointer-to-member overloads distinguish owner and pointee types is now
+covered; passing tests or the breadth of landed code do not complete the
+boundary. Implementation effort is not yet estimated reliably.
 
 ## Next work
 
@@ -203,7 +215,10 @@ Continue boundary 3A in this order:
    pairs and same-owner member-function-pointer pairs, builtin arithmetic, array-decay,
    null-pointer, and function-decay reference temporaries plus direct
    derived-to-base reference and pointer conversions now use the canonical
-   planner and base graph.
+   planner and base graph. Data-member-pointer pairs now compare owner and
+   pointee `TypeId`s and support the public non-virtual base-to-derived owner
+   conversion; member-function-pointer base adjustments and remaining callable
+   pairs are still pending.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,

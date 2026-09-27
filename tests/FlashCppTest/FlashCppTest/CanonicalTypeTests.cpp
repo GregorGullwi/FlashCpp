@@ -588,6 +588,41 @@ TEST_CASE("Canonical TypeIds compare same-owner member function pointer pairs") 
 	CHECK(top_level_cv_plan->rank == ConversionRank::ExactMatch);
 }
 
+TEST_CASE("Canonical TypeIds compare member object pointer pairs") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId owner = table.record(EntityId{806});
+	const TypeId other_owner = table.record(EntityId{807});
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId const_integer = table.qualify(integer, CVQualifier::Const);
+	const TypeId integer_member = table.memberObjectPointer(owner, integer);
+	const TypeId const_integer_member =
+		table.memberObjectPointer(owner, const_integer);
+	const TypeId other_owner_member =
+		table.memberObjectPointer(other_owner, integer);
+
+	const ConversionPlan exact_plan = buildCanonicalStructuralConversionPlan(
+		table, integer_member, integer_member);
+	CHECK(exact_plan.is_valid);
+	CHECK(exact_plan.rank == ConversionRank::ExactMatch);
+
+	const ConversionPlan qualification_plan =
+		buildCanonicalStructuralConversionPlan(
+			table, integer_member, const_integer_member);
+	CHECK(qualification_plan.is_valid);
+	CHECK(qualification_plan.rank == ConversionRank::QualificationAdjustment);
+
+	const ConversionPlan rejected_qualification_plan =
+		buildCanonicalStructuralConversionPlan(
+			table, const_integer_member, integer_member);
+	CHECK_FALSE(rejected_qualification_plan.is_valid);
+
+	const ConversionPlan rejected_owner_plan =
+		buildCanonicalStructuralConversionPlan(
+			table, integer_member, other_owner_member);
+	CHECK_FALSE(rejected_owner_plan.is_valid);
+}
+
 TEST_CASE("Ordered function objects decay to pointers") {
 	FrontendContext frontend;
 	TypeSpecifierNode parameter(

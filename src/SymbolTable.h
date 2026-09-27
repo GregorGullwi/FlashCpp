@@ -153,12 +153,42 @@ inline bool functionAcceptsArgumentCount(
 
 namespace SymbolTableDetail {
 
+inline EntityId functionMemberObjectPointerOwner(
+	const TypeSpecifierNode& type) {
+	if (type.has_ordered_declarator()) {
+		const std::span<const DeclaratorComponent> components =
+			type.declarator_components();
+		if (!components.empty() &&
+			components.front().kind == DeclaratorComponentKind::MemberObjectPointer &&
+			components.front().member_owner) {
+			return components.front().member_owner;
+		}
+	}
+	return type.has_member_class_entity()
+		? type.member_class_entity()
+		: EntityId{};
+}
+
 inline bool functionDeclaratorTypesCompatible(
 	const TypeSpecifierNode& first,
 	const TypeSpecifierNode& second) {
 	if (!first.matches_signature(second) ||
 		first.has_function_signature() != second.has_function_signature()) {
 		return false;
+	}
+	const bool first_is_member_object_pointer =
+		first.is_member_object_pointer_type();
+	const bool second_is_member_object_pointer =
+		second.is_member_object_pointer_type();
+	if (first_is_member_object_pointer != second_is_member_object_pointer) {
+		return false;
+	}
+	if (first_is_member_object_pointer) {
+		const EntityId first_owner = functionMemberObjectPointerOwner(first);
+		const EntityId second_owner = functionMemberObjectPointerOwner(second);
+		if (!first_owner || first_owner != second_owner) {
+			return false;
+		}
 	}
 	return !first.has_function_signature() ||
 		FlashCpp::equalFunctionSignatureIdentity(
