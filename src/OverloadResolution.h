@@ -912,6 +912,55 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
 	int64_t public_non_virtual_offset = 0;
 	std::vector<TypeIndex> public_virtual_subobjects;
 	std::vector<TypeIndex> inaccessible_virtual_subobjects;
+	auto grants_friend_access = [access_context_idx](const StructTypeInfo& owner) {
+		if (!owner.declaration_node) {
+			return false;
+		}
+		const TypeInfo* access_context_info = tryGetTypeInfo(access_context_idx);
+		const StructTypeInfo* access_context_struct = access_context_info != nullptr
+			? access_context_info->getStructInfo()
+			: nullptr;
+		if (access_context_struct == nullptr ||
+			access_context_struct->declaration_node == nullptr) {
+			return false;
+		}
+		const StructDeclarationNode* access_context_declaration =
+			access_context_struct->declaration_node;
+		const StructDeclarationNode* access_context_pattern =
+			access_context_declaration->injected_class_pattern_declaration();
+		const StructDeclarationNode* access_context_template =
+			access_context_pattern != nullptr
+				? access_context_pattern
+				: access_context_declaration;
+		for (const ASTNode& friend_node : owner.declaration_node->friend_declarations()) {
+			if (!friend_node.is<FriendDeclarationNode>()) {
+				continue;
+			}
+			const FriendDeclarationNode& friend_declaration =
+				friend_node.as<FriendDeclarationNode>();
+			if (friend_declaration.kind() != FriendKind::Class &&
+				friend_declaration.kind() != FriendKind::TemplateClass) {
+				continue;
+			}
+			if (friend_declaration.class_type_index().is_valid() &&
+				friend_declaration.class_type_index() == access_context_idx) {
+				return true;
+			}
+			if (friend_declaration.class_declaration() != nullptr &&
+				(friend_declaration.class_declaration() == access_context_declaration ||
+				 friend_declaration.class_declaration() == access_context_pattern)) {
+				return true;
+			}
+			if (friend_declaration.kind() == FriendKind::TemplateClass &&
+				friend_declaration.class_template_decl_id() &&
+				access_context_template->has_template_decl_id() &&
+				access_context_template->template_decl_id() ==
+					friend_declaration.class_template_decl_id()) {
+				return true;
+			}
+		}
+		return false;
+	};
 
 	auto contains_virtual_subobject = [&](TypeIndex type_index) {
 		return std::find(public_virtual_subobjects.begin(), public_virtual_subobjects.end(), type_index) !=
@@ -933,8 +982,7 @@ inline DerivedBaseConversionInfo classifyDerivedBaseConversion(
 		if (access_context_idx.index() == owner_type_idx.index()) {
 			return true;
 		}
-		if (const TypeInfo* access_context_info = tryGetTypeInfo(access_context_idx);
-			access_context_info != nullptr && owner.isFriendClass(access_context_info->name())) {
+		if (grants_friend_access(owner)) {
 			return true;
 		}
 		return access == AccessSpecifier::Protected &&

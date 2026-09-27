@@ -2040,8 +2040,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 
 	// Check access control
 	const StructTypeInfo* current_context = getCurrentStructContext();
-	std::string_view current_function = getCurrentFunctionName();
-	if (!checkMemberAccess(member, struct_info, current_context, nullptr, current_function)) {
+	if (!checkMemberAccess(member, struct_info, current_context, nullptr)) {
 		std::cerr << "Error: Cannot access ";
 		if (member->access == AccessSpecifier::Private) {
 			std::cerr << "private";
@@ -3433,11 +3432,72 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 // Helper function to check if access to a member is allowed
 // Returns true if access is allowed, false otherwise
+bool AstToIr::hasCurrentFunctionFriendAccess(
+	const StructTypeInfo* member_owner_struct) const {
+	if (member_owner_struct == nullptr ||
+		member_owner_struct->declaration_node == nullptr ||
+		current_function_node_ == nullptr) {
+		return false;
+	}
+	const FunctionDeclarationNode& current_function = *current_function_node_;
+	for (const ASTNode& friend_node :
+		member_owner_struct->declaration_node->friend_declarations()) {
+		if (!friend_node.is<FriendDeclarationNode>()) {
+			continue;
+		}
+		const FriendDeclarationNode& friend_declaration =
+			friend_node.as<FriendDeclarationNode>();
+		if (friend_declaration.kind() != FriendKind::Function ||
+			!friend_declaration.function_declaration().has_value()) {
+			continue;
+		}
+		const FunctionDeclarationNode* friend_function =
+			get_function_decl_node(friend_declaration.function_declaration());
+		if (friend_function == nullptr) {
+			continue;
+		}
+		if (friend_function == &current_function) {
+			return true;
+		}
+		if (friend_function->is_template_pattern() ||
+			current_function.is_template_pattern() ||
+			friend_function->namespace_handle() != current_function.namespace_handle() ||
+			friend_function->linkage() != current_function.linkage() ||
+			friend_function->decl_node().identifier_token().handle() !=
+				current_function.decl_node().identifier_token().handle() ||
+			friend_function->parameter_nodes().size() !=
+				current_function.parameter_nodes().size() ||
+			friend_function->is_variadic() != current_function.is_variadic()) {
+			continue;
+		}
+		const std::span<const ASTNode> friend_parameters =
+			friend_function->parameter_nodes();
+		const std::span<const ASTNode> current_parameters =
+			current_function.parameter_nodes();
+		bool same_parameter_types = true;
+		for (size_t index = 0; index < friend_parameters.size(); ++index) {
+			if (!friend_parameters[index].is<DeclarationNode>() ||
+				!current_parameters[index].is<DeclarationNode>() ||
+				!SymbolTableDetail::functionDeclaratorTypesCompatible(
+					friend_parameters[index].as<DeclarationNode>()
+						.type_specifier_node(),
+					current_parameters[index].as<DeclarationNode>()
+						.type_specifier_node())) {
+				same_parameter_types = false;
+				break;
+			}
+		}
+		if (same_parameter_types) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool AstToIr::checkMemberAccess(const StructMember* member,
 								const StructTypeInfo* member_owner_struct,
 								const StructTypeInfo* accessing_struct,
-								[[maybe_unused]] const BaseClassSpecifier* inheritance_path,
-								const std::string_view& accessing_function) const {
+								[[maybe_unused]] const BaseClassSpecifier* inheritance_path) const {
 	if (!member || !member_owner_struct) {
 		return false;
 	}
@@ -3453,7 +3513,7 @@ bool AstToIr::checkMemberAccess(const StructMember* member,
 	}
 
 	// Check if accessing function is a friend function of the member owner
-	if (!accessing_function.empty() && member_owner_struct->isFriendFunction(accessing_function)) {
+	if (hasCurrentFunctionFriendAccess(member_owner_struct)) {
 		return true;
 	}
 
@@ -3499,184 +3559,98 @@ bool AstToIr::checkMemberAccess(const StructMember* member,
 	return false;
 }
 
-// Helper: check if accessing_struct is a declared friend class of member_owner_struct.
-//
-// Friend declarations are stored both under the source-level name (typically
-// unqualified, e.g. "__use_cache") AND the namespace-qualified form (e.g.
-// "std::__use_cache") — the parser registers both at addFriendClass time.
-//
-// At codegen time the accessing struct carries its full internal name, which
-// may be:
-//   • namespace-qualified  – "std::__use_cache"
-//   • a $hash instantiation – "std::__use_cache$00a6ac8c5dbe3409"
-//   • a $pattern struct    – "std::__use_cache$pattern_P"
-//
-// The helper therefore tries, in order:
-//   1. Exact match on the full accessing name.
-//   2. The registered base-template name from TypeInfo (strips $hash).
-//   3. A manual $-strip (fallback for instantiations not yet in TypeInfo).
-//   4. For partial-specialisation pattern structs (identified via the registry):
-//      strip the "$pattern" separator to recover the base template name,
-//      preserving the namespace prefix for correct matching.
+// Friend grants are matched by resolved type, template, or declaration identity.
 bool AstToIr::checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
-									 const StructTypeInfo* accessing_struct) const {
-	if (!accessing_struct)
-		return false;
+                                     const StructTypeInfo* accessing_struct) const {
+    if (!member_owner_struct || !accessing_struct ||
+        !member_owner_struct->declaration_node ||
+        !accessing_struct->declaration_node) {
+        return false;
+    }
 
-	bool has_exact_specialization_friend = false;
-	bool has_legacy_class_friend = false;
-	if (member_owner_struct != nullptr &&
-		member_owner_struct->declaration_node != nullptr &&
-		accessing_struct->declaration_node != nullptr) {
-		for (const ASTNode& friend_node :
-			 member_owner_struct->declaration_node->friend_declarations()) {
-			if (!friend_node.is<FriendDeclarationNode>()) {
-				continue;
-			}
-			const FriendDeclarationNode& friend_declaration =
-				friend_node.as<FriendDeclarationNode>();
-			if (friend_declaration.kind() != FriendKind::Class &&
-				friend_declaration.kind() != FriendKind::TemplateClass) {
-				continue;
-			}
-			if (friend_declaration.kind() != FriendKind::Class ||
-				friend_declaration.class_template_arguments().empty()) {
-				has_legacy_class_friend = true;
-				continue;
-			}
-			has_exact_specialization_friend = true;
-			const StructDeclarationNode* friend_specialization =
-				gTemplateRegistry.findClassTemplateInstantiationDeclaration(
-					friend_declaration.class_declaration(),
-					friend_declaration.class_template_arguments());
-			if (friend_specialization == nullptr) {
-				auto friend_type =
-					getTypesByNameMap().find(friend_declaration.name());
-				if (friend_type != getTypesByNameMap().end() &&
-					friend_type->second != nullptr &&
-					friend_type->second->name() == friend_declaration.name() &&
-					friend_type->second->getStructInfo() != nullptr) {
-					friend_specialization =
-						friend_type->second->getStructInfo()->declaration_node;
-				}
-			}
-			if (friend_specialization != nullptr &&
-				friend_specialization == accessing_struct->declaration_node) {
-				return true;
-			}
-		}
-	}
-	if (has_exact_specialization_friend && !has_legacy_class_friend) {
-		return false;
-	}
-
-	// Fast path: exact StringHandle match avoids string_view ↔ StringHandle round-trip.
-	// This covers the most common case: non-template, same-namespace friend, or
-	// fully-qualified name matching the qualified friend entry stored by the parser.
-	StringHandle acc_handle = accessing_struct->getName();
-	if (member_owner_struct->isFriendClass(acc_handle))
-		return true;
-
-	std::string_view acc_name = StringTable::getStringView(acc_handle);
-
-	// 2. Registered base-template name from TypeInfo ($hash instantiations).
-	//    e.g. "std::__use_cache$00a6ac8c" → "std::__use_cache"
-	std::string_view base = extractBaseTemplateName(acc_name);
-	if (!base.empty() && base != acc_name) {
-		if (member_owner_struct->isFriendClass(base))
-			return true;
-	}
-
-	// 3. Fallback: manually strip at '$' for names not yet recorded in TypeInfo.
-	auto dollar_pos = acc_name.find('$');
-	if (dollar_pos != std::string_view::npos) {
-		std::string_view stripped = acc_name.substr(0, dollar_pos);
-		if (member_owner_struct->isFriendClass(stripped))
-			return true;
-	}
-
-	// 4. Partial-specialisation pattern structs.
-	//    Use the registry for non-string-based lookup of the base template name.
-	//    The base template name was stored when the pattern was registered,
-	//    so no string parsing of the pattern name is needed.
-	if (gTemplateRegistry.isPatternStructName(accessing_struct->getName())) {
-		auto base_opt = gTemplateRegistry.getPatternBaseTemplateName(accessing_struct->getName());
-		if (base_opt.has_value()) {
-			if (member_owner_struct->isFriendClass(*base_opt))
-				return true;
-			// Also try with namespace prefix from the accessing name
-			// e.g., pattern "std::__use_cache$pattern_P" has base "__use_cache",
-			// but the friend entry might be "std::__use_cache"
-			// Only prepend namespace if the base name is not already qualified
-			// (member struct patterns store fully qualified names like "ParentStruct::List")
-			std::string_view base_sv = StringTable::getStringView(*base_opt);
-			if (base_sv.find("::") == std::string_view::npos) {
-				auto last_scope = acc_name.rfind("::");
-				if (last_scope != std::string_view::npos) {
-					std::string_view ns_prefix = acc_name.substr(0, last_scope + 2);
-					StringBuilder qualified_base;
-					std::string_view qualified = qualified_base.append(ns_prefix).append(base_sv).commit();
-					if (member_owner_struct->isFriendClass(qualified))
-						return true;
-				}
-			}
-		}
-	}
-
-	return false;
+    const TypeIndex accessing_type_index =
+        accessing_struct->own_type_index_.value_or(TypeIndex{});
+    const StructDeclarationNode* accessing_pattern =
+        accessing_struct->declaration_node->injected_class_pattern_declaration();
+    for (const ASTNode& friend_node :
+         member_owner_struct->declaration_node->friend_declarations()) {
+        if (!friend_node.is<FriendDeclarationNode>()) {
+            continue;
+        }
+        const FriendDeclarationNode& friend_declaration =
+            friend_node.as<FriendDeclarationNode>();
+        if (friend_declaration.kind() != FriendKind::Class &&
+            friend_declaration.kind() != FriendKind::TemplateClass) {
+            continue;
+        }
+        if (friend_declaration.class_type_index().is_valid() &&
+            friend_declaration.class_type_index() == accessing_type_index) {
+            return true;
+        }
+        if (friend_declaration.kind() == FriendKind::Class &&
+            !friend_declaration.class_template_arguments().empty() &&
+            (friend_declaration.class_template_decl_id() ||
+             friend_declaration.class_declaration() != nullptr)) {
+            const StructDeclarationNode* friend_specialization = nullptr;
+            if (friend_declaration.class_template_decl_id()) {
+                friend_specialization =
+                    gTemplateRegistry.findClassTemplateInstantiationDeclaration(
+                        friend_declaration.class_template_decl_id(),
+                        friend_declaration.class_template_arguments());
+            }
+            if (friend_specialization == nullptr &&
+                friend_declaration.class_declaration() != nullptr) {
+                friend_specialization =
+                    gTemplateRegistry.findClassTemplateInstantiationDeclaration(
+                        friend_declaration.class_declaration(),
+                        friend_declaration.class_template_arguments());
+            }
+            if (friend_specialization == accessing_struct->declaration_node) {
+                return true;
+            }
+        }
+        if (friend_declaration.kind() == FriendKind::TemplateClass &&
+            friend_declaration.class_template_arguments().empty() &&
+            friend_declaration.class_template_decl_id()) {
+            const StructDeclarationNode* accessing_template =
+                accessing_pattern != nullptr
+                    ? accessing_pattern
+                    : accessing_struct->declaration_node;
+            if ((accessing_template->has_template_decl_id() &&
+                 accessing_template->template_decl_id() ==
+                     friend_declaration.class_template_decl_id()) ||
+                gTemplateRegistry.isClassTemplatePatternInFamily(
+                    accessing_template,
+                    friend_declaration.class_template_decl_id())) {
+                return true;
+            }
+        }
+        if (friend_declaration.kind() == FriendKind::TemplateClass &&
+            friend_declaration.class_template_arguments().empty() &&
+            friend_declaration.class_declaration() != nullptr &&
+            (friend_declaration.class_declaration() == accessing_struct->declaration_node ||
+             friend_declaration.class_declaration() == accessing_pattern)) {
+            return true;
+        }
+        if (friend_declaration.kind() == FriendKind::Class &&
+            friend_declaration.class_template_arguments().empty() &&
+            friend_declaration.class_declaration() == accessing_struct->declaration_node) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Helper: check if two structs are the same class, including template
-// instantiations. Specialization identity comes from the TypeInfos' stamped
-// template-instantiation metadata (base template + ordered template
-// arguments); registered names are only compared for exact equality, never
-// by stripping instantiation suffixes.
+// instantiations. A missing type identity cannot grant access.
 bool AstToIr::isSameClassOrInstantiation(const StructTypeInfo* a, const StructTypeInfo* b) const {
 	if (a == b)
 		return true;
 	if (!a || !b)
 		return false;
-
-	// Typed identity path: when both sides carry template-instantiation
-	// metadata with recorded arguments, compare their canonical instantiation
-	// keys (base template + ordered template arguments) instead of registered
-	// names. Distinct specializations of one class template are distinct
-	// classes (C++20 [class.access]), so a member of Box<int> must not match
-	// Box<double> even though both replay from the same primary template.
-	const TypeInfo* info_a = nullptr;
-	const TypeInfo* info_b = nullptr;
-	if (a->own_type_index_.has_value()) {
-		info_a = tryGetTypeInfo(*a->own_type_index_);
-	}
-	if (b->own_type_index_.has_value()) {
-		info_b = tryGetTypeInfo(*b->own_type_index_);
-	}
-	if (info_a != nullptr && info_b != nullptr &&
-		info_a->isTemplateInstantiation() && info_b->isTemplateInstantiation() &&
-		!info_a->templateArgs().empty() && !info_b->templateArgs().empty()) {
-		TemplateArgumentVector args_a;
-		TemplateArgumentVector args_b;
-		for (const auto& stored_arg : info_a->templateArgs()) {
-			args_a.push_back(toTemplateTypeArg(stored_arg));
-		}
-		for (const auto& stored_arg : info_b->templateArgs()) {
-			args_b.push_back(toTemplateTypeArg(stored_arg));
-		}
-		const FlashCpp::TemplateInstantiationKey key_a = FlashCpp::makeInstantiationKey(
-			info_a->baseTemplateName(),
-			std::span<const TemplateTypeArg>(args_a.data(), args_a.size()));
-		const FlashCpp::TemplateInstantiationKey key_b = FlashCpp::makeInstantiationKey(
-			info_b->baseTemplateName(),
-			std::span<const TemplateTypeArg>(args_b.data(), args_b.size()));
-		return key_a == key_b;
-	}
-
-	// Exact registered-name identity for everything the typed path does not
-	// cover: ordinary (non-template) classes, and instantiations whose
-	// TypeInfo has not been stamped with template-argument metadata yet.
-	std::string_view name_a = StringTable::getStringView(a->getName());
-	std::string_view name_b = StringTable::getStringView(b->getName());
-	return name_a == name_b;
+	return a->own_type_index_.has_value() &&
+		b->own_type_index_.has_value() &&
+		*a->own_type_index_ == *b->own_type_index_;
 }
 
 // Helper to check if accessing_struct is nested within member_owner_struct
@@ -3756,8 +3730,7 @@ const StructTypeInfo* AstToIr::getCurrentStructContext() const {
 // Helper function to check if access to a member function is allowed
 bool AstToIr::checkMemberFunctionAccess(const StructMemberFunction* member_func,
 										const StructTypeInfo* member_owner_struct,
-										const StructTypeInfo* accessing_struct,
-										std::string_view accessing_function) const {
+										const StructTypeInfo* accessing_struct) const {
 	if (!member_func || !member_owner_struct) {
 		return false;
 	}
@@ -3773,7 +3746,7 @@ bool AstToIr::checkMemberFunctionAccess(const StructMemberFunction* member_func,
 	}
 
 	// Check if accessing function is a friend function of the member owner
-	if (!accessing_function.empty() && member_owner_struct->isFriendFunction(accessing_function)) {
+	if (hasCurrentFunctionFriendAccess(member_owner_struct)) {
 		return true;
 	}
 

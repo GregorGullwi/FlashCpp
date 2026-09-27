@@ -3697,50 +3697,66 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 	registerOuterTemplateBindingsInScope(decl);
 	TypeInfo* struct_type_info = findStructTypeInfoForDeclaration(decl);
 
-	std::optional<MemberContext> member_default_init_context;
-	if (struct_type_info && struct_type_info->getStructInfo()) {
-		member_default_init_context = MemberContext{struct_type_info->type_index_, true, CVQualifier::None};
-		member_context_stack_.push_back(*member_default_init_context);
-	}
-	auto member_default_cleanup = ScopeGuard([this, &member_default_init_context]() {
-		if (member_default_init_context.has_value()) {
-			member_context_stack_.pop_back();
+	{
+		std::optional<MemberContext> member_default_init_context;
+		if (struct_type_info && struct_type_info->getStructInfo()) {
+			member_default_init_context = MemberContext{
+				struct_type_info->type_index_, true, CVQualifier::None};
+			member_context_stack_.push_back(*member_default_init_context);
 		}
-	});
-
-	for (const auto& member : decl.members()) {
-		if (member.declaration.is<DeclarationNode>()) {
-			const auto& member_decl = member.declaration.as<DeclarationNode>();
-			for (const auto& dim : member_decl.array_dimensions()) {
-				normalizeExpression(dim, ctx);
+		private_access_context_stack_.push_back(
+			member_default_init_context.has_value()
+				? member_default_init_context->type_index
+				: TypeIndex{});
+		auto member_default_cleanup = ScopeGuard([this, &member_default_init_context]() {
+			private_access_context_stack_.pop_back();
+			if (member_default_init_context.has_value()) {
+				member_context_stack_.pop_back();
 			}
-			if (member_decl.has_default_value()) {
-				normalizeExpression(member_decl.default_value(), ctx);
+		});
+
+		for (const auto& member : decl.members()) {
+			if (member.declaration.is<DeclarationNode>()) {
+				const auto& member_decl = member.declaration.as<DeclarationNode>();
+				for (const auto& dim : member_decl.array_dimensions()) {
+					normalizeExpression(dim, ctx);
+				}
+				if (member_decl.has_default_value()) {
+					normalizeExpression(member_decl.default_value(), ctx);
+				}
+			}
+
+			if (member.default_initializer.has_value()) {
+				normalizeExpression(*member.default_initializer, ctx);
+			}
+			if (member.bitfield_width_expr.has_value()) {
+				normalizeExpression(*member.bitfield_width_expr, ctx);
 			}
 		}
-
-		if (member.default_initializer.has_value()) {
-			normalizeExpression(*member.default_initializer, ctx);
-		}
-		if (member.bitfield_width_expr.has_value()) {
-			normalizeExpression(*member.bitfield_width_expr, ctx);
-		}
 	}
 
-	std::optional<MemberContext> static_member_context;
-	if (struct_type_info && struct_type_info->getStructInfo()) {
-		static_member_context = MemberContext{struct_type_info->type_index_, false, CVQualifier::None};
-		member_context_stack_.push_back(*static_member_context);
-	}
-	auto static_member_context_cleanup = ScopeGuard([this, &static_member_context]() {
-		if (static_member_context.has_value()) {
-			member_context_stack_.pop_back();
+	{
+		std::optional<MemberContext> static_member_context;
+		if (struct_type_info && struct_type_info->getStructInfo()) {
+			static_member_context = MemberContext{
+				struct_type_info->type_index_, false, CVQualifier::None};
+			member_context_stack_.push_back(*static_member_context);
 		}
-	});
+		private_access_context_stack_.push_back(
+			static_member_context.has_value()
+				? static_member_context->type_index
+				: TypeIndex{});
+		auto static_member_context_cleanup = ScopeGuard([this, &static_member_context]() {
+			private_access_context_stack_.pop_back();
+			if (static_member_context.has_value()) {
+				member_context_stack_.pop_back();
+			}
+		});
 
-	for (const auto& static_member : decl.static_members()) {
-		if (static_member.initializer.has_value()) {
-			normalizeExpression(*static_member.initializer, ctx);
+		for (const auto& static_member : decl.static_members()) {
+			if (static_member.initializer.has_value()) {
+				normalizeExpression(*static_member.initializer, ctx);
+			}
 		}
 	}
 
@@ -3749,6 +3765,14 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 		const auto& func_node = member_func.function_declaration;
 		if (!func_node.has_value())
 			continue;
+
+		private_access_context_stack_.push_back(
+			struct_type_info && struct_type_info->getStructInfo()
+				? struct_type_info->type_index_
+				: TypeIndex{});
+		auto private_access_context_cleanup = ScopeGuard([this]() {
+			private_access_context_stack_.pop_back();
+		});
 
 		if (member_func.is_constructor && func_node.is<ConstructorDeclarationNode>()) {
 			normalizeConstructorDeclaration(func_node.as<ConstructorDeclarationNode>());
@@ -3771,6 +3795,10 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 
 		const ASTNode& friend_function = *friend_decl.function_declaration();
 		if (friend_function.is<FunctionDeclarationNode>()) {
+			private_access_context_stack_.push_back(TypeIndex{});
+			auto private_access_context_cleanup = ScopeGuard([this]() {
+				private_access_context_stack_.pop_back();
+			});
 			normalizeFunctionDeclaration(friend_function.as<FunctionDeclarationNode>());
 		}
 	}
@@ -5101,13 +5129,24 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				normalizeExpression(e.object(), ctx);
 				const StructTypeInfo* resolved_owner_struct = nullptr;
 				const StructMember* resolved_member = nullptr;
-				resolveOrGetMemberAccess(e, resolved_owner_struct, resolved_member);
+				if (resolveOrGetMemberAccess(e, resolved_owner_struct, resolved_member) &&
+					resolved_owner_struct != nullptr && resolved_member != nullptr) {
+					checkPrivateMemberAccess(
+						*resolved_member,
+						*resolved_owner_struct,
+						e.member_token(),
+						e.member_token().handle());
+				}
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 				normalizeExpression(e.member_pointer(), ctx);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				if (e.has_receiver()) {
 					normalizeExpression(e.receiver(), ctx);
+					if (e.callee().is_member() &&
+						e.callee().function_declaration_or_null() != nullptr) {
+						checkPrivateMemberFunctionAccess(e);
+					}
 					const FunctionDeclarationNode* syntactic_callee =
 						e.callee().function_declaration_or_null();
 					// Member-call nodes also cover legacy indirect calls. Diagnose only
@@ -6243,6 +6282,338 @@ const SemanticAnalysis::MemberContext* SemanticAnalysis::getCurrentMemberContext
 	}
 
 	return &member_context_stack_.back();
+}
+
+TypeIndex SemanticAnalysis::getCurrentAccessingTypeIndex() const {
+	if (!private_access_context_stack_.empty()) {
+		if (private_access_context_stack_.back().is_valid()) {
+			return private_access_context_stack_.back();
+		}
+		if (!current_function_stack_.empty() &&
+			current_function_stack_.back()->is_member_function()) {
+			const TypeIndex function_owner =
+				current_function_stack_.back()->access_owner_type_index();
+			if (function_owner.is_valid()) {
+				return function_owner;
+			}
+			if (isParserAttached() &&
+				!parser().member_function_context_stack_.empty()) {
+				return parser().member_function_context_stack_.back().struct_type_index;
+			}
+		}
+		return TypeIndex{};
+	}
+	if (!current_function_stack_.empty()) {
+		const FunctionDeclarationNode* current_function =
+			current_function_stack_.back();
+		if (!current_function->is_member_function()) {
+			return TypeIndex{};
+		}
+		const TypeIndex function_owner =
+			current_function->access_owner_type_index();
+		if (function_owner.is_valid()) {
+			return function_owner;
+		}
+		if (isParserAttached() &&
+			!parser().member_function_context_stack_.empty()) {
+			return parser().member_function_context_stack_.back().struct_type_index;
+		}
+		return TypeIndex{};
+	}
+	if (isParserAttached() && !parser().member_function_context_stack_.empty()) {
+		return parser().member_function_context_stack_.back().struct_type_index;
+	}
+	return TypeIndex{};
+}
+
+bool SemanticAnalysis::sameFunctionDeclarationEntity(
+	const FunctionDeclarationNode& lhs,
+	const FunctionDeclarationNode& rhs) const {
+	if (&lhs == &rhs) {
+		return true;
+	}
+	if (lhs.is_template_pattern() || rhs.is_template_pattern() ||
+		lhs.namespace_handle() != rhs.namespace_handle() ||
+		lhs.linkage() != rhs.linkage() ||
+		lhs.decl_node().identifier_token().handle() !=
+			rhs.decl_node().identifier_token().handle() ||
+		lhs.parameter_nodes().size() != rhs.parameter_nodes().size() ||
+		lhs.is_variadic() != rhs.is_variadic()) {
+		return false;
+	}
+
+	const std::span<const ASTNode> lhs_parameters = lhs.parameter_nodes();
+	const std::span<const ASTNode> rhs_parameters = rhs.parameter_nodes();
+	for (size_t index = 0; index < lhs_parameters.size(); ++index) {
+		if (!lhs_parameters[index].is<DeclarationNode>() ||
+			!rhs_parameters[index].is<DeclarationNode>() ||
+			!SymbolTableDetail::functionDeclaratorTypesCompatible(
+				lhs_parameters[index].as<DeclarationNode>()
+					.type_specifier_node(),
+				rhs_parameters[index].as<DeclarationNode>()
+					.type_specifier_node())) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool SemanticAnalysis::hasFriendClassAccess(
+	const StructTypeInfo& member_owner,
+	TypeIndex accessing_type_index) const {
+	if (!accessing_type_index.is_valid() || member_owner.declaration_node == nullptr) {
+		return false;
+	}
+
+	const TypeInfo* accessing_type_info = tryGetTypeInfo(accessing_type_index);
+	const StructTypeInfo* accessing_struct = accessing_type_info
+		? accessing_type_info->getStructInfo()
+		: nullptr;
+	if (accessing_struct == nullptr || accessing_struct->declaration_node == nullptr) {
+		return false;
+	}
+	const StructDeclarationNode* accessing_pattern =
+		accessing_struct->declaration_node->injected_class_pattern_declaration();
+	const StructDeclarationNode* accessing_template = accessing_pattern != nullptr
+		? accessing_pattern
+		: accessing_struct->declaration_node;
+
+	for (const ASTNode& friend_node : member_owner.declaration_node->friend_declarations()) {
+		if (!friend_node.is<FriendDeclarationNode>()) {
+			continue;
+		}
+		const FriendDeclarationNode& friend_declaration =
+			friend_node.as<FriendDeclarationNode>();
+		if (friend_declaration.kind() != FriendKind::Class &&
+			friend_declaration.kind() != FriendKind::TemplateClass) {
+			continue;
+		}
+		if (friend_declaration.class_type_index().is_valid() &&
+			friend_declaration.class_type_index() == accessing_type_index) {
+			return true;
+		}
+		if (friend_declaration.kind() == FriendKind::Class &&
+			!friend_declaration.class_template_arguments().empty() &&
+			(friend_declaration.class_template_decl_id() ||
+			 friend_declaration.class_declaration() != nullptr)) {
+			const StructDeclarationNode* friend_specialization = nullptr;
+			if (friend_declaration.class_template_decl_id()) {
+				friend_specialization =
+					gTemplateRegistry.findClassTemplateInstantiationDeclaration(
+						friend_declaration.class_template_decl_id(),
+						friend_declaration.class_template_arguments());
+			}
+			if (friend_specialization == nullptr &&
+				friend_declaration.class_declaration() != nullptr) {
+				friend_specialization =
+					gTemplateRegistry.findClassTemplateInstantiationDeclaration(
+						friend_declaration.class_declaration(),
+						friend_declaration.class_template_arguments());
+			}
+			if (friend_specialization == accessing_struct->declaration_node) {
+				return true;
+			}
+		}
+		if (friend_declaration.kind() == FriendKind::TemplateClass &&
+			friend_declaration.class_template_arguments().empty() &&
+			friend_declaration.class_template_decl_id()) {
+			const bool same_template_decl_id =
+				accessing_template->has_template_decl_id() &&
+				accessing_template->template_decl_id() ==
+					friend_declaration.class_template_decl_id();
+			const bool is_pattern_in_family =
+				gTemplateRegistry.isClassTemplatePatternInFamily(
+					accessing_template,
+					friend_declaration.class_template_decl_id());
+			if (same_template_decl_id || is_pattern_in_family) {
+				return true;
+			}
+		}
+		if (friend_declaration.kind() == FriendKind::TemplateClass &&
+			friend_declaration.class_template_arguments().empty() &&
+			friend_declaration.class_declaration() != nullptr &&
+			(friend_declaration.class_declaration() == accessing_struct->declaration_node ||
+				friend_declaration.class_declaration() == accessing_pattern)) {
+			return true;
+		}
+		if (friend_declaration.kind() == FriendKind::Class &&
+			friend_declaration.class_template_arguments().empty() &&
+			friend_declaration.class_declaration() == accessing_struct->declaration_node) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool SemanticAnalysis::hasCurrentFunctionFriendAccess(
+	const StructTypeInfo& member_owner) const {
+	if (member_owner.declaration_node == nullptr || current_function_stack_.empty()) {
+		return false;
+	}
+	const FunctionDeclarationNode* current_function = current_function_stack_.back();
+	if (current_function == nullptr) {
+		return false;
+	}
+	for (const ASTNode& friend_node : member_owner.declaration_node->friend_declarations()) {
+		if (!friend_node.is<FriendDeclarationNode>()) {
+			continue;
+		}
+		const FriendDeclarationNode& friend_declaration =
+			friend_node.as<FriendDeclarationNode>();
+		if (friend_declaration.kind() != FriendKind::Function ||
+			!friend_declaration.function_declaration().has_value()) {
+			continue;
+		}
+		const FunctionDeclarationNode* friend_function =
+			get_function_decl_node(friend_declaration.function_declaration());
+		if (friend_function != nullptr &&
+			sameFunctionDeclarationEntity(*friend_function, *current_function)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void SemanticAnalysis::checkPrivateMemberAccess(
+	const StructMember& member,
+	const StructTypeInfo& member_owner,
+	const Token& access_token,
+	StringHandle member_name) const {
+	checkPrivateMemberAccess(
+		member.access,
+		member_owner,
+		access_token,
+		member_name);
+}
+
+void SemanticAnalysis::checkPrivateMemberAccess(
+	AccessSpecifier access,
+	const StructTypeInfo& member_owner,
+	const Token& access_token,
+	StringHandle member_name) const {
+	if (access != AccessSpecifier::Private || context_.isAccessControlDisabled()) {
+		return;
+	}
+
+	const TypeIndex accessing_type_index = getCurrentAccessingTypeIndex();
+	if (accessing_type_index.is_valid()) {
+		const TypeInfo* accessing_type_info = tryGetTypeInfo(accessing_type_index);
+		const StructTypeInfo* accessing_struct = accessing_type_info != nullptr
+			? accessing_type_info->getStructInfo()
+			: nullptr;
+		const StructDeclarationNode* access_pattern =
+			accessing_struct != nullptr &&
+				accessing_struct->declaration_node != nullptr
+				? accessing_struct->declaration_node
+					  ->injected_class_pattern_declaration()
+				: nullptr;
+		const bool is_unmaterialized_pattern =
+			accessing_type_info != nullptr &&
+			accessing_type_info->isTemplateInstantiation() &&
+			accessing_type_info->templateArgs().empty() &&
+			accessing_struct != nullptr &&
+			accessing_struct->declaration_node != nullptr &&
+			(gTemplateRegistry.isClassTemplateSpecializationPattern(
+				accessing_struct->declaration_node) ||
+			 gTemplateRegistry.isClassTemplateSpecializationPattern(
+				access_pattern));
+		if (is_unmaterialized_pattern) {
+			// The class-template partial-specialization pattern is not an access
+			// context for any concrete specialization. Check its member bodies when
+			// a specialization is materialized and the concrete class identity exists.
+			return;
+		}
+	}
+	if (accessing_type_index.is_valid()) {
+		if (member_owner.own_type_index_.has_value() &&
+			*member_owner.own_type_index_ == accessing_type_index) {
+			return;
+		}
+		if (member_owner.own_type_index_.has_value()) {
+			if (const StructTypeInfo* accessing_struct = tryGetStructTypeInfo(accessing_type_index)) {
+				for (const StructTypeInfo* nested_owner = accessing_struct->getEnclosingClass();
+					nested_owner != nullptr;
+					nested_owner = nested_owner->getEnclosingClass()) {
+					if (nested_owner->own_type_index_.has_value() &&
+						*member_owner.own_type_index_ == *nested_owner->own_type_index_) {
+						return;
+					}
+				}
+			}
+		}
+		if (hasFriendClassAccess(member_owner, accessing_type_index)) {
+			return;
+		}
+	}
+	if (hasCurrentFunctionFriendAccess(member_owner)) {
+		return;
+	}
+
+	const std::string message =
+		"Cannot access private member '" + std::string(member_name.view()) +
+		"' of '" + std::string(member_owner.getName().view()) + "'";
+	throw makeStructuredCompileError(
+		context_.diagnostics(),
+		DiagnosticId::AccessControlViolation,
+		DiagnosticSeverity::Error,
+		SourceLocation::fromToken(access_token),
+		message,
+		{});
+}
+
+void SemanticAnalysis::checkPrivateMemberFunctionAccess(
+	const CallExprNode& call) {
+	const FunctionDeclarationNode* requested_function =
+		call.callee().function_declaration_or_null();
+	if (requested_function == nullptr || context_.isAccessControlDisabled()) {
+		return;
+	}
+	const TypeInfo* receiver_type_info =
+		tryResolveStructOwnerTypeInfoForExpression(call.receiver());
+	const StructTypeInfo* receiver_struct = receiver_type_info != nullptr
+		? receiver_type_info->getStructInfo()
+		: nullptr;
+	if (receiver_struct == nullptr) {
+		return;
+	}
+
+	std::vector<const StructTypeInfo*> pending{receiver_struct};
+	std::vector<const StructTypeInfo*> visited;
+	const StringHandle requested_name =
+		requested_function->decl_node().identifier_token().handle();
+	while (!pending.empty()) {
+		const StructTypeInfo* current_struct = pending.back();
+		pending.pop_back();
+		if (current_struct == nullptr ||
+			std::find(visited.begin(), visited.end(), current_struct) != visited.end()) {
+			continue;
+		}
+		visited.push_back(current_struct);
+		for (const StructMemberFunction& member_function :
+			current_struct->member_functions) {
+			if (member_function.getName() != requested_name) {
+				continue;
+			}
+			const FunctionDeclarationNode* candidate_function =
+				get_function_decl_node(member_function.function_decl);
+			if (candidate_function == nullptr ||
+				!sameFunctionDeclarationEntity(
+					*candidate_function,
+					*requested_function)) {
+				continue;
+			}
+			checkPrivateMemberAccess(
+				member_function.access,
+				*current_struct,
+				call.called_from(),
+				requested_name);
+			return;
+		}
+		for (const BaseClassSpecifier& base : current_struct->base_classes) {
+			pending.push_back(tryGetStructTypeInfo(base.type_index));
+		}
+	}
 }
 
 std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::tryResolveIdentifierMember(const IdentifierNode& identifier) const {

@@ -150,11 +150,6 @@ struct StructTypeInfo {
 	// RTTI support (Phase 5)
 	RTTITypeInfo* rtti_info = nullptr;  // Runtime type information (for polymorphic classes)
 
-	// Friend declarations support (Phase 2)
-	std::vector<StringHandle> friend_functions_;		 // Friend function names
-	std::vector<StringHandle> friend_classes_;		   // Friend class names
-	std::vector<std::pair<StringHandle, StringHandle>> friend_member_functions_;	 // (class, function)
-
 	// Nested class support (Phase 2)
 	std::vector<StructTypeInfo*> nested_classes_;	  // Nested classes
 	StructTypeInfo* enclosing_class_ = nullptr;		// Enclosing class (if this is nested)
@@ -751,53 +746,6 @@ struct StructTypeInfo {
 	// Convenience overload that interns string_view
 	const StructMemberFunction* findMemberFunction(std::string_view func_name) const {
 		return findMemberFunction(StringTable::getOrInternStringHandle(func_name));
-	}
-
-	// Friend declaration support methods - Phase 7A (StringHandle only)
-	void addFriendFunction(StringHandle func_name) {
-		friend_functions_.push_back(func_name);
-	}
-
-	void addFriendClass(StringHandle class_name) {
-		friend_classes_.push_back(class_name);
-	}
-
-	void addFriendMemberFunction(StringHandle class_name, StringHandle func_name) {
-		friend_member_functions_.emplace_back(class_name, func_name);
-	}
-
-	bool isFriendFunction(std::string_view func_name) const {
-		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-		return std::find(friend_functions_.begin(), friend_functions_.end(), func_name_handle) != friend_functions_.end();
-	}
-
-	bool isFriendClass(std::string_view class_name) const {
-		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
-		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name_handle) != friend_classes_.end();
-	}
-
-	// StringHandle overload for isFriendClass - Phase 7A
-	bool isFriendClass(StringHandle class_name) const {
-		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name) != friend_classes_.end();
-	}
-
-	bool isFriendMemberFunction(std::string_view class_name, std::string_view func_name) const {
-		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
-		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
-							   [class_name_handle, func_name_handle](const auto& pair) {
-								   return pair.first == class_name_handle && pair.second == func_name_handle;
-							   });
-		return it != friend_member_functions_.end();
-	}
-
-	// StringHandle overload for isFriendMemberFunction - Phase 7A
-	bool isFriendMemberFunction(StringHandle class_name, StringHandle func_name) const {
-		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
-							   [class_name, func_name](const auto& pair) {
-								   return pair.first == class_name && pair.second == func_name;
-							   });
-		return it != friend_member_functions_.end();
 	}
 
 	// Nested class support methods
@@ -4121,6 +4069,12 @@ public:
 
 	// Member function support
 	bool is_member_function() const { return is_member_function_; }
+	TypeIndex access_owner_type_index() const {
+		return access_owner_type_index_;
+	}
+	void set_access_owner_type_index(TypeIndex type_index) const {
+		access_owner_type_index_ = type_index;
+	}
 	std::string_view parent_struct_name() const { return parent_struct_name_; }
 	void set_semantic_owner_name(StringHandle owner_name) { semantic_owner_name_ = owner_name; }
 	StringHandle semantic_owner_name() const { return semantic_owner_name_; }
@@ -4297,6 +4251,7 @@ private:
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
 	StringHandle semantic_owner_name_;  // Declaring class scope, independent of an implicit object parameter
+	mutable TypeIndex access_owner_type_index_{}; // Exact class type for access checks; populated by member-body parsing or instantiation
 	NamespaceHandle namespace_handle_;  // Namespace this function was declared in (default: INVALID = not yet set)
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)

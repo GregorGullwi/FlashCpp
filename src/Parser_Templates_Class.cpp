@@ -2267,7 +2267,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 						if (auto result_node = template_result.node()) {
 							if (result_node->is<FriendDeclarationNode>()) {
-								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info);
 							}
 						}
 						continue;
@@ -2337,7 +2336,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Register friend in AST and StructTypeInfo
 						if (auto friend_node = friend_result.node()) {
 							struct_ref.add_friend(*friend_node);
-							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info);
 						}
 						continue;
 					}
@@ -3818,7 +3816,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Register friend in AST and StructTypeInfo
 						if (auto friend_node = friend_result.node()) {
 							struct_ref.add_friend(*friend_node);
-							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info);
 						}
 						continue;
 					} else if (peek() == "template"_tok) {
@@ -3830,7 +3827,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 						if (auto result_node = template_result.node()) {
 							if (result_node->is<FriendDeclarationNode>()) {
-								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info);
 							}
 						}
 						continue;

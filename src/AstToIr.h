@@ -838,34 +838,15 @@ private:
 	bool checkMemberAccess(const StructMember* member,
 						   const StructTypeInfo* member_owner_struct,
 						   const StructTypeInfo* accessing_struct,
-						   [[maybe_unused]] const BaseClassSpecifier* inheritance_path = nullptr,
-						   const std::string_view& accessing_function = "") const;
+						   [[maybe_unused]] const BaseClassSpecifier* inheritance_path) const;
 
-	// Helper: check if accessing_struct is a declared friend class of member_owner_struct.
-	//
-	// Friend declarations are stored both under the source-level name (typically
-	// unqualified, e.g. "__use_cache") AND the namespace-qualified form (e.g.
-	// "std::__use_cache") — the parser registers both at addFriendClass time.
-	//
-	// At codegen time the accessing struct carries its full internal name, which
-	// may be:
-	//   • namespace-qualified  – "std::__use_cache"
-	//   • a $hash instantiation – "std::__use_cache$00a6ac8c5dbe3409"
-	//   • a $pattern struct    – "std::__use_cache$pattern_P"
-	//
-	// The helper therefore tries, in order:
-	//   1. Exact match on the full accessing name.
-	//   2. The registered base-template name from TypeInfo (strips $hash).
-	//   3. A manual $-strip (fallback for instantiations not yet in TypeInfo).
-	//   4. For partial-specialisation pattern structs (identified via the registry):
-	//      strip the "$pattern" separator to recover the base template name,
-	//      preserving the namespace prefix for correct matching.
+	// Friend declarations match resolved type, template, and function identities.
 	bool checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
 								const StructTypeInfo* accessing_struct) const;
+	bool hasCurrentFunctionFriendAccess(
+		const StructTypeInfo* member_owner_struct) const;
 
-	// Helper: check if two structs are the same class, including template instantiations.
-	// Template instantiations use a '$hash' suffix (e.g., basic_string_view$291eceb35e7234a9)
-	// that must be stripped for comparison with the base template.
+	// Helper: compare class identity, including canonical template instantiations.
 	bool isSameClassOrInstantiation(const StructTypeInfo* a, const StructTypeInfo* b) const;
 
 	// Helper to check if accessing_struct is nested within member_owner_struct
@@ -887,8 +868,7 @@ private:
 	// Helper function to check if access to a member function is allowed
 	bool checkMemberFunctionAccess(const StructMemberFunction* member_func,
 								   const StructTypeInfo* member_owner_struct,
-								   const StructTypeInfo* accessing_struct,
-								   std::string_view accessing_function = "") const;
+								   const StructTypeInfo* accessing_struct) const;
 
 	// Helper function to check if a variable is a reference by looking it up in the symbol table
 	// Returns true if the variable is declared as a reference (&  or &&)

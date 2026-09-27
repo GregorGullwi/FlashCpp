@@ -1341,8 +1341,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	// Check access control for member function calls
 	if (called_member_func && struct_info) {
 		const StructTypeInfo* current_context = getCurrentStructContext();
-		std::string_view current_function = getCurrentFunctionName();
-		if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context, current_function)) {
+		if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context)) {
 			std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
 			std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
 			FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(),

@@ -4257,10 +4257,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 							new_return_type, decl_node.identifier_token());
-						auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-							new_decl_ref,
-							instantiated_name);
-						applyMergedOuterTemplateBindings(new_func_ref);
+					auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+						new_decl_ref,
+						instantiated_name);
+					new_func_ref.set_access_owner_type_index(
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
+					applyMergedOuterTemplateBindings(new_func_ref);
 
 						size_t saved_pack_info = pack_param_info_.size();
 						substituteAndCopyMemberFunctionParameters(
@@ -4349,6 +4351,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto [new_func_node_no_subst, new_func_ref_no_subst] = emplace_node_ref<FunctionDeclarationNode>(
 							new_decl_ref_no_subst,
 							instantiated_name);
+						new_func_ref_no_subst.set_access_owner_type_index(
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 						applyMergedOuterTemplateBindings(new_func_ref_no_subst);
 
 						for (const auto& param : func_decl.parameter_nodes()) {
@@ -11685,6 +11689,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_decl_ref,
 					instantiated_name);
+				new_func_ref.set_access_owner_type_index(
+					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 				applyMergedOuterTemplateBindings(new_func_ref);
 
 				size_t saved_pack_info = pack_param_info_.size();
@@ -11898,6 +11904,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_decl_ref,
 					instantiated_name);
+				new_func_ref.set_access_owner_type_index(
+					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
 				applyMergedOuterTemplateBindings(new_func_ref);
 
 				for (const auto& param : func_decl.parameter_nodes()) {
