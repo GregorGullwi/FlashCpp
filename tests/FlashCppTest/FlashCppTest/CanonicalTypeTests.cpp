@@ -226,6 +226,49 @@ TEST_CASE("Canonical TypeIds plan prvalue materialization for const references")
 		tryBuildCanonicalReferenceBindingPlan(prvalue, nonconst_lvalue_reference);
 	REQUIRE(rejected_plan.has_value());
 	CHECK_FALSE(rejected_plan->is_valid);
+
+	TypeSpecifierNode double_prvalue(
+		TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	TypeSpecifierNode const_double_lvalue_reference(
+		TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::Const);
+	const_double_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> converting_prvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, const_double_lvalue_reference);
+	REQUIRE(converting_prvalue_plan.has_value());
+	CHECK(converting_prvalue_plan->is_valid);
+	CHECK(converting_prvalue_plan->rank == ConversionRank::Conversion);
+	CHECK(converting_prvalue_plan->kind ==
+		StandardConversionKind::FloatingIntegralConversion);
+	TypeSpecifierNode nonconst_double_lvalue_reference = double_prvalue;
+	nonconst_double_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> nonconst_conversion_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			prvalue, nonconst_double_lvalue_reference);
+	REQUIRE(nonconst_conversion_plan.has_value());
+	CHECK_FALSE(nonconst_conversion_plan->is_valid);
+
+	TypeSpecifierNode lvalue = prvalue;
+	lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> converting_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(lvalue, const_double_lvalue_reference);
+	REQUIRE(converting_lvalue_plan.has_value());
+	CHECK(converting_lvalue_plan->is_valid);
+	CHECK(converting_lvalue_plan->rank == ConversionRank::Conversion);
+
+	TypeSpecifierNode double_rvalue_reference = double_prvalue;
+	double_rvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::RValueReference);
+	const std::optional<ConversionPlan> converting_rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, double_rvalue_reference);
+	REQUIRE(converting_rvalue_reference_plan.has_value());
+	CHECK(converting_rvalue_reference_plan->is_valid);
+	CHECK(converting_rvalue_reference_plan->rank == ConversionRank::Conversion);
+	const std::optional<ConversionPlan> lvalue_to_rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(lvalue, double_rvalue_reference);
+	REQUIRE(lvalue_to_rvalue_reference_plan.has_value());
+	CHECK_FALSE(lvalue_to_rvalue_reference_plan->is_valid);
 }
 
 TEST_CASE("Ordered function objects decay to pointers") {

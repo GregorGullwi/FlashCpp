@@ -55,12 +55,15 @@ conversions. Same-shape reference binding, including exact-shape prvalues that
 materialize for `const` lvalue references, now plans from canonical `TypeId`s
 while carrying expression value category separately. Rvalue binding retains
 exact-match rank when it adds top-level cv. Imports stay within builtin, record,
-or enum base types. Speculative imports roll back; conversion-required temporary
-materialization, array referents, derived-to-base binding, callable and template
-types, and structural no-matches needing specialized rules still use
-compatibility planning. Regression coverage in
+or enum base types. Speculative imports roll back; standard builtin-to-builtin
+conversions can now bind eligible references through a temporary, such as an
+`int` value converted to `double` for `const double&`. User-defined conversions,
+array referents, derived-to-base binding, callable and template types, and
+structural no-matches needing specialized rules still use compatibility
+planning. Regression coverage in
 `tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises
-native, record, and substituted reference parameters.
+native, record, substituted, and conversion-required reference parameters, and
+checks that a promotion-ranked overload beats a conversion-ranked reference.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -124,8 +127,8 @@ Continue boundary 3A in this order:
 
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
-   planner, including conversions that require temporary materialization,
-   array-reference binding, derived-to-base reference binding, and callable
+   planner, including remaining conversions that require temporary
+   materialization, array-reference binding, derived-to-base reference binding, and callable
    pairs. Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,

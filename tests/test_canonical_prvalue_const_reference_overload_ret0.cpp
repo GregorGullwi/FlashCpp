@@ -14,6 +14,10 @@ int bindDouble(const double& value) {
 	return static_cast<int>(value);
 }
 
+int bindConvertedDouble(const double& value) {
+	return static_cast<int>(value);
+}
+
 int bindRecord(const Record& value) {
 	return static_cast<int>(value.value);
 }
@@ -23,6 +27,14 @@ int selectReference(const int&) {
 }
 
 int selectReference(int&&) {
+	return 2;
+}
+
+int selectConversionRank(const double&) {
+	return 1;
+}
+
+int selectConversionRank(int) {
 	return 2;
 }
 
@@ -47,5 +59,12 @@ int main() {
 	if (bindTemplate(Record{34}) != 34) {
 		return 5;
 	}
-	return selectReference(35) == 2 ? 0 : 6;
+	if (bindConvertedDouble(8) != 8) {
+		return 6;
+	}
+	short promoted_value = 9;
+	if (selectConversionRank(promoted_value) != 2) {
+		return 7;
+	}
+	return selectReference(35) == 2 ? 0 : 8;
 }

@@ -1723,10 +1723,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	return plan;
 }
 
-// Use canonical TypeIds for same-shape reference binding. Value category remains
-// expression metadata; exact-shape prvalues may materialize for const lvalue
-// references, while conversions between different referred-to shapes stay on
-// the compatibility path.
+// Use canonical TypeIds for reference binding. Value category remains expression
+// metadata; same-shape binding preserves qualification ranking, while builtin
+// conversions may materialize a temporary for an eligible reference.
 inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	const TypeSpecifierNode& from,
 	const TypeSpecifierNode& to) {
@@ -1832,7 +1831,20 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		target_shape = target_shape_node.child;
 	}
 	if (!same_shape_ignoring_cv) {
-		return std::nullopt;
+		const bool can_bind_conversion_temporary =
+			(target_is_lvalue_reference && target_referent_is_const) ||
+			(target_is_rvalue_reference && !source_is_lvalue);
+		const CanonicalTypeNode unqualified_source_node = table.node(source_type);
+		const CanonicalTypeNode unqualified_target_node = table.node(target_type);
+		if (unqualified_source_node.kind != CanonicalTypeKind::Builtin ||
+			unqualified_target_node.kind != CanonicalTypeKind::Builtin) {
+			return std::nullopt;
+		}
+		if (!can_bind_conversion_temporary) {
+			return ConversionPlan::no_match();
+		}
+		return buildCanonicalStructuralConversionPlan(
+			table, source_type, target_type);
 	}
 	if ((static_cast<uint8_t>(source_referent_cv) &
 			~static_cast<uint8_t>(target_referent_cv)) != 0) {
