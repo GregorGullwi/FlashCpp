@@ -1227,7 +1227,8 @@ ParseResult Parser::parse_lambda_expression() {
 					0,				   // pointer_depth (stored as void*, depth encoded in type)
 					std::nullopt,		  // bitfield_width
 					std::nullopt,		  // function_sig
-					false				   // is_no_unique_address
+					false,				   // is_no_unique_address
+					CVQualifier::None
 				);
 				continue;  // Skip the rest of processing for this capture
 			}
@@ -1260,7 +1261,8 @@ ParseResult Parser::parse_lambda_expression() {
 								0,									  // pointer_depth
 								std::nullopt,						  // bitfield_width
 								std::nullopt,						  // function_sig
-								false								  // is_no_unique_address
+								false,								  // is_no_unique_address
+								CVQualifier::None
 							);
 						}
 					}
@@ -1395,7 +1397,8 @@ ParseResult Parser::parse_lambda_expression() {
 				static_cast<int>(var_type.pointer_depth()),
 				std::nullopt,
 				var_type.has_function_signature() ? std::optional(var_type.function_signature()) : std::nullopt,
-				false);
+				false,
+				var_type.top_level_cv_qualifier());
 		}
 
 		// Capturing closures must publish a complete object layout. addMember updates

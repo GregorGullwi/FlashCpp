@@ -1059,6 +1059,7 @@ struct AnonymousUnionMemberInfo {
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference, or RValueReference
 	bool is_array;					   // True if member is an array
 	std::vector<size_t> array_dimensions; // Dimension sizes for multidimensional arrays (e.g., {3, 3} for int[3][3])
+	CVQualifier member_cv_qualifier = CVQualifier::None;
 	// C++20 [dcl.ptr]/1: true when a parenthesized declarator bound these
 	// dimensions inside the pointer (T (*m)[N]); is_array stays false.
 	bool pointee_array_declarator = false;
@@ -1075,11 +1076,12 @@ struct AnonymousUnionMemberInfo {
 							 bool is_arr,
 							 bool member_pointee_array_declarator,
 							 int ptr_depth,
-							 std::vector<size_t> arr_dims)
+							 std::vector<size_t> arr_dims,
+							 CVQualifier member_cv)
 		: member_name(name), type_index(tidx), member_size(size),
 		  member_alignment(align), bitfield_width(bitfield_w), default_initializer(std::move(initializer)),
 		  referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
-		  is_array(is_arr), array_dimensions(std::move(arr_dims)),
+		  is_array(is_arr), array_dimensions(std::move(arr_dims)), member_cv_qualifier(member_cv),
 		  pointee_array_declarator(member_pointee_array_declarator),
 		  pointer_depth(ptr_depth) {}
 };
@@ -1504,7 +1506,8 @@ public:
 									bool is_array,
 									bool pointee_array_declarator,
 									int pointer_depth,
-									std::vector<size_t> array_dimensions) {
+									std::vector<size_t> array_dimensions,
+									CVQualifier member_cv_qualifier) {
 		// Add to the last anonymous union that was created
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
@@ -1512,7 +1515,8 @@ public:
 				bitfield_width, std::move(default_initializer), referenced_size_bits, reference_qualifier, is_array,
 				pointee_array_declarator,
 				pointer_depth,
-				std::move(array_dimensions));
+				std::move(array_dimensions),
+				member_cv_qualifier);
 		}
 		// Note: If anonymous_unions_ is empty, this is a programming error in the parser
 		// The parser should always call add_anonymous_union_marker() before adding members

@@ -210,7 +210,8 @@ struct StructTypeInfo {
 				   int pointer_depth,
 				   std::optional<size_t> bitfield_width,
 				   std::optional<FunctionSignature> function_sig,
-				   bool is_no_unique_address) {
+				   bool is_no_unique_address,
+				   CVQualifier member_cv_qualifier) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members.
 		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
@@ -320,7 +321,8 @@ struct StructTypeInfo {
 		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
 							 access, std::move(default_initializer), reference_qualifier,
 							 referenced_size_bits, is_array, std::move(array_dimensions),
-							 pointee_array_declarator, pointer_depth, bitfield_width);
+							 pointee_array_declarator, pointer_depth, bitfield_width,
+							 member_cv_qualifier);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
 		members.back().is_no_unique_address = is_no_unique_address;
 		if (function_sig.has_value()) {
@@ -1865,6 +1867,11 @@ public:
 	void set_size_in_bits(int size_in_bits) { size_ = SizeInBits{size_in_bits}; }
 	auto qualifier() const { return qualifier_; }
 	auto cv_qualifier() const { return cv_qualifier_; }
+	CVQualifier top_level_cv_qualifier() const {
+		return pointer_levels_.empty()
+			? cv_qualifier_
+			: pointer_levels_.back().cv_qualifier;
+	}
 	void set_cv_qualifier(CVQualifier cv) { cv_qualifier_ = cv; }
 	// Adds a cv-qualifier using bitwise OR - safe to call multiple times with same qualifier
 	// (e.g., parsing "T const volatile" or accidentally "T const const" will just set the bits)

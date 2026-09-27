@@ -1797,7 +1797,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								{}, // array_dimensions
 								false, // pointee_array_declarator
 								0, // pointer_depth
-								std::nullopt // bitfield_width
+								std::nullopt, // bitfield_width
+								member_type_spec.top_level_cv_qualifier()
 							});
 							if (member_type_spec.has_function_signature()) {
 								anon_struct_info->members.back().function_signature = member_type_spec.function_signature();
@@ -2140,7 +2141,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							is_array,
 							pointee_array_declarator,
 							static_cast<int>(anon_member_type_spec.pointer_depth()),
-							std::move(array_dimensions));
+							std::move(array_dimensions),
+							anon_member_type_spec.top_level_cv_qualifier());
 
 						ASTNode anon_member_decl_node;
 						if (!anon_array_dimensions.empty()) {
@@ -3704,7 +3706,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				union_member.array_dimensions,
 				union_member.pointee_array_declarator,
 				union_member.pointer_depth,
-				union_member.bitfield_width);
+				union_member.bitfield_width,
+				union_member.member_cv_qualifier);
 				if (union_info.is_union) {
 					semantic_member.anonymous_union_group_index = next_union_idx;
 				}
@@ -3834,7 +3837,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width,
 			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
-			member_decl.is_no_unique_address);
+			member_decl.is_no_unique_address,
+			type_spec.top_level_cv_qualifier());
 
 		member_index++;
 	}
@@ -5062,7 +5066,8 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 		{}, // array_dimensions
 		false, // pointee_array_declarator
 		0, // pointer_depth
-		std::nullopt // bitfield_width
+		std::nullopt, // bitfield_width
+		fp_type.top_level_cv_qualifier()
 	};
 	// Copy the COMPLETE function signature (return type + parameter types) from parse_declarator
 	if (fp_type.has_function_signature()) {
@@ -5182,7 +5187,8 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					{}, // array_dimensions
 					false, // pointee_array_declarator
 					0, // pointer_depth
-					std::nullopt // bitfield_width
+					std::nullopt, // bitfield_width
+					CVQualifier::None
 				});
 
 				// Expect semicolon
@@ -5289,7 +5295,8 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			std::move(resolved_array_dimensions), // array_dimensions
 			pointee_array_declarator,
 			static_cast<int>(member_type_spec.pointer_depth()),
-			std::nullopt // bitfield_width
+			std::nullopt, // bitfield_width
+			member_type_spec.top_level_cv_qualifier()
 		});
 		if (member_type_spec.has_function_signature()) {
 			out_struct_info->members.back().function_signature = member_type_spec.function_signature();

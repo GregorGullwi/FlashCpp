@@ -1858,7 +1858,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width,
 			getCanonicalFunctionPointerSignature(substituted_type_spec),
-			member_decl.is_no_unique_address);
+			member_decl.is_no_unique_address,
+			substituted_type_spec.top_level_cv_qualifier());
 	}
 
 	// Finalize layout
