@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-09-26.
+Last updated: 2026-09-27.
 
 ## Current state
 
@@ -51,10 +51,12 @@ binding, and user-defined conversions remain on specialized paths.
 Parser-side overload ranking now uses the structural planner for non-projectable
 ordered pairs plus scalar builtin conversions, `nullptr`-to-pointer conversion,
 and supported projectable pointer pairs, array decay, and pointer/array-to-`bool`
-conversions. Imports stay within builtin, record, or enum base types. Speculative
-imports roll back; reference binding, callable/template types, structural
-no-matches needing specialized rules, and other syntax-facing callers still use
-the compatibility planner.
+conversions. Same-shape direct reference binding also plans from canonical
+`TypeId`s while carrying expression value category separately. Imports stay
+within builtin, record, or enum base types. Speculative imports roll back;
+temporary materialization, array referents, derived-to-base binding, callable
+and template types, and structural no-matches needing specialized rules still
+use compatibility planning.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -116,9 +118,11 @@ estimated reliably.
 
 Continue boundary 3A in this order:
 
-1. **Make `TypeId` the conversion currency.** Finish migrating parser-side
+1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
-   planner. Then make projectable semantic descriptors use structural identity
+   planner, including reference conversions that need temporary materialization,
+   array-reference binding, derived-to-base reference binding, and callable
+   pairs. Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
    nested cv, array decay, and value-category behavior.

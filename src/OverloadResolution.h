@@ -1723,6 +1723,146 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	return plan;
 }
 
+// Use canonical TypeIds for direct reference binding when the referred-to
+// types have the same structural shape. Value category remains expression
+// metadata; temporary materialization and conversions between different
+// referred-to shapes stay on the compatibility path.
+inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to) {
+	const bool to_has_lvalue_reference = to.is_lvalue_reference() ||
+		orderedDeclaratorIsLvalueReference(to);
+	const bool to_has_rvalue_reference = to.is_rvalue_reference() ||
+		orderedDeclaratorIsRvalueReference(to);
+	if (!to_has_lvalue_reference && !to_has_rvalue_reference) {
+		return std::nullopt;
+	}
+	FrontendContext* const context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport source_import = importCanonicalType(table, from);
+	if (source_import.status == CanonicalTypeImportStatus::Invalid) {
+		return ConversionPlan::no_match();
+	}
+	if (source_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeImport target_import = importCanonicalType(table, to);
+	if (target_import.status == CanonicalTypeImportStatus::Invalid) {
+		return ConversionPlan::no_match();
+	}
+	if (target_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const TypeId source_unqualified =
+		table.withoutTopLevelQualifiers(source_import.type);
+	const TypeId target_unqualified =
+		table.withoutTopLevelQualifiers(target_import.type);
+	const CanonicalTypeNode source_node = table.node(source_unqualified);
+	const CanonicalTypeNode target_node = table.node(target_unqualified);
+	const bool target_is_lvalue_reference =
+		target_node.kind == CanonicalTypeKind::LValueReference;
+	const bool target_is_rvalue_reference =
+		target_node.kind == CanonicalTypeKind::RValueReference;
+	if (!target_is_lvalue_reference && !target_is_rvalue_reference) {
+		return std::nullopt;
+	}
+	const bool source_is_lvalue = from.is_lvalue_reference() ||
+		orderedDeclaratorIsLvalueReference(from) ||
+		source_node.kind == CanonicalTypeKind::LValueReference;
+	const bool source_is_rvalue = from.is_rvalue_reference() ||
+		orderedDeclaratorIsRvalueReference(from) ||
+		source_node.kind == CanonicalTypeKind::RValueReference;
+	const bool source_has_reference =
+		source_node.kind == CanonicalTypeKind::LValueReference ||
+		source_node.kind == CanonicalTypeKind::RValueReference;
+	const TypeId source_referent = source_has_reference
+		? source_node.child
+		: source_unqualified;
+	const TypeId target_referent = target_node.child;
+	const CanonicalTypeNode source_referent_node = table.node(source_referent);
+	const CanonicalTypeNode target_referent_node = table.node(target_referent);
+	const CVQualifier source_referent_cv =
+		source_referent_node.kind == CanonicalTypeKind::Qualified
+			? source_referent_node.qualifiers
+			: CVQualifier::None;
+	const CVQualifier target_referent_cv =
+		target_referent_node.kind == CanonicalTypeKind::Qualified
+			? target_referent_node.qualifiers
+			: CVQualifier::None;
+	const TypeId source_type = table.withoutTopLevelQualifiers(source_referent);
+	const TypeId target_type = table.withoutTopLevelQualifiers(target_referent);
+	const bool target_referent_is_const =
+		(static_cast<uint8_t>(target_referent_cv) &
+			static_cast<uint8_t>(CVQualifier::Const)) != 0;
+	if (target_is_lvalue_reference && !source_is_lvalue &&
+		!target_referent_is_const) {
+		return ConversionPlan::no_match();
+	}
+	if (target_is_lvalue_reference && !source_is_lvalue && !source_is_rvalue) {
+		// A const lvalue reference may bind to a materialized temporary, but
+		// temporary materialization is not part of this direct-binding slice.
+		return std::nullopt;
+	}
+	if (target_is_rvalue_reference && source_is_lvalue && !source_is_rvalue) {
+		return ConversionPlan::no_match();
+	}
+	TypeId source_shape = source_type;
+	TypeId target_shape = target_type;
+	bool same_shape_ignoring_cv = true;
+	for (;;) {
+		source_shape = table.withoutTopLevelQualifiers(source_shape);
+		target_shape = table.withoutTopLevelQualifiers(target_shape);
+		const CanonicalTypeNode source_shape_node = table.node(source_shape);
+		const CanonicalTypeNode target_shape_node = table.node(target_shape);
+		if (source_shape_node.kind != target_shape_node.kind) {
+			same_shape_ignoring_cv = false;
+			break;
+		}
+		if (source_shape_node.kind != CanonicalTypeKind::Pointer &&
+			source_shape_node.kind != CanonicalTypeKind::Array) {
+			same_shape_ignoring_cv = source_shape == target_shape;
+			break;
+		}
+		if (source_shape_node.builtin != target_shape_node.builtin ||
+			source_shape_node.flags != target_shape_node.flags ||
+			source_shape_node.array_extent != target_shape_node.array_extent) {
+			same_shape_ignoring_cv = false;
+			break;
+		}
+		source_shape = source_shape_node.child;
+		target_shape = target_shape_node.child;
+	}
+	if (!same_shape_ignoring_cv) {
+		return std::nullopt;
+	}
+	if ((static_cast<uint8_t>(source_referent_cv) &
+			~static_cast<uint8_t>(target_referent_cv)) != 0) {
+		return ConversionPlan::no_match();
+	}
+	if (table.node(source_type).kind == CanonicalTypeKind::Array) {
+		// The current structural planner treats an array source as a decay.
+		return std::nullopt;
+	}
+	const ConversionPlan referent_plan =
+		buildCanonicalStructuralConversionPlan(table, source_type, target_type);
+	if (!referent_plan.is_valid) {
+		return ConversionPlan::no_match();
+	}
+	if (referent_plan.kind != StandardConversionKind::None &&
+		referent_plan.kind != StandardConversionKind::QualificationAdjustment) {
+		return std::nullopt;
+	}
+	if (source_referent_cv != target_referent_cv &&
+		referent_plan.kind == StandardConversionKind::None) {
+		return ConversionPlan::qualification_adjustment();
+	}
+	return referent_plan;
+}
+
 // Bounded ordered-declarator conversion path: a null pointer constant to an
 // ordered pointer, array-to-pointer decay, function-to-pointer decay, ordered
 // reference binding, an ordered object pointer to `cv void*`, array-to-pointer
@@ -1891,6 +2031,11 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	if (const std::optional<ConversionPlan> reference_plan =
+			tryBuildCanonicalReferenceBindingPlan(from, to);
+		reference_plan.has_value()) {
+		return *reference_plan;
+	}
 	if ((from.has_ordered_declarator() &&
 			!from.ordered_declarator_has_legacy_projection()) ||
 		(to.has_ordered_declarator() &&
