@@ -60,9 +60,10 @@ conversions can now bind eligible references through a temporary, such as an
 `int` value converted to `double` for `const double&`. Exact-shape array
 references now preserve extents and nested cv without decaying the array;
 extent mismatches are rejected by the canonical planner. Derived-record to
-base-reference conversions now use canonical record `EntityId`s to select the
-existing hierarchy classifier, which rejects inaccessible and ambiguous base
-paths. User-defined conversions, array-decay temporaries, derived-to-base
+base-reference conversions now classify accessibility and ambiguity by
+traversing canonical base schemas keyed by `EntityId`; overload planning no
+longer round-trips those relationships through compatibility `TypeIndex`s.
+User-defined conversions, array-decay temporaries, derived-to-base
 pointer conversions, callable and template types, and structural no-matches
 needing specialized rules still use compatibility planning. Regression coverage in
 `tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises

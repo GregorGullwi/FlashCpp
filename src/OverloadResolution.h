@@ -391,6 +391,19 @@ inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCatego
 	return ConversionPlan::no_match();
 }
 
+inline std::pair<TypeId, CVQualifier> stripCanonicalTopCv(
+	const CanonicalTypeTable& table,
+	TypeId type) {
+	CanonicalTypeNode node = table.node(type);
+	CVQualifier qualifiers = CVQualifier::None;
+	while (node.kind == CanonicalTypeKind::Qualified) {
+		qualifiers |= node.qualifiers;
+		type = node.child;
+		node = table.node(type);
+	}
+	return {type, qualifiers};
+}
+
 inline ConversionPlan buildCanonicalStructuralConversionPlan(
 	CanonicalTypeTable& table,
 	TypeId source_type,
@@ -402,20 +415,10 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 		return ConversionPlan::exact_match();
 	}
 
-	auto stripTopCv = [&table](TypeId type) {
-		CanonicalTypeNode node = table.node(type);
-		CVQualifier qualifiers = CVQualifier::None;
-		while (node.kind == CanonicalTypeKind::Qualified) {
-			qualifiers |= node.qualifiers;
-			type = node.child;
-			node = table.node(type);
-		}
-		return std::pair<TypeId, CVQualifier>{type, qualifiers};
-	};
-	auto topObjectCvThroughArrays = [&table, &stripTopCv](TypeId type) {
+	auto topObjectCvThroughArrays = [&table](TypeId type) {
 		CVQualifier qualifiers = CVQualifier::None;
 		for (;;) {
-			const auto [unqualified, top_cv] = stripTopCv(type);
+			const auto [unqualified, top_cv] = stripCanonicalTopCv(table, type);
 			qualifiers |= top_cv;
 			const CanonicalTypeNode node = table.node(unqualified);
 			if (node.kind != CanonicalTypeKind::Array) {
@@ -460,8 +463,8 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 		}
 		return !source_parameter && !target_parameter;
 	};
-	auto isBuiltin = [&table, &stripTopCv](TypeId type, CanonicalBuiltinKind builtin) {
-		const TypeId unqualified = stripTopCv(type).first;
+	auto isBuiltin = [&table](TypeId type, CanonicalBuiltinKind builtin) {
+		const TypeId unqualified = stripCanonicalTopCv(table, type).first;
 		const CanonicalTypeNode node = table.node(unqualified);
 		return node.kind == CanonicalTypeKind::Builtin && node.builtin == builtin;
 	};
@@ -480,7 +483,8 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 	}
 
 	if (isBuiltin(source_type, CanonicalBuiltinKind::Nullptr)) {
-		const CanonicalTypeNode target = table.node(stripTopCv(target_type).first);
+		const CanonicalTypeNode target =
+			table.node(stripCanonicalTopCv(table, target_type).first);
 		if (target.kind == CanonicalTypeKind::Pointer ||
 			target.kind == CanonicalTypeKind::MemberObjectPointer ||
 			target.kind == CanonicalTypeKind::MemberFunctionPointer) {
@@ -490,7 +494,8 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 	}
 
 	if (isBuiltin(target_type, CanonicalBuiltinKind::Bool)) {
-		const CanonicalTypeNode source = table.node(stripTopCv(source_type).first);
+		const CanonicalTypeNode source =
+			table.node(stripCanonicalTopCv(table, source_type).first);
 		if (source.kind == CanonicalTypeKind::Pointer ||
 			source.kind == CanonicalTypeKind::MemberObjectPointer ||
 			source.kind == CanonicalTypeKind::MemberFunctionPointer ||
@@ -502,9 +507,9 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 	}
 
 	const CanonicalTypeNode unqualified_source_node =
-		table.node(stripTopCv(source_type).first);
+		table.node(stripCanonicalTopCv(table, source_type).first);
 	const CanonicalTypeNode unqualified_target_node =
-		table.node(stripTopCv(target_type).first);
+		table.node(stripCanonicalTopCv(table, target_type).first);
 	if (unqualified_source_node.kind == CanonicalTypeKind::Builtin &&
 		unqualified_target_node.kind == CanonicalTypeKind::Builtin) {
 		const std::optional<TypeCategory> source_category =
@@ -521,7 +526,8 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 	}
 
 	StandardConversionKind decay_kind = StandardConversionKind::None;
-	const auto [unqualified_source, source_qualifiers] = stripTopCv(source_type);
+	const auto [unqualified_source, source_qualifiers] =
+		stripCanonicalTopCv(table, source_type);
 	const CanonicalTypeNode source_node = table.node(unqualified_source);
 	if (source_node.kind == CanonicalTypeKind::Array) {
 		TypeId element_type = source_node.child;
@@ -535,14 +541,20 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 		decay_kind = StandardConversionKind::FunctionToPointer;
 	}
 
-	const CanonicalTypeNode source_pointer = table.node(stripTopCv(source_type).first);
-	const CanonicalTypeNode target_pointer = table.node(stripTopCv(target_type).first);
+	const CanonicalTypeNode source_pointer =
+		table.node(stripCanonicalTopCv(table, source_type).first);
+	const CanonicalTypeNode target_pointer =
+		table.node(stripCanonicalTopCv(table, target_type).first);
 	if (source_pointer.kind == CanonicalTypeKind::Pointer &&
 		target_pointer.kind == CanonicalTypeKind::Pointer) {
-		const CVQualifier source_pointer_cv = stripTopCv(source_type).second;
-		const CVQualifier target_pointer_cv = stripTopCv(target_type).second;
-		const TypeId source_function = stripTopCv(source_pointer.child).first;
-		const TypeId target_function = stripTopCv(target_pointer.child).first;
+		const CVQualifier source_pointer_cv =
+			stripCanonicalTopCv(table, source_type).second;
+		const CVQualifier target_pointer_cv =
+			stripCanonicalTopCv(table, target_type).second;
+		const TypeId source_function =
+			stripCanonicalTopCv(table, source_pointer.child).first;
+		const TypeId target_function =
+			stripCanonicalTopCv(table, target_pointer.child).first;
 		if (table.node(source_function).kind == CanonicalTypeKind::Function &&
 			table.node(target_function).kind == CanonicalTypeKind::Function &&
 			compatibleFunctionPointerTarget(source_function, target_function)) {
@@ -559,8 +571,10 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 			}
 			return ConversionPlan::qualification_adjustment();
 		}
-		const TypeId source_pointee = stripTopCv(source_pointer.child).first;
-		const auto [target_pointee, target_pointee_cv] = stripTopCv(target_pointer.child);
+		const TypeId source_pointee =
+			stripCanonicalTopCv(table, source_pointer.child).first;
+		const auto [target_pointee, target_pointee_cv] =
+			stripCanonicalTopCv(table, target_pointer.child);
 		const CanonicalTypeNode source_pointee_node = table.node(source_pointee);
 		const CanonicalTypeNode target_pointee_node = table.node(target_pointee);
 		const CVQualifier source_object_cv =
@@ -584,8 +598,8 @@ inline ConversionPlan buildCanonicalStructuralConversionPlan(
 	TypeId from = source_type;
 	TypeId to = target_type;
 	for (;;) {
-		const auto [from_unqualified, from_cv] = stripTopCv(from);
-		const auto [to_unqualified, to_cv] = stripTopCv(to);
+		const auto [from_unqualified, from_cv] = stripCanonicalTopCv(table, from);
+		const auto [to_unqualified, to_cv] = stripCanonicalTopCv(table, to);
 		const CanonicalTypeNode from_node = table.node(from_unqualified);
 		const CanonicalTypeNode to_node = table.node(to_unqualified);
 		if (pointer_depth != 0) {
@@ -955,6 +969,144 @@ inline bool hasUsablePublicDerivedBaseConversion(TypeIndex derived_idx, TypeInde
 		classifyDerivedBaseConversion(derived_idx, base_idx).kind;
 	return kind == DerivedBaseConversionKind::UniquePublicNonVirtual ||
 		kind == DerivedBaseConversionKind::PublicVirtual;
+}
+
+// Classify a derived-to-base relationship directly from the published canonical
+// record schema. Virtual base subobjects are shared by EntityId; non-virtual
+// base subobjects remain distinct per containing subobject. The explicit worklist
+// keeps inheritance depth off the native call stack.
+inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(
+	const CanonicalTypeTable& table,
+	EntityId derived_entity,
+	EntityId base_entity) {
+	if (!derived_entity || !base_entity) {
+		return std::nullopt;
+	}
+	if (derived_entity == base_entity) {
+		return DerivedBaseConversionKind::UniquePublicNonVirtual;
+	}
+	if (!table.hasRecordLayout(derived_entity) ||
+		!table.hasRecordFieldSchema(derived_entity)) {
+		return std::nullopt;
+	}
+
+	constexpr uint32_t invalid_node = UINT32_MAX;
+	constexpr uint8_t accessible_flag = 1 << 0;
+	constexpr uint8_t virtual_path_flag = 1 << 1;
+	constexpr uint8_t expanded_flag = 1 << 2;
+	struct SubobjectNode {
+		EntityId entity;
+		uint32_t first_child_slot;
+		uint16_t child_count;
+		uint8_t flags;
+	};
+
+	std::vector<SubobjectNode> subobjects;
+	std::vector<uint32_t> child_slots;
+	std::vector<uint32_t> worklist;
+	std::unordered_map<uint32_t, uint32_t> virtual_subobjects;
+	subobjects.push_back(SubobjectNode{derived_entity, 0, 0, accessible_flag});
+	worklist.push_back(0);
+
+	for (size_t work_index = 0; work_index < worklist.size(); ++work_index) {
+		const uint32_t parent_id = worklist[work_index];
+		SubobjectNode parent = subobjects[parent_id];
+		if (parent.entity == base_entity) {
+			continue;
+		}
+		if ((parent.flags & expanded_flag) == 0) {
+			if (!table.hasRecordLayout(parent.entity) ||
+				!table.hasRecordFieldSchema(parent.entity)) {
+				return std::nullopt;
+			}
+			const CanonicalRecordLayout layout = table.recordLayout(parent.entity);
+			if (child_slots.size() > UINT32_MAX - layout.direct_base_count) {
+				return std::nullopt;
+			}
+			parent.first_child_slot = static_cast<uint32_t>(child_slots.size());
+			parent.child_count = layout.direct_base_count;
+			parent.flags |= expanded_flag;
+			child_slots.resize(child_slots.size() + parent.child_count, invalid_node);
+			subobjects[parent_id] = parent;
+		}
+
+		for (uint16_t base_index = 0; base_index < parent.child_count; ++base_index) {
+			const CanonicalRecordBase base = table.recordBaseAt(parent.entity, base_index);
+			if (!base.entity) {
+				return std::nullopt;
+			}
+			const uint32_t child_slot = parent.first_child_slot + base_index;
+			const bool is_virtual = hasCanonicalRecordBaseFlag(
+				base.flags, CanonicalRecordBaseFlags::Virtual);
+			const bool path_accessible =
+				(parent.flags & accessible_flag) != 0 && base.access == CanonicalAccess::Public;
+			const bool path_uses_virtual =
+				(parent.flags & virtual_path_flag) != 0 || is_virtual;
+			uint32_t child_id = child_slots[child_slot];
+			if (child_id == invalid_node) {
+				if (is_virtual) {
+					const auto found = virtual_subobjects.find(base.entity.value);
+					if (found != virtual_subobjects.end()) {
+						child_id = found->second;
+					}
+				}
+				if (child_id == invalid_node) {
+					if (subobjects.size() >= invalid_node) {
+						return std::nullopt;
+					}
+					child_id = static_cast<uint32_t>(subobjects.size());
+					const uint8_t child_flags =
+						(path_accessible ? accessible_flag : 0) |
+						(path_uses_virtual ? virtual_path_flag : 0);
+					subobjects.push_back(SubobjectNode{base.entity, 0, 0, child_flags});
+					worklist.push_back(child_id);
+					if (is_virtual) {
+						virtual_subobjects.emplace(base.entity.value, child_id);
+					}
+				} else {
+					const uint8_t previous_flags = subobjects[child_id].flags;
+					uint8_t updated_flags = previous_flags;
+					updated_flags |= path_accessible ? accessible_flag : 0;
+					updated_flags |= path_uses_virtual ? virtual_path_flag : 0;
+					if (updated_flags != previous_flags) {
+						subobjects[child_id].flags = updated_flags;
+						worklist.push_back(child_id);
+					}
+				}
+				child_slots[child_slot] = child_id;
+			} else {
+				const uint8_t previous_flags = subobjects[child_id].flags;
+				uint8_t updated_flags = previous_flags;
+				updated_flags |= path_accessible ? accessible_flag : 0;
+				updated_flags |= path_uses_virtual ? virtual_path_flag : 0;
+				if (updated_flags != previous_flags) {
+					subobjects[child_id].flags = updated_flags;
+					worklist.push_back(child_id);
+				}
+			}
+		}
+	}
+
+	uint32_t matching_subobject = invalid_node;
+	for (uint32_t subobject_id = 0; subobject_id < subobjects.size(); ++subobject_id) {
+		if (subobjects[subobject_id].entity != base_entity) {
+			continue;
+		}
+		if (matching_subobject != invalid_node) {
+			return DerivedBaseConversionKind::Ambiguous;
+		}
+		matching_subobject = subobject_id;
+	}
+	if (matching_subobject == invalid_node) {
+		return DerivedBaseConversionKind::NotRelated;
+	}
+	const uint8_t flags = subobjects[matching_subobject].flags;
+	if ((flags & accessible_flag) == 0) {
+		return DerivedBaseConversionKind::Inaccessible;
+	}
+	return (flags & virtual_path_flag) != 0
+		? DerivedBaseConversionKind::PublicVirtual
+		: DerivedBaseConversionKind::UniquePublicNonVirtual;
 }
 
 // Return the byte offset only for a unique, public, non-virtual base.  Callers
@@ -1757,9 +1909,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		return std::nullopt;
 	}
 	const TypeId source_unqualified =
-		table.withoutTopLevelQualifiers(source_import.type);
+		stripCanonicalTopCv(table, source_import.type).first;
 	const TypeId target_unqualified =
-		table.withoutTopLevelQualifiers(target_import.type);
+		stripCanonicalTopCv(table, target_import.type).first;
 	const CanonicalTypeNode source_node = table.node(source_unqualified);
 	const CanonicalTypeNode target_node = table.node(target_unqualified);
 	const bool target_is_lvalue_reference =
@@ -1782,27 +1934,16 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		? source_node.child
 		: source_unqualified;
 	const TypeId target_referent = target_node.child;
-	const CanonicalTypeNode source_referent_node = table.node(source_referent);
-	const CanonicalTypeNode target_referent_node = table.node(target_referent);
-	const CVQualifier source_referent_cv =
-		source_referent_node.kind == CanonicalTypeKind::Qualified
-			? source_referent_node.qualifiers
-			: CVQualifier::None;
-	const CVQualifier target_referent_cv =
-		target_referent_node.kind == CanonicalTypeKind::Qualified
-			? target_referent_node.qualifiers
-			: CVQualifier::None;
-	const TypeId source_type = table.withoutTopLevelQualifiers(source_referent);
-	const TypeId target_type = table.withoutTopLevelQualifiers(target_referent);
+	const auto [source_type, source_referent_cv] =
+		stripCanonicalTopCv(table, source_referent);
+	const auto [target_type, target_referent_cv] =
+		stripCanonicalTopCv(table, target_referent);
 	auto objectCvThroughArrays = [&table](TypeId type) {
 		CVQualifier qualifiers = CVQualifier::None;
 		for (;;) {
-			const CanonicalTypeNode node = table.node(type);
-			if (node.kind == CanonicalTypeKind::Qualified) {
-				qualifiers |= node.qualifiers;
-				type = node.child;
-				continue;
-			}
+			const auto [unqualified, top_cv] = stripCanonicalTopCv(table, type);
+			qualifiers |= top_cv;
+			const CanonicalTypeNode node = table.node(unqualified);
 			if (node.kind != CanonicalTypeKind::Array) {
 				return qualifiers;
 			}
@@ -1824,8 +1965,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	TypeId target_shape = target_type;
 	bool same_shape_ignoring_cv = true;
 	for (;;) {
-		source_shape = table.withoutTopLevelQualifiers(source_shape);
-		target_shape = table.withoutTopLevelQualifiers(target_shape);
+		source_shape = stripCanonicalTopCv(table, source_shape).first;
+		target_shape = stripCanonicalTopCv(table, target_shape).first;
 		const CanonicalTypeNode source_shape_node = table.node(source_shape);
 		const CanonicalTypeNode target_shape_node = table.node(target_shape);
 		if (source_shape_node.kind != target_shape_node.kind) {
@@ -1857,27 +1998,21 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 			}
 			const EntityId source_entity = table.recordEntity(source_type);
 			const EntityId target_entity = table.recordEntity(target_type);
-			// Keep nominal identity in EntityIds; resolve these exact declarations
-			// only to reuse the existing hierarchy/accessibility classifier.
-			const TypeInfo* source_info = tryFindTypeInfoByEntityId(source_entity);
-			const TypeInfo* target_info = tryFindTypeInfoByEntityId(target_entity);
-			if (source_info == nullptr || target_info == nullptr ||
-				!source_info->isStruct() || !target_info->isStruct()) {
+			// Resolve the relationship from canonical base edges; do not round-trip
+			// nominal TypeIds through the compatibility TypeIndex registry.
+			const std::optional<DerivedBaseConversionKind> base_conversion =
+				classifyCanonicalDerivedBaseConversion(
+					table, source_entity, target_entity);
+			if (!base_conversion.has_value()) {
 				return std::nullopt;
 			}
-			const TypeIndex source_index = source_info->registeredTypeIndex()
-				.withCategory(TypeCategory::Struct);
-			const TypeIndex target_index = target_info->registeredTypeIndex()
-				.withCategory(TypeCategory::Struct);
-			const DerivedBaseConversionKind base_conversion =
-				classifyDerivedBaseConversion(source_index, target_index).kind;
-			if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
-				base_conversion == DerivedBaseConversionKind::PublicVirtual) {
+			if (*base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+				*base_conversion == DerivedBaseConversionKind::PublicVirtual) {
 				return ConversionPlan{ConversionRank::Conversion,
 					StandardConversionKind::DerivedToBase, true};
 			}
-			if (base_conversion == DerivedBaseConversionKind::Inaccessible ||
-				base_conversion == DerivedBaseConversionKind::Ambiguous) {
+			if (*base_conversion == DerivedBaseConversionKind::Inaccessible ||
+				*base_conversion == DerivedBaseConversionKind::Ambiguous) {
 				return ConversionPlan::no_match();
 			}
 			return std::nullopt;
@@ -1904,22 +2039,14 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		return ConversionPlan::no_match();
 	}
 	if (table.node(source_type).kind == CanonicalTypeKind::Array) {
-		auto stripTopCv = [&table](TypeId type) {
-			CVQualifier qualifiers = CVQualifier::None;
-			CanonicalTypeNode node = table.node(type);
-			while (node.kind == CanonicalTypeKind::Qualified) {
-				qualifiers |= node.qualifiers;
-				type = node.child;
-				node = table.node(type);
-			}
-			return std::pair<TypeId, CVQualifier>{type, qualifiers};
-		};
 		bool qualification_changed = source_referent_cv != target_referent_cv;
 		TypeId source_element = source_type;
 		TypeId target_element = target_type;
 		for (;;) {
-			const auto [source_unqualified, source_cv] = stripTopCv(source_element);
-			const auto [target_unqualified, target_cv] = stripTopCv(target_element);
+			const auto [source_unqualified, source_cv] =
+				stripCanonicalTopCv(table, source_element);
+			const auto [target_unqualified, target_cv] =
+				stripCanonicalTopCv(table, target_element);
 			if ((static_cast<uint8_t>(source_cv) &
 				~static_cast<uint8_t>(target_cv)) != 0) {
 				return ConversionPlan::no_match();
