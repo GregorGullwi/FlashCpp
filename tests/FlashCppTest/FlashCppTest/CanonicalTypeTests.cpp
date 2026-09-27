@@ -100,6 +100,7 @@ TEST_CASE("Ordered declarator array conversion preserves the element spine") {
 }
 
 TEST_CASE("Ordered references bind to ordered pointer objects") {
+	FrontendContext frontend;
 	TypeSpecifierNode pointer_object(
 		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	pointer_object.set_ordered_declarator({
@@ -119,19 +120,37 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 		buildConversionPlan(lvalue_argument, lvalue_reference);
 	CHECK(lvalue_plan.is_valid);
 	CHECK(lvalue_plan.rank == ConversionRank::ExactMatch);
+	const std::optional<ConversionPlan> canonical_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, lvalue_reference);
+	REQUIRE(canonical_lvalue_plan.has_value());
+	CHECK(canonical_lvalue_plan->is_valid);
+	CHECK(canonical_lvalue_plan->rank == ConversionRank::ExactMatch);
 
 	TypeSpecifierNode prvalue = pointer_object;
 	CHECK_FALSE(buildConversionPlan(prvalue, lvalue_reference).is_valid);
+	const std::optional<ConversionPlan> canonical_prvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, lvalue_reference);
+	REQUIRE(canonical_prvalue_plan.has_value());
+	CHECK_FALSE(canonical_prvalue_plan->is_valid);
 
 	TypeSpecifierNode const_pointer_object = pointer_object;
 	const_pointer_object.set_cv_qualifier(CVQualifier::Const);
+	TypeSpecifierNode const_lvalue_argument = const_pointer_object;
+	const_lvalue_argument.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
 	TypeSpecifierNode const_lvalue_reference = const_pointer_object;
 	const_lvalue_reference.prepend_ordered_declarator_component(
 		DeclaratorComponent::lvalueReference());
 	const ConversionPlan const_plan =
-		buildConversionPlan(const_pointer_object, const_lvalue_reference);
+		buildConversionPlan(const_lvalue_argument, const_lvalue_reference);
 	CHECK(const_plan.is_valid);
 	CHECK(const_plan.rank == ConversionRank::ExactMatch);
+	const std::optional<ConversionPlan> canonical_const_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			const_lvalue_argument, const_lvalue_reference);
+	REQUIRE(canonical_const_plan.has_value());
+	CHECK(canonical_const_plan->is_valid);
+	CHECK(canonical_const_plan->rank == ConversionRank::ExactMatch);
 
 	TypeSpecifierNode qualified_pointer = pointer_object;
 	qualified_pointer.set_ordered_declarator({
@@ -147,6 +166,12 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 		buildConversionPlan(lvalue_argument, qualified_reference);
 	CHECK(qualified_plan.is_valid);
 	CHECK(qualified_plan.rank == ConversionRank::QualificationAdjustment);
+	const std::optional<ConversionPlan> canonical_qualified_plan =
+		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, qualified_reference);
+	REQUIRE(canonical_qualified_plan.has_value());
+	CHECK(canonical_qualified_plan->is_valid);
+	CHECK(canonical_qualified_plan->rank ==
+		ConversionRank::QualificationAdjustment);
 
 	TypeSpecifierNode rvalue_reference = pointer_object;
 	rvalue_reference.prepend_ordered_declarator_component(
@@ -156,6 +181,16 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	CHECK(rvalue_plan.is_valid);
 	CHECK(rvalue_plan.rank == ConversionRank::ExactMatch);
 	CHECK_FALSE(buildConversionPlan(lvalue_argument, rvalue_reference).is_valid);
+	const std::optional<ConversionPlan> canonical_rvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, rvalue_reference);
+	REQUIRE(canonical_rvalue_plan.has_value());
+	CHECK(canonical_rvalue_plan->is_valid);
+	CHECK(canonical_rvalue_plan->rank == ConversionRank::ExactMatch);
+	const std::optional<ConversionPlan> canonical_lvalue_to_rvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			lvalue_argument, rvalue_reference);
+	REQUIRE(canonical_lvalue_to_rvalue_plan.has_value());
+	CHECK_FALSE(canonical_lvalue_to_rvalue_plan->is_valid);
 
 	TypeSpecifierNode mismatched = lvalue_reference;
 	mismatched.set_ordered_declarator({
