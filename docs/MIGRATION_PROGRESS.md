@@ -101,7 +101,12 @@ and mismatched return or parameter types are rejected; top-level cv on
 by-value pointer arguments is ignored. The unit case
 `Canonical TypeIds compare projectable function pointer pairs` and
 `tests/test_canonical_function_pointer_noexcept_pair_overload_ret0.cpp`
-cover ranking and viability.
+cover ranking and viability. A dependent function-pointer argument in a
+function-template call now has source coverage showing that overload selection
+waits for substitution: `noexcept(true)` selects the non-throwing overload,
+`noexcept(false)` selects the throwing overload, and both convert to a
+throwing-only parameter. This is checked by
+`tests/test_canonical_dependent_noexcept_deferred_overload_ret0.cpp`.
 An added top-level cv-qualifier introduced purely by reference binding is now
 ranked as the identity conversion per [over.ics.ref]/1 instead of as a
 `QualificationAdjustment`. A direct `const T&` binding of a function-pointer
@@ -268,9 +273,12 @@ Continue boundary 3A in this order:
    compare owner and pointee `TypeId`s and support the public non-virtual
    base-to-derived owner conversion. Member-function-pointer base adjustments
    now use canonical owner schemas. Identical dependent `noexcept` expression
-   identities compare structurally; distinct or one-sided dependent expressions
-   and remaining unsupported callable pairs still need substitution-aware
-   ranking.
+   identities compare structurally. Dependent ordinary function-pointer calls
+   defer and rerank after substitution, as covered by
+   `tests/test_canonical_dependent_noexcept_deferred_overload_ret0.cpp`.
+   Distinct or one-sided dependent expressions, dependent member-function-pointer
+   cases beyond identical expression identity, and remaining unsupported
+   callable pairs still need substitution-aware canonical ranking.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
