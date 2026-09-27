@@ -180,8 +180,6 @@ start them.
   persistent-scope publication test expects no active context, and the AST
   family counter misclassifies `TemplateEnvironmentSnapshotNode` and `BlockNode`
   with clang-cl. Owner: unit fixture lifecycle and legacy AST classification.
-- `SemanticAnalysis:ResolvedDirectCallQueryTracksAnalysisState` also fails on
-  clean `main`; details are in [known issues](KNOWN_ISSUES.md).
 - Scratch `allocateObject` can construct an object before destructor-vector
   registration throws `bad_alloc`, leaving its destructor unregistered. Fix
   this before production scratch probes use nontrivial objects.
