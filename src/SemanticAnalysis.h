@@ -469,9 +469,6 @@ private:
 	std::optional<TypeSpecifierNode> resolveCallReturnType(
 		const FunctionDeclarationNode& callable,
 		const CallExprNode& call_expr);
-	std::optional<TypeSpecifierNode> resolveCallQueryType(const CallExprNode& call_expr) const;
-	std::optional<TypeSpecifierNode> resolveCallReceiverType(const ASTNode& receiver_node) const;
-
 	// Infer the canonical type of a simple expression without full evaluation.
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.

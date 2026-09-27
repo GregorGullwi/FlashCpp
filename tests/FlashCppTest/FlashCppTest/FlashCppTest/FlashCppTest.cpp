@@ -1551,6 +1551,38 @@ TEST_CASE("SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState") {
 	CHECK(after_run.type->type() == TypeCategory::Int);
 }
 
+TEST_CASE("SemanticAnalysis:CallExpressionTypeQueryUsesNormalizedSlot") {
+	std::string code = R"(
+		struct QueryValue { int value; };
+		QueryValue make_query_value() { return QueryValue{7}; }
+		QueryValue relay_query_value() { return make_query_value(); }
+	)";
+
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_call_expression_type_query.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	auto parse_result = parser.parse();
+	REQUIRE(!parse_result.is_error());
+
+	const ASTNode* return_expr = findAnyReturnCallExprNode(parser);
+	REQUIRE(return_expr != nullptr);
+	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
+	const TypeSpecifierQueryResult before_run = parser_services.getExpressionTypeQuery(*return_expr);
+	CHECK(before_run.state == TypeSpecifierQueryResult::State::NotYetAnalyzed);
+	CHECK(!before_run.type.has_value());
+
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
+	const TypeSpecifierQueryResult after_run =
+		sema.parserSemanticServices().getExpressionTypeQuery(*return_expr);
+	REQUIRE(after_run.state == TypeSpecifierQueryResult::State::Available);
+	REQUIRE(after_run.type.has_value());
+	CHECK(after_run.type->type() == TypeCategory::Struct);
+}
+
 TEST_CASE("SemanticAnalysis:ResolvedSubscriptQueryTracksAnalysisState") {
 	std::string code = R"(
 		struct Buffer {
