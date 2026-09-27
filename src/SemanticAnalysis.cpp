@@ -5110,6 +5110,46 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					normalizeExpression(e.receiver(), ctx);
 					const FunctionDeclarationNode* syntactic_callee =
 						e.callee().function_declaration_or_null();
+					// Member-call nodes also cover legacy indirect calls. Diagnose only
+					// unresolved calls carrying the synthetic auto-return placeholder.
+					bool has_auto_placeholder_return_type = false;
+					if (e.callee().is_member() && syntactic_callee != nullptr) {
+						const ASTNode callee_return_type =
+							syntactic_callee->decl_node().type_node();
+						if (callee_return_type.is<TypeSpecifierNode>()) {
+							has_auto_placeholder_return_type = isPlaceholderAutoType(
+								callee_return_type.as<TypeSpecifierNode>().type());
+						}
+					}
+					if (has_auto_placeholder_return_type) {
+						const CanonicalTypeId receiver_type_id =
+							inferExpressionType(e.receiver());
+						if (receiver_type_id) {
+							const CanonicalTypeDesc& receiver_type =
+								type_context_.get(receiver_type_id);
+							const TypeCategory receiver_category = receiver_type.category();
+							const bool receiver_has_known_non_class_type =
+								is_primitive_type(receiver_category) ||
+								receiver_category == TypeCategory::Enum ||
+								receiver_category == TypeCategory::Nullptr ||
+								receiver_category == TypeCategory::Void ||
+								(!is_struct_type(receiver_category) &&
+								 !receiver_type.pointer_levels.empty() &&
+								 receiver_category != TypeCategory::FunctionPointer &&
+								 receiver_category != TypeCategory::MemberFunctionPointer &&
+								 receiver_category != TypeCategory::Function &&
+								 !receiver_type.function_signature.has_value());
+							if (receiver_has_known_non_class_type) {
+								throw makeStructuredCompileError(
+									context_.diagnostics(),
+									DiagnosticId::NoViableMemberFunctionCall,
+									DiagnosticSeverity::Error,
+									SourceLocation::fromToken(e.called_from()),
+									"Member function call requires a class-type object",
+									{});
+							}
+						}
+					}
 					if (syntactic_callee != nullptr &&
 						syntactic_callee->parent_struct_name().empty()) {
 						queuePendingReceiverCallAnnotation(e);

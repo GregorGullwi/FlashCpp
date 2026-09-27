@@ -31,10 +31,8 @@ An agent looking for a regression to recover should:
 | `template_call_wrong_placeholder_base_fail.cpp.txt` | Template placeholder/base deduction | Placeholder/base matching has a bounded rejection owner. |
 | `template_concrete_undeduced_fail.cpp.txt` | Explicit template deduction | The undeduced-argument path reports a stable diagnostic. |
 | `test_const_rvalue_reference_before_pack_lvalue_fail.cpp.txt` | Function-template deduction | Reference/pack deduction has a stable mismatch owner. |
-| `test_constexpr_aggregate_brace_narrowing_fail.cpp.txt` | Constexpr aggregate initialization | Narrowing is reported by the existing initialization owner without status-2 compatibility. |
 | `test_constrained_auto_double_fail.cpp.txt` | Constrained abbreviated template | Constraint rejection has a stable bounded owner. |
 | `test_function_template_recursive_trailing_return_fail.cpp.txt` | Recursive trailing-return instantiation | Recursive substitution terminates through a stable rejection owner. |
-| `test_if_constexpr_active_branch_invalid_fail.cpp.txt` | `if constexpr` active-branch validation | The active branch is validated through its existing semantic owner. |
 | `test_injected_identity_ool_namespace_owner_fail.cpp.txt` | Out-of-line injected identity | Namespace/owner identity is preserved without recovery heuristics. |
 | `test_mismatch_args_fail.cpp.txt` | Declaration parser fallback | Shared declaration dispatch preserves the originating mismatch. |
 | `test_mismatch_const_fail.cpp.txt` | Declaration parser fallback | Const-mismatch validation is owned before expression fallback. |
