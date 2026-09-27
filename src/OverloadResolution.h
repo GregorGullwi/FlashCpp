@@ -2039,6 +2039,24 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 			}
 			return array_decay_plan;
 		}
+		if (unqualified_source_node.kind == CanonicalTypeKind::Builtin &&
+			unqualified_source_node.builtin == CanonicalBuiltinKind::Nullptr &&
+			(unqualified_target_node.kind == CanonicalTypeKind::Pointer ||
+			 unqualified_target_node.kind == CanonicalTypeKind::MemberObjectPointer ||
+			 unqualified_target_node.kind == CanonicalTypeKind::MemberFunctionPointer)) {
+			if (!can_bind_conversion_temporary) {
+				return ConversionPlan::no_match();
+			}
+			const ConversionPlan pointer_conversion_plan =
+				buildCanonicalStructuralConversionPlan(
+					table, source_type, target_type);
+			if (!pointer_conversion_plan.is_valid ||
+				pointer_conversion_plan.kind !=
+					StandardConversionKind::PointerConversion) {
+				return ConversionPlan::no_match();
+			}
+			return pointer_conversion_plan;
+		}
 		if (unqualified_source_node.kind == CanonicalTypeKind::Record &&
 			unqualified_target_node.kind == CanonicalTypeKind::Record) {
 			if (target_is_rvalue_reference && source_is_lvalue &&

@@ -73,6 +73,17 @@ conversions classify accessibility and ambiguity by traversing canonical base
 schemas keyed by `EntityId`; overload planning no longer round-trips those
 relationships through compatibility `TypeIndex`s. Derived-to-base pointer
 conversions now use the same canonical base graph for direct record pointees.
+Null-pointer conversions to object pointers and data-member pointers now bind
+eligible const lvalue and rvalue references through canonical temporary
+conversion plans; non-const lvalue references remain non-viable. The adapter
+preserves the top-level cv of flat member-pointer declarators and removes the
+outer reference before importing their pointee. Unit coverage also checks
+function-pointer and member-function-pointer targets through canonical type
+imports. The source regression
+`tests/test_canonical_nullptr_reference_temporary_overload_ret0.cpp` verifies
+overload selection for object and data-member pointers. Parser support for
+function-pointer and member-function-pointer reference declarators remains
+deferred; see [known issues](KNOWN_ISSUES.md).
 User-defined conversions, callable and template types, and structural
 no-matches needing specialized rules still use compatibility planning.
 Call lowering does not yet materialize the pointer object required when an
@@ -160,9 +171,9 @@ Continue boundary 3A in this order:
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
    planner, including remaining conversions that require temporary
-   materialization and callable pairs. Builtin arithmetic and array-decay
-   reference temporaries plus direct derived-to-base reference and pointer
-   conversions now use the canonical planner and base graph.
+   materialization and callable pairs. Builtin arithmetic, array-decay, and
+   null-pointer reference temporaries plus direct derived-to-base reference and
+   pointer conversions now use the canonical planner and base graph.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,

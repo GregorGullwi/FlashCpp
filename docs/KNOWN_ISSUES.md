@@ -100,6 +100,13 @@ over aliases with callable, array, reference, or member-pointer wrappers. Static
 member semantic identity must remain canonical and must not be flattened to
 bypass this consumer migration gap.
 
+Function-pointer and member-function-pointer reference declarators such as
+`int (* const&)()` and `int (Owner::* const&)()` are rejected by the declaration
+parser before overload resolution. The canonical conversion planner can plan
+null-pointer conversions to these reference targets when given imported
+`TypeSpecifierNode` shapes, but parser-owned calls cannot exercise that path
+until these declarator forms are parsed.
+
 ## Array-to-pointer reference arguments do not materialize pointer temporaries
 
 Overload ranking accepts an array lvalue for a parameter such as

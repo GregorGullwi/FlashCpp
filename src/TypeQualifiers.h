@@ -20,6 +20,12 @@ inline CVQualifier& operator|=(CVQualifier& a, CVQualifier b) {
 inline bool hasCVQualifier(CVQualifier cv, CVQualifier flag) {
 	return (static_cast<uint8_t>(cv) & static_cast<uint8_t>(flag)) != 0;
 }
+inline constexpr uint8_t ValidCVQualifierMask =
+	static_cast<uint8_t>(CVQualifier::ConstVolatile);
+inline constexpr bool isValidCVQualifier(CVQualifier cv) {
+	return (static_cast<uint8_t>(cv) &
+		static_cast<uint8_t>(~ValidCVQualifierMask)) == 0;
+}
 
 // Reference qualifiers - mutually exclusive enum (not a bitmask)
 enum class ReferenceQualifier : uint8_t {
