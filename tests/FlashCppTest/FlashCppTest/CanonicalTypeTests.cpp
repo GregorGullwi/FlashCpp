@@ -588,6 +588,137 @@ TEST_CASE("Canonical TypeIds compare same-owner member function pointer pairs") 
 	CHECK(top_level_cv_plan->rank == ConversionRank::ExactMatch);
 }
 
+TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_owner{820};
+	const EntityId derived_owner{821};
+	const EntityId private_derived_owner{822};
+	const EntityId virtual_derived_owner{823};
+	const EntityId left_owner{824};
+	const EntityId right_owner{825};
+	const EntityId ambiguous_derived_owner{826};
+	const EntityId unrelated_owner{827};
+
+	auto publish_record = [&table](EntityId entity,
+		std::span<const CanonicalRecordBase> bases) {
+		table.publishRecordLayout(CanonicalRecordLayout{
+			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
+			CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(entity,
+			std::span<const CanonicalRecordMember>{}, bases);
+	};
+	auto public_base = [](EntityId entity, CanonicalRecordBaseFlags flags) {
+		return CanonicalRecordBase{
+			entity, 0, CanonicalAccess::Public, flags, 0, 0};
+	};
+	const std::array<CanonicalRecordBase, 1> base_link{
+		public_base(base_owner, CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalRecordBase, 1> private_base_link{
+		CanonicalRecordBase{
+			base_owner, 0, CanonicalAccess::Private,
+			CanonicalRecordBaseFlags::None, 0, 0}};
+	const std::array<CanonicalRecordBase, 1> virtual_base_link{
+		public_base(base_owner, CanonicalRecordBaseFlags::Virtual)};
+	const std::array<CanonicalRecordBase, 2> ambiguous_base_links{
+		public_base(left_owner, CanonicalRecordBaseFlags::None),
+		public_base(right_owner, CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalRecordBase, 1> left_base_link{
+		public_base(base_owner, CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalRecordBase, 1> right_base_link{
+		public_base(base_owner, CanonicalRecordBaseFlags::None)};
+	publish_record(base_owner, {});
+	publish_record(derived_owner, base_link);
+	publish_record(private_derived_owner, private_base_link);
+	publish_record(virtual_derived_owner, virtual_base_link);
+	publish_record(left_owner, left_base_link);
+	publish_record(right_owner, right_base_link);
+	publish_record(ambiguous_derived_owner, ambiguous_base_links);
+	publish_record(unrelated_owner, {});
+
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode char_type(
+		TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	FunctionSignature throwing_signature;
+	throwing_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	throwing_signature.setParameterTypes(std::move(parameters));
+	FunctionSignature noexcept_signature = throwing_signature;
+	noexcept_signature.is_noexcept = true;
+	FunctionSignature mismatched_signature;
+	mismatched_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> mismatched_parameters;
+	mismatched_parameters.push_back(makeFunctionTypeFromSpecifier(char_type));
+	mismatched_signature.setParameterTypes(std::move(mismatched_parameters));
+	auto make_member_function_pointer = [](EntityId owner,
+		const FunctionSignature& signature) {
+		TypeSpecifierNode type(
+			TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	const TypeSpecifierNode base_pointer =
+		make_member_function_pointer(base_owner, throwing_signature);
+	const TypeSpecifierNode derived_pointer =
+		make_member_function_pointer(derived_owner, throwing_signature);
+	const std::optional<ConversionPlan> base_to_derived_plan =
+		tryBuildCanonicalProjectableConversionPlan(base_pointer, derived_pointer);
+	REQUIRE(base_to_derived_plan.has_value());
+	CHECK(base_to_derived_plan->is_valid);
+	CHECK(base_to_derived_plan->rank == ConversionRank::Conversion);
+	CHECK(base_to_derived_plan->kind == StandardConversionKind::PointerConversion);
+
+	const TypeSpecifierNode derived_noexcept_pointer =
+		make_member_function_pointer(derived_owner, noexcept_signature);
+	const std::optional<ConversionPlan> noexcept_relaxation_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			make_member_function_pointer(base_owner, noexcept_signature),
+			derived_pointer);
+	REQUIRE(noexcept_relaxation_plan.has_value());
+	CHECK(noexcept_relaxation_plan->is_valid);
+	CHECK(noexcept_relaxation_plan->rank == ConversionRank::Conversion);
+	const std::optional<ConversionPlan> rejected_noexcept_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			base_pointer, derived_noexcept_pointer);
+	REQUIRE(rejected_noexcept_plan.has_value());
+	CHECK_FALSE(rejected_noexcept_plan->is_valid);
+	const std::optional<ConversionPlan> rejected_signature_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			base_pointer,
+			make_member_function_pointer(derived_owner, mismatched_signature));
+	REQUIRE(rejected_signature_plan.has_value());
+	CHECK_FALSE(rejected_signature_plan->is_valid);
+
+	const TypeSpecifierNode private_derived_pointer =
+		make_member_function_pointer(private_derived_owner, throwing_signature);
+	const TypeSpecifierNode virtual_derived_pointer =
+		make_member_function_pointer(virtual_derived_owner, throwing_signature);
+	const TypeSpecifierNode ambiguous_derived_pointer =
+		make_member_function_pointer(ambiguous_derived_owner, throwing_signature);
+	const TypeSpecifierNode unrelated_pointer =
+		make_member_function_pointer(unrelated_owner, throwing_signature);
+	const std::array<const TypeSpecifierNode*, 4> rejected_targets{
+		&private_derived_pointer,
+		&virtual_derived_pointer,
+		&ambiguous_derived_pointer,
+		&unrelated_pointer,
+	};
+	for (const TypeSpecifierNode* target : rejected_targets) {
+		const std::optional<ConversionPlan> rejected_plan =
+			tryBuildCanonicalProjectableConversionPlan(base_pointer, *target);
+		REQUIRE(rejected_plan.has_value());
+		CHECK_FALSE(rejected_plan->is_valid);
+	}
+	const std::optional<ConversionPlan> rejected_reverse_plan =
+		tryBuildCanonicalProjectableConversionPlan(derived_pointer, base_pointer);
+	REQUIRE(rejected_reverse_plan.has_value());
+	CHECK_FALSE(rejected_reverse_plan->is_valid);
+}
+
 TEST_CASE("Canonical TypeIds compare member object pointer pairs") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

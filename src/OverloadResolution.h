@@ -1963,14 +1963,26 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 				const std::optional<DerivedBaseConversionKind> owner_conversion =
 					classifyCanonicalDerivedBaseConversion(
 						table, target_owner_entity, source_owner_entity);
-				if (!owner_conversion.has_value() ||
-					*owner_conversion ==
-						DerivedBaseConversionKind::UniquePublicNonVirtual) {
+				if (!owner_conversion.has_value()) {
 					return std::nullopt;
 				}
-				if (*owner_conversion != DerivedBaseConversionKind::NotRelated) {
+				if (*owner_conversion !=
+					DerivedBaseConversionKind::UniquePublicNonVirtual) {
 					return ConversionPlan::no_match();
 				}
+			const TypeId normalized_source =
+				table.memberFunctionPointer(target_owner, source_function);
+			const ConversionPlan function_plan =
+				buildCanonicalStructuralConversionPlan(
+					table, normalized_source, target_member);
+			if (!function_plan.is_valid ||
+				(function_plan.kind != StandardConversionKind::None &&
+					function_plan.kind !=
+						StandardConversionKind::QualificationAdjustment)) {
+				return ConversionPlan::no_match();
+			}
+			return ConversionPlan{ConversionRank::Conversion,
+				StandardConversionKind::PointerConversion, true};
 			}
 		}
 		return buildCanonicalStructuralConversionPlan(
