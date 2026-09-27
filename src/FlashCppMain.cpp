@@ -759,6 +759,9 @@ int main_impl(int argc, char* argv[]) {
 						  describeIrRootNode(node_handle), "': ", e.what());
 				++ir_conversion_error_count;
 			}
+			if (has_compile_errors) {
+				break;
+			}
 
 			// Advance past the node we just visited. Front inserts shift it right;
 			// locate it by identity so we neither revisit it nor fall onto a
@@ -778,7 +781,7 @@ int main_impl(int argc, char* argv[]) {
 
 	// Deferred generation (lambdas and local struct member functions).
 	// Failures here abort the TU — do not soft-skip missing member/lambda bodies.
-	{
+	if (!has_compile_errors) {
 		PhaseTimer deferred_timer("Deferred Gen", false, &deferred_gen_time, FlashCpp::AllocationPhase::DeferredGen);
 		converter.generateCollectedLambdas();
 		converter.generateCollectedLocalStructMembers();

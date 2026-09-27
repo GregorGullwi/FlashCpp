@@ -32,10 +32,10 @@ is not sufficient.
 ## Boundary 2F removed unsupported legacy negative fixtures
 
 On 2026-08-30 boundary 2F removed the frozen `_fail.cpp` inventories and their
-temporary internal-failure compatibility. The following fixtures were not
-converted into diagnostic contracts because their current failures are outside
-an existing bounded owner. Their source is preserved as non-discovered
-`.cpp.txt` reproducers under `tests/unsupported_boundary_2f/`:
+temporary internal-failure compatibility. The remaining fixtures were not
+converted into diagnostic contracts because their failures are outside an
+existing bounded owner. Their source is preserved as non-discovered `.cpp.txt`
+reproducers under `tests/unsupported_boundary_2f/`:
 
 - Template deduction or constraint failures that collapse to the generic
   template-instantiation rejection: `concept_error_test_fail.cpp`,
@@ -59,9 +59,7 @@ an existing bounded owner. Their source is preserved as non-discovered
   `test_template_ool_plain_member_single_candidate_alias_target_mismatch_fail.cpp`,
   `test_template_partial_spec_ool_ctor_template_alias_target_mismatch_fail.cpp`,
   and `test_template_partial_spec_ool_plain_member_alias_target_mismatch_fail.cpp`.
-- Five tests that previously depended on status-2 compatibility:
-  `test_constexpr_aggregate_brace_narrowing_fail.cpp`,
-  `test_if_constexpr_active_branch_invalid_fail.cpp`,
+- Three tests that previously depended on status-2 compatibility:
   `test_operator_subscript_const_ambiguity_fail.cpp`,
   `test_template_lazy_static_member_implicit_this_fail.cpp`, and
   `test_template_out_of_line_static_member_implicit_this_fail.cpp`.
