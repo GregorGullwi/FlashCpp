@@ -902,6 +902,23 @@ struct StructTypeInfo {
 		return false;
 	}
 
+	bool isAggregate() const {
+		if (hasUserDeclaredConstructor() || has_vtable) {
+			return false;
+		}
+		for (const auto& member : members) {
+			if (member.access != AccessSpecifier::Public) {
+				return false;
+			}
+		}
+		for (const auto& base_class : base_classes) {
+			if (base_class.access != AccessSpecifier::Public || base_class.is_virtual) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	bool hasConstructor() const {
 		// Check for explicit constructors OR if we need to generate a trivial default constructor
 		return findDefaultConstructor() != nullptr || needs_default_constructor;

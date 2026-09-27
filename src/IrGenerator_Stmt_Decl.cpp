@@ -1579,7 +1579,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								struct_info.isDefaultConstructorDeleted() ||
 								(struct_info.implicit_default_constructor.is_finalized &&
 								 struct_info.implicit_default_constructor.is_deleted);
-							if (initializers.empty() && default_constructor_is_deleted) {
+							const bool empty_aggregate_initialization =
+								initializers.empty() && struct_info.isAggregate();
+							if (initializers.empty() && default_constructor_is_deleted &&
+								!empty_aggregate_initialization) {
 								std::string_view error_msg = StringBuilder()
 									.append("Cannot default-initialize struct ")
 									.append(StringTable::getStringView(struct_info.name))
@@ -1596,7 +1599,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 								// Check if this is a designated initializer list or aggregate initialization
 								// Designated initializers always use direct member initialization
-							bool use_direct_member_init = init_list.has_any_designated();
+							bool use_direct_member_init =
+								init_list.has_any_designated() || empty_aggregate_initialization;
 
 								// Check if there's a constructor that matches the number of initializers
 								// For aggregate initialization Point{1, 2}, we need a constructor with 2 parameters
@@ -1920,7 +1924,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							} else {
 								// No constructor - use direct member initialization
 								// But first check if default constructor is deleted
-								if (num_initializers == 0 && default_constructor_is_deleted) {
+								if (num_initializers == 0 && default_constructor_is_deleted &&
+									!empty_aggregate_initialization) {
 									std::string_view error_msg = StringBuilder().append("Cannot default-initialize struct ").append(StringTable::getStringView(struct_info.name)).append(" - default constructor is deleted").commit();
 									throw makeStructuredCompileError(
 										context_->diagnostics(),

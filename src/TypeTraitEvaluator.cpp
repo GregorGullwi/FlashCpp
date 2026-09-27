@@ -682,19 +682,7 @@ TypeTraitResult evaluateTypeTrait(
 
 	case TypeTraitKind::IsAggregate:
 		if (struct_info && !is_reference && pointer_depth == 0) {
-				// Check aggregate conditions
-			bool has_user_constructors = struct_info->hasUserDeclaredConstructor();
-			bool no_virtual = !struct_info->has_vtable;
-			bool all_public = true;
-			for (const auto& member : struct_info->members) {
-				if (member.access == AccessSpecifier::Private ||
-					member.access == AccessSpecifier::Protected) {
-					all_public = false;
-					break;
-				}
-			}
-
-			result = !has_user_constructors && no_virtual && all_public;
+			result = struct_info->isAggregate();
 		} else if (is_array && !is_reference && pointer_depth == 0) {
 			result = true;
 		}

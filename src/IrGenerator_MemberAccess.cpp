@@ -2938,24 +2938,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		//   - No virtual, private, or protected base classes
 		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 			if (struct_info) {
-				// Check aggregate conditions (C++20 [dcl.init.aggr]/1):
-				// 1. No user-declared constructors (includes = default and = delete)
-				// 2. No private or protected members (all members are public)
-				// 3. No virtual functions (has_vtable flag)
-				bool has_user_constructors = struct_info->hasUserDeclaredConstructor();
-
-				bool no_virtual = !struct_info->has_vtable;
-				bool all_public = true;
-
-				for (const auto& member : struct_info->members) {
-					if (member.access == AccessSpecifier::Private ||
-						member.access == AccessSpecifier::Protected) {
-						all_public = false;
-						break;
-					}
-				}
-
-				result = !has_user_constructors && no_virtual && all_public;
+				result = struct_info->isAggregate();
 			}
 		}
 		// Arrays are aggregates

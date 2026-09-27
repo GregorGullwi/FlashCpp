@@ -10164,28 +10164,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (auto resolved_ctor_type = tryResolveConstructibleClassAlias(identifier_token)) {
 					TypeIndex type_index = resolved_ctor_type->first;
 					const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index);
-
-					// Check if this is an aggregate type (no user-declared constructors, all public, no vtable)
-					bool is_aggregate = false;
-					if (struct_info) {
-						bool has_user_ctors = false;
-						for (const auto& func : struct_info->member_functions) {
-							if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-								if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
-									has_user_ctors = true;
-									break;
-								}
-							}
-						}
-						bool all_public = true;
-						for (const auto& member : struct_info->members) {
-							if (member.access == AccessSpecifier::Private || member.access == AccessSpecifier::Protected) {
-								all_public = false;
-								break;
-							}
-						}
-						is_aggregate = !has_user_ctors && !struct_info->has_vtable && all_public && !struct_info->members.empty();
-					}
+					const bool is_aggregate = struct_info && struct_info->isAggregate();
 
 					if (is_aggregate) {
 						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
