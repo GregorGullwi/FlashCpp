@@ -1579,8 +1579,34 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								struct_info.isDefaultConstructorDeleted() ||
 								(struct_info.implicit_default_constructor.is_finalized &&
 								 struct_info.implicit_default_constructor.is_deleted);
+							bool aggregate_empty_init_can_use_direct_member_stores = !struct_info.is_union;
+							for (const StructMember& member : struct_info.members) {
+								if (member.is_reference() || member.is_array ||
+									member.anonymous_union_group_index.has_value() ||
+									(member.type_index.category() == TypeCategory::Struct &&
+									 member.pointer_depth == 0)) {
+									aggregate_empty_init_can_use_direct_member_stores = false;
+									break;
+								}
+							}
+							for (const BaseClassSpecifier& base_class : struct_info.base_classes) {
+								const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);
+								const StructTypeInfo* base_struct_info =
+									base_type_info ? base_type_info->getStructInfo() : nullptr;
+								if (!base_struct_info || base_struct_info->is_union ||
+									!base_struct_info->members.empty() ||
+									!base_struct_info->base_classes.empty() ||
+									base_struct_info->has_vtable ||
+									base_struct_info->hasDefaultMemberInitializers() ||
+									base_struct_info->hasUserDeclaredConstructor() ||
+									base_struct_info->isDefaultConstructorDeleted()) {
+									aggregate_empty_init_can_use_direct_member_stores = false;
+									break;
+								}
+							}
 							const bool empty_aggregate_initialization =
-								initializers.empty() && struct_info.isAggregate();
+								initializers.empty() && default_constructor_is_deleted &&
+								struct_info.isAggregate() && aggregate_empty_init_can_use_direct_member_stores;
 							if (initializers.empty() && default_constructor_is_deleted &&
 								!empty_aggregate_initialization) {
 								std::string_view error_msg = StringBuilder()
