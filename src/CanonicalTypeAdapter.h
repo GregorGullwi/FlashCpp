@@ -142,7 +142,7 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 		const DeclaratorComponent& component = components[index];
 		switch (component.kind) {
 		case DeclaratorComponentKind::Pointer:
-			if (static_cast<uint8_t>(component.cv_qualifier) > 3) {
+			if (!isValidCVQualifier(component.cv_qualifier)) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
 			id = table.qualify(table.pointer(id), component.cv_qualifier);
@@ -252,7 +252,7 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 		}
 		case DeclaratorComponentKind::MemberObjectPointer:
 			if (index != components.size() - 1 || !component.member_owner ||
-				static_cast<uint8_t>(component.cv_qualifier) > 3) {
+				!isValidCVQualifier(component.cv_qualifier)) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
 			id = table.qualify(
@@ -261,7 +261,7 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			break;
 		case DeclaratorComponentKind::MemberFunctionPointer: {
 			if (index != components.size() - 1 || !component.member_owner ||
-				static_cast<uint8_t>(component.cv_qualifier) > 3 ||
+				!isValidCVQualifier(component.cv_qualifier) ||
 				!syntax.has_function_signature()) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
@@ -675,6 +675,15 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		return applyCanonicalOrderedDeclarator(table, imported_pointee.type, syntax,
 			CanonicalTypeImportContext::Exact);
 	}
+	CVQualifier member_pointer_cv = syntax.cv_qualifier();
+	if (!syntax.pointer_levels().empty()) {
+		const CVQualifier outer_pointer_cv =
+			syntax.pointer_levels().front().cv_qualifier;
+		if (!isValidCVQualifier(outer_pointer_cv)) {
+			return {{}, CanonicalTypeImportStatus::Invalid};
+		}
+		member_pointer_cv = outer_pointer_cv;
+	}
 	const EntityId owner_entity = resolveMemberClassEntity(syntax);
 	if (!owner_entity) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
@@ -692,7 +701,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 			return imported_function;
 		}
 		auto id = table.memberFunctionPointer(owner, imported_function.type);
-		id = table.qualify(id, syntax.cv_qualifier());
+		id = table.qualify(id, member_pointer_cv);
 		if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 			id = table.reference(id, syntax.reference_qualifier());
 		}
@@ -711,7 +720,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 			return imported_pointee;
 		}
 		auto id = table.memberObjectPointer(owner, imported_pointee.type);
-		id = table.qualify(id, syntax.cv_qualifier());
+		id = table.qualify(id, member_pointer_cv);
 		if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 			id = table.reference(id, syntax.reference_qualifier());
 		}
@@ -724,13 +733,14 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 	pointee.clear_member_class_identity();
 	pointee.clear_injected_class_declaration();
 	pointee.limit_pointer_depth(0);
+	pointee.set_reference_qualifier(ReferenceQualifier::None);
 	const auto imported_pointee = importCanonicalTypeImpl(
 		table, pointee, CanonicalTypeImportContext::Exact);
 	if (imported_pointee.status != CanonicalTypeImportStatus::Supported) {
 		return imported_pointee;
 	}
 	auto id = table.memberObjectPointer(owner, imported_pointee.type);
-	id = table.qualify(id, syntax.cv_qualifier());
+	id = table.qualify(id, member_pointer_cv);
 	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 		id = table.reference(id, syntax.reference_qualifier());
 	}
@@ -804,13 +814,13 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 inline CanonicalTypeImport importCanonicalShapedBase(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context, TypeId id) {
 	const auto reference = syntax.reference_qualifier();
-	if (static_cast<uint8_t>(syntax.cv_qualifier()) > 3 ||
+	if (!isValidCVQualifier(syntax.cv_qualifier()) ||
 		(reference != ReferenceQualifier::None && reference != ReferenceQualifier::LValueReference &&
 			reference != ReferenceQualifier::RValueReference)) {
 		return {{}, CanonicalTypeImportStatus::Invalid};
 	}
 	for (const auto& pointer : syntax.pointer_levels()) {
-		if (static_cast<uint8_t>(pointer.cv_qualifier) > 3) {
+		if (!isValidCVQualifier(pointer.cv_qualifier)) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
 	}
@@ -862,13 +872,13 @@ inline CanonicalTypeImport importCanonicalTemplateSpecialization(CanonicalTypeTa
 		return {{}, CanonicalTypeImportStatus::Unresolved};
 	}
 	const auto reference = syntax.reference_qualifier();
-	if (static_cast<uint8_t>(syntax.cv_qualifier()) > 3 ||
+	if (!isValidCVQualifier(syntax.cv_qualifier()) ||
 		(reference != ReferenceQualifier::None && reference != ReferenceQualifier::LValueReference &&
 			reference != ReferenceQualifier::RValueReference)) {
 		return {{}, CanonicalTypeImportStatus::Invalid};
 	}
 	for (const auto& pointer : syntax.pointer_levels()) {
-		if (static_cast<uint8_t>(pointer.cv_qualifier) > 3) {
+		if (!isValidCVQualifier(pointer.cv_qualifier)) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
 	}
@@ -1059,7 +1069,7 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		throw InternalError("canonical type adapter: unknown type category");
 	}
 	const auto reference = syntax.reference_qualifier();
-	if (static_cast<uint8_t>(syntax.cv_qualifier()) > 3 ||
+	if (!isValidCVQualifier(syntax.cv_qualifier()) ||
 		(reference != ReferenceQualifier::None && reference != ReferenceQualifier::LValueReference &&
 			reference != ReferenceQualifier::RValueReference) ||
 		(builtin == CanonicalBuiltinKind::Void && !syntax.is_pointer() && syntax.is_reference())) {
@@ -1080,7 +1090,7 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		return imported;
 	}
 	for (const auto& pointer : syntax.pointer_levels()) {
-		if (static_cast<uint8_t>(pointer.cv_qualifier) > 3) {
+		if (!isValidCVQualifier(pointer.cv_qualifier)) {
 			return {{}, CanonicalTypeImportStatus::Invalid};
 		}
 	}

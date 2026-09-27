@@ -38,25 +38,154 @@ conversion, and outermost ordered-reference binding. Function signatures retain
 non-projectable declarator spines, and function decay compares the complete
 callable type including ordered returns. Template-signature substitution now
 composes substituted pointer and array wrappers with retained callable
-declarator spines before canonical import. Derived-to-base and further
-callable-component conversions remain deferred. For dereferences whose result has an
-unprojectable ordered declarator, parser typing leaves the expression
+declarator spines before canonical import. Derived-to-base conversions through
+non-projectable declarators and callable-component conversions remain deferred.
+For dereferences whose result has an unprojectable
+ordered declarator, parser typing leaves the expression
 unresolved and defers overload selection to sema. Sema uses the canonical
 argument type for selection and reports ambiguous or non-viable calls at the
 call site. Other parse-time expression queries still use the compatibility
 type view where needed.
 Conditional pointer common-type selection now compares imported structural
-`TypeId`s through the shared descriptor adapter. Derived-to-base, reference
-binding, and user-defined conversions remain on specialized paths.
+`TypeId`s through the shared descriptor adapter. Derived-to-base pointer
+conversions now classify direct record pointees from canonical base schemas
+keyed by `EntityId`, preserving public unique and virtual bases while rejecting
+inaccessible, ambiguous, and cv-removing conversions. Imported pointer-pair
+no-matches are authoritative, so derived-to-base ranking does not fall through
+to the compatibility `TypeIndex` classifier.
 Parser-side overload ranking now uses the structural planner for non-projectable
 ordered pairs plus scalar builtin conversions, `nullptr`-to-pointer conversion,
-and supported projectable pointer pairs, array decay, and pointer/array-to-`bool`
-conversions. Same-shape direct reference binding also plans from canonical
-`TypeId`s while carrying expression value category separately. Imports stay
-within builtin, record, or enum base types. Speculative imports roll back;
-temporary materialization, array referents, derived-to-base binding, callable
-and template types, and structural no-matches needing specialized rules still
-use compatibility planning.
+and supported projectable pointer pairs, including derived-to-base conversion,
+array decay, and pointer/array-to-`bool` conversions. Same-shape reference
+binding, including exact-shape prvalues that materialize for `const` lvalue
+references, now plans from canonical `TypeId`s
+while carrying expression value category separately. Rvalue binding retains
+exact-match rank when it adds top-level cv. Imports stay within builtin, record,
+or enum base types. Speculative imports roll back; standard builtin-to-builtin
+conversions can now bind eligible references through a temporary, such as an
+`int` value converted to `double` for `const double&`; an lvalue converted to
+`double` can also bind to `double&&`. Array lvalues now decay canonically when
+binding pointer temporaries to eligible const lvalue and rvalue references.
+Nested array extents and element cv are retained through decay, and mismatched
+pointer-to-array extents are rejected. Exact-shape array references still
+preserve extents and nested cv without decay. Derived-record to base-reference
+conversions classify accessibility and ambiguity by traversing canonical base
+schemas keyed by `EntityId`; overload planning no longer round-trips those
+relationships through compatibility `TypeIndex`s. Derived-to-base pointer
+conversions now use the same canonical base graph for direct record pointees.
+Null-pointer conversions to object pointers and data-member pointers now bind
+eligible const lvalue and rvalue references through canonical temporary
+conversion plans; non-const lvalue references remain non-viable. The adapter
+preserves the top-level cv of flat member-pointer declarators and removes the
+outer reference before importing their pointee. Unit coverage also checks
+function-pointer and member-function-pointer targets through canonical type
+imports. The source regression
+`tests/test_canonical_nullptr_reference_temporary_overload_ret0.cpp` verifies
+overload selection for object and data-member pointers. Parser support for
+function-pointer and member-function-pointer reference declarators remains
+deferred; see [known issues](KNOWN_ISSUES.md).
+Function designators now decay canonically when a matching function-pointer
+temporary binds to a `const` lvalue or rvalue reference. The planner rejects
+non-const lvalue-reference binding and mismatched function signatures. Parser
+typing also unwraps the legacy implicit `FunctionPointer` category when unary
+`*` produces a function lvalue, so overload selection sees the function type
+before decay. The unit coverage is in
+`Canonical TypeIds bind function decay temporaries to pointer references`, and
+`tests/test_canonical_function_pointer_reference_decay_overload_ret0.cpp`
+checks const-lvalue and rvalue-reference overload selection from a dereferenced
+function pointer.
+Regular function-pointer parameter pairs now compare canonical function
+`TypeId`s, preserving exact signatures and accepting the standard conversion
+from `noexcept` to potentially-throwing pointers. Reverse `noexcept` conversion
+and mismatched return or parameter types are rejected; top-level cv on
+by-value pointer arguments is ignored. The unit case
+`Canonical TypeIds compare projectable function pointer pairs` and
+`tests/test_canonical_function_pointer_noexcept_pair_overload_ret0.cpp`
+cover ranking and viability.
+An added top-level cv-qualifier introduced purely by reference binding is now
+ranked as the identity conversion per [over.ics.ref]/1 instead of as a
+`QualificationAdjustment`. A direct `const T&` binding of a function-pointer
+lvalue therefore outranks binding to a `const&` of the potentially-throwing
+pointer, which still requires the [conv.fctptr] function pointer conversion
+(category Qualification Adjustment, exact-match rank). The preference between
+`T&` and `const T&` for an lvalue is applied by the [over.ics.rank]/3.2.6
+cv-preference tie-break when comparing candidate sequences; the helper that
+compares referenced types ignoring top-level cv now also ignores the outermost
+pointer level's cv. Array references follow the same rule: a referenced array
+that differs only by top-level element cv is an identity binding, so
+`int (&)[N]` is preferred over `const int (&)[N]`, while element types that
+require a structural qualification (for example an array of pointers gaining
+pointee cv) remain qualification conversions. The unit case
+`Canonical TypeIds bind function pointer conversions to references` and the
+source regressions
+`tests/test_canonical_noexcept_function_pointer_reference_temp_overload_ret0.cpp`
+and `tests/test_reference_binding_cv_ranking_ret0.cpp` lock in the selection.
+Same-owner member-function-pointer pairs now compare the canonical owner and
+full function type, accept `noexcept` relaxation, and reject reverse
+relaxation or signature mismatches. Complete owner schemas reject unrelated,
+inaccessible, ambiguous, and virtual-base owner conversions. Member-function-
+pointer pairs also support public unambiguous non-virtual base-to-derived owner
+conversion through canonical `TypeId`s, including `noexcept` relaxation, and
+reject mismatched function signatures. Data-member-pointer pairs now
+compare canonical owner and pointee types, preserve same-owner qualification,
+and allow a public unambiguous non-virtual base-to-derived owner conversion.
+Complete owner schemas reject unrelated, inaccessible, ambiguous, and
+virtual-base conversions. Function declaration matching also retains the
+member-owner `EntityId`, so overloads with distinct data-member-pointer owners
+remain separate candidates. The unit case
+`Canonical TypeIds compare same-owner member function pointer pairs` checks
+signature ranking. The unit case
+`Canonical TypeIds compare member object pointer pairs` checks exact owner,
+qualification, and owner-mismatch behavior. The source regression
+`tests/test_canonical_member_object_pointer_pair_overload_ret0.cpp` checks
+pointee and owner selection, including base-to-derived ranking. The source
+regression
+`tests/test_canonical_member_function_pointer_pair_overload_ret0.cpp` checks
+member-owner, function-signature, and base-to-derived selection on MSVC.
+Itanium end-to-end coverage is deferred until boundary 3B supports mangling
+member-function-pointer parameter types. Dependent `noexcept`,
+user-defined conversions, and other unsupported callable or template types
+still use compatibility planning.
+Call lowering does not yet materialize the pointer object required when an
+array decays to a pointer temporary; see [known issues](KNOWN_ISSUES.md).
+Regression coverage in
+`tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises
+native, record, substituted, and conversion-required reference parameters, and
+checks that a promotion-ranked overload beats a conversion-ranked reference.
+`tests/test_canonical_array_reference_binding_ret0.cpp` checks array overload
+selection for exact extents and mutable versus const referents.
+`tests/test_canonical_derived_to_base_reference_overload_ret0.cpp` checks that
+derived-reference candidates rank ahead of their base-reference overloads.
+`tests/test_canonical_derived_to_base_pointer_overload_ret0.cpp` checks direct
+and cv-qualified derived-pointer ranking, including preference for the exact
+derived pointer and the less-qualified base pointer when both require
+derived-to-base conversion. The canonical planner unit test covers virtual,
+inaccessible, ambiguous, and cv-removing base-pointer conversions, and rejects
+derived-to-base conversions through pointer-to-pointer or pointer-to-array
+shapes. Object-pointer conversions that create a pointer temporary can now bind
+to eligible const lvalue and rvalue references through the projectable
+canonical planner, including derived-to-base and object-pointer-to-`cv void*`
+conversions; non-const lvalue references still reject that temporary path. The
+unit case `Canonical TypeIds bind pointer conversion temporaries to references`
+checks those plans, and
+`tests/test_canonical_pointer_conversion_reference_overload_ret0.cpp` checks
+compile-time overload selection. Reference binding also distinguishes cv on
+the pointer object from cv on its pointee: `int*` cannot bind through a
+qualification temporary to `const int*&`, while `const int* const&` can accept
+it. The unit case `Canonical TypeIds reject pointee qualification through
+mutable references` and
+`tests/test_canonical_pointer_cv_reference_binding_overload_ret0.cpp` cover
+that distinction. Member-object and member-function pointer conversions now
+also bind through eligible reference temporaries using canonical owner schemas.
+The unit case `Canonical TypeIds bind member-pointer conversion temporaries to
+references` covers both pointer-to-member families, and
+`tests/test_canonical_member_object_pointer_reference_temp_overload_ret0.cpp`
+checks source-level overload selection for a base-to-derived data-member-pointer
+conversion. `tests/test_canonical_array_decay_reference_overload_ret0.cpp`
+checks array-to-pointer temporary binding for const lvalue and rvalue references
+across builtin and record element types; the canonical planner unit test checks
+multidimensional row extents, cv addition/removal, and direct versus temporary
+rvalue-reference binding.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -110,9 +239,10 @@ call stack. The recorded Clang stack-usage probe measured `parse_declarator` at
 changing recursive parser paths. `TypeSpecifierNode` measured 520 bytes in the
 canonical architecture probe.
 
-The explicit-criteria rollup is **9/79 complete**. Passing tests or the breadth
-of landed code do not complete boundary 3A. Implementation effort is not yet
-estimated reliably.
+The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
+that pointer-to-member overloads distinguish owner and pointee types is now
+covered; passing tests or the breadth of landed code do not complete the
+boundary. Implementation effort is not yet estimated reliably.
 
 ## Next work
 
@@ -120,9 +250,17 @@ Continue boundary 3A in this order:
 
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
-   planner, including reference conversions that need temporary materialization,
-   array-reference binding, derived-to-base reference binding, and callable
-   pairs. Then make projectable semantic descriptors use structural identity
+   planner, including remaining conversions that require temporary
+   materialization and unsupported callable pairs. Regular function-pointer
+   pairs and same-owner member-function-pointer pairs, builtin arithmetic, array-decay,
+   null-pointer, function-decay, object-pointer, and member-pointer reference
+   temporaries plus direct derived-to-base reference and pointer conversions now
+   use the canonical planner and base graph. Data-member-pointer pairs now
+   compare owner and pointee `TypeId`s and support the public non-virtual
+   base-to-derived owner conversion. Member-function-pointer base adjustments
+   now use canonical owner schemas; dependent `noexcept` and remaining
+   unsupported callable pairs are still pending.
+   Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
    nested cv, array decay, and value-category behavior.

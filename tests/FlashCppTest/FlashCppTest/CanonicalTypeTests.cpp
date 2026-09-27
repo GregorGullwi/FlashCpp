@@ -165,13 +165,16 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	const ConversionPlan qualified_plan =
 		buildConversionPlan(lvalue_argument, qualified_reference);
 	CHECK(qualified_plan.is_valid);
-	CHECK(qualified_plan.rank == ConversionRank::QualificationAdjustment);
+	// qualified_pointer differs from pointer_object only in the cv-qualifier of
+	// its outermost pointer.  Per [over.ics.ref]/1, directly binding to a
+	// reference whose referenced type differs only by added top-level
+	// cv-qualification is the identity conversion, so this stays ExactMatch.
+	CHECK(qualified_plan.rank == ConversionRank::ExactMatch);
 	const std::optional<ConversionPlan> canonical_qualified_plan =
 		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, qualified_reference);
 	REQUIRE(canonical_qualified_plan.has_value());
 	CHECK(canonical_qualified_plan->is_valid);
-	CHECK(canonical_qualified_plan->rank ==
-		ConversionRank::QualificationAdjustment);
+	CHECK(canonical_qualified_plan->rank == ConversionRank::ExactMatch);
 
 	TypeSpecifierNode rvalue_reference = pointer_object;
 	rvalue_reference.prepend_ordered_declarator_component(
@@ -201,6 +204,818 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 		DeclaratorComponent::array(3),
 	});
 	CHECK_FALSE(buildConversionPlan(lvalue_argument, mismatched).is_valid);
+}
+
+TEST_CASE("Canonical TypeIds plan prvalue materialization for const references") {
+	FrontendContext frontend;
+	TypeSpecifierNode prvalue(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode const_lvalue_reference(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	const_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+
+	const std::optional<ConversionPlan> canonical_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, const_lvalue_reference);
+	REQUIRE(canonical_plan.has_value());
+	CHECK(canonical_plan->is_valid);
+	CHECK(canonical_plan->rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode nonconst_lvalue_reference(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	nonconst_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> rejected_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, nonconst_lvalue_reference);
+	REQUIRE(rejected_plan.has_value());
+	CHECK_FALSE(rejected_plan->is_valid);
+
+	TypeSpecifierNode double_prvalue(
+		TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	TypeSpecifierNode const_double_lvalue_reference(
+		TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::Const);
+	const_double_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> converting_prvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, const_double_lvalue_reference);
+	REQUIRE(converting_prvalue_plan.has_value());
+	CHECK(converting_prvalue_plan->is_valid);
+	CHECK(converting_prvalue_plan->rank == ConversionRank::Conversion);
+	CHECK(converting_prvalue_plan->kind ==
+		StandardConversionKind::FloatingIntegralConversion);
+	TypeSpecifierNode nonconst_double_lvalue_reference = double_prvalue;
+	nonconst_double_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> nonconst_conversion_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			prvalue, nonconst_double_lvalue_reference);
+	REQUIRE(nonconst_conversion_plan.has_value());
+	CHECK_FALSE(nonconst_conversion_plan->is_valid);
+
+	TypeSpecifierNode lvalue = prvalue;
+	lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> converting_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(lvalue, const_double_lvalue_reference);
+	REQUIRE(converting_lvalue_plan.has_value());
+	CHECK(converting_lvalue_plan->is_valid);
+	CHECK(converting_lvalue_plan->rank == ConversionRank::Conversion);
+
+	TypeSpecifierNode double_rvalue_reference = double_prvalue;
+	double_rvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::RValueReference);
+	const std::optional<ConversionPlan> converting_rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(prvalue, double_rvalue_reference);
+	REQUIRE(converting_rvalue_reference_plan.has_value());
+	CHECK(converting_rvalue_reference_plan->is_valid);
+	CHECK(converting_rvalue_reference_plan->rank == ConversionRank::Conversion);
+	const std::optional<ConversionPlan> lvalue_to_rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(lvalue, double_rvalue_reference);
+	REQUIRE(lvalue_to_rvalue_reference_plan.has_value());
+	CHECK(lvalue_to_rvalue_reference_plan->is_valid);
+	CHECK(lvalue_to_rvalue_reference_plan->rank == ConversionRank::Conversion);
+	CHECK(lvalue_to_rvalue_reference_plan->kind ==
+		StandardConversionKind::FloatingIntegralConversion);
+}
+
+TEST_CASE("Canonical TypeIds bind array references without decay") {
+	FrontendContext frontend;
+	TypeSpecifierNode array_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	array_type.set_ordered_declarator({DeclaratorComponent::array(3)});
+	TypeSpecifierNode array_lvalue = array_type;
+	array_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	TypeSpecifierNode array_reference = array_type;
+	array_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+
+	const std::optional<ConversionPlan> exact_array_plan =
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, array_reference);
+	REQUIRE(exact_array_plan.has_value());
+	CHECK(exact_array_plan->is_valid);
+	CHECK(exact_array_plan->rank == ConversionRank::ExactMatch);
+	CHECK(exact_array_plan->kind == StandardConversionKind::None);
+
+	TypeSpecifierNode const_array_type = array_type;
+	const_array_type.set_cv_qualifier(CVQualifier::Const);
+	TypeSpecifierNode const_array_reference = const_array_type;
+	const_array_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> qualified_array_plan =
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, const_array_reference);
+	REQUIRE(qualified_array_plan.has_value());
+	CHECK(qualified_array_plan->is_valid);
+	// The referenced array differs only by top-level element cv-qualification,
+	// so direct binding is the identity conversion ([over.ics.ref]/1); the
+	// mutable-vs-const preference is applied by [over.ics.rank]/3.2.6.
+	CHECK(qualified_array_plan->rank == ConversionRank::ExactMatch);
+	CHECK(qualified_array_plan->kind == StandardConversionKind::None);
+	const std::optional<ConversionPlan> const_array_xvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(array_type, const_array_reference);
+	REQUIRE(const_array_xvalue_plan.has_value());
+	CHECK(const_array_xvalue_plan->is_valid);
+	CHECK(const_array_xvalue_plan->rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode pointer_array_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_array_type.set_ordered_declarator({
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	TypeSpecifierNode pointer_array_lvalue = pointer_array_type;
+	pointer_array_lvalue.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_pointee_array_type = pointer_array_type;
+	const_pointee_array_type.set_cv_qualifier(CVQualifier::Const);
+	const_pointee_array_type.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> const_pointee_array_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			pointer_array_lvalue, const_pointee_array_type);
+	REQUIRE(const_pointee_array_plan.has_value());
+	CHECK(const_pointee_array_plan->is_valid);
+	CHECK(const_pointee_array_plan->rank ==
+		ConversionRank::QualificationAdjustment);
+
+	TypeSpecifierNode pointer_to_pointer_array_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	pointer_to_pointer_array_type.set_ordered_declarator({
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	TypeSpecifierNode pointer_to_pointer_array_lvalue =
+		pointer_to_pointer_array_type;
+	pointer_to_pointer_array_lvalue.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_nested_pointee_array_type =
+		pointer_to_pointer_array_type;
+	const_nested_pointee_array_type.set_cv_qualifier(CVQualifier::Const);
+	const_nested_pointee_array_type.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> const_nested_pointee_array_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			pointer_to_pointer_array_lvalue,
+			const_nested_pointee_array_type);
+	REQUIRE(const_nested_pointee_array_plan.has_value());
+	CHECK_FALSE(const_nested_pointee_array_plan->is_valid);
+
+	TypeSpecifierNode different_extent = array_type;
+	different_extent.set_ordered_declarator({DeclaratorComponent::array(4)});
+	different_extent.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> extent_mismatch_plan =
+		tryBuildCanonicalReferenceBindingPlan(array_lvalue, different_extent);
+	REQUIRE(extent_mismatch_plan.has_value());
+	CHECK_FALSE(extent_mismatch_plan->is_valid);
+}
+
+TEST_CASE("Canonical TypeIds bind function decay temporaries to pointer references") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	signature.setParameterTypes(std::move(parameters));
+	FunctionSignature mismatched_signature;
+	TypeSpecifierNode char_type(
+		TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	mismatched_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> mismatched_parameters;
+	mismatched_parameters.push_back(makeFunctionTypeFromSpecifier(char_type));
+	mismatched_signature.setParameterTypes(std::move(mismatched_parameters));
+
+	TypeSpecifierNode function_object(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	function_object.set_ordered_declarator({DeclaratorComponent::function()});
+	function_object.set_function_signature(signature);
+	TypeSpecifierNode function_lvalue = function_object;
+	function_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+
+	TypeSpecifierNode const_pointer_lvalue_reference = function_object;
+	const_pointer_lvalue_reference.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::function(),
+	});
+	const_pointer_lvalue_reference.set_function_signature(signature);
+	const_pointer_lvalue_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> const_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			function_lvalue, const_pointer_lvalue_reference);
+	REQUIRE(const_lvalue_plan.has_value());
+	CHECK(const_lvalue_plan->is_valid);
+	CHECK(const_lvalue_plan->kind == StandardConversionKind::FunctionToPointer);
+
+	TypeSpecifierNode nonconst_pointer_lvalue_reference = function_object;
+	nonconst_pointer_lvalue_reference.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::function(),
+	});
+	nonconst_pointer_lvalue_reference.set_function_signature(signature);
+	nonconst_pointer_lvalue_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> nonconst_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			function_lvalue, nonconst_pointer_lvalue_reference);
+	REQUIRE(nonconst_lvalue_plan.has_value());
+	CHECK_FALSE(nonconst_lvalue_plan->is_valid);
+
+	TypeSpecifierNode pointer_rvalue_reference = nonconst_pointer_lvalue_reference;
+	pointer_rvalue_reference.set_ordered_declarator({
+		DeclaratorComponent::rvalueReference(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::function(),
+	});
+	pointer_rvalue_reference.set_function_signature(signature);
+	const std::optional<ConversionPlan> rvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			function_lvalue, pointer_rvalue_reference);
+	REQUIRE(rvalue_plan.has_value());
+	CHECK(rvalue_plan->is_valid);
+	CHECK(rvalue_plan->kind == StandardConversionKind::FunctionToPointer);
+
+	TypeSpecifierNode mismatched_pointer_reference =
+		const_pointer_lvalue_reference;
+	mismatched_pointer_reference.set_function_signature(mismatched_signature);
+	const std::optional<ConversionPlan> mismatched_signature_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			function_lvalue, mismatched_pointer_reference);
+	REQUIRE(mismatched_signature_plan.has_value());
+	CHECK_FALSE(mismatched_signature_plan->is_valid);
+}
+
+TEST_CASE("Canonical TypeIds bind pointer conversion temporaries to references") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_entity{828};
+	const EntityId derived_entity{829};
+	const std::array<CanonicalRecordBase, 1> derived_bases{
+		CanonicalRecordBase{
+			base_entity, 0, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None, 0, 0}};
+	auto publish_record = [&table](EntityId entity,
+		std::span<const CanonicalRecordBase> bases) {
+		table.publishRecordLayout(CanonicalRecordLayout{
+			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
+			CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(entity,
+			std::span<const CanonicalRecordMember>{}, bases);
+	};
+	publish_record(base_entity, {});
+	publish_record(derived_entity, derived_bases);
+
+	TypeSpecifierNode derived_pointer(
+		TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	derived_pointer.set_type_entity(derived_entity);
+	derived_pointer.add_pointer_level(CVQualifier::None);
+	TypeSpecifierNode derived_pointer_lvalue = derived_pointer;
+	derived_pointer_lvalue.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+
+	TypeSpecifierNode const_base_pointer(
+		TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::Const);
+	const_base_pointer.set_type_entity(base_entity);
+	const_base_pointer.add_pointer_level(CVQualifier::Const);
+	const_base_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> derived_to_base_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			derived_pointer_lvalue, const_base_pointer);
+	REQUIRE(derived_to_base_plan.has_value());
+	CHECK(derived_to_base_plan->is_valid);
+	CHECK(derived_to_base_plan->rank == ConversionRank::Conversion);
+	CHECK(derived_to_base_plan->kind == StandardConversionKind::DerivedToBase);
+
+	TypeSpecifierNode const_void_pointer(
+		TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::Const);
+	const_void_pointer.add_pointer_level(CVQualifier::Const);
+	const_void_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> object_to_void_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			derived_pointer_lvalue, const_void_pointer);
+	REQUIRE(object_to_void_plan.has_value());
+	CHECK(object_to_void_plan->is_valid);
+	CHECK(object_to_void_plan->rank == ConversionRank::Conversion);
+	CHECK(object_to_void_plan->kind == StandardConversionKind::PointerConversion);
+
+	TypeSpecifierNode mutable_base_pointer(
+		TypeCategory::Struct, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+	mutable_base_pointer.set_type_entity(base_entity);
+	mutable_base_pointer.add_pointer_level(CVQualifier::None);
+	mutable_base_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> nonconst_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			derived_pointer_lvalue, mutable_base_pointer);
+	REQUIRE(nonconst_lvalue_plan.has_value());
+	CHECK_FALSE(nonconst_lvalue_plan->is_valid);
+
+	TypeSpecifierNode base_pointer_rvalue_reference = mutable_base_pointer;
+	base_pointer_rvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::RValueReference);
+	const std::optional<ConversionPlan> rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			derived_pointer_lvalue, base_pointer_rvalue_reference);
+	REQUIRE(rvalue_reference_plan.has_value());
+	CHECK(rvalue_reference_plan->is_valid);
+	CHECK(rvalue_reference_plan->rank == ConversionRank::Conversion);
+	CHECK(rvalue_reference_plan->kind == StandardConversionKind::DerivedToBase);
+}
+
+TEST_CASE("Canonical TypeIds reject pointee qualification through mutable references") {
+	FrontendContext frontend;
+	TypeSpecifierNode integer_pointer(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	integer_pointer.add_pointer_level(CVQualifier::None);
+	TypeSpecifierNode integer_pointer_lvalue = integer_pointer;
+	integer_pointer_lvalue.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+
+	TypeSpecifierNode const_pointee_reference(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	const_pointee_reference.add_pointer_level(CVQualifier::None);
+	const_pointee_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> mutable_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			integer_pointer_lvalue, const_pointee_reference);
+	REQUIRE(mutable_reference_plan.has_value());
+	CHECK_FALSE(mutable_reference_plan->is_valid);
+
+	TypeSpecifierNode const_pointer_reference(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::Const);
+	const_pointer_reference.add_pointer_level(CVQualifier::Const);
+	const_pointer_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> const_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			integer_pointer_lvalue, const_pointer_reference);
+	REQUIRE(const_reference_plan.has_value());
+	CHECK(const_reference_plan->is_valid);
+	CHECK(const_reference_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+}
+
+TEST_CASE("Canonical TypeIds compare projectable function pointer pairs") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode char_type(
+		TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	FunctionSignature throwing_signature;
+	throwing_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	throwing_signature.setParameterTypes(std::move(parameters));
+	FunctionSignature noexcept_signature = throwing_signature;
+	noexcept_signature.is_noexcept = true;
+	FunctionSignature mismatched_signature;
+	mismatched_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> mismatched_parameters;
+	mismatched_parameters.push_back(makeFunctionTypeFromSpecifier(char_type));
+	mismatched_signature.setParameterTypes(std::move(mismatched_parameters));
+
+	TypeSpecifierNode noexcept_pointer(
+		TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	noexcept_pointer.set_function_signature(noexcept_signature);
+	TypeSpecifierNode throwing_pointer(
+		TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	throwing_pointer.set_function_signature(throwing_signature);
+	const std::optional<ConversionPlan> exact_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_pointer, noexcept_pointer);
+	REQUIRE(exact_plan.has_value());
+	CHECK(exact_plan->is_valid);
+	CHECK(exact_plan->rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode noexcept_lvalue = noexcept_pointer;
+	noexcept_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> noexcept_relaxation_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_lvalue, throwing_pointer);
+	REQUIRE(noexcept_relaxation_plan.has_value());
+	CHECK(noexcept_relaxation_plan->is_valid);
+	CHECK(noexcept_relaxation_plan->rank ==
+		ConversionRank::QualificationAdjustment);
+	CHECK(noexcept_relaxation_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+
+	TypeSpecifierNode throwing_lvalue = throwing_pointer;
+	throwing_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> rejected_noexcept_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			throwing_lvalue, noexcept_pointer);
+	REQUIRE(rejected_noexcept_plan.has_value());
+	CHECK_FALSE(rejected_noexcept_plan->is_valid);
+
+	TypeSpecifierNode const_throwing_lvalue = throwing_lvalue;
+	const_throwing_lvalue.set_cv_qualifier(CVQualifier::Const);
+	const std::optional<ConversionPlan> top_level_cv_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			const_throwing_lvalue, throwing_pointer);
+	REQUIRE(top_level_cv_plan.has_value());
+	CHECK(top_level_cv_plan->is_valid);
+	CHECK(top_level_cv_plan->rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode mismatched_pointer(
+		TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+	mismatched_pointer.set_function_signature(mismatched_signature);
+	const std::optional<ConversionPlan> mismatched_signature_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_pointer, mismatched_pointer);
+	REQUIRE(mismatched_signature_plan.has_value());
+	CHECK_FALSE(mismatched_signature_plan->is_valid);
+}
+
+TEST_CASE("Canonical TypeIds bind function pointer conversions to references") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	FunctionSignature throwing_signature;
+	throwing_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	throwing_signature.setParameterTypes(std::move(parameters));
+	FunctionSignature noexcept_signature = throwing_signature;
+	noexcept_signature.is_noexcept = true;
+	auto make_function_pointer = [](const FunctionSignature& signature) {
+		TypeSpecifierNode type(TypeCategory::FunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_function_signature(signature);
+		return type;
+	};
+	TypeSpecifierNode noexcept_pointer =
+		make_function_pointer(noexcept_signature);
+	noexcept_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_throwing_reference =
+		make_function_pointer(throwing_signature);
+	const_throwing_reference.set_cv_qualifier(CVQualifier::Const);
+	const_throwing_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> relaxation_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			noexcept_pointer, const_throwing_reference);
+	REQUIRE(relaxation_plan.has_value());
+	CHECK(relaxation_plan->is_valid);
+	CHECK(relaxation_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+
+	TypeSpecifierNode nonconst_throwing_reference =
+		make_function_pointer(throwing_signature);
+	nonconst_throwing_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> nonconst_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			noexcept_pointer, nonconst_throwing_reference);
+	REQUIRE(nonconst_reference_plan.has_value());
+	CHECK_FALSE(nonconst_reference_plan->is_valid);
+
+	TypeSpecifierNode noexcept_reference =
+		make_function_pointer(noexcept_signature);
+	noexcept_reference.set_cv_qualifier(CVQualifier::Const);
+	noexcept_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> reverse_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			make_function_pointer(throwing_signature), noexcept_reference);
+	REQUIRE(reverse_plan.has_value());
+	CHECK_FALSE(reverse_plan->is_valid);
+
+	TypeSpecifierNode throwing_rvalue_reference =
+		make_function_pointer(throwing_signature);
+	throwing_rvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::RValueReference);
+	const std::optional<ConversionPlan> rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			noexcept_pointer, throwing_rvalue_reference);
+	REQUIRE(rvalue_reference_plan.has_value());
+	CHECK(rvalue_reference_plan->is_valid);
+	CHECK(rvalue_reference_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+}
+
+TEST_CASE("Canonical TypeIds compare same-owner member function pointer pairs") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode char_type(
+		TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	FunctionSignature throwing_signature;
+	throwing_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	throwing_signature.setParameterTypes(std::move(parameters));
+	FunctionSignature noexcept_signature = throwing_signature;
+	noexcept_signature.is_noexcept = true;
+	FunctionSignature mismatched_signature;
+	mismatched_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> mismatched_parameters;
+	mismatched_parameters.push_back(makeFunctionTypeFromSpecifier(char_type));
+	mismatched_signature.setParameterTypes(std::move(mismatched_parameters));
+	auto make_member_function_pointer = [](EntityId owner,
+		const FunctionSignature& signature) {
+		TypeSpecifierNode type(
+			TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	const EntityId owner{805};
+	TypeSpecifierNode noexcept_pointer =
+		make_member_function_pointer(owner, noexcept_signature);
+	TypeSpecifierNode throwing_pointer =
+		make_member_function_pointer(owner, throwing_signature);
+	const std::optional<ConversionPlan> exact_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_pointer, noexcept_pointer);
+	REQUIRE(exact_plan.has_value());
+	CHECK(exact_plan->is_valid);
+	CHECK(exact_plan->rank == ConversionRank::ExactMatch);
+
+	TypeSpecifierNode noexcept_lvalue = noexcept_pointer;
+	noexcept_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> relaxation_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_lvalue, throwing_pointer);
+	REQUIRE(relaxation_plan.has_value());
+	CHECK(relaxation_plan->is_valid);
+	CHECK(relaxation_plan->rank == ConversionRank::QualificationAdjustment);
+	CHECK(relaxation_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+
+	TypeSpecifierNode throwing_lvalue = throwing_pointer;
+	throwing_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> rejected_relaxation_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			throwing_lvalue, noexcept_pointer);
+	REQUIRE(rejected_relaxation_plan.has_value());
+	CHECK_FALSE(rejected_relaxation_plan->is_valid);
+
+	TypeSpecifierNode mismatched_pointer =
+		make_member_function_pointer(owner, mismatched_signature);
+	const std::optional<ConversionPlan> mismatched_signature_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			noexcept_pointer, mismatched_pointer);
+	REQUIRE(mismatched_signature_plan.has_value());
+	CHECK_FALSE(mismatched_signature_plan->is_valid);
+
+	TypeSpecifierNode const_noexcept_lvalue = noexcept_lvalue;
+	const_noexcept_lvalue.set_cv_qualifier(CVQualifier::Const);
+	const std::optional<ConversionPlan> top_level_cv_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			const_noexcept_lvalue, noexcept_pointer);
+	REQUIRE(top_level_cv_plan.has_value());
+	CHECK(top_level_cv_plan->is_valid);
+	CHECK(top_level_cv_plan->rank == ConversionRank::ExactMatch);
+}
+
+TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_owner{820};
+	const EntityId derived_owner{821};
+	const EntityId private_derived_owner{822};
+	const EntityId virtual_derived_owner{823};
+	const EntityId left_owner{824};
+	const EntityId right_owner{825};
+	const EntityId ambiguous_derived_owner{826};
+	const EntityId unrelated_owner{827};
+
+	auto publish_record = [&table](EntityId entity,
+		std::span<const CanonicalRecordBase> bases) {
+		table.publishRecordLayout(CanonicalRecordLayout{
+			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
+			CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(entity,
+			std::span<const CanonicalRecordMember>{}, bases);
+	};
+	auto public_base = [](EntityId entity, CanonicalRecordBaseFlags flags) {
+		return CanonicalRecordBase{
+			entity, 0, CanonicalAccess::Public, flags, 0, 0};
+	};
+	const std::array<CanonicalRecordBase, 1> base_link{
+		public_base(base_owner, CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalRecordBase, 1> private_base_link{
+		CanonicalRecordBase{
+			base_owner, 0, CanonicalAccess::Private,
+			CanonicalRecordBaseFlags::None, 0, 0}};
+	const std::array<CanonicalRecordBase, 1> virtual_base_link{
+		public_base(base_owner, CanonicalRecordBaseFlags::Virtual)};
+	const std::array<CanonicalRecordBase, 2> ambiguous_base_links{
+		public_base(left_owner, CanonicalRecordBaseFlags::None),
+		public_base(right_owner, CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalRecordBase, 1> left_base_link{
+		public_base(base_owner, CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalRecordBase, 1> right_base_link{
+		public_base(base_owner, CanonicalRecordBaseFlags::None)};
+	publish_record(base_owner, {});
+	publish_record(derived_owner, base_link);
+	publish_record(private_derived_owner, private_base_link);
+	publish_record(virtual_derived_owner, virtual_base_link);
+	publish_record(left_owner, left_base_link);
+	publish_record(right_owner, right_base_link);
+	publish_record(ambiguous_derived_owner, ambiguous_base_links);
+	publish_record(unrelated_owner, {});
+
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	TypeSpecifierNode char_type(
+		TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	FunctionSignature throwing_signature;
+	throwing_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	throwing_signature.setParameterTypes(std::move(parameters));
+	FunctionSignature noexcept_signature = throwing_signature;
+	noexcept_signature.is_noexcept = true;
+	FunctionSignature mismatched_signature;
+	mismatched_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> mismatched_parameters;
+	mismatched_parameters.push_back(makeFunctionTypeFromSpecifier(char_type));
+	mismatched_signature.setParameterTypes(std::move(mismatched_parameters));
+	auto make_member_function_pointer = [](EntityId owner,
+		const FunctionSignature& signature) {
+		TypeSpecifierNode type(
+			TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	const TypeSpecifierNode base_pointer =
+		make_member_function_pointer(base_owner, throwing_signature);
+	const TypeSpecifierNode derived_pointer =
+		make_member_function_pointer(derived_owner, throwing_signature);
+	const std::optional<ConversionPlan> base_to_derived_plan =
+		tryBuildCanonicalProjectableConversionPlan(base_pointer, derived_pointer);
+	REQUIRE(base_to_derived_plan.has_value());
+	CHECK(base_to_derived_plan->is_valid);
+	CHECK(base_to_derived_plan->rank == ConversionRank::Conversion);
+	CHECK(base_to_derived_plan->kind == StandardConversionKind::PointerConversion);
+
+	const TypeSpecifierNode derived_noexcept_pointer =
+		make_member_function_pointer(derived_owner, noexcept_signature);
+	const std::optional<ConversionPlan> noexcept_relaxation_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			make_member_function_pointer(base_owner, noexcept_signature),
+			derived_pointer);
+	REQUIRE(noexcept_relaxation_plan.has_value());
+	CHECK(noexcept_relaxation_plan->is_valid);
+	CHECK(noexcept_relaxation_plan->rank == ConversionRank::Conversion);
+	const std::optional<ConversionPlan> rejected_noexcept_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			base_pointer, derived_noexcept_pointer);
+	REQUIRE(rejected_noexcept_plan.has_value());
+	CHECK_FALSE(rejected_noexcept_plan->is_valid);
+	const std::optional<ConversionPlan> rejected_signature_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			base_pointer,
+			make_member_function_pointer(derived_owner, mismatched_signature));
+	REQUIRE(rejected_signature_plan.has_value());
+	CHECK_FALSE(rejected_signature_plan->is_valid);
+
+	const TypeSpecifierNode private_derived_pointer =
+		make_member_function_pointer(private_derived_owner, throwing_signature);
+	const TypeSpecifierNode virtual_derived_pointer =
+		make_member_function_pointer(virtual_derived_owner, throwing_signature);
+	const TypeSpecifierNode ambiguous_derived_pointer =
+		make_member_function_pointer(ambiguous_derived_owner, throwing_signature);
+	const TypeSpecifierNode unrelated_pointer =
+		make_member_function_pointer(unrelated_owner, throwing_signature);
+	const std::array<const TypeSpecifierNode*, 4> rejected_targets{
+		&private_derived_pointer,
+		&virtual_derived_pointer,
+		&ambiguous_derived_pointer,
+		&unrelated_pointer,
+	};
+	for (const TypeSpecifierNode* target : rejected_targets) {
+		const std::optional<ConversionPlan> rejected_plan =
+			tryBuildCanonicalProjectableConversionPlan(base_pointer, *target);
+		REQUIRE(rejected_plan.has_value());
+		CHECK_FALSE(rejected_plan->is_valid);
+	}
+	const std::optional<ConversionPlan> rejected_reverse_plan =
+		tryBuildCanonicalProjectableConversionPlan(derived_pointer, base_pointer);
+	REQUIRE(rejected_reverse_plan.has_value());
+	CHECK_FALSE(rejected_reverse_plan->is_valid);
+}
+
+TEST_CASE("Canonical TypeIds compare member object pointer pairs") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId owner = table.record(EntityId{806});
+	const TypeId other_owner = table.record(EntityId{807});
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TypeId const_integer = table.qualify(integer, CVQualifier::Const);
+	const TypeId integer_member = table.memberObjectPointer(owner, integer);
+	const TypeId const_integer_member =
+		table.memberObjectPointer(owner, const_integer);
+	const TypeId other_owner_member =
+		table.memberObjectPointer(other_owner, integer);
+
+	const ConversionPlan exact_plan = buildCanonicalStructuralConversionPlan(
+		table, integer_member, integer_member);
+	CHECK(exact_plan.is_valid);
+	CHECK(exact_plan.rank == ConversionRank::ExactMatch);
+
+	const ConversionPlan qualification_plan =
+		buildCanonicalStructuralConversionPlan(
+			table, integer_member, const_integer_member);
+	CHECK(qualification_plan.is_valid);
+	CHECK(qualification_plan.rank == ConversionRank::QualificationAdjustment);
+
+	const ConversionPlan rejected_qualification_plan =
+		buildCanonicalStructuralConversionPlan(
+			table, const_integer_member, integer_member);
+	CHECK_FALSE(rejected_qualification_plan.is_valid);
+
+	const ConversionPlan rejected_owner_plan =
+		buildCanonicalStructuralConversionPlan(
+			table, integer_member, other_owner_member);
+	CHECK_FALSE(rejected_owner_plan.is_valid);
+}
+
+TEST_CASE("Canonical TypeIds bind member-pointer conversion temporaries to references") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_owner{830};
+	const EntityId derived_owner{831};
+	const std::array<CanonicalRecordBase, 1> derived_bases{
+		CanonicalRecordBase{
+			base_owner, 0, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None, 0, 0}};
+	auto publish_record = [&table](EntityId entity,
+		std::span<const CanonicalRecordBase> bases) {
+		table.publishRecordLayout(CanonicalRecordLayout{
+			entity, 1, 1, 1, 1, 0, static_cast<uint16_t>(bases.size()),
+			CanonicalRecordLayoutFlags::None, 0});
+		table.publishRecordFieldSchema(entity,
+			std::span<const CanonicalRecordMember>{}, bases);
+	};
+	publish_record(base_owner, {});
+	publish_record(derived_owner, derived_bases);
+
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	auto make_member_object_pointer = [&int_type](EntityId owner) {
+		TypeSpecifierNode type(TypeCategory::MemberObjectPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_member_object_pointee(&int_type);
+		return type;
+	};
+	TypeSpecifierNode base_member_pointer =
+		make_member_object_pointer(base_owner);
+	base_member_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_derived_member_reference =
+		make_member_object_pointer(derived_owner);
+	const_derived_member_reference.set_cv_qualifier(CVQualifier::Const);
+	const_derived_member_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> member_object_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			base_member_pointer, const_derived_member_reference);
+	REQUIRE(member_object_plan.has_value());
+	CHECK(member_object_plan->is_valid);
+	CHECK(member_object_plan->rank == ConversionRank::Conversion);
+	CHECK(member_object_plan->kind == StandardConversionKind::PointerConversion);
+
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	signature.setParameterTypes(std::move(parameters));
+	auto make_member_function_pointer = [&signature](EntityId owner) {
+		TypeSpecifierNode type(TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	TypeSpecifierNode base_member_function_pointer =
+		make_member_function_pointer(base_owner);
+	base_member_function_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_derived_member_function_reference =
+		make_member_function_pointer(derived_owner);
+	const_derived_member_function_reference.set_cv_qualifier(
+		CVQualifier::Const);
+	const_derived_member_function_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> member_function_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			base_member_function_pointer,
+			const_derived_member_function_reference);
+	REQUIRE(member_function_plan.has_value());
+	CHECK(member_function_plan->is_valid);
+	CHECK(member_function_plan->rank == ConversionRank::Conversion);
+	CHECK(member_function_plan->kind == StandardConversionKind::PointerConversion);
 }
 
 TEST_CASE("Ordered function objects decay to pointers") {
