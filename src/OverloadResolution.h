@@ -2026,8 +2026,16 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 				stripCanonicalTopCv(table, table.node(source_member).child).first;
 			const TypeId target_function =
 				stripCanonicalTopCv(table, table.node(target_member).child).first;
-			if (table.functionDependentNoexcept(source_function) ||
-				table.functionDependentNoexcept(target_function)) {
+			const ExprId source_dependent_noexcept =
+				table.functionDependentNoexcept(source_function);
+			const ExprId target_dependent_noexcept =
+				table.functionDependentNoexcept(target_function);
+			// An identical dependent exception expression is part of the
+			// canonical function identity and can be compared structurally.
+			// Different or one-sided expressions still need substitution before
+			// overload ranking can decide their relationship.
+			if ((source_dependent_noexcept || target_dependent_noexcept) &&
+				source_dependent_noexcept != target_dependent_noexcept) {
 				return std::nullopt;
 			}
 			const TypeId source_owner = table.memberPointerOwner(source_member);

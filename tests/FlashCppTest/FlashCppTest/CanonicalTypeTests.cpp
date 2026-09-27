@@ -774,6 +774,59 @@ TEST_CASE("Canonical TypeIds compare same-owner member function pointer pairs") 
 	CHECK(top_level_cv_plan->rank == ConversionRank::ExactMatch);
 }
 
+TEST_CASE("Canonical TypeIds preserve dependent noexcept member pointer identity") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	FunctionSignature throwing_signature;
+	throwing_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	Token dependent_expression_token(
+		Token::Type::Identifier, std::string_view("IsNoexcept"), 0, 0, 0);
+	const ASTNode dependent_expression = ASTNode::emplace_node<ExpressionNode>(
+		IdentifierNode(dependent_expression_token));
+	const ExprId dependent_noexcept =
+		frontend.dependentExpressions().intern(dependent_expression);
+	FunctionSignature dependent_signature = throwing_signature;
+	dependent_signature.dependent_noexcept = dependent_noexcept;
+	auto make_member_function_pointer = [](EntityId owner,
+		const FunctionSignature& signature) {
+		TypeSpecifierNode type(
+			TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_entity(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	const EntityId owner{828};
+	const TypeSpecifierNode dependent_pointer =
+		make_member_function_pointer(owner, dependent_signature);
+	const std::optional<ConversionPlan> identical_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			dependent_pointer, dependent_pointer);
+	REQUIRE(identical_plan.has_value());
+	CHECK(identical_plan->is_valid);
+	CHECK(identical_plan->rank == ConversionRank::ExactMatch);
+
+	Token other_expression_token(
+		Token::Type::Identifier, std::string_view("CanThrow"), 0, 0, 0);
+	const ASTNode other_expression = ASTNode::emplace_node<ExpressionNode>(
+		IdentifierNode(other_expression_token));
+	FunctionSignature other_dependent_signature = dependent_signature;
+	other_dependent_signature.dependent_noexcept =
+		frontend.dependentExpressions().intern(other_expression);
+	const std::optional<ConversionPlan> distinct_expression_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			dependent_pointer,
+			make_member_function_pointer(owner, other_dependent_signature));
+	CHECK_FALSE(distinct_expression_plan.has_value());
+
+	const std::optional<ConversionPlan> unresolved_relaxation_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			dependent_pointer,
+			make_member_function_pointer(owner, throwing_signature));
+	CHECK_FALSE(unresolved_relaxation_plan.has_value());
+}
+
 TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
