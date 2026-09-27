@@ -3504,6 +3504,9 @@ inline SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShe
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 		new_func_decl_ref,
 		parent_struct_name);
+	if (instantiated_owner_type_index.is_valid()) {
+		new_func_ref.set_access_owner_type_index(instantiated_owner_type_index);
+	}
 	if (original_func.has_outer_template_bindings()) {
 		TemplateParameterVector combined_params;
 		TemplateArgumentVector combined_args;

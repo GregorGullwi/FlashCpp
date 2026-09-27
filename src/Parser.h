@@ -1935,10 +1935,12 @@ private:
 		StringHandle selected_name;
 		StringHandle selected_template_name;
 		const StructDeclarationNode* selected_declaration = nullptr;
+		TypeIndex selected_type_index{};
+		bool has_dependent_owner_arguments = false;
+		bool has_owner_template_arguments = false;
 		TemplateArgumentVector template_arguments;
 	};
 	ParseResult parseFriendClassSpec(FriendClassSpec& out);
-	void registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info);	// Helper: register friend in StructTypeInfo (all kinds)
 	// C++20 [temp.friend]/1 / [temp.inst]: materialize hidden friend function
 	// definitions for a class-template specialization from the pattern friends.
 	void materializeHiddenFriendsForClassTemplateInstantiation(

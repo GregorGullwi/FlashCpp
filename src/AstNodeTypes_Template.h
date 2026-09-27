@@ -1186,6 +1186,18 @@ public:
 	StringHandle class_template_name() const {
 		return class_template_name_;
 	}
+	void set_class_type_index(TypeIndex type_index) {
+		class_type_index_ = type_index;
+	}
+	TypeIndex class_type_index() const {
+		return class_type_index_;
+	}
+	void set_class_template_decl_id(TemplateDeclId template_decl_id) {
+		class_template_decl_id_ = template_decl_id;
+	}
+	TemplateDeclId class_template_decl_id() const {
+		return class_template_decl_id_;
+	}
 
 	// For friend functions, store the function declaration
 	void set_function_declaration(ASTNode decl) { function_decl_ = decl; }
@@ -1198,6 +1210,8 @@ private:
 	const StructDeclarationNode* class_declaration_ = nullptr;
 	TemplateArgumentVector class_template_arguments_;
 	StringHandle class_template_name_{};
+	TypeIndex class_type_index_{};
+	TemplateDeclId class_template_decl_id_{};
 	std::optional<ASTNode> function_decl_;  // For friend functions
 };
 

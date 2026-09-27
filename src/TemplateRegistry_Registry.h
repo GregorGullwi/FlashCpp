@@ -385,6 +385,99 @@ public:
 		return nullptr;
 	}
 
+	const StructDeclarationNode* findClassTemplateInstantiationDeclaration(
+		TemplateDeclId family_template_decl_id,
+		std::span<const TemplateTypeArg> template_arguments) const {
+		if (!family_template_decl_id) {
+			return nullptr;
+		}
+		auto structDeclaration =
+			[](const ASTNode& node) -> const StructDeclarationNode* {
+				if (node.is<TemplateClassDeclarationNode>()) {
+					return &node.as<TemplateClassDeclarationNode>()
+							 .class_decl_node();
+				}
+				if (node.is<StructDeclarationNode>()) {
+					return &node.as<StructDeclarationNode>();
+				}
+				return nullptr;
+		};
+		for (const auto& [registered_name, declarations] : templates_) {
+			const bool names_family = std::ranges::any_of(
+				declarations,
+				[&](const ASTNode& declaration) {
+					const StructDeclarationNode* class_declaration =
+						structDeclaration(declaration);
+					return class_declaration != nullptr &&
+						class_declaration->has_template_decl_id() &&
+						class_declaration->template_decl_id() ==
+							family_template_decl_id;
+				});
+			if (!names_family) {
+				continue;
+			}
+			const FlashCpp::TemplateInstantiationKey key =
+				FlashCpp::makeInstantiationKey(
+					registered_name,
+					template_arguments);
+			auto instantiation = instantiations_.find(key);
+			if (instantiation != instantiations_.end()) {
+				return structDeclaration(instantiation->second);
+			}
+		}
+		return nullptr;
+	}
+
+	bool isClassTemplatePatternInFamily(
+		const StructDeclarationNode* pattern_declaration,
+		TemplateDeclId family_template_decl_id) const {
+		if (pattern_declaration == nullptr || !family_template_decl_id) {
+			return false;
+		}
+		auto structDeclaration =
+			[](const ASTNode& node) -> const StructDeclarationNode* {
+				if (node.is<TemplateClassDeclarationNode>()) {
+					return &node.as<TemplateClassDeclarationNode>()
+							 .class_decl_node();
+				}
+				if (node.is<StructDeclarationNode>()) {
+					return &node.as<StructDeclarationNode>();
+				}
+				return nullptr;
+		};
+		for (const auto& [registered_name, declarations] : templates_) {
+			const bool contains_family = std::ranges::any_of(
+				declarations,
+				[&](const ASTNode& declaration) {
+					const StructDeclarationNode* class_declaration =
+						structDeclaration(declaration);
+					return class_declaration != nullptr &&
+						class_declaration->has_template_decl_id() &&
+						class_declaration->template_decl_id() ==
+							family_template_decl_id;
+				});
+			if (!contains_family) {
+				continue;
+			}
+			auto patterns = specialization_patterns_.find(registered_name);
+			if (patterns == specialization_patterns_.end()) {
+				continue;
+			}
+			for (const TemplatePattern& pattern : patterns->second) {
+				if (structDeclaration(pattern.specialized_node) == pattern_declaration) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	bool isClassTemplateSpecializationPattern(
+		const StructDeclarationNode* pattern_declaration) const {
+		return pattern_declaration != nullptr &&
+			class_template_specialization_patterns_.contains(pattern_declaration);
+	}
+
 	TemplateNameLookupResult lookupTemplateName(const TemplateNameLookupRequest& request) const {
 		TemplateNameLookupResult result;
 		result.request = request;
@@ -945,6 +1038,7 @@ public:
 		out_of_line_nested_classes_.clear();
 		specializations_.clear();
 		specialization_patterns_.clear();
+		class_template_specialization_patterns_.clear();
 		alias_templates_.clear();
 		variable_templates_.clear();
 		variable_template_specializations_.clear();
@@ -959,6 +1053,7 @@ public:
 
 	// Public access to specialization patterns for pattern matching in Parser
 	std::unordered_map<StringHandle, std::vector<TemplatePattern>, TransparentStringHash, TransparentStringEqual> specialization_patterns_;
+	std::unordered_set<const StructDeclarationNode*> class_template_specialization_patterns_;
 
 	// Register a pattern struct name (for partial specializations) along with its base template name.
 	// The base_template_name is stored for non-string-based reverse lookup (pattern → base template).
@@ -1098,6 +1193,15 @@ private:
 
 		specialization_patterns_[template_name].push_back(std::move(pattern));
 		const auto& stored_pattern = specialization_patterns_[template_name].back();
+		if (stored_pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
+			class_template_specialization_patterns_.insert(
+				&stored_pattern.specialized_node
+					 .as<TemplateClassDeclarationNode>()
+					 .class_decl_node());
+		} else if (stored_pattern.specialized_node.is<StructDeclarationNode>()) {
+			class_template_specialization_patterns_.insert(
+				&stored_pattern.specialized_node.as<StructDeclarationNode>());
+		}
 		FLASH_LOG(Templates, Trace, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
 		if (stored_pattern.sfinae_condition.has_value()) {
 			StringBuilder member_chain_builder;

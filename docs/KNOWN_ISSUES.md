@@ -70,13 +70,6 @@ diagnostic contract without adding recovery solely to empty the old inventory.
 The per-file recovery map is indexed in
 `tests/unsupported_boundary_2f/README.md`.
 
-## Friend declarations do not enforce private access
-
-Member class-template friend declarations parse and retain distinct owner
-identities, but private access through such a friend is not enforced: the
-compiler reports the private member and still exits successfully. This also
-occurs for a concrete non-template friend form.
-
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
 Boundary 3A is not complete: descriptors use `structural_type_id` for shapes
@@ -174,19 +167,18 @@ member-context equivalent of the definition-lookup metadata replay installs
 (param-name identifiers, TemplateParameterReferenceNode, dependent call
 records) is the right flip signal once those are fixed.
 
-## Access control is still evaluated during IR generation, not sema
+## Some access-control cases are still evaluated during IR generation
 
-Member access control (`checkMemberAccess`, `checkMemberFunctionAccess`,
-`isSameClassOrInstantiation` in `src/IrGenerator_MemberAccess.cpp`) runs at
-AstToIr/IR-generation time; the parser and `SemanticAnalysis.cpp` perform no
-access checking. Consequences: diagnostics lack real source locations (the
-generic `"Access control violation"` `CompileError`), ill-formed accesses in
-code that is never lowered are not diagnosed, and the accessing class context
-is recovered from the codegen symbol table (`this` symbol) instead of
-authoritative semantic class-scope state. The specialization-identity
-comparison added for cross-specialization private access (canonical
-`TemplateInstantiationKey` equality over stamped TypeInfo metadata) belongs
-to that future sema-side checker. See "Main remaining gaps" entry 7 in
+Semantic analysis now diagnoses private non-static data-member access and
+resolved direct member-function calls when the receiver has a semantic class
+type. These checks use the access token and resolved class/function identities,
+including exact friend class specializations and friend function overloads.
+IR still performs access checks for protected access, pointer-to-member and
+other member forms that sema does not yet resolve, and retains duplicate checks
+for the migrated cases. Those remaining IR-only checks can still miss invalid
+accesses in code that is never lowered and can report the generic
+`"Access control violation"` diagnostic. Move the remaining forms to sema,
+then remove the IR checks. See "Main remaining gaps" entry 7 in
 [SEMANTIC_ANALYSIS_STATUS.md](SEMANTIC_ANALYSIS_STATUS.md) for the migration
 requirements.
 

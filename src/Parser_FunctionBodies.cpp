@@ -84,6 +84,9 @@ CVQualifier Parser::currentMemberFunctionThisCv() const {
 // Both immediate (parse_function_body_with_context) and delayed
 // (parse_delayed_function_body) paths call this so they share identical setup.
 void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index, bool inject_this) {
+	if (current_function_ != nullptr && struct_type_index.is_valid()) {
+		current_function_->set_access_owner_type_index(struct_type_index);
+	}
 	// Push member function context
 	member_function_context_stack_.push_back({
 		struct_name,

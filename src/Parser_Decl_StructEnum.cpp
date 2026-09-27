@@ -1602,7 +1602,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 				if (auto result_node = template_result.node()) {
 					if (result_node->is<FriendDeclarationNode>()) {
-						registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info);
 					}
 				}
 				continue;
@@ -2266,7 +2265,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Add friend declaration to struct
 			if (auto friend_node = friend_result.node()) {
 				struct_ref.add_friend(*friend_node);
-				registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info);
 			}
 
 			continue; // Skip to next member
@@ -5312,6 +5310,10 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 }
 
 ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
+	SaveHandle friend_type_start = save_token_position();
+	auto friend_type_start_cleanup = ScopeGuard([this, friend_type_start]() {
+		discard_saved_token(friend_type_start);
+	});
 	// Parse a possibly qualified class-template-id component-wise so owner
 	// components may carry template arguments (friend struct
 	// Outer<int>::Box<char>). The final component names the friend template and
@@ -5328,6 +5330,8 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 	StringBuilder friend_primary_name_builder;
 	TemplateArgumentVector friend_template_arguments;
 	bool friend_name_is_qualified = false;
+	bool has_dependent_owner_arguments = false;
+	bool has_owner_template_arguments = false;
 	for (;;) {
 		Token component_token = advance();
 		if (!component_token.kind().is_identifier()) {
@@ -5353,6 +5357,15 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 			friend_template_arguments = std::move(component_arguments);
 			break;
 		}
+		has_dependent_owner_arguments = has_dependent_owner_arguments ||
+			std::any_of(
+				component_arguments.begin(),
+				component_arguments.end(),
+				[](const TemplateTypeArg& argument) {
+					return templateArgIsStructurallyDependent(argument);
+				});
+		has_owner_template_arguments =
+			has_owner_template_arguments || !component_arguments.empty();
 		advance(); // consume '::'
 		friend_name_is_qualified = true;
 	}
@@ -5370,9 +5383,9 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 			&friend_template->as<TemplateClassDeclarationNode>()
 				 .class_decl_node();
 	}
-	if (const TypeInfo* selected_friend_type =
-			lookupTypeInCurrentContext(selected_friend_name);
-		selected_friend_type != nullptr) {
+	const TypeInfo* selected_friend_type =
+		lookupTypeInCurrentContext(selected_friend_name);
+	if (selected_friend_type != nullptr) {
 		selected_friend_name = selected_friend_type->name();
 		if (selected_friend_type->getStructInfo() != nullptr) {
 			selected_friend_declaration =
@@ -5413,6 +5426,54 @@ ParseResult Parser::parseFriendClassSpec(FriendClassSpec& out) {
 	out.selected_template_name = selected_friend_template_name;
 	out.selected_declaration = selected_friend_declaration;
 	out.template_arguments = std::move(friend_template_arguments);
+	out.has_dependent_owner_arguments = has_dependent_owner_arguments;
+	out.has_owner_template_arguments = has_owner_template_arguments;
+
+	// Resolve the complete type-id through the regular type parser as well. Its
+	// component-wise member-template path materializes the enclosing class
+	// specialization before resolving the final member specialization. Preserve
+	// that canonical identity so access checking never has to reconstruct it from
+	// the flattened friend spelling above.
+	const bool has_dependent_final_arguments = std::any_of(
+		out.template_arguments.begin(),
+		out.template_arguments.end(),
+		[](const TemplateTypeArg& argument) {
+			return templateArgIsStructurallyDependent(argument);
+		});
+	if (!out.has_dependent_owner_arguments &&
+		!has_dependent_final_arguments &&
+		out.has_owner_template_arguments) {
+		restore_token_position(friend_type_start);
+		ParseResult friend_type_result = parse_type_specifier();
+		if (friend_type_result.is_error()) {
+			return friend_type_result;
+		}
+		if (!friend_type_result.node().has_value() ||
+			!friend_type_result.node()->is<TypeSpecifierNode>()) {
+			throw InternalError("Friend class type-id did not produce a TypeSpecifierNode");
+		}
+		const TypeSpecifierNode& friend_type_specifier =
+			friend_type_result.node()->as<TypeSpecifierNode>();
+		if (friend_type_specifier.type_index().is_valid()) {
+			out.selected_type_index = friend_type_specifier.type_index();
+		}
+	} else if (out.template_arguments.empty() &&
+		selected_friend_type != nullptr &&
+		selected_friend_type->getStructInfo() != nullptr) {
+		out.selected_type_index = selected_friend_type->type_index_;
+	}
+	if (!out.selected_type_index.is_valid() &&
+		!friend_name_is_qualified &&
+		friend_template_arguments.empty() &&
+		selected_friend_type == nullptr) {
+		// [namespace.memdef]/3: an unqualified friend class name with no prior
+		// declaration introduces that class in the innermost enclosing namespace.
+		// Publish its stable type-table identity now so a later class definition
+		// completes this same entity instead of requiring a spelling comparison.
+		out.selected_type_index = add_struct_type(
+			selected_friend_name,
+			gSymbolTable.get_current_namespace_handle()).index;
+	}
 	return ParseResult::success();
 }
 
@@ -5468,6 +5529,12 @@ ParseResult Parser::parse_friend_declaration() {
 			std::move(friend_template_arguments));
 		friend_declaration.set_class_template_name(
 			selected_friend_template_name);
+		friend_declaration.set_class_type_index(friend_spec.selected_type_index);
+		if (selected_friend_declaration != nullptr &&
+			selected_friend_declaration->has_template_decl_id()) {
+			friend_declaration.set_class_template_decl_id(
+				selected_friend_declaration->template_decl_id());
+		}
 		return saved_position.success(friend_node);
 	}
 
@@ -5535,6 +5602,14 @@ ParseResult Parser::parse_friend_declaration() {
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index()))
 			friend_name = type_info->name();
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name);
+		FriendDeclarationNode& friend_declaration =
+			friend_node.as<FriendDeclarationNode>();
+		friend_declaration.set_class_type_index(type_spec.type_index());
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+			type_info != nullptr && type_info->getStructInfo() != nullptr) {
+			friend_declaration.set_class_declaration(
+				type_info->getStructInfo()->declaration_node);
+		}
 		return saved_position.success(friend_node);
 	}
 
@@ -5785,6 +5860,26 @@ ParseResult Parser::parse_friend_declaration() {
 		// Friend member function
 		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::MemberFunction, StringTable::getOrInternStringHandle(function_name), StringTable::getOrInternStringHandle(std::string(last_qualifier)));
 	}
+	if (last_qualifier.empty() && params_parsed_ok &&
+		type_result.node().has_value() &&
+		type_result.node()->is<TypeSpecifierNode>()) {
+		ASTNode return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+			type_result.node()->as<TypeSpecifierNode>());
+		auto [decl_node, decl_ref] = emplace_node_ref<DeclarationNode>(
+			return_type_node,
+			function_name_token);
+		auto [function_node, function_ref] =
+			emplace_node_ref<FunctionDeclarationNode>(decl_ref);
+		function_ref.set_namespace_handle(
+			gSymbolTable.get_current_namespace_handle());
+		for (const ASTNode& parameter : param_list.parameters) {
+			function_ref.add_parameter_node(parameter);
+		}
+		function_ref.set_is_variadic(param_list.is_variadic);
+		function_ref.set_is_hidden_friend(true);
+		friend_node.as<FriendDeclarationNode>().set_function_declaration(
+			function_node);
+	}
 
 	return saved_position.success(friend_node);
 }
@@ -5935,6 +6030,12 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 			friend_node.as<FriendDeclarationNode>();
 		friend_declaration.set_class_declaration(
 			friend_spec.selected_declaration);
+		friend_declaration.set_class_type_index(friend_spec.selected_type_index);
+		if (friend_spec.selected_declaration != nullptr &&
+			friend_spec.selected_declaration->has_template_decl_id()) {
+			friend_declaration.set_class_template_decl_id(
+				friend_spec.selected_declaration->template_decl_id());
+		}
 		friend_declaration.set_class_template_name(
 			friend_spec.selected_template_name);
 		friend_declaration.set_class_template_arguments(
@@ -5946,6 +6047,24 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	// A bare friend class template keeps the all-specializations representation.
 	auto friend_node = emplace_node<FriendDeclarationNode>(
 		FriendKind::TemplateClass, friend_spec.selected_name);
+	FriendDeclarationNode& friend_declaration =
+		friend_node.as<FriendDeclarationNode>();
+	friend_declaration.set_class_declaration(friend_spec.selected_declaration);
+	friend_declaration.set_class_type_index(friend_spec.selected_type_index);
+	TemplateDeclId friend_template_decl_id{};
+	if (friend_spec.selected_declaration != nullptr &&
+		friend_spec.selected_declaration->has_template_decl_id()) {
+		friend_template_decl_id =
+			friend_spec.selected_declaration->template_decl_id();
+	} else if (!friend_spec.has_dependent_owner_arguments) {
+		FrontendContext& front_end = requireFrontendContext();
+		friend_template_decl_id =
+			front_end.templateDecls().publishPrimaryClassTemplate(
+				ownerIdFromNamespaceHandle(
+					gSymbolTable.get_current_namespace_handle()),
+				friend_spec.selected_template_name);
+	}
+	friend_declaration.set_class_template_decl_id(friend_template_decl_id);
 	struct_node.add_friend(friend_node);
 
 	return saved_position.success(friend_node);
@@ -6088,34 +6207,6 @@ void Parser::synthesize_implicit_special_members_for_aggregate(
 	}
 }
 
-// Helper: register a friend declaration in StructTypeInfo, handling all FriendKinds and
-// adding the namespace-qualified form so access checks against fully-qualified names match.
-// Does NOT add the node to the struct's AST friend list (callers that need that call
-// struct_ref.add_friend() separately; parse_template_friend_declaration already calls it).
-void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info) {
-	if (!struct_info)
-		return;
-	if (friend_decl.kind() == FriendKind::Class || friend_decl.kind() == FriendKind::TemplateClass) {
-		StringHandle name = friend_decl.name();
-		if (!name.isValid())
-			return;
-		struct_info->addFriendClass(name);
-		std::string_view sv = StringTable::getStringView(name);
-		if (sv.find("::") == std::string_view::npos) {
-			std::string_view ns_name = gNamespaceRegistry.getQualifiedName(gSymbolTable.get_current_namespace_handle());
-			if (!ns_name.empty()) {
-				struct_info->addFriendClass(StringTable::getOrInternStringHandle(
-					StringBuilder().append(ns_name).append("::").append(sv).commit()));
-			}
-		}
-	} else if (friend_decl.kind() == FriendKind::Function) {
-		if (friend_decl.name().isValid())
-			struct_info->addFriendFunction(friend_decl.name());
-	} else if (friend_decl.kind() == FriendKind::MemberFunction) {
-		struct_info->addFriendMemberFunction(friend_decl.class_name(), friend_decl.name());
-	}
-}
-
 void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 	const StructDeclarationNode& pattern_struct,
 	StructDeclarationNode& instantiated_struct,
@@ -6193,24 +6284,48 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 				materialized_friend_node.as<FriendDeclarationNode>();
 			materialized_friend.set_class_declaration(
 				pattern_friend.class_declaration());
+			materialized_friend.set_class_template_decl_id(
+				pattern_friend.class_template_decl_id());
+			if (arguments_are_concrete) {
+				if (auto friend_type = getTypesByNameMap().find(
+						materialized_friend_name);
+					friend_type != getTypesByNameMap().end() &&
+					friend_type->second != nullptr &&
+					friend_type->second->getStructInfo() != nullptr) {
+					const StructDeclarationNode* friend_specialization =
+						friend_type->second->getStructInfo()->declaration_node;
+					const StructDeclarationNode* friend_pattern =
+						friend_specialization != nullptr
+							? friend_specialization->injected_class_pattern_declaration()
+							: nullptr;
+					const bool same_primary =
+						friend_pattern == pattern_friend.class_declaration() ||
+						(friend_pattern != nullptr &&
+						 pattern_friend.class_template_decl_id() &&
+						 friend_pattern->has_template_decl_id() &&
+						 friend_pattern->template_decl_id() ==
+							pattern_friend.class_template_decl_id());
+					if (same_primary) {
+						materialized_friend.set_class_type_index(
+							friend_type->second->type_index_);
+					}
+				}
+			}
 			materialized_friend.set_class_template_name(
 				friend_template_name);
 			materialized_friend.set_class_template_arguments(
 				std::move(materialized_arguments));
-			registerFriendInStructInfo(materialized_friend, struct_info);
 			instantiated_struct.add_friend(materialized_friend_node);
 			continue;
 		}
 		if (pattern_friend.kind() != FriendKind::Function ||
 			!pattern_friend.function_declaration().has_value()) {
-			registerFriendInStructInfo(pattern_friend, struct_info);
 			instantiated_struct.add_friend(friend_decl_node);
 			continue;
 		}
 
 		const ASTNode& pattern_func_ast = *pattern_friend.function_declaration();
 		if (!pattern_func_ast.is<FunctionDeclarationNode>()) {
-			registerFriendInStructInfo(pattern_friend, struct_info);
 			instantiated_struct.add_friend(friend_decl_node);
 			continue;
 		}
@@ -6320,7 +6435,6 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
 		friend_node.as<FriendDeclarationNode>().set_function_declaration(new_func_node);
 		instantiated_struct.add_friend(friend_node);
-		registerFriendInStructInfo(friend_node.as<FriendDeclarationNode>(), struct_info);
 		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
 
 		FLASH_LOG(Templates, Trace,

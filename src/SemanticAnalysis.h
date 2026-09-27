@@ -607,6 +607,22 @@ private:
 	};
 	bool tryResolveMemberAccessInfo(const MemberAccessNode& member_access,
 								   ResolvedMemberAccessInfo& out_info);
+	TypeIndex getCurrentAccessingTypeIndex() const;
+	bool sameFunctionDeclarationEntity(
+		const FunctionDeclarationNode& lhs,
+		const FunctionDeclarationNode& rhs) const;
+	bool hasFriendClassAccess(const StructTypeInfo& member_owner,
+						  TypeIndex accessing_type_index) const;
+	bool hasCurrentFunctionFriendAccess(const StructTypeInfo& member_owner) const;
+	void checkPrivateMemberAccess(const StructMember& member,
+							  const StructTypeInfo& member_owner,
+							  const Token& access_token,
+							  StringHandle member_name) const;
+	void checkPrivateMemberFunctionAccess(const CallExprNode& call);
+	void checkPrivateMemberAccess(AccessSpecifier access,
+							  const StructTypeInfo& member_owner,
+							  const Token& access_token,
+							  StringHandle member_name) const;
 	std::optional<ResolvedIdentifierMemberInfo> tryResolveIdentifierMember(const IdentifierNode& identifier) const;
 	std::optional<ResolvedQualifiedIdentifierInfo> tryResolveQualifiedIdentifier(const QualifiedIdentifierNode& qualified_identifier, bool allow_nonstatic_data_member);
 
@@ -752,6 +768,7 @@ private:
 	};
 	std::vector<PendingReceiverCallAnnotation> pending_receiver_call_annotations_;
 	std::vector<const FunctionDeclarationNode*> current_function_stack_;
+	std::vector<TypeIndex> private_access_context_stack_;
 
 	// Track which function body ASTNode pointers sema has normalized.
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited
