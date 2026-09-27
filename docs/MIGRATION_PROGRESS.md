@@ -126,7 +126,12 @@ relaxation or signature mismatches. Complete owner schemas reject unrelated,
 inaccessible, ambiguous, and virtual-base owner conversions. Member-function-
 pointer pairs also support public unambiguous non-virtual base-to-derived owner
 conversion through canonical `TypeId`s, including `noexcept` relaxation, and
-reject mismatched function signatures. Data-member-pointer pairs now
+reject mismatched function signatures. Identical context-local dependent
+`noexcept` expression IDs now remain comparable as canonical function identity;
+distinct or one-sided dependent expressions still defer until substitution.
+Unit coverage checks both paths, while source regressions cover dependent
+`noexcept` overload selection for regular and member-function pointers.
+Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
 Complete owner schemas reject unrelated, inaccessible, ambiguous, and
@@ -258,8 +263,10 @@ Continue boundary 3A in this order:
    use the canonical planner and base graph. Data-member-pointer pairs now
    compare owner and pointee `TypeId`s and support the public non-virtual
    base-to-derived owner conversion. Member-function-pointer base adjustments
-   now use canonical owner schemas; dependent `noexcept` and remaining
-   unsupported callable pairs are still pending.
+   now use canonical owner schemas. Identical dependent `noexcept` expression
+   identities compare structurally; distinct or one-sided dependent expressions
+   and remaining unsupported callable pairs still need substitution-aware
+   ranking.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
