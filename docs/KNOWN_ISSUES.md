@@ -185,21 +185,6 @@ member-context equivalent of the definition-lookup metadata replay installs
 (param-name identifiers, TemplateParameterReferenceNode, dependent call
 records) is the right flip signal once those are fixed.
 
-## Some access-control cases are still evaluated during IR generation
-
-Semantic analysis now diagnoses private non-static data-member access and
-resolved direct member-function calls when the receiver has a semantic class
-type. These checks use the access token and resolved class/function identities,
-including exact friend class specializations and friend function overloads.
-IR still performs access checks for protected access, pointer-to-member and
-other member forms that sema does not yet resolve, and retains duplicate checks
-for the migrated cases. Those remaining IR-only checks can still miss invalid
-accesses in code that is never lowered and can report the generic
-`"Access control violation"` diagnostic. Move the remaining forms to sema,
-then remove the IR checks. See "Main remaining gaps" entry 7 in
-[SEMANTIC_ANALYSIS_STATUS.md](SEMANTIC_ANALYSIS_STATUS.md) for the migration
-requirements.
-
 ## Template instantiation recursion has very high per-level stack cost
 
 The recursive base-class instantiation path

@@ -1338,24 +1338,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 	}
 
-	// Check access control for member function calls
-	if (called_member_func && struct_info) {
-		const StructTypeInfo* current_context = getCurrentStructContext();
-		if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context)) {
-			std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
-			std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
-			FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(),
-					  "' of '", struct_info->getName(), "'", context_str);
-			throw makeStructuredCompileError(
-				context_->diagnostics(),
-				DiagnosticId::AccessControlViolation,
-				DiagnosticSeverity::Error,
-				SourceLocation::fromToken(callExprNode.called_from()),
-				"Access control violation",
-				{});
-		}
-	}
-
 	TempVar ret_var = var_counter.next();
 	// Member-call lowering needs the instantiated generic-lambda return type both
 	// while building the CallOp payload and later when shaping the final ExprResult.

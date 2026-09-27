@@ -3428,6 +3428,9 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 		normalizeFunctionDeclaration(node.as<FunctionDeclarationNode>());
 	} else if (node.is<StructDeclarationNode>()) {
 		normalizeStructDeclaration(node.as<StructDeclarationNode>());
+	} else if (node.is<TemplateClassDeclarationNode>()) {
+		normalizeStructDeclaration(
+			node.as<TemplateClassDeclarationNode>().class_decl_node());
 	} else if (node.is<NamespaceDeclarationNode>()) {
 		normalizeNamespace(node.as<NamespaceDeclarationNode>());
 	} else if (node.is<ConstructorDeclarationNode>()) {
@@ -3513,9 +3516,157 @@ void SemanticAnalysis::normalizeParameterExpressionsInScope(
 	}
 }
 
+void SemanticAnalysis::checkAccessControlInTemplatePattern(
+	const FunctionDeclarationNode& function) {
+	const auto& definition = function.get_definition();
+	if (!definition.has_value() ||
+		!access_checked_template_pattern_bodies_.insert(
+			static_cast<const void*>(&*definition)).second) {
+		return;
+	}
+
+	const TypeIndex access_type_index = function.access_owner_type_index();
+	if (function.is_member_function() && !access_type_index.is_valid()) {
+		throw InternalError(
+			"Member-function template pattern has no semantic owner type identity");
+	}
+	SemanticContext context;
+	pushScope();
+	registerOuterTemplateBindingsInScope(function);
+	setupNormalizedParameterScope(function, context);
+	if (access_type_index.is_valid()) {
+		member_context_stack_.push_back(
+			MemberContext{access_type_index, !function.is_static(), CVQualifier::None});
+	}
+	current_function_stack_.push_back(&function);
+	private_access_context_stack_.push_back(access_type_index);
+	const bool saved_pattern_context = access_check_in_template_pattern_;
+	access_check_in_template_pattern_ = true;
+	auto cleanup = ScopeGuard([this, access_type_index, saved_pattern_context]() {
+		access_check_in_template_pattern_ = saved_pattern_context;
+		private_access_context_stack_.pop_back();
+		current_function_stack_.pop_back();
+		if (access_type_index.is_valid()) {
+			member_context_stack_.pop_back();
+		}
+		popScope();
+	});
+
+	AstTraversal::visitAST(*definition, [this](const ASTNode& current) {
+		if (current.is<MemberAccessNode>()) {
+			const MemberAccessNode& member_access = current.as<MemberAccessNode>();
+			const auto object_info = resolveMemberAccessObjectInfo(member_access);
+			TypeIndex object_type_index{};
+			const StructTypeInfo* object_struct = nullptr;
+			if (object_info.has_value()) {
+				object_type_index = object_info->object_desc.type_index;
+				object_struct = object_info->object_type_info->getStructInfo();
+			}
+			const StructTypeInfo* owner_struct = nullptr;
+			const StructMember* member = nullptr;
+			if (resolveOrGetMemberAccess(member_access, owner_struct, member) &&
+				owner_struct != nullptr && member != nullptr) {
+				checkMemberAccess(
+					*member,
+					*owner_struct,
+					member_access.member_token(),
+					object_type_index,
+					TypeIndex{});
+			} else if (object_struct != nullptr) {
+				auto [static_member, static_owner] =
+					object_struct->findStaticMemberRecursive(
+						member_access.member_token().handle());
+				if (static_member != nullptr && static_owner != nullptr) {
+					checkMemberAccess(
+						*static_member,
+						*static_owner,
+						member_access.member_token());
+				}
+			}
+		} else if (current.is<IdentifierNode>()) {
+			const IdentifierNode& identifier = current.as<IdentifierNode>();
+			if (auto member = tryResolveIdentifierMember(identifier);
+				member.has_value() && member->owner_struct != nullptr) {
+				checkMemberAccess(
+					*member->member,
+					*member->owner_struct,
+					identifier.identifier_token(),
+					getCurrentAccessingTypeIndex(),
+					TypeIndex{});
+			}
+		} else if (current.is<QualifiedIdentifierNode>()) {
+			const QualifiedIdentifierNode& qualified =
+				current.as<QualifiedIdentifierNode>();
+			if (auto resolved = tryResolveQualifiedIdentifier(qualified, false);
+				resolved.has_value() &&
+				resolved->kind ==
+					ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
+				const StructTypeInfo* owner_struct =
+					tryGetStructTypeInfo(resolved->member_owner_type_index);
+				if (owner_struct == nullptr) {
+					throw InternalError(
+						"Resolved static member lacks its semantic owner class");
+				}
+				auto [static_member, static_owner] =
+					owner_struct->findStaticMemberRecursive(qualified.nameHandle());
+				if (static_member == nullptr || static_owner == nullptr) {
+					throw InternalError(
+						"Resolved static member metadata has no declaration");
+				}
+				checkMemberAccess(
+					*static_member,
+					*static_owner,
+					qualified.identifier_token());
+			}
+		} else if (current.is<UnaryOperatorNode>()) {
+			const UnaryOperatorNode& unary = current.as<UnaryOperatorNode>();
+			if (unary.op() == "&" &&
+				unary.get_operand().is<ExpressionNode>()) {
+				const ExpressionNode& operand =
+					unary.get_operand().as<ExpressionNode>();
+				if (const auto* qualified =
+						std::get_if<QualifiedIdentifierNode>(&operand)) {
+					auto resolved = tryResolveQualifiedIdentifier(*qualified, true);
+					if (resolved.has_value() &&
+						resolved->kind ==
+							ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember) {
+						const auto member = FlashCpp::gLazyMemberResolver.resolve(
+							resolved->member_owner_type_index,
+							qualified->nameHandle());
+						if (!member || member.owner_struct == nullptr) {
+							throw InternalError(
+								"Resolved pointer-to-member lacks its owning member declaration");
+						}
+						checkMemberAccess(
+							*member.member,
+							*member.owner_struct,
+							qualified->identifier_token(),
+							TypeIndex{},
+							resolved->member_owner_type_index);
+					} else if (resolved.has_value() &&
+						resolved->kind ==
+							ResolvedQualifiedIdentifierInfo::Kind::MemberFunction &&
+						resolved->member_function != nullptr) {
+						checkMemberFunctionAddressAccess(
+							*resolved,
+							qualified->identifier_token());
+					}
+				}
+			}
+		} else if (current.is<CallExprNode>()) {
+			const CallExprNode& call = current.as<CallExprNode>();
+			if ((call.callee().is_member() || call.callee().is_static_member()) &&
+				call.callee().function_declaration_or_null() != nullptr) {
+				checkMemberFunctionAccess(call);
+			}
+		}
+	});
+}
+
 void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNode& func) {
 	if (func.ownership_phase() == AstOwnershipPhase::ParserPattern ||
 		func.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
+		checkAccessControlInTemplatePattern(func);
 		return;
 	}
 	const auto& def = func.get_definition();
@@ -3689,13 +3840,44 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& decl) {
 	if (decl.ownership_phase() == AstOwnershipPhase::ParserPattern ||
 		decl.ownership_phase() == AstOwnershipPhase::ParserDeferredBody) {
+		for (const StructMemberFunctionDecl& member : decl.member_functions()) {
+			if (member.function_declaration.is<FunctionDeclarationNode>()) {
+				normalizeFunctionDeclaration(
+					member.function_declaration.as<FunctionDeclarationNode>());
+			}
+		}
+		for (const ASTNode& friend_node : decl.friend_declarations()) {
+			if (!friend_node.is<FriendDeclarationNode>()) {
+				continue;
+			}
+			const auto& friend_declaration =
+				friend_node.as<FriendDeclarationNode>();
+			if (friend_declaration.function_declaration().has_value()) {
+				if (const FunctionDeclarationNode* friend_function =
+						get_function_decl_node(
+							friend_declaration.function_declaration())) {
+					normalizeFunctionDeclaration(*friend_function);
+				}
+			}
+		}
 		return;
 	}
 	SemanticContext ctx;
 	pushScope();
-	auto cleanup = ScopeGuard([this]() { popScope(); });
 	registerOuterTemplateBindingsInScope(decl);
 	TypeInfo* struct_type_info = findStructTypeInfoForDeclaration(decl);
+	const bool decl_is_template_pattern =
+		struct_type_info != nullptr && struct_type_info->getStructInfo() != nullptr &&
+		struct_type_info->getStructInfo()->entity_participation ==
+			StructEntityParticipation::TemplatePattern;
+	const bool saved_pattern_access_context = access_check_in_template_pattern_;
+	if (decl_is_template_pattern) {
+		access_check_in_template_pattern_ = true;
+	}
+	auto cleanup = ScopeGuard([this, saved_pattern_access_context]() {
+		access_check_in_template_pattern_ = saved_pattern_access_context;
+		popScope();
+	});
 
 	{
 		std::optional<MemberContext> member_default_init_context;
@@ -4223,6 +4405,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			annotateStructInitListCtor();
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
+				checkMemberFunctionAddressAccessForTarget(*init, decl_type_id);
 				tryAnnotateVariableInitializationConversion(
 					*init,
 					decl_type_id,
@@ -5094,6 +5277,40 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				}
 				normalizeExpression(e.get_operand(), ctx);
 				if (e.op() == "&" && !e.is_builtin_addressof()) {
+					if (e.get_operand().template is<ExpressionNode>()) {
+						const ExpressionNode& operand_expression =
+							e.get_operand().template as<ExpressionNode>();
+						if (const auto* qualified =
+								std::get_if<QualifiedIdentifierNode>(&operand_expression)) {
+							const auto resolved_member =
+								tryResolveQualifiedIdentifier(*qualified, true);
+							if (resolved_member.has_value() &&
+								resolved_member->kind ==
+									ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember) {
+								const auto member_result =
+									FlashCpp::gLazyMemberResolver.resolve(
+										resolved_member->member_owner_type_index,
+										qualified->nameHandle());
+								if (!member_result || member_result.owner_struct == nullptr) {
+									throw InternalError(
+										"Resolved pointer-to-member lacks its owning member declaration");
+								}
+								checkMemberAccess(
+									*member_result.member,
+									*member_result.owner_struct,
+									qualified->identifier_token(),
+									TypeIndex{},
+									resolved_member->member_owner_type_index);
+							} else if (resolved_member.has_value() &&
+								   resolved_member->kind ==
+									   ResolvedQualifiedIdentifierInfo::Kind::MemberFunction &&
+							   resolved_member->member_function != nullptr) {
+								checkMemberFunctionAddressAccess(
+									*resolved_member,
+									qualified->identifier_token());
+							}
+						}
+					}
 					tryResolveUnaryAddressOfOperator(e);
 					if (!getResolvedUnaryAddressOfOperator(&e) &&
 						inferExpressionValueCategory(e.get_operand()) != ValueCategory::LValue) {
@@ -5127,15 +5344,32 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				tryAnnotateConstructorCallArgConversions(e);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
+				const auto object_info = resolveMemberAccessObjectInfo(e);
+				TypeIndex object_type_index{};
+				const StructTypeInfo* object_struct = nullptr;
+				if (object_info.has_value()) {
+					object_type_index = object_info->object_desc.type_index;
+					object_struct = object_info->object_type_info->getStructInfo();
+				}
 				const StructTypeInfo* resolved_owner_struct = nullptr;
 				const StructMember* resolved_member = nullptr;
 				if (resolveOrGetMemberAccess(e, resolved_owner_struct, resolved_member) &&
 					resolved_owner_struct != nullptr && resolved_member != nullptr) {
-					checkPrivateMemberAccess(
+					checkMemberAccess(
 						*resolved_member,
 						*resolved_owner_struct,
 						e.member_token(),
-						e.member_token().handle());
+						object_type_index,
+						TypeIndex{});
+				} else if (object_struct != nullptr) {
+					auto [static_member, static_member_owner] =
+						object_struct->findStaticMemberRecursive(e.member_token().handle());
+					if (static_member != nullptr && static_member_owner != nullptr) {
+						checkMemberAccess(
+							*static_member,
+							*static_member_owner,
+							e.member_token());
+					}
 				}
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
@@ -5143,10 +5377,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				if (e.has_receiver()) {
 					normalizeExpression(e.receiver(), ctx);
-					if (e.callee().is_member() &&
-						e.callee().function_declaration_or_null() != nullptr) {
-						checkPrivateMemberFunctionAccess(e);
-					}
 					const FunctionDeclarationNode* syntactic_callee =
 						e.callee().function_declaration_or_null();
 					// Member-call nodes also cover legacy indirect calls. Diagnose only
@@ -5193,6 +5423,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 						syntactic_callee->parent_struct_name().empty()) {
 						queuePendingReceiverCallAnnotation(e);
 					}
+				}
+				if ((e.callee().is_member() || e.callee().is_static_member()) &&
+					e.callee().function_declaration_or_null() != nullptr) {
+					checkMemberFunctionAccess(e);
 				}
 				for (const auto& template_arg : e.template_arguments()) {
 					normalizeExpression(template_arg, ctx);
@@ -5262,6 +5496,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				normalizeExpression(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, StaticCastNode>) {
 				normalizeExpression(e.expr(), ctx);
+				checkMemberFunctionAddressAccessForTarget(
+					e.expr(),
+					canonicalizeType(e.target_type()));
 			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
 				normalizeExpression(e.expr(), ctx);
 			} else if constexpr (std::is_same_v<T, ConstCastNode>) {
@@ -5334,13 +5571,54 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 				if (auto member_result = tryResolveIdentifierMember(e); member_result.has_value()) {
 					resolved_identifier_member_table_[&e] = *member_result;
+					if (member_result->owner_struct == nullptr ||
+						!getCurrentAccessingTypeIndex().is_valid()) {
+						throw InternalError(
+							"Resolved implicit member access lacks its semantic owner or context");
+					}
+					checkMemberAccess(
+						*member_result->member,
+						*member_result->owner_struct,
+						e.identifier_token(),
+						getCurrentAccessingTypeIndex(),
+						TypeIndex{});
 				} else {
 					resolved_identifier_member_table_.erase(&e);
+				}
+				if (e.binding() == IdentifierBinding::StaticMember) {
+					const StructTypeInfo* accessing_struct =
+						tryGetStructTypeInfo(getCurrentAccessingTypeIndex());
+					if (accessing_struct != nullptr) {
+						auto [static_member, static_member_owner] =
+							accessing_struct->findStaticMemberRecursive(e.getOrInternNameHandle());
+						if (static_member != nullptr && static_member_owner != nullptr) {
+							checkMemberAccess(
+								*static_member,
+								*static_member_owner,
+							e.identifier_token());
+						}
+					}
 				}
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				if (auto resolved = tryResolveQualifiedIdentifier(e, false); resolved.has_value()) {
 					resolved_qualified_identifier_table_[&e] = *resolved;
 					if (resolved->kind == ResolvedQualifiedIdentifierInfo::Kind::StaticMember) {
+						const StructTypeInfo* owner_struct =
+							tryGetStructTypeInfo(resolved->member_owner_type_index);
+						if (owner_struct == nullptr) {
+							throw InternalError(
+								"Resolved static member lacks its semantic owner class");
+						}
+						auto [static_member, static_member_owner] =
+							owner_struct->findStaticMemberRecursive(e.nameHandle());
+						if (static_member == nullptr || static_member_owner == nullptr) {
+							throw InternalError(
+								"Resolved static member metadata has no declaration");
+						}
+						checkMemberAccess(
+							*static_member,
+							*static_member_owner,
+							e.identifier_token());
 						SemanticSlot slot = getSlot(static_cast<const void*>(&expr)).value_or(SemanticSlot{});
 						slot.type_id = resolved->semantic_type_id;
 						slot.value_category = ValueCategory::LValue;
@@ -5571,46 +5849,16 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 	}
 
-	// C++20 [temp.local]: inside a class template (and members of its
-	// specializations), the injected-class-name denotes the current
-	// specialization.  Template instantiation can leave local declarations such
-	// as `SomeClass copy = *this;` carrying the primary template's
-	// TypeIndex while expression inference for `*this` correctly uses the
-	// instantiated TypeIndex.  Canonicalize that injected-class-name back to the
-	// current member context so same-type initialization is not misclassified as
-	// a converting construction through an explicit constructor.
+	// C++20 [temp.local]: an injected-class-name in a class member denotes the
+	// current specialization. Resolve it through declaration and specialization
+	// identity; an explicitly named different specialization must keep its type.
 	if (desc.type_index.is_valid()) {
 		if (const MemberContext* member_context = getCurrentMemberContext();
 			member_context && member_context->type_index.is_valid()) {
-			const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index);
-			const TypeInfo* named_type_info = tryGetTypeInfo(desc.type_index);
-			if (current_type_info && named_type_info && current_type_info->isTemplateInstantiation()) {
-				const std::string_view named_name = StringTable::getStringView(named_type_info->name());
-				const std::string_view base_name = StringTable::getStringView(current_type_info->baseTemplateName());
-				const NamespaceHandle source_namespace = current_type_info->sourceNamespace();
-				// Cached/template-only instantiation paths may not preserve a
-				// source namespace; fall back to the name check in that case
-				// rather than disabling injected-class-name remapping.
-				const bool namespace_matches =
-					!source_namespace.isValid() ||
-					source_namespace == named_type_info->namespaceHandle();
-				bool names_match = false;
-				if (!base_name.empty()) {
-					// Prefer the fully-qualified match, then fall back to injected-
-					// class-name identity (leaf / `$hash`-stripped) for metadata
-					// paths that disagree on namespace prefix or specialization suffix.
-					names_match = named_name == base_name;
-					if (!names_match) {
-						names_match = namesSameInjectedClassIdentity(named_name, base_name);
-					}
-				}
-				if (namespace_matches && names_match) {
-					// Use the current specialization's TypeIndex so same-type
-					// copy-initialization is not treated as a converting
-					// constructor call.
-					desc.type_index = current_type_info->type_index_;
-				}
-			}
+			desc.type_index = resolveSelfRefParamIndex(
+				desc.type_index,
+				member_context->type_index,
+				type.injected_class_declaration());
 		}
 	}
 	// Parser-built native types can carry a category-only TypeIndex until they
@@ -6289,14 +6537,14 @@ TypeIndex SemanticAnalysis::getCurrentAccessingTypeIndex() const {
 		if (private_access_context_stack_.back().is_valid()) {
 			return private_access_context_stack_.back();
 		}
-		if (!current_function_stack_.empty() &&
-			current_function_stack_.back()->is_member_function()) {
+		if (!current_function_stack_.empty()) {
 			const TypeIndex function_owner =
 				current_function_stack_.back()->access_owner_type_index();
 			if (function_owner.is_valid()) {
 				return function_owner;
 			}
-			if (isParserAttached() &&
+			if (current_function_stack_.back()->is_member_function() &&
+				isParserAttached() &&
 				!parser().member_function_context_stack_.empty()) {
 				return parser().member_function_context_stack_.back().struct_type_index;
 			}
@@ -6306,13 +6554,13 @@ TypeIndex SemanticAnalysis::getCurrentAccessingTypeIndex() const {
 	if (!current_function_stack_.empty()) {
 		const FunctionDeclarationNode* current_function =
 			current_function_stack_.back();
-		if (!current_function->is_member_function()) {
-			return TypeIndex{};
-		}
 		const TypeIndex function_owner =
 			current_function->access_owner_type_index();
 		if (function_owner.is_valid()) {
 			return function_owner;
+		}
+		if (!current_function->is_member_function()) {
+			return TypeIndex{};
 		}
 		if (isParserAttached() &&
 			!parser().member_function_context_stack_.empty()) {
@@ -6396,6 +6644,21 @@ bool SemanticAnalysis::hasFriendClassAccess(
 			!friend_declaration.class_template_arguments().empty() &&
 			(friend_declaration.class_template_decl_id() ||
 			 friend_declaration.class_declaration() != nullptr)) {
+			// A template pattern cannot decide whether a specialization-specific
+			// friend declaration applies. Defer this check until the concrete
+			// specialization is instantiated and re-checked; concrete classes still
+			// require exact friend identity below, so a defer here never grants
+			// access to a non-friend specialization.
+			if (access_check_in_template_pattern_ &&
+				friend_declaration.class_template_decl_id() &&
+				((accessing_template->has_template_decl_id() &&
+				  accessing_template->template_decl_id() ==
+					  friend_declaration.class_template_decl_id()) ||
+				 gTemplateRegistry.isClassTemplatePatternInFamily(
+					 accessing_template,
+					 friend_declaration.class_template_decl_id()))) {
+				return true;
+			}
 			const StructDeclarationNode* friend_specialization = nullptr;
 			if (friend_declaration.class_template_decl_id()) {
 				friend_specialization =
@@ -6475,83 +6738,161 @@ bool SemanticAnalysis::hasCurrentFunctionFriendAccess(
 	return false;
 }
 
-void SemanticAnalysis::checkPrivateMemberAccess(
+bool SemanticAnalysis::isDerivedFrom(
+	TypeIndex derived_type_index,
+	TypeIndex base_type_index,
+	bool require_accessible_path) const {
+	if (!derived_type_index.is_valid() || !base_type_index.is_valid()) {
+		return false;
+	}
+	if (derived_type_index == base_type_index) {
+		return true;
+	}
+
+	std::vector<std::pair<TypeIndex, bool>> pending;
+	std::unordered_set<TypeIndex> visited;
+	pending.emplace_back(derived_type_index, true);
+	while (!pending.empty()) {
+		const auto [current_type_index, is_first_base] = pending.back();
+		pending.pop_back();
+		if (!visited.insert(current_type_index).second) {
+			continue;
+		}
+		const StructTypeInfo* current_struct = tryGetStructTypeInfo(current_type_index);
+		if (current_struct == nullptr) {
+			throw InternalError("A class in an access-control base path has no struct metadata");
+		}
+		for (const BaseClassSpecifier& base : current_struct->base_classes) {
+			if (!base.type_index.is_valid()) {
+				throw InternalError("A class in an access-control base path has no type identity");
+			}
+			const bool base_is_accessible =
+				!require_accessible_path ||
+				is_first_base ||
+				(base.access != AccessSpecifier::Private);
+			if (base.type_index == base_type_index && base_is_accessible) {
+				return true;
+			}
+			if (base_is_accessible) {
+				pending.emplace_back(base.type_index, false);
+			}
+		}
+	}
+	return false;
+}
+
+void SemanticAnalysis::checkMemberAccess(
 	const StructMember& member,
 	const StructTypeInfo& member_owner,
 	const Token& access_token,
-	StringHandle member_name) const {
-	checkPrivateMemberAccess(
+	TypeIndex object_type_index,
+	TypeIndex pointer_member_class_type_index) const {
+	checkMemberAccess(
 		member.access,
 		member_owner,
 		access_token,
-		member_name);
+		member.name,
+		false,
+		object_type_index,
+		pointer_member_class_type_index);
 }
 
-void SemanticAnalysis::checkPrivateMemberAccess(
+void SemanticAnalysis::checkMemberAccess(
+	const StructStaticMember& member,
+	const StructTypeInfo& member_owner,
+	const Token& access_token) const {
+	checkMemberAccess(
+		member.access,
+		member_owner,
+		access_token,
+		member.name,
+		true,
+		TypeIndex{},
+		TypeIndex{});
+}
+
+void SemanticAnalysis::checkMemberAccess(
 	AccessSpecifier access,
 	const StructTypeInfo& member_owner,
 	const Token& access_token,
-	StringHandle member_name) const {
-	if (access != AccessSpecifier::Private || context_.isAccessControlDisabled()) {
+	StringHandle member_name,
+	bool is_static,
+	TypeIndex object_type_index,
+	TypeIndex pointer_member_class_type_index) const {
+	if (access == AccessSpecifier::Public || context_.isAccessControlDisabled()) {
 		return;
 	}
 
 	const TypeIndex accessing_type_index = getCurrentAccessingTypeIndex();
-	if (accessing_type_index.is_valid()) {
-		const TypeInfo* accessing_type_info = tryGetTypeInfo(accessing_type_index);
-		const StructTypeInfo* accessing_struct = accessing_type_info != nullptr
-			? accessing_type_info->getStructInfo()
-			: nullptr;
-		const StructDeclarationNode* access_pattern =
-			accessing_struct != nullptr &&
-				accessing_struct->declaration_node != nullptr
-				? accessing_struct->declaration_node
-					  ->injected_class_pattern_declaration()
-				: nullptr;
-		const bool is_unmaterialized_pattern =
-			accessing_type_info != nullptr &&
-			accessing_type_info->isTemplateInstantiation() &&
-			accessing_type_info->templateArgs().empty() &&
-			accessing_struct != nullptr &&
-			accessing_struct->declaration_node != nullptr &&
-			(gTemplateRegistry.isClassTemplateSpecializationPattern(
-				accessing_struct->declaration_node) ||
-			 gTemplateRegistry.isClassTemplateSpecializationPattern(
-				access_pattern));
-		if (is_unmaterialized_pattern) {
-			// The class-template partial-specialization pattern is not an access
-			// context for any concrete specialization. Check its member bodies when
-			// a specialization is materialized and the concrete class identity exists.
-			return;
-		}
-	}
-	if (accessing_type_index.is_valid()) {
-		if (member_owner.own_type_index_.has_value() &&
-			*member_owner.own_type_index_ == accessing_type_index) {
-			return;
-		}
-		if (member_owner.own_type_index_.has_value()) {
-			if (const StructTypeInfo* accessing_struct = tryGetStructTypeInfo(accessing_type_index)) {
-				for (const StructTypeInfo* nested_owner = accessing_struct->getEnclosingClass();
-					nested_owner != nullptr;
-					nested_owner = nested_owner->getEnclosingClass()) {
-					if (nested_owner->own_type_index_.has_value() &&
-						*member_owner.own_type_index_ == *nested_owner->own_type_index_) {
-						return;
-					}
-				}
-			}
-		}
-		if (hasFriendClassAccess(member_owner, accessing_type_index)) {
-			return;
-		}
+	const TypeIndex owner_type_index = member_owner.own_type_index_.value_or(TypeIndex{});
+	if (!owner_type_index.is_valid()) {
+		throw InternalError("A non-public member owner has no semantic type identity");
 	}
 	if (hasCurrentFunctionFriendAccess(member_owner)) {
 		return;
 	}
+	const StructTypeInfo* accessing_struct =
+		accessing_type_index.is_valid()
+			? tryGetStructTypeInfo(accessing_type_index)
+			: nullptr;
+	for (const StructTypeInfo* current_class = accessing_struct;
+		current_class != nullptr;
+		current_class = current_class->getEnclosingClass()) {
+		const TypeIndex current_type_index =
+			current_class->own_type_index_.value_or(TypeIndex{});
+		if (!current_type_index.is_valid()) {
+			throw InternalError("An access-context class has no semantic type identity");
+		}
+		if (hasFriendClassAccess(member_owner, current_type_index)) {
+			return;
+		}
+		if (access == AccessSpecifier::Private &&
+			current_type_index == owner_type_index) {
+			return;
+		}
+	}
 
+	if (access == AccessSpecifier::Protected) {
+		const StructTypeInfo* access_class = nullptr;
+		for (const StructTypeInfo* current_class = accessing_struct;
+			current_class != nullptr;
+			current_class = current_class->getEnclosingClass()) {
+			const TypeIndex current_type_index =
+				current_class->own_type_index_.value_or(TypeIndex{});
+			if (!current_type_index.is_valid()) {
+				throw InternalError("An access-context class has no semantic type identity");
+			}
+			if (isDerivedFrom(current_type_index, owner_type_index, true)) {
+				access_class = current_class;
+				break;
+			}
+		}
+		if (access_class != nullptr) {
+			const TypeIndex access_class_type_index =
+				access_class->own_type_index_.value_or(TypeIndex{});
+			const TypeIndex required_object_type_index =
+				pointer_member_class_type_index.is_valid()
+					? pointer_member_class_type_index
+					: object_type_index;
+			const bool has_valid_protected_object =
+				is_static ||
+				(required_object_type_index.is_valid() &&
+				 isDerivedFrom(
+					required_object_type_index,
+					access_class_type_index,
+					false));
+			if (has_valid_protected_object) {
+				return;
+			}
+		}
+	}
+
+	const std::string_view access_name = access == AccessSpecifier::Private
+		? "private"sv
+		: "protected"sv;
 	const std::string message =
-		"Cannot access private member '" + std::string(member_name.view()) +
+		"Cannot access " + std::string(access_name) + " member '" +
+		std::string(member_name.view()) +
 		"' of '" + std::string(member_owner.getName().view()) + "'";
 	throw makeStructuredCompileError(
 		context_.diagnostics(),
@@ -6562,26 +6903,59 @@ void SemanticAnalysis::checkPrivateMemberAccess(
 		{});
 }
 
-void SemanticAnalysis::checkPrivateMemberFunctionAccess(
+void SemanticAnalysis::checkMemberFunctionAccess(
 	const CallExprNode& call) {
 	const FunctionDeclarationNode* requested_function =
 		call.callee().function_declaration_or_null();
-	if (requested_function == nullptr || context_.isAccessControlDisabled()) {
+	if (requested_function == nullptr ||
+		context_.isAccessControlDisabled()) {
 		return;
 	}
-	const TypeInfo* receiver_type_info =
-		tryResolveStructOwnerTypeInfoForExpression(call.receiver());
-	const StructTypeInfo* receiver_struct = receiver_type_info != nullptr
-		? receiver_type_info->getStructInfo()
-		: nullptr;
-	if (receiver_struct == nullptr) {
+	if (!requested_function->is_member_function() &&
+		!requested_function->access_owner_type_index().is_valid()) {
+		// A resolved free, indirect, or callable-object invocation has no class
+		// member owner to apply access policy to. Member-function-template
+		// instantiations are not flagged as member functions but do carry the
+		// owning class identity stamped on their pattern.
 		return;
 	}
-
-	std::vector<const StructTypeInfo*> pending{receiver_struct};
+	std::vector<const StructTypeInfo*> pending;
+	if (call.has_receiver()) {
+		const TypeInfo* receiver_type_info =
+			tryResolveStructOwnerTypeInfoForExpression(call.receiver());
+		const StructTypeInfo* receiver_struct = receiver_type_info != nullptr
+			? receiver_type_info->getStructInfo()
+			: nullptr;
+		if (receiver_struct != nullptr) {
+			pending.push_back(receiver_struct);
+		}
+	}
+	if (requested_function->access_owner_type_index().is_valid()) {
+		if (const StructTypeInfo* declared_owner =
+				tryGetStructTypeInfo(requested_function->access_owner_type_index())) {
+			pending.push_back(declared_owner);
+		}
+	}
+	if (pending.empty()) {
+		// A call through a pointer-to-member function has no named member owner
+		// at the call site. Its access was checked when the member address was
+		// formed; a free function calling that pointer has no class access scope.
+		const bool calls_through_member_pointer =
+			call.has_receiver() && call.receiver().is<ExpressionNode>() &&
+			std::holds_alternative<PointerToMemberAccessNode>(
+				call.receiver().as<ExpressionNode>());
+		if (calls_through_member_pointer ||
+			(!call.has_receiver() && !requested_function->is_static() &&
+			 !getCurrentAccessingTypeIndex().is_valid())) {
+			return;
+		}
+		throw InternalError("Resolved member function access has no semantic owner class");
+	}
 	std::vector<const StructTypeInfo*> visited;
 	const StringHandle requested_name =
 		requested_function->decl_node().identifier_token().handle();
+	const std::string_view requested_base_name =
+		simpleBaseName(StringTable::getStringView(requested_name));
 	while (!pending.empty()) {
 		const StructTypeInfo* current_struct = pending.back();
 		pending.pop_back();
@@ -6592,28 +6966,197 @@ void SemanticAnalysis::checkPrivateMemberFunctionAccess(
 		visited.push_back(current_struct);
 		for (const StructMemberFunction& member_function :
 			current_struct->member_functions) {
-			if (member_function.getName() != requested_name) {
-				continue;
-			}
 			const FunctionDeclarationNode* candidate_function =
 				get_function_decl_node(member_function.function_decl);
-			if (candidate_function == nullptr ||
-				!sameFunctionDeclarationEntity(
-					*candidate_function,
-					*requested_function)) {
+			if (candidate_function == nullptr) {
 				continue;
 			}
-			checkPrivateMemberAccess(
+			// Exact declaration identity first. A resolved template instantiation
+			// is a distinct node carrying the compiler's `$hash` suffix, so fall
+			// back to matching the declaring entry by base name, parameter count,
+			// and staticness. Instantiation never changes the access specifier, so
+			// this recovers the pattern's access without a name-based type lookup.
+			const bool same_entity = sameFunctionDeclarationEntity(
+				*candidate_function,
+				*requested_function);
+			const bool same_template_specialization =
+				!same_entity &&
+				member_function.getName() != requested_name &&
+				candidate_function->is_static() ==
+					requested_function->is_static() &&
+				candidate_function->parameter_nodes().size() ==
+					requested_function->parameter_nodes().size() &&
+				simpleBaseName(
+					StringTable::getStringView(member_function.getName())) ==
+					requested_base_name;
+			if (!same_entity && !same_template_specialization) {
+				continue;
+			}
+			TypeIndex object_type_index{};
+			if (!requested_function->is_static()) {
+				if (call.has_receiver()) {
+					const TypeInfo* receiver_type_info =
+						tryResolveStructOwnerTypeInfoForExpression(call.receiver());
+					const StructTypeInfo* receiver_struct = receiver_type_info != nullptr
+						? receiver_type_info->getStructInfo()
+						: nullptr;
+					if (receiver_struct == nullptr ||
+						!receiver_struct->own_type_index_.has_value()) {
+						throw InternalError("Resolved member call has no semantic receiver class identity");
+					}
+					object_type_index = *receiver_struct->own_type_index_;
+				} else {
+					object_type_index = getCurrentAccessingTypeIndex();
+				}
+			}
+			checkMemberAccess(
 				member_function.access,
 				*current_struct,
 				call.called_from(),
-				requested_name);
+				requested_name,
+				requested_function->is_static(),
+				object_type_index,
+				TypeIndex{});
 			return;
 		}
 		for (const BaseClassSpecifier& base : current_struct->base_classes) {
 			pending.push_back(tryGetStructTypeInfo(base.type_index));
 		}
 	}
+}
+
+void SemanticAnalysis::checkMemberFunctionAddressAccess(
+	const ResolvedQualifiedIdentifierInfo& member_function,
+	const Token& access_token) const {
+	if (member_function.member_function == nullptr ||
+		!member_function.member_owner_type_index.is_valid() ||
+		!member_function.member_class_type_index.is_valid()) {
+		throw InternalError(
+			"Resolved member function address lacks semantic owner identity");
+	}
+	const StructTypeInfo* member_owner =
+		tryGetStructTypeInfo(member_function.member_owner_type_index);
+	if (member_owner == nullptr) {
+		throw InternalError(
+			"Resolved member function address owner has no struct metadata");
+	}
+	checkMemberAccess(
+		member_function.member_access,
+		*member_owner,
+		access_token,
+		member_function.member_function->decl_node().identifier_token().handle(),
+		member_function.is_static_member_function,
+		TypeIndex{},
+		member_function.is_static_member_function
+			? TypeIndex{}
+			: member_function.member_class_type_index);
+}
+
+void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
+	const ASTNode& expression,
+	CanonicalTypeId target_type_id) {
+	if (!target_type_id || !expression.is<ExpressionNode>()) {
+		return;
+	}
+	const ExpressionNode& expression_node = expression.as<ExpressionNode>();
+	const auto* address_operator =
+		std::get_if<UnaryOperatorNode>(&expression_node);
+	if (address_operator == nullptr || address_operator->op() != "&" ||
+		address_operator->is_builtin_addressof() ||
+		!address_operator->get_operand().is<ExpressionNode>()) {
+		return;
+	}
+	const ExpressionNode& operand =
+		address_operator->get_operand().as<ExpressionNode>();
+	const auto* qualified = std::get_if<QualifiedIdentifierNode>(&operand);
+	if (qualified == nullptr) {
+		return;
+	}
+	auto resolved = getResolvedQualifiedIdentifier(qualified);
+	if (!resolved.has_value()) {
+		resolved = tryResolveQualifiedIdentifier(*qualified, true);
+	}
+	if (!resolved.has_value() ||
+		resolved->kind != ResolvedQualifiedIdentifierInfo::Kind::MemberFunction ||
+		resolved->member_function != nullptr) {
+		return;
+	}
+	const StructTypeInfo* member_owner =
+		tryGetStructTypeInfo(resolved->member_owner_type_index);
+	if (member_owner == nullptr ||
+		!resolved->member_class_type_index.is_valid()) {
+		throw InternalError(
+			"Resolved member-function overload set has no semantic owner");
+	}
+	const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
+	const CanonicalTypeImport target_import = tryImportCanonicalTypeDesc(target_desc);
+
+	const StructMemberFunction* best_member_function = nullptr;
+	ConversionRank best_rank = ConversionRank::NoMatch;
+	bool best_is_ambiguous = false;
+	for (const StructMemberFunction& candidate : member_owner->member_functions) {
+		if (candidate.getName() != qualified->nameHandle()) {
+			continue;
+		}
+		const FunctionDeclarationNode* candidate_function =
+			get_function_decl_node(candidate.function_decl);
+		if (candidate_function == nullptr) {
+			continue;
+		}
+		TypeSpecifierNode candidate_type = candidate_function->is_static()
+			? FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(
+				*candidate_function)
+			: FlashCpp::ParserFunctionTypeHelpers::buildMemberFunctionPointerTypeFromFunctionDeclaration(
+				*candidate_function);
+		const CanonicalTypeId candidate_type_id = canonicalizeType(candidate_type);
+		ConversionRank candidate_rank = ConversionRank::NoMatch;
+		if (candidate_type_id == target_type_id) {
+			candidate_rank = ConversionRank::ExactMatch;
+		} else {
+			if (target_import.status != CanonicalTypeImportStatus::Supported) {
+				continue;
+			}
+			const CanonicalTypeImport candidate_import =
+				tryImportCanonicalTypeDesc(type_context_.get(candidate_type_id));
+			if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
+				continue;
+			}
+			const ConversionPlan plan = buildCanonicalStructuralConversionPlan(
+				requireFrontendContext().canonicalTypes(),
+				candidate_import.type,
+				target_import.type);
+			if (!plan.is_valid) {
+				continue;
+			}
+			candidate_rank = plan.rank;
+		}
+		if (candidate_rank < best_rank) {
+			best_member_function = &candidate;
+			best_rank = candidate_rank;
+			best_is_ambiguous = false;
+		} else if (candidate_rank == best_rank) {
+			best_is_ambiguous = true;
+		}
+	}
+	if (best_member_function == nullptr || best_is_ambiguous) {
+		return;
+	}
+	const FunctionDeclarationNode* selected_function =
+		get_function_decl_node(best_member_function->function_decl);
+	if (selected_function == nullptr) {
+		throw InternalError(
+			"Selected member-function overload has no function declaration");
+	}
+	checkMemberAccess(
+		best_member_function->access,
+		*member_owner,
+		qualified->identifier_token(),
+		selected_function->decl_node().identifier_token().handle(),
+		selected_function->is_static(),
+		TypeIndex{},
+		selected_function->is_static()
+			? TypeIndex{}
+			: resolved->member_class_type_index);
 }
 
 std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::tryResolveIdentifierMember(const IdentifierNode& identifier) const {
@@ -6630,7 +7173,10 @@ std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::
 	}
 
 	if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, identifier.getOrInternNameHandle())) {
-		return ResolvedIdentifierMemberInfo{member_result.member, member_result.adjusted_offset};
+		return ResolvedIdentifierMemberInfo{
+			member_result.member,
+			member_result.owner_struct,
+			member_result.adjusted_offset};
 	}
 
 	return std::nullopt;
@@ -6786,6 +7332,12 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 					if (static_member && owner_struct) {
 						ResolvedQualifiedIdentifierInfo resolved;
 						resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::StaticMember;
+						resolved.member_owner_type_index =
+							owner_struct->own_type_index_.value_or(TypeIndex{});
+						if (!resolved.member_owner_type_index.is_valid()) {
+							throw InternalError(
+								"Resolved static member owner has no semantic type identity");
+						}
 						resolved.storage_name = StringTable::getOrInternStringHandle(
 							StringBuilder()
 								.append(owner_struct->getName())
@@ -6815,6 +7367,56 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 							resolved.type.add_pointer_levels(member.member->pointer_depth);
 							return resolved;
 						}
+					}
+				auto [member_function, member_function_owner] =
+						struct_info->findMemberFunctionRecursive(name_handle);
+					if (member_function != nullptr && member_function_owner != nullptr) {
+						bool overloads_share_access = true;
+						bool overloads_share_staticness = true;
+						const FunctionDeclarationNode* first_function = nullptr;
+						for (const StructMemberFunction& candidate :
+							 member_function_owner->member_functions) {
+							if (candidate.getName() == name_handle) {
+								const FunctionDeclarationNode* candidate_function =
+									get_function_decl_node(candidate.function_decl);
+								if (candidate_function == nullptr) {
+									overloads_share_access = false;
+									overloads_share_staticness = false;
+									continue;
+								}
+								if (first_function == nullptr) {
+									first_function = candidate_function;
+								} else {
+									if (candidate.access != member_function->access) {
+										overloads_share_access = false;
+									}
+									if (candidate_function->is_static() !=
+										first_function->is_static()) {
+										overloads_share_staticness = false;
+									}
+								}
+							}
+						}
+						ResolvedQualifiedIdentifierInfo resolved;
+						resolved.kind =
+							ResolvedQualifiedIdentifierInfo::Kind::MemberFunction;
+						resolved.member_owner_type_index =
+							member_function_owner->own_type_index_.value_or(TypeIndex{});
+						resolved.member_class_type_index =
+							owner_type_info->registeredTypeIndex();
+						if (!resolved.member_owner_type_index.is_valid() ||
+							!resolved.member_class_type_index.is_valid()) {
+							throw InternalError(
+								"Resolved member function has no semantic owner identity");
+						}
+					if (overloads_share_access && overloads_share_staticness &&
+						first_function != nullptr) {
+						resolved.member_function = first_function;
+						resolved.member_access = member_function->access;
+						resolved.is_static_member_function =
+							resolved.member_function->is_static();
+					}
+					return resolved;
 					}
 					for (TypeIndex nested_enum_index : struct_info->getNestedEnumIndices()) {
 						const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
@@ -8631,6 +9233,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 											 CanonicalTypeId expr_type_id) {
 	if (!target_type_id)
 		return false;
+	checkMemberFunctionAddressAccessForTarget(expr_node, target_type_id);
 	if (!expr_node.is<ExpressionNode>())
 		return false;
 

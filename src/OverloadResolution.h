@@ -4172,16 +4172,28 @@ inline TypeIndex resolveSelfRefParamIndex(
 		return param_idx;
 	}
 
-	const StructTypeInfo* param_struct_info =
-		param_idx.is_valid() && param_idx.index() < getTypeInfoCount()
-			? getTypeInfo(param_idx).getStructInfo()
-			: nullptr;
+	const TypeInfo* param_type_info = tryGetTypeInfo(param_idx);
+	const TypeInfo* owner_type_info = tryGetTypeInfo(left_type_index);
 	const bool param_is_concrete_instantiation =
-		param_struct_info != nullptr &&
-		param_struct_info->declaration_node != nullptr &&
-		param_struct_info->declaration_node
-			->injected_class_pattern_declaration() != nullptr;
-	return param_is_concrete_instantiation ? param_idx : left_type_index;
+		param_type_info != nullptr &&
+		param_type_info->isTemplateInstantiation() &&
+		!param_type_info->templateArgs().empty();
+	if (param_is_concrete_instantiation) {
+		if (owner_type_info == nullptr ||
+			!FlashCpp::equalTemplateArgInfoListIdentity(
+				std::span<const TypeInfo::TemplateArgInfo>(
+					param_type_info->templateArgs().data(),
+					param_type_info->templateArgs().size()),
+				std::span<const TypeInfo::TemplateArgInfo>(
+					owner_type_info->templateArgs().data(),
+					owner_type_info->templateArgs().size()))) {
+			// A different explicit specialization is not an injected-class-name
+			// reference to the current owner, even when both share the same pattern
+			// declaration. Preserve its registered type identity.
+			return param_idx;
+		}
+	}
+	return left_type_index;
 }
 
 inline TypeIndex typeIndexForRegisteredStructName(StringHandle name) {

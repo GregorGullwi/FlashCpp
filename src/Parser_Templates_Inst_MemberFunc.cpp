@@ -1703,6 +1703,10 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			auto [inst_func_node, inst_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 				inst_decl_ref,
 				struct_name);
+			if (struct_type_info != nullptr) {
+				inst_func_ref.set_access_owner_type_index(
+					struct_type_info->registeredTypeIndex().withCategory(TypeCategory::Struct));
+			}
 			copy_function_properties(inst_func_ref, spec_func);
 			for (const auto& param : spec_func.parameter_nodes()) {
 				inst_func_ref.add_parameter_node(param);
@@ -2499,6 +2503,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Create the new function declaration
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, struct_name);
+	// Stamp the exact owning class identity so access policy can apply to the
+	// instantiated member function instead of falling back to no owner.
+	if (current_owner_type_index.is_valid()) {
+		new_func_ref.set_access_owner_type_index(current_owner_type_index);
+	}
 	TemplateAstNodeVector instantiated_template_params;
 	TemplateArgumentVector instantiated_template_args;
 	if (outer_binding != nullptr) {

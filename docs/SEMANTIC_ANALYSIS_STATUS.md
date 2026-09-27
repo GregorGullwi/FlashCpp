@@ -353,44 +353,34 @@ be converted to one of:
 - `InternalError` for missing compiler-owned facts
 - user-facing compile diagnostics for ill-formed code
 
-### 7. Move access control out of AstToIr into sema
+### 7. Access control is sema-owned
 
-Member access control is currently evaluated during IR generation, not by
-parser or sema; `SemanticAnalysis.cpp` contains no access-control logic at
-all. The checks live in `AstToIr`: `checkMemberAccess` for data members
-(called from `generateMemberAccessIr`) and `checkMemberFunctionAccess` for
-member functions (called from `IrGenerator_Call_Indirect.cpp`), both backed
-by `isSameClassOrInstantiation` in `src/IrGenerator_MemberAccess.cpp`. That
-identity helper also serves non-access consumers today - constructor/target
-matching (`resolvedConstructorMatchesTargetType`) and copy-initialization
-comparison in `IrGenerator_Stmt_Decl.cpp` - so moving the access checks to
-sema must leave those callers with an equally exact identity predicate. This is a transitional placement, not the
-desired end state:
+Access policy now runs in semantic analysis and reports `AccessControlViolation`
+at the member's source token. Sema checks resolved data-member and static-member
+access, direct member-function calls, data-member pointer formation, and
+member-function pointer formation. It applies private and protected access,
+friend declarations, protected-object constraints, and the access-control
+disabled mode before IR generation.
 
-- C++20 [class.access] makes access control part of the semantic meaning of
-  an expression, checked together with name lookup before the expression is
-  used; diagnostics should carry real source locations instead of the current
-  `std::cerr` + generic `"Access control violation"` `CompileError`.
-- The check runs only on paths that reach IR generation, so ill-formed access
-  in dead or never-lowered code is not diagnosed.
-- The accessing context is recovered indirectly (the `this` symbol in the
-  codegen symbol table) instead of being tracked as semantic class-scope
-  state.
+The current class is carried as a semantic `TypeIndex` on the function/member
+context. Template injected-class-name remapping uses declaration identity and
+template-argument identity, preserving an explicitly named different
+specialization. Target-typed member-function overload addresses are checked
+against the selected canonical function-pointer type; overload sets with a
+uniform access level can be checked before target selection.
 
-Moving it requires:
+Access checks inside an uninstantiated class template or partial-specialization
+pattern are deferred, because a specialization-specific friend cannot be
+resolved until the specialization is known. Each concrete instantiation is
+re-checked against exact friend identity, so deferral never grants access to a
+non-friend specialization. Member-function templates and their instantiations
+carry the owning class `TypeIndex`, including static member-function templates
+whose instantiations are not flagged as member functions.
 
-1. Sema-resolved member expressions: for each `MemberAccessNode`, record the
-   resolved owner struct identity and member after substitution/instantiation
-   in the per-expression sema slots (the mechanism already exists for calls
-   and casts).
-2. An authoritative semantic current-class scope stack that survives template
-   replay, replacing recovery from the codegen symbol table.
-3. Reusing the specialization-identity comparison introduced for cross-
-   specialization private access (canonical `TemplateInstantiationKey`
-   equality over stamped TypeInfo metadata; exact registered-name equality
-   otherwise). That logic should move with the check and be deleted from
-   AstToIr once the sema-side checker owns it; AstToIr keeps at most an
-   assertion.
+The access-policy checks and helpers have been removed from `AstToIr`. Its
+`isSameClassOrInstantiation` predicate remains for non-access consumers such as
+constructor/target matching and copy-initialization identity. Access diagnostics
+no longer depend on reaching IR generation.
 
 ### 8. Move implicit special-member synthesis into sema
 

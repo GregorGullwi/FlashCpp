@@ -722,7 +722,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			return resolved;
 		}
 		if (auto resolved = FlashCpp::gLazyMemberResolver.resolve(owner_type_index, member_name)) {
-			return SemanticAnalysis::ResolvedIdentifierMemberInfo{resolved.member, resolved.adjusted_offset};
+			return SemanticAnalysis::ResolvedIdentifierMemberInfo{
+				resolved.member,
+				resolved.owner_struct,
+				resolved.adjusted_offset};
 		}
 		return std::nullopt;
 	};
@@ -1677,6 +1680,11 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						// A non-static data member is only named as a value through
 						// `&Class::member`; the address-of path handles that form, so
 						// a plain qualified-id value has no lowering here.
+						break;
+					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::MemberFunction:
+						// A member function is named as a value through a direct call
+						// or `&Class::function`; both are lowered by their dedicated
+						// paths, so a plain qualified-id value has no lowering here.
 						break;
 				}
 			}
