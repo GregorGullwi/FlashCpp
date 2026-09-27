@@ -1849,6 +1849,39 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	if (!same_shape_ignoring_cv) {
 		const CanonicalTypeNode unqualified_source_node = table.node(source_type);
 		const CanonicalTypeNode unqualified_target_node = table.node(target_type);
+		if (unqualified_source_node.kind == CanonicalTypeKind::Record &&
+			unqualified_target_node.kind == CanonicalTypeKind::Record) {
+			if ((static_cast<uint8_t>(source_referent_cv) &
+				~static_cast<uint8_t>(target_referent_cv)) != 0) {
+				return ConversionPlan::no_match();
+			}
+			const EntityId source_entity = table.recordEntity(source_type);
+			const EntityId target_entity = table.recordEntity(target_type);
+			// Keep nominal identity in EntityIds; resolve these exact declarations
+			// only to reuse the existing hierarchy/accessibility classifier.
+			const TypeInfo* source_info = tryFindTypeInfoByEntityId(source_entity);
+			const TypeInfo* target_info = tryFindTypeInfoByEntityId(target_entity);
+			if (source_info == nullptr || target_info == nullptr ||
+				!source_info->isStruct() || !target_info->isStruct()) {
+				return std::nullopt;
+			}
+			const TypeIndex source_index = source_info->registeredTypeIndex()
+				.withCategory(TypeCategory::Struct);
+			const TypeIndex target_index = target_info->registeredTypeIndex()
+				.withCategory(TypeCategory::Struct);
+			const DerivedBaseConversionKind base_conversion =
+				classifyDerivedBaseConversion(source_index, target_index).kind;
+			if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+				base_conversion == DerivedBaseConversionKind::PublicVirtual) {
+				return ConversionPlan{ConversionRank::Conversion,
+					StandardConversionKind::DerivedToBase, true};
+			}
+			if (base_conversion == DerivedBaseConversionKind::Inaccessible ||
+				base_conversion == DerivedBaseConversionKind::Ambiguous) {
+				return ConversionPlan::no_match();
+			}
+			return std::nullopt;
+		}
 		if (unqualified_source_node.kind == CanonicalTypeKind::Array &&
 			unqualified_target_node.kind == CanonicalTypeKind::Array) {
 			return ConversionPlan::no_match();

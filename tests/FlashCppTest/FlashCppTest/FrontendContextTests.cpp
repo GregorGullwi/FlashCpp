@@ -3426,6 +3426,107 @@ int main() {
 		CHECK(builder.declaration(second.decl_id).previous_decl_id == first.decl_id);
 	}
 
+	TEST_CASE("Canonical TypeIds plan derived-to-base reference conversions") {
+		clearLegacyTypeTablesForTesting();
+		gTemplateRegistry.clear();
+		gConceptRegistry.clear();
+		gSymbolTable.clear();
+		FrontendContext context;
+		const std::string code =
+			"struct CanonicalBaseForBinding { int value; };\n"
+			"struct CanonicalDerivedForBinding : public CanonicalBaseForBinding {};\n"
+			"struct CanonicalPrivateDerivedForBinding : private CanonicalBaseForBinding {};\n"
+			"struct CanonicalLeftForBinding : public CanonicalBaseForBinding {};\n"
+			"struct CanonicalRightForBinding : public CanonicalBaseForBinding {};\n"
+			"struct CanonicalAmbiguousDerivedForBinding : public CanonicalLeftForBinding, public CanonicalRightForBinding {};\n";
+		CompileContext test_context;
+		test_context.setInputFile("canonical_derived_to_base_reference_binding.cpp");
+		Lexer lexer(code);
+		SemanticAnalysis sema(test_context, gSymbolTable);
+		Parser parser(lexer, test_context, sema);
+		REQUIRE(!parser.parse().is_error());
+
+		const auto base_type_info = getTypesByNameMap().find(
+			StringTable::getOrInternStringHandle("CanonicalBaseForBinding"));
+		const auto derived_type_info = getTypesByNameMap().find(
+			StringTable::getOrInternStringHandle("CanonicalDerivedForBinding"));
+		const auto private_derived_type_info = getTypesByNameMap().find(
+			StringTable::getOrInternStringHandle("CanonicalPrivateDerivedForBinding"));
+		const auto ambiguous_derived_type_info = getTypesByNameMap().find(
+			StringTable::getOrInternStringHandle("CanonicalAmbiguousDerivedForBinding"));
+		REQUIRE(base_type_info != getTypesByNameMap().end());
+		REQUIRE(derived_type_info != getTypesByNameMap().end());
+		REQUIRE(private_derived_type_info != getTypesByNameMap().end());
+		REQUIRE(ambiguous_derived_type_info != getTypesByNameMap().end());
+
+		auto make_reference_type = [](const TypeInfo& info,
+			CVQualifier cv_qualifier,
+			ReferenceQualifier reference_qualifier) {
+			TypeSpecifierNode type(
+				info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+				info.sizeInBits(), Token{}, cv_qualifier,
+				ReferenceQualifier::None);
+			tryBindPublishedTypeEntity(type);
+			type.set_reference_qualifier(reference_qualifier);
+			return type;
+		};
+
+		TypeSpecifierNode derived_lvalue = make_reference_type(
+			*derived_type_info->second, CVQualifier::None,
+			ReferenceQualifier::LValueReference);
+		TypeSpecifierNode base_lvalue_reference = make_reference_type(
+			*base_type_info->second, CVQualifier::None,
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> public_lvalue_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				derived_lvalue, base_lvalue_reference);
+		REQUIRE(public_lvalue_plan.has_value());
+		CHECK(public_lvalue_plan->is_valid);
+		CHECK(public_lvalue_plan->rank == ConversionRank::Conversion);
+		CHECK(public_lvalue_plan->kind == StandardConversionKind::DerivedToBase);
+
+		TypeSpecifierNode derived_rvalue = make_reference_type(
+			*derived_type_info->second, CVQualifier::None,
+			ReferenceQualifier::RValueReference);
+		TypeSpecifierNode base_rvalue_reference = make_reference_type(
+			*base_type_info->second, CVQualifier::None,
+			ReferenceQualifier::RValueReference);
+		const std::optional<ConversionPlan> public_rvalue_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				derived_rvalue, base_rvalue_reference);
+		REQUIRE(public_rvalue_plan.has_value());
+		CHECK(public_rvalue_plan->is_valid);
+		CHECK(public_rvalue_plan->rank == ConversionRank::Conversion);
+		CHECK(public_rvalue_plan->kind == StandardConversionKind::DerivedToBase);
+
+		TypeSpecifierNode private_derived_lvalue = make_reference_type(
+			*private_derived_type_info->second, CVQualifier::None,
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> private_base_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				private_derived_lvalue, base_lvalue_reference);
+		REQUIRE(private_base_plan.has_value());
+		CHECK_FALSE(private_base_plan->is_valid);
+
+		TypeSpecifierNode ambiguous_derived_lvalue = make_reference_type(
+			*ambiguous_derived_type_info->second, CVQualifier::None,
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> ambiguous_base_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				ambiguous_derived_lvalue, base_lvalue_reference);
+		REQUIRE(ambiguous_base_plan.has_value());
+		CHECK_FALSE(ambiguous_base_plan->is_valid);
+
+		TypeSpecifierNode const_derived_lvalue = make_reference_type(
+			*derived_type_info->second, CVQualifier::Const,
+			ReferenceQualifier::LValueReference);
+		const std::optional<ConversionPlan> cv_removal_plan =
+			tryBuildCanonicalReferenceBindingPlan(
+				const_derived_lvalue, base_lvalue_reference);
+		REQUIRE(cv_removal_plan.has_value());
+		CHECK_FALSE(cv_removal_plan->is_valid);
+	}
+
 	TEST_CASE("Forward-declared published nominal parameters import by EntityId") {
 		clearLegacyTypeTablesForTesting();
 		gTemplateRegistry.clear();

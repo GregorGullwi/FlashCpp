@@ -46,8 +46,8 @@ argument type for selection and reports ambiguous or non-viable calls at the
 call site. Other parse-time expression queries still use the compatibility
 type view where needed.
 Conditional pointer common-type selection now compares imported structural
-`TypeId`s through the shared descriptor adapter. Derived-to-base, reference
-binding, and user-defined conversions remain on specialized paths.
+`TypeId`s through the shared descriptor adapter. Derived-to-base pointer
+conversions and user-defined conversions remain on specialized paths.
 Parser-side overload ranking now uses the structural planner for non-projectable
 ordered pairs plus scalar builtin conversions, `nullptr`-to-pointer conversion,
 and supported projectable pointer pairs, array decay, and pointer/array-to-`bool`
@@ -59,15 +59,19 @@ or enum base types. Speculative imports roll back; standard builtin-to-builtin
 conversions can now bind eligible references through a temporary, such as an
 `int` value converted to `double` for `const double&`. Exact-shape array
 references now preserve extents and nested cv without decaying the array;
-extent mismatches are rejected by the canonical planner. User-defined
-conversions, array-decay temporaries, derived-to-base binding, callable and
-template types, and structural no-matches needing specialized rules still use
-compatibility planning. Regression coverage in
+extent mismatches are rejected by the canonical planner. Derived-record to
+base-reference conversions now use canonical record `EntityId`s to select the
+existing hierarchy classifier, which rejects inaccessible and ambiguous base
+paths. User-defined conversions, array-decay temporaries, derived-to-base
+pointer conversions, callable and template types, and structural no-matches
+needing specialized rules still use compatibility planning. Regression coverage in
 `tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises
 native, record, substituted, and conversion-required reference parameters, and
 checks that a promotion-ranked overload beats a conversion-ranked reference.
 `tests/test_canonical_array_reference_binding_ret0.cpp` checks array overload
 selection for exact extents and mutable versus const referents.
+`tests/test_canonical_derived_to_base_reference_overload_ret0.cpp` checks that
+derived-reference candidates rank ahead of their base-reference overloads.
 
 Static-member `TypeId`s are recomputed after template substitution when the
 canonical importer supports the substituted type, including projectable
@@ -132,7 +136,7 @@ Continue boundary 3A in this order:
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
    planner, including remaining conversions that require temporary
-   materialization, derived-to-base reference binding, and callable pairs.
+   materialization, derived-to-base pointer conversions, and callable pairs.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
