@@ -10854,7 +10854,9 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	}
 
 	if (!param_type.is_rvalue_reference() && param_type.is_reference()) {
-		if (!param_type.is_const())
+		if (!hasCVQualifier(
+				param_type.top_level_cv_qualifier(),
+				CVQualifier::Const))
 			return std::nullopt;
 	}
 

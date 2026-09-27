@@ -146,8 +146,12 @@ Itanium end-to-end coverage is deferred until boundary 3B supports mangling
 member-function-pointer parameter types. Dependent `noexcept`,
 user-defined conversions, and other unsupported callable or template types
 still use compatibility planning.
-Call lowering does not yet materialize the pointer object required when an
-array decays to a pointer temporary; see [known issues](KNOWN_ISSUES.md).
+Call lowering now materializes the pointer object required when an array
+decays to a pointer temporary before binding it to an eligible reference.
+`tests/test_array_to_pointer_reference_temporary_ret42.cpp` checks runtime
+dereferencing through references to decayed `int*` and `short*` values, while
+`tests/test_canonical_array_decay_reference_overload_ret0.cpp` checks overload
+selection across builtin and record element types.
 Regression coverage in
 `tests/test_canonical_prvalue_const_reference_overload_ret0.cpp` exercises
 native, record, substituted, and conversion-required reference parameters, and

@@ -3200,7 +3200,9 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 	}
 
 	auto registerStructTempDestructorIfNeeded = [&](const ExprResult& value_result) {
-		if (value_result.category() != TypeCategory::Struct || !value_result.type_index.is_valid()) {
+		if (value_result.category() != TypeCategory::Struct ||
+			value_result.pointer_depth.is_pointer() ||
+			!value_result.type_index.is_valid()) {
 			return;
 		}
 		const TypeInfo* type_info = tryGetTypeInfo(value_result.type_index);
@@ -3347,7 +3349,53 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 		const CanonicalTypeDesc& to_desc = sema_.typeContext().get(cast_info.target_type_id);
 		TypeCategory from_t = from_desc.category();
 		const TypeCategory to_t = to_desc.category();
-		if (cast_info.cast_kind == StandardConversionKind::DerivedToBase &&
+		if (cast_info.cast_kind == StandardConversionKind::ArrayToPointer) {
+			if (to_desc.pointer_levels.empty()) {
+				throw InternalError("Array-to-pointer reference binding has no pointer target type");
+			}
+			if (arg_result.storage != ValueStorage::ContainsAddress) {
+				arg_result = materializeAddressResult(
+					arg_expr.as<ExpressionNode>(),
+					std::move(arg_result),
+					source_token);
+			}
+			if (arg_result.storage != ValueStorage::ContainsAddress) {
+				throw InternalError("Array-to-pointer reference binding has no array address");
+			}
+			const TypeIndex pointer_type_index =
+				to_desc.type_index.withCategory(to_t);
+			const PointerDepth pointer_depth{
+				static_cast<int>(to_desc.pointer_levels.size())};
+			// The array address is the decayed pointer value. Copy it into a fresh
+			// pointer object so the reference binds to that object for this call.
+			arg_result = makeExprResult(
+				pointer_type_index,
+				SizeInBits{POINTER_SIZE_BITS},
+				std::move(arg_result.value),
+				pointer_depth,
+				ValueStorage::ContainsData);
+			const TempVar pointer_value_temp = var_counter.next();
+			AssignmentOp pointer_value_assignment;
+			pointer_value_assignment.result = pointer_value_temp;
+			pointer_value_assignment.lhs = makeTypedValue(
+				pointer_type_index,
+				SizeInBits{POINTER_SIZE_BITS},
+				IrValue(pointer_value_temp),
+				pointer_depth);
+			pointer_value_assignment.rhs = toTypedValue(arg_result);
+			pointer_value_assignment.rhs.storage = ValueStorage::ContainsAddress;
+			ir_.addInstruction(IrInstruction(
+				IrOpcode::Assignment,
+				std::move(pointer_value_assignment),
+				source_token));
+			arg_result = makeExprResult(
+				pointer_type_index,
+				SizeInBits{POINTER_SIZE_BITS},
+				IrOperand{pointer_value_temp},
+				pointer_depth,
+				ValueStorage::ContainsData);
+			return materializeTemporaryAndTakeAddress(std::move(arg_result));
+		} else if (cast_info.cast_kind == StandardConversionKind::DerivedToBase &&
 			from_t == TypeCategory::Struct && to_t == TypeCategory::Struct) {
 			if (!cast_info.selected_constructor)
 				throw InternalError("Sema missed the selected base copy/move constructor for reference binding");

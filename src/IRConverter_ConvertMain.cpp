@@ -12139,6 +12139,22 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			return;
 		}
 
+		// Pointers to class types have the same scalar representation as other
+		// object pointers. Copy the pointer value itself; the pointee's aggregate
+		// size and address metadata do not describe the pointer object.
+		if (op.lhs.pointer_depth.is_pointer()) {
+			X64Register pointer_reg = allocateRegisterWithSpilling();
+			emitMovFromFrameSized(
+				SizedRegister{pointer_reg, 64, false},
+				SizedStackSlot{rhs_offset, 64, false});
+			emitMovToFrameSized(
+				SizedRegister{pointer_reg, 64, false},
+				SizedStackSlot{lhs_offset, 64, false});
+			regAlloc.clearStackVariableAssociations(lhs_offset);
+			regAlloc.release(pointer_reg);
+			return;
+		}
+
 			// Get struct size in bytes from TypedValue (round up to handle partial bytes)
 		int struct_size_bytes = (op.lhs.size_in_bits.value + 7) / 8;
 
