@@ -84,6 +84,16 @@ imports. The source regression
 overload selection for object and data-member pointers. Parser support for
 function-pointer and member-function-pointer reference declarators remains
 deferred; see [known issues](KNOWN_ISSUES.md).
+Function designators now decay canonically when a matching function-pointer
+temporary binds to a `const` lvalue or rvalue reference. The planner rejects
+non-const lvalue-reference binding and mismatched function signatures. Parser
+typing also unwraps the legacy implicit `FunctionPointer` category when unary
+`*` produces a function lvalue, so overload selection sees the function type
+before decay. The unit coverage is in
+`Canonical TypeIds bind function decay temporaries to pointer references`, and
+`tests/test_canonical_function_pointer_reference_decay_overload_ret0.cpp`
+checks const-lvalue and rvalue-reference overload selection from a dereferenced
+function pointer.
 User-defined conversions, callable and template types, and structural
 no-matches needing specialized rules still use compatibility planning.
 Call lowering does not yet materialize the pointer object required when an
@@ -171,9 +181,10 @@ Continue boundary 3A in this order:
 1. **Make `TypeId` the conversion currency.** Continue migrating parser-side
    overload ranking and remaining syntax-facing callers to the structural
    planner, including remaining conversions that require temporary
-   materialization and callable pairs. Builtin arithmetic, array-decay, and
-   null-pointer reference temporaries plus direct derived-to-base reference and
-   pointer conversions now use the canonical planner and base graph.
+   materialization and callable pairs. Builtin arithmetic, array-decay,
+   null-pointer, and function-decay reference temporaries plus direct
+   derived-to-base reference and pointer conversions now use the canonical
+   planner and base graph.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,

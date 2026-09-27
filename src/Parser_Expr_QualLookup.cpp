@@ -3580,6 +3580,21 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// call from its structural argument type.
 				return std::nullopt;
 			}
+			if (operand_type.category() == TypeCategory::FunctionPointer &&
+				operand_type.pointer_levels().empty() &&
+				operand_type.has_function_signature()) {
+				// FunctionPointer is a legacy category that carries its outer
+				// pointer implicitly. Dereferencing it produces a function lvalue,
+				// so expose the callable signature without that pointer wrapper.
+				TypeSpecifierNode result(
+					TypeCategory::Function,
+					TypeQualifier::None,
+					get_type_size_bits(TypeCategory::Function),
+					operand_type.token(),
+					CVQualifier::None);
+				result.set_function_signature(operand_type.function_signature());
+				return result;
+			}
 			if (operand_type.is_reference()) {
 				// Dereferencing a reference gives the underlying type
 				TypeSpecifierNode result = operand_type;

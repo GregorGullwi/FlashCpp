@@ -361,6 +361,83 @@ TEST_CASE("Canonical TypeIds bind array references without decay") {
 	CHECK_FALSE(extent_mismatch_plan->is_valid);
 }
 
+TEST_CASE("Canonical TypeIds bind function decay temporaries to pointer references") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	signature.setParameterTypes(std::move(parameters));
+	FunctionSignature mismatched_signature;
+	TypeSpecifierNode char_type(
+		TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	mismatched_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> mismatched_parameters;
+	mismatched_parameters.push_back(makeFunctionTypeFromSpecifier(char_type));
+	mismatched_signature.setParameterTypes(std::move(mismatched_parameters));
+
+	TypeSpecifierNode function_object(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	function_object.set_ordered_declarator({DeclaratorComponent::function()});
+	function_object.set_function_signature(signature);
+	TypeSpecifierNode function_lvalue = function_object;
+	function_lvalue.set_reference_qualifier(ReferenceQualifier::LValueReference);
+
+	TypeSpecifierNode const_pointer_lvalue_reference = function_object;
+	const_pointer_lvalue_reference.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::Const),
+		DeclaratorComponent::function(),
+	});
+	const_pointer_lvalue_reference.set_function_signature(signature);
+	const_pointer_lvalue_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> const_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			function_lvalue, const_pointer_lvalue_reference);
+	REQUIRE(const_lvalue_plan.has_value());
+	CHECK(const_lvalue_plan->is_valid);
+	CHECK(const_lvalue_plan->kind == StandardConversionKind::FunctionToPointer);
+
+	TypeSpecifierNode nonconst_pointer_lvalue_reference = function_object;
+	nonconst_pointer_lvalue_reference.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::function(),
+	});
+	nonconst_pointer_lvalue_reference.set_function_signature(signature);
+	nonconst_pointer_lvalue_reference.prepend_ordered_declarator_component(
+		DeclaratorComponent::lvalueReference());
+	const std::optional<ConversionPlan> nonconst_lvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			function_lvalue, nonconst_pointer_lvalue_reference);
+	REQUIRE(nonconst_lvalue_plan.has_value());
+	CHECK_FALSE(nonconst_lvalue_plan->is_valid);
+
+	TypeSpecifierNode pointer_rvalue_reference = nonconst_pointer_lvalue_reference;
+	pointer_rvalue_reference.set_ordered_declarator({
+		DeclaratorComponent::rvalueReference(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::function(),
+	});
+	pointer_rvalue_reference.set_function_signature(signature);
+	const std::optional<ConversionPlan> rvalue_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			function_lvalue, pointer_rvalue_reference);
+	REQUIRE(rvalue_plan.has_value());
+	CHECK(rvalue_plan->is_valid);
+	CHECK(rvalue_plan->kind == StandardConversionKind::FunctionToPointer);
+
+	TypeSpecifierNode mismatched_pointer_reference =
+		const_pointer_lvalue_reference;
+	mismatched_pointer_reference.set_function_signature(mismatched_signature);
+	const std::optional<ConversionPlan> mismatched_signature_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			function_lvalue, mismatched_pointer_reference);
+	REQUIRE(mismatched_signature_plan.has_value());
+	CHECK_FALSE(mismatched_signature_plan->is_valid);
+}
+
 TEST_CASE("Ordered function objects decay to pointers") {
 	FrontendContext frontend;
 	TypeSpecifierNode parameter(
