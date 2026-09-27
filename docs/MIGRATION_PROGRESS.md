@@ -102,6 +102,20 @@ by-value pointer arguments is ignored. The unit case
 `Canonical TypeIds compare projectable function pointer pairs` and
 `tests/test_canonical_function_pointer_noexcept_pair_overload_ret0.cpp`
 cover ranking and viability.
+An added top-level cv-qualifier introduced purely by reference binding is now
+ranked as the identity conversion per [over.ics.ref]/1 instead of as a
+`QualificationAdjustment`. A direct `const T&` binding of a function-pointer
+lvalue therefore outranks binding to a `const&` of the potentially-throwing
+pointer, which still requires the [conv.fctptr] function pointer conversion
+(category Qualification Adjustment, exact-match rank). The preference between
+`T&` and `const T&` for an lvalue is applied by the [over.ics.rank]/3.2.6
+cv-preference tie-break when comparing candidate sequences; the helper that
+compares referenced types ignoring top-level cv now also ignores the outermost
+pointer level's cv. The unit case
+`Canonical TypeIds bind function pointer conversions to references` and the
+source regressions
+`tests/test_canonical_noexcept_function_pointer_reference_temp_overload_ret0.cpp`
+and `tests/test_reference_binding_cv_ranking_ret0.cpp` lock in the selection.
 Same-owner member-function-pointer pairs now compare the canonical owner and
 full function type, accept `noexcept` relaxation, and reject reverse
 relaxation or signature mismatches. Complete owner schemas reject unrelated,

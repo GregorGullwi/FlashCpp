@@ -165,13 +165,16 @@ TEST_CASE("Ordered references bind to ordered pointer objects") {
 	const ConversionPlan qualified_plan =
 		buildConversionPlan(lvalue_argument, qualified_reference);
 	CHECK(qualified_plan.is_valid);
-	CHECK(qualified_plan.rank == ConversionRank::QualificationAdjustment);
+	// qualified_pointer differs from pointer_object only in the cv-qualifier of
+	// its outermost pointer.  Per [over.ics.ref]/1, directly binding to a
+	// reference whose referenced type differs only by added top-level
+	// cv-qualification is the identity conversion, so this stays ExactMatch.
+	CHECK(qualified_plan.rank == ConversionRank::ExactMatch);
 	const std::optional<ConversionPlan> canonical_qualified_plan =
 		tryBuildCanonicalReferenceBindingPlan(lvalue_argument, qualified_reference);
 	REQUIRE(canonical_qualified_plan.has_value());
 	CHECK(canonical_qualified_plan->is_valid);
-	CHECK(canonical_qualified_plan->rank ==
-		ConversionRank::QualificationAdjustment);
+	CHECK(canonical_qualified_plan->rank == ConversionRank::ExactMatch);
 
 	TypeSpecifierNode rvalue_reference = pointer_object;
 	rvalue_reference.prepend_ordered_declarator_component(
@@ -623,6 +626,74 @@ TEST_CASE("Canonical TypeIds compare projectable function pointer pairs") {
 			noexcept_pointer, mismatched_pointer);
 	REQUIRE(mismatched_signature_plan.has_value());
 	CHECK_FALSE(mismatched_signature_plan->is_valid);
+}
+
+TEST_CASE("Canonical TypeIds bind function pointer conversions to references") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	FunctionSignature throwing_signature;
+	throwing_signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	OverloadVector<FunctionType, 4> parameters;
+	parameters.push_back(makeFunctionTypeFromSpecifier(int_type));
+	throwing_signature.setParameterTypes(std::move(parameters));
+	FunctionSignature noexcept_signature = throwing_signature;
+	noexcept_signature.is_noexcept = true;
+	auto make_function_pointer = [](const FunctionSignature& signature) {
+		TypeSpecifierNode type(TypeCategory::FunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_function_signature(signature);
+		return type;
+	};
+	TypeSpecifierNode noexcept_pointer =
+		make_function_pointer(noexcept_signature);
+	noexcept_pointer.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	TypeSpecifierNode const_throwing_reference =
+		make_function_pointer(throwing_signature);
+	const_throwing_reference.set_cv_qualifier(CVQualifier::Const);
+	const_throwing_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> relaxation_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			noexcept_pointer, const_throwing_reference);
+	REQUIRE(relaxation_plan.has_value());
+	CHECK(relaxation_plan->is_valid);
+	CHECK(relaxation_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
+
+	TypeSpecifierNode nonconst_throwing_reference =
+		make_function_pointer(throwing_signature);
+	nonconst_throwing_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> nonconst_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			noexcept_pointer, nonconst_throwing_reference);
+	REQUIRE(nonconst_reference_plan.has_value());
+	CHECK_FALSE(nonconst_reference_plan->is_valid);
+
+	TypeSpecifierNode noexcept_reference =
+		make_function_pointer(noexcept_signature);
+	noexcept_reference.set_cv_qualifier(CVQualifier::Const);
+	noexcept_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> reverse_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			make_function_pointer(throwing_signature), noexcept_reference);
+	REQUIRE(reverse_plan.has_value());
+	CHECK_FALSE(reverse_plan->is_valid);
+
+	TypeSpecifierNode throwing_rvalue_reference =
+		make_function_pointer(throwing_signature);
+	throwing_rvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::RValueReference);
+	const std::optional<ConversionPlan> rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(
+			noexcept_pointer, throwing_rvalue_reference);
+	REQUIRE(rvalue_reference_plan.has_value());
+	CHECK(rvalue_reference_plan->is_valid);
+	CHECK(rvalue_reference_plan->kind ==
+		StandardConversionKind::QualificationAdjustment);
 }
 
 TEST_CASE("Canonical TypeIds compare same-owner member function pointer pairs") {

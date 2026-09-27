@@ -140,7 +140,10 @@ inline bool isSameTypeIgnoringTopLevelCvAndRef(
 		return false;
 	}
 
-	for (size_t i = 0; i < lhs.pointer_levels().size(); ++i) {
+	// Skip the outermost pointer level: its cv-qualifiers are the top-level
+	// cv-qualifiers of a pointer referent, which this helper deliberately
+	// disregards.  Inner pointer cv-qualifiers remain part of the identity.
+	for (size_t i = 0; i + 1 < lhs.pointer_levels().size(); ++i) {
 		if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
 			return false;
 		}
@@ -229,21 +232,45 @@ inline int compareArgumentConversionInfo(
 	}
 
 	if (lhs.rank != ConversionRank::ExactMatch ||
-		lhs.parameter_type == nullptr || rhs.parameter_type == nullptr ||
-		!isRvalueLikeArgumentForReferenceBinding(argument_type)) {
+		lhs.parameter_type == nullptr || rhs.parameter_type == nullptr) {
 		return 0;
 	}
 
 	const TypeSpecifierNode& lhs_param = *lhs.parameter_type;
 	const TypeSpecifierNode& rhs_param = *rhs.parameter_type;
-	const bool lhs_is_rvalue_ref = lhs_param.is_rvalue_reference();
-	const bool rhs_is_rvalue_ref = rhs_param.is_rvalue_reference();
-	const bool lhs_is_const_lvalue_ref = lhs_param.is_lvalue_reference() && lhs_param.is_const();
-	const bool rhs_is_const_lvalue_ref = rhs_param.is_lvalue_reference() && rhs_param.is_const();
 
 	if (!isSameTypeIgnoringTopLevelCvAndRef(lhs_param, rhs_param)) {
 		return 0;
 	}
+
+	// [over.ics.rank]/3.2.6: when two reference bindings refer to types that
+	// differ only in top-level cv-qualification, binding to the less
+	// cv-qualified referenced type is better.  This is what lets T& beat
+	// const T& for an lvalue argument now that adding a top-level cv-qualifier
+	// through reference binding is ranked as an identity conversion.
+	if (lhs_param.is_reference() && rhs_param.is_reference()) {
+		const uint8_t lhs_cv =
+			static_cast<uint8_t>(lhs_param.top_level_cv_qualifier());
+		const uint8_t rhs_cv =
+			static_cast<uint8_t>(rhs_param.top_level_cv_qualifier());
+		const bool lhs_is_subset = (lhs_cv & ~rhs_cv) == 0;
+		const bool rhs_is_subset = (rhs_cv & ~lhs_cv) == 0;
+		if (lhs_is_subset && !rhs_is_subset) {
+			return -1;
+		}
+		if (rhs_is_subset && !lhs_is_subset) {
+			return 1;
+		}
+	}
+
+	if (!isRvalueLikeArgumentForReferenceBinding(argument_type)) {
+		return 0;
+	}
+
+	const bool lhs_is_rvalue_ref = lhs_param.is_rvalue_reference();
+	const bool rhs_is_rvalue_ref = rhs_param.is_rvalue_reference();
+	const bool lhs_is_const_lvalue_ref = lhs_param.is_lvalue_reference() && lhs_param.is_const();
+	const bool rhs_is_const_lvalue_ref = rhs_param.is_lvalue_reference() && rhs_param.is_const();
 
 	if (lhs_is_rvalue_ref && rhs_is_const_lvalue_ref) {
 		return -1;
@@ -2424,12 +2451,11 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	}
 	if (source_referent_cv != target_referent_cv &&
 		referent_plan.kind == StandardConversionKind::None) {
-		if (!source_is_lvalue) {
-			// Binding a prvalue or xvalue to a cv-qualified reference remains an
-			// exact-match sequence; keep qualification ranking for lvalue binding.
-			return ConversionPlan::exact_match();
-		}
-		return ConversionPlan::qualification_adjustment();
+		// [over.ics.ref]/1: directly binding to a reference whose referenced
+		// type differs only by added top-level cv-qualification is the identity
+		// conversion.  The preference of T& over const T& is [over.ics.rank]/3.2.6
+		// and is applied when comparing candidate conversion sequences.
+		return ConversionPlan::exact_match();
 	}
 	return referent_plan;
 }
