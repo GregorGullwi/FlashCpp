@@ -157,7 +157,13 @@ qualification temporary to `const int*&`, while `const int* const&` can accept
 it. The unit case `Canonical TypeIds reject pointee qualification through
 mutable references` and
 `tests/test_canonical_pointer_cv_reference_binding_overload_ret0.cpp` cover
-that distinction. `tests/test_canonical_array_decay_reference_overload_ret0.cpp`
+that distinction. Member-object and member-function pointer conversions now
+also bind through eligible reference temporaries using canonical owner schemas.
+The unit case `Canonical TypeIds bind member-pointer conversion temporaries to
+references` covers both pointer-to-member families, and
+`tests/test_canonical_member_object_pointer_reference_temp_overload_ret0.cpp`
+checks source-level overload selection for a base-to-derived data-member-pointer
+conversion. `tests/test_canonical_array_decay_reference_overload_ret0.cpp`
 checks array-to-pointer temporary binding for const lvalue and rvalue references
 across builtin and record element types; the canonical planner unit test checks
 multidimensional row extents, cv addition/removal, and direct versus temporary
@@ -229,13 +235,13 @@ Continue boundary 3A in this order:
    planner, including remaining conversions that require temporary
    materialization and unsupported callable pairs. Regular function-pointer
    pairs and same-owner member-function-pointer pairs, builtin arithmetic, array-decay,
-   null-pointer, and function-decay reference temporaries plus direct
-   derived-to-base reference and pointer conversions now use the canonical
-   planner and base graph. Data-member-pointer pairs now compare owner and
-   pointee `TypeId`s and support the public non-virtual base-to-derived owner
-   conversion. Member-function-pointer base adjustments now use canonical owner
-   schemas; dependent `noexcept` and remaining unsupported callable pairs are
-   still pending.
+   null-pointer, function-decay, object-pointer, and member-pointer reference
+   temporaries plus direct derived-to-base reference and pointer conversions now
+   use the canonical planner and base graph. Data-member-pointer pairs now
+   compare owner and pointee `TypeId`s and support the public non-virtual
+   base-to-derived owner conversion. Member-function-pointer base adjustments
+   now use canonical owner schemas; dependent `noexcept` and remaining
+   unsupported callable pairs are still pending.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
