@@ -2637,7 +2637,7 @@ void StructTypeInfo::recalculateLayout() {
 				  std::move(member.default_initializer), member.reference_qualifier,
 				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
 				  member.pointee_array_declarator, member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
-				  member.is_no_unique_address);
+				  member.is_no_unique_address, member.member_cv_qualifier);
 		members.back().anonymous_union_group_index = anonymous_union_group_index;
 	};
 
@@ -2712,7 +2712,7 @@ bool StructTypeInfo::finalizeWithBases() {
 				  std::move(member.default_initializer), member.reference_qualifier,
 				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
 				  member.pointee_array_declarator, member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
-				  member.is_no_unique_address);
+				  member.is_no_unique_address, member.member_cv_qualifier);
 		members.back().anonymous_union_group_index = anonymous_union_group_index;
 	}
 

@@ -6427,7 +6427,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width,
 			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt,
-			member_decl.is_no_unique_address);
+			member_decl.is_no_unique_address,
+			type_spec.top_level_cv_qualifier());
 	}
 
 	// Copy static members. Prefer the specialization AST so we preserve in-class

@@ -296,18 +296,6 @@ path. Constexpr evaluation often collapses
 `long double` to `double`. Do not paper over return ABI with size guesses or INTEGER
 fallbacks; wait until `long double` lowering can emit the SysV x87 convention.
 
-## Implicit default-constructor deletion misses const scalar members
-
-`StructMember` does not currently preserve the declared cv-qualification of a
-non-static data member. Consequently, semantic special-member finalization can
-detect reference members and class-type subobjects that delete an implicit
-default constructor, but cannot yet implement every C++20
-`const-default-constructible` rule for a const non-class member without a default
-member initializer (for example, `struct S { const int value; };`). Preserve
-member cv metadata through parsing and template substitution, then make the
-sema-owned implicit default-constructor record decide this case. Do not recreate
-the decision in IR from type spellings.
-
 ## Recursive class-template chains can overflow the native stack
 
 A generated benchmark probe using a recursively specialized class template

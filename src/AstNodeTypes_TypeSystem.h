@@ -1286,6 +1286,7 @@ struct StructMember {
 	bool is_no_unique_address = false;
 	// Identifies variants flattened from the same anonymous union; absent for non-variant members.
 	std::optional<size_t> anonymous_union_group_index;
+	CVQualifier member_cv_qualifier = CVQualifier::None;
 
 	// Convenience helpers for common checks
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
@@ -1301,13 +1302,14 @@ struct StructMember {
 				 std::vector<size_t> arr_dims,
 				 bool member_pointee_array_declarator,
 				 int ptr_depth,
-				 std::optional<size_t> bf_width)
+				 std::optional<size_t> bf_width,
+				 CVQualifier member_cv)
 		: name(n), type_index(tidx), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), reference_qualifier(ref_qual),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
 		  pointee_array_declarator(member_pointee_array_declarator),
-		  pointer_depth(ptr_depth) {}
+		  pointer_depth(ptr_depth), member_cv_qualifier(member_cv) {}
 
 	StringHandle getName() const {
 		return name;

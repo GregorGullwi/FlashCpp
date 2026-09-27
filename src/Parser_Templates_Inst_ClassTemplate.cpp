@@ -2611,7 +2611,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
 					getCanonicalFunctionPointerSignature(substituted_member_type_spec),
-					member_decl.is_no_unique_address);
+					member_decl.is_no_unique_address,
+					substituted_member_type_spec.top_level_cv_qualifier());
 			}
 
 			SourceMemberStructInfoIndexMaps struct_info_member_identity_maps;
@@ -7832,7 +7833,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
 			getCanonicalFunctionPointerSignature(substituted_type_spec),
-			member_decl.is_no_unique_address);
+			member_decl.is_no_unique_address,
+			substituted_type_spec.top_level_cv_qualifier());
 	}
 
 	// Skip member function instantiation - we only need type information for nested classes
@@ -8956,7 +8958,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_cast<int>(substituted_type_spec.pointer_depth()),
 					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
 					getCanonicalFunctionPointerSignature(substituted_type_spec),
-					member_decl.is_no_unique_address);
+					member_decl.is_no_unique_address,
+					substituted_type_spec.top_level_cv_qualifier());
 
 				ASTNode substituted_member_decl = substituteTemplateParameters(
 					member_decl.declaration, template_params, template_args_to_use);

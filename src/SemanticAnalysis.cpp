@@ -4070,6 +4070,13 @@ void SemanticAnalysis::finalizeImplicitDefaultConstructors() {
 				record.is_deleted = true;
 				continue;
 			}
+			// C++20 [class.default.ctor]: a const-qualified non-class member
+			// object (including a pointer object or array element) needs a DMI.
+			if (hasCVQualifier(member.member_cv_qualifier, CVQualifier::Const) &&
+				(member.type_index.category() != TypeCategory::Struct || member.pointer_depth > 0)) {
+				record.is_deleted = true;
+				continue;
+			}
 			if (member.type_index.category() != TypeCategory::Struct || member.pointer_depth != 0) {
 				continue;
 			}
