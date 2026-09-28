@@ -294,10 +294,13 @@ Continue boundary 3A in this order:
     mixed paths through ordinary records; concrete `int` and `char` owner
     conversions are covered by
     `tests/test_canonical_class_template_member_pointer_base_conversion_ret0.cpp`.
-    Dependent class-specialization owner graphs still need coverage through
-    substitution. Other dependent member-function-pointer forms, distinct or
-    one-sided dependent expressions, and remaining unsupported callable pairs
-    still need substitution-aware canonical ranking.
+    The dependent-source case is covered by
+    `tests/test_canonical_dependent_class_template_member_pointer_base_conversion_ret0.cpp`:
+    `Base<T>` member addresses select concrete `Derived<int>` and
+    `Derived<char>` owner candidates after substitution. Other dependent
+    member-function-pointer forms, distinct or one-sided dependent expressions,
+    and remaining unsupported callable pairs still need substitution-aware
+    canonical ranking.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
