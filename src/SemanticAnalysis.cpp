@@ -10844,9 +10844,11 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 
 	const bool arg_is_lvalue = arg_binding_type.is_lvalue_reference();
 	const bool arg_is_xvalue = arg_binding_type.is_rvalue_reference();
-	if (param_type.is_rvalue_reference() && arg_is_lvalue)
-		return std::nullopt;
-
+	const bool direct_base_subobject_binding =
+		arg_value_type.runtime_pointer_depth() == 0 &&
+		param_value_type.runtime_pointer_depth() == 0 &&
+		arg_value_type.category() == TypeCategory::Struct &&
+		param_value_type.category() == TypeCategory::Struct;
 	const ConversionPlan direct_plan = buildConversionPlan(arg_binding_type, param_type);
 	if (direct_plan.is_valid && (arg_is_lvalue || arg_is_xvalue) &&
 		(direct_plan.kind == StandardConversionKind::None ||
@@ -10873,6 +10875,19 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 
 	const ConversionPlan value_plan = buildConversionPlan(arg_value_type, param_value_type);
 	if (!value_plan.is_valid || value_plan.rank == ConversionRank::UserDefined) {
+		return std::nullopt;
+	}
+	const bool source_and_target_are_reference_related =
+		value_plan.kind == StandardConversionKind::None ||
+		value_plan.kind == StandardConversionKind::QualificationAdjustment ||
+		(value_plan.kind == StandardConversionKind::DerivedToBase &&
+			direct_base_subobject_binding);
+	// [dcl.init.ref]/5.4.3 rejects an lvalue when the referred-to types are
+	// reference-related. Do this after computing the value conversion: array or
+	// function decay, pointer adjustment, and arithmetic conversion can produce
+	// a prvalue that binds a temporary even when the original argument is an lvalue.
+	if (param_type.is_rvalue_reference() && arg_is_lvalue &&
+		source_and_target_are_reference_related) {
 		return std::nullopt;
 	}
 

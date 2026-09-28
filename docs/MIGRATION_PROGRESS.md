@@ -66,6 +66,9 @@ conversions can now bind eligible references through a temporary, such as an
 `int` value converted to `double` for `const double&`; an lvalue converted to
 `double` can also bind to `double&&`. Array lvalues now decay canonically when
 binding pointer temporaries to eligible const lvalue and rvalue references.
+At ordinary calls, an array lvalue can bind to `int*&&` through that converted
+pointer temporary, as covered by
+`tests/test_array_decay_rvalue_reference_temporary_ret0.cpp`.
 Nested array extents and element cv are retained through decay, and mismatched
 pointer-to-array extents are rejected. Exact-shape array references still
 preserve extents and nested cv without decay. Derived-record to base-reference
