@@ -76,13 +76,21 @@ canonical enum layout metadata: conversion to the declared underlying type is
 an integral promotion, while other arithmetic targets are conversions. Scoped
 enum arguments retain their existing diagnostic path because reporting the
 scoped-enum-specific error requires overload selection to complete. Unfixed
-unscoped enum promotion also remains on its compatibility path. The regression
+unscoped enums now publish their promotion target as a canonical `TypeId`,
+selected from the enum's full minimal-width value range; overload ranking uses
+that target for integral promotion and treats other arithmetic destinations as
+conversions. The chosen type also becomes the parser's implementation-defined
+underlying type, keeping enum layout and `sizeof` consistent with that range.
+The regression
 `tests/test_canonical_fixed_enum_promotion_overload_ret0.cpp` checks overload
 selection for fixed narrow and wide underlying types, an opaque fixed enum used
 before its definition, and ordinary enums, while
-`tests/test_scoped_enum_call_arg_e1401.cpp` guards the scoped-enum diagnostic. A
-migration counter guards fixed unscoped enums from returning to TypeIndex
-fallback ranking.
+`tests/test_scoped_enum_call_arg_e1401.cpp` guards the scoped-enum diagnostic.
+The migration counter guards fixed and unfixed unscoped enums from returning to
+TypeIndex fallback ranking. The regression
+`tests/test_canonical_unfixed_enum_promotion_overload_ret0.cpp` checks `int`,
+`unsigned int`, and platform-width-sensitive signed promotions for by-value and
+reference parameters.
 Eligible `const` lvalue and rvalue references can now bind through the same
 fixed-enum arithmetic conversions using the canonical plan; a mutable lvalue
 reference still cannot bind to the converted temporary. The regression

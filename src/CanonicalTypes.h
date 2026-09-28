@@ -265,6 +265,7 @@ struct CanonicalRecordLayout {
 struct CanonicalEnumLayout {
 	EntityId entity;
 	TypeId underlying_type;
+	TypeId unfixed_promotion_type{};
 	uint32_t size_bytes;
 	uint16_t enumerator_count;
 	CanonicalEnumLayoutFlags flags;
@@ -371,7 +372,7 @@ static_assert(std::is_trivially_copyable_v<CanonicalRecordBase>);
 static_assert(std::is_trivially_copyable_v<CanonicalClassBase>);
 static_assert(std::is_trivially_copyable_v<CanonicalNamedTypeMember>);
 static_assert(sizeof(CanonicalRecordLayout) == 24);
-static_assert(sizeof(CanonicalEnumLayout) == 16);
+static_assert(sizeof(CanonicalEnumLayout) == 20);
 static_assert(sizeof(CanonicalRecordMember) == 16);
 static_assert(sizeof(CanonicalRecordBase) == 16);
 static_assert(sizeof(CanonicalClassBase) == 8);

@@ -881,6 +881,20 @@ inline void checkAdapter() {
 	};
 	table.publishEnumLayout(enum_layout);
 	require(table.enumLayout(EntityId{5}) == enum_layout);
+	const CanonicalEnumLayout unfixed_enum_layout{
+		.entity = EntityId{6},
+		.underlying_type = table.builtin(CanonicalBuiltinKind::Int),
+		.unfixed_promotion_type = table.builtin(CanonicalBuiltinKind::UnsignedInt),
+		.size_bytes = 4,
+		.enumerator_count = 1,
+		.flags = CanonicalEnumLayoutFlags::None,
+	};
+	table.publishEnumLayout(unfixed_enum_layout);
+	require(table.enumLayout(EntityId{6}) == unfixed_enum_layout);
+	CanonicalEnumLayout invalid_unfixed_enum_layout = unfixed_enum_layout;
+	invalid_unfixed_enum_layout.unfixed_promotion_type =
+		table.builtin(CanonicalBuiltinKind::Short);
+	rejects([&] { table.publishEnumLayout(invalid_unfixed_enum_layout); });
 	const CanonicalEnumLayout forward_enum_layout{
 		.entity = EntityId{12},
 		.underlying_type = table.builtin(CanonicalBuiltinKind::UnsignedChar),

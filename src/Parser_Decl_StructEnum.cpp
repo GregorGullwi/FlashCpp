@@ -34,6 +34,70 @@ uint8_t canonicalBitfieldWidth(size_t value) {
 	return static_cast<uint8_t>(value);
 }
 
+std::optional<TypeCategory> findUnfixedEnumPromotionType(
+	const EnumTypeInfo& enum_info) {
+	long long minimum = 0;
+	long long maximum = 0;
+	if (!enum_info.enumerators.empty()) {
+		minimum = enum_info.enumerators.front().value;
+		maximum = minimum;
+		for (const Enumerator& enumerator : enum_info.enumerators) {
+			minimum = std::min(minimum, enumerator.value);
+			maximum = std::max(maximum, enumerator.value);
+		}
+	}
+
+	const bool has_negative_values = minimum < 0;
+	unsigned minimum_width = 1;
+	if (has_negative_values) {
+		// [dcl.enum] defines an unfixed enum's values using the minimal-width
+		// integer that can represent its enumerators.
+		while (minimum_width < 64) {
+			const int64_t highest_bit = static_cast<int64_t>(minimum_width - 1);
+			const long long minimum_for_width = -(int64_t{1} << highest_bit);
+			const long long maximum_for_width =
+				(int64_t{1} << highest_bit) - 1;
+			if (minimum >= minimum_for_width && maximum <= maximum_for_width) {
+				break;
+			}
+			++minimum_width;
+		}
+	} else {
+		// Nonnegative enumerator sets fit an unsigned minimal-width integer.
+		const uint64_t maximum_value = static_cast<uint64_t>(maximum);
+		while (minimum_width < 64 &&
+			maximum_value >= (uint64_t{1} << minimum_width)) {
+			++minimum_width;
+		}
+	}
+
+	constexpr TypeCategory promotion_candidates[] = {
+		TypeCategory::Int,
+		TypeCategory::UnsignedInt,
+		TypeCategory::Long,
+		TypeCategory::UnsignedLong,
+		TypeCategory::LongLong,
+		TypeCategory::UnsignedLongLong,
+	};
+	for (const TypeCategory candidate : promotion_candidates) {
+		const unsigned candidate_width =
+			static_cast<unsigned>(get_type_size_bits(candidate));
+		const bool candidate_is_unsigned =
+			candidate == TypeCategory::UnsignedInt ||
+			candidate == TypeCategory::UnsignedLong ||
+			candidate == TypeCategory::UnsignedLongLong;
+		const bool can_represent_all_values = has_negative_values
+			? !candidate_is_unsigned && candidate_width >= minimum_width
+			: candidate_is_unsigned
+				? candidate_width >= minimum_width
+				: candidate_width > minimum_width;
+		if (can_represent_all_values) {
+			return candidate;
+		}
+	}
+	return std::nullopt;
+}
+
 CanonicalAccess canonicalAccess(AccessSpecifier access) {
 	switch (access) {
 	case AccessSpecifier::Public:
@@ -4818,20 +4882,25 @@ ParseResult Parser::parse_enum_declaration() {
 			enum_type_info.fallback_size_bits_ = enum_info.underlying_size.value;
 		}
 	}
-	const auto publishCanonicalEnumLayout = [&enum_ref, &enum_info]() {
+	const auto publishCanonicalEnumLayout = [&enum_ref, &enum_info, &enum_type_info]() {
+		std::optional<TypeCategory> promotion_category;
+		if (!enum_ref.is_forward_declaration() &&
+			!enum_ref.has_underlying_type() && !enum_info.is_scoped) {
+			promotion_category = findUnfixedEnumPromotionType(enum_info);
+		}
+		if (promotion_category.has_value()) {
+			// Choose an implementation-defined underlying type that represents
+			// the complete enum range. The first eligible type also is its
+			// integral promotion target under [conv.prom].
+			enum_info.underlying_type = *promotion_category;
+			enum_info.underlying_size =
+				SizeInBits{get_type_size_bits(*promotion_category)};
+			enum_type_info.fallback_size_bits_ = enum_info.underlying_size.value;
+		}
 		if (!enum_ref.has_entity_id()) {
 			return;
 		}
 		FrontendContext& front_end = requireFrontendContext();
-		const TypeSpecifierNode underlying_syntax = enum_ref.has_underlying_type()
-			? *enum_ref.underlying_type()
-			: TypeSpecifierNode(enum_info.underlying_type, TypeQualifier::None,
-				enum_info.underlying_size.value, Token{}, CVQualifier::None);
-		const CanonicalTypeImport imported_underlying = importCanonicalType(
-			front_end.canonicalTypes(), underlying_syntax);
-		if (imported_underlying.status != CanonicalTypeImportStatus::Supported) {
-			return;
-		}
 		CanonicalEnumLayoutFlags flags = enum_info.is_scoped
 			? CanonicalEnumLayoutFlags::Scoped |
 				CanonicalEnumLayoutFlags::FixedUnderlying
@@ -4841,9 +4910,34 @@ ParseResult Parser::parse_enum_declaration() {
 		if (enum_ref.is_forward_declaration()) {
 			flags = flags | CanonicalEnumLayoutFlags::ForwardDeclaration;
 		}
+		TypeId unfixed_promotion_type;
+		if (promotion_category.has_value()) {
+			const TypeSpecifierNode promotion_syntax(
+				*promotion_category,
+				TypeQualifier::None,
+				get_type_size_bits(*promotion_category),
+				Token{},
+				CVQualifier::None);
+			const CanonicalTypeImport imported_promotion = importCanonicalType(
+				front_end.canonicalTypes(), promotion_syntax);
+			if (imported_promotion.status != CanonicalTypeImportStatus::Supported) {
+				throw InternalError("canonical enum promotion type is not importable");
+			}
+			unfixed_promotion_type = imported_promotion.type;
+		}
+		const TypeSpecifierNode underlying_syntax = enum_ref.has_underlying_type()
+			? *enum_ref.underlying_type()
+			: TypeSpecifierNode(enum_info.underlying_type, TypeQualifier::None,
+				enum_info.underlying_size.value, Token{}, CVQualifier::None);
+		const CanonicalTypeImport imported_underlying = importCanonicalType(
+			front_end.canonicalTypes(), underlying_syntax);
+		if (imported_underlying.status != CanonicalTypeImportStatus::Supported) {
+			return;
+		}
 		front_end.canonicalTypes().publishEnumLayout({
 			.entity = enum_ref.entity_id(),
 			.underlying_type = imported_underlying.type,
+			.unfixed_promotion_type = unfixed_promotion_type,
 			.size_bytes = canonicalLayoutSize(toSizeT(enum_info.sizeInBytes())),
 			.enumerator_count = canonicalLayoutCount(enum_info.enumerators.size()),
 			.flags = flags,
