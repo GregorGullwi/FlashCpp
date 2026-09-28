@@ -1752,6 +1752,16 @@ bool typeRefersToCurrentTemplateParam(
 	if (type_spec.category() == TypeCategory::Template) {
 		return true;
 	}
+	if (!current_template_param_names.empty() &&
+		type_spec.has_function_signature()) {
+		const FunctionSignature& signature = type_spec.function_signature();
+		if (signature.noexcept_expression.has_value() &&
+			astNodeHasDeferredTemplateDependency(
+				signature.noexcept_expression->node(),
+				current_template_param_names)) {
+			return true;
+		}
+	}
 	if (type_spec.category() != TypeCategory::UserDefined &&
 		type_spec.category() != TypeCategory::TypeAlias) {
 		return false;

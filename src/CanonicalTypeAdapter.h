@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "CanonicalTypes.h"
+#include "TemplateRegistry_Types.h"
 
 #include <optional>
 
@@ -251,16 +252,21 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			break;
 		}
 		case DeclaratorComponentKind::MemberObjectPointer:
-			if (index != components.size() - 1 || !component.member_owner ||
+			if (index != components.size() - 1 || !component.hasMemberOwner() ||
 				!isValidCVQualifier(component.cv_qualifier)) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
 			}
-			id = table.qualify(
-				table.memberObjectPointer(table.record(component.member_owner), id),
-				component.cv_qualifier);
+			{
+				const TypeId owner = component.memberOwnerType()
+					? component.memberOwnerType()
+					: table.record(component.memberOwnerEntity());
+				id = table.qualify(
+					table.memberObjectPointer(owner, id),
+					component.cv_qualifier);
+			}
 			break;
 		case DeclaratorComponentKind::MemberFunctionPointer: {
-			if (index != components.size() - 1 || !component.member_owner ||
+			if (index != components.size() - 1 || !component.hasMemberOwner() ||
 				!isValidCVQualifier(component.cv_qualifier) ||
 				!syntax.has_function_signature()) {
 				return {{}, CanonicalTypeImportStatus::Invalid};
@@ -272,9 +278,11 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			if (imported_function.status != CanonicalTypeImportStatus::Supported) {
 				return imported_function;
 			}
+			const TypeId owner = component.memberOwnerType()
+				? component.memberOwnerType()
+				: table.record(component.memberOwnerEntity());
 			id = table.qualify(
-				table.memberFunctionPointer(table.record(component.member_owner),
-					imported_function.type),
+				table.memberFunctionPointer(owner, imported_function.type),
 				component.cv_qualifier);
 			break;
 		}
@@ -684,11 +692,14 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		}
 		member_pointer_cv = outer_pointer_cv;
 	}
+	const TypeId owner = syntax.has_member_class_type_id()
+		? syntax.member_class_type_id()
+		: TypeId{};
 	const EntityId owner_entity = resolveMemberClassEntity(syntax);
-	if (!owner_entity) {
+	if (!owner && !owner_entity) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 	}
-	const TypeId owner = table.record(owner_entity);
+	const TypeId canonical_owner = owner ? owner : table.record(owner_entity);
 	if (syntax.category() == TypeCategory::MemberFunctionPointer ||
 		(syntax.has_function_signature() && syntax.has_member_class())) {
 		if (!syntax.has_function_signature()) {
@@ -700,7 +711,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		if (imported_function.status != CanonicalTypeImportStatus::Supported) {
 			return imported_function;
 		}
-		auto id = table.memberFunctionPointer(owner, imported_function.type);
+		auto id = table.memberFunctionPointer(canonical_owner, imported_function.type);
 		id = table.qualify(id, member_pointer_cv);
 		if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 			id = table.reference(id, syntax.reference_qualifier());
@@ -719,7 +730,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		if (imported_pointee.status != CanonicalTypeImportStatus::Supported) {
 			return imported_pointee;
 		}
-		auto id = table.memberObjectPointer(owner, imported_pointee.type);
+		auto id = table.memberObjectPointer(canonical_owner, imported_pointee.type);
 		id = table.qualify(id, member_pointer_cv);
 		if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 			id = table.reference(id, syntax.reference_qualifier());
@@ -739,7 +750,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 	if (imported_pointee.status != CanonicalTypeImportStatus::Supported) {
 		return imported_pointee;
 	}
-	auto id = table.memberObjectPointer(owner, imported_pointee.type);
+	auto id = table.memberObjectPointer(canonical_owner, imported_pointee.type);
 	id = table.qualify(id, member_pointer_cv);
 	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
 		id = table.reference(id, syntax.reference_qualifier());
@@ -1127,6 +1138,62 @@ inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const 
 	return importCanonicalTypeImpl(table, syntax, CanonicalTypeImportContext::Exact);
 }
 
+inline CanonicalTypeImport importCanonicalClassDeclaration(
+	CanonicalTypeTable& table,
+	const StructDeclarationNode& declaration) {
+	const StructDeclarationNode* pattern =
+		declaration.injected_class_pattern_declaration();
+	if (pattern == nullptr || !pattern->has_template_decl_id()) {
+		if (declaration.has_entity_id()) {
+			return {
+				table.record(declaration.entity_id()),
+				CanonicalTypeImportStatus::Supported};
+		}
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+
+	CanonicalTypeTransaction transaction(table);
+	std::vector<CanonicalTemplateArgument> arguments;
+	arguments.reserve(declaration.outer_template_args().size());
+	for (const TypeInfo::TemplateArgInfo& argument :
+		declaration.outer_template_args()) {
+		if (argument.is_value || argument.is_pack ||
+			argument.is_template_template_arg) {
+			return {{}, CanonicalTypeImportStatus::Unresolved};
+		}
+		const std::optional<TypeSpecifierNode> argument_type =
+			makeTypeSpecifierFromTemplateArgInfo(argument, Token{});
+		if (!argument_type.has_value()) {
+			return {{}, CanonicalTypeImportStatus::Unresolved};
+		}
+		const CanonicalTypeImport imported_argument =
+			importCanonicalType(table, *argument_type);
+		if (imported_argument.status != CanonicalTypeImportStatus::Supported) {
+			return {{}, imported_argument.status};
+		}
+		arguments.push_back(
+			CanonicalTemplateArgument::makeType(imported_argument.type));
+	}
+	const TypeId specialization = table.templateSpecialization(
+		pattern->template_decl_id(), arguments);
+	transaction.commit();
+	return {specialization, CanonicalTypeImportStatus::Supported};
+}
+
+inline CanonicalTypeImport importCanonicalClassTypeInfo(
+	CanonicalTypeTable& table,
+	const TypeInfo& type_info) {
+	if (const TypeSpecifierNode* alias_type = type_info.aliasTypeSpecifier();
+		alias_type != nullptr) {
+		return importCanonicalType(table, *alias_type);
+	}
+	const StructTypeInfo* struct_info = type_info.getStructInfo();
+	if (struct_info == nullptr || struct_info->declaration_node == nullptr) {
+		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
+	}
+	return importCanonicalClassDeclaration(table, *struct_info->declaration_node);
+}
+
 inline CanonicalTypeImport importCanonicalFunctionParameterType(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax) {
 	return importCanonicalTypeImpl(table, syntax, CanonicalTypeImportContext::FunctionParameter);
@@ -1201,27 +1268,37 @@ inline CanonicalDeclaratorExport exportCanonicalDeclaratorUntil(
 			type = node.child;
 			break;
 		case CanonicalTypeKind::MemberObjectPointer: {
-			const EntityId owner = table.recordEntity(table.memberPointerOwner(type));
-			if (!owner) {
+			const TypeId owner = table.memberPointerOwner(type);
+			const CanonicalTypeNode owner_node = table.node(owner);
+			if (owner_node.kind == CanonicalTypeKind::Record) {
+				result.components.push_back(DeclaratorComponent::memberPointer(
+					table.recordEntity(owner), false, pending_pointer_cv));
+			} else if (owner_node.kind == CanonicalTypeKind::TemplateSpecialization) {
+				result.components.push_back(DeclaratorComponent::memberPointer(
+					owner, false, pending_pointer_cv));
+			} else {
 				result.base = type;
 				result.status = CanonicalTypeImportStatus::UnmigratedCallable;
 				return result;
 			}
-			result.components.push_back(
-				DeclaratorComponent::memberPointer(owner, false, pending_pointer_cv));
 			pending_pointer_cv = CVQualifier::None;
 			type = node.child;
 			break;
 		}
 		case CanonicalTypeKind::MemberFunctionPointer: {
-			const EntityId owner = table.recordEntity(table.memberPointerOwner(type));
-			if (!owner) {
+			const TypeId owner = table.memberPointerOwner(type);
+			const CanonicalTypeNode owner_node = table.node(owner);
+			if (owner_node.kind == CanonicalTypeKind::Record) {
+				result.components.push_back(DeclaratorComponent::memberPointer(
+					table.recordEntity(owner), true, pending_pointer_cv));
+			} else if (owner_node.kind == CanonicalTypeKind::TemplateSpecialization) {
+				result.components.push_back(DeclaratorComponent::memberPointer(
+					owner, true, pending_pointer_cv));
+			} else {
 				result.base = type;
 				result.status = CanonicalTypeImportStatus::UnmigratedCallable;
 				return result;
 			}
-			result.components.push_back(
-				DeclaratorComponent::memberPointer(owner, true, pending_pointer_cv));
 			pending_pointer_cv = CVQualifier::None;
 			// The function payload is carried out-of-band by
 			// CanonicalTypeDesc::function_signature; stop at the function type so

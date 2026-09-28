@@ -5789,15 +5789,26 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		// spine, then copy the published identity into its member components.
 		tryBindPublishedTypeEntity(resolved_syntax);
 		tryBindPublishedMemberClassEntity(resolved_syntax);
-		if (resolved_syntax.has_member_class_entity()) {
+		if (resolved_syntax.has_member_class_entity() ||
+			resolved_syntax.has_member_class_type_id()) {
 			std::vector<DeclaratorComponent> bound_components(
 				resolved_syntax.declarator_components().begin(),
 				resolved_syntax.declarator_components().end());
 			for (DeclaratorComponent& component : bound_components) {
 				if ((component.kind == DeclaratorComponentKind::MemberObjectPointer ||
 					 component.kind == DeclaratorComponentKind::MemberFunctionPointer) &&
-					!component.member_owner) {
-					component.member_owner = resolved_syntax.member_class_entity();
+					!component.hasMemberOwner()) {
+					const bool is_function_pointer =
+						component.kind == DeclaratorComponentKind::MemberFunctionPointer;
+					component = resolved_syntax.has_member_class_type_id()
+						? DeclaratorComponent::memberPointer(
+							resolved_syntax.member_class_type_id(),
+							is_function_pointer,
+							component.cv_qualifier)
+						: DeclaratorComponent::memberPointer(
+							resolved_syntax.member_class_entity(),
+							is_function_pointer,
+							component.cv_qualifier);
 				}
 			}
 			resolved_syntax.set_ordered_declarator(std::move(bound_components));

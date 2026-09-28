@@ -709,7 +709,7 @@ private:
 
 	static bool isMemberPointer(CanonicalTypeKind kind);
 
-	TypeId recordOwnerUnlocked(TypeId owner) const;
+	TypeId classOwnerUnlocked(TypeId owner) const;
 
 	TypeId arrayUnlocked(TypeId element, uint64_t extent, CanonicalTypeNodeFlags flags);
 

@@ -2361,6 +2361,7 @@ public:
 		specialization_template_args_ = other.specialization_template_args_;
 		injected_class_declaration_ = other.injected_class_declaration_;
 		member_class_entity_ = other.member_class_entity_;
+		member_class_type_id_ = other.member_class_type_id_;
 		type_entity_ = other.type_entity_;
 		member_object_pointee_ = other.member_object_pointee_;
 	}
@@ -2377,10 +2378,22 @@ public:
 	}
 	bool has_member_class_entity() const { return static_cast<bool>(member_class_entity_); }
 	EntityId member_class_entity() const { return member_class_entity_; }
-	void set_member_class_entity(EntityId entity_id) { member_class_entity_ = entity_id; }
+	void set_member_class_entity(EntityId entity_id) {
+		member_class_entity_ = entity_id;
+		member_class_type_id_ = {};
+	}
+	bool has_member_class_type_id() const {
+		return static_cast<bool>(member_class_type_id_);
+	}
+	TypeId member_class_type_id() const { return member_class_type_id_; }
+	void set_member_class_type_id(TypeId type_id) {
+		member_class_entity_ = {};
+		member_class_type_id_ = type_id;
+	}
 	void clear_member_class_identity() {
 		member_class_name_.reset();
 		member_class_entity_ = {};
+		member_class_type_id_ = {};
 	}
 	// Cast and non-type-template-parameter rewrites flatten a member object
 	// pointer to the MemberObjectPointer category and cannot carry the pointee
@@ -2552,7 +2565,8 @@ private:
 	std::vector<SpecDependentTemplateArg> specialization_dependent_template_args_; // Dependent template payloads only
 	const StructDeclarationNode* injected_class_declaration_ = nullptr;
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
-	EntityId member_class_entity_; // Published class owner; never StringHandle identity
+	EntityId member_class_entity_; // Published record owner; never StringHandle identity
+	TypeId member_class_type_id_; // Canonical class-specialization owner identity
 	EntityId type_entity_; // Published named type entity; never StringHandle identity
 	const TypeSpecifierNode* member_object_pointee_ = nullptr; // Preserved MOP pointee syntax
 	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
@@ -2597,7 +2611,8 @@ inline void appendDeclaratorShapeForSubstitution(
 		if (type.has_member_class() && type.pointer_depth() != 0) {
 			TypeSpecifierNode member_pointer_type = type;
 			tryBindPublishedMemberClassEntity(member_pointer_type);
-			if (!member_pointer_type.has_member_class_entity()) {
+			if (!member_pointer_type.has_member_class_entity() &&
+				!member_pointer_type.has_member_class_type_id()) {
 				throw InternalError(
 					"member-pointer substitution has no published owner identity");
 			}
@@ -2605,10 +2620,15 @@ inline void appendDeclaratorShapeForSubstitution(
 				member_pointer_type.pointer_levels().empty()
 					? CVQualifier::None
 					: member_pointer_type.pointer_levels().front().cv_qualifier;
-			components.push_back(DeclaratorComponent::memberPointer(
-				member_pointer_type.member_class_entity(),
-				member_pointer_type.category() == TypeCategory::MemberFunctionPointer,
-				member_pointer_cv));
+			components.push_back(member_pointer_type.has_member_class_type_id()
+				? DeclaratorComponent::memberPointer(
+					member_pointer_type.member_class_type_id(),
+					member_pointer_type.category() == TypeCategory::MemberFunctionPointer,
+					member_pointer_cv)
+				: DeclaratorComponent::memberPointer(
+					member_pointer_type.member_class_entity(),
+					member_pointer_type.category() == TypeCategory::MemberFunctionPointer,
+					member_pointer_cv));
 			return;
 		}
 		for (size_t index = type.pointer_levels().size(); index-- > 0;) {

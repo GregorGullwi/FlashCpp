@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-09-27.
+Last updated: 2026-09-28.
 
 ## Current state
 
@@ -250,8 +250,9 @@ forwarding.
 The explicit declarator frame stack keeps nested declarator depth off the native
 call stack. The recorded Clang stack-usage probe measured `parse_declarator` at
 5,160 bytes versus 5,000 bytes on `origin/main`; repeat the comparison when
-changing recursive parser paths. `TypeSpecifierNode` measured 520 bytes in the
-canonical architecture probe.
+changing recursive parser paths. The latest canonical architecture probe
+reports `TypeSpecifierNode` at 600 bytes; the previous 520-byte handoff
+measurement is stale.
 
 The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
@@ -281,6 +282,15 @@ Continue boundary 3A in this order:
     overload set when that argument type is unavailable until instantiation. The
     `noexcept(true)` / `noexcept(false)` case is covered by
     `tests/test_canonical_dependent_member_noexcept_deferred_overload_ret0.cpp`.
+    Class-template specialization owners now retain canonical `TypeId` identity
+    through member-pointer import, substitution, and export. Exact owner
+    comparison is covered by the canonical type unit test, and
+    `tests/test_canonical_dependent_member_noexcept_class_template_overload_ret0.cpp`
+    checks overload selection after substituting `Callable<T>::run`'s exception
+    specification. Conversions between distinct specialization owners still
+    lack base-schema adjustments because the canonical base graph is keyed by
+    record `EntityId`; imported class-specialization owners currently support
+    concrete type arguments only. These remain 3A blockers.
     Other dependent member-function-pointer forms, distinct or one-sided
     dependent expressions, and remaining unsupported callable pairs still need
     substitution-aware canonical ranking.
@@ -351,10 +361,12 @@ is ready. Never run the full suite concurrently with the build.
 
 Migration counters and static identity inventories are baselined under
 `tests/migration_counters/`; run the host-native counter and inventory scripts
-after compiler changes. All 64 fixed-corpus entries were within baseline at
-this update. Gate 0's Windows and ELF multi-translation-unit checks remain
-required compatibility evidence. See the plan for complete boundary-specific
-validation.
+after compiler changes. On 2026-09-28 all 64 fixed-corpus entries remained
+within baseline, the inline dollar-recovery inventory measured 16 against a
+baseline of 17, and the canonical-adapter source corpus remained within its
+supported/deferred baseline. Gate 0's Windows and ELF multi-translation-unit
+checks remain required compatibility evidence. See the plan for complete
+boundary-specific validation.
 
 For recursive-path changes, report the largest changed native stack frame and
 whether stack use remains bounded as logical depth grows. Do not raise the

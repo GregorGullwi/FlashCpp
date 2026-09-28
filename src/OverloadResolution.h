@@ -1662,7 +1662,8 @@ inline bool sameOrderedDeclaratorShapeIgnoringCv(
 		const DeclaratorComponent& lhs = from_components[index];
 		const DeclaratorComponent& rhs = to_components[index];
 		if (lhs.kind != rhs.kind || lhs.payload != rhs.payload ||
-			lhs.member_owner != rhs.member_owner) {
+			lhs.member_owner != rhs.member_owner ||
+			lhs.owner_identity_kind != rhs.owner_identity_kind) {
 			return false;
 		}
 	}
@@ -1926,6 +1927,10 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			return buildCanonicalStructuralConversionPlan(
 				table, source_member, target_member);
 		}
+		if (table.node(source_owner).kind != CanonicalTypeKind::Record ||
+			table.node(target_owner).kind != CanonicalTypeKind::Record) {
+			return ConversionPlan::no_match();
+		}
 
 		const EntityId source_owner_entity = table.recordEntity(source_owner);
 		const EntityId target_owner_entity = table.recordEntity(target_owner);
@@ -2041,6 +2046,10 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			const TypeId source_owner = table.memberPointerOwner(source_member);
 			const TypeId target_owner = table.memberPointerOwner(target_member);
 			if (source_owner != target_owner) {
+				if (table.node(source_owner).kind != CanonicalTypeKind::Record ||
+					table.node(target_owner).kind != CanonicalTypeKind::Record) {
+					return ConversionPlan::no_match();
+				}
 				const EntityId source_owner_entity = table.recordEntity(source_owner);
 				const EntityId target_owner_entity = table.recordEntity(target_owner);
 				const std::optional<DerivedBaseConversionKind> owner_conversion =
