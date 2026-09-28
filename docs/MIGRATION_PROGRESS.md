@@ -154,6 +154,12 @@ concrete alias-template specialization remains a separate gap in
 checks that distinct dependent exception expressions select the non-throwing
 target for `int` and the potentially-throwing target for `char`, and resolves a
 32-level nested function-address alias chain.
+Deferred member-function `decltype` aliases now publish the resolved callable
+specifier as well as the legacy type projection, preserving the substituted
+owner and exception specification for overload ranking.
+`tests/test_canonical_dependent_member_pointer_owner_alias_overload_ret0.cpp`
+checks that an alias of `decltype(&Callable<T>::run)` selects the non-throwing
+target for `int` and the potentially-throwing target for `char`.
 Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
