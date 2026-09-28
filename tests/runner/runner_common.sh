@@ -418,8 +418,8 @@ runner_migration_counter_value() {
 		declaration_builder_publish)
 			line=$(printf '%s\n' "$output" | grep -E '^DeclarationBuilder publishes:' | head -1 || true)
 			;;
-		fixed_unscoped_enum_typeindex_fallback)
-			line=$(printf '%s\n' "$output" | grep -E '^Fixed-unscoped-enum TypeIndex fallbacks:' | head -1 || true)
+		unscoped_enum_typeindex_fallback)
+			line=$(printf '%s\n' "$output" | grep -E '^Unscoped-enum TypeIndex fallbacks:' | head -1 || true)
 			;;
 		*)
 			return 1
@@ -436,7 +436,7 @@ runner_parse_migration_counter_values() {
 	RUNNER_MIGRATION_COUNTER_VALUES=()
 	for counter in outside_engine token_replay post_parse_typing ast_to_ir_semantic \
 		codegen_to_parser template_old_engine dollar_identity declaration_builder_publish \
-		fixed_unscoped_enum_typeindex_fallback; do
+		unscoped_enum_typeindex_fallback; do
 		value=$(runner_migration_counter_value "$output" "$counter") || return 1
 		RUNNER_MIGRATION_COUNTER_VALUES["$counter"]=$value
 	done

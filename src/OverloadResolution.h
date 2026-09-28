@@ -2447,11 +2447,15 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			// diagnostic. Semantic analysis still rejects the selected conversion.
 			return std::nullopt;
 		}
-		if (!hasCanonicalEnumLayoutFlag(
-				layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying)) {
+		const bool has_fixed_underlying_type = hasCanonicalEnumLayoutFlag(
+			layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying);
+		const TypeId promotion_type = has_fixed_underlying_type
+			? layout.underlying_type
+			: layout.unfixed_promotion_type;
+		if (!promotion_type) {
 			return std::nullopt;
 		}
-		if (stripCanonicalTopCv(table, layout.underlying_type).first ==
+		if (stripCanonicalTopCv(table, promotion_type).first ==
 			stripCanonicalTopCv(table, to_import.type).first) {
 			return ConversionPlan{ConversionRank::Promotion,
 				StandardConversionKind::IntegralPromotion, true};
@@ -3572,13 +3576,10 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (table.node(enum_type).kind == CanonicalTypeKind::Enum) {
 					const EntityId enum_entity = table.enumEntity(enum_type);
 					if (table.hasEnumLayout(enum_entity) &&
-						hasCanonicalEnumLayoutFlag(
-							table.enumLayout(enum_entity).flags,
-							CanonicalEnumLayoutFlags::FixedUnderlying) &&
 						!hasCanonicalEnumLayoutFlag(
 							table.enumLayout(enum_entity).flags,
 							CanonicalEnumLayoutFlags::Scoped)) {
-						recordFixedUnscopedEnumTypeIndexFallback();
+						recordUnscopedEnumTypeIndexFallback();
 					}
 				}
 			}

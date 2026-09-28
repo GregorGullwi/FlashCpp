@@ -922,6 +922,28 @@ void CanonicalTypeTable::publishEnumLayout(CanonicalEnumLayout layout) {
 		underlying.builtin == CanonicalBuiltinKind::Nullptr) {
 		throw InternalError("canonical type: enum underlying type is not an integer builtin");
 	}
+	if (layout.unfixed_promotion_type) {
+		if (hasCanonicalEnumLayoutFlag(layout.flags,
+				CanonicalEnumLayoutFlags::FixedUnderlying) ||
+			hasCanonicalEnumLayoutFlag(layout.flags,
+				CanonicalEnumLayoutFlags::Scoped) ||
+			hasCanonicalEnumLayoutFlag(layout.flags,
+				CanonicalEnumLayoutFlags::ForwardDeclaration)) {
+			throw InternalError("canonical type: invalid unfixed enum promotion metadata");
+		}
+		const CanonicalTypeNode promotion = nodeUnlocked(layout.unfixed_promotion_type);
+		const bool is_unfixed_enum_promotion_builtin =
+			promotion.kind == CanonicalTypeKind::Builtin &&
+			(promotion.builtin == CanonicalBuiltinKind::Int ||
+				promotion.builtin == CanonicalBuiltinKind::UnsignedInt ||
+				promotion.builtin == CanonicalBuiltinKind::Long ||
+				promotion.builtin == CanonicalBuiltinKind::UnsignedLong ||
+				promotion.builtin == CanonicalBuiltinKind::LongLong ||
+				promotion.builtin == CanonicalBuiltinKind::UnsignedLongLong);
+		if (!is_unfixed_enum_promotion_builtin) {
+			throw InternalError("canonical type: enum promotion type is not an integer type");
+		}
+	}
 	const auto existing = enum_layout_ids_.find(layout.entity.value);
 	if (existing != enum_layout_ids_.end()) {
 		CanonicalEnumLayout& current = enum_layouts_[existing->second];
@@ -938,6 +960,7 @@ void CanonicalTypeTable::publishEnumLayout(CanonicalEnumLayout layout) {
 			current.entity == layout.entity &&
 			current.underlying_type == layout.underlying_type &&
 			current.size_bytes == layout.size_bytes &&
+			!current.unfixed_promotion_type &&
 			current.enumerator_count == 0 &&
 			static_cast<uint8_t>(current.flags) ==
 				(static_cast<uint8_t>(layout.flags) | forward_flag);
