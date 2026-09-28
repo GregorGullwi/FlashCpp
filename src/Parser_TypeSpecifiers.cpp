@@ -2584,8 +2584,12 @@ ParseResult Parser::parse_type_specifier() {
 						for (const TemplateTypeArg& arg : args) {
 							if (arg.is_dependent ||
 								arg.is_pack ||
+								(!arg.is_value &&
+								 arg.category() == TypeCategory::Template) ||
 								arg.dependent_name.isValid() ||
-								arg.dependent_expr.has_value()) {
+								arg.dependent_expr.has_value() ||
+								(!arg.is_value &&
+								 typeIndexContainsDependentPlaceholder(arg.type_index))) {
 								return true;
 							}
 						}
@@ -2727,8 +2731,16 @@ ParseResult Parser::parse_type_specifier() {
 								}
 							}
 						}
+						const bool has_resolved_callable_type =
+							materialized_alias.resolved_type_specifier.has_value() &&
+							materialized_alias.resolved_type_specifier->has_function_signature() &&
+							(materialized_alias.resolved_type_specifier->category() ==
+								 TypeCategory::FunctionPointer ||
+							 materialized_alias.resolved_type_specifier->category() ==
+								 TypeCategory::MemberFunctionPointer);
 						if (materialized_alias.resolved_type_specifier.has_value() &&
-							materialized_alias.resolved_type_specifier->has_ordered_declarator() &&
+							(materialized_alias.resolved_type_specifier->has_ordered_declarator() ||
+							 has_resolved_callable_type) &&
 							peek() != "::"_tok) {
 							TypeSpecifierNode resolved_alias_type =
 								*materialized_alias.resolved_type_specifier;
@@ -2883,7 +2895,12 @@ ParseResult Parser::parse_type_specifier() {
 									break;
 								}
 							}
-							if (has_dependent_nttp) {
+							const TypeInfo* deferred_decltype_type_info =
+								tryGetTypeInfo(alias_node.target_type_node().type_index());
+							const bool has_deferred_decltype_target =
+								deferred_decltype_type_info != nullptr &&
+								deferred_decltype_type_info->deferredDecltypeExpression() != nullptr;
+							if (has_dependent_nttp || has_deferred_decltype_target) {
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									buildDependentAliasTemplateTypeSpecifier(
 										type_name,

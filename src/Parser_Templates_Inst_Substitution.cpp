@@ -2628,7 +2628,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				result.instantiated_name = StringTable::getStringView(concrete_type_info->name());
 			}
 		}
-		if (!result.resolved_type_specifier.has_value() &&
+		if (resolved_deferred_decltype_spec.has_value()) {
+			result.resolved_type_specifier = *resolved_deferred_decltype_spec;
+		} else if (!result.resolved_type_specifier.has_value() &&
 			alias_node != nullptr &&
 			alias_node->target_type_node().has_ordered_declarator()) {
 			result.resolved_type_specifier =
