@@ -136,6 +136,12 @@ reject mismatched function signatures. Identical context-local dependent
 distinct or one-sided dependent expressions still defer until substitution.
 Unit coverage checks both paths, while source regressions cover dependent
 `noexcept` overload selection for regular and member-function pointers.
+Dependent `decltype(&Callable<T>::member)` aliases now recover the substituted
+member-function signature and canonical owner before overload ranking.
+`tests/test_canonical_distinct_dependent_member_noexcept_pair_overload_ret0.cpp`
+checks that distinct dependent exception expressions select the non-throwing
+target for `int` and reject it for `char` when the source member is potentially
+throwing.
 Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
@@ -297,9 +303,9 @@ Continue boundary 3A in this order:
     The dependent-source case is covered by
     `tests/test_canonical_dependent_class_template_member_pointer_base_conversion_ret0.cpp`:
     `Base<T>` member addresses select concrete `Derived<int>` and
-    `Derived<char>` owner candidates after substitution. Other dependent
-    member-function-pointer forms, distinct or one-sided dependent expressions,
-    and remaining unsupported callable pairs still need substitution-aware
+    `Derived<char>` owner candidates after substitution. Further dependent
+    member-function-pointer forms, one-sided dependent expressions, and
+    remaining unsupported callable pairs still need substitution-aware
     canonical ranking.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
