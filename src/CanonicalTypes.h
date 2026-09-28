@@ -230,7 +230,19 @@ enum class CanonicalRecordLayoutFlags : uint8_t {
 enum class CanonicalEnumLayoutFlags : uint8_t {
 	None = 0,
 	Scoped = 1 << 0,
+	FixedUnderlying = 1 << 1,
+	ForwardDeclaration = 1 << 2,
 };
+
+inline CanonicalEnumLayoutFlags operator|(CanonicalEnumLayoutFlags a,
+	CanonicalEnumLayoutFlags b) {
+	return static_cast<CanonicalEnumLayoutFlags>(
+		static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline bool hasCanonicalEnumLayoutFlag(CanonicalEnumLayoutFlags flags,
+	CanonicalEnumLayoutFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
 
 // Complete-object layout is separate from immutable canonical type identity.
 // It is keyed by the published EntityId and contains no spelling, TypeIndex,
@@ -668,6 +680,7 @@ private:
 		size_t node_count;
 		size_t record_layout_count;
 		size_t enum_layout_count;
+		size_t enum_layout_update_count;
 		size_t record_field_schema_count;
 		size_t record_member_count;
 		size_t record_base_count;
@@ -675,6 +688,11 @@ private:
 		size_t class_base_count;
 		size_t named_type_member_schema_count;
 		size_t named_type_member_count;
+	};
+
+	struct CanonicalEnumLayoutUpdate {
+		size_t index;
+		CanonicalEnumLayout previous;
 	};
 
 	struct NodeHash {
@@ -864,6 +882,7 @@ private:
 	size_t live_named_type_member_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
 	std::vector<TransactionMark> transaction_marks_;
+	std::vector<CanonicalEnumLayoutUpdate> enum_layout_update_history_;
 	std::thread::id transaction_owner_;
 	mutable std::mutex mutex_;
 	ChunkedVector<CanonicalTypeNode, kChunkSize> nodes_;

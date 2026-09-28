@@ -97,10 +97,12 @@ try {
 		"Codegen-to-parser callbacks: 5",
 		"TemplateEngine old-engine routes: 6",
 		"Dollar identity recoveries: 7",
-		"DeclarationBuilder publishes: 8"
+		"DeclarationBuilder publishes: 8",
+		"Fixed-unscoped-enum TypeIndex fallbacks: 9"
 	) -join "`n"
 	$migrationValues = Get-FlashCppMigrationCounterValues -CompilerOutput $migrationOutput
 	Assert-Runner ($migrationValues.outside_engine -eq 1) "migration telemetry parses outside-engine count"
+	Assert-Runner ($migrationValues.fixed_unscoped_enum_typeindex_fallback -eq 9) "migration telemetry parses fixed-unscoped-enum fallback count"
 	Assert-Runner ($migrationValues.template_old_engine -eq 6) "migration telemetry parses template route count"
 	$missingMigration = Get-FlashCppMigrationCounterValues -CompilerOutput "compiler crashed without telemetry"
 	Assert-Runner ($null -eq $missingMigration) "output missing migration telemetry yields no values"

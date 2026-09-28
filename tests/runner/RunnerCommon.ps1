@@ -327,6 +327,7 @@ function Get-FlashCppMigrationCounterValues {
 		template_old_engine = 'TemplateEngine old-engine routes:\s*(\d+)'
 		dollar_identity = 'Dollar identity recoveries:\s*(\d+)'
 		declaration_builder_publish = 'DeclarationBuilder publishes:\s*(\d+)'
+		fixed_unscoped_enum_typeindex_fallback = 'Fixed-unscoped-enum TypeIndex fallbacks:\s*(\d+)'
 	}
 	$values = @{}
 	foreach ($entry in $patterns.GetEnumerator()) {

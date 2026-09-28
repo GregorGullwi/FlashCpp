@@ -922,6 +922,37 @@ void CanonicalTypeTable::publishEnumLayout(CanonicalEnumLayout layout) {
 		underlying.builtin == CanonicalBuiltinKind::Nullptr) {
 		throw InternalError("canonical type: enum underlying type is not an integer builtin");
 	}
+	const auto existing = enum_layout_ids_.find(layout.entity.value);
+	if (existing != enum_layout_ids_.end()) {
+		CanonicalEnumLayout& current = enum_layouts_[existing->second];
+		if (current == layout) {
+			return;
+		}
+		const uint8_t forward_flag = static_cast<uint8_t>(
+			CanonicalEnumLayoutFlags::ForwardDeclaration);
+		const bool completes_forward_declaration =
+			hasCanonicalEnumLayoutFlag(
+				current.flags, CanonicalEnumLayoutFlags::ForwardDeclaration) &&
+			!hasCanonicalEnumLayoutFlag(
+				layout.flags, CanonicalEnumLayoutFlags::ForwardDeclaration) &&
+			current.entity == layout.entity &&
+			current.underlying_type == layout.underlying_type &&
+			current.size_bytes == layout.size_bytes &&
+			current.enumerator_count == 0 &&
+			static_cast<uint8_t>(current.flags) ==
+				(static_cast<uint8_t>(layout.flags) | forward_flag);
+		if (!completes_forward_declaration) {
+			throw InternalError("canonical type: conflicting enum layout publication");
+		}
+		if (!transaction_marks_.empty()) {
+			enum_layout_update_history_.push_back({
+				existing->second,
+				current});
+		}
+		current = layout;
+		noteArenaBytes();
+		return;
+	}
 	publishLayoutUnlocked(enum_layouts_, live_enum_layout_count_, enum_layout_ids_, layout,
 		"canonical type: conflicting enum layout publication");
 	noteArenaBytes();
@@ -2764,7 +2795,9 @@ uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
 		record_members_.reservedBytes() + record_bases_.reservedBytes() +
 		class_base_schema_headers_.reservedBytes() + class_bases_.reservedBytes() +
 		named_type_member_schema_headers_.reservedBytes() +
-		named_type_members_.reservedBytes();
+		named_type_members_.reservedBytes() +
+		static_cast<uint64_t>(enum_layout_update_history_.capacity()) *
+			sizeof(CanonicalEnumLayoutUpdate);
 }
 
 void CanonicalTypeTable::noteArenaBytes() {
@@ -2786,6 +2819,7 @@ size_t CanonicalTypeTable::beginTransaction() {
 		live_count_,
 		live_record_layout_count_,
 		live_enum_layout_count_,
+		enum_layout_update_history_.size(),
 		live_record_field_schema_count_,
 		live_record_member_count_,
 		live_record_base_count_,
@@ -2806,6 +2840,13 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 	}
 	if (!commit) {
 		const TransactionMark mark = transaction_marks_.back();
+		while (enum_layout_update_history_.size() >
+			mark.enum_layout_update_count) {
+			const CanonicalEnumLayoutUpdate update =
+				enum_layout_update_history_.back();
+			enum_layouts_[update.index] = update.previous;
+			enum_layout_update_history_.pop_back();
+		}
 		while (live_count_ > mark.node_count) {
 			ids_.erase(nodes_[live_count_ - 1]);
 			--live_count_;
@@ -2842,6 +2883,9 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 		noteArenaBytes();
 	}
 	transaction_marks_.pop_back();
+	if (transaction_marks_.empty()) {
+		enum_layout_update_history_.clear();
+	}
 }
 
 void CanonicalTypeTable::appendNodeTraceFields(StringBuilder& shape, CanonicalTypeNode node, uint64_t extent) const {

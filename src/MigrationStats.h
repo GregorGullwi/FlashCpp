@@ -17,6 +17,7 @@ inline uint64_t gCodegenToParserCallbackCount = 0;
 inline uint64_t gTemplateEngineOldEngineRouteCount = 0;
 inline uint64_t gDollarIdentityRecoveryCount = 0;
 inline uint64_t gDeclarationBuilderPublishCount = 0;
+inline uint64_t gFixedUnscopedEnumTypeIndexFallbackCount = 0;
 
 inline void recordTokenReplay() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gTokenReplayCount);
@@ -44,6 +45,10 @@ inline void recordDollarIdentityRecovery() {
 
 inline void recordDeclarationBuilderPublish() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gDeclarationBuilderPublishCount);
+}
+
+inline void recordFixedUnscopedEnumTypeIndexFallback() {
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gFixedUnscopedEnumTypeIndexFallbackCount);
 }
 
 inline uint64_t tokenReplayCount() {
@@ -82,6 +87,8 @@ inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "TemplateEngine old-engine routes: ", gTemplateEngineOldEngineRouteCount);
 	FLASH_LOG(General, Info, "Dollar identity recoveries: ", gDollarIdentityRecoveryCount);
 	FLASH_LOG(General, Info, "DeclarationBuilder publishes: ", gDeclarationBuilderPublishCount);
+	FLASH_LOG(General, Info, "Fixed-unscoped-enum TypeIndex fallbacks: ",
+		gFixedUnscopedEnumTypeIndexFallbackCount);
 	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
 	for (std::size_t index = 0; index < static_cast<std::size_t>(FlashCpp::InlineVectorSpillFamily::Count); ++index) {
 		const uint64_t count =

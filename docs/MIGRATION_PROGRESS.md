@@ -71,6 +71,18 @@ conversions can now bind eligible references through a temporary, such as an
 `int` value converted to `double` for `const double&`; an lvalue converted to
 `double` can also bind to `double&&`. Array lvalues now decay canonically when
 binding pointer temporaries to eligible const lvalue and rvalue references.
+Fixed-underlying unscoped enum conversions to arithmetic parameters now use
+canonical enum layout metadata: conversion to the declared underlying type is
+an integral promotion, while other arithmetic targets are conversions. Scoped
+enum arguments retain their existing diagnostic path because reporting the
+scoped-enum-specific error requires overload selection to complete. Unfixed
+unscoped enum promotion also remains on its compatibility path. The regression
+`tests/test_canonical_fixed_enum_promotion_overload_ret0.cpp` checks overload
+selection for fixed narrow and wide underlying types, an opaque fixed enum used
+before its definition, and ordinary enums, while
+`tests/test_scoped_enum_call_arg_e1401.cpp` guards the scoped-enum diagnostic. A
+migration counter guards fixed unscoped enums from returning to TypeIndex
+fallback ranking.
 At ordinary calls, an array lvalue can bind to `int*&&` through that converted
 pointer temporary, as covered by
 `tests/test_array_decay_rvalue_reference_temporary_ret0.cpp`.

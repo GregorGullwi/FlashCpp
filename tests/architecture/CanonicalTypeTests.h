@@ -881,6 +881,31 @@ inline void checkAdapter() {
 	};
 	table.publishEnumLayout(enum_layout);
 	require(table.enumLayout(EntityId{5}) == enum_layout);
+	const CanonicalEnumLayout forward_enum_layout{
+		.entity = EntityId{12},
+		.underlying_type = table.builtin(CanonicalBuiltinKind::UnsignedChar),
+		.size_bytes = 1,
+		.enumerator_count = 0,
+		.flags = CanonicalEnumLayoutFlags::FixedUnderlying |
+			CanonicalEnumLayoutFlags::ForwardDeclaration,
+	};
+	table.publishEnumLayout(forward_enum_layout);
+	const CanonicalEnumLayout completed_enum_layout{
+		.entity = EntityId{12},
+		.underlying_type = table.builtin(CanonicalBuiltinKind::UnsignedChar),
+		.size_bytes = 1,
+		.enumerator_count = 2,
+		.flags = CanonicalEnumLayoutFlags::FixedUnderlying,
+	};
+	{
+		CanonicalTypeTransaction enum_completion_transaction(table);
+		table.publishEnumLayout(completed_enum_layout);
+		require(table.enumLayout(EntityId{12}) == completed_enum_layout);
+		enum_completion_transaction.rollback();
+	}
+	require(table.enumLayout(EntityId{12}) == forward_enum_layout);
+	table.publishEnumLayout(completed_enum_layout);
+	require(table.enumLayout(EntityId{12}) == completed_enum_layout);
 	require(importCanonicalType(table, published_enum_array).type ==
 		table.array(table.enumeration(EntityId{5}), 2));
 	TypeSpecifierNode published_record_array(TypeCategory::Struct, TypeQualifier::None, 128, Token{},
