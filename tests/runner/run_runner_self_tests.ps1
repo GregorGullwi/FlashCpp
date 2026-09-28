@@ -42,7 +42,7 @@ try {
 	(Get-Item -LiteralPath $linuxBinary).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(1)
 	(Get-Item -LiteralPath $windowsBinary).LastWriteTimeUtc = [DateTime]::UtcNow
 	$resolvedPath = Resolve-FlashCppCompilerPath -RepoRoot $resolveRoot
-	Assert-Runner ($resolvedPath -eq $linuxBinary) "Resolve-FlashCppCompilerPath selects the newest FlashCpp or FlashCppMSVC binary under x64"
+	Assert-Runner ($resolvedPath -eq $windowsBinary) "Resolve-FlashCppCompilerPath selects a Windows executable and ignores newer extensionless ELF binaries"
 
 	$compileOnlyKind = Get-FlashCppTestKind -FileName "test_compile_only.cpp" -SourceContent "int value();" -PlatformExclusions @() -SupportSources @() -CompileOnlyOverrides @()
 	$failureKind = Get-FlashCppTestKind -FileName "test_invalid_e1001.cpp" -SourceContent "int main() { return 0; }" -PlatformExclusions @() -SupportSources @() -CompileOnlyOverrides @()
