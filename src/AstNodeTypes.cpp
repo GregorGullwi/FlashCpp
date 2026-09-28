@@ -1,4 +1,6 @@
 #include "AstNodeTypes.h"
+#include "CanonicalTypeAdapter.h"
+#include "FrontendContext.h"
 #include "MemberFunctionLookupShared.h"
 #include "LazyMemberResolver.h"
 #include "StringBuilder.h"
@@ -995,31 +997,84 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 }
 
 void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec) {
-	if (type_spec.has_member_class_entity()) {
+	if (type_spec.has_member_class_entity() || type_spec.has_member_class_type_id()) {
 		return;
 	}
-	if (type_spec.has_injected_class_declaration() &&
-		type_spec.injected_class_declaration()->has_entity_id()) {
-		type_spec.set_member_class_entity(
-			type_spec.injected_class_declaration()->entity_id());
+	if (type_spec.has_injected_class_declaration()) {
+		const StructDeclarationNode* declaration =
+			type_spec.injected_class_declaration();
+		if (declaration->has_entity_id()) {
+			type_spec.set_member_class_entity(declaration->entity_id());
+			return;
+		}
+		FrontendContext* const context = FrontendContext::active();
+		if (context != nullptr) {
+			CanonicalTypeTable& table = context->canonicalTypes();
+			CanonicalTypeTransaction transaction(table);
+			const CanonicalTypeImport imported =
+				importCanonicalClassDeclaration(table, *declaration);
+			if (imported.status == CanonicalTypeImportStatus::Supported &&
+				table.node(imported.type).kind ==
+					CanonicalTypeKind::TemplateSpecialization) {
+				type_spec.set_member_class_type_id(imported.type);
+				transaction.commit();
+			}
+		}
 		return;
 	}
 	if (!type_spec.has_member_class()) {
 		return;
 	}
 	const auto type_it = getTypesByNameMap().find(type_spec.member_class_name());
-	if (type_it == getTypesByNameMap().end() || type_it->second == nullptr ||
-		!type_it->second->isStruct()) {
+	if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+		return;
+	}
+	if (type_it->second->aliasTypeSpecifier() != nullptr) {
+		FrontendContext* const context = FrontendContext::active();
+		if (context == nullptr) {
+			return;
+		}
+		CanonicalTypeTable& table = context->canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(
+			table, *type_it->second);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			type_spec.set_member_class_type_id(imported.type);
+			transaction.commit();
+		}
+		return;
+	}
+	if (!type_it->second->isStruct()) {
 		return;
 	}
 	const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-	if (struct_info == nullptr || struct_info->declaration_node == nullptr ||
-		!struct_info->declaration_node->has_entity_id()) {
+	if (struct_info == nullptr || struct_info->declaration_node == nullptr) {
+		return;
+	}
+	const StructDeclarationNode* declaration = struct_info->declaration_node;
+	if (declaration->injected_class_pattern_declaration() != nullptr) {
+		FrontendContext* const context = FrontendContext::active();
+		if (context == nullptr) {
+			return;
+		}
+		CanonicalTypeTable& table = context->canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported =
+			importCanonicalClassTypeInfo(table, *type_it->second);
+		if (imported.status == CanonicalTypeImportStatus::Supported &&
+			table.node(imported.type).kind ==
+				CanonicalTypeKind::TemplateSpecialization) {
+			type_spec.set_member_class_type_id(imported.type);
+			transaction.commit();
+		}
+		return;
+	}
+	if (!declaration->has_entity_id()) {
 		return;
 	}
 	// EntityId is the owner identity. Leave injected-class binding to callers that
 	// already have a declaration pointer; do not re-enter set_injected here.
-	type_spec.set_member_class_entity(struct_info->declaration_node->entity_id());
+	type_spec.set_member_class_entity(declaration->entity_id());
 }
 
 void tryBindPublishedTypeEntity(TypeSpecifierNode& type_spec) {

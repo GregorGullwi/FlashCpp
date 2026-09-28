@@ -834,6 +834,39 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		false, // Do not re-apply bound metadata to full substitution
 		true,  // Force resolved TypeIndex onto full AST substitutions
 		false); // Plain member lazy replay does not need dependent member-template signature preservation
+	copy_function_properties(new_func_ref, func_decl);
+	if (!materialize_body && func_decl.has_noexcept_expression()) {
+		ASTNode substituted_noexcept = substituteTemplateParameters(
+			func_decl.noexcept_expression()->node(),
+			lazy_info.template_params,
+			lazy_info.template_args,
+			instantiated_owner_type_index,
+			true,
+			owner_struct_decl);
+		FunctionSignature exception_specification;
+		exception_specification.is_noexcept = func_decl.is_noexcept();
+		exception_specification.noexcept_expression =
+			ExpressionHandle(substituted_noexcept);
+		foldInstantiatedNoexceptSpecification(
+			exception_specification,
+			std::span<const TemplateParameterNode>(
+				lazy_info.template_params.data(),
+				lazy_info.template_params.size()),
+			std::span<const TemplateTypeArg>(
+				lazy_info.template_args.data(),
+				lazy_info.template_args.size()));
+		new_func_ref.set_noexcept(exception_specification.is_noexcept);
+		if (exception_specification.noexcept_expression.has_value()) {
+			new_func_ref.set_noexcept_expression(
+				*exception_specification.noexcept_expression);
+		} else {
+			new_func_ref.clear_noexcept_expression();
+		}
+	}
+	if (!materialize_body) {
+		compute_and_set_mangled_name(new_func_ref);
+		return new_func_node;
+	}
 
 	// Get the function body - either from definition or by re-parsing from saved position
 	std::optional<ASTNode> body_to_substitute;
@@ -1105,7 +1138,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		}
 	}
 
-	copy_function_properties(new_func_ref, func_decl);
 	// Carry the const-method qualifier so mangling emits 'K' (Itanium) / 'QEBA' (MSVC).
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
 	new_func_ref.set_is_volatile_member_function(hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));

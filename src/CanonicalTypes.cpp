@@ -553,7 +553,7 @@ TypeId CanonicalTypeTable::substitute(TypeId type, TemplateDeclId env, std::span
 TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	const TypeId record_owner = recordOwnerUnlocked(owner);
+	const TypeId record_owner = classOwnerUnlocked(owner);
 	const CanonicalTypeNode pointee_node = nodeUnlocked(pointee);
 	if (pointee_node.kind == CanonicalTypeKind::Function ||
 		isInternalLink(pointee_node.kind) ||
@@ -574,7 +574,7 @@ TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {
 TypeId CanonicalTypeTable::memberFunctionPointer(TypeId owner, TypeId function) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	const TypeId record_owner = recordOwnerUnlocked(owner);
+	const TypeId record_owner = classOwnerUnlocked(owner);
 	if (nodeUnlocked(function).kind != CanonicalTypeKind::Function) {
 		throw InternalError("canonical type: member function pointee must be a function type");
 	}
@@ -2392,14 +2392,15 @@ bool CanonicalTypeTable::isMemberPointer(CanonicalTypeKind kind) {
 		kind == CanonicalTypeKind::MemberFunctionPointer;
 }
 
-TypeId CanonicalTypeTable::recordOwnerUnlocked(TypeId owner) const {
+TypeId CanonicalTypeTable::classOwnerUnlocked(TypeId owner) const {
 	CanonicalTypeNode input = nodeUnlocked(owner);
 	if (input.kind == CanonicalTypeKind::Qualified) {
 		owner = input.child;
 		input = nodeUnlocked(owner);
 	}
-	if (input.kind != CanonicalTypeKind::Record) {
-		throw InternalError("canonical type: member pointer owner must be a record");
+	if (input.kind != CanonicalTypeKind::Record &&
+		input.kind != CanonicalTypeKind::TemplateSpecialization) {
+		throw InternalError("canonical type: member pointer owner must be a class type");
 	}
 	return owner;
 }

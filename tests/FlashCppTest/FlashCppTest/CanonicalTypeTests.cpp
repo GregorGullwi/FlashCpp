@@ -958,6 +958,52 @@ TEST_CASE("Canonical TypeIds plan member function pointer base conversions") {
 	CHECK_FALSE(rejected_reverse_plan->is_valid);
 }
 
+TEST_CASE("Canonical TypeIds retain class specialization member function pointer owners") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_argument[] = {
+		table.builtin(CanonicalBuiltinKind::Int),
+	};
+	const TypeId char_argument[] = {
+		table.builtin(CanonicalBuiltinKind::Char),
+	};
+	const TypeId int_owner = table.templateSpecialization(
+		TemplateDeclId{910}, int_argument);
+	const TypeId char_owner = table.templateSpecialization(
+		TemplateDeclId{910}, char_argument);
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	auto make_member_function_pointer = [&signature](TypeId owner) {
+		TypeSpecifierNode type(
+			TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_type_id(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	const TypeSpecifierNode int_pointer =
+		make_member_function_pointer(int_owner);
+	const TypeSpecifierNode char_pointer =
+		make_member_function_pointer(char_owner);
+	const CanonicalTypeImport imported = importCanonicalType(table, int_pointer);
+	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
+	CHECK(table.memberPointerOwner(imported.type) == int_owner);
+	CHECK(table.memberPointerPointee(imported.type) == importCanonicalFunctionSignature(
+		table, signature).type);
+
+	const std::optional<ConversionPlan> exact_plan =
+		tryBuildCanonicalProjectableConversionPlan(int_pointer, int_pointer);
+	REQUIRE(exact_plan.has_value());
+	CHECK(exact_plan->is_valid);
+	CHECK(exact_plan->rank == ConversionRank::ExactMatch);
+	const std::optional<ConversionPlan> different_owner_plan =
+		tryBuildCanonicalProjectableConversionPlan(int_pointer, char_pointer);
+	REQUIRE(different_owner_plan.has_value());
+	CHECK_FALSE(different_owner_plan->is_valid);
+}
+
 TEST_CASE("Canonical TypeIds compare member object pointer pairs") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

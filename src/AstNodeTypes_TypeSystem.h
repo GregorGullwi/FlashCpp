@@ -1089,35 +1089,60 @@ enum class DeclaratorComponentKind : uint8_t {
 	MemberFunctionPointer,
 };
 
+enum class DeclaratorOwnerIdentityKind : uint8_t {
+	None,
+	Entity,
+	Type,
+};
+
 struct DeclaratorComponent {
-	uint64_t payload = 0; // Array extent, or zero for non-array wrappers.
+	uint64_t payload = 0; // Array extent, or TypeId value for a typed member owner.
 	EntityId member_owner{};
 	DeclaratorComponentKind kind = DeclaratorComponentKind::Pointer;
 	CVQualifier cv_qualifier = CVQualifier::None;
-	uint16_t reserved = 0;
+	DeclaratorOwnerIdentityKind owner_identity_kind = DeclaratorOwnerIdentityKind::None;
+	uint8_t reserved = 0;
+
+	bool hasMemberOwner() const {
+		return owner_identity_kind == DeclaratorOwnerIdentityKind::Entity
+			? static_cast<bool>(member_owner)
+			: owner_identity_kind == DeclaratorOwnerIdentityKind::Type && payload != 0;
+	}
+	EntityId memberOwnerEntity() const {
+		return owner_identity_kind == DeclaratorOwnerIdentityKind::Entity
+			? member_owner
+			: EntityId{};
+	}
+	TypeId memberOwnerType() const {
+		return owner_identity_kind == DeclaratorOwnerIdentityKind::Type
+			? TypeId{static_cast<uint32_t>(payload)}
+			: TypeId{};
+	}
 
 	static DeclaratorComponent pointer(CVQualifier cv) {
-		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Pointer, cv, 0};
+		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Pointer, cv,
+			DeclaratorOwnerIdentityKind::None, 0};
 	}
 	static DeclaratorComponent lvalueReference() {
 		return DeclaratorComponent{0, {}, DeclaratorComponentKind::LValueReference,
-			CVQualifier::None, 0};
+			CVQualifier::None, DeclaratorOwnerIdentityKind::None, 0};
 	}
 	static DeclaratorComponent rvalueReference() {
 		return DeclaratorComponent{0, {}, DeclaratorComponentKind::RValueReference,
-			CVQualifier::None, 0};
+			CVQualifier::None, DeclaratorOwnerIdentityKind::None, 0};
 	}
 	static DeclaratorComponent array(size_t extent) {
 		return DeclaratorComponent{static_cast<uint64_t>(extent), {},
-			DeclaratorComponentKind::Array, CVQualifier::None, 0};
+			DeclaratorComponentKind::Array, CVQualifier::None,
+			DeclaratorOwnerIdentityKind::None, 0};
 	}
 	static DeclaratorComponent unknownBoundArray() {
 		return DeclaratorComponent{0, {}, DeclaratorComponentKind::UnknownBoundArray,
-			CVQualifier::None, 0};
+			CVQualifier::None, DeclaratorOwnerIdentityKind::None, 0};
 	}
 	static DeclaratorComponent function() {
 		return DeclaratorComponent{0, {}, DeclaratorComponentKind::Function,
-			CVQualifier::None, 0};
+			CVQualifier::None, DeclaratorOwnerIdentityKind::None, 0};
 	}
 	static DeclaratorComponent memberPointer(EntityId owner, bool is_function,
 		CVQualifier cv) {
@@ -1128,6 +1153,19 @@ struct DeclaratorComponent {
 				? DeclaratorComponentKind::MemberFunctionPointer
 				: DeclaratorComponentKind::MemberObjectPointer,
 			cv,
+			DeclaratorOwnerIdentityKind::Entity,
+			0};
+	}
+	static DeclaratorComponent memberPointer(TypeId owner, bool is_function,
+		CVQualifier cv) {
+		return DeclaratorComponent{
+			owner.value,
+			{},
+			is_function
+				? DeclaratorComponentKind::MemberFunctionPointer
+				: DeclaratorComponentKind::MemberObjectPointer,
+			cv,
+			DeclaratorOwnerIdentityKind::Type,
 			0};
 	}
 

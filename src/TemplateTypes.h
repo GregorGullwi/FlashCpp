@@ -297,10 +297,11 @@ inline void appendFunctionTypeIdentityHash(
 		combineFunctionTypeIdentityHash(
 			hash, std::hash<uint32_t>{}(component.member_owner.value));
 		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint8_t>{}(
+				static_cast<uint8_t>(component.owner_identity_kind)));
+		combineFunctionTypeIdentityHash(
 			hash,
 			std::hash<uint8_t>{}(static_cast<uint8_t>(component.cv_qualifier)));
-		combineFunctionTypeIdentityHash(
-			hash, std::hash<uint16_t>{}(component.reserved));
 	}
 	combineFunctionTypeIdentityHash(
 		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier)));

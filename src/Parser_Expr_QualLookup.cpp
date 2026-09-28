@@ -3522,6 +3522,28 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 								}
 								if (!ambiguous &&
 									resolved_function != nullptr) {
+									if (!resolved_function->is_materialized() &&
+										struct_type_it->second->isTemplateInstantiation()) {
+										const StringHandle owner_name =
+											StringTable::getOrInternStringHandle(struct_name);
+										const LazyMemberKey member_key =
+											LazyMemberKey::exact(owner_name, *resolved_function);
+										if (LazyMemberInstantiationRegistry::getInstance()
+												.needsInstantiation(member_key)) {
+											if (std::optional<LazyMemberFunctionInfo> lazy_info =
+													LazyMemberInstantiationRegistry::getInstance()
+													.getLazyMemberInfo(member_key);
+											lazy_info.has_value()) {
+												const std::optional<ASTNode> instantiated_function =
+													instantiateLazyMemberFunction(*lazy_info, false);
+												if (const FunctionDeclarationNode* instantiated_decl =
+													get_function_decl_node(instantiated_function);
+												instantiated_decl != nullptr) {
+													resolved_function = instantiated_decl;
+												}
+											}
+										}
+									}
 									return resolved_function->is_static()
 										? FlashCpp::ParserFunctionTypeHelpers::
 											  buildFunctionPointerTypeFromFunctionDeclaration(
