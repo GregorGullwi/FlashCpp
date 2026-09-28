@@ -2137,6 +2137,22 @@ void attachQualifiedIdentifierTemplateArguments(
 	}
 }
 
+ASTNode makeDeferredFunctionTemplateIdentifier(
+	const Token& identifier_token,
+	const std::optional<TemplateArgumentVector>& template_args,
+	std::vector<ASTNode>& template_arg_nodes) {
+	QualifiedIdentifierNode deferred_function_id(
+		gSymbolTable.get_current_namespace_handle(),
+		identifier_token);
+	attachQualifiedIdentifierTemplateArguments(
+		deferred_function_id,
+		template_args,
+		template_arg_nodes);
+	ExpressionNode& expression = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+		std::move(deferred_function_id));
+	return ASTNode(&expression);
+}
+
 bool qualifiedMemberTemplateIdIsKnown(
 	Parser& parser,
 	std::string_view owner_name,
@@ -10127,6 +10143,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							result = emplace_node<ExpressionNode>(IdentifierNode(decl_ptr->identifier_token()));
 							return ParseResult::success(*result);
 						}
+					} else if (identifierType.has_value() &&
+						identifierType->is<TemplateFunctionDeclarationNode>() &&
+						explicitTemplateArgsRequireDeferredInstantiation(
+							*explicit_template_args)) {
+						result = makeDeferredFunctionTemplateIdentifier(
+							identifier_token,
+							explicit_template_args,
+							explicit_template_arg_nodes);
+						return ParseResult::success(*result);
 					}
 				}
 			}

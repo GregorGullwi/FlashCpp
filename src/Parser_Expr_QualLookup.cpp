@@ -3137,6 +3137,71 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 	return fp_type;
 }
 
+std::optional<TypeSpecifierNode> Parser::tryBuildFunctionTemplateAddressType(
+	const QualifiedIdentifierNode& function_id) {
+	if (!function_id.has_template_arguments()) {
+		return std::nullopt;
+	}
+	std::optional<TemplateArgumentVector> template_args =
+		materializeConcreteCallTemplateArguments(
+			function_id.template_arguments());
+	if (!template_args.has_value()) {
+		return std::nullopt;
+	}
+	const std::string qualified_name = function_id.full_name();
+	std::optional<ASTNode> explicit_specialization =
+		gTemplateRegistry.lookupSpecialization(
+			qualified_name,
+			*template_args);
+	if (!explicit_specialization.has_value() &&
+		qualified_name != function_id.name()) {
+		explicit_specialization = gTemplateRegistry.lookupSpecialization(
+			function_id.name(),
+			*template_args);
+	}
+	if (const FunctionDeclarationNode* function =
+			get_function_decl_node(explicit_specialization);
+		function != nullptr) {
+		return FlashCpp::ParserFunctionTypeHelpers::
+			buildFunctionPointerTypeFromFunctionDeclaration(*function);
+	}
+
+	std::vector<TemplateNameLookupCandidate> function_templates =
+		lookupFunctionTemplateCandidatesForInstantiation(
+			qualified_name,
+			0);
+	if (function_templates.empty() && qualified_name != function_id.name()) {
+		function_templates = lookupFunctionTemplateCandidatesForInstantiation(
+			function_id.name(),
+			0);
+	}
+	if (function_templates.size() != 1 ||
+		!function_templates.front().declaration.is<TemplateFunctionDeclarationNode>()) {
+		return std::nullopt;
+	}
+
+	const TemplateFunctionDeclarationNode& function_template =
+		function_templates.front()
+			.declaration.as<TemplateFunctionDeclarationNode>();
+	const TemplateParameterVector& template_params =
+		function_template.template_parameters();
+	TypeSpecifierNode function_type =
+		FlashCpp::ParserFunctionTypeHelpers::
+			buildFunctionPointerTypeFromFunctionDeclaration(
+				function_template.function_decl_node());
+	FunctionSignature substituted_signature =
+		substituteTemplateFunctionSignature(
+			function_type.function_signature(),
+			std::span<const TemplateParameterNode>(
+				template_params.data(),
+				template_params.size()),
+			std::span<const TemplateTypeArg>(
+				template_args->data(),
+				template_args->size()));
+	function_type.set_function_signature(std::move(substituted_signature));
+	return function_type;
+}
+
 // Helper to extract type from an expression for overload resolution
 std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr_node) {
 #if WITH_PARSER_RUNTIME_STATS
@@ -4217,6 +4282,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// symbol lookup. Return the declared type so a non-projectable ordered
 		// declarator survives into overload resolution and lowering instead of
 		// falling back to an untyped placeholder.
+		if (std::optional<TypeSpecifierNode> function_template_type =
+				tryBuildFunctionTemplateAddressType(qual_id);
+			function_template_type.has_value()) {
+			return function_template_type;
+		}
+
 		if (std::optional<ASTNode> qualified_symbol =
 				gSymbolTable.lookup_qualified(qual_id.qualifiedIdentifier());
 			qualified_symbol.has_value()) {

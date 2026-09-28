@@ -145,6 +145,15 @@ throwing.
 `tests/test_canonical_one_sided_dependent_member_noexcept_pair_overload_ret0.cpp`
 checks a dependent source exception specification against fixed non-throwing
 and potentially-throwing target aliases after class-template substitution.
+Deferred ordinary function-template addresses now retain their explicit
+template arguments through substitution, so `decltype(&function<T>)` aliases
+use substituted signatures for overload ranking. Exact type identity for a
+concrete alias-template specialization remains a separate gap in
+`docs/KNOWN_ISSUES.md`.
+`tests/test_canonical_distinct_dependent_noexcept_function_pointer_alias_overload_ret0.cpp`
+checks that distinct dependent exception expressions select the non-throwing
+target for `int` and the potentially-throwing target for `char`, and resolves a
+32-level nested function-address alias chain.
 Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
@@ -306,10 +315,12 @@ Continue boundary 3A in this order:
     The dependent-source case is covered by
     `tests/test_canonical_dependent_class_template_member_pointer_base_conversion_ret0.cpp`:
     `Base<T>` member addresses select concrete `Derived<int>` and
-    `Derived<char>` owner candidates after substitution. Further dependent
+    `Derived<char>` owner candidates after substitution. Dependent
     member-function-pointer forms beyond class-template `decltype` aliases and
     remaining unsupported callable pairs still need substitution-aware
-    canonical ranking.
+    canonical ranking. Ordinary function-pointer `decltype(&function<T>)`
+    aliases now retain and substitute explicit function-template arguments
+    before ranking.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,
