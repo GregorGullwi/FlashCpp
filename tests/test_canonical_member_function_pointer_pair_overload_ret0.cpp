@@ -1,4 +1,3 @@
-#if defined(_MSC_VER)
 struct Owner {
 	int noThrow(int value);
 	int narrow(char value);
@@ -49,11 +48,3 @@ static_assert(SameType<decltype(chooseDerivedOnly(baseMember)), DerivedOnlyMembe
 int main() {
 	return 0;
 }
-#else
-// The Itanium mangler does not yet support member-function-pointer parameter
-// types. The canonical TypeId planner is covered by CanonicalTypeTests.cpp;
-// end-to-end overload declarations remain enabled on MSVC until boundary 3B.
-int main() {
-	return 0;
-}
-#endif

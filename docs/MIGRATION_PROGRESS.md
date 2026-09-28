@@ -219,11 +219,11 @@ qualification, and owner-mismatch behavior. The source regression
 pointee and owner selection, including base-to-derived ranking. The source
 regression
 `tests/test_canonical_member_function_pointer_pair_overload_ret0.cpp` checks
-member-owner, function-signature, and base-to-derived selection on MSVC.
-Itanium end-to-end coverage is deferred until boundary 3B supports mangling
-member-function-pointer parameter types. Dependent `noexcept`,
-user-defined conversions, and other unsupported callable or template types
-still use compatibility planning.
+member-owner, function-signature, and base-to-derived selection on both MSVC
+and Itanium. Itanium mangling covers member-function-pointer parameter types,
+including qualified and `noexcept` signatures, with ABI substitution
+compression. Dependent `noexcept`, user-defined conversions, and other
+unsupported callable or template types still use compatibility planning.
 Binary operator-template ranking now sends distinct record operand and
 parameter types through the shared conversion planner instead of rejecting
 them by `TypeIndex` inequality. The regression

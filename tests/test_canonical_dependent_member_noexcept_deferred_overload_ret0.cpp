@@ -1,4 +1,3 @@
-#if defined(_MSC_VER)
 struct Callable {
 	template <bool IsNoexcept>
 	int run() noexcept(IsNoexcept) {
@@ -63,11 +62,3 @@ static_assert(SameType<
 int main() {
 	return 0;
 }
-#else
-// The Itanium mangler does not yet support member-function-pointer parameter
-// types. Keep source-level overload checks on MSVC; canonical type-planner
-// behavior is covered by the platform-independent unit tests.
-int main() {
-	return 0;
-}
-#endif

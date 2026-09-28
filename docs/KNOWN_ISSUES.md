@@ -1,5 +1,15 @@
 # Known Issues
 
+## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
+
+Compiling `tests/std/test_std_typeinfo_ret0.cpp` with the WSL Debug compiler
+currently ends in a SIGSEGV before code generation. The captured stack runs
+through `AstToIr::tryEvaluateAsConstExpr<MemberAccessNode>`, constexpr
+destructor evaluation, and `StructTypeInfo::buildRTTI()`. This is a front-end
+failure while processing the standard header, separate from Itanium symbol
+mangling; the typeinfo test therefore does not currently verify the mangling
+change on WSL.
+
 ## Member class template dependent bases are not instantiated
 
 A member class template whose base is one of its own type parameters does not

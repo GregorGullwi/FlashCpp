@@ -1,4 +1,3 @@
-#if defined(_MSC_VER)
 struct NoexceptSelection {
 	char marker[1];
 };
@@ -56,10 +55,3 @@ int main() {
 		sizeof(decltype(selectExplicitMemberTemplateAddress<char>())) !=
 			sizeof(ThrowingSelection));
 }
-#else
-// The Itanium mangler does not yet support member-function-pointer parameter
-// types. Keep this source-level overload regression on the MSVC ABI.
-int main() {
-	return 0;
-}
-#endif
