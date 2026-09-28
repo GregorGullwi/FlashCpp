@@ -1565,6 +1565,11 @@ const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 // Defined in AstNodeTypes.cpp; parser call sites invoke this after set_member_class_name.
 class TypeSpecifierNode;
 void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec);
+// Convert the legacy declaration-owner index to canonical identity here, at
+// the syntax boundary, before member-pointer overload ranking.
+void tryBindPublishedMemberClassEntity(
+	TypeSpecifierNode& type_spec,
+	TypeIndex member_owner_type_index);
 
 // Bind a published class EntityId onto a named struct TypeSpecifierNode.
 // Uses type_index / injected-class metadata only as a temporary bridge.

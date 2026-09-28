@@ -1098,6 +1098,37 @@ void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec) {
 	type_spec.set_member_class_entity(declaration->entity_id());
 }
 
+void tryBindPublishedMemberClassEntity(
+	TypeSpecifierNode& type_spec,
+	TypeIndex member_owner_type_index) {
+	if (member_owner_type_index.is_valid() &&
+		!type_spec.has_member_class_type_id()) {
+		const TypeInfo* owner_type_info = tryGetTypeInfo(member_owner_type_index);
+		if (owner_type_info != nullptr) {
+			FrontendContext& frontend_context = requireFrontendContext();
+			CanonicalTypeTable& table = frontend_context.canonicalTypes();
+			CanonicalTypeTransaction transaction(table);
+			const CanonicalTypeImport imported =
+				importCanonicalClassTypeInfo(table, *owner_type_info);
+			if (imported.status == CanonicalTypeImportStatus::Supported) {
+				const CanonicalTypeKind owner_kind = table.node(imported.type).kind;
+				if (owner_kind == CanonicalTypeKind::Record ||
+					owner_kind == CanonicalTypeKind::TemplateSpecialization) {
+					type_spec.set_member_class_type_id(imported.type);
+					if (const StructTypeInfo* struct_info =
+							canonicalClassStructInfoFromTypeInfo(*owner_type_info)) {
+						(void)tryPublishCanonicalClassBaseSchema(
+							table, imported.type, *struct_info);
+					}
+					transaction.commit();
+					return;
+				}
+			}
+		}
+	}
+	tryBindPublishedMemberClassEntity(type_spec);
+}
+
 void tryBindPublishedTypeEntity(TypeSpecifierNode& type_spec) {
 	if (type_spec.has_type_entity()) {
 		return;
