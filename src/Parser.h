@@ -2269,6 +2269,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::vector<TypeSpecifierNode>& arg_types_out);
 	std::optional<TemplateArgumentVector> materializeConcreteCallTemplateArguments(
 		std::span<const ASTNode> template_argument_nodes);
+	std::optional<TypeSpecifierNode> tryBuildFunctionTemplateAddressType(
+		const QualifiedIdentifierNode& function_id);
 	std::optional<ASTNode> resolveDependentUnqualifiedCallAtPointOfInstantiation(
 		const DependentUnqualifiedCallLookupRecord& record,
 		const ChunkedVector<ASTNode>& arguments,
