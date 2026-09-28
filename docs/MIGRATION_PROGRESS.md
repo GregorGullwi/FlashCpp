@@ -214,7 +214,11 @@ derived pointer and the less-qualified base pointer when both require
 derived-to-base conversion. The canonical planner unit test covers virtual,
 inaccessible, ambiguous, and cv-removing base-pointer conversions, and rejects
 derived-to-base conversions through pointer-to-pointer or pointer-to-array
-shapes. Object-pointer conversions that create a pointer temporary can now bind
+shapes. By-value record conversions now compare canonical record identities and
+rank a public derived-to-base conversion as a standard conversion. This keeps
+it better than a competing converting-constructor sequence, as covered by
+`tests/test_canonical_derived_to_base_value_overload_ret0.cpp`. Object-pointer
+conversions that create a pointer temporary can now bind
 to eligible const lvalue and rvalue references through the projectable
 canonical planner, including derived-to-base and object-pointer-to-`cv void*`
 conversions; non-const lvalue references still reject that temporary path. The

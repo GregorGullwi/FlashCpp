@@ -2069,6 +2069,25 @@ inline void stripOrderedReference(TypeSpecifierNode& spec) {
 
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
 
+inline EntityId resolveOverloadRecordEntity(const TypeSpecifierNode& type) {
+	if (type.category() != TypeCategory::Struct) {
+		return {};
+	}
+	if (const EntityId bound = resolveNamedTypeEntity(type)) {
+		return bound;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+	if (type_info == nullptr || type_info->isTypeAlias()) {
+		return {};
+	}
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	if (struct_info == nullptr || struct_info->declaration_node == nullptr ||
+		!struct_info->declaration_node->has_entity_id()) {
+		return {};
+	}
+	return struct_info->declaration_node->entity_id();
+}
+
 // Try the structural planner for an ordered overload conversion. Imports are
 // speculative: overload candidate checks must not publish temporary TypeIds.
 // A null result means the importer or reference-binding rules still need the
@@ -2341,13 +2360,19 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
 		!from.is_pointer() && !from.is_array() &&
 		!to.is_pointer() && !to.is_array();
+	const bool may_be_nominal_object_conversion =
+		from.category() == TypeCategory::Struct &&
+		to.category() == TypeCategory::Struct &&
+		!from.is_pointer() && !from.is_array() &&
+		!to.is_pointer() && !to.is_array() &&
+		!from.has_ordered_declarator() && !to.has_ordered_declarator();
 	if (from.is_reference() || from.is_rvalue_reference() ||
 		to.is_reference() || to.is_rvalue_reference() ||
 		orderedDeclaratorIsReference(from) ||
 		orderedDeclaratorIsReference(to) ||
 		(!may_be_pointer_pair && !may_be_array_decay &&
 			!may_be_boolean_conversion && !may_be_nullptr_pointer_conversion &&
-			!may_be_builtin_conversion) ||
+			!may_be_builtin_conversion && !may_be_nominal_object_conversion) ||
 		!hasNonRecursiveBaseType(from) || !hasNonRecursiveBaseType(to)) {
 		return std::nullopt;
 	}
@@ -2357,6 +2382,29 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	}
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
+	if (may_be_nominal_object_conversion) {
+		const EntityId source_entity = resolveOverloadRecordEntity(from);
+		const EntityId target_entity = resolveOverloadRecordEntity(to);
+		if (source_entity && target_entity) {
+			const TypeId source = table.withoutTopLevelQualifiers(
+				table.qualify(table.record(source_entity), from.cv_qualifier()));
+			const TypeId target = table.withoutTopLevelQualifiers(
+				table.qualify(table.record(target_entity), to.cv_qualifier()));
+			if (source == target) {
+				return ConversionPlan::exact_match();
+			}
+			const std::optional<DerivedBaseConversionKind> base_conversion =
+				classifyCanonicalDerivedBaseConversion(table, source, target);
+			if (base_conversion == DerivedBaseConversionKind::UniquePublicNonVirtual ||
+				base_conversion == DerivedBaseConversionKind::PublicVirtual) {
+				return ConversionPlan{ConversionRank::Conversion,
+					StandardConversionKind::DerivedToBase, true};
+			}
+			// Leave unrelated or inaccessible class pairs to the compatibility path,
+			// which also checks converting constructors and context-sensitive access.
+			return std::nullopt;
+		}
+	}
 	const CanonicalTypeImport from_import = importCanonicalType(table, from);
 	if (from_import.status == CanonicalTypeImportStatus::Invalid) {
 		return ConversionPlan::no_match();
