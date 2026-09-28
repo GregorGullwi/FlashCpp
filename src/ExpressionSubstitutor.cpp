@@ -5467,8 +5467,16 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 						alias_entry->is<TemplateAliasNode>()) {
 						const TemplateAliasNode& alias_node =
 							alias_entry->as<TemplateAliasNode>();
-						if (!alias_node.target_type_node().has_ordered_declarator() ||
-							alias_node.target_type_node().ordered_declarator_has_legacy_projection()) {
+						const TypeInfo* alias_target_type_info = tryGetTypeInfo(
+							alias_node.target_type_node().type_index());
+						const bool has_deferred_decltype_target =
+							alias_target_type_info != nullptr &&
+							alias_target_type_info->deferredDecltypeExpression() != nullptr;
+						const bool alias_target_has_legacy_declarator =
+							!alias_node.target_type_node().has_ordered_declarator() ||
+							alias_node.target_type_node().ordered_declarator_has_legacy_projection();
+						if (!has_deferred_decltype_target &&
+							alias_target_has_legacy_declarator) {
 							std::optional<TemplateTypeArg> rebound_arg =
 								parser_.tryRebindAliasTargetTemplateArg(
 									alias_node,
@@ -5482,13 +5490,15 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 								return substituted_type;
 							}
 						}
-						TypeSpecifierNode substituted_type =
-							substituteInType(alias_node.target_type_node());
-						if (substituted_type.category() != TypeCategory::Invalid &&
-							substituted_type.category() != TypeCategory::Template &&
-							!isPlaceholderAutoType(substituted_type.category())) {
-							applyOuterTypeModifiers(substituted_type, type);
-							return substituted_type;
+						if (!has_deferred_decltype_target) {
+							TypeSpecifierNode substituted_type =
+								substituteInType(alias_node.target_type_node());
+							if (substituted_type.category() != TypeCategory::Invalid &&
+								substituted_type.category() != TypeCategory::Template &&
+								!isPlaceholderAutoType(substituted_type.category())) {
+								applyOuterTypeModifiers(substituted_type, type);
+								return substituted_type;
+							}
 						}
 					}
 					Parser::AliasTemplateMaterializationResult materialized_type =
@@ -5497,7 +5507,8 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 							materialized_args.args);
 					const TypeInfo* resolved_type_info =
 						materialized_type.resolved_type_info;
-					if (resolved_type_info == nullptr) {
+					if (resolved_type_info == nullptr &&
+						!materialized_type.resolved_type_specifier.has_value()) {
 						materialized_type =
 							parser_.templateEngine().materializeTemplateInstantiationForLookup(
 								base_template_name,
@@ -5505,6 +5516,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 						resolved_type_info = materialized_type.resolved_type_info;
 					}
 					if (resolved_type_info == nullptr &&
+						!materialized_type.resolved_type_specifier.has_value() &&
 						qualified_base_template_name != type_info->baseTemplateName()) {
 						materialized_type =
 							parser_.templateEngine().materializeAliasTemplateInstantiation(
@@ -5520,9 +5532,16 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 						}
 					}
 					if (resolved_type_info == nullptr &&
+						!materialized_type.resolved_type_specifier.has_value() &&
 						materialized_type.canonicalNameHandle().isValid()) {
 						resolved_type_info =
 							findTypeByName(materialized_type.canonicalNameHandle());
+					}
+					if (materialized_type.resolved_type_specifier.has_value()) {
+						TypeSpecifierNode substituted_type =
+							*materialized_type.resolved_type_specifier;
+						applyOuterTypeModifiers(substituted_type, type);
+						return substituted_type;
 					}
 					if (resolved_type_info != nullptr) {
 						return makeSubstitutedTypeFromResolvedTypeInfo(*resolved_type_info, type);

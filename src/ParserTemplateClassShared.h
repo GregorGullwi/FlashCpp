@@ -385,8 +385,18 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 		substituted_category != TypeCategory::MemberFunctionPointer) {
 		return;
 	}
+	TemplateParameterVector semantic_template_params;
+	semantic_template_params.reserve(template_params.size());
+	for (const auto& template_param_node : template_params) {
+		const TemplateParameterNode* template_param =
+			tryGetTemplateParameterNode(template_param_node);
+		if (template_param != nullptr) {
+			semantic_template_params.push_back(*template_param);
+		}
+	}
 
 	std::optional<FunctionSignature> signature;
+	std::optional<TypeSpecifierNode> resolved_decltype_type;
 	if (substituted_type.has_function_signature()) {
 		signature = substituted_type.function_signature();
 	} else if (substituted_alias.function_signature.has_value()) {
@@ -409,17 +419,36 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 		}
 	}
 	if (!signature.has_value()) {
+		const ResolvedAliasTypeInfo original_alias =
+			resolveAliasTypeInfo(original_type.type_index());
+		const TypeInfo* decltype_type_info = original_alias.terminal_type_info;
+		if (decltype_type_info == nullptr) {
+			decltype_type_info = tryGetTypeInfo(original_type.type_index());
+		}
+		const ASTNode* deferred_decltype_expression = decltype_type_info != nullptr
+			? decltype_type_info->deferredDecltypeExpression()
+			: nullptr;
+		if (deferred_decltype_expression != nullptr) {
+			// A dependent decltype alias keeps its callable metadata on the
+			// deferred expression's resolved type, not on the alias placeholder.
+			ASTNode substituted_expression = parser.substituteTemplateParameters(
+				*deferred_decltype_expression,
+				std::span<const TemplateParameterNode>(
+					semantic_template_params.data(), semantic_template_params.size()),
+				std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
+			std::optional<TypeSpecifierNode> decltype_type =
+				parser.get_expression_type(substituted_expression);
+			if (decltype_type.has_value() &&
+				decltype_type->category() == substituted_category &&
+				decltype_type->has_function_signature()) {
+				resolved_decltype_type = *decltype_type;
+				signature = decltype_type->function_signature();
+			}
+		}
+	}
+	if (!signature.has_value()) {
 		throw InternalError(
 			"Concrete function pointer type is missing canonical FunctionSignature metadata");
-	}
-	TemplateParameterVector semantic_template_params;
-	semantic_template_params.reserve(template_params.size());
-	for (const auto& template_param_node : template_params) {
-		const TemplateParameterNode* template_param =
-			tryGetTemplateParameterNode(template_param_node);
-		if (template_param != nullptr) {
-			semantic_template_params.push_back(*template_param);
-		}
 	}
 	FunctionSignature substituted_signature = parser.substituteTemplateFunctionSignature(
 		*signature,
@@ -427,16 +456,30 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 			semantic_template_params.data(), semantic_template_params.size()),
 		std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 	if (substituted_category == TypeCategory::MemberFunctionPointer) {
-		StringHandle original_owner = substituted_type.has_member_class()
-			? substituted_type.member_class_name()
-			: substituted_signature.class_name;
+		StringHandle original_owner = resolved_decltype_type.has_value() &&
+			resolved_decltype_type->has_member_class()
+			? resolved_decltype_type->member_class_name()
+			: (substituted_type.has_member_class()
+				? substituted_type.member_class_name()
+				: substituted_signature.class_name);
 		if (!original_owner.isValid()) {
 			throw InternalError(
 				"Concrete member function pointer is missing canonical owner metadata");
 		}
-		const StringHandle substituted_owner = substituteTemplateMemberFunctionOwner(
-			original_owner, template_params, template_args);
+		const StringHandle substituted_owner = resolved_decltype_type.has_value()
+			? original_owner
+			: substituteTemplateMemberFunctionOwner(
+				original_owner, template_params, template_args);
 		substituted_type.set_member_class_name(substituted_owner);
+		if (resolved_decltype_type.has_value()) {
+			if (resolved_decltype_type->has_member_class_type_id()) {
+				substituted_type.set_member_class_type_id(
+					resolved_decltype_type->member_class_type_id());
+			} else if (resolved_decltype_type->has_member_class_entity()) {
+				substituted_type.set_member_class_entity(
+					resolved_decltype_type->member_class_entity());
+			}
+		}
 		substituted_signature.class_name = substituted_owner;
 	}
 	substituted_type.set_function_signature(substituted_signature);
