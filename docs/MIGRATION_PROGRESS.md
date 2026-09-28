@@ -142,6 +142,9 @@ member-function signature and canonical owner before overload ranking.
 checks that distinct dependent exception expressions select the non-throwing
 target for `int` and reject it for `char` when the source member is potentially
 throwing.
+`tests/test_canonical_one_sided_dependent_member_noexcept_pair_overload_ret0.cpp`
+checks a dependent source exception specification against fixed non-throwing
+and potentially-throwing target aliases after class-template substitution.
 Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
@@ -304,7 +307,7 @@ Continue boundary 3A in this order:
     `tests/test_canonical_dependent_class_template_member_pointer_base_conversion_ret0.cpp`:
     `Base<T>` member addresses select concrete `Derived<int>` and
     `Derived<char>` owner candidates after substitution. Further dependent
-    member-function-pointer forms, one-sided dependent expressions, and
+    member-function-pointer forms beyond class-template `decltype` aliases and
     remaining unsupported callable pairs still need substitution-aware
     canonical ranking.
    Then make projectable semantic descriptors use structural identity
