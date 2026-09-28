@@ -101,9 +101,13 @@ outer reference before importing their pointee. Unit coverage also checks
 function-pointer and member-function-pointer targets through canonical type
 imports. The source regression
 `tests/test_canonical_nullptr_reference_temporary_overload_ret0.cpp` verifies
-overload selection for object and data-member pointers. Parser support for
-function-pointer and member-function-pointer reference declarators remains
-deferred; see [known issues](KNOWN_ISSUES.md).
+overload selection for object and data-member pointers. Function-pointer and
+member-function-pointer reference declarators now parse through the canonical
+conversion path. The regression
+`tests/test_canonical_callable_pointer_nullptr_reference_temporary_overload_ret0.cpp`
+checks that `nullptr` selects a `const` function-pointer reference over a
+non-const lvalue reference and materializes a null member-function pointer for
+a local const-reference binding.
 Function designators now decay canonically when a matching function-pointer
 temporary binds to a `const` lvalue or rvalue reference. The planner rejects
 non-const lvalue-reference binding and mismatched function signatures. Parser
