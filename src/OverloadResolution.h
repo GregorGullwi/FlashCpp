@@ -121,7 +121,101 @@ using OverloadResolutionSizeIndexVector =
 using OverloadResolutionAstNodePtrVector =
 	OverloadVector<const ASTNode*, 4>;
 
-inline bool isSameTypeIgnoringTopLevelCvAndRef(
+inline TypeId canonicalTypeWithoutReference(
+	CanonicalTypeTable& table,
+	TypeId type) {
+	while (true) {
+		const CanonicalTypeNode node = table.node(type);
+		if (node.kind != CanonicalTypeKind::LValueReference &&
+			node.kind != CanonicalTypeKind::RValueReference) {
+			return type;
+		}
+		type = node.child;
+	}
+}
+
+inline TypeId canonicalTypeWithoutTopLevelQualifiers(
+	CanonicalTypeTable& table,
+	TypeId type) {
+	return table.withoutTopLevelQualifiers(type);
+}
+
+inline size_t canonicalPointerDepth(
+	CanonicalTypeTable& table,
+	TypeId type) {
+	size_t depth = 0;
+	type = canonicalTypeWithoutTopLevelQualifiers(table, type);
+	while (table.node(type).kind == CanonicalTypeKind::Pointer) {
+		++depth;
+		type = canonicalTypeWithoutTopLevelQualifiers(table, table.node(type).child);
+	}
+	return depth;
+}
+
+inline CVQualifier canonicalTopLevelCvThroughArrays(
+	CanonicalTypeTable& table,
+	TypeId type) {
+	while (table.node(type).kind == CanonicalTypeKind::Array) {
+		type = table.node(type).child;
+	}
+	const CanonicalTypeNode node = table.node(type);
+	return node.kind == CanonicalTypeKind::Qualified
+		? node.qualifiers
+		: CVQualifier::None;
+}
+
+inline bool canonicalTypesMatchIgnoringTopLevelCv(
+	CanonicalTypeTable& table,
+	TypeId lhs,
+	TypeId rhs) {
+	while (true) {
+		const CanonicalTypeNode lhs_node = table.node(lhs);
+		const CanonicalTypeNode rhs_node = table.node(rhs);
+		if (lhs_node.kind == CanonicalTypeKind::Array ||
+			rhs_node.kind == CanonicalTypeKind::Array) {
+			if (lhs_node.kind != CanonicalTypeKind::Array ||
+				rhs_node.kind != CanonicalTypeKind::Array ||
+				lhs_node.flags != rhs_node.flags ||
+				lhs_node.array_extent != rhs_node.array_extent) {
+				return false;
+			}
+			lhs = lhs_node.child;
+			rhs = rhs_node.child;
+			continue;
+		}
+		if (lhs_node.kind == CanonicalTypeKind::Qualified) {
+			lhs = lhs_node.child;
+		}
+		if (rhs_node.kind == CanonicalTypeKind::Qualified) {
+			rhs = rhs_node.child;
+		}
+		return lhs == rhs;
+	}
+}
+
+inline std::optional<bool> tryCanonicalTypesMatchIgnoringTopLevelCvAndRef(
+	const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs) {
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport lhs_import = importCanonicalType(table, lhs);
+	const CanonicalTypeImport rhs_import = importCanonicalType(table, rhs);
+	if (lhs_import.status == CanonicalTypeImportStatus::Invalid ||
+		rhs_import.status == CanonicalTypeImportStatus::Invalid) {
+		return false;
+	}
+	if (lhs_import.status != CanonicalTypeImportStatus::Supported ||
+		rhs_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return canonicalTypesMatchIgnoringTopLevelCv(
+		table,
+		canonicalTypeWithoutReference(table, lhs_import.type),
+		canonicalTypeWithoutReference(table, rhs_import.type));
+}
+
+// Compatibility boundary for types the canonical importer cannot handle yet.
+inline bool isSameTypeIgnoringTopLevelCvAndRefCompatibility(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs) {
 	const CanonicalTypeAlias lhs_canonical = canonicalize_type_alias(lhs.type_index());
@@ -164,12 +258,83 @@ inline bool isSameTypeIgnoringTopLevelCvAndRef(
 	return true;
 }
 
-// C++20 [over.ics.rank]/3.2.1: when two conversion sequences have the same rank
-// and convert similar pointer types, the destination that adds fewer cv-qualifiers
-// is a proper subsequence of the other and is therefore better.  This prefers
-// volatile T* over const volatile T* for a T* argument (MSVC <atomic>
-// __iso_volatile_store32).
-inline int compareQualificationConversionDestinations(
+inline bool isSameTypeIgnoringTopLevelCvAndRef(
+	const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs) {
+	const std::optional<bool> canonical_match =
+		tryCanonicalTypesMatchIgnoringTopLevelCvAndRef(lhs, rhs);
+	if (canonical_match.has_value()) {
+		return *canonical_match;
+	}
+	return isSameTypeIgnoringTopLevelCvAndRefCompatibility(lhs, rhs);
+}
+
+inline std::optional<int> tryCompareCanonicalQualificationConversionDestinations(
+	const TypeSpecifierNode& argument_type,
+	const TypeSpecifierNode& lhs_param,
+	const TypeSpecifierNode& rhs_param) {
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport argument_import = importCanonicalType(table, argument_type);
+	const CanonicalTypeImport lhs_import = importCanonicalType(table, lhs_param);
+	const CanonicalTypeImport rhs_import = importCanonicalType(table, rhs_param);
+	if (argument_import.status == CanonicalTypeImportStatus::Invalid ||
+		lhs_import.status == CanonicalTypeImportStatus::Invalid ||
+		rhs_import.status == CanonicalTypeImportStatus::Invalid) {
+		return 0;
+	}
+	if (argument_import.status != CanonicalTypeImportStatus::Supported ||
+		lhs_import.status != CanonicalTypeImportStatus::Supported ||
+		rhs_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+
+	const TypeId argument = canonicalTypeWithoutTopLevelQualifiers(
+		table,
+		canonicalTypeWithoutReference(table, argument_import.type));
+	const TypeId lhs = canonicalTypeWithoutTopLevelQualifiers(
+		table,
+		canonicalTypeWithoutReference(table, lhs_import.type));
+	const TypeId rhs = canonicalTypeWithoutTopLevelQualifiers(
+		table,
+		canonicalTypeWithoutReference(table, rhs_import.type));
+	if (canonicalPointerDepth(table, argument) == 0 ||
+		canonicalPointerDepth(table, argument) != canonicalPointerDepth(table, lhs) ||
+		canonicalPointerDepth(table, lhs) != canonicalPointerDepth(table, rhs) ||
+		table.node(argument).kind != CanonicalTypeKind::Pointer ||
+		table.node(lhs).kind != CanonicalTypeKind::Pointer ||
+		table.node(rhs).kind != CanonicalTypeKind::Pointer) {
+		return 0;
+	}
+
+	const TypeId argument_pointee = table.node(argument).child;
+	const TypeId lhs_pointee = table.node(lhs).child;
+	const TypeId rhs_pointee = table.node(rhs).child;
+	if (!canonicalTypesMatchIgnoringTopLevelCv(table, lhs_pointee, rhs_pointee)) {
+		return 0;
+	}
+
+	const uint8_t from_cv = static_cast<uint8_t>(
+		canonicalTopLevelCvThroughArrays(table, argument_pointee));
+	const uint8_t lhs_cv = static_cast<uint8_t>(
+		canonicalTopLevelCvThroughArrays(table, lhs_pointee));
+	const uint8_t rhs_cv = static_cast<uint8_t>(
+		canonicalTopLevelCvThroughArrays(table, rhs_pointee));
+	const uint8_t lhs_extra = static_cast<uint8_t>(lhs_cv & ~from_cv);
+	const uint8_t rhs_extra = static_cast<uint8_t>(rhs_cv & ~from_cv);
+	const bool lhs_is_subset = (lhs_extra & ~rhs_extra) == 0;
+	const bool rhs_is_subset = (rhs_extra & ~lhs_extra) == 0;
+	if (lhs_is_subset && !rhs_is_subset) {
+		return -1;
+	}
+	if (rhs_is_subset && !lhs_is_subset) {
+		return 1;
+	}
+	return 0;
+}
+
+// Compatibility boundary for types the canonical importer cannot handle yet.
+inline int compareQualificationConversionDestinationsCompatibility(
 	const TypeSpecifierNode& argument_type,
 	const TypeSpecifierNode& lhs_param,
 	const TypeSpecifierNode& rhs_param) {
@@ -204,6 +369,25 @@ inline int compareQualificationConversionDestinations(
 		return 1;
 	}
 	return 0;
+}
+
+// C++20 [over.ics.rank]/3.2.1: when two conversion sequences have the same rank
+// and convert similar pointer types, the destination that adds fewer cv-qualifiers
+// is a proper subsequence of the other and is therefore better.  This prefers
+// volatile T* over const volatile T* for a T* argument (MSVC <atomic>
+// __iso_volatile_store32).
+inline int compareQualificationConversionDestinations(
+	const TypeSpecifierNode& argument_type,
+	const TypeSpecifierNode& lhs_param,
+	const TypeSpecifierNode& rhs_param) {
+	const std::optional<int> canonical_comparison =
+		tryCompareCanonicalQualificationConversionDestinations(
+			argument_type, lhs_param, rhs_param);
+	if (canonical_comparison.has_value()) {
+		return *canonical_comparison;
+	}
+	return compareQualificationConversionDestinationsCompatibility(
+		argument_type, lhs_param, rhs_param);
 }
 
 inline bool isRvalueLikeArgumentForReferenceBinding(const TypeSpecifierNode& argument_type) {
