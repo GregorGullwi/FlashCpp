@@ -45,6 +45,46 @@ TEST_CASE("Structural TypeId controls semantic type descriptor identity") {
 	CHECK(nested_pointer_id != structural_id);
 }
 
+TEST_CASE("Canonical TypeIds rank by-value derived-to-base conversions") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const EntityId base_entity{801};
+	const EntityId derived_entity{802};
+	const CanonicalRecordBase base_link{
+		base_entity, 0, CanonicalAccess::Public,
+		CanonicalRecordBaseFlags::None, 0, 0};
+	const std::array<CanonicalRecordBase, 1> derived_bases{base_link};
+	table.publishRecordLayout(CanonicalRecordLayout{
+		base_entity, 1, 1, 1, 1, 0, 0, CanonicalRecordLayoutFlags::None, 0});
+	table.publishRecordFieldSchema(base_entity,
+		std::span<const CanonicalRecordMember>{},
+		std::span<const CanonicalRecordBase>{});
+	table.publishRecordLayout(CanonicalRecordLayout{
+		derived_entity, 1, 1, 1, 1, 0, 1, CanonicalRecordLayoutFlags::None, 0});
+	table.publishRecordFieldSchema(derived_entity,
+		std::span<const CanonicalRecordMember>{}, derived_bases);
+
+	TypeSpecifierNode derived(
+		TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	derived.set_type_entity(derived_entity);
+	TypeSpecifierNode base(
+		TypeCategory::Struct, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	base.set_type_entity(base_entity);
+
+	const std::optional<ConversionPlan> base_conversion =
+		tryBuildCanonicalProjectableConversionPlan(derived, base);
+	REQUIRE(base_conversion.has_value());
+	CHECK(base_conversion->is_valid);
+	CHECK(base_conversion->rank == ConversionRank::Conversion);
+	CHECK(base_conversion->kind == StandardConversionKind::DerivedToBase);
+
+	const std::optional<ConversionPlan> exact_conversion =
+		tryBuildCanonicalProjectableConversionPlan(derived, derived);
+	REQUIRE(exact_conversion.has_value());
+	CHECK(exact_conversion->is_valid);
+	CHECK(exact_conversion->rank == ConversionRank::ExactMatch);
+}
+
 TEST_CASE("Overload ranking compares non-projectable parameter shapes structurally") {
 	FrontendContext frontend;
 	TypeSpecifierNode smaller_array(
