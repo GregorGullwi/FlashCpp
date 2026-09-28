@@ -1820,6 +1820,13 @@ enum class Phase : unsigned short { cold = 3, hot = 7 };
 	CHECK(definition.entity_id == entity.id);
 	CHECK(definition.previous_decl_id == forward.id);
 	CHECK((entity.flags & DeclarationFlags::IsDefinition) != 0);
+	const CanonicalEnumLayout layout = context.canonicalTypes().enumLayout(entity.id);
+	CHECK(hasCanonicalEnumLayoutFlag(layout.flags, CanonicalEnumLayoutFlags::Scoped));
+	CHECK(hasCanonicalEnumLayoutFlag(
+		layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying));
+	CHECK(layout.underlying_type ==
+		context.canonicalTypes().builtin(CanonicalBuiltinKind::UnsignedShort));
+	CHECK(layout.enumerator_count == 2);
 }
 
 TEST_CASE("Canonical adapter preserves supported identity and defers entire unsupported shapes") {

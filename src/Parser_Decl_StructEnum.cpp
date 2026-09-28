@@ -4818,6 +4818,37 @@ ParseResult Parser::parse_enum_declaration() {
 			enum_type_info.fallback_size_bits_ = enum_info.underlying_size.value;
 		}
 	}
+	const auto publishCanonicalEnumLayout = [&enum_ref, &enum_info]() {
+		if (!enum_ref.has_entity_id()) {
+			return;
+		}
+		FrontendContext& front_end = requireFrontendContext();
+		const TypeSpecifierNode underlying_syntax = enum_ref.has_underlying_type()
+			? *enum_ref.underlying_type()
+			: TypeSpecifierNode(enum_info.underlying_type, TypeQualifier::None,
+				enum_info.underlying_size.value, Token{}, CVQualifier::None);
+		const CanonicalTypeImport imported_underlying = importCanonicalType(
+			front_end.canonicalTypes(), underlying_syntax);
+		if (imported_underlying.status != CanonicalTypeImportStatus::Supported) {
+			return;
+		}
+		CanonicalEnumLayoutFlags flags = enum_info.is_scoped
+			? CanonicalEnumLayoutFlags::Scoped |
+				CanonicalEnumLayoutFlags::FixedUnderlying
+			: enum_ref.has_underlying_type()
+				? CanonicalEnumLayoutFlags::FixedUnderlying
+				: CanonicalEnumLayoutFlags::None;
+		if (enum_ref.is_forward_declaration()) {
+			flags = flags | CanonicalEnumLayoutFlags::ForwardDeclaration;
+		}
+		front_end.canonicalTypes().publishEnumLayout({
+			.entity = enum_ref.entity_id(),
+			.underlying_type = imported_underlying.type,
+			.size_bytes = canonicalLayoutSize(toSizeT(enum_info.sizeInBytes())),
+			.enumerator_count = canonicalLayoutCount(enum_info.enumerators.size()),
+			.flags = flags,
+		});
+	};
 
 	// Check for forward declaration (semicolon without body)
 	// C++11: enum class Name : underlying_type;
@@ -4843,6 +4874,9 @@ ParseResult Parser::parse_enum_declaration() {
 
 		FLASH_LOG(Parser, Debug, "Parsed enum forward declaration: ", std::string(StringTable::getStringView(enum_name)));
 		stampEnumLexicalScope();
+		if (enum_ref.is_scoped() || enum_ref.has_underlying_type()) {
+			publishCanonicalEnumLayout();
+		}
 		return saved_position.success(enum_node);
 	}
 
@@ -4977,25 +5011,7 @@ ParseResult Parser::parse_enum_declaration() {
 
 	// enum_info was already stored in gTypeInfo before the loop
 	stampEnumLexicalScope();
-	if (enum_ref.has_entity_id()) {
-		FrontendContext& front_end = requireFrontendContext();
-		const TypeSpecifierNode underlying_syntax = enum_ref.has_underlying_type()
-			? *enum_ref.underlying_type()
-			: TypeSpecifierNode(enum_info.underlying_type, TypeQualifier::None,
-				enum_info.underlying_size.value, Token{}, CVQualifier::None);
-		const CanonicalTypeImport imported_underlying = importCanonicalType(
-			front_end.canonicalTypes(), underlying_syntax);
-		if (imported_underlying.status == CanonicalTypeImportStatus::Supported) {
-			front_end.canonicalTypes().publishEnumLayout({
-				.entity = enum_ref.entity_id(),
-				.underlying_type = imported_underlying.type,
-				.size_bytes = canonicalLayoutSize(toSizeT(enum_info.sizeInBytes())),
-				.enumerator_count = canonicalLayoutCount(enum_info.enumerators.size()),
-				.flags = enum_info.is_scoped
-					? CanonicalEnumLayoutFlags::Scoped : CanonicalEnumLayoutFlags::None,
-			});
-		}
-	}
+	publishCanonicalEnumLayout();
 	return saved_position.success(enum_node);
 }
 

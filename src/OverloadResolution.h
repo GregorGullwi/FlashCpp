@@ -9,6 +9,7 @@
 #include "ChunkedString.h"
 #include "TemplateExpressionEquivalence.h"
 #include "TemplateTypes.h" // For FunctionSignatureKey
+#include "MigrationStats.h"
 #include "InlineVector.h"
 #include <algorithm>
 #include <array>
@@ -2357,7 +2358,8 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	const bool may_be_nullptr_pointer_conversion =
 		from.category() == TypeCategory::Nullptr && to.is_pointer();
 	const bool may_be_builtin_conversion =
-		is_builtin_type(from.category()) && is_builtin_type(to.category()) &&
+		(is_builtin_type(from.category()) || from.category() == TypeCategory::Enum) &&
+		is_builtin_type(to.category()) &&
 		!from.is_pointer() && !from.is_array() &&
 		!to.is_pointer() && !to.is_array();
 	const bool may_be_nominal_object_conversion =
@@ -2405,7 +2407,11 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			return std::nullopt;
 		}
 	}
-	const CanonicalTypeImport from_import = importCanonicalType(table, from);
+	TypeSpecifierNode canonical_from = from;
+	if (from.category() == TypeCategory::Enum) {
+		tryBindPublishedTypeEntity(canonical_from);
+	}
+	const CanonicalTypeImport from_import = importCanonicalType(table, canonical_from);
 	if (from_import.status == CanonicalTypeImportStatus::Invalid) {
 		return ConversionPlan::no_match();
 	}
@@ -2423,6 +2429,43 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		stripCanonicalTopCv(table, from_import.type).first);
 	const CanonicalTypeNode to_node = table.node(
 		stripCanonicalTopCv(table, to_import.type).first);
+	const bool is_enum_arithmetic_conversion =
+		from_node.kind == CanonicalTypeKind::Enum &&
+		to_node.kind == CanonicalTypeKind::Builtin &&
+		(isIntegralType(to.category()) || isFloatingPointType(to.category()));
+	if (is_enum_arithmetic_conversion) {
+		const EntityId enum_entity = table.enumEntity(
+			stripCanonicalTopCv(table, from_import.type).first);
+		if (!table.hasEnumLayout(enum_entity)) {
+			return std::nullopt;
+		}
+		const CanonicalEnumLayout layout = table.enumLayout(enum_entity);
+		if (hasCanonicalEnumLayoutFlag(
+				layout.flags, CanonicalEnumLayoutFlags::Scoped)) {
+			// Keep the scoped-enum compatibility route until overload failure can
+			// emit ScopedEnumImplicitConversion instead of a generic no-viable-call
+			// diagnostic. Semantic analysis still rejects the selected conversion.
+			return std::nullopt;
+		}
+		if (!hasCanonicalEnumLayoutFlag(
+				layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying)) {
+			return std::nullopt;
+		}
+		if (stripCanonicalTopCv(table, layout.underlying_type).first ==
+			stripCanonicalTopCv(table, to_import.type).first) {
+			return ConversionPlan{ConversionRank::Promotion,
+				StandardConversionKind::IntegralPromotion, true};
+		}
+		if (to_node.builtin == CanonicalBuiltinKind::Bool) {
+			return ConversionPlan{ConversionRank::Conversion,
+				StandardConversionKind::BooleanConversion, true};
+		}
+		return ConversionPlan{ConversionRank::Conversion,
+			isFloatingPointType(to.category())
+				? StandardConversionKind::FloatingIntegralConversion
+				: StandardConversionKind::IntegralConversion,
+			true};
+	}
 	const bool is_pointer_pair = from_node.kind == CanonicalTypeKind::Pointer &&
 		to_node.kind == CanonicalTypeKind::Pointer;
 	const bool is_array_decay = from_node.kind == CanonicalTypeKind::Array &&
@@ -3489,6 +3532,32 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// conversions, not implicit conversions between distinct enum types.
 		// Unlike structs, enums cannot provide converting constructors.
 		return ConversionPlan::no_match();
+	}
+	if (from_type_index.isEnum() &&
+		(isIntegralType(to_type_category) || isFloatingPointType(to_type_category))) {
+		FrontendContext* const context = FrontendContext::active();
+		if (context != nullptr) {
+			CanonicalTypeTable& table = context->canonicalTypes();
+			CanonicalTypeTransaction transaction(table);
+			TypeSpecifierNode canonical_from = from;
+			tryBindPublishedTypeEntity(canonical_from);
+			const CanonicalTypeImport imported = importCanonicalType(table, canonical_from);
+			if (imported.status == CanonicalTypeImportStatus::Supported) {
+				const TypeId enum_type = stripCanonicalTopCv(table, imported.type).first;
+				if (table.node(enum_type).kind == CanonicalTypeKind::Enum) {
+					const EntityId enum_entity = table.enumEntity(enum_type);
+					if (table.hasEnumLayout(enum_entity) &&
+						hasCanonicalEnumLayoutFlag(
+							table.enumLayout(enum_entity).flags,
+							CanonicalEnumLayoutFlags::FixedUnderlying) &&
+						!hasCanonicalEnumLayoutFlag(
+							table.enumLayout(enum_entity).flags,
+							CanonicalEnumLayoutFlags::Scoped)) {
+						recordFixedUnscopedEnumTypeIndexFallback();
+					}
+				}
+			}
+		}
 	}
 	return buildConversionPlan(from_type_category, to_type_category);
 }
