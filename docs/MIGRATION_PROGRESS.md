@@ -273,12 +273,17 @@ Continue boundary 3A in this order:
    compare owner and pointee `TypeId`s and support the public non-virtual
    base-to-derived owner conversion. Member-function-pointer base adjustments
    now use canonical owner schemas. Identical dependent `noexcept` expression
-   identities compare structurally. Dependent ordinary function-pointer calls
-   defer and rerank after substitution, as covered by
-   `tests/test_canonical_dependent_noexcept_deferred_overload_ret0.cpp`.
-   Distinct or one-sided dependent expressions, dependent member-function-pointer
-   cases beyond identical expression identity, and remaining unsupported
-   callable pairs still need substitution-aware canonical ranking.
+    identities compare structurally. Dependent ordinary function-pointer calls
+    defer and rerank after substitution, as covered by
+    `tests/test_canonical_dependent_noexcept_deferred_overload_ret0.cpp`.
+    Explicit member-function-template addresses now substitute their arguments
+    before forming a member-function-pointer type, and dependent calls retain the
+    overload set when that argument type is unavailable until instantiation. The
+    `noexcept(true)` / `noexcept(false)` case is covered by
+    `tests/test_canonical_dependent_member_noexcept_deferred_overload_ret0.cpp`.
+    Other dependent member-function-pointer forms, distinct or one-sided
+    dependent expressions, and remaining unsupported callable pairs still need
+    substitution-aware canonical ranking.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,

@@ -7784,6 +7784,37 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						all_overloads.begin(),
 						all_overloads.end(),
 						is_adl_blocking_with_block_scope_function);
+				auto make_dependent_call_result = [&]() -> ParseResult {
+					FLASH_LOG(Templates, Trace, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
+					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+					result = emplace_node<ExpressionNode>(
+						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args_ref), identifier_token));
+					if (std::optional<DependentUnqualifiedCallLookupRecord> record =
+							makeDependentUnqualifiedCallLookupRecord(
+								current_template_definition_lookup_context_,
+								identifier_token,
+								argumentDependentLookupIncluded,
+								nullptr);
+						record.has_value()) {
+						setCallDependentUnqualifiedLookupRecord(
+							result->as<ExpressionNode>(),
+							*record);
+					}
+					return ParseResult::success(*result);
+				};
+				if (((current_template_definition_lookup_context_ != nullptr &&
+					  current_template_definition_lookup_context_->is_valid()) ||
+					 parsing_template_depth_ > 0 ||
+					 hasActiveTemplateParameters()) &&
+					all_overloads.size() > 1 &&
+					(!all_arg_types_known || has_deferred_template_call_args)) {
+					// Keep the complete ordinary lookup set until substitution makes
+					// the argument types concrete. Binding identifierType here would
+					// freeze a definition-time guess and prevent point-of-instantiation
+					// overload resolution from considering its siblings.
+					return make_dependent_call_result();
+				}
 
 				if (!all_arg_types_known) {
 					if (!identifierType.has_value()) {
@@ -7898,26 +7929,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						current_template_definition_lookup_context_,
 						argumentDependentLookupIncluded,
 						*call_target);
-					return ParseResult::success(*result);
-				};
-
-				auto make_dependent_call_result = [&]() -> ParseResult {
-					FLASH_LOG(Templates, Trace, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
-					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-					result = emplace_node<ExpressionNode>(
-						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args_ref), identifier_token));
-					if (std::optional<DependentUnqualifiedCallLookupRecord> record =
-							makeDependentUnqualifiedCallLookupRecord(
-								current_template_definition_lookup_context_,
-								identifier_token,
-								argumentDependentLookupIncluded,
-								nullptr);
-						record.has_value()) {
-						setCallDependentUnqualifiedLookupRecord(
-							result->as<ExpressionNode>(),
-							*record);
-					}
 					return ParseResult::success(*result);
 				};
 
@@ -10614,14 +10625,46 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							// First, get all overloads of this function
 							auto all_overloads = gSymbolTable.lookup_all(identifier_token.value());
 							filterPhase1OrdinaryFunctionOverloads(all_overloads);
+							auto make_late_dependent_call_result = [&]() -> ParseResult {
+								FLASH_LOG(Templates, Trace, "Creating dependent call expression for '", identifier_token.value(), "'");
+								auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
+								auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+								result = emplace_node<ExpressionNode>(
+									makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+								if (identifierType.has_value() && all_overloads.size() <= 1) {
+									maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
+										result->as<ExpressionNode>(),
+										identifier_token,
+										true,
+										current_template_definition_lookup_context_,
+										true,
+										*identifierType);
+								} else {
+									maybeAttachDependentUnqualifiedLookupRecord(
+										result->as<ExpressionNode>(),
+										identifier_token,
+										true,
+										current_template_definition_lookup_context_,
+										true,
+										nullptr);
+								}
+								return ParseResult::success(*result);
+							};
 
 							// Extract argument types
 							std::vector<TypeSpecifierNode> arg_types;
 							if (!tryCollectOrdinaryDirectCallArgTypes(args, &arg_types)) {
-									const bool has_deferred_ordinary_call_args =
-										argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
-										argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
-									const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+								const bool has_deferred_ordinary_call_args =
+									argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+									argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+								if (all_overloads.size() > 1 &&
+									((current_template_definition_lookup_context_ != nullptr &&
+									  current_template_definition_lookup_context_->is_valid()) ||
+									 parsing_template_depth_ > 0 ||
+									 hasActiveTemplateParameters())) {
+									return make_late_dependent_call_result();
+								}
+								const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 									if (!decl_ptr) {
 										return ParseResult::error("Invalid function declaration", identifier_token);
 									}
@@ -10679,32 +10722,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								};
 								const bool has_deferred_call_args =
 									deleted_call_has_dependent_arguments();
-
-								auto make_late_dependent_call_result = [&]() -> ParseResult {
-									FLASH_LOG(Templates, Trace, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
-									auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
-									auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-									result = emplace_node<ExpressionNode>(
-										makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
-									if (identifierType.has_value()) {
-										maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
-											result->as<ExpressionNode>(),
-											identifier_token,
-											true,
-											current_template_definition_lookup_context_,
-											true,
-											*identifierType);
-									} else {
-										maybeAttachDependentUnqualifiedLookupRecord(
-											result->as<ExpressionNode>(),
-											identifier_token,
-											true,
-											current_template_definition_lookup_context_,
-											true,
-											nullptr);
-									}
-									return ParseResult::success(*result);
-								};
 
 								// If explicit template arguments were provided, use them directly
 								if (effective_template_args.has_value()) {
@@ -11044,6 +11061,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									}
 								} else {
 									// No explicit template arguments - try overload resolution first
+									if (has_deferred_call_args && all_overloads.size() > 1) {
+										// Retain the definition-time ordinary lookup set and rerank it
+										// after substitution provides the concrete argument types.
+										return make_late_dependent_call_result();
+									}
 									FLASH_LOG(Parser, Debug, "Function call to '", identifier_token.value(), "': found ", all_overloads.size(), " overload(s), ", arg_types.size(), " argument(s)");
 									for (size_t i = 0; i < arg_types.size(); ++i) {
 										const auto& arg = arg_types[i];

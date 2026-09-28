@@ -3073,7 +3073,15 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 	}
 	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, std::span<const TypeSpecifierNode> arg_types);  // NEW: Instantiate member function template
-	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, std::span<const TemplateTypeArg> template_type_args);  // NEW: Instantiate member function template with explicit args
+	std::optional<ASTNode> try_instantiate_member_function_template_explicit(
+		std::string_view struct_name,
+		std::string_view member_name,
+		std::span<const TemplateTypeArg> template_type_args);
+	std::optional<ASTNode> try_instantiate_member_function_template_explicit(
+		std::string_view struct_name,
+		std::string_view member_name,
+		std::span<const TemplateTypeArg> template_type_args,
+		bool materialize_body);
 		// Core logic shared by both try_instantiate_member_function_template and _explicit.
 		// Given a resolved template node and template arguments, performs type substitution,
 		// body parsing, scope management, and AST registration.
