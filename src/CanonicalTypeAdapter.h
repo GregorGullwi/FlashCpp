@@ -1220,7 +1220,9 @@ inline CanonicalTypeImport importCanonicalClassSource(
 		if (!active_declarations.insert(declaration).second) {
 			return CanonicalTypeImport{{}, CanonicalTypeImportStatus::Unresolved};
 		}
-		PendingClassImport pending{declaration, pattern};
+		PendingClassImport pending{};
+		pending.declaration = declaration;
+		pending.pattern = pattern;
 		pending.arguments.reserve(declaration->outer_template_args().size());
 		worklist.push_back(std::move(pending));
 		return std::nullopt;
