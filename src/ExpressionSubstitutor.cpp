@@ -4459,6 +4459,13 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				/*allow_current_context_dependent_owner_materialization=*/false);
 		std::string_view materialized_owner_name =
 			materialized_owner.canonicalName();
+		if (!materialized_owner_name.empty() &&
+			dependent_name->member_chain.size() == 1) {
+			materialized_owner_name = canonicalizeLookupOwnerForMember(
+				materialized_owner,
+				StringTable::getStringView(
+					dependent_name->member_chain.front().name));
+		}
 
 		if (!materialized_owner_name.empty() && !dependent_name->member_chain.empty()) {
 			std::string_view materialized_namespace = materialized_owner_name;
