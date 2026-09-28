@@ -1178,6 +1178,7 @@ ParseResult Parser::parse_declarator(
 					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
 					skip_noop_gnu_qualifiers();
 					candidate = peek() == "("_tok ||
+						peek() == "&"_tok || peek() == "&&"_tok ||
 						(peek() == ")"_tok && peek(1) == "["_tok);
 				} else if (peek() == "&"_tok || peek() == "&&"_tok) {
 					advance();
@@ -1267,6 +1268,7 @@ ParseResult Parser::parse_declarator(
 									base_type.member_class_entity(), false, member_cv));
 								has_member_pointer = true;
 								discard_saved_token(member_pointer_start);
+								continue;
 							} else {
 								restore_token_position(member_pointer_start);
 							}
@@ -1444,6 +1446,21 @@ ParseResult Parser::parse_declarator(
 								failed = true;
 								break;
 							}
+							ReferenceQualifier function_pointer_reference =
+								ReferenceQualifier::None;
+							size_t function_pointer_component = 0;
+							if (completed[0].kind == DeclaratorComponentKind::LValueReference ||
+								completed[0].kind == DeclaratorComponentKind::RValueReference) {
+								function_pointer_reference = completed[0].kind ==
+										DeclaratorComponentKind::LValueReference
+									? ReferenceQualifier::LValueReference
+									: ReferenceQualifier::RValueReference;
+								function_pointer_component = 1;
+							}
+							const bool flat_function_pointer_shape =
+								*function_index == function_pointer_component + 1 &&
+								completed[function_pointer_component].kind ==
+									DeclaratorComponentKind::Pointer;
 							TypeSpecifierNode return_type = base_type;
 							return_type.clear_declarator_shape();
 							std::vector<DeclaratorComponent> return_components(
@@ -1454,11 +1471,15 @@ ParseResult Parser::parse_declarator(
 								return_type.set_ordered_declarator(
 									std::move(return_components));
 							}
-							// A projectable return is already a flat function
-							// pointer. Recording a Function component here puts
-							// an ordered callable into a parameter type, and
-							// name mangling does not materialize that component.
-							if (return_type.ordered_declarator_has_legacy_projection()) {
+							// Keep a direct function-pointer object or reference on
+							// the flat FunctionPointer representation. Other
+							// projectable returns would record an ordered callable
+							// that name mangling cannot materialize.
+							const bool use_flat_function_pointer =
+								return_type.ordered_declarator_has_legacy_projection() &&
+								flat_function_pointer_shape;
+							if (return_type.ordered_declarator_has_legacy_projection() &&
+								!use_flat_function_pointer) {
 								failed = true;
 								break;
 							}
@@ -1510,6 +1531,26 @@ ParseResult Parser::parse_declarator(
 								func_ref.set_noexcept(signature.is_noexcept);
 								discard_saved_token(structural_start);
 								return ParseResult::success(func_decl_node);
+							}
+							if (use_flat_function_pointer) {
+								ASTNode function_pointer_node = emplace_node<TypeSpecifierNode>(
+									TypeCategory::FunctionPointer,
+									TypeQualifier::None,
+									SizeInBits{kFunctionPointerSizeBits},
+									base_type.token(),
+									completed[function_pointer_component].cv_qualifier);
+								TypeSpecifierNode& function_pointer =
+									function_pointer_node.as<TypeSpecifierNode>();
+								function_pointer.set_function_signature(signature);
+								function_pointer.set_reference_qualifier(
+									function_pointer_reference);
+								if (identifier.value().empty()) {
+									base_type = function_pointer;
+								}
+								discard_saved_token(structural_start);
+								return ParseResult::success(emplace_node<DeclarationNode>(
+									std::move(function_pointer_node),
+									identifier));
 							}
 							TypeSpecifierNode structural_type = base_type;
 							structural_type.clear_declarator_shape();
