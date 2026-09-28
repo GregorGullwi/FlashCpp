@@ -316,11 +316,11 @@ def main():
                 "TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {\n"
                 "\t\tstd::lock_guard lock(mutex_);\n"
                 "\t\tcheckTransactionThread();\n"
-                "\t\tconst TypeId record_owner = recordOwnerUnlocked(owner);",
+                "\t\tconst TypeId record_owner = classOwnerUnlocked(owner);",
                 "TypeId CanonicalTypeTable::memberObjectPointer(TypeId owner, TypeId pointee) {\n"
                 "\t\tstd::lock_guard lock(mutex_);\n"
                 "\t\tcheckTransactionThread();\n"
-                "\t\trecordOwnerUnlocked(owner);\n"
+                "\t\tclassOwnerUnlocked(owner);\n"
                 "\t\tconst TypeId record_owner = TypeId{1};"),
             "lost_record_entity": (
                 ".kind = CanonicalTypeKind::Record,\n"
