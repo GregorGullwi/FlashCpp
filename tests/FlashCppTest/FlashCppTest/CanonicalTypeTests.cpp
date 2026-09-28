@@ -1004,6 +1004,154 @@ TEST_CASE("Canonical TypeIds retain class specialization member function pointer
 	CHECK_FALSE(different_owner_plan->is_valid);
 }
 
+TEST_CASE("Canonical TypeIds classify class specialization member pointer bases") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId int_argument = table.builtin(CanonicalBuiltinKind::Int);
+	auto make_owner = [&table, int_argument](uint32_t declaration) {
+		const CanonicalTemplateArgument arguments[] = {
+			CanonicalTemplateArgument::makeType(int_argument),
+		};
+		return table.templateSpecialization(
+			TemplateDeclId{declaration}, arguments);
+	};
+	const TypeId base_owner = make_owner(920);
+	const TypeId derived_owner = make_owner(921);
+	const TypeId private_derived_owner = make_owner(922);
+	const TypeId virtual_derived_owner = make_owner(923);
+	const TypeId left_owner = make_owner(924);
+	const TypeId right_owner = make_owner(925);
+	const TypeId ambiguous_derived_owner = make_owner(926);
+	const TypeId unrelated_owner = make_owner(927);
+	auto publish_bases = [&table](TypeId owner,
+		std::span<const CanonicalClassBase> bases) {
+		table.publishClassBaseSchema(owner, bases);
+	};
+	auto base_link = [](TypeId type, CanonicalAccess access,
+		CanonicalRecordBaseFlags flags) {
+		return CanonicalClassBase{type, access, flags, 0};
+	};
+	const std::array<CanonicalClassBase, 1> public_base_link{
+		base_link(base_owner, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalClassBase, 1> private_base_link{
+		base_link(base_owner, CanonicalAccess::Private,
+			CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalClassBase, 1> virtual_base_link{
+		base_link(base_owner, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::Virtual)};
+	const std::array<CanonicalClassBase, 1> left_base_link{public_base_link[0]};
+	const std::array<CanonicalClassBase, 1> right_base_link{public_base_link[0]};
+	const std::array<CanonicalClassBase, 2> ambiguous_base_links{
+		base_link(left_owner, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None),
+		base_link(right_owner, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None),
+	};
+	publish_bases(base_owner, {});
+	publish_bases(derived_owner, public_base_link);
+	publish_bases(private_derived_owner, private_base_link);
+	publish_bases(virtual_derived_owner, virtual_base_link);
+	publish_bases(left_owner, left_base_link);
+	publish_bases(right_owner, right_base_link);
+	publish_bases(ambiguous_derived_owner, ambiguous_base_links);
+	publish_bases(unrelated_owner, {});
+
+	CHECK(classifyCanonicalDerivedBaseConversion(
+		table, derived_owner, base_owner) ==
+		DerivedBaseConversionKind::UniquePublicNonVirtual);
+	CHECK(classifyCanonicalDerivedBaseConversion(
+		table, private_derived_owner, base_owner) ==
+		DerivedBaseConversionKind::Inaccessible);
+	CHECK(classifyCanonicalDerivedBaseConversion(
+		table, virtual_derived_owner, base_owner) ==
+		DerivedBaseConversionKind::PublicVirtual);
+	CHECK(classifyCanonicalDerivedBaseConversion(
+		table, ambiguous_derived_owner, base_owner) ==
+		DerivedBaseConversionKind::Ambiguous);
+	CHECK(classifyCanonicalDerivedBaseConversion(
+		table, unrelated_owner, base_owner) ==
+		DerivedBaseConversionKind::NotRelated);
+
+	const TypeId record_base_owner = table.record(EntityId{929});
+	const TypeId record_derived_owner = table.record(EntityId{930});
+	const TypeId specialization_intermediate_owner = make_owner(931);
+	const std::array<CanonicalClassBase, 1> record_base_link{
+		base_link(record_base_owner, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None)};
+	const std::array<CanonicalClassBase, 1> specialization_link{
+		base_link(specialization_intermediate_owner, CanonicalAccess::Public,
+			CanonicalRecordBaseFlags::None)};
+	publish_bases(record_base_owner, {});
+	publish_bases(record_derived_owner, specialization_link);
+	publish_bases(specialization_intermediate_owner, record_base_link);
+	CHECK(classifyCanonicalDerivedBaseConversion(
+		table, record_derived_owner, record_base_owner) ==
+		DerivedBaseConversionKind::UniquePublicNonVirtual);
+
+	TypeSpecifierNode int_type(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionTypeFromSpecifier(int_type));
+	auto make_member_function_pointer = [&signature](TypeId owner) {
+		TypeSpecifierNode type(TypeCategory::MemberFunctionPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_type_id(owner);
+		type.set_function_signature(signature);
+		return type;
+	};
+	const TypeSpecifierNode base_function_pointer =
+		make_member_function_pointer(base_owner);
+	const TypeSpecifierNode derived_function_pointer =
+		make_member_function_pointer(derived_owner);
+	const std::optional<ConversionPlan> function_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			base_function_pointer, derived_function_pointer);
+	REQUIRE(function_plan.has_value());
+	CHECK(function_plan->is_valid);
+	CHECK(function_plan->rank == ConversionRank::Conversion);
+	CHECK(function_plan->kind == StandardConversionKind::PointerConversion);
+	auto make_member_object_pointer = [&int_type](TypeId owner) {
+		TypeSpecifierNode type(TypeCategory::MemberObjectPointer,
+			TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		type.set_member_class_type_id(owner);
+		type.set_member_object_pointee(&int_type);
+		return type;
+	};
+	const std::optional<ConversionPlan> object_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			make_member_object_pointer(base_owner),
+			make_member_object_pointer(derived_owner));
+	REQUIRE(object_plan.has_value());
+	CHECK(object_plan->is_valid);
+	CHECK(object_plan->rank == ConversionRank::Conversion);
+	CHECK(object_plan->kind == StandardConversionKind::PointerConversion);
+	const std::optional<ConversionPlan> mixed_owner_plan =
+		tryBuildCanonicalProjectableConversionPlan(
+			make_member_function_pointer(record_base_owner),
+			make_member_function_pointer(record_derived_owner));
+	REQUIRE(mixed_owner_plan.has_value());
+	CHECK(mixed_owner_plan->is_valid);
+	CHECK(mixed_owner_plan->kind == StandardConversionKind::PointerConversion);
+	for (const TypeId rejected_owner : {
+		private_derived_owner, virtual_derived_owner,
+		ambiguous_derived_owner, unrelated_owner}) {
+		const std::optional<ConversionPlan> rejected_plan =
+			tryBuildCanonicalProjectableConversionPlan(
+				base_function_pointer,
+				make_member_function_pointer(rejected_owner));
+		REQUIRE(rejected_plan.has_value());
+		CHECK_FALSE(rejected_plan->is_valid);
+	}
+
+	const TypeId rollback_owner = make_owner(928);
+	{
+		CanonicalTypeTransaction transaction(table);
+		publish_bases(rollback_owner, public_base_link);
+	}
+	CHECK_FALSE(table.hasClassBaseSchema(rollback_owner));
+}
+
 TEST_CASE("Canonical TypeIds compare member object pointer pairs") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

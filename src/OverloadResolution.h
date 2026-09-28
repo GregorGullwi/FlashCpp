@@ -1067,22 +1067,26 @@ inline bool hasUsablePublicDerivedBaseConversion(TypeIndex derived_idx, TypeInde
 		kind == DerivedBaseConversionKind::PublicVirtual;
 }
 
-// Classify a derived-to-base relationship directly from the published canonical
-// record schema. Virtual base subobjects are shared by EntityId; non-virtual
-// base subobjects remain distinct per containing subobject. The explicit worklist
-// keeps inheritance depth off the native call stack.
-inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(
-	const CanonicalTypeTable& table,
-	EntityId derived_entity,
-	EntityId base_entity) {
-	if (!derived_entity || !base_entity) {
+struct CanonicalBaseGraphEdgeView {
+	uint32_t target;
+	CanonicalAccess access;
+	CanonicalRecordBaseFlags flags;
+};
+
+template<typename HasSchema, typename DirectBaseCount, typename DirectBaseAt>
+inline std::optional<DerivedBaseConversionKind> classifyCanonicalBaseSubobjectGraph(
+	uint32_t derived_id,
+	uint32_t base_id,
+	const HasSchema& has_schema,
+	const DirectBaseCount& direct_base_count,
+	const DirectBaseAt& direct_base_at) {
+	if (derived_id == 0 || base_id == 0) {
 		return std::nullopt;
 	}
-	if (derived_entity == base_entity) {
+	if (derived_id == base_id) {
 		return DerivedBaseConversionKind::UniquePublicNonVirtual;
 	}
-	if (!table.hasRecordLayout(derived_entity) ||
-		!table.hasRecordFieldSchema(derived_entity)) {
+	if (!has_schema(derived_id)) {
 		return std::nullopt;
 	}
 
@@ -1091,7 +1095,7 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConv
 	constexpr uint8_t virtual_path_flag = 1 << 1;
 	constexpr uint8_t expanded_flag = 1 << 2;
 	struct SubobjectNode {
-		EntityId entity;
+		uint32_t type;
 		uint32_t first_child_slot;
 		uint16_t child_count;
 		uint8_t flags;
@@ -1101,75 +1105,65 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConv
 	std::vector<uint32_t> child_slots;
 	std::vector<uint32_t> worklist;
 	std::unordered_map<uint32_t, uint32_t> virtual_subobjects;
-	subobjects.push_back(SubobjectNode{derived_entity, 0, 0, accessible_flag});
+	subobjects.push_back(SubobjectNode{derived_id, 0, 0, accessible_flag});
 	worklist.push_back(0);
 
 	for (size_t work_index = 0; work_index < worklist.size(); ++work_index) {
 		const uint32_t parent_id = worklist[work_index];
 		SubobjectNode parent = subobjects[parent_id];
-		if (parent.entity == base_entity) {
+		if (parent.type == base_id) {
 			continue;
 		}
 		if ((parent.flags & expanded_flag) == 0) {
-			if (!table.hasRecordLayout(parent.entity) ||
-				!table.hasRecordFieldSchema(parent.entity)) {
+			if (!has_schema(parent.type)) {
 				return std::nullopt;
 			}
-			const CanonicalRecordLayout layout = table.recordLayout(parent.entity);
-			if (child_slots.size() > UINT32_MAX - layout.direct_base_count) {
+			const size_t base_count = direct_base_count(parent.type);
+			if (base_count > std::numeric_limits<uint16_t>::max() ||
+				child_slots.size() > UINT32_MAX - base_count) {
 				return std::nullopt;
 			}
 			parent.first_child_slot = static_cast<uint32_t>(child_slots.size());
-			parent.child_count = layout.direct_base_count;
+			parent.child_count = static_cast<uint16_t>(base_count);
 			parent.flags |= expanded_flag;
 			child_slots.resize(child_slots.size() + parent.child_count, invalid_node);
 			subobjects[parent_id] = parent;
 		}
 
 		for (uint16_t base_index = 0; base_index < parent.child_count; ++base_index) {
-			const CanonicalRecordBase base = table.recordBaseAt(parent.entity, base_index);
-			if (!base.entity) {
+			const CanonicalBaseGraphEdgeView edge =
+				direct_base_at(parent.type, base_index);
+			if (edge.target == 0) {
 				return std::nullopt;
 			}
 			const uint32_t child_slot = parent.first_child_slot + base_index;
 			const bool is_virtual = hasCanonicalRecordBaseFlag(
-				base.flags, CanonicalRecordBaseFlags::Virtual);
+				edge.flags, CanonicalRecordBaseFlags::Virtual);
 			const bool path_accessible =
-				(parent.flags & accessible_flag) != 0 && base.access == CanonicalAccess::Public;
+				(parent.flags & accessible_flag) != 0 &&
+				edge.access == CanonicalAccess::Public;
 			const bool path_uses_virtual =
 				(parent.flags & virtual_path_flag) != 0 || is_virtual;
 			uint32_t child_id = child_slots[child_slot];
+			if (child_id == invalid_node && is_virtual) {
+				const auto found = virtual_subobjects.find(edge.target);
+				if (found != virtual_subobjects.end()) {
+					child_id = found->second;
+				}
+			}
 			if (child_id == invalid_node) {
+				if (subobjects.size() >= invalid_node) {
+					return std::nullopt;
+				}
+				child_id = static_cast<uint32_t>(subobjects.size());
+				const uint8_t child_flags =
+					(path_accessible ? accessible_flag : 0) |
+					(path_uses_virtual ? virtual_path_flag : 0);
+				subobjects.push_back(SubobjectNode{edge.target, 0, 0, child_flags});
+				worklist.push_back(child_id);
 				if (is_virtual) {
-					const auto found = virtual_subobjects.find(base.entity.value);
-					if (found != virtual_subobjects.end()) {
-						child_id = found->second;
-					}
+					virtual_subobjects.emplace(edge.target, child_id);
 				}
-				if (child_id == invalid_node) {
-					if (subobjects.size() >= invalid_node) {
-						return std::nullopt;
-					}
-					child_id = static_cast<uint32_t>(subobjects.size());
-					const uint8_t child_flags =
-						(path_accessible ? accessible_flag : 0) |
-						(path_uses_virtual ? virtual_path_flag : 0);
-					subobjects.push_back(SubobjectNode{base.entity, 0, 0, child_flags});
-					worklist.push_back(child_id);
-					if (is_virtual) {
-						virtual_subobjects.emplace(base.entity.value, child_id);
-					}
-				} else {
-					const uint8_t previous_flags = subobjects[child_id].flags;
-					uint8_t updated_flags = previous_flags;
-					updated_flags |= path_accessible ? accessible_flag : 0;
-					updated_flags |= path_uses_virtual ? virtual_path_flag : 0;
-					if (updated_flags != previous_flags) {
-						subobjects[child_id].flags = updated_flags;
-						worklist.push_back(child_id);
-					}
-				}
-				child_slots[child_slot] = child_id;
 			} else {
 				const uint8_t previous_flags = subobjects[child_id].flags;
 				uint8_t updated_flags = previous_flags;
@@ -1180,12 +1174,13 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConv
 					worklist.push_back(child_id);
 				}
 			}
+			child_slots[child_slot] = child_id;
 		}
 	}
 
 	uint32_t matching_subobject = invalid_node;
 	for (uint32_t subobject_id = 0; subobject_id < subobjects.size(); ++subobject_id) {
-		if (subobjects[subobject_id].entity != base_entity) {
+		if (subobjects[subobject_id].type != base_id) {
 			continue;
 		}
 		if (matching_subobject != invalid_node) {
@@ -1203,6 +1198,71 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConv
 	return (flags & virtual_path_flag) != 0
 		? DerivedBaseConversionKind::PublicVirtual
 		: DerivedBaseConversionKind::UniquePublicNonVirtual;
+}
+
+// Classify a derived-to-base relation in the EntityId-keyed record schema.
+// Virtual subobjects are shared by record identity. The shared worklist avoids
+// using native call depth for source inheritance depth.
+inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(
+	const CanonicalTypeTable& table,
+	EntityId derived_entity,
+	EntityId base_entity) {
+	const auto has_schema = [&table](uint32_t entity_value) {
+		const EntityId entity{entity_value};
+		return table.hasRecordLayout(entity) && table.hasRecordFieldSchema(entity);
+	};
+	const auto direct_base_count = [&table](uint32_t entity_value) {
+		return table.recordLayout(EntityId{entity_value}).direct_base_count;
+	};
+	const auto direct_base_at = [&table](uint32_t entity_value, size_t index) {
+		const CanonicalRecordBase base = table.recordBaseAt(EntityId{entity_value}, index);
+		return CanonicalBaseGraphEdgeView{base.entity.value, base.access, base.flags};
+	};
+	return classifyCanonicalBaseSubobjectGraph(
+		derived_entity.value, base_entity.value,
+		has_schema, direct_base_count, direct_base_at);
+}
+
+// Class TypeIds keep template-specialization base identity through inheritance.
+// Complete records can use the type graph when one is published; legacy native
+// tests and partial callers retain the EntityId schema path otherwise.
+inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConversion(
+	const CanonicalTypeTable& table,
+	TypeId derived_type,
+	TypeId base_type) {
+	if (!derived_type || !base_type) {
+		return std::nullopt;
+	}
+	const CanonicalTypeKind derived_kind = table.node(derived_type).kind;
+	const CanonicalTypeKind base_kind = table.node(base_type).kind;
+	if ((derived_kind != CanonicalTypeKind::Record &&
+			derived_kind != CanonicalTypeKind::TemplateSpecialization) ||
+		(base_kind != CanonicalTypeKind::Record &&
+			base_kind != CanonicalTypeKind::TemplateSpecialization)) {
+		return std::nullopt;
+	}
+	if (derived_kind == CanonicalTypeKind::Record &&
+		base_kind == CanonicalTypeKind::Record &&
+		!table.hasClassBaseSchema(derived_type)) {
+		return classifyCanonicalDerivedBaseConversion(
+			table,
+			table.recordEntity(derived_type),
+			table.recordEntity(base_type));
+	}
+	const auto has_schema = [&table](uint32_t type_value) {
+		return table.hasClassBaseSchema(TypeId{type_value});
+	};
+	const auto direct_base_count = [&table](uint32_t type_value) {
+		return table.classBaseCount(TypeId{type_value});
+	};
+	const auto direct_base_at = [&table](uint32_t type_value, size_t index) {
+		const CanonicalClassBase base =
+			table.classBaseAt(TypeId{type_value}, index);
+		return CanonicalBaseGraphEdgeView{base.type.value, base.access, base.flags};
+	};
+	return classifyCanonicalBaseSubobjectGraph(
+		derived_type.value, base_type.value,
+		has_schema, direct_base_count, direct_base_at);
 }
 
 // Return the byte offset only for a unique, public, non-virtual base.  Callers
@@ -1927,16 +1987,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			return buildCanonicalStructuralConversionPlan(
 				table, source_member, target_member);
 		}
-		if (table.node(source_owner).kind != CanonicalTypeKind::Record ||
-			table.node(target_owner).kind != CanonicalTypeKind::Record) {
-			return ConversionPlan::no_match();
-		}
-
-		const EntityId source_owner_entity = table.recordEntity(source_owner);
-		const EntityId target_owner_entity = table.recordEntity(target_owner);
 		const std::optional<DerivedBaseConversionKind> owner_conversion =
 			classifyCanonicalDerivedBaseConversion(
-				table, target_owner_entity, source_owner_entity);
+				table, target_owner, source_owner);
 		if (!owner_conversion.has_value()) {
 			return std::nullopt;
 		}
@@ -2046,15 +2099,9 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 			const TypeId source_owner = table.memberPointerOwner(source_member);
 			const TypeId target_owner = table.memberPointerOwner(target_member);
 			if (source_owner != target_owner) {
-				if (table.node(source_owner).kind != CanonicalTypeKind::Record ||
-					table.node(target_owner).kind != CanonicalTypeKind::Record) {
-					return ConversionPlan::no_match();
-				}
-				const EntityId source_owner_entity = table.recordEntity(source_owner);
-				const EntityId target_owner_entity = table.recordEntity(target_owner);
 				const std::optional<DerivedBaseConversionKind> owner_conversion =
 					classifyCanonicalDerivedBaseConversion(
-						table, target_owner_entity, source_owner_entity);
+						table, target_owner, source_owner);
 				if (!owner_conversion.has_value()) {
 					return std::nullopt;
 				}
