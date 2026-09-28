@@ -3470,6 +3470,32 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 							const StructTypeInfo* struct_info =
 								struct_type_it->second->getStructInfo();
 							if (struct_info != nullptr) {
+								if (qualified_identifier->has_template_arguments()) {
+									auto explicit_template_args =
+										materializeConcreteCallTemplateArguments(
+											qualified_identifier->template_arguments());
+									if (!explicit_template_args.has_value()) {
+										return std::nullopt;
+									}
+									const std::optional<ASTNode> instantiated_function =
+										try_instantiate_member_function_template_explicit(
+											struct_name,
+											qualified_identifier->name(),
+											*explicit_template_args,
+											false);
+									const FunctionDeclarationNode* function =
+										get_function_decl_node(instantiated_function);
+									if (function == nullptr) {
+										return std::nullopt;
+									}
+									return function->is_static()
+										? FlashCpp::ParserFunctionTypeHelpers::
+											  buildFunctionPointerTypeFromFunctionDeclaration(
+												  *function)
+										: FlashCpp::ParserFunctionTypeHelpers::
+											  buildMemberFunctionPointerTypeFromFunctionDeclaration(
+												  *function);
+								}
 								StringHandle member_name_handle =
 									StringTable::getOrInternStringHandle(
 										qualified_identifier->name());

@@ -1566,6 +1566,18 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	std::string_view struct_name,
 	std::string_view member_name,
 	std::span<const TemplateTypeArg> template_type_args) {
+	return try_instantiate_member_function_template_explicit(
+		struct_name,
+		member_name,
+		template_type_args,
+		true);
+}
+
+std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit(
+	std::string_view struct_name,
+	std::string_view member_name,
+	std::span<const TemplateTypeArg> template_type_args,
+	bool materialize_body) {
 
 	ScopedInjectedClassOwnerContext owner_context(*this, struct_name);
 
@@ -1627,7 +1639,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			FunctionDeclarationNode& spec_func = spec_node.as<FunctionDeclarationNode>();
 
 			// If the specialization has a body position and no definition yet, parse it now
-			if (spec_func.has_template_body_position() && spec_func.needs_body_materialization()) {
+			if (materialize_body && spec_func.has_template_body_position() &&
+				spec_func.needs_body_materialization()) {
 				FLASH_LOG(Templates, Trace, "Parsing specialization body for ", specialization_lookup_name.view());
 
 				// Look up the struct type index and node for the member function context
@@ -1933,7 +1946,15 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			StringTable::getStringView(candidate_owner_name),
 			candidate_qualified_name.view());
 		auto result = instantiate_member_function_template_core(
-			StringTable::getStringView(candidate_owner_name), member_name, candidate_qualified_name, candidate_qualified_name, template_node, template_args, key, call_arg_types, true);
+			StringTable::getStringView(candidate_owner_name),
+			member_name,
+			candidate_qualified_name,
+			candidate_qualified_name,
+			template_node,
+			template_args,
+			key,
+			call_arg_types,
+			materialize_body);
 		if (result.has_value()) {
 			FLASH_LOG_FORMAT(
 				Templates,

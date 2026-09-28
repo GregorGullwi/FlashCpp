@@ -4314,6 +4314,36 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		return ASTNode(&deferred_expr);
 	}
 	ScopeGuard qual_id_guard([&]() { substituting_qual_ids_.erase(qual_id_key); });
+	auto substitute_qualified_id_template_args = [&]() {
+		std::vector<ASTNode> substituted_template_args;
+		substituted_template_args.reserve(qual_id.template_arguments().size());
+		for (const ASTNode& template_arg : qual_id.template_arguments()) {
+			if (template_arg.is<TypeSpecifierNode>()) {
+				TypeSpecifierNode& substituted_type =
+					gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+						substituteInType(template_arg.as<TypeSpecifierNode>()));
+				substituted_template_args.push_back(ASTNode(&substituted_type));
+			} else {
+				substituted_template_args.push_back(substitute(template_arg));
+			}
+		}
+		return substituted_template_args;
+	};
+	auto create_rebound_qualified_id = [&](NamespaceHandle namespace_handle,
+										   const Token& token) -> QualifiedIdentifierNode& {
+		QualifiedIdentifierNode& rebound_qual_id =
+			gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+				namespace_handle,
+				token);
+		if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+			rebound_qual_id.setDependentQualifiedName(*dependent_record);
+		}
+		if (qual_id.has_template_arguments()) {
+			rebound_qual_id.set_template_arguments(
+				substitute_qualified_id_template_args());
+		}
+		return rebound_qual_id;
+	};
 
 	// Qualified identifiers like R1_T::num need template parameter substitution in the namespace part
 	// The namespace is stored as a mangled template name like "R1_T" (template R1 with parameter T)
@@ -4337,12 +4367,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					NamespaceRegistry::GLOBAL_NAMESPACE,
 					resolved_owner->name());
 				QualifiedIdentifierNode& rebound_qual_id =
-					gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+					create_rebound_qualified_id(
 						rebound_ns,
 						qual_id.identifier_token());
-				if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
-					rebound_qual_id.setDependentQualifiedName(*dependent_record);
-				}
 				ExpressionNode& rebound_expr =
 					gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_qual_id);
 				return ASTNode(&rebound_expr);
@@ -4465,25 +4492,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					qual_id.identifier_token().column(),
 					qual_id.identifier_token().file_index());
 			}
-			auto substitute_qualified_id_template_args = [&]() {
-				std::vector<ASTNode> explicit_template_arg_nodes;
-				explicit_template_arg_nodes.reserve(
-					qual_id.template_arguments().size());
-				for (const ASTNode& template_arg : qual_id.template_arguments()) {
-					if (template_arg.is<TypeSpecifierNode>()) {
-						TypeSpecifierNode& substituted_type =
-							gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-								substituteInType(
-									template_arg.as<TypeSpecifierNode>()));
-						explicit_template_arg_nodes.push_back(
-							ASTNode(&substituted_type));
-					} else {
-						explicit_template_arg_nodes.push_back(
-							substitute(template_arg));
-					}
-				}
-				return explicit_template_arg_nodes;
-			};
 			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
 				NamespaceRegistry::GLOBAL_NAMESPACE,
 				StringTable::getOrInternStringHandle(materialized_namespace));
@@ -4605,12 +4613,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 							NamespaceRegistry::GLOBAL_NAMESPACE,
 							instantiated_name_handle);
 
-						QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-							new_ns_handle,
-							qual_id.identifier_token());
-						if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
-							new_qual_id.setDependentQualifiedName(*dependent_record);
-						}
+						QualifiedIdentifierNode& new_qual_id =
+							create_rebound_qualified_id(
+								new_ns_handle,
+								qual_id.identifier_token());
 						FLASH_LOG(Templates, Trace, "  Substituted TTP: ", ns_name, "::", qual_id.name(), " -> ",
 								  materialized_type.instantiated_name, "::", qual_id.name());
 						ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
@@ -4653,12 +4659,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
 				NamespaceRegistry::GLOBAL_NAMESPACE,
 				resolved_name_handle);
-			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-				new_ns_handle,
-				qual_id.identifier_token());
-			if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
-				new_qual_id.setDependentQualifiedName(*dependent_record);
-			}
+			QualifiedIdentifierNode& new_qual_id =
+				create_rebound_qualified_id(
+					new_ns_handle,
+					qual_id.identifier_token());
 			FLASH_LOG(Templates, Trace, "  Resolved struct-local alias namespace '", ns_name,
 					  "' -> ", StringTable::getStringView(resolved_name_handle),
 					  " in owner ", StringTable::getStringView(current_owner_type_name_));
@@ -4699,12 +4703,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					NamespaceRegistry::GLOBAL_NAMESPACE,
 					type_name_handle);
 
-				QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-					new_ns_handle,
-					qual_id.identifier_token());
-				if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
-					new_qual_id.setDependentQualifiedName(*dependent_record);
-				}
+				QualifiedIdentifierNode& new_qual_id =
+					create_rebound_qualified_id(
+						new_ns_handle,
+						qual_id.identifier_token());
 				FLASH_LOG(Templates, Trace, "  Substituted: ", ns_name, "::", qual_id.name(), " -> ",
 						  StringTable::getStringView(type_name_handle), "::", qual_id.name());
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
@@ -4731,6 +4733,16 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	if (base_template_name.empty()) {
 		// Not a template instantiation, return as-is
 		FLASH_LOG(Templates, Trace, "  No template parameters in namespace, returning as-is");
+		if (qual_id.has_template_arguments()) {
+			QualifiedIdentifierNode& substituted_qual_id =
+				create_rebound_qualified_id(
+					qual_id.namespace_handle(),
+					qual_id.identifier_token());
+			ExpressionNode& substituted_expr =
+				gChunkedAnyStorage.emplace_back<ExpressionNode>(
+					substituted_qual_id);
+			return ASTNode(&substituted_expr);
+		}
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 		return ASTNode(&new_expr);
 	}
@@ -4866,12 +4878,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			NamespaceRegistry::GLOBAL_NAMESPACE,
 			instantiated_name_handle);
 
-		QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-			new_ns_handle,
-			qual_id.identifier_token());
-		if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
-			new_qual_id.setDependentQualifiedName(*dependent_record);
-		}
+		QualifiedIdentifierNode& new_qual_id =
+			create_rebound_qualified_id(
+				new_ns_handle,
+				qual_id.identifier_token());
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 		return ASTNode(&new_expr);
 	}
@@ -4905,19 +4915,27 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
 					NamespaceRegistry::GLOBAL_NAMESPACE,
 					instantiated_name_handle);
-				QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-					new_ns_handle,
-					qual_id.identifier_token());
-				if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
-					new_qual_id.setDependentQualifiedName(*dependent_record);
-				}
+				QualifiedIdentifierNode& new_qual_id =
+					create_rebound_qualified_id(
+						new_ns_handle,
+						qual_id.identifier_token());
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 				return ASTNode(&new_expr);
 			}
 		}
 	}
 
-	// No template arguments - just return as-is
+	if (qual_id.has_template_arguments()) {
+		QualifiedIdentifierNode& substituted_qual_id =
+			create_rebound_qualified_id(
+				qual_id.namespace_handle(),
+				qual_id.identifier_token());
+		ExpressionNode& substituted_expr =
+			gChunkedAnyStorage.emplace_back<ExpressionNode>(substituted_qual_id);
+		return ASTNode(&substituted_expr);
+	}
+
+	// No explicit template arguments - keep the qualified identifier as-is.
 	FLASH_LOG(Templates, Trace, "  No template arguments to substitute");
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 	return ASTNode(&new_expr);
