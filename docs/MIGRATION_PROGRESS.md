@@ -72,9 +72,11 @@ conversions can now bind eligible references through a temporary, such as an
 `double` can also bind to `double&&`. Array lvalues now decay canonically when
 binding pointer temporaries to eligible const lvalue and rvalue references.
 Fixed-underlying unscoped enum conversions to arithmetic parameters now use
-canonical enum layout metadata: conversion to the declared underlying type is
-an integral promotion, while other arithmetic targets are conversions. Scoped
-enum arguments retain their existing diagnostic path because reporting the
+canonical enum layout metadata: conversion to the declared underlying type and
+to its promoted integral type are both integral promotions. When those targets
+differ, overload ranking prefers the declared underlying type; other arithmetic
+targets are conversions. Scoped enum arguments retain their existing diagnostic
+path because reporting the
 scoped-enum-specific error requires overload selection to complete. Unfixed
 unscoped enums now publish their promotion target as a canonical `TypeId`,
 selected from the enum's full minimal-width value range; overload ranking uses
@@ -90,7 +92,10 @@ The migration counter guards fixed and unfixed unscoped enums from returning to
 TypeIndex fallback ranking. The regression
 `tests/test_canonical_unfixed_enum_promotion_overload_ret0.cpp` checks `int`,
 `unsigned int`, and platform-width-sensitive signed promotions for by-value and
-reference parameters.
+reference parameters. The regression
+`tests/test_canonical_fixed_enum_promoted_underlying_ranking_ret0.cpp` checks
+the promoted-underlying rank, the preference for the underlying type, and both
+rules through value and reference parameters.
 Eligible `const` lvalue and rvalue references can now bind through the same
 fixed-enum arithmetic conversions using the canonical plan; a mutable lvalue
 reference still cannot bind to the converted temporary. The regression

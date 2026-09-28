@@ -395,6 +395,11 @@ inline bool isRvalueLikeArgumentForReferenceBinding(const TypeSpecifierNode& arg
 	return !argument_type.is_reference() || argument_type.is_rvalue_reference();
 }
 
+inline std::optional<int> tryCompareFixedEnumPromotionTargets(
+	const TypeSpecifierNode& argument_type,
+	const TypeSpecifierNode& lhs_parameter,
+	const TypeSpecifierNode& rhs_parameter);
+
 inline int compareArgumentConversionInfo(
 	const TypeSpecifierNode& argument_type,
 	const ArgumentConversionInfo& lhs,
@@ -404,6 +409,18 @@ inline int compareArgumentConversionInfo(
 	}
 	if (lhs.rank > rhs.rank) {
 		return 1;
+	}
+	if (lhs.rank == ConversionRank::Promotion &&
+		lhs.parameter_type != nullptr && rhs.parameter_type != nullptr) {
+		const std::optional<int> enum_promotion_comparison =
+			tryCompareFixedEnumPromotionTargets(
+				argument_type,
+				*lhs.parameter_type,
+				*rhs.parameter_type);
+		if (enum_promotion_comparison.has_value() &&
+			*enum_promotion_comparison != 0) {
+			return *enum_promotion_comparison;
+		}
 	}
 
 	if (lhs.parameter_type != nullptr && rhs.parameter_type != nullptr) {
@@ -2070,6 +2087,102 @@ inline void stripOrderedReference(TypeSpecifierNode& spec) {
 
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
 
+inline TypeId canonicalPromotedFixedEnumUnderlyingType(
+	CanonicalTypeTable& table,
+	TypeId underlying_type) {
+	const CanonicalTypeNode underlying = table.node(
+		stripCanonicalTopCv(table, underlying_type).first);
+	if (underlying.kind != CanonicalTypeKind::Builtin) {
+		return {};
+	}
+	const std::optional<TypeCategory> underlying_category =
+		canonicalBuiltinToTypeCategory(underlying.builtin);
+	if (!underlying_category.has_value() ||
+		!isIntegralType(*underlying_category)) {
+		return {};
+	}
+	const TypeCategory promoted_category =
+		promote_integer_type(*underlying_category);
+	if (promoted_category == *underlying_category) {
+		return {};
+	}
+	const TypeSpecifierNode promoted_syntax(
+		promoted_category,
+		TypeQualifier::None,
+		get_type_size_bits(promoted_category),
+		Token{},
+		CVQualifier::None);
+	const CanonicalTypeImport imported = importCanonicalType(table, promoted_syntax);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		throw InternalError("canonical enum promotion type is not importable");
+	}
+	return imported.type;
+}
+
+inline std::optional<int> tryCompareFixedEnumPromotionTargets(
+	const TypeSpecifierNode& argument_type,
+	const TypeSpecifierNode& lhs_parameter,
+	const TypeSpecifierNode& rhs_parameter) {
+	FrontendContext* const context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	TypeSpecifierNode canonical_argument = argument_type;
+	if (canonical_argument.category() == TypeCategory::Enum) {
+		tryBindPublishedTypeEntity(canonical_argument);
+	}
+	const CanonicalTypeImport argument_import = importCanonicalType(
+		table, canonical_argument);
+	const CanonicalTypeImport lhs_import = importCanonicalType(
+		table, lhs_parameter);
+	const CanonicalTypeImport rhs_import = importCanonicalType(
+		table, rhs_parameter);
+	if (argument_import.status != CanonicalTypeImportStatus::Supported ||
+		lhs_import.status != CanonicalTypeImportStatus::Supported ||
+		rhs_import.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const TypeId argument = stripCanonicalTopCv(
+		table,
+		canonicalTypeWithoutReference(table, argument_import.type)).first;
+	if (table.node(argument).kind != CanonicalTypeKind::Enum) {
+		return 0;
+	}
+	const EntityId entity = table.enumEntity(argument);
+	if (!table.hasEnumLayout(entity)) {
+		return std::nullopt;
+	}
+	const CanonicalEnumLayout layout = table.enumLayout(entity);
+	if (hasCanonicalEnumLayoutFlag(
+			layout.flags, CanonicalEnumLayoutFlags::Scoped) ||
+		!hasCanonicalEnumLayoutFlag(
+			layout.flags, CanonicalEnumLayoutFlags::FixedUnderlying)) {
+		return 0;
+	}
+	const TypeId promoted_underlying =
+		canonicalPromotedFixedEnumUnderlyingType(table, layout.underlying_type);
+	if (!promoted_underlying || promoted_underlying == layout.underlying_type) {
+		return 0;
+	}
+	const TypeId lhs_target = stripCanonicalTopCv(
+		table,
+		canonicalTypeWithoutReference(table, lhs_import.type)).first;
+	const TypeId rhs_target = stripCanonicalTopCv(
+		table,
+		canonicalTypeWithoutReference(table, rhs_import.type)).first;
+	if (lhs_target == layout.underlying_type &&
+		rhs_target == promoted_underlying) {
+		return -1;
+	}
+	if (rhs_target == layout.underlying_type &&
+		lhs_target == promoted_underlying) {
+		return 1;
+	}
+	return 0;
+}
+
 inline EntityId resolveOverloadRecordEntity(const TypeSpecifierNode& type) {
 	if (type.category() != TypeCategory::Struct) {
 		return {};
@@ -2455,8 +2568,21 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		if (!promotion_type) {
 			return std::nullopt;
 		}
-		if (stripCanonicalTopCv(table, promotion_type).first ==
-			stripCanonicalTopCv(table, to_import.type).first) {
+		const TypeId target_type = stripCanonicalTopCv(
+			table, to_import.type).first;
+		if (has_fixed_underlying_type) {
+			const TypeId promoted_underlying =
+				canonicalPromotedFixedEnumUnderlyingType(
+					table, layout.underlying_type);
+			const TypeId underlying_type = stripCanonicalTopCv(
+				table, layout.underlying_type).first;
+			if (target_type == underlying_type ||
+				(promoted_underlying &&
+					stripCanonicalTopCv(table, promoted_underlying).first == target_type)) {
+				return ConversionPlan{ConversionRank::Promotion,
+					StandardConversionKind::IntegralPromotion, true};
+			}
+		} else if (stripCanonicalTopCv(table, promotion_type).first == target_type) {
 			return ConversionPlan{ConversionRank::Promotion,
 				StandardConversionKind::IntegralPromotion, true};
 		}

@@ -1603,13 +1603,13 @@ TypeCategory promote_integer_type(TypeCategory type) {
 		// Otherwise promote to unsigned int (but for char/short, int is always sufficient)
 		return TypeCategory::Int;
 	case TypeCategory::WChar:
-		// wchar_t promotion is target-dependent:
-		// On Windows (16-bit): promotes to int
-		// On Linux (32-bit): doesn't promote (same size as int)
-		return (get_wchar_size_bits() < 32) ? TypeCategory::Int : TypeCategory::WChar;
+		// The supported Windows and Linux target models use wchar_t underlying
+		// types whose complete ranges are representable by int.
+		return TypeCategory::Int;
 	case TypeCategory::Char32:
-		// char32_t (32-bit) doesn't promote - same size as int
-		return TypeCategory::Char32;
+		// char32_t uses a 32-bit unsigned underlying type, which promotes to
+		// unsigned int because int cannot represent its full range.
+		return TypeCategory::UnsignedInt;
 	default:
 		// Types int and larger don't get promoted
 		return type;
