@@ -160,8 +160,10 @@ owner and exception specification for overload ranking.
 `tests/test_canonical_dependent_member_pointer_owner_alias_overload_ret0.cpp`
 checks the class-template owner form, and
 `tests/test_canonical_dependent_member_pointer_template_owner_alias_overload_ret0.cpp`
-checks a dependent owner type parameter; both verify `noexcept`-sensitive
-selection after substitution.
+checks a dependent owner type parameter. The regression
+`tests/test_canonical_dependent_member_template_pointer_ranking_ret0.cpp`
+covers an explicitly selected member-function-template address; all three
+verify `noexcept`-sensitive selection after substitution.
 Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
