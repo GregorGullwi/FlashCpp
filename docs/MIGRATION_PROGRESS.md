@@ -83,6 +83,13 @@ before its definition, and ordinary enums, while
 `tests/test_scoped_enum_call_arg_e1401.cpp` guards the scoped-enum diagnostic. A
 migration counter guards fixed unscoped enums from returning to TypeIndex
 fallback ranking.
+Eligible `const` lvalue and rvalue references can now bind through the same
+fixed-enum arithmetic conversions using the canonical plan; a mutable lvalue
+reference still cannot bind to the converted temporary. The regression
+`tests/test_canonical_fixed_enum_reference_temporary_overload_ret0.cpp` checks
+underlying-type ranking from an enum lvalue and rejects the mutable-reference
+candidate, while `tests/test_scoped_enum_reference_call_arg_e1401.cpp` preserves
+the scoped-enum diagnostic for a reference parameter.
 At ordinary calls, an array lvalue can bind to `int*&&` through that converted
 pointer temporary, as covered by
 `tests/test_array_decay_rvalue_reference_temporary_ret0.cpp`.

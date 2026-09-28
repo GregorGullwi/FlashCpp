@@ -2549,7 +2549,12 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 	}
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport source_import = importCanonicalType(table, from);
+	TypeSpecifierNode canonical_source = from;
+	if (from.category() == TypeCategory::Enum) {
+		tryBindPublishedTypeEntity(canonical_source);
+	}
+	const CanonicalTypeImport source_import =
+		importCanonicalType(table, canonical_source);
 	if (source_import.status == CanonicalTypeImportStatus::Invalid) {
 		return ConversionPlan::no_match();
 	}
@@ -2756,6 +2761,26 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		if (unqualified_source_node.kind == CanonicalTypeKind::Array &&
 			unqualified_target_node.kind == CanonicalTypeKind::Array) {
 			return ConversionPlan::no_match();
+		}
+		if (unqualified_source_node.kind == CanonicalTypeKind::Enum &&
+			unqualified_target_node.kind == CanonicalTypeKind::Builtin) {
+			TypeSpecifierNode source_value = from;
+			TypeSpecifierNode target_value = to;
+			stripOrderedReference(source_value);
+			stripOrderedReference(target_value);
+			const std::optional<ConversionPlan> conversion_plan =
+				tryBuildCanonicalProjectableConversionPlan(
+					source_value, target_value);
+			if (!conversion_plan.has_value()) {
+				return std::nullopt;
+			}
+			if (!conversion_plan->is_valid) {
+				return *conversion_plan;
+			}
+			if (!can_bind_conversion_temporary) {
+				return ConversionPlan::no_match();
+			}
+			return *conversion_plan;
 		}
 		if (unqualified_source_node.kind != CanonicalTypeKind::Builtin ||
 			unqualified_target_node.kind != CanonicalTypeKind::Builtin) {
