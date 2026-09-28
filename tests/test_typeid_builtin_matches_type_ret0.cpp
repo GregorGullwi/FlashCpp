@@ -7,14 +7,9 @@
 // placeholder). Both platforms are expected to satisfy the same identity
 // relations exercised below.
 //
-// NOTE: <typeinfo> is intentionally NOT included here. Parsing it causes
-// FlashCpp to emit a local vtable for std::type_info whose virtual-function
-// slots reference incorrectly-mangled symbols (missing Itanium ABI
-// back-substitution S_ for the repeated type_info parameter), which produces
-// undefined-reference linker errors. Until that name-mangling bug is fixed,
-// RTTI tests must rely on the implicit compiler-provided type_info identity
-// (pointer comparison via const void*) rather than std::type_info::operator==.
-// Tracked in docs/RTTI_IMPLEMENTATION_PLAN.md § "Remaining Work".
+// The separate tests/std/test_std_typeinfo_ret0.cpp is the focused <typeinfo>
+// header and linkage regression; this file stays focused on built-in typeid
+// identity relations.
 
 int main() {
 	int i = 7;

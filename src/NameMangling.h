@@ -484,7 +484,7 @@ inline void appendItaniumVendorExtendedTypeCode(
 }
 
 template <typename OutputType>
-inline void appendItaniumMemberFunctionQualifiers(
+inline void appendItaniumMemberFunctionTypeQualifiers(
 	OutputType& output,
 	const FunctionSignature& sig) {
 	if (sig.is_const) {
@@ -493,55 +493,26 @@ inline void appendItaniumMemberFunctionQualifiers(
 	if (sig.is_volatile) {
 		output += 'V';
 	}
-	if (sig.function_reference_qualifier == ReferenceQualifier::LValueReference) {
-		output += 'R';
-	} else if (sig.function_reference_qualifier == ReferenceQualifier::RValueReference) {
-		output += 'O';
-	}
 	if (sig.is_noexcept) {
 		output += "Do";
 	}
 }
 
 template <typename OutputType>
+inline void appendItaniumFunctionTypeCode(
+	OutputType& output,
+	const FunctionSignature& signature);
+
+template <typename OutputType>
+inline void appendItaniumMemberFunctionPointerTypeCode(
+	OutputType& output,
+	std::string_view class_name,
+	const FunctionSignature& signature);
+
+template <typename OutputType>
 inline bool appendItaniumMemberPointerTypeCode(
 	OutputType& output,
-	const FlashCpp::NonTypeValueIdentity& identity) {
-	if (!identity.member_class_name.isValid()) {
-		return false;
-	}
-	output += 'M';
-	appendItaniumQualifiedTypeName(output, StringTable::getStringView(identity.member_class_name));
-	if (identity.valueTypeCategory() == TypeCategory::MemberObjectPointer) {
-		const StructMember* member = tryResolveMemberObjectPointerMember(identity);
-		if (member == nullptr) {
-			return false;
-		}
-		const TypeSpecifierNode member_type =
-			typeSpecifierFromStructMemberProjection(*member);
-		appendItaniumTypeCode(output, member_type, false);
-		return true;
-	}
-	if (identity.valueTypeCategory() == TypeCategory::MemberFunctionPointer &&
-		identity.function_signature.has_value()) {
-		output += 'F';
-		const FunctionSignature& sig = *identity.function_signature;
-		TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-		appendItaniumTypeCode(output, ret_spec, false);
-		if (sig.parameter_type_indices.empty()) {
-			output += 'v';
-		} else {
-			for (const TypeIndex& pt : sig.parameter_type_indices) {
-				TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-				appendItaniumTypeCode(output, param_spec, false);
-			}
-		}
-		appendItaniumMemberFunctionQualifiers(output, sig);
-		output += 'E';
-		return true;
-	}
-	return false;
-}
+	const FlashCpp::NonTypeValueIdentity& identity);
 
 template <typename OutputType>
 inline void appendMsvcArrayExtent(OutputType& output, uint64_t value) {
@@ -1040,6 +1011,12 @@ inline void addItaniumTypeSubstitutionPrefixes(OutputType& output, std::string_v
 class ItaniumManglingCtx {
 public:
 	explicit ItaniumManglingCtx(StringBuilder& sb) : sb_(sb) {}
+	void setNamespacePath(std::span<const std::string_view> namespace_path) {
+		namespace_path_ = namespace_path;
+	}
+	std::span<const std::string_view> namespacePath() const {
+		return namespace_path_;
+	}
 
 	// Forward all output operators to the underlying StringBuilder
 	ItaniumManglingCtx& operator+=(std::string_view sv) { sb_.append(sv); return *this; }
@@ -1100,7 +1077,291 @@ public:
 private:
 	StringBuilder& sb_;
 	std::vector<std::string> subs_;
+	std::span<const std::string_view> namespace_path_;
 };
+
+inline std::string_view getItaniumTypeInfoName(const TypeInfo& type_info) {
+	const std::string_view type_name = StringTable::getStringView(type_info.name());
+	if (type_name.find("::") != std::string_view::npos ||
+		!type_info.namespaceHandle().isValid() ||
+		type_info.namespaceHandle().isGlobal()) {
+		return type_name;
+	}
+	return gNamespaceRegistry.buildQualifiedIdentifier(
+		type_info.namespaceHandle(), type_info.name()).view();
+}
+
+inline std::string_view resolveItaniumMemberPointerClassName(StringHandle class_name) {
+	if (!class_name.isValid()) {
+		return {};
+	}
+	auto type_it = getTypesByNameMap().find(class_name);
+	if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+		return class_name.view();
+	}
+	const TypeInfo& type_info = *type_it->second;
+	if (type_info.isTypeAlias()) {
+		const ResolvedAliasTypeInfo resolved = resolveAliasTypeInfo(
+			type_info.registeredTypeIndex().withCategory(type_info.typeEnum()));
+		if (resolved.terminal_type_info != nullptr) {
+			return getItaniumTypeInfoName(*resolved.terminal_type_info);
+		}
+	}
+	return getItaniumTypeInfoName(type_info);
+}
+
+inline StringHandle tryResolveItaniumMemberPointerClassInNamespace(
+	std::span<const std::string_view> namespace_path,
+	StringHandle class_name) {
+	if (!class_name.isValid() ||
+		StringTable::getStringView(class_name).find("::") != std::string_view::npos) {
+		return {};
+	}
+	for (size_t namespace_count = namespace_path.size(); namespace_count != 0; --namespace_count) {
+		StringBuilder qualified_name;
+		bool has_namespace_component = false;
+		for (size_t index = 0; index < namespace_count; ++index) {
+			if (namespace_path[index].empty()) {
+				continue;
+			}
+			if (has_namespace_component) {
+				qualified_name.append("::");
+			}
+			qualified_name.append(namespace_path[index]);
+			has_namespace_component = true;
+		}
+		if (!has_namespace_component) {
+			(void)qualified_name.commit();
+			continue;
+		}
+		qualified_name.append("::").append(class_name.view());
+		const StringHandle candidate =
+			StringTable::getOrInternStringHandle(qualified_name.commit());
+		const auto type_it = getTypesByNameMap().find(candidate);
+		if (type_it != getTypesByNameMap().end() && type_it->second != nullptr) {
+			return candidate;
+		}
+	}
+	return {};
+}
+
+template <typename OutputType>
+inline std::string_view getItaniumMemberPointerClassName(
+	const OutputType& output,
+	const TypeSpecifierNode& type_node) {
+	if (type_node.has_member_class_entity()) {
+		if constexpr (requires { output.namespacePath(); }) {
+			const StringHandle namespace_class =
+				tryResolveItaniumMemberPointerClassInNamespace(
+					output.namespacePath(),
+					type_node.member_class_name());
+			if (namespace_class.isValid()) {
+				return resolveItaniumMemberPointerClassName(namespace_class);
+			}
+		}
+		if (const TypeInfo* type_info =
+				tryFindTypeInfoByEntityId(type_node.member_class_entity())) {
+			return getItaniumTypeInfoName(*type_info);
+		}
+	}
+	if (type_node.has_member_class()) {
+		if constexpr (requires { output.namespacePath(); }) {
+			const StringHandle namespace_class =
+				tryResolveItaniumMemberPointerClassInNamespace(
+					output.namespacePath(), type_node.member_class_name());
+			if (namespace_class.isValid()) {
+				return resolveItaniumMemberPointerClassName(namespace_class);
+			}
+		}
+		return resolveItaniumMemberPointerClassName(type_node.member_class_name());
+	}
+	if (type_node.has_function_signature()) {
+		return resolveItaniumMemberPointerClassName(
+			type_node.function_signature().class_name);
+	}
+	return {};
+}
+
+template <typename OutputType>
+inline void appendItaniumTypeNameWithSubstitution(
+	OutputType& output,
+	std::string_view qualified_name) {
+	if constexpr (!ItaniumSubsAware<OutputType>) {
+		appendItaniumQualifiedTypeName(output, qualified_name);
+	} else {
+		const std::string substitution_key =
+			computeItaniumTypeSubstitutionKey(qualified_name);
+		if (output.tryEmitSubstitution(substitution_key)) {
+			return;
+		}
+
+		std::vector<std::string_view> components;
+		size_t start = 0;
+		while (start < qualified_name.size()) {
+			size_t end = qualified_name.find("::", start);
+			if (end == std::string_view::npos) {
+				end = qualified_name.size();
+			}
+			components.push_back(qualified_name.substr(start, end - start));
+			start = (end == qualified_name.size()) ? end : end + 2;
+		}
+		if (components.size() == 1) {
+			appendItaniumQualifiedTypeName(output, qualified_name);
+			if (components.front() != "std") {
+				output.addSubstitution(substitution_key);
+			}
+			return;
+		}
+		if (components.size() == 2 && components.front() == "std") {
+			appendItaniumQualifiedTypeName(output, qualified_name);
+			output.addSubstitution(substitution_key);
+			return;
+		}
+
+		output += 'N';
+		std::string accumulated;
+		for (size_t index = 0; index < components.size(); ++index) {
+			const std::string_view component = components[index];
+			if (component == "std") {
+				output += "St";
+				accumulated += "St";
+				continue;
+			}
+
+			const std::string encoded_component = component.empty()
+				? std::string("12_GLOBAL__N_1")
+				: std::to_string(component.size()) + std::string(component);
+			accumulated += encoded_component;
+			if (index + 1 < components.size() &&
+				output.tryEmitSubstitution(accumulated)) {
+				continue;
+			}
+			output += encoded_component;
+			if (index + 1 < components.size() && component != "std") {
+				output.addSubstitution(accumulated);
+			}
+		}
+		output += 'E';
+		output.addSubstitution(substitution_key);
+	}
+}
+
+template <typename OutputType>
+inline void appendItaniumFunctionTypeCodeBody(
+	OutputType& output,
+	const FunctionSignature& signature) {
+	appendItaniumMemberFunctionTypeQualifiers(output, signature);
+	output += 'F';
+	appendItaniumTypeCode(
+		output, buildFunctionSignatureReturnTypeForMangling(signature), false);
+	if (signature.hasStructuredTypes()) {
+		if (signature.parameter_types().empty()) {
+			output += 'v';
+		} else {
+			for (const FunctionType& parameter_type : signature.parameter_types()) {
+				appendItaniumTypeCode(
+					output,
+					buildFunctionTypeComponentForMangling(parameter_type)
+						.adjusted_function_parameter_type(),
+					false);
+			}
+		}
+	} else if (signature.parameter_type_indices.empty()) {
+		output += 'v';
+	} else {
+		for (const TypeIndex parameter_type : signature.parameter_type_indices) {
+			TypeSpecifierNode parameter_spec(
+				resolveTypeAliasIndex(parameter_type),
+				TypeQualifier::None,
+				0,
+				Token{},
+				CVQualifier::None);
+			appendItaniumTypeCode(output, parameter_spec, false);
+		}
+	}
+	if (signature.is_variadic) {
+		output += 'z';
+	}
+	if (signature.function_reference_qualifier == ReferenceQualifier::LValueReference) {
+		output += 'R';
+	} else if (signature.function_reference_qualifier == ReferenceQualifier::RValueReference) {
+		output += 'O';
+	}
+	output += 'E';
+}
+
+template <typename OutputType>
+inline void appendItaniumFunctionTypeCode(
+	OutputType& output,
+	const FunctionSignature& signature) {
+	StringBuilder key_builder;
+	appendItaniumFunctionTypeCodeBody(key_builder, signature);
+	std::string substitution_key(key_builder.commit());
+	if constexpr (ItaniumSubsAware<OutputType>) {
+		if (output.tryEmitSubstitution(substitution_key)) {
+			return;
+		}
+	}
+	appendItaniumFunctionTypeCodeBody(output, signature);
+	if constexpr (ItaniumSubsAware<OutputType>) {
+		output.addSubstitution(std::move(substitution_key));
+	}
+}
+
+template <typename OutputType>
+inline void appendItaniumMemberFunctionPointerTypeCode(
+	OutputType& output,
+	std::string_view class_name,
+	const FunctionSignature& signature) {
+	StringBuilder key_builder;
+	key_builder += 'M';
+	appendItaniumQualifiedTypeName(key_builder, class_name);
+	appendItaniumFunctionTypeCode(key_builder, signature);
+	std::string substitution_key(key_builder.commit());
+	if constexpr (ItaniumSubsAware<OutputType>) {
+		if (output.tryEmitSubstitution(substitution_key)) {
+			return;
+		}
+	}
+	output += 'M';
+	appendItaniumTypeNameWithSubstitution(output, class_name);
+	appendItaniumFunctionTypeCode(output, signature);
+	if constexpr (ItaniumSubsAware<OutputType>) {
+		output.addSubstitution(std::move(substitution_key));
+	}
+}
+
+template <typename OutputType>
+inline bool appendItaniumMemberPointerTypeCode(
+	OutputType& output,
+	const FlashCpp::NonTypeValueIdentity& identity) {
+	if (!identity.member_class_name.isValid()) {
+		return false;
+	}
+	if (identity.valueTypeCategory() == TypeCategory::MemberFunctionPointer &&
+		identity.function_signature.has_value()) {
+		appendItaniumMemberFunctionPointerTypeCode(
+			output,
+			resolveItaniumMemberPointerClassName(identity.member_class_name),
+			*identity.function_signature);
+		return true;
+	}
+	output += 'M';
+	appendItaniumTypeNameWithSubstitution(
+		output,
+		resolveItaniumMemberPointerClassName(identity.member_class_name));
+	if (identity.valueTypeCategory() == TypeCategory::MemberObjectPointer) {
+		const StructMember* member = tryResolveMemberObjectPointerMember(identity);
+		if (member == nullptr) {
+			return false;
+		}
+		const TypeSpecifierNode member_type =
+			typeSpecifierFromStructMemberProjection(*member);
+		appendItaniumTypeCode(output, member_type, false);
+		return true;
+	}
+	return false;
+}
 
 // Pre-populate the substitution table for a member function from its class context.
 // Per Itanium C++ ABI §5.1.8, each prefix of the nested name (up to but NOT including
@@ -1208,7 +1469,8 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 			if (index + 1 != components.size()) {
 				throw InternalError("Itanium name mangling: ordered member pointer is not innermost");
 			}
-			const std::string_view class_name = getMsvcMemberPointerClassName(normalized);
+			const std::string_view class_name =
+				getItaniumMemberPointerClassName(output, normalized);
 			if (class_name.empty()) {
 				throw InternalError("Itanium name mangling: ordered member pointer missing declaring class");
 			}
@@ -1221,9 +1483,9 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 			} else if (component.cv_qualifier != CVQualifier::None) {
 				throw InternalError("Itanium name mangling: invalid ordered member pointer qualifier");
 			}
-			output += 'M';
-			appendItaniumQualifiedTypeName(output, class_name);
 			if (component.kind == DeclaratorComponentKind::MemberObjectPointer) {
+				output += 'M';
+				appendItaniumTypeNameWithSubstitution(output, class_name);
 				TypeSpecifierNode member_type = normalized;
 				member_type.clear_declarator_shape();
 				member_type.clear_member_class_identity();
@@ -1239,30 +1501,8 @@ inline void appendItaniumOrderedDeclaratorTypeCode(
 			if (!normalized.has_function_signature()) {
 				throw InternalError("Itanium name mangling: ordered member function pointer missing function signature");
 			}
-			const FunctionSignature& signature = normalized.function_signature();
-			output += 'F';
-			appendItaniumTypeCode(
-				output, buildFunctionSignatureReturnTypeForMangling(signature), false);
-			if (signature.hasStructuredTypes()) {
-				if (signature.parameter_types().empty()) {
-					output += 'v';
-				} else {
-					for (const FunctionType& parameter_type : signature.parameter_types()) {
-						appendItaniumTypeCode(output,
-							buildFunctionTypeComponentForMangling(parameter_type), false);
-					}
-				}
-			} else if (signature.parameter_type_indices.empty()) {
-				output += 'v';
-			} else {
-				for (const TypeIndex parameter_type : signature.parameter_type_indices) {
-					TypeSpecifierNode parameter_spec(resolveTypeAliasIndex(parameter_type),
-						TypeQualifier::None, 0, Token{}, CVQualifier::None);
-					appendItaniumTypeCode(output, parameter_spec, false);
-				}
-			}
-			appendItaniumMemberFunctionQualifiers(output, signature);
-			output += 'E';
+			appendItaniumMemberFunctionPointerTypeCode(
+				output, class_name, normalized.function_signature());
 			return;
 		}
 		}
@@ -1426,21 +1666,9 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			throw CompileError("Itanium name mangling: unknown struct/enum type index — cannot generate valid symbol");
 		}
 		const TypeInfo& type_info = getTypeInfo(normalized.type_index());
-		auto struct_name_sv = StringTable::getStringView(type_info.name());
+		const std::string_view struct_name_sv = getItaniumTypeInfoName(type_info);
 
-		if constexpr (ItaniumSubsAware<OutputType>) {
-				// Substitution-aware path: compute full key, check table, emit back-ref or encode+add.
-				// The key is the encoding WITHOUT N...E (the canonical prefix form per ABI §5.1.8).
-			std::string key = computeItaniumTypeSubstitutionKey(struct_name_sv);
-			if (!output.tryEmitSubstitution(key)) {
-				appendItaniumQualifiedTypeName(output, struct_name_sv);
-				// Register all component prefixes as substitution candidates per ABI §5.1.8.
-				// e.g., "A::B::C" adds "1A", "1A1B", "1A1B1C" — addSubstitution deduplicates.
-				addItaniumTypeSubstitutionPrefixes(output, struct_name_sv);
-			}
-		} else {
-			appendItaniumQualifiedTypeName(output, struct_name_sv);
-		}
+		appendItaniumTypeNameWithSubstitution(output, struct_name_sv);
 		break;
 	}
 	case TypeCategory::Function:
@@ -1455,49 +1683,22 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		if (normalized.category() == TypeCategory::FunctionPointer) {
 			output += 'P';
 		}
-		if (sig.is_const) {
-			output += 'K';
+		appendItaniumFunctionTypeCode(output, sig);
+		break;
+	}
+	case TypeCategory::MemberFunctionPointer: {
+		if (!normalized.has_function_signature()) {
+			throw InternalError(
+				"Itanium name mangling: MemberFunctionPointer type missing function signature");
 		}
-		if (sig.is_volatile) {
-			output += 'V';
+		const std::string_view class_name =
+			getItaniumMemberPointerClassName(output, normalized);
+		if (class_name.empty()) {
+			throw InternalError(
+				"Itanium name mangling: member function pointer missing declaring class");
 		}
-		if (sig.is_noexcept) {
-			output += "Do";
-		}
-		output += 'F';
-		appendItaniumTypeCode(
-			output, buildFunctionSignatureReturnTypeForMangling(sig), false);
-		if (sig.hasStructuredTypes()) {
-			if (sig.parameter_types().empty()) {
-				output += 'v';
-			} else {
-				for (const FunctionType& parameter_type : sig.parameter_types()) {
-					appendItaniumTypeCode(
-						output,
-						buildFunctionTypeComponentForMangling(parameter_type)
-							.adjusted_function_parameter_type(),
-						false);
-				}
-			}
-		} else if (sig.parameter_type_indices.empty()) {
-			output += 'v';
-		} else {
-			for (const TypeIndex parameter_type : sig.parameter_type_indices) {
-				TypeSpecifierNode parameter_spec(
-					resolveTypeAliasIndex(parameter_type),
-					TypeQualifier::None,
-					0,
-					Token{},
-					CVQualifier::None);
-				appendItaniumTypeCode(output, parameter_spec, false);
-			}
-		}
-		if (sig.function_reference_qualifier == ReferenceQualifier::LValueReference) {
-			output += 'R';
-		} else if (sig.function_reference_qualifier == ReferenceQualifier::RValueReference) {
-			output += 'O';
-		}
-		output += 'E';
+		appendItaniumMemberFunctionPointerTypeCode(
+			output, class_name, normalized.function_signature());
 		break;
 	}
 	case TypeCategory::Nullptr:
@@ -1904,27 +2105,17 @@ inline void appendItaniumTypeTemplateArgs(
 				break;
 			}
 			case TypeCategory::MemberFunctionPointer: {
-					// Itanium ABI: member function pointer is M<class>F<return><params>E
-					// Simplified: encode as PF (same as function pointer) since class info
-					// is not always available in TemplateTypeArg
-				output += "PF";
-				if (arg.function_signature.has_value()) {
-					const auto& sig = *arg.function_signature;
-					TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-					appendItaniumTypeCode(output, ret_spec, false);
-					if (sig.parameter_type_indices.empty()) {
-						output += 'v';
-					} else {
-						for (const TypeIndex& pt : sig.parameter_type_indices) {
-							TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-							appendItaniumTypeCode(output, param_spec, false);
-						}
-					}
-					appendItaniumMemberFunctionQualifiers(output, sig);
-				} else {
+				if (!arg.member_class_name.isValid()) {
+					throw InternalError(
+						"Itanium name mangling: member function pointer template argument missing declaring class");
+				}
+				if (!arg.function_signature.has_value()) {
 					throw InternalError("Itanium name mangling: MemberFunctionPointer template arg missing function signature");
 				}
-				output += 'E';
+				appendItaniumMemberFunctionPointerTypeCode(
+					output,
+					resolveItaniumMemberPointerClassName(arg.member_class_name),
+					*arg.function_signature);
 				break;
 			}
 			default:
@@ -2236,6 +2427,7 @@ inline MangledName generateMangledName(
 		// Pre-populate the substitution table with the class-context prefixes so that
 		// parameter types matching the enclosing class use S_/S0_/... back-references.
 		ItaniumManglingCtx ctx(builder);
+		ctx.setNamespacePath(namespace_path);
 		if (struct_name.isValid() || !namespace_path.empty()) {
 			populateSubstitutionsFromClassContext(ctx, struct_name, namespace_path);
 		}
@@ -2372,6 +2564,7 @@ inline MangledName generateMangledName(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// Use Itanium C++ ABI name mangling with substitution tracking.
 		ItaniumManglingCtx ctx(builder);
+		ctx.setNamespacePath(namespace_path);
 		if (struct_name.isValid() || !namespace_path.empty()) {
 			populateSubstitutionsFromClassContext(ctx, struct_name, namespace_path);
 		}

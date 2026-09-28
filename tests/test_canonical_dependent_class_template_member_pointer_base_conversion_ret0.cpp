@@ -1,4 +1,3 @@
-#if defined(_MSC_VER)
 template <class Type>
 struct Base {
 	Type run();
@@ -35,10 +34,3 @@ static_assert(sizeof(BaseMemberChoice<char>) == sizeof(CharSelection));
 int main() {
 	return 0;
 }
-#else
-// The Itanium mangler does not yet support member-function-pointer parameter
-// types. Platform-independent owner planning is covered by CanonicalTypeTests.
-int main() {
-	return 0;
-}
-#endif
