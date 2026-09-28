@@ -1062,6 +1062,100 @@ CanonicalRecordBase CanonicalTypeTable::recordBaseAt(EntityId entity, size_t ind
 	return record_bases_[header.base_begin + index];
 }
 
+void CanonicalTypeTable::publishClassBaseSchema(TypeId class_type,
+	std::span<const CanonicalClassBase> bases) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	if (!class_type || bases.size() > std::numeric_limits<uint16_t>::max()) {
+		throw InternalError("canonical type: invalid class base schema");
+	}
+	const CanonicalTypeKind owner_kind = nodeUnlocked(class_type).kind;
+	if (owner_kind != CanonicalTypeKind::Record &&
+		owner_kind != CanonicalTypeKind::TemplateSpecialization) {
+		throw InternalError("canonical type: base schema owner is not a class type");
+	}
+	for (const CanonicalClassBase& base : bases) {
+		if (!base.type || base.type == class_type ||
+			(base.access != CanonicalAccess::Public &&
+				base.access != CanonicalAccess::Protected &&
+				base.access != CanonicalAccess::Private) ||
+			base.reserved != 0 ||
+			(static_cast<uint8_t>(base.flags) &
+				~static_cast<uint8_t>(CanonicalRecordBaseFlags::Virtual)) != 0) {
+			throw InternalError("canonical type: invalid class base schema edge");
+		}
+		const CanonicalTypeKind base_kind = nodeUnlocked(base.type).kind;
+		if (base_kind != CanonicalTypeKind::Record &&
+			base_kind != CanonicalTypeKind::TemplateSpecialization) {
+			throw InternalError("canonical type: class base edge does not name a class type");
+		}
+	}
+	const auto existing = class_base_schema_ids_.find(class_type.value);
+	if (existing != class_base_schema_ids_.end()) {
+		const CanonicalClassBaseSchemaHeader header =
+			class_base_schema_headers_[existing->second];
+		if (header.base_count != bases.size()) {
+			throw InternalError("canonical type: conflicting class base schema publication");
+		}
+		for (size_t index = 0; index < bases.size(); ++index) {
+			if (class_bases_[header.base_begin + index] != bases[index]) {
+				throw InternalError("canonical type: conflicting class base schema publication");
+			}
+		}
+		return;
+	}
+	const uint32_t base_begin = static_cast<uint32_t>(live_class_base_count_);
+	if (static_cast<uint64_t>(base_begin) + bases.size() >
+		std::numeric_limits<uint32_t>::max()) {
+		throw InternalError("canonical type: class base schema arena exhausted");
+	}
+	for (const CanonicalClassBase& base : bases) {
+		appendSchemaEntryUnlocked(class_bases_, live_class_base_count_, base);
+	}
+	const CanonicalClassBaseSchemaHeader header{
+		.class_type = class_type,
+		.base_begin = base_begin,
+		.base_count = static_cast<uint16_t>(bases.size()),
+		.reserved = 0,
+		.reserved2 = 0,
+	};
+	const size_t header_index = live_class_base_schema_count_;
+	appendSchemaEntryUnlocked(
+		class_base_schema_headers_, live_class_base_schema_count_, header);
+	try {
+		class_base_schema_ids_.emplace(class_type.value, header_index);
+	} catch (...) {
+		live_class_base_schema_count_ = header_index;
+		live_class_base_count_ = base_begin;
+		noteArenaBytes();
+		throw;
+	}
+	noteArenaBytes();
+}
+
+bool CanonicalTypeTable::hasClassBaseSchema(TypeId class_type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return class_type && class_base_schema_ids_.contains(class_type.value);
+}
+
+size_t CanonicalTypeTable::classBaseCount(TypeId class_type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return classBaseSchemaHeaderUnlocked(class_type).base_count;
+}
+
+CanonicalClassBase CanonicalTypeTable::classBaseAt(TypeId class_type, size_t index) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const CanonicalClassBaseSchemaHeader header =
+		classBaseSchemaHeaderUnlocked(class_type);
+	if (index >= header.base_count) {
+		throw InternalError("canonical type: class base schema index out of range");
+	}
+	return class_bases_[header.base_begin + index];
+}
+
 void CanonicalTypeTable::publishRecordNamedTypeMembers(EntityId entity,
 	std::span<const CanonicalNamedTypeMemberSpec> members) {
 	std::lock_guard lock(mutex_);
@@ -2656,6 +2750,9 @@ uint64_t CanonicalTypeTable::usedBytesUnlocked() const {
 			sizeof(CanonicalRecordFieldSchemaHeader) +
 		static_cast<uint64_t>(live_record_member_count_) * sizeof(CanonicalRecordMember) +
 		static_cast<uint64_t>(live_record_base_count_) * sizeof(CanonicalRecordBase) +
+		static_cast<uint64_t>(live_class_base_schema_count_) *
+			sizeof(CanonicalClassBaseSchemaHeader) +
+		static_cast<uint64_t>(live_class_base_count_) * sizeof(CanonicalClassBase) +
 		static_cast<uint64_t>(live_named_type_member_schema_count_) *
 			sizeof(CanonicalNamedTypeMemberSchemaHeader) +
 		static_cast<uint64_t>(live_named_type_member_count_) * sizeof(CanonicalNamedTypeMember);
@@ -2665,6 +2762,7 @@ uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
 	return nodes_.reservedBytes() + record_layouts_.reservedBytes() +
 		enum_layouts_.reservedBytes() + record_field_schema_headers_.reservedBytes() +
 		record_members_.reservedBytes() + record_bases_.reservedBytes() +
+		class_base_schema_headers_.reservedBytes() + class_bases_.reservedBytes() +
 		named_type_member_schema_headers_.reservedBytes() +
 		named_type_members_.reservedBytes();
 }
@@ -2691,6 +2789,8 @@ size_t CanonicalTypeTable::beginTransaction() {
 		live_record_field_schema_count_,
 		live_record_member_count_,
 		live_record_base_count_,
+		live_class_base_schema_count_,
+		live_class_base_count_,
 		live_named_type_member_schema_count_,
 		live_named_type_member_count_,
 	});
@@ -2725,6 +2825,13 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 		}
 		live_record_member_count_ = mark.record_member_count;
 		live_record_base_count_ = mark.record_base_count;
+		while (live_class_base_schema_count_ > mark.class_base_schema_count) {
+			class_base_schema_ids_.erase(
+				class_base_schema_headers_[live_class_base_schema_count_ - 1]
+					.class_type.value);
+			--live_class_base_schema_count_;
+		}
+		live_class_base_count_ = mark.class_base_count;
 		while (live_named_type_member_schema_count_ > mark.named_type_member_schema_count) {
 			named_type_member_schema_ids_.erase(
 				named_type_member_schema_headers_[live_named_type_member_schema_count_ - 1]

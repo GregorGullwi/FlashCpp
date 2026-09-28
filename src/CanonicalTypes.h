@@ -300,6 +300,17 @@ struct CanonicalRecordBase {
 	friend bool operator==(CanonicalRecordBase, CanonicalRecordBase) = default;
 };
 
+// Inheritance edge keyed by canonical class TypeId. Unlike the record layout
+// schema, this graph also represents class-template specializations and does
+// not carry ABI offsets.
+struct CanonicalClassBase {
+	TypeId type;
+	CanonicalAccess access;
+	CanonicalRecordBaseFlags flags;
+	uint16_t reserved = 0;
+	friend bool operator==(CanonicalClassBase, CanonicalClassBase) = default;
+};
+
 // Nested type-member schema entry for tip lookup after substitution.
 // Identifier content is a NameBytes link (structural content), never StringHandle.
 struct CanonicalNamedTypeMember {
@@ -345,11 +356,13 @@ static_assert(std::is_trivially_copyable_v<CanonicalRecordLayout>);
 static_assert(std::is_trivially_copyable_v<CanonicalEnumLayout>);
 static_assert(std::is_trivially_copyable_v<CanonicalRecordMember>);
 static_assert(std::is_trivially_copyable_v<CanonicalRecordBase>);
+static_assert(std::is_trivially_copyable_v<CanonicalClassBase>);
 static_assert(std::is_trivially_copyable_v<CanonicalNamedTypeMember>);
 static_assert(sizeof(CanonicalRecordLayout) == 24);
 static_assert(sizeof(CanonicalEnumLayout) == 16);
 static_assert(sizeof(CanonicalRecordMember) == 16);
 static_assert(sizeof(CanonicalRecordBase) == 16);
+static_assert(sizeof(CanonicalClassBase) == 8);
 static_assert(sizeof(CanonicalNamedTypeMember) == 16);
 
 class CanonicalTypeTransaction;
@@ -577,6 +590,15 @@ public:
 		std::span<const CanonicalRecordMember> members,
 		std::span<const CanonicalRecordBase> bases);
 
+	void publishClassBaseSchema(TypeId class_type,
+		std::span<const CanonicalClassBase> bases);
+
+	bool hasClassBaseSchema(TypeId class_type) const;
+
+	size_t classBaseCount(TypeId class_type) const;
+
+	CanonicalClassBase classBaseAt(TypeId class_type, size_t index) const;
+
 	bool hasRecordFieldSchema(EntityId entity) const;
 
 	CanonicalRecordMember recordMemberAt(EntityId entity, size_t index) const;
@@ -620,6 +642,17 @@ private:
 	};
 	static_assert(sizeof(CanonicalRecordFieldSchemaHeader) == 16);
 
+	struct CanonicalClassBaseSchemaHeader {
+		TypeId class_type;
+		uint32_t base_begin;
+		uint16_t base_count;
+		uint16_t reserved;
+		uint32_t reserved2;
+		friend bool operator==(CanonicalClassBaseSchemaHeader,
+			CanonicalClassBaseSchemaHeader) = default;
+	};
+	static_assert(sizeof(CanonicalClassBaseSchemaHeader) == 16);
+
 	struct CanonicalNamedTypeMemberSchemaHeader {
 		EntityId entity;
 		uint32_t member_begin;
@@ -638,6 +671,8 @@ private:
 		size_t record_field_schema_count;
 		size_t record_member_count;
 		size_t record_base_count;
+		size_t class_base_schema_count;
+		size_t class_base_count;
 		size_t named_type_member_schema_count;
 		size_t named_type_member_count;
 	};
@@ -768,6 +803,14 @@ private:
 		return record_field_schema_headers_[found->second];
 	}
 
+	CanonicalClassBaseSchemaHeader classBaseSchemaHeaderUnlocked(TypeId class_type) const {
+		const auto found = class_base_schema_ids_.find(class_type.value);
+		if (!class_type || found == class_base_schema_ids_.end()) {
+			throw InternalError("canonical type: class has no base schema");
+		}
+		return class_base_schema_headers_[found->second];
+	}
+
 	bool nameBytesEqualUnlocked(TypeId name_link, std::string_view identifier) const;
 
 	std::optional<TypeId> tryLookupNamedTypeMemberUnlocked(EntityId entity,
@@ -815,6 +858,8 @@ private:
 	size_t live_record_field_schema_count_ = 0;
 	size_t live_record_member_count_ = 0;
 	size_t live_record_base_count_ = 0;
+	size_t live_class_base_schema_count_ = 0;
+	size_t live_class_base_count_ = 0;
 	size_t live_named_type_member_schema_count_ = 0;
 	size_t live_named_type_member_count_ = 0;
 	SemanticArenaAccounting* accounting_ = nullptr;
@@ -836,6 +881,10 @@ private:
 	ChunkedVector<CanonicalRecordMember, 32> record_members_;
 	ChunkedVector<CanonicalRecordBase, 16> record_bases_;
 	std::unordered_map<uint32_t, size_t> record_field_schema_ids_;
+	// Class inheritance graph samples: 16 headers / 16 edges per chunk.
+	ChunkedVector<CanonicalClassBaseSchemaHeader, 16> class_base_schema_headers_;
+	ChunkedVector<CanonicalClassBase, 16> class_bases_;
+	std::unordered_map<uint32_t, size_t> class_base_schema_ids_;
 	// Named type-member schema samples: 16 headers / 32 members per chunk until a
 	// production nested-type corpus measures a larger peak.
 	ChunkedVector<CanonicalNamedTypeMemberSchemaHeader, 16> named_type_member_schema_headers_;

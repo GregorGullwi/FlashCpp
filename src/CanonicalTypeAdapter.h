@@ -5,6 +5,7 @@
 #include "TemplateRegistry_Types.h"
 
 #include <optional>
+#include <unordered_set>
 
 inline std::optional<TypeCategory> canonicalBuiltinToTypeCategory(
 	CanonicalBuiltinKind builtin) {
@@ -1192,6 +1193,121 @@ inline CanonicalTypeImport importCanonicalClassTypeInfo(
 		return {{}, CanonicalTypeImportStatus::UnmigratedNominal};
 	}
 	return importCanonicalClassDeclaration(table, *struct_info->declaration_node);
+}
+
+inline const StructTypeInfo* canonicalClassStructInfoFromTypeInfo(
+	const TypeInfo& type_info) {
+	const TypeInfo* current = &type_info;
+	std::unordered_set<uint32_t> visited_type_indices;
+	while (current != nullptr) {
+		if (const StructTypeInfo* struct_info = current->getStructInfo();
+			struct_info != nullptr) {
+			return struct_info;
+		}
+		const TypeSpecifierNode* alias_type = current->aliasTypeSpecifier();
+		if (alias_type == nullptr || !alias_type->type_index().is_valid() ||
+			!visited_type_indices.insert(alias_type->type_index().index()).second) {
+			return nullptr;
+		}
+		current = tryGetTypeInfo(alias_type->type_index());
+	}
+	return nullptr;
+}
+
+inline bool tryPublishCanonicalClassBaseSchema(
+	CanonicalTypeTable& table,
+	TypeId root_type,
+	const StructTypeInfo& root_struct_info) {
+	const auto is_class_type = [&table](TypeId type) {
+		const CanonicalTypeKind kind = table.node(type).kind;
+		return kind == CanonicalTypeKind::Record ||
+			kind == CanonicalTypeKind::TemplateSpecialization;
+	};
+	if (!root_type || !is_class_type(root_type)) {
+		return false;
+	}
+
+	struct PendingClass {
+		TypeId type;
+		const StructTypeInfo* struct_info;
+	};
+	CanonicalTypeTransaction transaction(table);
+	std::vector<PendingClass> worklist;
+	std::unordered_set<uint32_t> visited;
+	worklist.push_back({root_type, &root_struct_info});
+	while (!worklist.empty()) {
+		const PendingClass current = worklist.back();
+		worklist.pop_back();
+		if (!visited.insert(current.type.value).second ||
+			table.hasClassBaseSchema(current.type)) {
+			continue;
+		}
+		if (current.struct_info == nullptr ||
+			!current.struct_info->layout_is_complete ||
+			current.struct_info->has_deferred_base_classes) {
+			return false;
+		}
+
+		std::vector<CanonicalClassBase> bases;
+		bases.reserve(current.struct_info->base_classes.size());
+		for (const BaseClassSpecifier& base : current.struct_info->base_classes) {
+			if (base.is_deferred || !base.type_index.is_valid()) {
+				return false;
+			}
+			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+			if (base_type_info == nullptr) {
+				return false;
+			}
+			const CanonicalTypeImport imported_base =
+				importCanonicalClassTypeInfo(table, *base_type_info);
+			if (imported_base.status != CanonicalTypeImportStatus::Supported ||
+				!is_class_type(imported_base.type)) {
+				return false;
+			}
+
+			CanonicalAccess access = CanonicalAccess::Public;
+			switch (base.access) {
+			case AccessSpecifier::Public:
+				access = CanonicalAccess::Public;
+				break;
+			case AccessSpecifier::Protected:
+				access = CanonicalAccess::Protected;
+				break;
+			case AccessSpecifier::Private:
+				access = CanonicalAccess::Private;
+				break;
+			default:
+				return false;
+			}
+			CanonicalRecordBaseFlags flags = CanonicalRecordBaseFlags::None;
+			if (base.is_virtual) {
+				flags = flags | CanonicalRecordBaseFlags::Virtual;
+			}
+			bases.push_back({imported_base.type, access, flags, 0});
+
+			if (!table.hasClassBaseSchema(imported_base.type)) {
+				const StructTypeInfo* base_struct_info =
+					canonicalClassStructInfoFromTypeInfo(*base_type_info);
+				if (base_struct_info == nullptr) {
+					return false;
+				}
+				worklist.push_back({imported_base.type, base_struct_info});
+			}
+		}
+		table.publishClassBaseSchema(current.type, bases);
+	}
+	transaction.commit();
+	return true;
+}
+
+inline bool tryPublishCanonicalClassBaseSchema(
+	CanonicalTypeTable& table,
+	TypeId class_type,
+	const TypeInfo& type_info) {
+	const StructTypeInfo* struct_info =
+		canonicalClassStructInfoFromTypeInfo(type_info);
+	return struct_info != nullptr &&
+		tryPublishCanonicalClassBaseSchema(table, class_type, *struct_info);
 }
 
 inline CanonicalTypeImport importCanonicalFunctionParameterType(CanonicalTypeTable& table,

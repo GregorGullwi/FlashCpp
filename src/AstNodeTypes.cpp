@@ -997,7 +997,34 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 }
 
 void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec) {
-	if (type_spec.has_member_class_entity() || type_spec.has_member_class_type_id()) {
+	FrontendContext& frontend_context = requireFrontendContext();
+	if (type_spec.has_member_class_entity()) {
+		return;
+	}
+	auto tryPublishOwnerBaseSchema = [&](CanonicalTypeTable& table, TypeId owner) {
+		if (!type_spec.has_member_class()) {
+			return false;
+		}
+		const auto owner_type_it = getTypesByNameMap().find(
+			type_spec.member_class_name());
+		if (owner_type_it == getTypesByNameMap().end() ||
+			owner_type_it->second == nullptr) {
+			return false;
+		}
+		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(
+			table, *owner_type_it->second);
+		return imported.status == CanonicalTypeImportStatus::Supported &&
+			imported.type == owner &&
+			tryPublishCanonicalClassBaseSchema(
+				table, owner, *owner_type_it->second);
+	};
+	if (type_spec.has_member_class_type_id()) {
+		CanonicalTypeTable& table = frontend_context.canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		if (tryPublishOwnerBaseSchema(
+				table, type_spec.member_class_type_id())) {
+			transaction.commit();
+		}
 		return;
 	}
 	if (type_spec.has_injected_class_declaration()) {
@@ -1007,18 +1034,16 @@ void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec) {
 			type_spec.set_member_class_entity(declaration->entity_id());
 			return;
 		}
-		FrontendContext* const context = FrontendContext::active();
-		if (context != nullptr) {
-			CanonicalTypeTable& table = context->canonicalTypes();
-			CanonicalTypeTransaction transaction(table);
-			const CanonicalTypeImport imported =
-				importCanonicalClassDeclaration(table, *declaration);
-			if (imported.status == CanonicalTypeImportStatus::Supported &&
+		CanonicalTypeTable& table = frontend_context.canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported =
+			importCanonicalClassDeclaration(table, *declaration);
+		if (imported.status == CanonicalTypeImportStatus::Supported &&
 				table.node(imported.type).kind ==
-					CanonicalTypeKind::TemplateSpecialization) {
-				type_spec.set_member_class_type_id(imported.type);
-				transaction.commit();
-			}
+				CanonicalTypeKind::TemplateSpecialization) {
+			type_spec.set_member_class_type_id(imported.type);
+			(void)tryPublishOwnerBaseSchema(table, imported.type);
+			transaction.commit();
 		}
 		return;
 	}
@@ -1030,16 +1055,14 @@ void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec) {
 		return;
 	}
 	if (type_it->second->aliasTypeSpecifier() != nullptr) {
-		FrontendContext* const context = FrontendContext::active();
-		if (context == nullptr) {
-			return;
-		}
-		CanonicalTypeTable& table = context->canonicalTypes();
+		CanonicalTypeTable& table = frontend_context.canonicalTypes();
 		CanonicalTypeTransaction transaction(table);
 		const CanonicalTypeImport imported = importCanonicalClassTypeInfo(
 			table, *type_it->second);
 		if (imported.status == CanonicalTypeImportStatus::Supported) {
 			type_spec.set_member_class_type_id(imported.type);
+			(void)tryPublishCanonicalClassBaseSchema(
+				table, imported.type, *type_it->second);
 			transaction.commit();
 		}
 		return;
@@ -1053,18 +1076,16 @@ void tryBindPublishedMemberClassEntity(TypeSpecifierNode& type_spec) {
 	}
 	const StructDeclarationNode* declaration = struct_info->declaration_node;
 	if (declaration->injected_class_pattern_declaration() != nullptr) {
-		FrontendContext* const context = FrontendContext::active();
-		if (context == nullptr) {
-			return;
-		}
-		CanonicalTypeTable& table = context->canonicalTypes();
+		CanonicalTypeTable& table = frontend_context.canonicalTypes();
 		CanonicalTypeTransaction transaction(table);
 		const CanonicalTypeImport imported =
 			importCanonicalClassTypeInfo(table, *type_it->second);
 		if (imported.status == CanonicalTypeImportStatus::Supported &&
-			table.node(imported.type).kind ==
-				CanonicalTypeKind::TemplateSpecialization) {
+				table.node(imported.type).kind ==
+					CanonicalTypeKind::TemplateSpecialization) {
 			type_spec.set_member_class_type_id(imported.type);
+			(void)tryPublishCanonicalClassBaseSchema(
+				table, imported.type, *type_it->second);
 			transaction.commit();
 		}
 		return;

@@ -140,9 +140,11 @@ Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
 Complete owner schemas reject unrelated, inaccessible, ambiguous, and
-virtual-base conversions. Function declaration matching also retains the
-member-owner `EntityId`, so overloads with distinct data-member-pointer owners
-remain separate candidates. The unit case
+virtual-base conversions. Member-pointer owner binding gets its canonical
+table through `requireFrontendContext()` and fails fast outside a front-end
+context. Function declaration matching also retains the member-owner
+`EntityId`, so overloads with distinct data-member-pointer owners remain
+separate candidates. The unit case
 `Canonical TypeIds compare same-owner member function pointer pairs` checks
 signature ranking. The unit case
 `Canonical TypeIds compare member object pointer pairs` checks exact owner,
@@ -287,13 +289,15 @@ Continue boundary 3A in this order:
     comparison is covered by the canonical type unit test, and
     `tests/test_canonical_dependent_member_noexcept_class_template_overload_ret0.cpp`
     checks overload selection after substituting `Callable<T>::run`'s exception
-    specification. Conversions between distinct specialization owners still
-    lack base-schema adjustments because the canonical base graph is keyed by
-    record `EntityId`; imported class-specialization owners currently support
-    concrete type arguments only. These remain 3A blockers.
-    Other dependent member-function-pointer forms, distinct or one-sided
-    dependent expressions, and remaining unsupported callable pairs still need
-    substitution-aware canonical ranking.
+    specification. Member-pointer conversions between distinct class-template
+    specialization owners now use a `TypeId`-keyed inheritance graph, including
+    mixed paths through ordinary records; concrete `int` and `char` owner
+    conversions are covered by
+    `tests/test_canonical_class_template_member_pointer_base_conversion_ret0.cpp`.
+    Dependent class-specialization owner graphs still need coverage through
+    substitution. Other dependent member-function-pointer forms, distinct or
+    one-sided dependent expressions, and remaining unsupported callable pairs
+    still need substitution-aware canonical ranking.
    Then make projectable semantic descriptors use structural identity
    too, and replace flat-field reads with a single compatibility materializer
    at each remaining legacy boundary. Preserve full callable comparison,

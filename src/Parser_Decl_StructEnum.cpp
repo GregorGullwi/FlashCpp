@@ -4670,6 +4670,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			.flags = struct_info->is_union
 				? CanonicalRecordLayoutFlags::Union : CanonicalRecordLayoutFlags::None,
 		});
+		(void)tryPublishCanonicalClassBaseSchema(
+			front_end.canonicalTypes(),
+			front_end.canonicalTypes().record(struct_ref.entity_id()),
+			*struct_info);
 		(void)tryPublishCanonicalRecordFieldSchema(
 			front_end.canonicalTypes(), struct_ref.entity_id(), *struct_info);
 		tryPublishNestedClassEntities(
