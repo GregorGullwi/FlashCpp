@@ -4737,9 +4737,6 @@ inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpe
 
 inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& arg_spec, const TypeSpecifierNode& param_spec, TypeIndex enclosing_type_index) {
 	TypeSpecifierNode resolved_param_spec = resolveBinaryOperatorTypeForSelfReference(param_spec, enclosing_type_index);
-	if (isUserDefinedBinaryOperatorOperandType(arg_spec) && isUserDefinedBinaryOperatorOperandType(resolved_param_spec) && arg_spec.type_index().is_valid() && resolved_param_spec.type_index().is_valid() && arg_spec.type_index() != resolved_param_spec.type_index()) {
-		return ConversionRank::NoMatch;
-	}
 	if (!arg_spec.is_pointer() &&
 		!resolved_param_spec.is_pointer() &&
 		arg_spec.category() != TypeCategory::Struct &&

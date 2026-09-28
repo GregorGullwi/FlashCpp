@@ -213,6 +213,12 @@ Itanium end-to-end coverage is deferred until boundary 3B supports mangling
 member-function-pointer parameter types. Dependent `noexcept`,
 user-defined conversions, and other unsupported callable or template types
 still use compatibility planning.
+Binary operator-template ranking now sends distinct record operand and
+parameter types through the shared conversion planner instead of rejecting
+them by `TypeIndex` inequality. The regression
+`tests/test_canonical_binary_operator_template_user_defined_conversion_ret0.cpp`
+checks that a candidate requiring one converting constructor beats a
+candidate requiring two.
 Call lowering now materializes the pointer object required when an array
 decays to a pointer temporary before binding it to an eligible reference.
 `tests/test_array_to_pointer_reference_temporary_ret42.cpp` checks runtime
