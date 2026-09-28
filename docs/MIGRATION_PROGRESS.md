@@ -158,8 +158,10 @@ Deferred member-function `decltype` aliases now publish the resolved callable
 specifier as well as the legacy type projection, preserving the substituted
 owner and exception specification for overload ranking.
 `tests/test_canonical_dependent_member_pointer_owner_alias_overload_ret0.cpp`
-checks that an alias of `decltype(&Callable<T>::run)` selects the non-throwing
-target for `int` and the potentially-throwing target for `char`.
+checks the class-template owner form, and
+`tests/test_canonical_dependent_member_pointer_template_owner_alias_overload_ret0.cpp`
+checks a dependent owner type parameter; both verify `noexcept`-sensitive
+selection after substitution.
 Data-member-pointer pairs now
 compare canonical owner and pointee types, preserve same-owner qualification,
 and allow a public unambiguous non-virtual base-to-derived owner conversion.
