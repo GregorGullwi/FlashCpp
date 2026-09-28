@@ -146,6 +146,13 @@ Unit coverage checks both paths, while source regressions cover dependent
 `noexcept` overload selection for regular and member-function pointers.
 Dependent `decltype(&Callable<T>::member)` aliases now recover the substituted
 member-function signature and canonical owner before overload ranking.
+Nested class-template arguments in those owners now import recursively from
+their published type metadata, and member-function address formation binds the
+exact declaring class as a canonical `TypeId`. The regression
+`tests/test_canonical_dependent_member_pointer_alias_chain_overload_ret0.cpp`
+checks three forwarding aliases over a `Callable` owner with sixteen nested
+`ValueBox` specializations, selecting the `noexcept` or potentially-throwing
+overload after substitution for `int` and `char`.
 `tests/test_canonical_distinct_dependent_member_noexcept_pair_overload_ret0.cpp`
 checks that distinct dependent exception expressions select the non-throwing
 target for `int` and reject it for `char` when the source member is potentially
