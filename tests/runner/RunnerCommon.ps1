@@ -40,7 +40,7 @@ function Resolve-FlashCppCompilerPath {
 	}
 
 	$allowedNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-	foreach ($name in @("FlashCpp.exe", "FlashCppMSVC.exe", "FlashCpp", "FlashCppMSVC")) {
+	foreach ($name in @("FlashCpp.exe", "FlashCppMSVC.exe")) {
 		[void]$allowedNames.Add($name)
 	}
 
