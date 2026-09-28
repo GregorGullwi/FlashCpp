@@ -2597,6 +2597,12 @@ ParseResult Parser::parse_type_specifier() {
 					};
 					const bool has_dependent_alias_args =
 						aliasTemplateArgsStillDependent(*template_args);
+					const TypeSpecifierNode& alias_target = alias_node.target_type_node();
+					const TypeInfo* deferred_decltype_type_info =
+						tryGetTypeInfo(alias_target.type_index());
+					const bool has_deferred_decltype_target =
+						deferred_decltype_type_info != nullptr &&
+						deferred_decltype_type_info->deferredDecltypeExpression() != nullptr;
 					auto resolveAliasDeclarator = [&]() -> std::optional<TypeSpecifierNode> {
 						TypeSpecifierNode resolved_type = alias_target_type_spec;
 						if (resolved_type.has_ordered_declarator()) {
@@ -2670,6 +2676,26 @@ ParseResult Parser::parse_type_specifier() {
 						// since we already know this is an alias template.
 						AliasTemplateMaterializationResult materialized_alias =
 							materializeAliasTemplateInstantiation(type_name, *template_args);
+						const bool has_unresolved_materialized_specifier =
+							!materialized_alias.resolved_type_specifier.has_value() ||
+							materialized_alias.resolved_type_specifier->category() ==
+								TypeCategory::Invalid ||
+							materialized_alias.resolved_type_specifier->category() ==
+								TypeCategory::Template ||
+							isPlaceholderAutoType(
+								materialized_alias.resolved_type_specifier->category());
+						if (has_deferred_decltype_target &&
+							materialized_alias.resolved_type_info == nullptr &&
+							has_unresolved_materialized_specifier) {
+							return ParseResult::success(emplace_node<TypeSpecifierNode>(
+								buildDependentAliasTemplateTypeSpecifier(
+									type_name,
+									alias_node,
+									*template_args,
+									template_arg_syntax_nodes,
+									type_name_token,
+									cv_qualifier)));
+						}
 						if (materialized_alias.resolved_type_info != nullptr) {
 							const TypeInfo* materialized_info = materialized_alias.resolved_type_info;
 							FLASH_LOG(
@@ -2895,12 +2921,20 @@ ParseResult Parser::parse_type_specifier() {
 									break;
 								}
 							}
-							const TypeInfo* deferred_decltype_type_info =
-								tryGetTypeInfo(alias_node.target_type_node().type_index());
-							const bool has_deferred_decltype_target =
-								deferred_decltype_type_info != nullptr &&
-								deferred_decltype_type_info->deferredDecltypeExpression() != nullptr;
-							if (has_dependent_nttp || has_deferred_decltype_target) {
+							const bool has_dependent_callable_target =
+								alias_target.is_function_pointer() ||
+								alias_target.is_member_function_pointer() ||
+								alias_target.has_function_signature() ||
+								std::ranges::any_of(
+									alias_target.declarator_components(),
+									[](const DeclaratorComponent& component) {
+										return component.kind ==
+											DeclaratorComponentKind::Function ||
+										component.kind ==
+											DeclaratorComponentKind::MemberFunctionPointer;
+									});
+							if (has_dependent_nttp || has_deferred_decltype_target ||
+								has_dependent_callable_target) {
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									buildDependentAliasTemplateTypeSpecifier(
 										type_name,

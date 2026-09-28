@@ -387,9 +387,14 @@ Continue boundary 3A in this order:
     `tests/test_canonical_dependent_class_template_member_pointer_base_conversion_ret0.cpp`:
     `Base<T>` member addresses select concrete `Derived<int>` and
     `Derived<char>` owner candidates after substitution. Dependent
-    member-function-pointer forms beyond class-template `decltype` aliases and
-    remaining unsupported callable pairs still need substitution-aware
-    canonical ranking. Ordinary function-pointer `decltype(&function<T>)`
+    member-function-pointer aliases now preserve deferred `decltype` targets
+    until substitution can resolve a nested owner alias such as
+    `OwnerBox<T>::type`. The regression
+    `tests/test_canonical_dependent_member_template_pointer_argument_substitution_ret0.cpp`
+    checks overload selection through both that alias and a direct `decltype`
+    cast for `noexcept(true)` and `noexcept(false)` specializations. Additional
+    dependent member-function-pointer forms and unsupported callable pairs still
+    need substitution-aware canonical ranking. Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
    Overload-ranking tie-breakers for reference parameter identity and pointer
