@@ -32,6 +32,11 @@ lazy-constraint trait evaluation, and template, constexpr, and IR consumers
 still read flat fields. Array and callable outer wrappers remain guarded where
 their consumers are not migrated.
 
+Overload-ranking tie-breakers for reference parameter identity and pointer
+qualification now import supported syntax types and compare canonical `TypeId`
+structure, preserving nested declarators, array bounds, and pointee cv. Types the
+canonical importer does not yet support retain the compatibility tie-breakers.
+
 Semantic conversion support covers ordered shape identity, pointer
 qualification, object-pointer-to-`cv void*`, array/function decay, boolean
 conversion, and outermost ordered-reference binding. Function signatures retain
@@ -334,10 +339,13 @@ Continue boundary 3A in this order:
     canonical ranking. Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
-   Then make projectable semantic descriptors use structural identity
-   too, and replace flat-field reads with a single compatibility materializer
-   at each remaining legacy boundary. Preserve full callable comparison,
-   nested cv, array decay, and value-category behavior.
+   Overload-ranking tie-breakers for reference parameter identity and pointer
+   qualification now compare supported imports structurally; unsupported types
+   still use their compatibility tie-breakers. Continue making projectable
+   semantic descriptors use structural identity and replace remaining
+   flat-field reads with a single compatibility materializer at each legacy
+   boundary. Preserve full callable comparison, nested cv, array decay, and
+   value-category behavior.
 2. **Migrate remaining flat consumers.** Extend canonical classification from
    `__is_pointer` and `__is_array` to the other type traits and lazy constraints,
    then prioritize template argument/substitution storage, constexpr type

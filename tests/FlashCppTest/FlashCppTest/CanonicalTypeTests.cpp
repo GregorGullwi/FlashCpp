@@ -45,6 +45,47 @@ TEST_CASE("Structural TypeId controls semantic type descriptor identity") {
 	CHECK(nested_pointer_id != structural_id);
 }
 
+TEST_CASE("Overload ranking compares non-projectable parameter shapes structurally") {
+	FrontendContext frontend;
+	TypeSpecifierNode smaller_array(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	smaller_array.set_ordered_declarator({
+		DeclaratorComponent::lvalueReference(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+	TypeSpecifierNode larger_array = smaller_array;
+	larger_array.set_ordered_declarator({
+		DeclaratorComponent::lvalueReference(),
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(4),
+		DeclaratorComponent::pointer(CVQualifier::None),
+	});
+
+	// Both interleaved declarators have the same empty legacy projection. Their
+	// array bounds remain part of the canonical parameter type identity.
+	CHECK_FALSE(isSameTypeIgnoringTopLevelCvAndRef(smaller_array, larger_array));
+	CHECK(isSameTypeIgnoringTopLevelCvAndRef(smaller_array, smaller_array));
+}
+
+TEST_CASE("Qualification ranking reads pointee cv from canonical pointer-to-array types") {
+	FrontendContext frontend;
+	TypeSpecifierNode argument(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	argument.set_ordered_declarator({
+		DeclaratorComponent::pointer(CVQualifier::None),
+		DeclaratorComponent::array(3),
+	});
+	TypeSpecifierNode volatile_parameter = argument;
+	volatile_parameter.set_cv_qualifier(CVQualifier::Volatile);
+	TypeSpecifierNode const_volatile_parameter = argument;
+	const_volatile_parameter.set_cv_qualifier(CVQualifier::ConstVolatile);
+
+	CHECK(compareQualificationConversionDestinations(
+		argument, volatile_parameter, const_volatile_parameter) == -1);
+}
+
 TEST_CASE("Ordered declarator array conversion preserves the element spine") {
 	TypeSpecifierNode source(
 		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
