@@ -1919,6 +1919,15 @@ private:
 	ParseResult parse_struct_declaration();	// Add struct declaration parser (entry point)
 	ParseResult parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline);	// With pre-parsed specifiers
 	ParseResult parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access);  // Helper: Parse typedef/using in struct/template
+	// Publish a class-scope typedef under its simple name and struct-relative /
+	// namespace-qualified spellings so Nested::Alias resolves to the TypeInfo that
+	// carries mop/MFP owner TypeId authority.
+	void publishMemberTypedefAlias(
+		StructDeclarationNode& struct_ref,
+		StringHandle alias_name,
+		ASTNode type_node,
+		const TypeSpecifierNode& type_spec,
+		AccessSpecifier current_access);
 	ParseResult parse_enum_declaration();	  // Add enum declaration parser
 	ParseResult parse_typedef_declaration(); // Add typedef declaration parser
 	ParseResult parse_static_assert();	   // NEW: Parse static_assert declarations

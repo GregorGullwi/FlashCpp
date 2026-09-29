@@ -272,6 +272,11 @@ Typedef spellings of member-function pointers now parse through the shared
 declarator path (plain and template-id owners), so
 `static_cast<TypedefName>(nullptr)` ranks by owner identity; covered by
 `tests/test_canonical_typedef_member_function_pointer_owner_overload_ret0.cpp`.
+Class-scope typedef and nested-name mop/MFP aliases (`Typedefs::Field`,
+`Typedefs::Run`) now publish struct-relative TypeInfo spellings and project
+owner `TypeId` through nested alias materialization
+(`resolveTypeInfoToTypeSpec` / `buildTypeFromInfo`); covered by
+`tests/test_canonical_class_scope_typedef_member_pointer_owner_overload_ret0.cpp`.
 Dependent `noexcept`, user-defined
 conversions, calling-convention-sensitive function-pointer ranking, and other
 unsupported callable or template types still use compatibility planning.
@@ -472,6 +477,10 @@ Continue boundary 3A in this order:
     and template-id owners) now reuse `parse_declarator` so owner `TypeId`
     identity is published for cast overload ranking; covered by
     `tests/test_canonical_typedef_member_function_pointer_owner_overload_ret0.cpp`.
+    Class-scope typedef mop/MFP aliases keep that owner identity through nested
+    name lookup (`Typedefs::Field` / `Typedefs::Run`) via struct-relative
+    TypeInfo publication and alias-owner projection; covered by
+    `tests/test_canonical_class_scope_typedef_member_pointer_owner_overload_ret0.cpp`.
     Additional dependent member-function-pointer
     forms and remaining unsupported callable pairs (including calling-
     convention-sensitive ranking) still need substitution-aware canonical

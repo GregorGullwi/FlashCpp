@@ -1483,7 +1483,15 @@ inline TypeSpecifierNode resolveTypeInfoToTypeSpec(
 				std::move(resolved_alias.ordered_declarator));
 		}
 		applyOuterDeclaratorShapeForSubstitution(ordered_type, outer_spec);
+		if (resolved_alias.has_member_class_owner()) {
+			applyResolvedAliasMemberOwner(ordered_type, resolved_alias);
+		}
 		return ordered_type;
+	}
+	if (resolved_alias.has_member_class_owner()) {
+		TypeSpecifierNode owned_type = resolved_type;
+		applyResolvedAliasMemberOwner(owned_type, resolved_alias);
+		return owned_type;
 	}
 	return resolved_type;
 }
