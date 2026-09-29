@@ -180,6 +180,11 @@ reject mismatched function signatures. Identical context-local dependent
 distinct or one-sided dependent expressions still defer until substitution.
 Unit coverage checks both paths, while source regressions cover dependent
 `noexcept` overload selection for regular and member-function pointers.
+MSVC x64 function-pointer signatures now preserve the ABI distinction between
+`__vectorcall` and the default calling convention in nested type mangling, so
+overloads accepting those callback types remain separate declarations. The
+regression `tests/test_canonical_function_pointer_calling_convention_overload_ret0.cpp`
+checks that each callback selects its matching overload.
 Dependent `decltype(&Callable<T>::member)` aliases now recover the substituted
 member-function signature and canonical owner before overload ranking.
 Nested class-template arguments in those owners now import recursively from
