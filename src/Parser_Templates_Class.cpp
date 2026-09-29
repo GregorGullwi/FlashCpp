@@ -1470,31 +1470,62 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 		std::vector<ASTNode> alias_array_bound_expressions;
 		bool has_structural_alias_declarator = false;
-		if (peek() == "("_tok && peek(1) == "*"_tok) {
-			SaveHandle declarator_start = save_token_position();
-			TypeSpecifierNode structural_target = type_spec;
-			ParseResult declarator_result =
-				parse_declarator(
-					structural_target,
-					Linkage::None,
-					&alias_array_bound_expressions);
-			if (!declarator_result.is_error() && declarator_result.node().has_value() &&
-				declarator_result.node()->is<DeclarationNode>() &&
-				declarator_result.node()->as<DeclarationNode>().identifier_token().value().empty()) {
-				type_spec = declarator_result.node()->as<DeclarationNode>().type_specifier_node();
-				promoteDeclaratorShapeToOrdered(
-					type_spec,
-					alias_array_bound_expressions);
-				has_structural_alias_declarator = true;
-				discard_saved_token(declarator_start);
-			} else {
-				restore_token_position(declarator_start);
-				discard_saved_token(declarator_start);
+		// Structural abstract declarators: function/array pointers, and
+		// member-function pointers such as int (Owner::*)() / int (Holder<T>::*)().
+		if (peek() == "("_tok) {
+			SaveHandle member_or_pointer_probe = save_token_position();
+			advance(); // '('
+			(void)parse_calling_convention(CallingConvention::Default);
+			bool try_structural = peek() == "*"_tok;
+			if (!try_structural && peek().is_identifier()) {
+				Token owner_token = peek_info();
+				advance();
+				(void)parseMemberPointerOwnerAfterName(owner_token);
+				try_structural = consume("::"_tok) && consume("*"_tok);
+			}
+			restore_token_position(member_or_pointer_probe);
+			if (try_structural) {
+				SaveHandle declarator_start = save_token_position();
+				TypeSpecifierNode structural_target = type_spec;
+				ParseResult declarator_result =
+					parse_declarator(
+						structural_target,
+						Linkage::None,
+						&alias_array_bound_expressions);
+				if (!declarator_result.is_error() && declarator_result.node().has_value() &&
+					declarator_result.node()->is<DeclarationNode>() &&
+					declarator_result.node()->as<DeclarationNode>().identifier_token().value().empty()) {
+					type_spec = declarator_result.node()->as<DeclarationNode>().type_specifier_node();
+					promoteDeclaratorShapeToOrdered(
+						type_spec,
+						alias_array_bound_expressions);
+					has_structural_alias_declarator = true;
+					discard_saved_token(declarator_start);
+				} else {
+					restore_token_position(declarator_start);
+					discard_saved_token(declarator_start);
+				}
 			}
 		}
 
 		if (!has_structural_alias_declarator) {
 			consume_pointer_ref_modifiers(type_spec);
+		}
+
+		// Member-object-pointer targets: using Field = int Owner::*; / Holder<T>::*
+		if (!has_structural_alias_declarator && peek().is_identifier()) {
+			SaveHandle mop_start = save_token_position();
+			Token owner_token = peek_info();
+			advance();
+			const MemberPointerOwnerParse owner =
+				parseMemberPointerOwnerAfterName(owner_token);
+			if (consume("::"_tok) && consume("*"_tok)) {
+				type_spec.add_pointer_level(CVQualifier::None);
+				applyMemberPointerOwner(type_spec, owner);
+				discard_saved_token(mop_start);
+			} else {
+				restore_token_position(mop_start);
+			}
 		}
 
 		// Array dimensions in the alias target: using A = T[3]; or using A = T[N];
