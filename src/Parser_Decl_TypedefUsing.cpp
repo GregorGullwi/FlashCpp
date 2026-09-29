@@ -1029,6 +1029,55 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 	}
 
+	// Member-function-pointer typedef in class scope:
+	// typedef Ret (Owner::*Name)(Params); including template-id owners.
+	if (peek() == "("_tok) {
+		SaveHandle mfp_probe = save_token_position();
+		advance(); // '('
+		(void)parse_calling_convention(CallingConvention::Default);
+		bool try_member_function_pointer = false;
+		if (peek().is_identifier()) {
+			Token owner_token = peek_info();
+			advance();
+			(void)parseMemberPointerOwnerAfterName(owner_token);
+			try_member_function_pointer = consume("::"_tok) && consume("*"_tok);
+		}
+		restore_token_position(mfp_probe);
+		if (try_member_function_pointer) {
+			TypeSpecifierNode mfp_target = type_spec;
+			ParseResult declarator_result =
+				parse_declarator(mfp_target, Linkage::None);
+			if (!declarator_result.is_error() &&
+				declarator_result.node().has_value() &&
+				declarator_result.node()->is<DeclarationNode>()) {
+				const DeclarationNode& decl =
+					declarator_result.node()->as<DeclarationNode>();
+				const TypeSpecifierNode& mfp_spec = decl.type_specifier_node();
+				const Token& name_token = decl.identifier_token();
+				if (name_token.kind().is_identifier() &&
+					!name_token.value().empty() &&
+					mfp_spec.has_member_class() &&
+					mfp_spec.has_function_signature()) {
+					discard_saved_token(mfp_probe);
+					auto alias_name = name_token.handle();
+					type_spec = mfp_spec;
+					type_node = emplace_node<TypeSpecifierNode>(type_spec);
+					if (struct_ref) {
+						struct_ref->add_type_alias(
+							alias_name, type_node, current_access);
+					}
+					register_type_alias(alias_name, type_spec);
+					if (!consume(";"_tok)) {
+						return ParseResult::error(
+							"Expected ';' after typedef", current_token_);
+					}
+					return ParseResult::success();
+				}
+			}
+			restore_token_position(mfp_probe);
+		}
+	}
+
 	// Check for function pointer typedef: typedef ReturnType (*Name)(Params);
 	// Pattern: typedef void (*event_callback)(event e, ios_base& b, int i);
 	if (peek() == "("_tok) {
@@ -2044,6 +2093,56 @@ ParseResult Parser::parse_typedef_declaration() {
 		}
 	}
 
+	// Member-function-pointer typedef: typedef Ret (Owner::*Name)(Params);
+	// Owners may be template-ids (Holder<int>::*). Reuse parse_declarator so
+	// owner TypeId publication stays on applyMemberPointerOwner.
+	bool is_member_function_pointer_typedef = false;
+	std::string_view member_function_pointer_alias_name;
+	Token member_function_pointer_alias_token;
+	if (peek() == "("_tok) {
+		SaveHandle mfp_probe = save_token_position();
+		advance(); // '('
+		(void)parse_calling_convention(CallingConvention::Default);
+		bool try_member_function_pointer = false;
+		if (peek().is_identifier()) {
+			Token owner_token = peek_info();
+			advance();
+			(void)parseMemberPointerOwnerAfterName(owner_token);
+			try_member_function_pointer = consume("::"_tok) && consume("*"_tok);
+		}
+		restore_token_position(mfp_probe);
+		if (try_member_function_pointer) {
+			TypeSpecifierNode mfp_target = type_spec;
+			ParseResult declarator_result =
+				parse_declarator(mfp_target, Linkage::None);
+			if (!declarator_result.is_error() &&
+				declarator_result.node().has_value() &&
+				declarator_result.node()->is<DeclarationNode>()) {
+				const DeclarationNode& decl =
+					declarator_result.node()->as<DeclarationNode>();
+				const TypeSpecifierNode& mfp_spec = decl.type_specifier_node();
+				const Token& name_token = decl.identifier_token();
+				if (name_token.kind().is_identifier() &&
+					!name_token.value().empty() &&
+					mfp_spec.has_member_class() &&
+					mfp_spec.has_function_signature()) {
+					is_member_function_pointer_typedef = true;
+					type_spec = mfp_spec;
+					type_node = emplace_node<TypeSpecifierNode>(type_spec);
+					member_function_pointer_alias_name = name_token.value();
+					member_function_pointer_alias_token = name_token;
+					FLASH_LOG_FORMAT(Parser, Debug,
+						"Parsed member-function-pointer typedef '{}'",
+						member_function_pointer_alias_name);
+					discard_saved_token(mfp_probe);
+				}
+			}
+			if (!is_member_function_pointer_typedef) {
+				restore_token_position(mfp_probe);
+			}
+		}
+	}
+
 	// Check for function pointer typedef: typedef return_type (*alias_name)(params);
 	// Pattern: '(' '*' identifier ')' '(' params ')'
 	bool is_function_pointer_typedef = false;
@@ -2052,7 +2151,7 @@ ParseResult Parser::parse_typedef_declaration() {
 	bool function_pointer_is_variadic = false;
 	FlashCpp::MemberQualifiers function_pointer_qualifiers;
 	FlashCpp::FunctionSpecifiers function_pointer_specifiers;
-	if (peek() == "("_tok) {
+	if (!is_member_function_pointer_typedef && peek() == "("_tok) {
 		// Peek ahead to check if this is a function pointer pattern
 		SaveHandle paren_saved = save_token_position();
 		advance(); // consume '('
@@ -2112,7 +2211,10 @@ ParseResult Parser::parse_typedef_declaration() {
 	std::string_view alias_name;
 	std::optional<Token> alias_token;
 
-	if (is_function_pointer_typedef) {
+	if (is_member_function_pointer_typedef) {
+		alias_name = member_function_pointer_alias_name;
+		alias_token = member_function_pointer_alias_token;
+	} else if (is_function_pointer_typedef) {
 		alias_name = function_pointer_alias_name;
 		// Create a synthetic token for the alias name (use file index 0 since it's synthetic)
 		alias_token = Token(Token::Type::Identifier, function_pointer_alias_name, 0, 0, 0);

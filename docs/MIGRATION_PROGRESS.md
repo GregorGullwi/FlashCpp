@@ -268,6 +268,10 @@ identity for cast overload ranking; covered by
 preserves member-pointer owner identity through the shared outer-modifier path
 and republishes concrete owners via `applyMemberPointerOwner` / TypeIndex import
 rather than spelling-only name-map binding.
+Typedef spellings of member-function pointers now parse through the shared
+declarator path (plain and template-id owners), so
+`static_cast<TypedefName>(nullptr)` ranks by owner identity; covered by
+`tests/test_canonical_typedef_member_function_pointer_owner_overload_ret0.cpp`.
 Dependent `noexcept`, user-defined
 conversions, calling-convention-sensitive function-pointer ranking, and other
 unsupported callable or template types still use compatibility planning.
@@ -464,6 +468,10 @@ Continue boundary 3A in this order:
     `tests/test_canonical_alias_template_member_pointer_owner_overload_ret0.cpp`
     (including type-parameter owners). Owner identity is preserved through
     alias-target substitution and republished with TypeId authority.
+    Typedef member-function-pointer declarators (`typedef int (Owner::*Name)()`
+    and template-id owners) now reuse `parse_declarator` so owner `TypeId`
+    identity is published for cast overload ranking; covered by
+    `tests/test_canonical_typedef_member_function_pointer_owner_overload_ret0.cpp`.
     Additional dependent member-function-pointer
     forms and remaining unsupported callable pairs (including calling-
     convention-sensitive ranking) still need substitution-aware canonical
