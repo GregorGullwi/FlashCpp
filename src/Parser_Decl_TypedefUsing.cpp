@@ -18,6 +18,43 @@ void Parser::bindLocalTypeAlias(
 	gSymbolTable.insert(alias_token.handle(), alias_symbol);
 }
 
+void Parser::publishMemberTypedefAlias(
+	StructDeclarationNode& struct_ref,
+	StringHandle alias_name,
+	ASTNode type_node,
+	const TypeSpecifierNode& type_spec,
+	AccessSpecifier current_access) {
+	struct_ref.add_type_alias(alias_name, type_node, current_access);
+
+	// Register the simple alias name so it can be resolved as a type from within
+	// the same struct body (e.g., typedef A B; typedef B C;). Using the simple
+	// name as the canonical entry avoids a second TypeInfo.
+	NamespaceHandle current_ns = gSymbolTable.get_current_namespace_handle();
+	std::string_view current_ns_name = gNamespaceRegistry.getQualifiedName(current_ns);
+	TypeInfo& alias_info = register_type_alias(alias_name, type_spec, current_ns);
+
+	// Also register the struct-chain-relative and namespace-qualified names
+	// (e.g., "Container::MyInt" and "ns::Container::MyInt") so external callers
+	// resolve Nested::Alias to the same TypeInfo that carries mop/MFP owner
+	// TypeId authority.
+	StringBuilder chain_builder;
+	for (const auto& ctx : struct_parsing_context_stack_) {
+		chain_builder.append(ctx.struct_name).append("::");
+	}
+	chain_builder.append(alias_name);
+	StringHandle struct_relative_handle =
+		StringTable::getOrInternStringHandle(chain_builder.commit());
+	getTypesByNameMap().emplace(struct_relative_handle, &alias_info);
+
+	if (!current_ns_name.empty()) {
+		StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+			current_ns, struct_relative_handle);
+		if (getTypesByNameMap().find(ns_qualified_handle) == getTypesByNameMap().end()) {
+			getTypesByNameMap().emplace(ns_qualified_handle, &alias_info);
+		}
+	}
+}
+
 // Parse the function type suffix used in aliases such as ReturnType (*)(Args...),
 // including vendor calling conventions, variadic ellipses, and trailing noexcept.
 // Returns false after restoring the token position when the next tokens are not
@@ -1063,10 +1100,15 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					type_spec = mfp_spec;
 					type_node = emplace_node<TypeSpecifierNode>(type_spec);
 					if (struct_ref) {
-						struct_ref->add_type_alias(
-							alias_name, type_node, current_access);
+						publishMemberTypedefAlias(
+							*struct_ref,
+							alias_name,
+							type_node,
+							type_spec,
+							current_access);
+					} else {
+						register_type_alias(alias_name, type_spec);
 					}
-					register_type_alias(alias_name, type_spec);
 					if (!consume(";"_tok)) {
 						return ParseResult::error(
 							"Expected ';' after typedef", current_token_);
@@ -1145,33 +1187,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 	// Store the alias in the struct (if struct_ref provided)
 	if (struct_ref) {
-		struct_ref->add_type_alias(alias_name, type_node, current_access);
-
-		// Register the simple alias name so it can be resolved as a type
-		// from within the same struct body (e.g., typedef A B; typedef B C;).
-		// Using the simple name as the canonical entry avoids a second TypeInfo.
-		NamespaceHandle current_ns = gSymbolTable.get_current_namespace_handle();
-		std::string_view current_ns_name = gNamespaceRegistry.getQualifiedName(current_ns);
-		TypeInfo& alias_info = register_type_alias(alias_name, type_spec, current_ns);
-
-		// Also register the struct-chain-relative and namespace-qualified names
-		// (e.g., "Container::MyInt" and "ns::Container::MyInt") so that
-		// external callers can resolve the type.
-		StringBuilder chain_builder;
-		for (const auto& ctx : struct_parsing_context_stack_) {
-			chain_builder.append(ctx.struct_name).append("::");
-		}
-		chain_builder.append(alias_name);
-		StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(chain_builder.commit());
-		getTypesByNameMap().emplace(struct_relative_handle, &alias_info);
-
-		if (!current_ns_name.empty()) {
-			StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-				current_ns, struct_relative_handle);
-			if (getTypesByNameMap().find(ns_qualified_handle) == getTypesByNameMap().end()) {
-				getTypesByNameMap().emplace(ns_qualified_handle, &alias_info);
-			}
-		}
+		publishMemberTypedefAlias(
+			*struct_ref, alias_name, type_node, type_spec, current_access);
 		return ParseResult::success();
 	}
 

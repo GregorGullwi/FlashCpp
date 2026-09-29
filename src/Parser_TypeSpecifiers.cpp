@@ -2417,17 +2417,19 @@ ParseResult Parser::parse_type_specifier() {
 						std::vector<size_t> resolved_array_dimensions;
 						std::optional<FunctionSignature> resolved_function_signature;
 						CVQualifier resolved_cv = CVQualifier::None;
+						std::optional<ResolvedAliasTypeInfo> resolved_alias;
 						if (resolve_aliases || type_info.isTypeAlias()) {
-							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_info.registeredTypeIndex());
-							if (resolve_aliases && resolved_alias.type_index.is_valid()) {
-								resolved_type_index = resolved_alias.type_index;
-								resolved_category = resolved_alias.typeEnum();
+							resolved_alias =
+								resolveAliasTypeInfo(type_info.registeredTypeIndex());
+							if (resolve_aliases && resolved_alias->type_index.is_valid()) {
+								resolved_type_index = resolved_alias->type_index;
+								resolved_category = resolved_alias->typeEnum();
 							}
-							resolved_pointer_depth = resolved_alias.pointer_depth;
-							resolved_reference = resolved_alias.reference_qualifier;
-							resolved_array_dimensions = resolved_alias.array_dimensions;
-							resolved_function_signature = resolved_alias.function_signature;
-							resolved_cv = resolved_alias.cv_qualifier;
+							resolved_pointer_depth = resolved_alias->pointer_depth;
+							resolved_reference = resolved_alias->reference_qualifier;
+							resolved_array_dimensions = resolved_alias->array_dimensions;
+							resolved_function_signature = resolved_alias->function_signature;
+							resolved_cv = resolved_alias->cv_qualifier;
 						}
 						auto type_node = emplace_node<TypeSpecifierNode>(
 							resolved_type_index.withCategory(resolved_category),
@@ -2447,18 +2449,22 @@ ParseResult Parser::parse_type_specifier() {
 						if (resolved_function_signature.has_value()) {
 							type_node.as<TypeSpecifierNode>().set_function_signature(*resolved_function_signature);
 						}
-						if (resolve_aliases || type_info.isTypeAlias()) {
-							const ResolvedAliasTypeInfo resolved_alias =
-								resolveAliasTypeInfo(type_info.registeredTypeIndex());
-							if (resolved_alias.has_ordered_declarator) {
+						if (resolved_alias.has_value()) {
+							if (resolved_alias->has_ordered_declarator) {
 								TypeSpecifierNode resolved_type_specifier =
 									type_node.as<TypeSpecifierNode>();
 								resolved_type_specifier.set_ordered_declarator(
-									resolved_alias.ordered_declarator);
+									resolved_alias->ordered_declarator);
 								if (!resolved_type_specifier.ordered_declarator_has_legacy_projection()) {
 									type_node.as<TypeSpecifierNode>().set_ordered_declarator(
-										resolved_alias.ordered_declarator);
+										resolved_alias->ordered_declarator);
 								}
+							}
+							// Nested Typedefs::Field / Nested::Run must keep mop/MFP
+							// owner TypeId authority the same way unqualified aliases do.
+							if (resolved_alias->has_member_class_owner()) {
+								applyResolvedAliasMemberOwner(
+									type_node.as<TypeSpecifierNode>(), *resolved_alias);
 							}
 						}
 						return ParseResult::success(type_node);
