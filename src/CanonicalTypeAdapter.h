@@ -803,13 +803,18 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 		return imported_function;
 	}
 	auto id = imported_function.type;
-	if (syntax.category() == TypeCategory::FunctionPointer) {
-		// FunctionPointer always contributes one pointer-to-function wrapper.
-		// Additional pointer_levels are outer wrappers (int (**)(Args)).
-		id = table.pointer(id);
-	}
-	if (!syntax.pointer_levels().empty()) {
-		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {
+		// FunctionPointer with empty pointer_levels is a single pointer-to-function
+		// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full
+		// wrapper stack around the function — including nested forms such as
+		// int (**)(Args) encoded as FunctionPointer with two levels — so do not
+		// also add a category wrap (legacy decltype aliases may carry a
+		// redundant level that would otherwise become depth 2).
+		if (syntax.pointer_levels().empty()) {
+			id = table.pointer(id);
+		} else {
+			id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+		}
 	}
 	id = table.qualify(id, syntax.cv_qualifier());
 	if (syntax.reference_qualifier() != ReferenceQualifier::None) {

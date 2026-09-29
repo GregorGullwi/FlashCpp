@@ -1566,27 +1566,38 @@ ParseResult Parser::parse_declarator(
 								return ParseResult::success(func_decl_node);
 							}
 							if (use_flat_function_pointer) {
-								// The pointer immediately outside Function is
-								// absorbed into TypeCategory::FunctionPointer;
-								// any further outer pointers become flat
-								// pointer_levels so int (**)(int) stays distinct
-								// from int (*)(int) without an ordered callable.
-								const size_t absorbed_pointer_index = *function_index - 1;
+								// Flat FunctionPointer encoding:
+								//   int (*)(Args)  → category only (empty levels)
+								//   int (**)(Args) → category + full pointer_levels
+								// Import adds one wrap for empty levels, or applies
+								// pointer_levels as the complete wrapper stack when
+								// non-empty (so nested depth stays distinct without
+								// double-counting a category wrap).
+								const size_t first_pointer_index = function_pointer_component;
+								const size_t last_pointer_index = *function_index - 1;
+								const size_t pointer_wrapper_count =
+									last_pointer_index - first_pointer_index + 1;
+								const CVQualifier function_pointer_cv =
+									pointer_wrapper_count == 1
+										? completed[last_pointer_index].cv_qualifier
+										: CVQualifier::None;
 								ASTNode function_pointer_node = emplace_node<TypeSpecifierNode>(
 									TypeCategory::FunctionPointer,
 									TypeQualifier::None,
 									SizeInBits{kFunctionPointerSizeBits},
 									base_type.token(),
-									completed[absorbed_pointer_index].cv_qualifier);
+									function_pointer_cv);
 								TypeSpecifierNode& function_pointer =
 									function_pointer_node.as<TypeSpecifierNode>();
 								function_pointer.set_function_signature(signature);
 								function_pointer.set_reference_qualifier(
 									function_pointer_reference);
-								for (size_t index = function_pointer_component;
-									index < absorbed_pointer_index; ++index) {
-									function_pointer.add_pointer_level(
-										completed[index].cv_qualifier);
+								if (pointer_wrapper_count > 1) {
+									for (size_t index = first_pointer_index;
+										index <= last_pointer_index; ++index) {
+										function_pointer.add_pointer_level(
+											completed[index].cv_qualifier);
+									}
 								}
 								if (identifier.value().empty()) {
 									base_type = function_pointer;
