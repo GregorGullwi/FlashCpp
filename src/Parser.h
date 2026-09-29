@@ -3732,6 +3732,14 @@ private:
 		bool& out_has_template_args);
 	StringHandle parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_args, bool& out_has_template_args);
 
+	// After consuming a class-name identifier for a pointer-to-member owner,
+	// resolve an optional class-template specialization (`Class<Args>::*`).
+	// When peek is not '<' or the name is not a class template, returns the
+	// original identifier handle and leaves the token stream unchanged so the
+	// caller can still match `::*`. Instantiates the specialization when needed
+	// and returns its published type name for member-class binding.
+	StringHandle resolveMemberPointerOwnerName(Token class_name_token);
+
 		// Template name extraction helpers - extract base template names from mangled/instantiated names
 	std::string_view extract_base_template_name(std::string_view mangled_name);	// Extract by searching for underscores left-to-right
 	std::string_view extract_base_template_name_by_stripping(std::string_view instantiated_name);  // Extract by stripping suffixes right-to-left
