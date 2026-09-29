@@ -1265,7 +1265,11 @@ ParseResult Parser::parse_declarator(
 					skip_noop_gnu_qualifiers();
 					candidate = peek() == "("_tok || peek().is_identifier();
 				} else if (peek().is_identifier()) {
+					// Match the outer probe and the parse loop: owners may be
+					// template-ids (Holder<int>::*), not only bare names.
+					Token owner_token = peek_info();
 					advance();
+					(void)parseMemberPointerOwnerAfterName(owner_token);
 					candidate = consume("::"_tok) && consume("*"_tok);
 				}
 				restore_token_position(structural_start);
