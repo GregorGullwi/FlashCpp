@@ -384,16 +384,10 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 
 inline CanonicalTypeImport importCanonicalFunctionTypeComponent(CanonicalTypeTable& table,
 	const FunctionType& type, CanonicalTypeImportContext context) {
-	TypeSpecifierNode syntax = typeSpecifierFromFunctionType(type);
-	// FunctionType carries nominal components through TypeIndex; import their
-	// published declaration identity before canonicalizing the signature.
-	if ((syntax.category() == TypeCategory::Struct ||
-		syntax.category() == TypeCategory::Enum) &&
-		!syntax.has_template_specialization() &&
-		!syntax.is_alias_template_specialization()) {
-		tryBindPublishedTypeEntity(syntax);
-	}
-	return importCanonicalTypeImpl(table, syntax, context);
+	return importCanonicalTypeImpl(
+		table,
+		typeSpecifierFromFunctionType(type),
+		context);
 }
 
 inline CVQualifier functionSignatureCV(const FunctionSignature& signature) {

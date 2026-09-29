@@ -1612,7 +1612,7 @@ ParseResult Parser::parse_declarator(
 							}
 							FunctionSignature signature;
 							signature.setReturnType(
-								makeFunctionTypeFromSpecifier(return_type));
+								makeFunctionType(return_type));
 							std::vector<FunctionType> parameter_types;
 							parameter_types.reserve(
 								ordered_function_parameters->parameters.size());
@@ -1623,7 +1623,7 @@ ParseResult Parser::parse_declarator(
 									parameters_ok = false;
 									break;
 								}
-								parameter_types.push_back(makeFunctionTypeFromSpecifier(
+								parameter_types.push_back(makeFunctionType(
 									parameter.as<DeclarationNode>().type_specifier_node()));
 							}
 							if (!parameters_ok) {
@@ -2718,7 +2718,9 @@ ParseResult Parser::parse_declaration(FlashCpp::DeclarationContext context) {
 	}
 }
 FunctionType Parser::makeFunctionType(const TypeSpecifierNode& type_spec) const {
-	FunctionType type = makeFunctionTypeFromSpecifier(type_spec);
+	TypeSpecifierNode bound_type = type_spec;
+	tryBindPublishedTypeEntity(bound_type);
+	FunctionType type = makeFunctionTypeFromSpecifier(bound_type);
 	if (!type.template_parameter_name.isValid() &&
 		typeIndexContainsDependentPlaceholder(type_spec.type_index())) {
 		const std::optional<TemplateParameterKind> parameter_kind =
