@@ -203,7 +203,7 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 		SaveHandle mop_save = save_token_position();
 		Token mop_class_token = peek_info();
 		advance(); // consume potential class name
-		StringHandle owner_name = resolveMemberPointerOwnerName(mop_class_token);
+		const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(mop_class_token);
 		if (peek() == "::"_tok) {
 			advance(); // consume '::'
 			if (peek() == "*"_tok) {
@@ -216,9 +216,8 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 				type_spec.set_type_index(nativeTypeIndex(TypeCategory::MemberObjectPointer));
 				type_spec.set_size_in_bits(64);
 				type_spec.limit_pointer_depth(0);
-				type_spec.set_member_class_name(owner_name);
+				applyMemberPointerOwner(type_spec, owner);
 				type_spec.set_member_object_pointee(&pointee_node.as<TypeSpecifierNode>());
-				tryBindPublishedMemberClassEntity(type_spec);
 				discard_saved_token(mop_save);
 			} else {
 				restore_token_position(mop_save);
@@ -236,7 +235,7 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 		if (peek().is_identifier()) {
 			Token mfp_class_token = peek_info();
 			advance(); // consume class name
-			StringHandle owner_name = resolveMemberPointerOwnerName(mfp_class_token);
+			const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(mfp_class_token);
 			if (peek() == "::"_tok) {
 				advance(); // consume '::'
 				if (peek() == "*"_tok) {
@@ -268,8 +267,7 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 								type_spec.set_size_in_bits(64);
 								type_spec.limit_pointer_depth(0);
 								type_spec.set_function_signature(mfp_sig);
-								type_spec.set_member_class_name(owner_name);
-								tryBindPublishedMemberClassEntity(type_spec);
+								applyMemberPointerOwner(type_spec, owner);
 								discard_saved_token(mfp_save);
 							} else {
 								restore_token_position(mfp_save);

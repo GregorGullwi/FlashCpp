@@ -245,8 +245,8 @@ declaring-class owner rather than the naming class. The regression
 `tests/test_canonical_member_object_pointer_address_of_exact_vs_base_conversion_ret0.cpp`
 checks `&Base::value`, `&Derived::value`, and `&Derived::own` selection.
 Member-object-pointer owners spelled as class-template specializations such as
-`Holder<int>::*` now publish the same specialization identity as typedef
-aliases; `tests/test_canonical_template_id_member_pointer_owner_overload_ret0.cpp`
+`Holder<int>::*` now publish specialization `TypeId` identity at parse
+(spelling remains only a lexical projection); `tests/test_canonical_template_id_member_pointer_owner_overload_ret0.cpp`
 checks parameter and alias overload selection. Dependent `noexcept`, user-defined
 conversions, calling-convention-sensitive function-pointer ranking, and other
 unsupported callable or template types still use compatibility planning.
@@ -421,10 +421,11 @@ Continue boundary 3A in this order:
     parser-time ranking, covered by
     `tests/test_canonical_member_object_pointer_address_of_exact_vs_base_conversion_ret0.cpp`.
     Member-object-pointer owners spelled as class-template specializations
-    (`Holder<int>::*`) now resolve through the same published specialization
-    identity used by typedef aliases, so overload ranking distinguishes
-    `Holder<int>::*` from `Holder<char>::*` without requiring an intermediate
-    alias. The regression
+    (`Holder<int>::*`) now publish specialization `TypeId` identity directly
+    from the instantiated class declaration (with spelling retained only as a
+    lexical projection), so overload ranking distinguishes `Holder<int>::*`
+    from `Holder<char>::*` without requiring an intermediate alias or a
+    name-map round-trip as owner authority. The regression
     `tests/test_canonical_template_id_member_pointer_owner_overload_ret0.cpp`
     checks parameter and alias forms. Member-function-pointer owners spelled
     as template-ids, additional dependent member-function-pointer forms, and

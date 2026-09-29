@@ -3733,12 +3733,22 @@ private:
 	StringHandle parseRawAliasTargetTemplateId(std::vector<ASTNode>& out_args, bool& out_has_template_args);
 
 	// After consuming a class-name identifier for a pointer-to-member owner,
-	// resolve an optional class-template specialization (`Class<Args>::*`).
-	// When peek is not '<' or the name is not a class template, returns the
-	// original identifier handle and leaves the token stream unchanged so the
-	// caller can still match `::*`. Instantiates the specialization when needed
-	// and returns its published type name for member-class binding.
-	StringHandle resolveMemberPointerOwnerName(Token class_name_token);
+	// consume an optional class-template specialization (`Class<Args>`).
+	struct MemberPointerOwnerParse {
+		StringHandle spelling;
+		std::optional<ASTNode> specialization_node;
+	};
+	MemberPointerOwnerParse parseMemberPointerOwnerAfterName(Token class_name_token);
+
+	// Publish mop/mfp owner identity from a prior parseMemberPointerOwnerAfterName
+	// result: TypeId for specializations, else EntityId via tryBind. Spelling is
+	// retained only as a lexical projection for has_member_class().
+	void applyMemberPointerOwner(
+		TypeSpecifierNode& type_spec,
+		const MemberPointerOwnerParse& parsed);
+
+	// parseMemberPointerOwnerAfterName + applyMemberPointerOwner.
+	void bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_name_token);
 
 		// Template name extraction helpers - extract base template names from mangled/instantiated names
 	std::string_view extract_base_template_name(std::string_view mangled_name);	// Extract by searching for underscores left-to-right

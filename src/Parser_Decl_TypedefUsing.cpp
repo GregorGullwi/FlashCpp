@@ -341,7 +341,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto saved_pos = save_token_position();
 			Token class_token = peek_info();
 			advance(); // consume potential class name
-			StringHandle owner_name = resolveMemberPointerOwnerName(class_token);
+			const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(class_token);
 
 			if (peek() == "::"_tok) {
 				advance(); // consume '::'
@@ -350,8 +350,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					// This is a pointer-to-member type: Type Class::*
 					// Mark the type as a pointer-to-member
 					type_spec.add_pointer_level(CVQualifier::None); // Add pointer level
-					type_spec.set_member_class_name(owner_name);
-					tryBindPublishedMemberClassEntity(type_spec);
+					applyMemberPointerOwner(type_spec, owner);
 					FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
 					discard_saved_token(saved_pos);
 				} else {
@@ -979,7 +978,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		SaveHandle saved_pos = save_token_position();
 		Token class_token = peek_info();
 		advance(); // consume potential class name
-		StringHandle owner_name = resolveMemberPointerOwnerName(class_token);
+		const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(class_token);
 
 		if (peek() == "::"_tok) {
 			advance(); // consume '::'
@@ -988,8 +987,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// This is a pointer-to-member type: Type Class::*
 				// Mark the type as a pointer-to-member
 				type_spec.add_pointer_level(CVQualifier::None); // Add pointer level
-				type_spec.set_member_class_name(owner_name);
-				tryBindPublishedMemberClassEntity(type_spec);
+				applyMemberPointerOwner(type_spec, owner);
 				FLASH_LOG(Parser, Debug, "Parsed pointer-to-member typedef in member_type_alias: ", type_spec.token().value(), " ", class_token.value(), "::*");
 				discard_saved_token(saved_pos);
 			} else {
@@ -1994,7 +1992,7 @@ ParseResult Parser::parse_typedef_declaration() {
 			SaveHandle saved_pos = save_token_position();
 			Token class_token = peek_info();
 			advance(); // consume potential class name
-			StringHandle owner_name = resolveMemberPointerOwnerName(class_token);
+			const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(class_token);
 
 			if (peek() == "::"_tok) {
 				advance(); // consume '::'
@@ -2003,8 +2001,7 @@ ParseResult Parser::parse_typedef_declaration() {
 					// This is a pointer-to-member type: Type Class::*
 					// Mark the type as a pointer-to-member
 					type_spec.add_pointer_level(CVQualifier::None); // Add pointer level
-					type_spec.set_member_class_name(owner_name);
-					tryBindPublishedMemberClassEntity(type_spec);
+					applyMemberPointerOwner(type_spec, owner);
 					FLASH_LOG(Parser, Debug, "Parsed pointer-to-member typedef: ", type_spec.token().value(), " ", class_token.value(), "::*");
 					discard_saved_token(saved_pos);
 				} else {

@@ -77,16 +77,18 @@ std::optional<size_t> singleFunctionComponentIndex(
 
 }
 
-StringHandle Parser::resolveMemberPointerOwnerName(Token class_name_token) {
-	StringHandle owner = class_name_token.handle();
+Parser::MemberPointerOwnerParse Parser::parseMemberPointerOwnerAfterName(
+	Token class_name_token) {
+	MemberPointerOwnerParse parsed;
+	parsed.spelling = class_name_token.handle();
 	if (peek() != "<"_tok) {
-		return owner;
+		return parsed;
 	}
 	const std::string_view primary = class_name_token.value();
 	const auto class_template = gTemplateRegistry.lookupTemplate(primary);
 	if (!class_template.has_value() ||
 		!class_template->is<TemplateClassDeclarationNode>()) {
-		return owner;
+		return parsed;
 	}
 	SaveHandle args_pos = save_token_position();
 	auto args = parse_explicit_template_arguments(
@@ -94,15 +96,57 @@ StringHandle Parser::resolveMemberPointerOwnerName(Token class_name_token) {
 		static_cast<std::vector<ASTNode>*>(nullptr));
 	if (!args.has_value()) {
 		restore_token_position(args_pos);
-		return owner;
+		return parsed;
 	}
 	discard_saved_token(args_pos);
 	if (auto instantiated = try_instantiate_class_template(primary, *args);
 		instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 		registerAndNormalizeLateMaterializedTopLevelNode(*instantiated);
+		parsed.specialization_node = *instantiated;
 	}
-	return StringTable::getOrInternStringHandle(
+	parsed.spelling = StringTable::getOrInternStringHandle(
 		get_instantiated_class_name(primary, *args));
+	return parsed;
+}
+
+void Parser::applyMemberPointerOwner(
+	TypeSpecifierNode& type_spec,
+	const MemberPointerOwnerParse& parsed) {
+	// Lexical projection: has_member_class() and legacy consumers still read
+	// the spelling, but specialization owners publish TypeId as authority.
+	type_spec.set_member_class_name(parsed.spelling);
+
+	if (parsed.specialization_node.has_value() &&
+		parsed.specialization_node->is<StructDeclarationNode>()) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport imported = importCanonicalClassDeclaration(
+			table, parsed.specialization_node->as<StructDeclarationNode>());
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			const CanonicalTypeKind kind = table.node(imported.type).kind;
+			if (kind == CanonicalTypeKind::TemplateSpecialization ||
+				kind == CanonicalTypeKind::Record) {
+				type_spec.set_member_class_type_id(imported.type);
+				const auto type_it = getTypesByNameMap().find(parsed.spelling);
+				if (type_it != getTypesByNameMap().end() &&
+					type_it->second != nullptr) {
+					if (const StructTypeInfo* struct_info =
+							canonicalClassStructInfoFromTypeInfo(*type_it->second)) {
+						(void)tryPublishCanonicalClassBaseSchema(
+							table, imported.type, *struct_info);
+					}
+				}
+				transaction.commit();
+				return;
+			}
+		}
+	}
+
+	tryBindPublishedMemberClassEntity(type_spec);
+}
+
+void Parser::bindMemberPointerOwner(TypeSpecifierNode& type_spec, Token class_name_token) {
+	applyMemberPointerOwner(type_spec, parseMemberPointerOwnerAfterName(class_name_token));
 }
 
 ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
@@ -300,7 +344,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			SaveHandle member_pointer_probe = save_token_position();
 			Token owner_token = peek_info();
 			advance();
-			(void)resolveMemberPointerOwnerName(owner_token);
+			(void)parseMemberPointerOwnerAfterName(owner_token);
 			const bool is_member_pointer = consume("::"_tok) && consume("*"_tok);
 			restore_token_position(member_pointer_probe);
 			if (is_member_pointer) {
@@ -462,7 +506,8 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			SaveHandle ptrmf_check_pos = save_token_position();
 			Token class_name_token = peek_info();
 			advance(); // consume class name
-			StringHandle owner_name = resolveMemberPointerOwnerName(class_name_token);
+			const MemberPointerOwnerParse owner =
+				parseMemberPointerOwnerAfterName(class_name_token);
 
 			if (peek() == "::"_tok) {
 				advance(); // consume '::'
@@ -531,8 +576,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 							type_spec.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
 							type_spec.set_size_in_bits(64);
 							type_spec.limit_pointer_depth(0);
-							type_spec.set_member_class_name(owner_name);
-							tryBindPublishedMemberClassEntity(type_spec);
+							applyMemberPointerOwner(type_spec, owner);
 							type_spec.set_function_signature(signature);
 
 							// Create declaration node
@@ -574,7 +618,8 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		SaveHandle saved_pos = save_token_position();
 		Token class_name_token = peek_info();
 		advance(); // consume class name
-		StringHandle owner_name = resolveMemberPointerOwnerName(class_name_token);
+		const MemberPointerOwnerParse owner =
+			parseMemberPointerOwnerAfterName(class_name_token);
 
 		// Check for ::
 		if (peek() == "::"_tok) {
@@ -588,9 +633,7 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 				FLASH_LOG(Parser, Debug, "parse_type_and_name: Detected pointer-to-member: ",
 						  class_name_token.value(), "::*");
 
-				// Set the member class name
-				type_spec.set_member_class_name(owner_name);
-				tryBindPublishedMemberClassEntity(type_spec);
+				applyMemberPointerOwner(type_spec, owner);
 
 				// Add a pointer level to indicate this is a pointer
 				CVQualifier member_pointer_cv = parse_cv_qualifiers();
@@ -1302,13 +1345,13 @@ ParseResult Parser::parse_declarator(
 							SaveHandle member_pointer_start = save_token_position();
 							Token owner_token = peek_info();
 							advance();
-							StringHandle owner_name = resolveMemberPointerOwnerName(owner_token);
+							const MemberPointerOwnerParse owner =
+								parseMemberPointerOwnerAfterName(owner_token);
 							if (consume("::"_tok) && consume("*"_tok)) {
 								CVQualifier member_cv = parse_cv_qualifiers();
 								skip_noop_gnu_qualifiers();
 								member_cv |= parse_cv_qualifiers();
-								base_type.set_member_class_name(owner_name);
-								tryBindPublishedMemberClassEntity(base_type);
+								applyMemberPointerOwner(base_type, owner);
 								frame.prefixes.push_back(
 									base_type.has_member_class_type_id()
 										? DeclaratorComponent::memberPointer(

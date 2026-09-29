@@ -628,7 +628,7 @@ ParseResult Parser::parse_template_parameter() {
 			// e.g., template <int (S::* MemberFn)()>
 			Token mfp_class_token = peek_info();
 			advance(); // consume class name
-			StringHandle owner_name = resolveMemberPointerOwnerName(mfp_class_token);
+			const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(mfp_class_token);
 			if (peek() == "::"_tok) {
 				advance(); // consume '::'
 				if (peek() == "*"_tok) {
@@ -680,8 +680,7 @@ ParseResult Parser::parse_template_parameter() {
 								nttp_type.set_size_in_bits(64);
 								nttp_type.limit_pointer_depth(0);
 								nttp_type.set_function_signature(mfp_sig);
-								nttp_type.set_member_class_name(owner_name);
-								tryBindPublishedMemberClassEntity(nttp_type);
+								applyMemberPointerOwner(nttp_type, owner);
 
 								discard_saved_token(fp_decl_pos);
 								parsed_as_function_pointer = true;
@@ -727,7 +726,7 @@ ParseResult Parser::parse_template_parameter() {
 		SaveHandle mop_pos = save_token_position();
 		Token mop_class_token = peek_info();
 		advance(); // consume potential class name
-		StringHandle owner_name = resolveMemberPointerOwnerName(mop_class_token);
+		const MemberPointerOwnerParse owner = parseMemberPointerOwnerAfterName(mop_class_token);
 		if (peek() == "::"_tok) {
 			advance(); // consume '::'
 			if (peek() == "*"_tok) {
@@ -741,9 +740,8 @@ ParseResult Parser::parse_template_parameter() {
 				nttp_type.set_type_index(nativeTypeIndex(TypeCategory::MemberObjectPointer));
 				nttp_type.set_size_in_bits(64);
 				nttp_type.limit_pointer_depth(0);
-				nttp_type.set_member_class_name(owner_name);
+				applyMemberPointerOwner(nttp_type, owner);
 				nttp_type.set_member_object_pointee(&mop_pointee_node.as<TypeSpecifierNode>());
-				tryBindPublishedMemberClassEntity(nttp_type);
 				discard_saved_token(mop_pos);
 				FLASH_LOG(Parser, Debug, "Parsed member object pointer NTTP: ",
 						  nttp_type.token().value(), " ", mop_class_token.value(), "::*");
