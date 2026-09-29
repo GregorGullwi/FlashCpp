@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-09-28.
+Last updated: 2026-09-29.
 
 ## Current state
 
@@ -392,9 +392,12 @@ Continue boundary 3A in this order:
     `OwnerBox<T>::type`. The regression
     `tests/test_canonical_dependent_member_template_pointer_argument_substitution_ret0.cpp`
     checks overload selection through both that alias and a direct `decltype`
-    cast for `noexcept(true)` and `noexcept(false)` specializations. Additional
-    dependent member-function-pointer forms and unsupported callable pairs still
-    need substitution-aware canonical ranking. Ordinary function-pointer `decltype(&function<T>)`
+    cast for `noexcept(true)` and `noexcept(false)` specializations.
+    `tests/test_canonical_dependent_member_template_pointer_deep_alias_overload_ret0.cpp`
+    covers a 32-hop alias-template chain over that same nested-owner member-
+    function-template address on both MSVC and Itanium (no platform guard).
+    Additional dependent member-function-pointer forms and unsupported callable
+    pairs still need substitution-aware canonical ranking. Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
    Overload-ranking tie-breakers for reference parameter identity and pointer
