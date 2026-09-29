@@ -216,6 +216,8 @@ COMPILE_ONLY_OVERRIDES=""
 for candidate in tests/test_seh_*.cpp; do
 	[ -f "$candidate" ] && PLATFORM_EXCLUSIONS+=" $(basename "$candidate")"
 done
+# This regression checks MSVC x64's distinct __vectorcall type encoding.
+PLATFORM_EXCLUSIONS+=" test_canonical_function_pointer_calling_convention_overload_ret0.cpp"
 if ! runner_validate_expected_failure_schedule "$PLATFORM_EXCLUSIONS $SUPPORT_SOURCES"; then
 	echo -e "${RED}ERROR:${NC} $RUNNER_EXPECTED_FAILURE_ERROR"
 	runner_ci_record "$CI_OUTPUT" discovery expected-failures invalid "$RUNNER_EXPECTED_FAILURE_ERROR"
