@@ -15,5 +15,7 @@ int accept(PointerBox box) {
 }
 
 int main() {
-	return (LeftOperand{} + 0) + accept(0);
+	PointerBox direct_zero(0);
+	return (direct_zero.value == nullptr ? 0 : 1) +
+		(LeftOperand{} + 0) + accept(0);
 }

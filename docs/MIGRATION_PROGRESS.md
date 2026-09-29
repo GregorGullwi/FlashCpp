@@ -293,11 +293,18 @@ overload selection; `tests/test_canonical_function_pointer_calling_convention_ov
 covers both forms.
 Constructor-based conversion viability now receives the argument expression:
 pointer-taking constructors accept an integer literal zero as a null pointer
-constant and reject other integral arguments. Regressions
+constant and reject other integral arguments. Direct-initialization
+(`Type obj(args)`) resolves against the same expression-aware conversion, so a
+nonzero integer literal fails with the no-match constructor diagnostic while a
+zero literal binds the pointer. Regressions
 `tests/test_operator_constructor_null_pointer_argument_ret0.cpp` and
 `tests/test_operator_constructor_nonzero_pointer_argument_e1319.cpp` cover
 binary-operator ranking; `tests/test_function_constructor_nonzero_pointer_argument_e1704.cpp`
-checks ordinary-call rejection.
+checks ordinary-call rejection, and
+`tests/test_direct_constructor_nonzero_pointer_argument_e1508.cpp` checks the
+direct-initialization no-match. Constructor argument types that are still
+dependent (no concrete type index) keep the unique-arity recovery instead of
+producing a spurious no-match.
 Binary operator-template ranking now sends distinct record operand and
 parameter types through the shared conversion planner instead of rejecting
 them by `TypeIndex` inequality. The regression
