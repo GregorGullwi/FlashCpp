@@ -400,11 +400,11 @@ Continue boundary 3A in this order:
     covers a 32-hop alias-template chain over that same nested-owner member-
     function-template address on both MSVC and Itanium (no platform guard).
     Nested function-pointer objects such as `int (**)(int)` now keep distinct
-    flat `FunctionPointer` identity from `int (*)(int)`: the structural
-    declarator path records outer pointer levels around the absorbed function
-    pointer, canonical import applies those levels after the function-pointer
-    wrapper, and both the canonical and compatibility planners reject depth
-    mismatches as authoritative no-matches. The regression
+    flat `FunctionPointer` identity from `int (*)(int)`: nested forms store the
+    full pointer-wrapper stack in `pointer_levels` (two levels for `(**)`),
+    single forms keep empty levels so import adds one category wrap, and both
+    the canonical and compatibility planners reject depth mismatches as
+    authoritative no-matches. The regression
     `tests/test_canonical_nested_function_pointer_overload_ret0.cpp` checks
     overload selection for single versus nested parameters. Additional
     dependent member-function-pointer forms and remaining unsupported callable
