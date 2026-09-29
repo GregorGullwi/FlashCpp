@@ -2856,17 +2856,68 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			alias_node->target_type_node();
 		TypeSpecifierNode substituted_alias_target_type_spec =
 			alias_target_type_spec;
-		if (alias_target_type_spec.has_ordered_declarator()) {
+		if (alias_target_type_spec.has_ordered_declarator() ||
+			alias_target_type_spec.has_member_class()) {
 			ASTNode substituted_alias_target = substituteTemplateParameters(
 				ASTNode::emplace_node<TypeSpecifierNode>(alias_target_type_spec),
 				effective_template_params,
 				effective_template_args);
 			if (!substituted_alias_target.is<TypeSpecifierNode>()) {
 				throw InternalError(
-					"ordered alias target substitution did not produce a type specifier");
+					"alias target substitution did not produce a type specifier");
 			}
 			substituted_alias_target_type_spec =
 				substituted_alias_target.as<TypeSpecifierNode>();
+			if (substituted_alias_target_type_spec.has_member_class()) {
+				// Rematerialize class-template specialization owners through the
+				// alias parameter bindings so Holder<Type>::* becomes Holder<int>::*
+				// with published TypeId authority.
+				const StringHandle original_owner =
+					substituted_alias_target_type_spec.member_class_name();
+				const StringHandle param_bound_owner =
+					substituteTemplateMemberFunctionOwner(
+						original_owner,
+						effective_template_params,
+						effective_template_args);
+				if (param_bound_owner != original_owner) {
+					substituted_alias_target_type_spec.clear_member_class_identity();
+					substituted_alias_target_type_spec.set_member_class_name(
+						param_bound_owner);
+					tryBindPublishedMemberClassEntity(
+						substituted_alias_target_type_spec);
+				} else if (const TypeInfo* owner_type_info =
+							   findTypeByName(original_owner);
+						   owner_type_info != nullptr &&
+						   owner_type_info->isTemplateInstantiation()) {
+					std::vector<TemplateTypeArg> concrete_owner_args =
+						materializeTemplateArgsForLookup(*owner_type_info);
+					if (!templateArgsStillNeedAliasLookupMaterialization(
+							concrete_owner_args)) {
+						const std::string_view primary = StringTable::getStringView(
+							owner_type_info->baseTemplateName());
+						if (auto instantiated = try_instantiate_class_template(
+								primary, concrete_owner_args);
+							instantiated.has_value() &&
+							instantiated->is<StructDeclarationNode>()) {
+							registerAndNormalizeLateMaterializedTopLevelNode(
+								*instantiated);
+							MemberPointerOwnerParse owner_parse;
+							owner_parse.specialization_node = *instantiated;
+							owner_parse.spelling =
+								StringTable::getOrInternStringHandle(
+									get_instantiated_class_name(
+										primary, concrete_owner_args));
+							substituted_alias_target_type_spec
+								.clear_member_class_identity();
+							applyMemberPointerOwner(
+								substituted_alias_target_type_spec, owner_parse);
+						}
+					}
+				} else {
+					tryBindPublishedMemberClassEntity(
+						substituted_alias_target_type_spec);
+				}
+			}
 			bool has_dependent_alias_args = false;
 			for (const TemplateTypeArg& alias_arg : effective_template_args) {
 				if (alias_arg.is_dependent ||
@@ -2877,7 +2928,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					break;
 				}
 			}
-			if (!has_dependent_alias_args) {
+			if (alias_target_type_spec.has_ordered_declarator() &&
+				!has_dependent_alias_args) {
 				const bool bounds_resolved = resolveOrderedDeclaratorArrayBounds(
 					substituted_alias_target_type_spec,
 					alias_node->arrayBoundExpressions(),
@@ -2903,6 +2955,11 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				substituted_alias_target_type_spec);
 		if (resolved_deferred_decltype_spec.has_value()) {
 			alias_registration_type_spec = *resolved_deferred_decltype_spec;
+		} else if (substituted_alias_target_type_spec.has_member_class()) {
+			// Member-pointer alias targets carry owner identity on the
+			// substituted specifier; do not collapse through TypeInfo-only
+			// resolution which drops TypeId and can leave a shared spelling.
+			alias_registration_type_spec = substituted_alias_target_type_spec;
 		} else if (result.resolved_type_specifier.has_value() &&
 			result.resolved_type_specifier->has_ordered_declarator() &&
 			!typeSpecifierPreservesSurfaceModifiers(

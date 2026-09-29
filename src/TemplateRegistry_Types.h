@@ -1410,7 +1410,8 @@ inline bool typeSpecifierPreservesSurfaceModifiers(
 		type_spec.is_array() ||
 		type_spec.has_pointee_array_declarator() ||
 		type_spec.has_unsized_outer_array_dimension() ||
-		type_spec.has_function_signature();
+		type_spec.has_function_signature() ||
+		type_spec.has_member_class();
 }
 
 // An alias can keep its surface wrappers in its registered TypeSpecifierNode,

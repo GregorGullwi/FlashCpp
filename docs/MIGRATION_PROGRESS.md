@@ -257,6 +257,13 @@ member-object pointers now project owner `TypeId`/`EntityId` through
 `resolveAliasTypeInfo`, so `static_cast<Alias>(nullptr)` ranks by owner identity
 even when flat `type_index` values collide; covered by
 `tests/test_canonical_member_pointer_alias_owner_typeid_overload_ret0.cpp`.
+Alias-template targets that are member-object or member-function pointers with
+class-template owners (`using FieldPointer = int Holder<Type>::*`,
+`using RunPointer = int (Holder<Type>::*)()`) now parse as real mop/MFP shapes
+and rematerialize the owner specialization through alias parameter bindings so
+`FieldPointer<int>` / `RunPointer<char>` publish distinct owner `TypeId`
+identity for cast overload ranking; covered by
+`tests/test_canonical_alias_template_member_pointer_owner_overload_ret0.cpp`.
 Dependent `noexcept`, user-defined
 conversions, calling-convention-sensitive function-pointer ranking, and other
 unsupported callable or template types still use compatibility planning.
@@ -442,10 +449,15 @@ Continue boundary 3A in this order:
     declarator candidate path (which previously rejected template-id owners)
     and publish specialization `TypeId` identity through the shared owner
     helper; `tests/test_canonical_template_id_member_function_pointer_owner_overload_ret0.cpp`
-    checks parameter and address-of selection. Using-alias MFP and mop spellings
+    checks parameter and address-of selection.     Using-alias MFP and mop spellings
     project owner `TypeId`/`EntityId` through alias resolution so cast ranking
     distinguishes same flat `type_index` shapes; covered by
     `tests/test_canonical_member_pointer_alias_owner_typeid_overload_ret0.cpp`.
+    Alias-template mop/MFP targets with class-template owners now parse through
+    the structural / `Owner::*` alias-target paths and rematerialize
+    specialization owners at alias instantiation so substituted casts keep
+    distinct owner `TypeId`s; covered by
+    `tests/test_canonical_alias_template_member_pointer_owner_overload_ret0.cpp`.
     Additional dependent member-function-pointer
     forms and remaining unsupported callable pairs (including calling-
     convention-sensitive ranking) still need substitution-aware canonical
