@@ -882,7 +882,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						restore_token_position(after_type_pos);
 					}
 
-					// Check for pointer-to-member type syntax: Type Class::*
+					// Check for pointer-to-member type syntax: Type Class::* or Type Class<Args>::*
 					// This is used in <type_traits> for result_of patterns
 					// Pattern: using _MemPtr = _Res _Class::*;
 					if (peek().is_identifier()) {
@@ -890,6 +890,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						auto saved_pos = save_token_position();
 						Token class_token = peek_info();
 						advance(); // consume potential class name
+						StringHandle owner_name = resolveMemberPointerOwnerName(class_token);
 
 						if (peek() == "::"_tok) {
 							advance(); // consume '::'
@@ -898,7 +899,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 								// This is a pointer-to-member type: Type Class::*
 								// Mark the type as a pointer-to-member
 								type_spec.add_pointer_level(CVQualifier::None);	// Add pointer level
-								type_spec.set_member_class_name(class_token.handle());
+								type_spec.set_member_class_name(owner_name);
 								tryBindPublishedMemberClassEntity(type_spec);
 								FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
 								discard_saved_token(saved_pos);
