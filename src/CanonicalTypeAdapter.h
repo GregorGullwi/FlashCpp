@@ -803,12 +803,13 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 		return imported_function;
 	}
 	auto id = imported_function.type;
-	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {
-		if (syntax.pointer_levels().empty()) {
-			id = table.pointer(id);
-		} else {
-			id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
-		}
+	if (syntax.category() == TypeCategory::FunctionPointer) {
+		// FunctionPointer always contributes one pointer-to-function wrapper.
+		// Additional pointer_levels are outer wrappers (int (**)(Args)).
+		id = table.pointer(id);
+	}
+	if (!syntax.pointer_levels().empty()) {
+		id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
 	}
 	id = table.qualify(id, syntax.cv_qualifier());
 	if (syntax.reference_qualifier() != ReferenceQualifier::None) {

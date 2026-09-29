@@ -235,7 +235,10 @@ regression
 member-owner, function-signature, and base-to-derived selection on both MSVC
 and Itanium. Itanium mangling covers member-function-pointer parameter types,
 including qualified and `noexcept` signatures, with ABI substitution
-compression. Dependent `noexcept`, user-defined conversions, and other
+compression. Nested function-pointer parameter pairs such as `int (*)(int)`
+versus `int (**)(int)` now rank through distinct flat `FunctionPointer`
+identities rather than collapsing. Dependent `noexcept`, user-defined
+conversions, calling-convention-sensitive function-pointer ranking, and other
 unsupported callable or template types still use compatibility planning.
 Binary operator-template ranking now sends distinct record operand and
 parameter types through the shared conversion planner instead of rejecting
@@ -396,8 +399,17 @@ Continue boundary 3A in this order:
     `tests/test_canonical_dependent_member_template_pointer_deep_alias_overload_ret0.cpp`
     covers a 32-hop alias-template chain over that same nested-owner member-
     function-template address on both MSVC and Itanium (no platform guard).
-    Additional dependent member-function-pointer forms and unsupported callable
-    pairs still need substitution-aware canonical ranking. Ordinary function-pointer `decltype(&function<T>)`
+    Nested function-pointer objects such as `int (**)(int)` now keep distinct
+    flat `FunctionPointer` identity from `int (*)(int)`: the structural
+    declarator path records outer pointer levels around the absorbed function
+    pointer, canonical import applies those levels after the function-pointer
+    wrapper, and both the canonical and compatibility planners reject depth
+    mismatches as authoritative no-matches. The regression
+    `tests/test_canonical_nested_function_pointer_overload_ret0.cpp` checks
+    overload selection for single versus nested parameters. Additional
+    dependent member-function-pointer forms and remaining unsupported callable
+    pairs (including calling-convention-sensitive ranking) still need
+    substitution-aware canonical ranking. Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
    Overload-ranking tie-breakers for reference parameter identity and pointer
