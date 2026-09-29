@@ -9041,7 +9041,6 @@ bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
 			lhs_type_spec,
 			rhs_type_spec,
 			op_kind,
-			&bin_op.get_lhs(),
 			&bin_op.get_rhs())
 		: findBinaryOperatorOverloadWithFreeFunction(
 			lhs_type_spec,

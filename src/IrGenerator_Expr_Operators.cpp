@@ -2415,7 +2415,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						type_specs->first,
 						type_specs->second,
 						OverloadableOperator::Assign,
-						&binaryOperatorNode.get_lhs(),
 						&binaryOperatorNode.get_rhs());
 				} else {
 					overload_result = findBinaryOperatorOverload(
@@ -2423,7 +2422,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						rhs_type_index,
 						OverloadableOperator::Assign,
 						rhsCat,
-						&binaryOperatorNode.get_lhs(),
 						&binaryOperatorNode.get_rhs());
 				}
 			}
