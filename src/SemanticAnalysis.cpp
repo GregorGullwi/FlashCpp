@@ -5747,7 +5747,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 			(!resolved_alias.array_dimensions.empty() ||
 			 resolved_alias.reference_qualifier != ReferenceQualifier::None ||
 			 resolved_alias.function_signature.has_value() ||
-			 resolved_alias.member_class_name.has_value())) {
+			 resolved_alias.has_member_class_owner())) {
 			throw InternalError(
 				"ordered declarator over a non-pointer alias wrapper is not migrated");
 		}
