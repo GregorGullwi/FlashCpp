@@ -31,6 +31,35 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 		return false;
 	}
 
+	// Member-function-pointer aliases: using Ptr = int (Owner::*)();
+	// Owners may be template-ids (Holder<int>::*). Reuse parse_declarator so
+	// TypeId owner publication stays on the shared applyMemberPointerOwner path.
+	{
+		SaveHandle mfp_probe = save_token_position();
+		advance(); // '('
+		(void)parse_calling_convention(CallingConvention::Default);
+		bool is_member_function_pointer = false;
+		if (peek().is_identifier()) {
+			Token owner_token = peek_info();
+			advance();
+			(void)parseMemberPointerOwnerAfterName(owner_token);
+			is_member_function_pointer = consume("::"_tok) && consume("*"_tok);
+		}
+		restore_token_position(mfp_probe);
+		if (is_member_function_pointer) {
+			auto result = parse_declarator(type_spec, Linkage::None);
+			if (!result.is_error()) {
+				FLASH_LOG_FORMAT(Parser, Debug,
+					"Parsed member-function-pointer type in type alias{}",
+					log_context);
+				discard_saved_token(func_type_saved_pos);
+				return true;
+			}
+			restore_token_position(func_type_saved_pos);
+			return false;
+		}
+	}
+
 	advance(); // consume '('
 
 	CallingConvention declarator_calling_conv =
