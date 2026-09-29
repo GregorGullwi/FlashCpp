@@ -1177,7 +1177,11 @@ ParseResult Parser::parse_declarator(
 					advance();
 					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
 					skip_noop_gnu_qualifiers();
-					candidate = peek() == "("_tok ||
+					// Nested stars such as (**)(params) are pointer wrappers
+					// around a function type and need the ordered spine; a
+					// single (*)(params) stays on the legacy flat path below.
+					candidate = peek() == "*"_tok ||
+						peek() == "("_tok ||
 						peek() == "&"_tok || peek() == "&&"_tok ||
 						(peek() == ")"_tok && peek(1) == "["_tok);
 				} else if (peek() == "&"_tok || peek() == "&&"_tok) {
@@ -1440,11 +1444,32 @@ ParseResult Parser::parse_declarator(
 								failed = true;
 								break;
 							}
-							const std::optional<size_t> function_index =
+							std::optional<size_t> function_index =
 								singleFunctionComponentIndex(completed);
 							if (!function_index.has_value()) {
 								failed = true;
 								break;
+							}
+							// Frame close appends pointer prefixes after the
+							// Function suffix, so a nested abstract form such as
+							// (**)(params) is assembled as
+							// [Function, inner*, outer*]. Reverse that leading
+							// Function + trailing-pointer spine into the
+							// outermost-to-innermost order used by the rest of
+							// the ordered-declarator consumers.
+							if (*function_index == 0 && completed.size() > 1) {
+								bool trailing_pointers_only = true;
+								for (size_t index = 1; index < completed.size(); ++index) {
+									if (completed[index].kind !=
+										DeclaratorComponentKind::Pointer) {
+										trailing_pointers_only = false;
+										break;
+									}
+								}
+								if (trailing_pointers_only) {
+									std::reverse(completed.begin(), completed.end());
+									function_index = completed.size() - 1;
+								}
 							}
 							ReferenceQualifier function_pointer_reference =
 								ReferenceQualifier::None;
@@ -1457,10 +1482,15 @@ ParseResult Parser::parse_declarator(
 									: ReferenceQualifier::RValueReference;
 								function_pointer_component = 1;
 							}
-							const bool flat_function_pointer_shape =
-								*function_index == function_pointer_component + 1 &&
-								completed[function_pointer_component].kind ==
-									DeclaratorComponentKind::Pointer;
+							bool pointer_wrappers_before_function = true;
+							for (size_t index = function_pointer_component;
+								index < *function_index; ++index) {
+								if (completed[index].kind !=
+									DeclaratorComponentKind::Pointer) {
+									pointer_wrappers_before_function = false;
+									break;
+								}
+							}
 							TypeSpecifierNode return_type = base_type;
 							return_type.clear_declarator_shape();
 							std::vector<DeclaratorComponent> return_components(
@@ -1471,14 +1501,17 @@ ParseResult Parser::parse_declarator(
 								return_type.set_ordered_declarator(
 									std::move(return_components));
 							}
-							// Keep a direct function-pointer object or reference on
-							// the flat FunctionPointer representation. Other
-							// projectable returns would record an ordered callable
-							// that name mangling cannot materialize.
+							// A bare function return with one or more pointer
+							// wrappers is a (possibly nested) function-pointer
+							// object. Keep it on the flat FunctionPointer
+							// representation so ABI mangling does not need an
+							// ordered callable spine yet (boundary 3B).
 							const bool use_flat_function_pointer =
+								!return_type.has_ordered_declarator() &&
+								pointer_wrappers_before_function &&
+								*function_index >= function_pointer_component + 1;
+							if (return_type.has_ordered_declarator() &&
 								return_type.ordered_declarator_has_legacy_projection() &&
-								flat_function_pointer_shape;
-							if (return_type.ordered_declarator_has_legacy_projection() &&
 								!use_flat_function_pointer) {
 								failed = true;
 								break;
@@ -1533,17 +1566,28 @@ ParseResult Parser::parse_declarator(
 								return ParseResult::success(func_decl_node);
 							}
 							if (use_flat_function_pointer) {
+								// The pointer immediately outside Function is
+								// absorbed into TypeCategory::FunctionPointer;
+								// any further outer pointers become flat
+								// pointer_levels so int (**)(int) stays distinct
+								// from int (*)(int) without an ordered callable.
+								const size_t absorbed_pointer_index = *function_index - 1;
 								ASTNode function_pointer_node = emplace_node<TypeSpecifierNode>(
 									TypeCategory::FunctionPointer,
 									TypeQualifier::None,
 									SizeInBits{kFunctionPointerSizeBits},
 									base_type.token(),
-									completed[function_pointer_component].cv_qualifier);
+									completed[absorbed_pointer_index].cv_qualifier);
 								TypeSpecifierNode& function_pointer =
 									function_pointer_node.as<TypeSpecifierNode>();
 								function_pointer.set_function_signature(signature);
 								function_pointer.set_reference_qualifier(
 									function_pointer_reference);
+								for (size_t index = function_pointer_component;
+									index < absorbed_pointer_index; ++index) {
+									function_pointer.add_pointer_level(
+										completed[index].cv_qualifier);
+								}
 								if (identifier.value().empty()) {
 									base_type = function_pointer;
 								}

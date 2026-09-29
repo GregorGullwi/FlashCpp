@@ -2369,28 +2369,42 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 		source_type = stripCanonicalTopCv(table, source_type).first;
 		const TypeId target_type =
 			stripCanonicalTopCv(table, to_import.type).first;
-		auto isFunctionPointer = [&table](TypeId type) {
-			const CanonicalTypeNode pointer = table.node(
-				stripCanonicalTopCv(table, type).first);
-			if (pointer.kind != CanonicalTypeKind::Pointer) {
-				return false;
+		auto functionPointerDepth = [&table](TypeId type) -> std::optional<size_t> {
+			size_t depth = 0;
+			TypeId current = stripCanonicalTopCv(table, type).first;
+			while (table.node(current).kind == CanonicalTypeKind::Pointer) {
+				++depth;
+				current = stripCanonicalTopCv(table, table.node(current).child).first;
 			}
-			return table.node(
-				stripCanonicalTopCv(table, pointer.child).first).kind ==
-				CanonicalTypeKind::Function;
+			if (table.node(current).kind != CanonicalTypeKind::Function || depth == 0) {
+				return std::nullopt;
+			}
+			return depth;
 		};
 		auto isMemberFunctionPointer = [&table](TypeId type) {
 			return table.node(
 				stripCanonicalTopCv(table, type).first).kind ==
 				CanonicalTypeKind::MemberFunctionPointer;
 		};
+		const std::optional<size_t> source_function_pointer_depth =
+			functionPointerDepth(source_type);
+		const std::optional<size_t> target_function_pointer_depth =
+			functionPointerDepth(target_type);
 		const bool is_function_pointer_pair =
-			isFunctionPointer(source_type) && isFunctionPointer(target_type);
+			source_function_pointer_depth.has_value() &&
+			target_function_pointer_depth.has_value();
 		const bool is_member_function_pointer_pair =
 			isMemberFunctionPointer(source_type) &&
 			isMemberFunctionPointer(target_type);
 		if (!is_function_pointer_pair && !is_member_function_pointer_pair) {
 			return std::nullopt;
+		}
+		if (is_function_pointer_pair &&
+			*source_function_pointer_depth != *target_function_pointer_depth) {
+			// int (*)(Args) and int (**)(Args) are distinct pointer types; a
+			// depth mismatch is an authoritative no-match, not a reason to fall
+			// through to the category-only FunctionPointer compatibility arm.
+			return ConversionPlan::no_match();
 		}
 		if (is_member_function_pointer_pair) {
 			const TypeId source_member =
@@ -3265,6 +3279,19 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		if (!from.is_function_pointer() || !to.is_function_pointer() ||
 			!from.has_function_signature() || !to.has_function_signature()) {
 			return ConversionPlan::no_match();
+		}
+		// Nested function pointers such as int (**)(int) keep their outer
+		// wrappers in pointer_levels while remaining FunctionPointer category.
+		if (from.pointer_depth() != to.pointer_depth()) {
+			return ConversionPlan::no_match();
+		}
+		const size_t shared_pointer_depth =
+			std::min(from.pointer_levels().size(), to.pointer_levels().size());
+		for (size_t index = 0; index < shared_pointer_depth; ++index) {
+			if (from.pointer_levels()[index].cv_qualifier !=
+				to.pointer_levels()[index].cv_qualifier) {
+				return ConversionPlan::no_match();
+			}
 		}
 		const FunctionSignature& from_signature = from.function_signature();
 		const FunctionSignature& to_signature = to.function_signature();
