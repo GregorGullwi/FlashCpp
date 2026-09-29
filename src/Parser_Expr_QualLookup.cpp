@@ -3860,7 +3860,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (!type.has_function_signature() && return_alias_info.function_signature.has_value()) {
 				type.set_function_signature(*return_alias_info.function_signature);
 			}
-			applyResolvedAliasMemberOwner(type, return_alias_info);
+			if (return_alias_info.has_member_class_owner()) {
+				applyResolvedAliasMemberOwner(type, return_alias_info);
+			} else if (return_alias_info.member_class_name.has_value()) {
+				type.set_member_class_name(*return_alias_info.member_class_name);
+			}
 			if (!return_alias_info.array_dimensions.empty()) {
 				type.set_array_dimensions(return_alias_info.array_dimensions);
 			}

@@ -2893,12 +2893,25 @@ struct ResolvedAliasTypeInfo {
 	}
 };
 
+inline bool aliasTypeSpecProjectsMemberPointerOwner(
+	const TypeSpecifierNode& alias_type_spec) {
+	if (alias_type_spec.has_member_class_type_id() ||
+		alias_type_spec.has_member_class_entity()) {
+		return true;
+	}
+	return alias_type_spec.is_member_object_pointer() ||
+		alias_type_spec.is_member_function_pointer();
+}
+
 // Project alias-chain member-pointer owner identity onto a use-site specifier.
 // TypeId/EntityId are authority; spelling is only the has_member_class() bridge
 // and a fallback bind key when the alias stored name alone.
 inline void applyResolvedAliasMemberOwner(
 	TypeSpecifierNode& type_spec,
 	const ResolvedAliasTypeInfo& resolved) {
+	if (!resolved.has_member_class_owner()) {
+		return;
+	}
 	if (type_spec.has_member_class_type_id() || type_spec.has_member_class_entity()) {
 		return;
 	}
@@ -2973,18 +2986,22 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 				}
 				resolved.pointee_array_declarator |=
 					alias_type_spec->has_pointee_array_declarator();
-				if (!resolved.member_class_name.has_value() && alias_type_spec->has_member_class()) {
-					resolved.member_class_name = alias_type_spec->member_class_name();
-				}
-				if (!resolved.member_class_type_id &&
-					alias_type_spec->has_member_class_type_id()) {
-					resolved.member_class_type_id =
-						alias_type_spec->member_class_type_id();
-				}
-				if (!resolved.member_class_entity &&
-					alias_type_spec->has_member_class_entity()) {
-					resolved.member_class_entity =
-						alias_type_spec->member_class_entity();
+				if (aliasTypeSpecProjectsMemberPointerOwner(*alias_type_spec)) {
+					if (!resolved.member_class_name.has_value() &&
+						alias_type_spec->has_member_class()) {
+						resolved.member_class_name =
+							alias_type_spec->member_class_name();
+					}
+					if (!resolved.member_class_type_id &&
+						alias_type_spec->has_member_class_type_id()) {
+						resolved.member_class_type_id =
+							alias_type_spec->member_class_type_id();
+					}
+					if (!resolved.member_class_entity &&
+						alias_type_spec->has_member_class_entity()) {
+						resolved.member_class_entity =
+							alias_type_spec->member_class_entity();
+					}
 				}
 				if (alias_type_spec->is_array() ||
 					alias_type_spec->has_pointee_array_declarator()) {

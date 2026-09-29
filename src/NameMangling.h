@@ -380,7 +380,11 @@ inline TypeSpecifierNode normalizeTypeSpecifierForMangling(TypeSpecifierNode typ
 		if (!type_node.has_function_signature() && alias_info.function_signature.has_value()) {
 			type_node.set_function_signature(*alias_info.function_signature);
 		}
-		applyResolvedAliasMemberOwner(type_node, alias_info);
+		if (alias_info.has_member_class_owner()) {
+			applyResolvedAliasMemberOwner(type_node, alias_info);
+		} else if (alias_info.member_class_name.has_value()) {
+			type_node.set_member_class_name(*alias_info.member_class_name);
+		}
 	}
 
 	if ((category_out_of_range || type_node.category() == TypeCategory::Invalid) && type_node.type_index().is_valid()) {
