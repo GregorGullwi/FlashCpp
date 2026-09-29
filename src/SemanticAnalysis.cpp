@@ -5846,12 +5846,17 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	// (pointee category + one pointer level + a member class). Publish the
 	// structural MemberObjectPointer node as the authoritative shape so the
 	// owner travels with the canonical type instead of a parallel scalar.
+	// Address-of forms use the MemberObjectPointer category with an explicit
+	// pointee specifier and zero flat pointer depth; import those the same way
+	// so materialization for overload ranking retains owner and pointee.
 	if (!type.has_ordered_declarator() && type.has_member_class() &&
-		type.category() != TypeCategory::MemberFunctionPointer &&
-		type.runtime_pointer_depth() == 1) {
+		((type.category() == TypeCategory::MemberObjectPointer &&
+			type.has_member_object_pointee()) ||
+			(type.category() != TypeCategory::MemberFunctionPointer &&
+				type.runtime_pointer_depth() == 1))) {
 		TypeSpecifierNode syntax = type;
 		tryBindPublishedMemberClassEntity(syntax);
-		if (syntax.has_member_class_entity()) {
+		if (syntax.has_member_class_entity() || syntax.has_member_class_type_id()) {
 			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 			const CanonicalTypeImport imported = importCanonicalType(canonical_types, syntax);
 			if (imported.status == CanonicalTypeImportStatus::Supported) {
@@ -7368,7 +7373,19 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 								owner_type_info->registeredTypeIndex(), name_handle)) {
 							ResolvedQualifiedIdentifierInfo resolved;
 							resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::NonStaticDataMember;
-							resolved.member_owner_type_index = owner_type_info->registeredTypeIndex();
+							// [expr.unary.op]/4: &C::m has type “pointer to member of
+							// B of type T” where B is the class in which m is declared,
+							// even when the qualified-id names a derived class C.
+							resolved.member_owner_type_index = member.owner_type_index;
+							if (!resolved.member_owner_type_index.is_valid() &&
+								member.owner_struct != nullptr) {
+								resolved.member_owner_type_index =
+									member.owner_struct->own_type_index_.value_or(TypeIndex{});
+							}
+							if (!resolved.member_owner_type_index.is_valid()) {
+								throw InternalError(
+									"Resolved non-static data member owner has no semantic type identity");
+							}
 							resolved.type = TypeSpecifierNode(
 								member.member->type_index.withCategory(member.member->memberType()),
 								SizeInBits{static_cast<int>(member.member->size * 8)},
