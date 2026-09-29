@@ -237,7 +237,14 @@ and Itanium. Itanium mangling covers member-function-pointer parameter types,
 including qualified and `noexcept` signatures, with ABI substitution
 compression. Nested function-pointer parameter pairs such as `int (*)(int)`
 versus `int (**)(int)` now rank through distinct flat `FunctionPointer`
-identities rather than collapsing. Dependent `noexcept`, user-defined
+identities rather than collapsing. Address-of expressions for non-static data
+members (`&C::m`) now form parser-facing member-object-pointer types whose
+owner is the declaring class, so Exact Match to that owner ranks ahead of
+[conv.mem] base-to-derived owner conversion; inherited members keep the
+declaring-class owner rather than the naming class. The regression
+`tests/test_canonical_member_object_pointer_address_of_exact_vs_base_conversion_ret0.cpp`
+checks `&Base::value`, `&Derived::value`, and `&Derived::own` selection.
+Dependent `noexcept`, user-defined
 conversions, calling-convention-sensitive function-pointer ranking, and other
 unsupported callable or template types still use compatibility planning.
 Binary operator-template ranking now sends distinct record operand and
@@ -406,7 +413,11 @@ Continue boundary 3A in this order:
     the canonical and compatibility planners reject depth mismatches as
     authoritative no-matches. The regression
     `tests/test_canonical_nested_function_pointer_overload_ret0.cpp` checks
-    overload selection for single versus nested parameters. Additional
+    overload selection for single versus nested parameters. Address-of data
+    members now publish declaring-class member-object-pointer identity for
+    parser-time ranking, covered by
+    `tests/test_canonical_member_object_pointer_address_of_exact_vs_base_conversion_ret0.cpp`.
+    Additional
     dependent member-function-pointer forms and remaining unsupported callable
     pairs (including calling-convention-sensitive ranking) still need
     substitution-aware canonical ranking. Ordinary function-pointer `decltype(&function<T>)`

@@ -3617,6 +3617,45 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 											  buildMemberFunctionPointerTypeFromFunctionDeclaration(
 												  *resolved_function);
 								}
+								// Non-static data member: &C::m has type “pointer to
+								// member of B of type T”, where B is the declaring
+								// class. Do not fall through to ordinary &T* typing.
+								if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+										struct_type_it->second->registeredTypeIndex(),
+										member_name_handle)) {
+									TypeIndex declaring_owner_index =
+										member_result.owner_type_index;
+									if (!declaring_owner_index.is_valid() &&
+										member_result.owner_struct != nullptr) {
+										declaring_owner_index =
+											member_result.owner_struct->own_type_index_
+												.value_or(TypeIndex{});
+									}
+									const TypeInfo* declaring_owner =
+										declaring_owner_index.is_valid()
+											? tryGetTypeInfo(declaring_owner_index)
+											: nullptr;
+									if (declaring_owner == nullptr ||
+										member_result.member == nullptr) {
+										return std::nullopt;
+									}
+									TypeSpecifierNode member_pointer(
+										member_result.member->type_index.withCategory(
+											member_result.member->memberType()),
+										SizeInBits{static_cast<int>(
+											member_result.member->size * 8)},
+										qualified_identifier->identifier_token(),
+										CVQualifier::None,
+										member_result.member->reference_qualifier);
+									member_pointer.add_pointer_levels(
+										member_result.member->pointer_depth);
+									member_pointer.add_pointer_level();
+									member_pointer.set_member_class_name(
+										declaring_owner->name());
+									tryBindPublishedMemberClassEntity(
+										member_pointer, declaring_owner_index);
+									return member_pointer;
+								}
 							}
 						}
 					}
