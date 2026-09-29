@@ -5846,14 +5846,9 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	// (pointee category + one pointer level + a member class). Publish the
 	// structural MemberObjectPointer node as the authoritative shape so the
 	// owner travels with the canonical type instead of a parallel scalar.
-	// Address-of forms use the MemberObjectPointer category with an explicit
-	// pointee specifier and zero flat pointer depth; import those the same way
-	// so materialization for overload ranking retains owner and pointee.
 	if (!type.has_ordered_declarator() && type.has_member_class() &&
-		((type.category() == TypeCategory::MemberObjectPointer &&
-			type.has_member_object_pointee()) ||
-			(type.category() != TypeCategory::MemberFunctionPointer &&
-				type.runtime_pointer_depth() == 1))) {
+		type.category() != TypeCategory::MemberFunctionPointer &&
+		type.runtime_pointer_depth() == 1) {
 		TypeSpecifierNode syntax = type;
 		tryBindPublishedMemberClassEntity(syntax);
 		if (syntax.has_member_class_entity() || syntax.has_member_class_type_id()) {
