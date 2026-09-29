@@ -252,9 +252,12 @@ spelled the same way (`int (Holder<int>::*)()`) now take the structural
 declarator path for template-id owners and publish the same specialization
 `TypeId` authority; `tests/test_canonical_template_id_member_function_pointer_owner_overload_ret0.cpp`
 checks parameter and address-of overload selection with identical signatures
-that differ only by owner. Using-alias spellings of member-function pointers
-parse, but alias-cast ranking that must distinguish same flat `type_index`
-shapes still needs TypeId projection through alias `TypeInfo`. Dependent `noexcept`, user-defined
+that differ only by owner. Using-alias spellings of member-function and
+member-object pointers now project owner `TypeId`/`EntityId` through
+`resolveAliasTypeInfo`, so `static_cast<Alias>(nullptr)` ranks by owner identity
+even when flat `type_index` values collide; covered by
+`tests/test_canonical_member_pointer_alias_owner_typeid_overload_ret0.cpp`.
+Dependent `noexcept`, user-defined
 conversions, calling-convention-sensitive function-pointer ranking, and other
 unsupported callable or template types still use compatibility planning.
 Binary operator-template ranking now sends distinct record operand and
@@ -439,9 +442,11 @@ Continue boundary 3A in this order:
     declarator candidate path (which previously rejected template-id owners)
     and publish specialization `TypeId` identity through the shared owner
     helper; `tests/test_canonical_template_id_member_function_pointer_owner_overload_ret0.cpp`
-    checks parameter and address-of selection. Using-alias MFP spellings parse
-    via that path, but ranking through alias casts when flat `type_index`
-    values collide remains open. Additional dependent member-function-pointer
+    checks parameter and address-of selection. Using-alias MFP and mop spellings
+    project owner `TypeId`/`EntityId` through alias resolution so cast ranking
+    distinguishes same flat `type_index` shapes; covered by
+    `tests/test_canonical_member_pointer_alias_owner_typeid_overload_ret0.cpp`.
+    Additional dependent member-function-pointer
     forms and remaining unsupported callable pairs (including calling-
     convention-sensitive ranking) still need substitution-aware canonical
     ranking. Ordinary function-pointer `decltype(&function<T>)`

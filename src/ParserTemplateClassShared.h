@@ -95,9 +95,7 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	if (!type_spec.has_function_signature() && resolved_alias.function_signature.has_value()) {
 		type_spec.set_function_signature(*resolved_alias.function_signature);
 	}
-	if (!type_spec.has_member_class() && resolved_alias.member_class_name.has_value()) {
-		type_spec.set_member_class_name(*resolved_alias.member_class_name);
-	}
+	applyResolvedAliasMemberOwner(type_spec, resolved_alias);
 	if (!resolved_alias.array_dimensions.empty()) {
 		const std::span<const size_t> type_dimensions = type_spec.array_dimensions();
 		TemplateVector<size_t, 4> array_dimensions;
