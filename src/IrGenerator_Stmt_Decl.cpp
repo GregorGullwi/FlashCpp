@@ -2821,7 +2821,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									});
 
 									if (arg_types.size() == num_args) {
-										auto resolution = resolve_constructor_overload(*type_info->getStructInfo(), arg_types, false);
+										auto resolution = resolve_constructor_overload(
+										*type_info->getStructInfo(),
+										arg_types,
+										false,
+										direct_ctor->arguments());
 										if (resolution.is_ambiguous) {
 											throwAmbiguousConstructorCallDiagnostic(*context_);
 										}
@@ -2838,9 +2842,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										if (!matching_ctor) {
 											matching_ctor = resolution.selected_overload;
 										}
-									}
-
-									if (!matching_ctor && !sema_normalized_current_function_) {
+									} else if (!matching_ctor && !sema_normalized_current_function_) {
 										FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(type_info->name()));
 										auto arity_resolution = resolve_constructor_overload_arity(*type_info->getStructInfo(), num_args, true);
 										matching_ctor = arity_resolution.selected_overload;

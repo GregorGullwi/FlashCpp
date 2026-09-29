@@ -681,7 +681,10 @@ private:
 
 	// Annotate InitializerListNode elements used as constructor arguments
 	// with their parameter-type conversions (for direct-init syntax like `Type obj(args...)`).
-	void tryAnnotateInitListConstructorArgs(const InitializerListNode& init_list, const StructTypeInfo& struct_info);
+	void tryAnnotateInitListConstructorArgs(
+		const InitializerListNode& init_list,
+		const StructTypeInfo& struct_info,
+		const Token& declaration_token);
 	void diagnoseDeletedSameTypeConstructorUsage(
 		const StructTypeInfo& struct_info,
 		const TypeSpecifierNode& source_type,

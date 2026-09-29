@@ -3212,6 +3212,11 @@ inline ConversionPlan buildConversionPlan(
 		reference_plan.has_value()) {
 		return *reference_plan;
 	}
+	if (from.category() == TypeCategory::Nullptr && !to.is_reference() &&
+		(to.is_pointer() || to.is_function_pointer() ||
+		 to.is_member_function_pointer() || to.is_member_object_pointer())) {
+		return {ConversionRank::Conversion, StandardConversionKind::PointerConversion, true};
+	}
 	if ((from.has_ordered_declarator() &&
 			!from.ordered_declarator_has_legacy_projection()) ||
 		(to.has_ordered_declarator() &&
@@ -3786,6 +3791,9 @@ inline TypeSpecifierNode normalizeArgumentTypeForNullPointerConstantConversion(
 	const TypeSpecifierNode& argument_type,
 	const TypeSpecifierNode& parameter_type,
 	const ASTNode* argument_node = nullptr);
+inline bool isNonZeroIntegerLiteralToPointerConversion(
+	const ASTNode* argument_node,
+	const TypeSpecifierNode& parameter_type);
 
 inline ArgumentConversionInfo buildArgumentConversionInfo(
 	const TypeSpecifierNode& argument_type,
@@ -3796,6 +3804,13 @@ inline ArgumentConversionInfo buildArgumentConversionInfo(
 			argument_type,
 			parameter_type,
 			argument_node);
+	// C++20 [conv.ptr]: a pointer parameter only accepts a null pointer
+	// constant or another pointer-like value. An integer literal other than the
+	// null pointer constant must not become viable merely because the flat
+	// category fallback sees matching pointee/integer categories.
+	if (isNonZeroIntegerLiteralToPointerConversion(argument_node, parameter_type)) {
+		return {ConversionRank::NoMatch, &parameter_type, false};
+	}
 	if (isIntegerLiteralZeroNullptrTypeOverloadConversion(argument_node, parameter_type)) {
 		const ConversionPlan conversion = buildConversionPlan(
 			effective_argument_type,
@@ -3963,6 +3978,43 @@ inline TypeSpecifierNode normalizeArgumentTypeForNullPointerConstantConversion(
 	return effective_argument_type;
 }
 
+// True when an integer literal other than the literal null pointer constant
+// initializes a pointer-like parameter. Such a conversion is only present in
+// the flat category fallback because the pointee category coincides with the
+// integer category; overload resolution must not treat it as viable.
+inline bool isNonZeroIntegerLiteralToPointerConversion(
+	const ASTNode* argument_node,
+	const TypeSpecifierNode& parameter_type) {
+	if (argument_node == nullptr ||
+		!parameterSupportsNullPointerConstantOverloadConversion(parameter_type) ||
+		!argument_node->is<ExpressionNode>()) {
+		return false;
+	}
+	const auto* numeric_literal =
+		std::get_if<NumericLiteralNode>(&argument_node->as<ExpressionNode>());
+	if (numeric_literal == nullptr || !isIntegralType(numeric_literal->type())) {
+		return false;
+	}
+	const NumericLiteralValue literal_value = numeric_literal->value();
+	if (const auto* integer_value = std::get_if<unsigned long long>(&literal_value)) {
+		return *integer_value != 0;
+	}
+	return false;
+}
+
+// Argument types are incomplete when the front end has not yet bound a
+// concrete type index (for example a dependent pointer written before template
+// substitution). Overload resolution cannot rank such arguments by type.
+inline bool hasIncompleteConstructorArgumentTypes(
+	std::span<const TypeSpecifierNode> argument_types) {
+	for (const TypeSpecifierNode& argument_type : argument_types) {
+		if (!argument_type.type_index().is_valid()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 inline void adjust_argument_type_for_overload_resolution(const ASTNode& arg_node, TypeSpecifierNode& arg_type) {
 	if (is_lvalue_expression_for_overload_resolution(arg_node)) {
 		arg_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
@@ -4039,7 +4091,11 @@ inline int compareConstructorTemplatePreference(
 inline bool tryBuildConstructorConversionInfos(
 	const ConstructorDeclarationNode& ctor_decl,
 	std::span<const TypeSpecifierNode> argument_types,
+	std::span<const ASTNode* const> argument_nodes,
 	ArgumentConversionInfoVector& conversion_infos) {
+	if (!argument_nodes.empty() && argument_nodes.size() != argument_types.size()) {
+		throw InternalError("Constructor argument expression/type count mismatch");
+	}
 	const auto& parameters = ctor_decl.parameter_nodes();
 	size_t min_required = countMinRequiredArgs(ctor_decl);
 	if (argument_types.size() < min_required || argument_types.size() > parameters.size()) {
@@ -4055,7 +4111,10 @@ inline bool tryBuildConstructorConversionInfos(
 
 		const auto& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
 		const ArgumentConversionInfo conversion =
-			buildArgumentConversionInfo(argument_types[i], param_type);
+			buildArgumentConversionInfo(
+				argument_types[i],
+				param_type,
+				argument_nodes.empty() ? nullptr : argument_nodes[i]);
 		if (!conversion.is_valid) {
 			return false;
 		}
@@ -4068,6 +4127,7 @@ template <typename CompareSourceTemplates>
 inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 	std::span<const ConstructorDeclarationNode* const> candidates,
 	std::span<const TypeSpecifierNode> argument_types,
+	std::span<const ASTNode* const> argument_nodes,
 	std::span<const ConstructorDeclarationNode* const> source_templates,
 	CompareSourceTemplates&& compare_source_templates,
 	bool& is_ambiguous) {
@@ -4101,7 +4161,11 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 		}
 
 		ArgumentConversionInfoVector conversion_infos;
-		if (!tryBuildConstructorConversionInfos(*candidate, argument_types, conversion_infos)) {
+		if (!tryBuildConstructorConversionInfos(
+				*candidate,
+				argument_types,
+				argument_nodes,
+				conversion_infos)) {
 			continue;
 		}
 
@@ -4147,7 +4211,11 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 					continue;
 				}
 				ArgumentConversionInfoVector previous_infos;
-				if (!tryBuildConstructorConversionInfos(*previous, argument_types, previous_infos)) {
+				if (!tryBuildConstructorConversionInfos(
+						*previous,
+						argument_types,
+						argument_nodes,
+						previous_infos)) {
 					continue;
 				}
 
@@ -4191,6 +4259,36 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 	return best_match;
 }
 
+template <typename CompareSourceTemplates>
+inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
+	std::span<const ConstructorDeclarationNode* const> candidates,
+	std::span<const TypeSpecifierNode> argument_types,
+	std::span<const ConstructorDeclarationNode* const> source_templates,
+	CompareSourceTemplates&& compare_source_templates,
+	bool& is_ambiguous) {
+	return selectBestConstructorCandidate(
+		candidates,
+		argument_types,
+		std::span<const ASTNode* const>{},
+		source_templates,
+		std::forward<CompareSourceTemplates>(compare_source_templates),
+		is_ambiguous);
+}
+
+inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
+	std::span<const ConstructorDeclarationNode* const> candidates,
+	std::span<const TypeSpecifierNode> argument_types,
+	std::span<const ASTNode* const> argument_nodes,
+	bool& is_ambiguous) {
+	return selectBestConstructorCandidate(
+		candidates,
+		argument_types,
+		argument_nodes,
+		std::span<const ConstructorDeclarationNode* const>{},
+		[](const ConstructorDeclarationNode&, const ConstructorDeclarationNode&) { return 0; },
+		is_ambiguous);
+}
+
 inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 	std::span<const ConstructorDeclarationNode* const> candidates,
 	std::span<const TypeSpecifierNode> argument_types,
@@ -4198,6 +4296,7 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 	return selectBestConstructorCandidate(
 		candidates,
 		argument_types,
+		std::span<const ASTNode* const>{},
 		std::span<const ConstructorDeclarationNode* const>{},
 		[](const ConstructorDeclarationNode&, const ConstructorDeclarationNode&) { return 0; },
 		is_ambiguous);
@@ -4206,7 +4305,11 @@ inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
 inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	const StructTypeInfo& struct_info,
 	std::span<const TypeSpecifierNode> argument_types,
-	bool skip_implicit = false) {
+	bool skip_implicit,
+	std::span<const ASTNode* const> argument_nodes) {
+	if (!argument_nodes.empty() && argument_nodes.size() != argument_types.size()) {
+		throw InternalError("Constructor argument expression/type count mismatch");
+	}
 	std::vector<const ConstructorDeclarationNode*> viable_candidates;
 	viable_candidates.reserve(struct_info.member_functions.size());
 
@@ -4242,7 +4345,11 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 	bool is_ambiguous = false;
 	const ConstructorDeclarationNode* best_match =
-		selectBestConstructorCandidate(viable_candidates, argument_types, is_ambiguous);
+		selectBestConstructorCandidate(
+			viable_candidates,
+			argument_types,
+			argument_nodes,
+			is_ambiguous);
 	if (!best_match) {
 		if (is_ambiguous) {
 			return ConstructorOverloadResolutionResult::ambiguous();
@@ -4250,6 +4357,37 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		return ConstructorOverloadResolutionResult::no_match();
 	}
 	return ConstructorOverloadResolutionResult(best_match);
+}
+
+inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+	const StructTypeInfo& struct_info,
+	std::span<const TypeSpecifierNode> argument_types,
+	bool skip_implicit = false) {
+	return resolve_constructor_overload(
+		struct_info,
+		argument_types,
+		skip_implicit,
+		std::span<const ASTNode* const>{});
+}
+
+template <typename ArgumentRange>
+inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+	const StructTypeInfo& struct_info,
+	std::span<const TypeSpecifierNode> argument_types,
+	bool skip_implicit,
+	const ArgumentRange& argument_nodes) {
+	std::vector<const ASTNode*> argument_node_pointers;
+	argument_node_pointers.reserve(argument_nodes.size());
+	for (const auto& argument_node : argument_nodes) {
+		argument_node_pointers.push_back(&argument_node);
+	}
+	return resolve_constructor_overload(
+		struct_info,
+		argument_types,
+		skip_implicit,
+		std::span<const ASTNode* const>(
+			argument_node_pointers.data(),
+			argument_node_pointers.size()));
 }
 
 // Arity-only constructor overload resolution — used as fallback when argument type

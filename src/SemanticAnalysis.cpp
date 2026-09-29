@@ -4377,14 +4377,16 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 					return;
 				}
 				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
-				if (ts.category() != TypeCategory::Struct) {
+				// Array declarations list one initializer per element (or per
+				// sub-object); they are not a single constructor argument list.
+				if (ts.category() != TypeCategory::Struct || ts.is_array()) {
 					return;
 				}
 				const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
 				const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
 				if (si && si->hasAnyConstructor()) {
 					const InitializerListNode& il = init->as<InitializerListNode>();
-					tryAnnotateInitListConstructorArgs(il, *si);
+					tryAnnotateInitListConstructorArgs(il, *si, decl.identifier_token());
 				}
 			};
 
@@ -12641,7 +12643,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
-	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
+	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true, arguments);
 	bool template_ctor_ambiguous = false;
 	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
 		struct_info->getName(),
@@ -12654,7 +12656,11 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	} else if (resolution.selected_overload != nullptr) {
 		resolution.is_ambiguous = false;
 	}
-	if (!resolution.selected_overload) {
+	// Type-based selection is authoritative when every argument carries a
+	// concrete type. Only when a dependent/unresolved argument type prevented
+	// ranking may the unique-arity fallback recover the constructor.
+	if (!resolution.selected_overload && !resolution.is_ambiguous &&
+		hasIncompleteConstructorArgumentTypes(arg_types)) {
 		resolution.selected_overload = resolveUniqueArityConstructor(*struct_info, num_args);
 	}
 	resolution.selected_overload = ensureSelectedConstructorMaterialized(*struct_info, resolution.selected_overload);
@@ -12940,7 +12946,9 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 }
 
 void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
-	const InitializerListNode& init_list, const StructTypeInfo& struct_info) {
+	const InitializerListNode& init_list,
+	const StructTypeInfo& struct_info,
+	const Token& declaration_token) {
 	const auto& initializers = init_list.initializers();
 	if (initializers.empty())
 		return;
@@ -13017,7 +13025,7 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		return;
 	}
 
-	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+	auto resolution = resolve_constructor_overload(struct_info, arg_types, true, initializers);
 	bool template_ctor_ambiguous = false;
 	resolution.selected_overload = parser().templateEngine().materializeMatchingConstructorTemplate(
 		struct_info.getName(),
@@ -13028,8 +13036,22 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	if (template_ctor_ambiguous) {
 		resolution.is_ambiguous = true;
 	}
-	if (!resolution.selected_overload) {
-		resolution.selected_overload = resolveUniqueArityConstructor(struct_info, initializers.size());
+	if (!resolution.selected_overload && !resolution.is_ambiguous &&
+		hasIncompleteConstructorArgumentTypes(arg_types)) {
+		if (const ConstructorDeclarationNode* unique_arity_ctor =
+				resolveUniqueArityConstructor(struct_info, initializers.size())) {
+			init_list.set_resolved_constructor(unique_arity_ctor);
+			return;
+		}
+	}
+	if (resolution.is_ambiguous) {
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::AmbiguousConstructorCall,
+			DiagnosticSeverity::Error,
+			SourceLocation::fromToken(declaration_token),
+			"Ambiguous constructor call",
+			{});
 	}
 	resolution.selected_overload = ensureSelectedConstructorMaterialized(struct_info, resolution.selected_overload);
 	if (!resolution.selected_overload) {
@@ -13076,6 +13098,23 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 						"' in constructor argument; use static_cast",
 					{});
 			}
+		}
+		if (struct_info.hasUserDeclaredConstructor()) {
+			const std::string message = std::string(
+				StringBuilder()
+					.append("No matching constructor for direct initialization of '")
+					.append(StringTable::getStringView(struct_info.getName()))
+					.append("' with ")
+					.append(initializers.size())
+					.append(" argument(s)")
+					.commit());
+			throw makeStructuredCompileError(
+				context_.diagnostics(),
+				DiagnosticId::NoMatchingConstructor,
+				DiagnosticSeverity::Error,
+				SourceLocation::fromToken(declaration_token),
+				message,
+				{});
 		}
 		return;
 	}
