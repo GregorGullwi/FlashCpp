@@ -2877,6 +2877,8 @@ struct ResolvedAliasTypeInfo {
 	std::vector<DeclaratorComponent> ordered_declarator;
 	std::optional<FunctionSignature> function_signature;
 	std::optional<StringHandle> member_class_name;
+	TypeId member_class_type_id{};
+	EntityId member_class_entity{};
 	std::vector<size_t> array_dimensions;
 	const TypeInfo* terminal_type_info = nullptr;
 
@@ -2884,7 +2886,37 @@ struct ResolvedAliasTypeInfo {
 	bool isArray() const {
 		return !pointee_array_declarator && !array_dimensions.empty();
 	}
+	bool has_member_class_owner() const {
+		return static_cast<bool>(member_class_type_id) ||
+			static_cast<bool>(member_class_entity) ||
+			member_class_name.has_value();
+	}
 };
+
+// Project alias-chain member-pointer owner identity onto a use-site specifier.
+// TypeId/EntityId are authority; spelling is only the has_member_class() bridge
+// and a fallback bind key when the alias stored name alone.
+inline void applyResolvedAliasMemberOwner(
+	TypeSpecifierNode& type_spec,
+	const ResolvedAliasTypeInfo& resolved) {
+	if (type_spec.has_member_class_type_id() || type_spec.has_member_class_entity()) {
+		return;
+	}
+	if (resolved.member_class_name.has_value() && !type_spec.has_member_class()) {
+		type_spec.set_member_class_name(*resolved.member_class_name);
+	}
+	if (resolved.member_class_type_id) {
+		type_spec.set_member_class_type_id(resolved.member_class_type_id);
+		return;
+	}
+	if (resolved.member_class_entity) {
+		type_spec.set_member_class_entity(resolved.member_class_entity);
+		return;
+	}
+	if (type_spec.has_member_class()) {
+		tryBindPublishedMemberClassEntity(type_spec);
+	}
+}
 
 // Follow a TypeAlias chain until a non-alias terminal type is reached while
 // accumulating alias-applied indirection, reference collapsing, function
@@ -2943,6 +2975,16 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 					alias_type_spec->has_pointee_array_declarator();
 				if (!resolved.member_class_name.has_value() && alias_type_spec->has_member_class()) {
 					resolved.member_class_name = alias_type_spec->member_class_name();
+				}
+				if (!resolved.member_class_type_id &&
+					alias_type_spec->has_member_class_type_id()) {
+					resolved.member_class_type_id =
+						alias_type_spec->member_class_type_id();
+				}
+				if (!resolved.member_class_entity &&
+					alias_type_spec->has_member_class_entity()) {
+					resolved.member_class_entity =
+						alias_type_spec->member_class_entity();
 				}
 				if (alias_type_spec->is_array() ||
 					alias_type_spec->has_pointee_array_declarator()) {

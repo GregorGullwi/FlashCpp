@@ -409,6 +409,12 @@ inline EntityId resolveMemberClassEntity(const TypeSpecifierNode& syntax) {
 	return {};
 }
 
+inline bool hasMemberPointerOwnerIdentity(const TypeSpecifierNode& syntax) {
+	return syntax.has_member_class_type_id() ||
+		static_cast<bool>(resolveMemberClassEntity(syntax)) ||
+		syntax.has_member_class();
+}
+
 inline EntityId resolveNamedTypeEntity(const TypeSpecifierNode& syntax) {
 	if (syntax.has_type_entity()) {
 		return syntax.type_entity();
@@ -703,7 +709,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 	}
 	const TypeId canonical_owner = owner ? owner : table.record(owner_entity);
 	if (syntax.category() == TypeCategory::MemberFunctionPointer ||
-		(syntax.has_function_signature() && syntax.has_member_class())) {
+		(syntax.has_function_signature() && hasMemberPointerOwnerIdentity(syntax))) {
 		if (!syntax.has_function_signature()) {
 			return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 		}
@@ -739,7 +745,7 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		}
 		return {id, CanonicalTypeImportStatus::Supported};
 	}
-	if (!syntax.has_member_class()) {
+	if (!hasMemberPointerOwnerIdentity(syntax)) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 	}
 	TypeSpecifierNode pointee = syntax;
@@ -786,7 +792,7 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 		return applyCanonicalOrderedDeclarator(
 			table, imported_base.type, syntax, context);
 	}
-	if (syntax.has_member_class() ||
+	if (hasMemberPointerOwnerIdentity(syntax) ||
 		syntax.category() == TypeCategory::MemberFunctionPointer ||
 		syntax.category() == TypeCategory::MemberObjectPointer) {
 		return importCanonicalMemberPointer(table, syntax);
@@ -1008,7 +1014,7 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 		}
 		return imported;
 	}
-	if (syntax.has_member_class() ||
+	if (hasMemberPointerOwnerIdentity(syntax) ||
 		syntax.category() == TypeCategory::MemberFunctionPointer ||
 		syntax.category() == TypeCategory::MemberObjectPointer) {
 		CanonicalTypeTransaction transaction(table);

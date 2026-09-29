@@ -2432,6 +2432,8 @@ ParseResult Parser::parse_type_specifier() {
 						if (resolve_aliases || type_info.isTypeAlias()) {
 							const ResolvedAliasTypeInfo resolved_alias =
 								resolveAliasTypeInfo(type_info.registeredTypeIndex());
+							applyResolvedAliasMemberOwner(
+								type_node.as<TypeSpecifierNode>(), resolved_alias);
 							if (resolved_alias.has_ordered_declarator) {
 								TypeSpecifierNode resolved_type_specifier =
 									type_node.as<TypeSpecifierNode>();
@@ -3501,6 +3503,8 @@ ParseResult Parser::parse_type_specifier() {
 						if (resolved_alias.function_signature.has_value()) {
 							type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
 						}
+						applyResolvedAliasMemberOwner(
+							type_spec_node.as<TypeSpecifierNode>(), resolved_alias);
 						return type_spec_node;
 					};
 					auto tryResolveQualifiedType = [&](std::string_view candidate_qualified_type_name) -> std::optional<ASTNode> {
@@ -5060,7 +5064,8 @@ ParseResult Parser::parse_type_specifier() {
 			bool has_alias_type_shape = resolved_alias.pointer_depth != 0 ||
 										resolved_alias.reference_qualifier != ReferenceQualifier::None ||
 										resolved_alias.function_signature.has_value() ||
-										resolved_alias.isArray();
+										resolved_alias.isArray() ||
+										resolved_alias.has_member_class_owner();
 			// Alias-applied pointer/reference/function metadata now comes from the alias chain.
 			if (!is_typedef && has_alias_type_shape) {
 				is_typedef = true;
@@ -5088,6 +5093,8 @@ ParseResult Parser::parse_type_specifier() {
 				if (resolved_alias.function_signature.has_value()) {
 					type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
 				}
+				applyResolvedAliasMemberOwner(
+					type_spec_node.as<TypeSpecifierNode>(), resolved_alias);
 				return ParseResult::success(type_spec_node);
 			} else {
 				// Not a typedef - might be a struct type without size set in TypeInfo

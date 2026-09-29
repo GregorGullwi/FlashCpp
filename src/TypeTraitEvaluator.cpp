@@ -138,10 +138,18 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 		normalized_type.set_function_signature(*resolved_alias.function_signature);
 	}
 
-	if (type_spec.has_member_class()) {
-		normalized_type.set_member_class_name(type_spec.member_class_name());
-	} else if (resolved_alias.member_class_name.has_value()) {
-		normalized_type.set_member_class_name(*resolved_alias.member_class_name);
+	if (type_spec.has_member_class_type_id() || type_spec.has_member_class_entity() ||
+		type_spec.has_member_class()) {
+		if (type_spec.has_member_class()) {
+			normalized_type.set_member_class_name(type_spec.member_class_name());
+		}
+		if (type_spec.has_member_class_type_id()) {
+			normalized_type.set_member_class_type_id(type_spec.member_class_type_id());
+		} else if (type_spec.has_member_class_entity()) {
+			normalized_type.set_member_class_entity(type_spec.member_class_entity());
+		}
+	} else {
+		applyResolvedAliasMemberOwner(normalized_type, resolved_alias);
 	}
 
 	return normalized_type;
