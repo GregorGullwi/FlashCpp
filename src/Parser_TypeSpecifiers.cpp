@@ -1495,6 +1495,24 @@ ParseResult Parser::parse_type_specifier() {
 						resolved_type_info = findTypeByName(
 							StringTable::getOrInternStringHandle(materialized_alias.instantiated_name));
 					}
+					if (materialized_alias.resolved_type_specifier.has_value() &&
+						(materialized_alias.resolved_type_specifier->has_ordered_declarator() ||
+						 materialized_alias.resolved_type_specifier->has_member_class() ||
+						 materialized_alias.resolved_type_specifier->has_function_signature())) {
+						TypeSpecifierNode resolved_alias_type =
+							*materialized_alias.resolved_type_specifier;
+						resolved_alias_type.add_cv_qualifier(cv_qualifier);
+						if (!typeSpecStillUsesDependentPlaceholder(resolved_alias_type) &&
+							resolved_alias_type.type() != TypeCategory::Template) {
+							if (const int resolved_size_bits =
+									getTypeSpecSizeBits(resolved_alias_type);
+								resolved_size_bits > 0) {
+								resolved_alias_type.set_size_in_bits(resolved_size_bits);
+							}
+							return ParseResult::success(
+								emplace_node<TypeSpecifierNode>(resolved_alias_type));
+						}
+					}
 					if (resolved_type_info != nullptr) {
 						TypeSpecifierNode outer_spec(
 							resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum()),
@@ -2766,6 +2784,7 @@ ParseResult Parser::parse_type_specifier() {
 								 TypeCategory::MemberFunctionPointer);
 						if (materialized_alias.resolved_type_specifier.has_value() &&
 							(materialized_alias.resolved_type_specifier->has_ordered_declarator() ||
+							 materialized_alias.resolved_type_specifier->has_member_class() ||
 							 has_resolved_callable_type) &&
 							peek() != "::"_tok) {
 							TypeSpecifierNode resolved_alias_type =
