@@ -547,6 +547,9 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 
 	if (member_result.node()->is<FunctionDeclarationNode>()) {
 		out_func_decl = &member_result.node()->as<FunctionDeclarationNode>();
+		if (last_calling_convention_ != CallingConvention::Default) {
+			out_func_decl->set_calling_convention(last_calling_convention_);
+		}
 		out_decl = &out_func_decl->decl_node();
 		return ParseResult::success();
 	}
@@ -556,7 +559,8 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 	}
 
 	out_decl = &member_result.node()->as<DeclarationNode>();
-	auto func_result = parse_function_declaration(*out_decl, CallingConvention::Default, true);
+	auto func_result = parse_function_declaration(
+		*out_decl, last_calling_convention_, true);
 	if (func_result.is_error()) {
 		return func_result;
 	}
@@ -3178,6 +3182,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			if (!struct_parsing_context_stack_.empty()) {
 				member_func_ref.set_namespace_handle(struct_parsing_context_stack_.back().namespace_handle);
 			}
+			member_func_ref.set_calling_convention(func_decl.calling_convention());
 			for (const auto& param : func_decl.parameter_nodes()) {
 				member_func_ref.add_parameter_node(param);
 			}
