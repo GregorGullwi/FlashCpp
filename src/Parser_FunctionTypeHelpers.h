@@ -43,17 +43,24 @@ inline const FunctionDeclarationNode* findFunctionDeclarationForSymbol(const AST
 	return nullptr;
 }
 
+inline FunctionType makePublishedFunctionTypeFromSpecifier(
+	const TypeSpecifierNode& type_spec) {
+	TypeSpecifierNode bound_type = type_spec;
+	tryBindPublishedTypeEntity(bound_type);
+	return makeFunctionTypeFromSpecifier(bound_type);
+}
+
 inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
 	FunctionSignature sig;
 	const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
-	sig.setReturnType(makeFunctionTypeFromSpecifier(return_type));
+	sig.setReturnType(makePublishedFunctionTypeFromSpecifier(return_type));
 	std::vector<FunctionType> parameter_types;
 	for (const auto& param_node : func_decl.parameter_nodes()) {
 		if (!param_node.is<DeclarationNode>()) {
 			continue;
 		}
 		const auto& param_type = param_node.as<DeclarationNode>().type_specifier_node();
-		parameter_types.push_back(makeFunctionTypeFromSpecifier(param_type));
+		parameter_types.push_back(makePublishedFunctionTypeFromSpecifier(param_type));
 	}
 	sig.setParameterTypes(std::move(parameter_types));
 	sig.calling_convention = func_decl.calling_convention();
@@ -92,7 +99,7 @@ inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const F
 inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
 	FunctionSignature sig;
 	const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
-	sig.setReturnType(makeFunctionTypeFromSpecifier(return_type));
+	sig.setReturnType(makePublishedFunctionTypeFromSpecifier(return_type));
 	sig.is_const = func_decl.is_const_member_function();
 	sig.is_volatile = func_decl.is_volatile_member_function();
 	sig.is_noexcept = func_decl.is_noexcept();
@@ -108,7 +115,7 @@ inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(c
 			continue;
 		}
 		const auto& param_type = param_node.as<DeclarationNode>().type_specifier_node();
-		parameter_types.push_back(makeFunctionTypeFromSpecifier(param_type));
+		parameter_types.push_back(makePublishedFunctionTypeFromSpecifier(param_type));
 	}
 	sig.setParameterTypes(std::move(parameter_types));
 	sig.calling_convention = func_decl.calling_convention();
