@@ -539,8 +539,16 @@ def main():
              "has_ordinary_array && context == CanonicalTypeImportContext::FunctionParameter &&",
              "has_ordinary_array && context == CanonicalTypeImportContext::Exact &&"),
             ("adapter_function_pointer", "CanonicalTypeAdapter.h",
-             "if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {",
-             "if (false && (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty())) {"),
+             "if (syntax.category() == TypeCategory::FunctionPointer) {\n"
+             "\t\t// FunctionPointer always contributes one pointer-to-function wrapper.\n"
+             "\t\t// Additional pointer_levels are outer wrappers (int (**)(Args)).\n"
+             "\t\tid = table.pointer(id);\n"
+             "\t}",
+             "if (false && syntax.category() == TypeCategory::FunctionPointer) {\n"
+             "\t\t// FunctionPointer always contributes one pointer-to-function wrapper.\n"
+             "\t\t// Additional pointer_levels are outer wrappers (int (**)(Args)).\n"
+             "\t\tid = table.pointer(id);\n"
+             "\t}"),
             ("adapter_function_param_decay", "CanonicalTypeAdapter.h",
              "if (context == CanonicalTypeImportContext::FunctionParameter &&\n"
              "\t\ttable.node(table.withoutTopLevelQualifiers(id)).kind == CanonicalTypeKind::Function) {",
