@@ -2784,6 +2784,14 @@ inline void applyOuterDeclaratorShapeForSubstitution(
 	if (pattern.has_function_signature() && !target.has_function_signature()) {
 		target.set_function_signature(pattern.function_signature());
 	}
+	if (pattern.has_member_class()) {
+		target.set_member_class_name(pattern.member_class_name());
+		if (pattern.has_member_class_type_id()) {
+			target.set_member_class_type_id(pattern.member_class_type_id());
+		} else if (pattern.has_member_class_entity()) {
+			target.set_member_class_entity(pattern.member_class_entity());
+		}
+	}
 }
 
 inline TypeSpecifierNode typeSpecifierFromStructMemberProjection(

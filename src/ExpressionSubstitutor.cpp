@@ -177,20 +177,30 @@ void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasT
 void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode& source) {
 	if (source.has_ordered_declarator()) {
 		applyOuterDeclaratorShapeForSubstitution(target, source);
-		return;
+	} else {
+		if (source.has_injected_class_declaration()) {
+			target.set_injected_class_declaration(
+				source.injected_class_declaration());
+		}
+		target.add_pointer_levels(static_cast<int>(source.pointer_depth()));
+		target.add_cv_qualifier(source.cv_qualifier());
+		if (source.reference_qualifier() != ReferenceQualifier::None) {
+			target.set_reference_qualifier(source.reference_qualifier());
+		}
+		appendArrayDimensions(target, source.array_dimensions());
+		if (source.has_function_signature() && !target.has_function_signature()) {
+			target.set_function_signature(source.function_signature());
+		}
 	}
-	if (source.has_injected_class_declaration()) {
-		target.set_injected_class_declaration(
-			source.injected_class_declaration());
-	}
-	target.add_pointer_levels(static_cast<int>(source.pointer_depth()));
-	target.add_cv_qualifier(source.cv_qualifier());
-	if (source.reference_qualifier() != ReferenceQualifier::None) {
-		target.set_reference_qualifier(source.reference_qualifier());
-	}
-	appendArrayDimensions(target, source.array_dimensions());
-	if (source.has_function_signature() && !target.has_function_signature()) {
-		target.set_function_signature(source.function_signature());
+	// Member-pointer owners are identity, not pointee sugar. Preserve spelling as
+	// a lexical projection and TypeId/EntityId as authority through substitution.
+	if (source.has_member_class()) {
+		target.set_member_class_name(source.member_class_name());
+		if (source.has_member_class_type_id()) {
+			target.set_member_class_type_id(source.member_class_type_id());
+		} else if (source.has_member_class_entity()) {
+			target.set_member_class_entity(source.member_class_entity());
+		}
 	}
 }
 
@@ -5560,6 +5570,22 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 
 	if (std::optional<TypeSpecifierNode> canonical_builtin =
 			makeCanonicalBuiltinTypeSpecifier(type)) {
+		// makeCanonicalBuiltinTypeSpecifier rebuilds pointee sugar but drops
+		// member-pointer owner identity and ordered declarator shape.
+		if (type.has_ordered_declarator() &&
+			!canonical_builtin->has_ordered_declarator()) {
+			applyOuterDeclaratorShapeForSubstitution(*canonical_builtin, type);
+		}
+		if (type.has_member_class()) {
+			canonical_builtin->set_member_class_name(type.member_class_name());
+			if (type.has_member_class_type_id()) {
+				canonical_builtin->set_member_class_type_id(
+					type.member_class_type_id());
+			} else if (type.has_member_class_entity()) {
+				canonical_builtin->set_member_class_entity(
+					type.member_class_entity());
+			}
+		}
 		return *canonical_builtin;
 	}
 
@@ -5583,20 +5609,12 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInTypeCore(const TypeSpecifie
 				type.token(),
 				type.cv_qualifier(),
 				type.reference_qualifier());
-			for (const PointerLevel& pointer_level : type.pointer_levels()) {
-				builtin_spec.add_pointer_level(pointer_level.cv_qualifier);
-			}
 			if (type.is_pack_expansion()) {
 				builtin_spec.set_pack_expansion(true);
 			}
-			if (type.is_array()) {
-				for (size_t dim : type.array_dimensions()) {
-					builtin_spec.add_array_dimension(dim);
-				}
-			}
-			if (type.has_function_signature()) {
-				builtin_spec.set_function_signature(type.function_signature());
-			}
+			// Reuse the shared outer-modifier path so ordered declarators,
+			// member-pointer owners, and other surface wrappers survive.
+			applyOuterTypeModifiers(builtin_spec, type);
 			return builtin_spec;
 		}
 

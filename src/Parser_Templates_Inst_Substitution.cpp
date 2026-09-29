@@ -2425,7 +2425,13 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	};
 	auto makeResolvedAliasTargetTypeSpecifier =
 		[&]() -> std::optional<TypeSpecifierNode> {
-		if (alias_node == nullptr || result.resolved_type_info == nullptr) {
+		if (alias_node == nullptr) {
+			return std::nullopt;
+		}
+		// Member-pointer targets rematerialize owner TypeId without needing a
+		// prior pointee TypeInfo resolution.
+		if (result.resolved_type_info == nullptr &&
+			!alias_node->target_type_node().has_member_class()) {
 			return std::nullopt;
 		}
 		ASTNode substituted_alias_target = substituteTemplateParameters(
@@ -2438,6 +2444,113 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 		TypeSpecifierNode target_type_spec =
 			substituted_alias_target.as<TypeSpecifierNode>();
+		if (target_type_spec.has_member_class()) {
+			// Keep the substituted mop/MFP specifier (with rematerialized owner
+			// TypeId below). resolveTypeInfoToTypeSpec drops owner identity.
+			auto applyOwnerFromTypeInfo =
+				[&](const TypeInfo& owner_type_info) -> bool {
+				target_type_spec.clear_member_class_identity();
+				target_type_spec.set_member_class_name(owner_type_info.name());
+				if (owner_type_info.isTemplateInstantiation()) {
+					std::vector<TemplateTypeArg> concrete_owner_args =
+						materializeTemplateArgsForLookup(owner_type_info);
+					if (templateArgsStillNeedAliasLookupMaterialization(
+							concrete_owner_args)) {
+						return false;
+					}
+					for (TemplateTypeArg& owner_arg : concrete_owner_args) {
+						if (!owner_arg.isTypeArgument() ||
+							owner_arg.type_index.is_valid() ||
+							!is_builtin_type(owner_arg.typeEnum())) {
+							continue;
+						}
+						owner_arg.type_index = nativeTypeIndex(owner_arg.typeEnum());
+					}
+					const std::string_view primary = StringTable::getStringView(
+						owner_type_info.baseTemplateName());
+					const StringHandle concrete_owner_spelling =
+						StringTable::getOrInternStringHandle(
+							get_instantiated_class_name(primary, concrete_owner_args));
+					if (const TypeInfo* concrete_owner_type_info =
+							findTypeByName(concrete_owner_spelling);
+						concrete_owner_type_info != nullptr) {
+						target_type_spec.clear_member_class_identity();
+						target_type_spec.set_member_class_name(concrete_owner_spelling);
+						tryBindPublishedMemberClassEntity(
+							target_type_spec,
+							concrete_owner_type_info->registeredTypeIndex().withCategory(
+								concrete_owner_type_info->typeEnum()));
+						if (target_type_spec.has_member_class_type_id() ||
+							target_type_spec.has_member_class_entity()) {
+							return true;
+						}
+					}
+					if (auto instantiated = try_instantiate_class_template(
+							primary, concrete_owner_args);
+						instantiated.has_value() &&
+						instantiated->is<StructDeclarationNode>()) {
+						registerAndNormalizeLateMaterializedTopLevelNode(
+							*instantiated);
+						MemberPointerOwnerParse owner_parse;
+						owner_parse.specialization_node = *instantiated;
+						owner_parse.spelling = concrete_owner_spelling;
+						applyMemberPointerOwner(target_type_spec, owner_parse);
+						return target_type_spec.has_member_class_type_id();
+					}
+					return false;
+				}
+				tryBindPublishedMemberClassEntity(
+					target_type_spec,
+					owner_type_info.registeredTypeIndex().withCategory(
+						owner_type_info.typeEnum()));
+				return target_type_spec.has_member_class_type_id() ||
+					target_type_spec.has_member_class_entity();
+			};
+
+			bool owner_republished = false;
+			const StringHandle owner_spelling = target_type_spec.member_class_name();
+			forEachNonPackTemplateParamArgBinding(
+				effective_template_params,
+				effective_template_args,
+				[&](const TemplateParameterNode& param,
+					const TemplateTypeArg& arg,
+					size_t) {
+					if (owner_republished ||
+						param.kind() != TemplateParameterKind::Type ||
+						param.nameHandle() != owner_spelling ||
+						templateArgIsStructurallyDependent(arg) ||
+						!arg.isTypeArgument()) {
+						return;
+					}
+					const TypeIndex owner_type_index =
+						FlashCpp::canonicalizeTemplateIdentityTypeIndex(
+							arg.type_index);
+					const TypeInfo* owner_type_info = tryGetTypeInfo(owner_type_index);
+					if (owner_type_info == nullptr) {
+						throw InternalError(
+							"Concrete member-pointer alias owner is missing "
+							"canonical class type metadata");
+					}
+					if (!owner_type_info->isStruct() &&
+						!owner_type_info->isTemplateInstantiation()) {
+						throw CompileError(
+							"Member-pointer owner must be a class or union type");
+					}
+					owner_republished = applyOwnerFromTypeInfo(*owner_type_info);
+				});
+			if (!owner_republished) {
+				if (const TypeInfo* pattern_owner_type_info =
+						findTypeByName(owner_spelling);
+					pattern_owner_type_info != nullptr) {
+					owner_republished =
+						applyOwnerFromTypeInfo(*pattern_owner_type_info);
+				}
+			}
+			if (!owner_republished) {
+				tryBindPublishedMemberClassEntity(target_type_spec);
+			}
+			return target_type_spec;
+		}
 		if (target_type_spec.has_ordered_declarator()) {
 			bool has_dependent_alias_args = false;
 			for (const TemplateTypeArg& alias_arg : effective_template_args) {
@@ -2467,6 +2580,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					context_.diagnostics(),
 					lexer_.getSourceLocation(current_token_));
 			}
+		}
+		if (result.resolved_type_info == nullptr) {
+			return std::nullopt;
 		}
 		return resolveTypeInfoToTypeSpec(
 			*result.resolved_type_info,
@@ -2567,7 +2683,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	std::string_view resolved_name = alias_template_name;
 	bool alias_target_requires_structural_materialization =
 		alias_node != nullptr &&
-		alias_node->target_type_node().has_ordered_declarator();
+		(alias_node->target_type_node().has_ordered_declarator() ||
+			alias_node->target_type_node().has_member_class());
 	if (alias_node != nullptr && !alias_target_requires_structural_materialization) {
 		if (const TypeInfo* target_type_info =
 				tryGetTypeInfo(alias_node->target_type_node().type_index());
@@ -2586,10 +2703,11 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					gTemplateRegistry.lookup_alias_template(target_template_name);
 				target_alias.has_value() &&
 				target_alias->is<TemplateAliasNode>()) {
+				const TypeSpecifierNode& nested_target =
+					target_alias->as<TemplateAliasNode>().target_type_node();
 				alias_target_requires_structural_materialization =
-					target_alias->as<TemplateAliasNode>()
-						.target_type_node()
-						.has_ordered_declarator();
+					nested_target.has_ordered_declarator() ||
+					nested_target.has_member_class();
 			}
 		}
 	}
@@ -2632,7 +2750,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			result.resolved_type_specifier = *resolved_deferred_decltype_spec;
 		} else if (!result.resolved_type_specifier.has_value() &&
 			alias_node != nullptr &&
-			alias_node->target_type_node().has_ordered_declarator()) {
+			(alias_node->target_type_node().has_ordered_declarator() ||
+				alias_node->target_type_node().has_member_class())) {
 			result.resolved_type_specifier =
 				makeResolvedAliasTargetTypeSpecifier();
 		}
@@ -2869,32 +2988,48 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			substituted_alias_target_type_spec =
 				substituted_alias_target.as<TypeSpecifierNode>();
 			if (substituted_alias_target_type_spec.has_member_class()) {
-				// Rematerialize class-template specialization owners through the
-				// alias parameter bindings so Holder<Type>::* becomes Holder<int>::*
-				// with published TypeId authority.
-				const StringHandle original_owner =
-					substituted_alias_target_type_spec.member_class_name();
-				const StringHandle param_bound_owner =
-					substituteTemplateMemberFunctionOwner(
-						original_owner,
-						effective_template_params,
-						effective_template_args);
-				if (param_bound_owner != original_owner) {
+				// Rematerialize mop/MFP owners with TypeId authority.
+				// Spelling is only a lexical projection / TypeInfo registry key.
+				auto applyOwnerFromTypeInfo =
+					[&](const TypeInfo& owner_type_info) -> bool {
 					substituted_alias_target_type_spec.clear_member_class_identity();
 					substituted_alias_target_type_spec.set_member_class_name(
-						param_bound_owner);
-					tryBindPublishedMemberClassEntity(
-						substituted_alias_target_type_spec);
-				} else if (const TypeInfo* owner_type_info =
-							   findTypeByName(original_owner);
-						   owner_type_info != nullptr &&
-						   owner_type_info->isTemplateInstantiation()) {
-					std::vector<TemplateTypeArg> concrete_owner_args =
-						materializeTemplateArgsForLookup(*owner_type_info);
-					if (!templateArgsStillNeedAliasLookupMaterialization(
-							concrete_owner_args)) {
+						owner_type_info.name());
+					if (owner_type_info.isTemplateInstantiation()) {
+						std::vector<TemplateTypeArg> concrete_owner_args =
+							materializeTemplateArgsForLookup(owner_type_info);
+						if (templateArgsStillNeedAliasLookupMaterialization(
+								concrete_owner_args)) {
+							return false;
+						}
+						for (TemplateTypeArg& owner_arg : concrete_owner_args) {
+							if (!owner_arg.isTypeArgument() ||
+								owner_arg.type_index.is_valid() ||
+								!is_builtin_type(owner_arg.typeEnum())) {
+								continue;
+							}
+							owner_arg.type_index = nativeTypeIndex(owner_arg.typeEnum());
+						}
 						const std::string_view primary = StringTable::getStringView(
-							owner_type_info->baseTemplateName());
+							owner_type_info.baseTemplateName());
+						const StringHandle concrete_owner_spelling =
+							StringTable::getOrInternStringHandle(
+								get_instantiated_class_name(primary, concrete_owner_args));
+						if (const TypeInfo* concrete_owner_type_info =
+								findTypeByName(concrete_owner_spelling);
+							concrete_owner_type_info != nullptr) {
+							substituted_alias_target_type_spec.clear_member_class_identity();
+							substituted_alias_target_type_spec.set_member_class_name(
+								concrete_owner_spelling);
+							tryBindPublishedMemberClassEntity(
+								substituted_alias_target_type_spec,
+								concrete_owner_type_info->registeredTypeIndex().withCategory(
+									concrete_owner_type_info->typeEnum()));
+							if (substituted_alias_target_type_spec.has_member_class_type_id() ||
+								substituted_alias_target_type_spec.has_member_class_entity()) {
+								return true;
+							}
+						}
 						if (auto instantiated = try_instantiate_class_template(
 								primary, concrete_owner_args);
 							instantiated.has_value() &&
@@ -2903,17 +3038,72 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 								*instantiated);
 							MemberPointerOwnerParse owner_parse;
 							owner_parse.specialization_node = *instantiated;
-							owner_parse.spelling =
-								StringTable::getOrInternStringHandle(
-									get_instantiated_class_name(
-										primary, concrete_owner_args));
-							substituted_alias_target_type_spec
-								.clear_member_class_identity();
+							owner_parse.spelling = concrete_owner_spelling;
 							applyMemberPointerOwner(
 								substituted_alias_target_type_spec, owner_parse);
+							return substituted_alias_target_type_spec
+								.has_member_class_type_id();
 						}
+						return false;
 					}
-				} else {
+					// Ordinary class TypeInfo: import TypeId from TypeIndex.
+					tryBindPublishedMemberClassEntity(
+						substituted_alias_target_type_spec,
+						owner_type_info.registeredTypeIndex().withCategory(
+							owner_type_info.typeEnum()));
+					return substituted_alias_target_type_spec.has_member_class_type_id() ||
+						substituted_alias_target_type_spec.has_member_class_entity();
+				};
+
+				bool owner_republished = false;
+				// Type-parameter owners (using Ptr = int Type::*): bind from the
+				// alias argument TypeIndex rather than rewriting spelling alone.
+				const StringHandle owner_spelling =
+					substituted_alias_target_type_spec.member_class_name();
+				forEachNonPackTemplateParamArgBinding(
+					effective_template_params,
+					effective_template_args,
+					[&](const TemplateParameterNode& param,
+						const TemplateTypeArg& arg,
+						size_t) {
+						if (owner_republished ||
+							param.kind() != TemplateParameterKind::Type ||
+							param.nameHandle() != owner_spelling ||
+							templateArgIsStructurallyDependent(arg) ||
+							!arg.isTypeArgument()) {
+							return;
+						}
+						const TypeIndex owner_type_index =
+							FlashCpp::canonicalizeTemplateIdentityTypeIndex(
+								arg.type_index);
+						const TypeInfo* owner_type_info =
+							tryGetTypeInfo(owner_type_index);
+						if (owner_type_info == nullptr) {
+							throw InternalError(
+								"Concrete member-pointer alias owner is missing "
+								"canonical class type metadata");
+						}
+						if (!owner_type_info->isStruct() &&
+							!owner_type_info->isTemplateInstantiation()) {
+							throw CompileError(
+								"Member-pointer owner must be a class or union type");
+						}
+						owner_republished = applyOwnerFromTypeInfo(*owner_type_info);
+					});
+
+				// Class-template specialization owners (Holder<Type>::*): recover
+				// pattern TypeInfo via registry spelling, rematerialize args, then
+				// publish via applyMemberPointerOwner.
+				if (!owner_republished) {
+					if (const TypeInfo* pattern_owner_type_info =
+							findTypeByName(owner_spelling);
+						pattern_owner_type_info != nullptr) {
+						owner_republished =
+							applyOwnerFromTypeInfo(*pattern_owner_type_info);
+					}
+				}
+
+				if (!owner_republished) {
 					tryBindPublishedMemberClassEntity(
 						substituted_alias_target_type_spec);
 				}
