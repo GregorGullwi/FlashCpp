@@ -330,7 +330,6 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 			*left_type_spec,
 			*right_type_spec,
 			op_kind,
-			&binary_operator_node.get_lhs(),
 			&binary_operator_node.get_rhs());
 	} else {
 		overload_result = findBinaryOperatorOverloadWithFreeFunction(

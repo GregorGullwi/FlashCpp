@@ -5267,7 +5267,6 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 	const TypeSpecifierNode& left_type_spec,
 	const TypeSpecifierNode& right_type_spec,
 	OverloadableOperator operator_kind,
-	const ASTNode* left_argument,
 	const ASTNode* right_argument) {
 	TypeIndex left_type_index = left_type_spec.type_index();
 	if (!left_type_index.is_valid() || left_type_index.index() >= getTypeInfoCount()) {
@@ -5394,7 +5393,6 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 		left_type_spec,
 		right_type_spec,
 		operator_kind,
-		nullptr,
 		nullptr);
 }
 
@@ -5403,7 +5401,6 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 	TypeIndex right_type_index,
 	OverloadableOperator operator_kind,
 	TypeCategory right_type,
-	const ASTNode* left_argument,
 	const ASTNode* right_argument) {
 	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid()) {
@@ -5416,7 +5413,6 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
 		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
 		operator_kind,
-		left_argument,
 		right_argument);
 }
 
@@ -5430,7 +5426,6 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 		right_type_index,
 		operator_kind,
 		right_type,
-		nullptr,
 		nullptr);
 }
 
