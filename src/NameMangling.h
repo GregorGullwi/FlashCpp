@@ -279,10 +279,34 @@ inline TypeSpecifierNode buildFunctionSignatureReturnTypeForMangling(
 }
 
 template <typename OutputType>
+inline void appendMsvcCallingConventionCode(
+	OutputType& output,
+	CallingConvention calling_convention) {
+	switch (calling_convention) {
+	case CallingConvention::Default:
+	case CallingConvention::Cdecl:
+	case CallingConvention::Stdcall:
+	case CallingConvention::Fastcall:
+	case CallingConvention::Thiscall:
+		// The supported MSVC target is x64, where these conventions use the
+		// default ABI and share its function-type encoding.
+		output += 'A';
+		return;
+	case CallingConvention::Vectorcall:
+		output += 'Q';
+		return;
+	case CallingConvention::Clrcall:
+		output += 'M';
+		return;
+	}
+	throw InternalError("MSVC name mangling: unsupported calling convention");
+}
+
+template <typename OutputType>
 inline void appendMsvcFunctionSignatureTypeCode(
 	OutputType& output,
 	const FunctionSignature& sig) {
-	output += 'A';
+	appendMsvcCallingConventionCode(output, sig.calling_convention);
 	appendTypeCode(output, buildFunctionSignatureReturnTypeForMangling(sig));
 	if (sig.hasStructuredTypes()) {
 		if (sig.parameter_types().empty()) {
@@ -335,7 +359,7 @@ inline void appendMsvcMemberFunctionPointerQualifierCode(
 					: CVQualifier::None);
 	// MSVC encodes the callable's calling convention between its cv-qualifier
 	// and return type, mirroring the free-function signature encoding.
-	output += 'A';
+	appendMsvcCallingConventionCode(output, sig.calling_convention);
 }
 
 // Resolve a TypeIndex through any TypeAlias chain to get the underlying concrete TypeIndex.
