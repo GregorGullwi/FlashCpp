@@ -21,6 +21,16 @@ HEADER = ROOT / "src/CanonicalTypes.h"
 IMPL = ROOT / "src/CanonicalTypes.cpp"
 OUTPUT = ROOT / "x64/canonical-types"
 
+
+def read_text(path):
+    # Windows defaults to the ANSI code page; source and mutation anchors are UTF-8.
+    return path.read_text(encoding="utf-8")
+
+
+def write_text(path, text):
+    path.write_text(text, encoding="utf-8")
+
+
 # Files copied into every mutation directory. The list is also what decides
 # whether a translation unit can reuse the pristine object: a mutation that
 # leaves a TU's inputs byte-identical cannot change that TU's object.
@@ -43,24 +53,24 @@ def deindent(text):
 
 def check_guards():
     for source in (HEADER, IMPL):
-        code = re.sub(r"//[^\n]*", "", source.read_text())
+        code = re.sub(r"//[^\n]*", "", read_text(source))
         for forbidden in ("StringHandle", "TypeIndex", "Parser", "matches_signature",
                           "TypeSpecifierNode", "TelemetryTypeId"):
             if re.search(r"\b" + forbidden + r"\b", code):
                 raise RuntimeError("canonical identity dependency in " + source.name + ": " + forbidden)
     for name in ("FlashCpp.vcxproj", "FlashCppMSVC.vcxproj"):
-        project = (ROOT / name).read_text()
+        project = read_text(ROOT / name)
         for header in ("CanonicalTypes.h", "TypeQualifiers.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
             if 'Include="src\\' + header + '"' not in project:
                 raise RuntimeError("missing project registration: " + header)
         if 'Include="src\\CanonicalTypes.cpp"' not in project:
             raise RuntimeError("missing project registration: CanonicalTypes.cpp")
-    adapter = re.sub(r"//[^\n]*", "", (ROOT / "src/CanonicalTypeAdapter.h").read_text())
+    adapter = re.sub(r"//[^\n]*", "", read_text(ROOT / "src/CanonicalTypeAdapter.h"))
     for forbidden in ("StringTable", "gTypeInfo", "matches_signature", "Parser"):
         if re.search(r"\b" + forbidden + r"\b", adapter):
             raise RuntimeError("adapter identity dependency: " + forbidden)
     for name in ("DeclarationBuilder.h", "DeclarationBuilder.cpp"):
-        bridge = (ROOT / "src" / name).read_text()
+        bridge = read_text(ROOT / "src" / name)
         if re.search(r"\bTypeId\s+(signature_id|return_type_id|internDeclaratorType|internParameterListSignature)\b", bridge):
             raise RuntimeError("telemetry bridge still uses canonical TypeId")
 
@@ -97,7 +107,7 @@ def changed_project_files(include):
     changed = set()
     for name in PROJECT_FILES:
         candidate = include / name
-        if candidate.exists() and candidate.read_text() != (ROOT / "src" / name).read_text():
+        if candidate.exists() and read_text(candidate) != read_text(ROOT / "src" / name):
             changed.add(name)
     return changed
 
@@ -166,7 +176,7 @@ def run_template_owner_tag_mutation():
     after = ("const Key key{isTemplateOwnedOwnerId(owner) ?\n"
              "\t\t\t(owner.value & kOwnerIdPayloadMask) | kClassOwnerIdTag : owner.value,\n"
              "\t\t\tname, kind, signature_index};")
-    original_template_decls = (ROOT / "src" / "TemplateDeclTable.h").read_text()
+    original_template_decls = read_text(ROOT / "src" / "TemplateDeclTable.h")
     if original_template_decls.count(before) != 1:
         raise RuntimeError("mutation anchor changed: " + name)
     directory = OUTPUT / name
@@ -174,10 +184,10 @@ def run_template_owner_tag_mutation():
     for sibling in (
         "CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
         "ArenaAccounting.h", "TemplateDeclTable.h"):
-        text = (ROOT / "src" / sibling).read_text()
+        text = read_text(ROOT / "src" / sibling)
         if sibling == "TemplateDeclTable.h":
             text = text.replace(before, after)
-        (directory / sibling).write_text(text)
+        write_text(directory / sibling, text)
     return (name, directory, 1)
 
 
@@ -187,12 +197,12 @@ def run_adapter_order_mutation(name, before, after):
     for sibling in (
         "CanonicalTypes.h", "CanonicalTypes.cpp", "CanonicalTypeAdapter.h",
         "ArenaAccounting.h"):
-        text = (ROOT / "src" / sibling).read_text()
+        text = read_text(ROOT / "src" / sibling)
         if sibling == "CanonicalTypeAdapter.h":
             if text.count(before) != 1:
                 raise RuntimeError("mutation anchor changed: " + name)
             text = text.replace(before, after)
-        (directory / sibling).write_text(text)
+        write_text(directory / sibling, text)
     return (name, directory, 1)
 
 
@@ -223,7 +233,7 @@ def main():
                 "if (false) result.components.push_back(\n"
                 "\t\t\t\tDeclaratorComponent::pointer(pending_pointer_cv));"),
         ]
-        original = IMPL.read_text()
+        original = read_text(IMPL)
         mutations = {
             "lost_dependent_qualifier": (
                 ".child = qualifier,\n\t\t\t.kind = CanonicalTypeKind::DependentName,",
@@ -506,8 +516,8 @@ def main():
             directory.mkdir(parents=True, exist_ok=True)
             for sibling in ("CanonicalTypes.h", "CanonicalTypes.cpp",
                             "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
-                (directory / sibling).write_text((ROOT / "src" / sibling).read_text())
-            (directory / IMPL.name).write_text(original.replace(before, after))
+                write_text(directory / sibling, read_text(ROOT / "src" / sibling))
+            write_text(directory / IMPL.name, original.replace(before, after))
             jobs.append((name, directory, 1))
         for name, header, before, after in (
             ("adapter_dependent_name", "CanonicalTypeAdapter.h",
@@ -542,8 +552,8 @@ def main():
              "if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {\n"
              "\t\t// FunctionPointer with empty pointer_levels is a single pointer-to-function\n"
              "\t\t// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full\n"
-             "\t\t// wrapper stack around the function — including nested forms such as\n"
-             "\t\t// int (**)(Args) encoded as FunctionPointer with two levels — so do not\n"
+             "\t\t// wrapper stack around the function, including nested forms such as\n"
+             "\t\t// int (**)(Args) encoded as FunctionPointer with two levels, so do not\n"
              "\t\t// also add a category wrap (legacy decltype aliases may carry a\n"
              "\t\t// redundant level that would otherwise become depth 2).\n"
              "\t\tif (syntax.pointer_levels().empty()) {\n"
@@ -555,8 +565,8 @@ def main():
              "if (false && (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty())) {\n"
              "\t\t// FunctionPointer with empty pointer_levels is a single pointer-to-function\n"
              "\t\t// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full\n"
-             "\t\t// wrapper stack around the function — including nested forms such as\n"
-             "\t\t// int (**)(Args) encoded as FunctionPointer with two levels — so do not\n"
+             "\t\t// wrapper stack around the function, including nested forms such as\n"
+             "\t\t// int (**)(Args) encoded as FunctionPointer with two levels, so do not\n"
              "\t\t// also add a category wrap (legacy decltype aliases may carry a\n"
              "\t\t// redundant level that would otherwise become depth 2).\n"
              "\t\tif (syntax.pointer_levels().empty()) {\n"
@@ -620,12 +630,12 @@ def main():
             directory.mkdir(parents=True, exist_ok=True)
             for sibling in ("CanonicalTypes.h", "CanonicalTypes.cpp",
                             "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
-                text = (ROOT / "src" / sibling).read_text()
+                text = read_text(ROOT / "src" / sibling)
                 if sibling == header:
                     if text.count(before) != 1:
                         raise RuntimeError("mutation anchor changed: " + name)
                     text = text.replace(before, after)
-                (directory / sibling).write_text(text)
+                write_text(directory / sibling, text)
             jobs.append((name, directory, 1))
 
         jobs.append(run_template_owner_tag_mutation())

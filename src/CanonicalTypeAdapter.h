@@ -806,8 +806,8 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	if (syntax.category() == TypeCategory::FunctionPointer || !syntax.pointer_levels().empty()) {
 		// FunctionPointer with empty pointer_levels is a single pointer-to-function
 		// (int (*)(Args)): add one wrapper. Non-empty pointer_levels are the full
-		// wrapper stack around the function — including nested forms such as
-		// int (**)(Args) encoded as FunctionPointer with two levels — so do not
+		// wrapper stack around the function, including nested forms such as
+		// int (**)(Args) encoded as FunctionPointer with two levels, so do not
 		// also add a category wrap (legacy decltype aliases may carry a
 		// redundant level that would otherwise become depth 2).
 		if (syntax.pointer_levels().empty()) {
