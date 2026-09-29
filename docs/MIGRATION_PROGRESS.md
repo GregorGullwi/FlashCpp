@@ -185,6 +185,10 @@ MSVC x64 function-pointer signatures now preserve the ABI distinction between
 overloads accepting those callback types remain separate declarations. The
 regression `tests/test_canonical_function_pointer_calling_convention_overload_ret0.cpp`
 checks that each callback selects its matching overload.
+Member declarations now carry the same convention into generated member-
+function-pointer types, and canonical imports recover published nominal
+parameter identity before comparing those signatures. The regression also
+checks `decltype(&Owner::method)` overloads with struct parameters.
 Dependent `decltype(&Callable<T>::member)` aliases now recover the substituted
 member-function signature and canonical owner before overload ranking.
 Nested class-template arguments in those owners now import recursively from
