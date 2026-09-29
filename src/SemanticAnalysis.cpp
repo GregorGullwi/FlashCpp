@@ -9037,18 +9037,27 @@ bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
 	}
 
 	OperatorOverloadResult overload_result = op_kind == OverloadableOperator::Assign
-		? findBinaryOperatorOverload(lhs_type_spec, rhs_type_spec, op_kind)
+		? findBinaryOperatorOverload(
+			lhs_type_spec,
+			rhs_type_spec,
+			op_kind,
+			&bin_op.get_lhs(),
+			&bin_op.get_rhs())
 		: findBinaryOperatorOverloadWithFreeFunction(
 			lhs_type_spec,
 			rhs_type_spec,
 			op_kind,
-			gSymbolTable);
+			gSymbolTable,
+			&bin_op.get_lhs(),
+			&bin_op.get_rhs());
 	if (op_kind != OverloadableOperator::Assign && parser_ != nullptr) {
 		if (const FunctionDeclarationNode* instantiated_overload =
 				parser_->templateEngine().tryInstantiateOperatorTemplateForBinary(
 					bin_op.op(),
 					lhs_type_spec,
-					rhs_type_spec);
+					rhs_type_spec,
+					bin_op.get_lhs(),
+					bin_op.get_rhs());
 			instantiated_overload != nullptr &&
 			(!overload_result.has_match ||
 			 overload_result.is_ambiguous ||
@@ -9065,7 +9074,9 @@ bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
 			lhs_type_spec,
 			rhs_type_spec,
 			OverloadableOperator::Equal,
-			gSymbolTable);
+			gSymbolTable,
+			&bin_op.get_lhs(),
+			&bin_op.get_rhs());
 		if (eq_overload.has_match && !eq_overload.is_ambiguous) {
 			overload_result = eq_overload;
 			equality_rewrite_negate = true;

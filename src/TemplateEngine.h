@@ -107,7 +107,9 @@ public:
 	const FunctionDeclarationNode* tryInstantiateOperatorTemplateForBinary(
 		std::string_view op_symbol,
 		const TypeSpecifierNode& left_type_spec,
-		const TypeSpecifierNode& right_type_spec);
+		const TypeSpecifierNode& right_type_spec,
+		const ASTNode& left_argument,
+		const ASTNode& right_argument);
 
 	std::optional<ASTNode> instantiateLazyMemberForCanonicalOwner(
 		std::string_view& owner_name,
@@ -357,12 +359,16 @@ inline std::optional<ASTNode> TemplateEngine::tryInstantiateTemplateFromCallArgu
 inline const FunctionDeclarationNode* TemplateEngine::tryInstantiateOperatorTemplateForBinary(
 	std::string_view op_symbol,
 	const TypeSpecifierNode& left_type_spec,
-	const TypeSpecifierNode& right_type_spec) {
+	const TypeSpecifierNode& right_type_spec,
+	const ASTNode& left_argument,
+	const ASTNode& right_argument) {
 	recordTemplateEngineOldEngineRoute();
 	return parser().tryInstantiateOperatorTemplateForBinary(
 		op_symbol,
 		left_type_spec,
-		right_type_spec);
+		right_type_spec,
+		left_argument,
+		right_argument);
 }
 
 inline std::optional<ASTNode> TemplateEngine::instantiateLazyMemberForCanonicalOwner(

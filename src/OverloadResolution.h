@@ -1578,7 +1578,17 @@ inline bool isDirectCtorTemplateParameterMatch(
 	return false;
 }
 
-inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, const TypeSpecifierNode& source_type) {
+inline bool isIntegerLiteralZeroNullPointerConstant(const ASTNode& arg_node);
+inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
+inline ConversionPlan buildConversionPlan(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to,
+	const ASTNode* argument_node);
+
+inline bool hasImplicitConvertingConstructorForArgument(
+	TypeIndex target_idx,
+	const TypeSpecifierNode& source_type,
+	const ASTNode* argument_node) {
 	if (!target_idx.is_valid()) {
 		return false;
 	}
@@ -1598,17 +1608,24 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 		const auto& param_spec = *first_param;
 		if (param_spec.is_pointer() || param_spec.is_function_pointer() ||
 			param_spec.is_member_function_pointer() || param_spec.is_member_object_pointer()) {
-			// At overload-resolution time we only have type-category information; we
-			// cannot distinguish a null-pointer constant (literal 0) from a generic
-			// integer.  Accepting any integral source as potentially viable is an
-			// intentional approximation: in practice these constructors are called
-			// only with null-pointer constants (e.g. libstdc++ __cmp_cat::__unspec),
-			// and non-zero integers that slip through would be caught at codegen time
-			// or produce UB that is the programmer's responsibility.
-			if (source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category())) {
-				return true;
+			TypeSpecifierNode effective_source_type = source_type;
+			if (argument_node != nullptr &&
+				isIntegerLiteralZeroNullPointerConstant(*argument_node) &&
+				(source_type.category() == TypeCategory::Nullptr ||
+				 isIntegralType(source_type.category()))) {
+				effective_source_type.set_type_index(nativeTypeIndex(TypeCategory::Nullptr));
+				effective_source_type.set_size_in_bits(get_type_size_bits(TypeCategory::Nullptr));
+				effective_source_type.set_reference_qualifier(ReferenceQualifier::None);
 			}
-			const auto conversion = can_convert_type(source_type.category(), param_spec.category());
+			const bool source_is_pointer_like = effective_source_type.is_pointer() ||
+				effective_source_type.is_function_pointer() ||
+				effective_source_type.is_member_function_pointer() ||
+				effective_source_type.is_member_object_pointer() ||
+				effective_source_type.category() == TypeCategory::Nullptr;
+			if (!source_is_pointer_like) {
+				continue;
+			}
+			const ConversionPlan conversion = buildConversionPlan(effective_source_type, param_spec);
 			if (conversion.is_valid) {
 				return true;
 			}
@@ -2084,8 +2101,6 @@ inline void stripOrderedReference(TypeSpecifierNode& spec) {
 	}
 	spec.set_reference_qualifier(ReferenceQualifier::None);
 }
-
-inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
 
 inline TypeId canonicalPromotedFixedEnumUnderlyingType(
 	CanonicalTypeTable& table,
@@ -3188,7 +3203,10 @@ inline ConversionPlan buildOrderedDeclaratorConversionPlan(
 // IMPORTANT: For correct lvalue-vs-rvalue-reference matching the caller must:
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
-inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+inline ConversionPlan buildConversionPlan(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to,
+	const ASTNode* argument_node) {
 	if (const std::optional<ConversionPlan> reference_plan =
 			tryBuildCanonicalReferenceBindingPlan(from, to);
 		reference_plan.has_value()) {
@@ -3252,7 +3270,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		!to.is_array() && to.is_pointer()) {
 		TypeSpecifierNode decayed_from = from;
 		applyArrayToPointerConversion(decayed_from);
-		ConversionPlan plan = buildConversionPlan(decayed_from, to);
+		ConversionPlan plan = buildConversionPlan(decayed_from, to, argument_node);
 		if (!plan.is_valid)
 			return ConversionPlan::no_match();
 		return {plan.rank, StandardConversionKind::ArrayToPointer, true};
@@ -3483,7 +3501,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (!to_is_rvalue && to.is_const()) {
 					auto plan = buildConversionPlan(
 						stripReferenceQualifier(from),
-						stripReferenceQualifier(to));
+						stripReferenceQualifier(to),
+						argument_node);
 					if (plan.is_valid) {
 						// C++20 [over.ics.rank]/3.2.3 prefers binding an rvalue to T&& over
 						// binding it to const T& when the implied conversion sequences are
@@ -3496,7 +3515,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (from_is_rvalue && to_is_rvalue) {
 					auto plan = buildConversionPlan(
 						stripReferenceQualifier(from),
-						stripReferenceQualifier(to));
+						stripReferenceQualifier(to),
+						argument_node);
 					if (plan.is_valid) {
 						return plan;
 					}
@@ -3531,7 +3551,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					// materializing a temporary of the referred-to type.
 					auto plan = buildConversionPlan(
 						stripReferenceQualifier(from),
-						stripReferenceQualifier(to));
+						stripReferenceQualifier(to),
+						argument_node);
 					if ((!to_is_rvalue && to_is_const && plan.is_valid) ||
 						(to_is_rvalue && plan.is_valid)) {
 						// Const lvalue ref can bind to values that can be converted
@@ -3603,7 +3624,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// Try conversion of the referenced type to target type
 			return buildConversionPlan(
 				stripReferenceQualifier(from),
-				stripReferenceQualifier(to));
+				stripReferenceQualifier(to),
+				argument_node);
 		}
 	}
 
@@ -3630,7 +3652,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	if (effective_to_category == TypeCategory::Struct &&
 		effective_from_category != TypeCategory::Struct) {
 		if (to.type_index().is_valid() &&
-			hasImplicitConvertingConstructorForArgument(to.type_index(), from)) {
+			hasImplicitConvertingConstructorForArgument(to.type_index(), from, argument_node)) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 		if (!hasCompleteStructInfo(to.type_index())) {
@@ -3741,6 +3763,12 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	return buildConversionPlan(from_type_category, to_type_category);
 }
 
+inline ConversionPlan buildConversionPlan(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to) {
+	return buildConversionPlan(from, to, nullptr);
+}
+
 // Check if one type can be implicitly converted to another (considering pointers and references).
 // Delegates to buildConversionPlan(TypeSpecifierNode, TypeSpecifierNode) for the unified
 // conversion logic, matching the pattern the primitive overload already uses.
@@ -3769,13 +3797,19 @@ inline ArgumentConversionInfo buildArgumentConversionInfo(
 			parameter_type,
 			argument_node);
 	if (isIntegerLiteralZeroNullptrTypeOverloadConversion(argument_node, parameter_type)) {
-		const ConversionPlan conversion = buildConversionPlan(effective_argument_type, parameter_type);
+		const ConversionPlan conversion = buildConversionPlan(
+			effective_argument_type,
+			parameter_type,
+			argument_node);
 		return {conversion.is_valid ? ConversionRank::Conversion : ConversionRank::NoMatch,
 				&parameter_type,
 				conversion.is_valid};
 	}
 
-	const ConversionPlan conversion = buildConversionPlan(effective_argument_type, parameter_type);
+	const ConversionPlan conversion = buildConversionPlan(
+		effective_argument_type,
+		parameter_type,
+		argument_node);
 	return {conversion.rank, &parameter_type, conversion.is_valid};
 }
 
@@ -4914,7 +4948,11 @@ inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpe
 	return resolveTypeSpecifierForSelfReference(type_spec, enclosing_type_index);
 }
 
-inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& arg_spec, const TypeSpecifierNode& param_spec, TypeIndex enclosing_type_index) {
+inline ConversionRank rankBinaryOperatorOperandMatch(
+	const TypeSpecifierNode& arg_spec,
+	const TypeSpecifierNode& param_spec,
+	TypeIndex enclosing_type_index,
+	const ASTNode* argument_node) {
 	TypeSpecifierNode resolved_param_spec = resolveBinaryOperatorTypeForSelfReference(param_spec, enclosing_type_index);
 	if (!arg_spec.is_pointer() &&
 		!resolved_param_spec.is_pointer() &&
@@ -4923,16 +4961,26 @@ inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& ar
 		if (!resolved_param_spec.type_index().is_valid() ||
 			resolved_param_spec.type_index().index() >= getTypeInfoCount() ||
 			!getTypeInfo(resolved_param_spec.type_index()).getStructInfo()) {
-			auto conversion = can_convert_type(arg_spec, resolved_param_spec);
+			auto conversion = buildConversionPlan(arg_spec, resolved_param_spec, argument_node);
 			return conversion.is_valid ? conversion.rank : ConversionRank::NoMatch;
 		}
-		if (!hasImplicitConvertingConstructorForArgument(resolved_param_spec.type_index(), arg_spec)) {
+		if (!hasImplicitConvertingConstructorForArgument(
+				resolved_param_spec.type_index(),
+				arg_spec,
+				argument_node)) {
 			return ConversionRank::NoMatch;
 		}
 		return ConversionRank::UserDefined;
 	}
-	auto conversion = can_convert_type(arg_spec, resolved_param_spec);
+	auto conversion = buildConversionPlan(arg_spec, resolved_param_spec, argument_node);
 	return conversion.is_valid ? conversion.rank : ConversionRank::NoMatch;
+}
+
+inline ConversionRank rankBinaryOperatorOperandMatch(
+	const TypeSpecifierNode& arg_spec,
+	const TypeSpecifierNode& param_spec,
+	TypeIndex enclosing_type_index) {
+	return rankBinaryOperatorOperandMatch(arg_spec, param_spec, enclosing_type_index, nullptr);
 }
 
 inline ConversionRank rankImplicitObjectToOperator(
@@ -5218,7 +5266,9 @@ inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
 inline OperatorOverloadResult findBinaryOperatorOverload(
 	const TypeSpecifierNode& left_type_spec,
 	const TypeSpecifierNode& right_type_spec,
-	OverloadableOperator operator_kind) {
+	OverloadableOperator operator_kind,
+	const ASTNode* left_argument,
+	const ASTNode* right_argument) {
 	TypeIndex left_type_index = left_type_spec.type_index();
 	if (!left_type_index.is_valid() || left_type_index.index() >= getTypeInfoCount()) {
 		return OperatorOverloadResult::no_overload();
@@ -5277,7 +5327,8 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
 				right_type_spec,
 				rhs_param_spec,
-				struct_idx);
+				struct_idx,
+				right_argument);
 			if (rhs_rank == ConversionRank::NoMatch)
 				continue;
 
@@ -5335,7 +5386,25 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 	return OperatorOverloadResult(best_candidates[0]->member_func);
 }
 
-inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, TypeCategory right_type) {
+inline OperatorOverloadResult findBinaryOperatorOverload(
+	const TypeSpecifierNode& left_type_spec,
+	const TypeSpecifierNode& right_type_spec,
+	OverloadableOperator operator_kind) {
+	return findBinaryOperatorOverload(
+		left_type_spec,
+		right_type_spec,
+		operator_kind,
+		nullptr,
+		nullptr);
+}
+
+inline OperatorOverloadResult findBinaryOperatorOverload(
+	TypeIndex left_type_index,
+	TypeIndex right_type_index,
+	OverloadableOperator operator_kind,
+	TypeCategory right_type,
+	const ASTNode* left_argument,
+	const ASTNode* right_argument) {
 	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid()) {
 		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
@@ -5346,7 +5415,23 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	return findBinaryOperatorOverload(
 		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
 		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
-		operator_kind);
+		operator_kind,
+		left_argument,
+		right_argument);
+}
+
+inline OperatorOverloadResult findBinaryOperatorOverload(
+	TypeIndex left_type_index,
+	TypeIndex right_type_index,
+	OverloadableOperator operator_kind,
+	TypeCategory right_type) {
+	return findBinaryOperatorOverload(
+		left_type_index,
+		right_type_index,
+		operator_kind,
+		right_type,
+		nullptr,
+		nullptr);
 }
 
 // Find binary operator overload, including free-function operators in the given symbol table.
@@ -5358,7 +5443,9 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	const TypeSpecifierNode& left_type_spec,
 	const TypeSpecifierNode& right_type_spec,
 	OverloadableOperator operator_kind,
-	const SymbolTable& symbol_table) {
+	const SymbolTable& symbol_table,
+	const ASTNode* left_argument,
+	const ASTNode* right_argument) {
 	if (operator_kind == OverloadableOperator::None) {
 		return OperatorOverloadResult::no_overload();
 	}
@@ -5419,7 +5506,8 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
 				right_type_spec,
 				rhs_param_spec,
-				struct_idx);
+				struct_idx,
+				right_argument);
 			if (rhs_rank != ConversionRank::NoMatch) {
 				candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false, &rhs_param_spec});
 			}
@@ -5464,11 +5552,19 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 			continue;
 		const auto& p1_spec = p1_type.as<TypeSpecifierNode>();
 
-		ConversionRank lhs_rank = rankBinaryOperatorOperandMatch(left_type_spec, p0_spec, left_type_index);
+		ConversionRank lhs_rank = rankBinaryOperatorOperandMatch(
+			left_type_spec,
+			p0_spec,
+			left_type_index,
+			left_argument);
 		if (lhs_rank == ConversionRank::NoMatch)
 			continue;
 
-		ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(right_type_spec, p1_spec, right_type_index);
+		ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
+			right_type_spec,
+			p1_spec,
+			right_type_index,
+			right_argument);
 		if (rhs_rank == ConversionRank::NoMatch)
 			continue;
 
@@ -5527,11 +5623,27 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 }
 
 inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
+	const TypeSpecifierNode& left_type_spec,
+	const TypeSpecifierNode& right_type_spec,
+	OverloadableOperator operator_kind,
+	const SymbolTable& symbol_table) {
+	return findBinaryOperatorOverloadWithFreeFunction(
+		left_type_spec,
+		right_type_spec,
+		operator_kind,
+		symbol_table,
+		nullptr,
+		nullptr);
+}
+
+inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	TypeIndex left_type_index,
 	TypeIndex right_type_index,
 	OverloadableOperator operator_kind,
 	const SymbolTable& symbol_table,
-	TypeCategory right_type) {
+	TypeCategory right_type,
+	const ASTNode* left_argument,
+	const ASTNode* right_argument) {
 	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid()) {
 		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
@@ -5543,7 +5655,25 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
 		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
 		operator_kind,
-		symbol_table);
+		symbol_table,
+		left_argument,
+		right_argument);
+}
+
+inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
+	TypeIndex left_type_index,
+	TypeIndex right_type_index,
+	OverloadableOperator operator_kind,
+	const SymbolTable& symbol_table,
+	TypeCategory right_type) {
+	return findBinaryOperatorOverloadWithFreeFunction(
+		left_type_index,
+		right_type_index,
+		operator_kind,
+		symbol_table,
+		right_type,
+		nullptr,
+		nullptr);
 }
 
 // ============================================================================
