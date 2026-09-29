@@ -37,7 +37,9 @@ bool typeSpecCanHaveArrayAbstractDeclarator(const TypeSpecifierNode& type_spec) 
 const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 	std::string_view op_symbol,
 	const TypeSpecifierNode& left_type_spec,
-	const TypeSpecifierNode& right_type_spec) {
+	const TypeSpecifierNode& right_type_spec,
+	const ASTNode& left_argument,
+	const ASTNode& right_argument) {
 	if (current_linkage_ == Linkage::C) {
 		return nullptr;
 	}
@@ -65,7 +67,11 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 		OperatorTemplateCandidateSource source = OperatorTemplateCandidateSource::Registry;
 	};
 
-	auto tryRankOperatorTemplateCandidate = [&left_type_spec, &right_type_spec](
+	auto tryRankOperatorTemplateCandidate = [
+		&left_type_spec,
+		&right_type_spec,
+		&left_argument,
+		&right_argument](
 		const FunctionDeclarationNode& func_decl,
 		OperatorTemplateCandidateSource source,
 		int specificity,
@@ -84,7 +90,8 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 		ConversionRank lhs_rank = rankBinaryOperatorOperandMatch(
 			left_type_spec,
 			lhs_type_node.as<TypeSpecifierNode>(),
-			left_type_spec.type_index());
+			left_type_spec.type_index(),
+			&left_argument);
 		if (lhs_rank == ConversionRank::NoMatch) {
 			return false;
 		}
@@ -92,7 +99,8 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 		ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
 			right_type_spec,
 			rhs_type_node.as<TypeSpecifierNode>(),
-			right_type_spec.type_index());
+			right_type_spec.type_index(),
+			&right_argument);
 		if (rhs_rank == ConversionRank::NoMatch) {
 			return false;
 		}
@@ -321,16 +329,25 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 		overload_result = findBinaryOperatorOverload(
 			*left_type_spec,
 			*right_type_spec,
-			op_kind);
+			op_kind,
+			&binary_operator_node.get_lhs(),
+			&binary_operator_node.get_rhs());
 	} else {
 		overload_result = findBinaryOperatorOverloadWithFreeFunction(
 			*left_type_spec,
 			*right_type_spec,
 			op_kind,
-			gSymbolTable);
+			gSymbolTable,
+			&binary_operator_node.get_lhs(),
+			&binary_operator_node.get_rhs());
 		if (isHardUseLikeInstantiationMode()) {
 			if (const FunctionDeclarationNode* instantiated_overload =
-					tryInstantiateOperatorTemplateForBinary(binary_operator_node.op(), *left_type_spec, *right_type_spec)) {
+					tryInstantiateOperatorTemplateForBinary(
+						binary_operator_node.op(),
+						*left_type_spec,
+						*right_type_spec,
+						binary_operator_node.get_lhs(),
+						binary_operator_node.get_rhs())) {
 				if (!overload_result.has_match ||
 					overload_result.is_ambiguous ||
 					(overload_result.is_free_function &&
@@ -345,7 +362,9 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 			*left_type_spec,
 			*right_type_spec,
 			OverloadableOperator::Equal,
-			gSymbolTable);
+			gSymbolTable,
+			&binary_operator_node.get_lhs(),
+			&binary_operator_node.get_rhs());
 		if (eq_overload.has_match && !eq_overload.is_ambiguous) {
 			overload_result = eq_overload;
 			equality_rewrite_negate = true;
@@ -934,10 +953,17 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*left_type_spec,
 								*right_type_spec,
 								op_kind,
-								gSymbolTable);
+								gSymbolTable,
+								&*leftNode,
+								&*rightNode);
 							if (op_kind != OverloadableOperator::Assign) {
 								if (const FunctionDeclarationNode* instantiated_overload =
-										tryInstantiateOperatorTemplateForBinary(op_symbol, *left_type_spec, *right_type_spec)) {
+										tryInstantiateOperatorTemplateForBinary(
+											op_symbol,
+											*left_type_spec,
+											*right_type_spec,
+											*leftNode,
+											*rightNode)) {
 									if (!overload_result.has_match ||
 										overload_result.is_ambiguous ||
 										(overload_result.is_free_function &&

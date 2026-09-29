@@ -2411,9 +2411,20 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				overload_result = OperatorOverloadResult::no_overload();
 			} else {
 				if (auto type_specs = tryGetBinaryOperatorTypeSpecs(); type_specs.has_value()) {
-					overload_result = findBinaryOperatorOverload(type_specs->first, type_specs->second, OverloadableOperator::Assign);
+					overload_result = findBinaryOperatorOverload(
+						type_specs->first,
+						type_specs->second,
+						OverloadableOperator::Assign,
+						&binaryOperatorNode.get_lhs(),
+						&binaryOperatorNode.get_rhs());
 				} else {
-					overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, OverloadableOperator::Assign, rhsCat);
+					overload_result = findBinaryOperatorOverload(
+						lhs_type_index,
+						rhs_type_index,
+						OverloadableOperator::Assign,
+						rhsCat,
+						&binaryOperatorNode.get_lhs(),
+						&binaryOperatorNode.get_rhs());
 				}
 			}
 
@@ -2754,14 +2765,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					concrete_type_specs->first,
 					concrete_type_specs->second,
 					op_kind,
-					sym_table);
+					sym_table,
+					&binaryOperatorNode.get_lhs(),
+					&binaryOperatorNode.get_rhs());
 				if (!overload_result.has_match && !overload_result.is_ambiguous && (lhs_type_index.is_valid() || rhs_type_index.is_valid())) {
 					overload_result = findBinaryOperatorOverloadWithFreeFunction(
 						lhs_type_index,
 						rhs_type_index,
 						op_kind,
 						sym_table,
-						rhsCat);
+						rhsCat,
+						&binaryOperatorNode.get_lhs(),
+						&binaryOperatorNode.get_rhs());
 				}
 			} else {
 				overload_result = findBinaryOperatorOverloadWithFreeFunction(
@@ -2769,7 +2784,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					rhs_type_index,
 					op_kind,
 					sym_table,
-					rhsCat);
+					rhsCat,
+					&binaryOperatorNode.get_lhs(),
+					&binaryOperatorNode.get_rhs());
 			}
 		}
 
@@ -2783,14 +2800,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					concrete_type_specs->first,
 					concrete_type_specs->second,
 					OverloadableOperator::Equal,
-					sym_table);
+					sym_table,
+					&binaryOperatorNode.get_lhs(),
+					&binaryOperatorNode.get_rhs());
 			} else {
 				eq_overload = findBinaryOperatorOverloadWithFreeFunction(
 					lhs_type_index,
 					rhs_type_index,
 					OverloadableOperator::Equal,
 					sym_table,
-					rhsCat);
+					rhsCat,
+					&binaryOperatorNode.get_lhs(),
+					&binaryOperatorNode.get_rhs());
 			}
 			if (eq_overload.has_match && !eq_overload.is_ambiguous) {
 				overload_result = eq_overload;
