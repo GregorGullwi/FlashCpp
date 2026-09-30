@@ -4235,6 +4235,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				consume_type_id_abstract_declarators(type_spec);
+				// Publish the nominal identity of a record or enum operand so the
+				// canonical type table can import it by EntityId.
+				tryBindPublishedTypeEntity(type_spec);
 
 				// Check for pack expansion (...) after the first type argument
 				if (peek() == "..."_tok) {
@@ -4254,6 +4257,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
 						consume_type_id_abstract_declarators(arg_type_spec);
+						tryBindPublishedTypeEntity(arg_type_spec);
 
 						// Check for pack expansion (...) after the type argument
 						if (peek() == "..."_tok) {
@@ -4283,6 +4287,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
 					consume_type_id_abstract_declarators(second_type_spec);
+					tryBindPublishedTypeEntity(second_type_spec);
 
 					if (!consume(")"_tok)) {
 						return ParseResult::error("Expected ')' after type trait arguments", current_token_);

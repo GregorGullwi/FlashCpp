@@ -5391,6 +5391,14 @@ ParseResult Parser::parse_decltype_specifier() {
 		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
 	}
 
+	// Publish the nominal identity a deduced record or enum type already has, so
+	// every consumer of this specifier - the canonical type table in particular -
+	// reads the EntityId instead of a spelling-shaped type index. This is the one
+	// place the deduced type is materialized; the copy emplaced below carries the
+	// stamp. A class whose entity is not published yet simply leaves it unset, and
+	// a later publication re-stamps on the consumer side.
+	tryBindPublishedTypeEntity(*type_spec_opt);
+
 	// Return the deduced type specifier
 	return saved_position.success(emplace_node<TypeSpecifierNode>(*type_spec_opt));
 }
