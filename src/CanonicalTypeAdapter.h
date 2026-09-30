@@ -455,9 +455,11 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 
 inline CanonicalTypeImport importCanonicalFunctionTypeComponent(CanonicalTypeTable& table,
 	const FunctionType& type, CanonicalTypeImportContext context) {
+	TypeSpecifierNode syntax = typeSpecifierFromFunctionType(type);
+	tryBindPublishedTypeEntity(syntax);
 	return importCanonicalTypeImpl(
 		table,
-		typeSpecifierFromFunctionType(type),
+		syntax,
 		context);
 }
 
