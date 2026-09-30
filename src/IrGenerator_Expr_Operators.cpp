@@ -1869,6 +1869,29 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				expr, from_t, to_t, ci.cast_kind, binaryOperatorNode.get_token());
 			return true;
 		}
+		if (ci.cast_kind == StandardConversionKind::UserDefined &&
+			from_t == TypeCategory::Struct &&
+			ci.selected_conversion_function != nullptr) {
+			const CanonicalTypeDesc& source_desc =
+				sema_.typeContext().get(ci.source_type_id);
+			const TypeInfo* const source_type_info =
+				tryGetTypeInfo(source_desc.type_index);
+			if (source_type_info == nullptr) {
+				throw InternalError(
+					"Sema-selected conversion operator source type is unavailable during assignment lowering");
+			}
+			if (auto result = emitSemaSelectedConversionOperatorCall(
+					expr,
+					*source_type_info,
+					ci,
+					to_t,
+					binaryOperatorNode.get_token())) {
+				expr = *result;
+				return true;
+			}
+			throw InternalError(
+				"Sema-selected conversion operator failed to lower an assignment conversion");
+		}
 		if (from_t == TypeCategory::Struct || to_t == TypeCategory::Struct)
 			return false;
 		if (expected_cat != TypeCategory::Invalid && to_t != expected_cat)
@@ -2721,9 +2744,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		recorded_overload_still_relevant = false;
 	}
 	OverloadableOperator op_kind = binaryOperatorNode.operator_kind();
-	bool should_attempt_operator_overload = isOverloadableBinaryOperator(op_kind) && (concrete_type_specs.has_value()
-																						  ? concrete_operands_require_user_defined_operator
-																						  : (lhs_has_user_defined_identity || rhs_has_user_defined_identity || recorded_overload_still_relevant));
+	const bool builtin_assignment_candidate =
+		op_kind == OverloadableOperator::Assign && !is_struct_type(lhsCat);
+	bool should_attempt_operator_overload = isOverloadableBinaryOperator(op_kind) &&
+		!builtin_assignment_candidate && (concrete_type_specs.has_value()
+																	  ? concrete_operands_require_user_defined_operator
+																	  : (lhs_has_user_defined_identity || rhs_has_user_defined_identity || recorded_overload_still_relevant));
 	bool can_try_spaceship_rewrite = false;
 	bool equality_rewrite_negate = binaryOperatorNode.has_recorded_equality_rewrite_negate();
 

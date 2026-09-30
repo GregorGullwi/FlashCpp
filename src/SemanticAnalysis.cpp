@@ -9534,6 +9534,74 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		return true;
 	}
 
+	if (from_desc.category() == TypeCategory::Struct &&
+		(is_builtin_type(to_desc.category()) ||
+			to_desc.category() == TypeCategory::Enum) &&
+		from_desc.pointer_levels.empty() &&
+		from_desc.array_dimensions.empty() &&
+		to_desc.pointer_levels.empty() &&
+		to_desc.array_dimensions.empty() &&
+		from_desc.ref_qualifier == ReferenceQualifier::None &&
+		to_desc.ref_qualifier == ReferenceQualifier::None) {
+		const TypeSpecifierNode target_type = materializeTypeSpecifier(to_desc);
+		const auto selected_conversion =
+			trySelectCanonicalUserDefinedConversionOperator(
+				from_desc.type_index,
+				from_desc.base_cv,
+				target_type);
+		if (selected_conversion.has_value() && !selected_conversion->ambiguous) {
+			const TypeInfo* const declaring_type_info =
+				tryGetTypeInfo(selected_conversion->declaring_type_index);
+			const StructTypeInfo* const declaring_struct_info =
+				declaring_type_info != nullptr
+					? declaring_type_info->getStructInfo()
+					: nullptr;
+			if (declaring_struct_info == nullptr ||
+				!declaring_struct_info->name.isValid() ||
+				selected_conversion->function == nullptr) {
+				return false;
+			}
+			const StringHandle conversion_name =
+				selected_conversion->function->decl_node().identifier_token().handle();
+			if (conversion_name.isValid()) {
+				const bool conversion_is_const = hasCVQualifier(
+					selected_conversion->member_cv_qualifier,
+					CVQualifier::Const);
+				LazyMemberInstantiationRegistry::getInstance().markOdrUsed(
+					declaring_struct_info->name,
+					conversion_name,
+					conversion_is_const);
+				LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
+					declaring_struct_info->name);
+			}
+			if (selected_conversion->function->needs_body_materialization()) {
+				ensureMemberFunctionMaterialized(
+					declaring_struct_info->name,
+					*selected_conversion->function);
+			}
+
+			ImplicitCastInfo cast_info;
+			cast_info.source_type_id = expr_type_id;
+			cast_info.target_type_id = target_type_id;
+			cast_info.cast_kind = StandardConversionKind::UserDefined;
+			cast_info.value_category_after = ValueCategory::PRValue;
+			cast_info.selected_conversion_function = selected_conversion->function;
+			cast_info.trailing_standard_conversion =
+				selected_conversion->trailing_standard_kind;
+			const CastInfoIndex idx = allocateCastInfo(cast_info);
+			SemanticSlot slot;
+			slot.type_id = target_type_id;
+			slot.cast_info_index = idx;
+			slot.value_category = ValueCategory::PRValue;
+			setSlot(getExpressionKey(expr_node), slot);
+			stats_.slots_filled++;
+			return true;
+		}
+		if (selected_conversion.has_value() && selected_conversion->ambiguous) {
+			return false;
+		}
+	}
+
 	// Same base type but different canonical IDs (differ only in qualifiers or type_index,
 	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
 	if (from_desc.category() == to_desc.category())

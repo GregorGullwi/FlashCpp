@@ -379,8 +379,9 @@ Class-scope typedef and nested-name mop/MFP aliases (`Typedefs::Field`,
 owner `TypeId` through nested alias materialization
 (`resolveTypeInfoToTypeSpec` / `buildTypeFromInfo`); covered by
 `tests/test_canonical_class_scope_typedef_member_pointer_owner_overload_ret0.cpp`.
-Dependent `noexcept`, user-defined conversions, and other unsupported callable
-or template types still use compatibility planning. Calling-convention-sensitive
+Dependent `noexcept`, standard-conversion tails outside the canonical
+projectable set, and other unsupported callable or template types still use
+compatibility planning. Calling-convention-sensitive
 regular and member-function-pointer ranking now preserves the signature through
 overload selection; `tests/test_canonical_function_pointer_calling_convention_overload_ret0.cpp`
 covers both forms. Parenthesized function-pointer declarators now carry their
@@ -405,6 +406,23 @@ declaration matching distinguishes the ref-qualified overloads. The regression
 `tests/test_canonical_member_function_pointer_ref_qualifier_overload_ret0.cpp`
 checks that `decltype(&Owner::method)` matches an explicitly ref-qualified
 member-function-pointer alias and selects its matching overload.
+Class-to-scalar conversion-function sequences now retain the selected
+conversion function and its trailing standard conversion through overload
+ranking, sema, and call lowering. The trailing conversion rank breaks ties
+between user-defined sequences, and the call uses the conversion function's
+declared result type before applying that standard tail. Regressions
+`tests/test_conversion_operator_trailing_standard_sequence_ret0.cpp` and
+`tests/test_conversion_operator_trailing_standard_rank_ret0.cpp` cover
+`operator int()` followed by `int`-to-`float` conversion and promotion-versus-
+conversion ranking. `tests/test_conversion_operator_trailing_standard_return_ret0.cpp`
+checks return lowering, while
+`tests/test_conversion_operator_trailing_standard_assignment_ret0.cpp`
+checks local and global assignment lowering. This covers scalar tails accepted
+by the canonical projectable planner; unsupported tail families remain on
+compatibility paths.
+`FunctionDeclarationNode` does not yet retain an `explicit` specifier for
+conversion functions, so implicit viability of explicit conversion functions
+remains a separate parser/sema gap.
 Constructor-based conversion viability now receives the argument expression:
 pointer-taking constructors accept an integer literal zero as a null pointer
 constant and reject other integral arguments. Direct-initialization

@@ -1514,6 +1514,20 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						TypeIndex source_type_idx =
 							sema_.typeContext().get(cast_info.source_type_id).type_index;
 						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
+							if (cast_info.selected_conversion_function != nullptr) {
+								if (auto result = emitSemaSelectedConversionOperatorCall(
+										argumentIrOperands,
+										*src_type_info,
+										cast_info,
+										param_type->category(),
+										callExprNode.called_from())) {
+									argumentIrOperands = *result;
+									arg_type = argumentIrOperands.typeEnum();
+									arg_type_index = argumentIrOperands.type_index;
+									return true;
+								}
+								return false;
+							}
 							const bool source_is_const =
 								((static_cast<uint8_t>(
 									 sema_.typeContext().get(cast_info.source_type_id).base_cv)) &

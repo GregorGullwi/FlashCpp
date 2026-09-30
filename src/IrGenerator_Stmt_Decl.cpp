@@ -2266,7 +2266,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 					}
 					if (need_conversion && init_cat == TypeCategory::Struct) {
-							// First check for a sema-annotated user-defined conversion
+						// First check for a sema-annotated user-defined conversion.
 						if (init_node.is<ExpressionNode>()) {
 							const void* key = &init_node.as<ExpressionNode>();
 							const auto slot = sema_.getSlot(key);
@@ -2276,16 +2276,28 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								if (cast_info.cast_kind == StandardConversionKind::UserDefined) {
 									TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
 									if (const TypeInfo* src_info = tryGetTypeInfo(source_type_index)) {
-										const StructMemberFunction* conv_op = findConversionOperator(
-											src_info->getStructInfo(), type_node.type_index(),
-											isExprConstQualified(init_node));
-										if (conv_op) {
-											FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
-													  StringTable::getStringView(src_info->name()), " to target type");
-											if (auto result = emitConversionOperatorCall(init_operands, *src_info, *conv_op,
-																						 type_node.type_index(), target_size, decl.identifier_token())) {
+										if (cast_info.selected_conversion_function != nullptr) {
+											if (auto result = emitSemaSelectedConversionOperatorCall(
+												init_operands,
+												*src_info,
+												cast_info,
+												type_node.category(),
+												decl.identifier_token())) {
 												init_operands = *result;
 												conv_op_applied = true;
+											}
+										} else {
+											const StructMemberFunction* conv_op = findConversionOperator(
+												src_info->getStructInfo(), type_node.type_index(),
+												isExprConstQualified(init_node));
+											if (conv_op) {
+												FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
+													  StringTable::getStringView(src_info->name()), " to target type");
+												if (auto result = emitConversionOperatorCall(init_operands, *src_info, *conv_op,
+																 type_node.type_index(), target_size, decl.identifier_token())) {
+													init_operands = *result;
+													conv_op_applied = true;
+												}
 											}
 										}
 									}
@@ -2293,11 +2305,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 
-						// Probed 2026-04-29 across the full 2243-test corpus: the codegen-side
-						// var-init conversion-operator fallback was never hit after
-						// SemanticAnalysis::tryAnnotateConversion was extended to handle struct
-						// reference sources (T&, const T&, T&&). The sema-annotated path above
-						// is now the only active route.
 						if (!conv_op_applied) {
 							if (const TypeInfo* source_type_info = tryGetTypeInfo(init_type_index)) {
 								const StructMemberFunction* conv_op = findConversionOperator(
