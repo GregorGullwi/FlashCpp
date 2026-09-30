@@ -93,6 +93,9 @@ struct ImplicitCastInfo {
 	// conversion operator selected by sema. Codegen consumes this directly
 	// rather than re-running conversion-operator lookup.
 	const FunctionDeclarationNode* selected_conversion_function = nullptr;
+	// A conversion function may return a type that then undergoes a standard
+	// conversion to the destination (for example, operator int() to float).
+	StandardConversionKind trailing_standard_conversion = StandardConversionKind::None;
 };
 
 // --- Canonical type descriptor (stored in TypeContext, indexed by CanonicalTypeId) ---

@@ -374,18 +374,33 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							// Sema annotated a user-defined conversion operator call
 						TypeIndex source_type_idx = sema_.typeContext().get(cast_info.source_type_id).type_index;
 						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
-							const StructTypeInfo* src_struct_info = src_type_info->getStructInfo();
-							const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
-							const bool source_is_const = ((static_cast<uint8_t>(sema_.typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
-							const StructMemberFunction* conv_op = findConversionOperator(
-								src_struct_info, ret_type_idx, source_is_const);
-							if (conv_op) {
-								FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
-										  StringTable::getStringView(src_type_info->name()), " to return type");
-								if (auto result = emitConversionOperatorCall(operands, *src_type_info, *conv_op,
-																			 ret_type_idx, return_size, node.return_token())) {
+							if (cast_info.selected_conversion_function != nullptr) {
+								if (auto result = emitSemaSelectedConversionOperatorCall(
+										operands,
+										*src_type_info,
+										cast_info,
+										return_category,
+										node.return_token())) {
 									operands = *result;
 									sema_applied_conversion = true;
+								} else {
+									throw InternalError(
+										"Sema-selected conversion operator failed to lower a return conversion");
+								}
+							} else {
+								const StructTypeInfo* src_struct_info = src_type_info->getStructInfo();
+								const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
+								const bool source_is_const = ((static_cast<uint8_t>(sema_.typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
+								const StructMemberFunction* conv_op = findConversionOperator(
+									src_struct_info, ret_type_idx, source_is_const);
+								if (conv_op) {
+									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
+											  StringTable::getStringView(src_type_info->name()), " to return type");
+									if (auto result = emitConversionOperatorCall(operands, *src_type_info, *conv_op,
+														 ret_type_idx, return_size, node.return_token())) {
+										operands = *result;
+										sema_applied_conversion = true;
+									}
 								}
 							}
 						}

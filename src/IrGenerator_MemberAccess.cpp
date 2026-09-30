@@ -3637,6 +3637,22 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
 		return std::nullopt;
+	return emitConversionOperatorCall(
+		source,
+		source_type_info,
+		conv_op.function_decl.as<FunctionDeclarationNode>(),
+		target_type_index,
+		target_size_bits,
+		token);
+}
+
+std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
+	const ExprResult& source,
+	const TypeInfo& source_type_info,
+	const FunctionDeclarationNode& func_decl,
+	TypeIndex target_type_index,
+	int target_size_bits,
+	const Token& token) {
 
 	// Phase 5 Slice K: historical lazy-conversion-operator materialize-and-queue
 	// fallback removed. Sema's `tryAnnotateConversion` now eagerly materializes the
@@ -3644,9 +3660,6 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	// at sema time, and the end-of-normalization drain covers any residuals. An audit
 	// across the full 2201-test corpus confirmed 0 first-materializer hits here.
 
-	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
-		return std::nullopt;
-	const auto& func_decl = conv_op.function_decl.as<FunctionDeclarationNode>();
 	std::string_view struct_name = StringTable::getStringView(source_type_info.name());
 
 	std::string_view mangled_name;
@@ -3764,4 +3777,40 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
 	return makeExprResult(target_type_index, SizeInBits{target_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+}
+
+std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
+	const ExprResult& source,
+	const TypeInfo& source_type_info,
+	const ImplicitCastInfo& cast_info,
+	TypeCategory destination_type_category,
+	const Token& token) {
+	if (cast_info.selected_conversion_function == nullptr) {
+		return std::nullopt;
+	}
+	const FunctionDeclarationNode& conversion_function =
+		*cast_info.selected_conversion_function;
+	const TypeSpecifierNode& conversion_return_type =
+		conversion_function.decl_node().type_specifier_node();
+	TypeIndex conversion_return_type_index = conversion_return_type.type_index();
+	if (!conversion_return_type_index.is_valid()) {
+		conversion_return_type_index = nativeTypeIndex(conversion_return_type.category());
+	}
+	std::optional<ExprResult> result = emitConversionOperatorCall(
+		source,
+		source_type_info,
+		conversion_function,
+		conversion_return_type_index,
+		static_cast<int>(conversion_return_type.size_in_bits()),
+		token);
+	if (!result.has_value() ||
+		cast_info.trailing_standard_conversion == StandardConversionKind::None) {
+		return result;
+	}
+	return generateTypeConversion(
+		*result,
+		conversion_return_type.category(),
+		destination_type_category,
+		cast_info.trailing_standard_conversion,
+		token);
 }

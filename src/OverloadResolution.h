@@ -80,6 +80,7 @@ struct ConversionPlan {
 	ConversionRank rank = ConversionRank::NoMatch;
 	StandardConversionKind kind = StandardConversionKind::None;
 	bool is_valid = false;
+	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
 
 	// Convert to TypeConversionResult for backward compatibility with callers
 	// that only need rank + validity.
@@ -101,6 +102,7 @@ struct ArgumentConversionInfo {
 	ConversionRank rank = ConversionRank::NoMatch;
 	const TypeSpecifierNode* parameter_type = nullptr;
 	bool is_valid = false;
+	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
 
 	TypeConversionResult toResult() const { return {rank, is_valid}; }
 
@@ -409,6 +411,16 @@ inline int compareArgumentConversionInfo(
 	}
 	if (lhs.rank > rhs.rank) {
 		return 1;
+	}
+	if (lhs.rank == ConversionRank::UserDefined &&
+		lhs.trailing_standard_rank != ConversionRank::NoMatch &&
+		rhs.trailing_standard_rank != ConversionRank::NoMatch) {
+		if (lhs.trailing_standard_rank < rhs.trailing_standard_rank) {
+			return -1;
+		}
+		if (lhs.trailing_standard_rank > rhs.trailing_standard_rank) {
+			return 1;
+		}
 	}
 	if (lhs.rank == ConversionRank::Promotion &&
 		lhs.parameter_type != nullptr && rhs.parameter_type != nullptr) {
@@ -970,6 +982,25 @@ inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to)
 }
 
 inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
+inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
+	const TypeSpecifierNode& from,
+	const TypeSpecifierNode& to);
+
+struct UserDefinedConversionOperatorSelection {
+	const FunctionDeclarationNode* function = nullptr;
+	TypeIndex declaring_type_index{};
+	TypeIndex conversion_target_type{};
+	StandardConversionKind trailing_standard_kind = StandardConversionKind::None;
+	ConversionRank trailing_standard_rank = ConversionRank::NoMatch;
+	CVQualifier member_cv_qualifier = CVQualifier::None;
+	bool ambiguous = false;
+};
+
+inline std::optional<UserDefinedConversionOperatorSelection>
+trySelectCanonicalUserDefinedConversionOperator(
+	TypeIndex source_type_index,
+	CVQualifier source_cv_qualifier,
+	const TypeSpecifierNode& target_type);
 
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
@@ -2689,6 +2720,176 @@ inline std::optional<ConversionPlan> tryBuildCanonicalProjectableConversionPlan(
 	return plan;
 }
 
+inline std::optional<UserDefinedConversionOperatorSelection>
+trySelectCanonicalUserDefinedConversionOperator(
+	TypeIndex source_type_index,
+	CVQualifier source_cv_qualifier,
+	const TypeSpecifierNode& target_type) {
+	if (!source_type_index.is_valid()) {
+		return std::nullopt;
+	}
+	struct PendingType {
+		TypeIndex type_index;
+		size_t depth;
+	};
+	struct Candidate {
+		UserDefinedConversionOperatorSelection selection;
+		size_t depth;
+	};
+	struct NearestDeclaration {
+		TypeIndex conversion_target_type;
+		size_t depth;
+	};
+	std::vector<PendingType> pending_types{{source_type_index, 0}};
+	std::vector<TypeIndex> visited_types;
+	std::vector<const FunctionDeclarationNode*> visited_functions;
+	std::vector<NearestDeclaration> nearest_declarations;
+	std::vector<Candidate> candidates;
+	const uint8_t source_cv_bits = static_cast<uint8_t>(source_cv_qualifier);
+	for (size_t pending_index = 0;
+		 pending_index < pending_types.size();
+		 ++pending_index) {
+		const PendingType pending_type = pending_types[pending_index];
+		const TypeIndex current_type = pending_type.type_index;
+		if (std::find(visited_types.begin(), visited_types.end(), current_type) !=
+			visited_types.end()) {
+			continue;
+		}
+		visited_types.push_back(current_type);
+		const TypeInfo* const type_info = tryGetTypeInfo(current_type);
+		if (type_info == nullptr) {
+			continue;
+		}
+		const StructTypeInfo* const struct_info = type_info->getStructInfo();
+		if (struct_info == nullptr) {
+			continue;
+		}
+		for (const StructMemberFunction& member_function : struct_info->member_functions) {
+			if (!member_function.is_conversion_operator() ||
+				!member_function.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const TypeIndex conversion_target_type =
+				member_function.conversion_target_type;
+			if (!conversion_target_type.is_valid()) {
+				continue;
+			}
+			auto nearest_declaration = std::find_if(
+				nearest_declarations.begin(),
+				nearest_declarations.end(),
+				[conversion_target_type](const NearestDeclaration& declaration) {
+					return declaration.conversion_target_type == conversion_target_type;
+				});
+			if (nearest_declaration == nearest_declarations.end()) {
+				nearest_declarations.push_back(
+					{conversion_target_type, pending_type.depth});
+			} else {
+				nearest_declaration->depth = std::min(
+					nearest_declaration->depth,
+					pending_type.depth);
+			}
+			const FunctionDeclarationNode& function =
+				member_function.function_decl.as<FunctionDeclarationNode>();
+			if (std::find(visited_functions.begin(), visited_functions.end(), &function) !=
+				visited_functions.end()) {
+				continue;
+			}
+			visited_functions.push_back(&function);
+			const uint8_t member_cv_bits =
+				static_cast<uint8_t>(member_function.cv_qualifier);
+			if ((source_cv_bits & ~member_cv_bits) != 0) {
+				continue;
+			}
+			const TypeSpecifierNode& return_type =
+				function.decl_node().type_specifier_node();
+			if (!return_type.pointer_levels().empty() ||
+				!return_type.array_dimensions().empty() ||
+				(!is_builtin_type(return_type.category()) &&
+					return_type.category() != TypeCategory::Enum)) {
+				continue;
+			}
+			const std::optional<ConversionPlan> trailing_plan =
+				tryBuildCanonicalProjectableConversionPlan(return_type, target_type);
+			if (!trailing_plan.has_value() || !trailing_plan->is_valid ||
+				trailing_plan->rank == ConversionRank::UserDefined) {
+				continue;
+			}
+
+			UserDefinedConversionOperatorSelection candidate;
+			candidate.function = &function;
+			candidate.declaring_type_index = current_type;
+			candidate.conversion_target_type = conversion_target_type;
+			candidate.trailing_standard_kind = trailing_plan->kind;
+			candidate.trailing_standard_rank = trailing_plan->rank;
+			candidate.member_cv_qualifier = member_function.cv_qualifier;
+			candidates.push_back({candidate, pending_type.depth});
+		}
+		for (const BaseClassSpecifier& base_specifier : struct_info->base_classes) {
+			if (!base_specifier.is_deferred && base_specifier.type_index.is_valid()) {
+				pending_types.push_back(
+					{base_specifier.type_index, pending_type.depth + 1});
+			}
+		}
+	}
+
+	std::optional<ConversionRank> best_trailing_rank;
+	std::vector<UserDefinedConversionOperatorSelection> visible_candidates;
+	for (const Candidate& candidate : candidates) {
+		const auto nearest_declaration = std::find_if(
+			nearest_declarations.begin(),
+			nearest_declarations.end(),
+			[&candidate](const NearestDeclaration& declaration) {
+				return declaration.conversion_target_type ==
+					candidate.selection.conversion_target_type;
+			});
+		if (nearest_declaration == nearest_declarations.end() ||
+			candidate.depth != nearest_declaration->depth) {
+			continue;
+		}
+		if (!best_trailing_rank.has_value() ||
+			candidate.selection.trailing_standard_rank < *best_trailing_rank) {
+			best_trailing_rank = candidate.selection.trailing_standard_rank;
+			visible_candidates.clear();
+		}
+		if (candidate.selection.trailing_standard_rank == *best_trailing_rank &&
+			std::none_of(
+				visible_candidates.begin(),
+				visible_candidates.end(),
+				[&candidate](const UserDefinedConversionOperatorSelection& visible) {
+					return visible.function == candidate.selection.function;
+				})) {
+			visible_candidates.push_back(candidate.selection);
+		}
+	}
+	if (visible_candidates.empty()) {
+		return std::nullopt;
+	}
+	std::vector<UserDefinedConversionOperatorSelection> best_candidates;
+	for (const UserDefinedConversionOperatorSelection& candidate : visible_candidates) {
+		const uint8_t candidate_cv_bits =
+			static_cast<uint8_t>(candidate.member_cv_qualifier);
+		const bool is_dominated = std::any_of(
+			visible_candidates.begin(),
+			visible_candidates.end(),
+			[&candidate, candidate_cv_bits](
+				const UserDefinedConversionOperatorSelection& other) {
+				if (other.function == candidate.function) {
+					return false;
+				}
+				const uint8_t other_cv_bits =
+					static_cast<uint8_t>(other.member_cv_qualifier);
+				return (other_cv_bits & ~candidate_cv_bits) == 0 &&
+					other_cv_bits != candidate_cv_bits;
+			});
+		if (!is_dominated) {
+			best_candidates.push_back(candidate);
+		}
+	}
+	UserDefinedConversionOperatorSelection result = best_candidates.front();
+	result.ambiguous = best_candidates.size() != 1;
+	return result;
+}
+
 // Use canonical TypeIds for reference binding. Value category remains expression
 // metadata; same-shape binding preserves qualification ranking, while supported
 // standard conversions may materialize a temporary for an eligible reference.
@@ -3659,9 +3860,28 @@ inline ConversionPlan buildConversionPlan(
 	const TypeCategory effective_to_category = effectiveCategory(to);
 	if (effective_from_category == TypeCategory::Struct &&
 		effective_to_category != TypeCategory::Struct) {
-		if (from.type_index().is_valid() &&
-			hasConversionOperator(from.type_index(), effective_to_category, to.type_index())) {
-			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		if (from.type_index().is_valid()) {
+			const bool has_canonical_scalar_target =
+				is_builtin_type(effective_to_category) ||
+				effective_to_category == TypeCategory::Enum;
+			if (has_canonical_scalar_target) {
+				if (const auto selected_conversion =
+					trySelectCanonicalUserDefinedConversionOperator(
+						from.type_index(), from.cv_qualifier(), to);
+					selected_conversion.has_value()) {
+					if (selected_conversion->ambiguous) {
+						return ConversionPlan::no_match();
+					}
+					return {ConversionRank::UserDefined,
+						StandardConversionKind::UserDefined,
+						true,
+						selected_conversion->trailing_standard_rank};
+				}
+			}
+			if (hasConversionOperator(
+				from.type_index(), effective_to_category, to.type_index())) {
+				return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+			}
 		}
 		if (!hasCompleteStructInfo(from.type_index())) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
@@ -3842,7 +4062,10 @@ inline ArgumentConversionInfo buildArgumentConversionInfo(
 		effective_argument_type,
 		parameter_type,
 		argument_node);
-	return {conversion.rank, &parameter_type, conversion.is_valid};
+	ArgumentConversionInfo result{
+		conversion.rank, &parameter_type, conversion.is_valid};
+	result.trailing_standard_rank = conversion.trailing_standard_rank;
+	return result;
 }
 
 inline bool callArgumentsHaveIncompatiblePointerToArrayPointee(

@@ -2977,6 +2977,18 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 				sema_applied_bool_conv = true;
 				TypeIndex source_type_idx = from_desc.type_index;
 				if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
+					if (cast_info.selected_conversion_function != nullptr) {
+						if (auto result = emitSemaSelectedConversionOperatorCall(
+								condition,
+								*src_type_info,
+								cast_info,
+								TypeCategory::Bool,
+								source_token)) {
+							return *result;
+						}
+						throw InternalError(
+							"Sema-selected conversion operator failed to lower a contextual bool conversion");
+					}
 					const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 					const StructMemberFunction* conv_op = findConversionOperator(
 						src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), source_is_const);
@@ -3104,21 +3116,36 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 				from_desc.category() == TypeCategory::Struct) {
 				TypeIndex source_type_idx = from_desc.type_index;
 				if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
-					const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
-					const StructMemberFunction* conv_op = findConversionOperator(
-						src_type_info->getStructInfo(), param_type.type_index(), source_is_const);
-					if (conv_op) {
-						FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
-								  StringTable::getStringView(src_type_info->name()), " to parameter type");
-						const int param_size = static_cast<int>(param_type.size_in_bits());
-						if (auto result = emitConversionOperatorCall(arg_result, *src_type_info, *conv_op,
-																	 param_type.type_index(), param_size, source_token)) {
+					if (ci.selected_conversion_function != nullptr) {
+						if (auto result = emitSemaSelectedConversionOperatorCall(
+								arg_result,
+								*src_type_info,
+								ci,
+								param_type.category(),
+								source_token)) {
 							arg_result = *result;
 							sema_applied = true;
+						} else {
+							throw InternalError(
+								"Sema-selected conversion operator failed to lower a constructor argument conversion");
+						}
+					} else {
+						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
+						const StructMemberFunction* conv_op = findConversionOperator(
+							src_type_info->getStructInfo(), param_type.type_index(), source_is_const);
+						if (conv_op) {
+							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
+									  StringTable::getStringView(src_type_info->name()), " to parameter type");
+							const int param_size = static_cast<int>(param_type.size_in_bits());
+							if (auto result = emitConversionOperatorCall(arg_result, *src_type_info, *conv_op,
+															 param_type.type_index(), param_size, source_token)) {
+								arg_result = *result;
+								sema_applied = true;
+							}
+						}
 						}
 					}
-				}
-			} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
+				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					   ci.selected_constructor &&
 					   from_desc.category() != TypeCategory::Struct &&
 					   param_base_type != TypeCategory::Struct) {
