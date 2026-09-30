@@ -1,7 +1,9 @@
 #pragma once
 
 #include "FrontendIds.h"
+#include "MigrationStats.h"
 #include "TemplateRegistry.h"
+#include "TypeTraitEvaluator.h"
 #include <algorithm>
 #include <cstdint>
 
@@ -1349,22 +1351,51 @@ inline int compareConceptSubsumption(const ASTNode& conceptA, const ASTNode& con
 // Constraint Evaluation for C++20 Concepts
 // ============================================================================
 
+// Outcome of one atomic constraint. `Unknown` is neither proof of
+// satisfaction nor proof of failure: the trait that carries the requirement is
+// not classified by the canonical type table. It is counted and logged, and
+// `&&`, `||`, and `!` propagate it instead of resolving it, so an unclassified
+// trait can never be turned into a hard failure by negation.
+enum class ConstraintSatisfaction : uint8_t {
+	Satisfied,
+	Unsatisfied,
+	Unknown,
+};
+
 // Result of constraint evaluation
 struct ConstraintEvaluationResult {
-	bool satisfied;
+	ConstraintSatisfaction satisfaction = ConstraintSatisfaction::Satisfied;
 	std::string error_message;
 	std::string failed_requirement;
 	std::string suggestion;
 
+	// A candidate stays viable unless the constraint is proven unsatisfied. An
+	// unknown outcome is not proof of failure, so viability is unchanged from
+	// the previous two-state result; only proven outcomes are reported.
+	bool satisfied() const noexcept {
+		return satisfaction != ConstraintSatisfaction::Unsatisfied;
+	}
+	bool unknown() const noexcept {
+		return satisfaction == ConstraintSatisfaction::Unknown;
+	}
+
 	static ConstraintEvaluationResult success() {
-		return ConstraintEvaluationResult{true, "", "", ""};
+		return ConstraintEvaluationResult{ConstraintSatisfaction::Satisfied, "", "", ""};
+	}
+
+	static ConstraintEvaluationResult unknown_result(std::string_view failed_req) {
+		return ConstraintEvaluationResult{
+			ConstraintSatisfaction::Unknown,
+			"",
+			std::string(failed_req),
+			""};
 	}
 
 	static ConstraintEvaluationResult failure(std::string_view error_msg,
 											  std::string_view failed_req = "",
 											  std::string_view suggestion = "") {
 		return ConstraintEvaluationResult{
-			false,
+			ConstraintSatisfaction::Unsatisfied,
 			std::string(error_msg),
 			std::string(failed_req),
 			std::string(suggestion)};
@@ -2242,26 +2273,36 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		if (op == "&&") {
 			// Conjunction - both must be satisfied
 			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names, parser, template_params);
-			if (!left_result.satisfied) {
+			if (!left_result.satisfied()) {
 				return left_result;	// Return first failure
 			}
 
 			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names, parser, template_params);
-			if (!right_result.satisfied) {
+			if (!right_result.satisfied()) {
 				return right_result;
 			}
 
-			return ConstraintEvaluationResult::success();
+			return left_result.unknown() || right_result.unknown()
+				? ConstraintEvaluationResult::unknown_result(
+					left_result.failed_requirement + " && " + right_result.failed_requirement)
+				: ConstraintEvaluationResult::success();
 		} else if (op == "||") {
 			// Disjunction - at least one must be satisfied
 			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names, parser, template_params);
-			if (left_result.satisfied) {
+			if (left_result.satisfied() && !left_result.unknown()) {
 				return ConstraintEvaluationResult::success();
 			}
 
 			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names, parser, template_params);
-			if (right_result.satisfied) {
+			if (right_result.satisfied() && !right_result.unknown()) {
 				return ConstraintEvaluationResult::success();
+			}
+
+			// Neither side is a proven satisfaction. An unknown side cannot prove
+			// the disjunction false either.
+			if (left_result.unknown() || right_result.unknown()) {
+				return ConstraintEvaluationResult::unknown_result(
+					left_result.failed_requirement + " || " + right_result.failed_requirement);
 			}
 
 			// Both failed
@@ -2324,7 +2365,14 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		const auto& unop = constraint_expr.as<UnaryOperatorNode>();
 		if (unop.op() == "!") {
 			auto operand_result = evaluateConstraint(unop.get_operand(), template_args, template_param_names, parser, template_params);
-			if (operand_result.satisfied) {
+			if (operand_result.unknown()) {
+				// Negating an unknown operand yields an unknown operand. Treating
+				// it as a failure here is what used to reject every concept whose
+				// requirement is a negated unclassified trait.
+				return ConstraintEvaluationResult::unknown_result(
+					"!" + operand_result.failed_requirement);
+			}
+			if (operand_result.satisfied()) {
 				return ConstraintEvaluationResult::failure(
 					"constraint not satisfied: negated constraint is true",
 					"!" + operand_result.failed_requirement,
@@ -2379,6 +2427,83 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					ts.reference_qualifier(), ts.cv_qualifier()};
 		};
 
+		// The same operand resolution, projected onto a declarator specifier so
+		// the shared canonical classification can import it. This is the single
+		// compatibility materializer between the flat template argument storage
+		// and canonical type identity; it never recovers identity from spelling.
+		auto resolve_operand_specifier = [&](const ASTNode& type_node)
+			-> std::optional<TypeSpecifierNode> {
+			if (!type_node.is<TypeSpecifierNode>()) {
+				return std::nullopt;
+			}
+			const TypeSpecifierNode& ts = type_node.as<TypeSpecifierNode>();
+			if (ts.category() == TypeCategory::UserDefined ||
+				ts.category() == TypeCategory::TypeAlias ||
+				ts.category() == TypeCategory::Template) {
+				const std::string_view name = ts.token().value();
+				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
+					if (template_param_names[i] != name) {
+						continue;
+					}
+					const TemplateTypeArg& arg = template_args[i];
+					if (!arg.isTypeArgument() || arg.is_dependent) {
+						return std::nullopt;
+					}
+					TypeSpecifierNode operand =
+						makeTypeSpecifierFromTemplateTypeArg(arg, ts.token());
+					// Publish the nominal EntityId so the canonical importer
+					// recognizes a record or enum operand instead of deferring
+					// the classification to the compatibility switch.
+					tryBindPublishedTypeEntity(operand);
+					return operand;
+				}
+			}
+			TypeSpecifierNode operand = ts;
+			tryBindPublishedTypeEntity(operand);
+			return operand;
+		};
+
+		const auto constraint_result_for_trait = [&trait_expr](const TypeTraitResult& trait_result) {
+			if (trait_result.success && trait_result.value) {
+				return ConstraintEvaluationResult::success();
+			}
+			if (trait_result.success) {
+				return ConstraintEvaluationResult::failure(
+					std::string("constraint not satisfied: type trait '") + std::string(trait_expr.trait_name()) + "' evaluated to false",
+					std::string(trait_expr.trait_name()),
+					"check that the template argument satisfies the type trait");
+			}
+			return ConstraintEvaluationResult::unknown_result(trait_expr.trait_name());
+		};
+
+		// Canonical type identity is the authority. The compatibility classifier
+		// below is reached only when the canonical table cannot import the
+		// operand or does not own the trait.
+		if (const std::optional<TypeSpecifierNode> first_specifier =
+				resolve_operand_specifier(trait_expr.type_node());
+			first_specifier.has_value()) {
+			if (const std::optional<TypeTraitResult> canonical_result =
+					tryEvaluateCanonicalStructuralTrait(
+						trait_expr.kind(), *first_specifier);
+				canonical_result.has_value()) {
+				return constraint_result_for_trait(*canonical_result);
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsSame &&
+				trait_expr.has_second_type()) {
+				if (const std::optional<TypeSpecifierNode> second_specifier =
+						resolve_operand_specifier(trait_expr.second_type_node());
+					second_specifier.has_value()) {
+					if (const std::optional<TypeTraitResult> canonical_result =
+							tryEvaluateCanonicalSameTrait(
+								*first_specifier, *second_specifier);
+						canonical_result.has_value()) {
+						return constraint_result_for_trait(*canonical_result);
+					}
+				}
+			}
+		}
+		recordLazyConstraintTraitFallback();
+
 		auto first = resolve_type(trait_expr.type_node());
 
 		bool result = false;
@@ -2429,8 +2554,13 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			result = (static_cast<uint8_t>(first.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0;
 			break;
 		default:
-				// For unhandled type traits, assume satisfied
-			return ConstraintEvaluationResult::success();
+			// Neither the canonical classification nor the compatibility
+			// classifier knows this trait. Report it as unknown: it is not proof
+			// of satisfaction, and negation must not turn it into a failure.
+			FLASH_LOG(Templates, Trace,
+				"evaluateConstraint: type trait '", trait_expr.trait_name(),
+				"' is not classified by the canonical type table");
+			return ConstraintEvaluationResult::unknown_result(trait_expr.trait_name());
 		}
 
 		if (!result) {

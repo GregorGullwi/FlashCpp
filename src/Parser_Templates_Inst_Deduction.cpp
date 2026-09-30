@@ -3845,9 +3845,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				this,
 				template_params);
 
-			FLASH_LOG(Templates, Trace, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
+			FLASH_LOG(Templates, Trace, "  Constraint evaluation result: satisfied=", constraint_result.satisfied());
 
-			if (!constraint_result.satisfied) {
+			if (!constraint_result.satisfied()) {
 				// Constraint not satisfied - report detailed error
 				std::string args_str;
 				for (size_t j = 0; j < constraint_eval_args.size(); ++j) {
@@ -3890,7 +3890,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						concept_node,
 						concept_args,
 						this);
-					if (!constraint_result.satisfied) {
+					if (!constraint_result.satisfied()) {
 						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
 						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
 						overload_mismatch = true;
@@ -4453,7 +4453,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 								param_names,
 								this,
 								winner_template_params);
-							if (!cr.satisfied) {
+							if (!cr.satisfied()) {
 								failTemplateInstantiation(
 									StringBuilder()
 										.append("constraint not satisfied for template function '")
@@ -4482,7 +4482,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 									TemplateArgumentVector concept_args;
 									concept_args.push_back(concept_arg);
 									auto cr = evaluateConstraint(concept_node, concept_args, this);
-									if (!cr.satisfied) {
+									if (!cr.satisfied()) {
 										concept_failed = true;
 									}
 								});
@@ -5105,9 +5105,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			this,
 			template_params);
 
-		FLASH_LOG(Templates, Trace, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
+		FLASH_LOG(Templates, Trace, "  Constraint evaluation result: satisfied=", constraint_result.satisfied());
 
-		if (!constraint_result.satisfied) {
+		if (!constraint_result.satisfied()) {
 			// Constraint not satisfied - report detailed error
 			// Build template arguments string
 			std::string args_str;
@@ -5162,7 +5162,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					concept_node,
 					concept_args,
 					this);
-				if (!constraint_result.satisfied) {
+				if (!constraint_result.satisfied()) {
 					if (isTemplateInstantiationFailureProbeMode()) {
 						FLASH_LOG(Templates, Trace, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
 						FLASH_LOG(Templates, Trace, "  ", constraint_result.error_message);

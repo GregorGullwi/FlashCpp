@@ -34,9 +34,27 @@ Shared evaluation, constant-expression evaluation, and code-generation trait
 lowering all route through that one classification, so a trait no longer
 answers differently depending on whether it is folded or lowered. Class-property
 traits, the target-signedness traits, and `__is_const` / `__is_volatile` still
-read flat or sema-owned metadata, and lazy-constraint trait evaluation plus
-template, constexpr, and IR consumers still read flat fields. Array and callable
-outer wrappers remain guarded where their consumers are not migrated.
+read flat or sema-owned metadata, and template, constexpr, and IR consumers
+still read flat fields. Array and callable outer wrappers remain guarded where
+their consumers are not migrated.
+
+The lazy constraint evaluator routes the same family through that shared
+classification. A concept requirement whose operand is a substituted template
+parameter is projected onto a declarator specifier at that one boundary, its
+nominal `EntityId` is published, and the trait is answered from the canonical
+node. A trait the canonical table does not own is now an explicit
+`ConstraintSatisfaction::Unknown` outcome instead of a silent success: it is
+counted, it is not proof of satisfaction, and `!`, `&&`, and `||` propagate it
+rather than resolving it. That removes a real defect - `!__is_trivially_copyable(T)`
+in a concept requirement rejected every candidate, because the unclassified trait
+answered "satisfied" and `!` inverted it into a hard failure. The regression
+`tests/test_canonical_lazy_constraint_traits_ret0.cpp` checks acceptance and
+rejection for the classified family over native scalars, records, both enum
+forms, member pointers, an array reference, and a class-template member, plus
+the three unknown-outcome shapes. The new `lazy_constraint_trait_fallback`
+counter has a fixed corpus and baseline and must reach zero at the 3A exit; the
+existing concept corpus already measures zero, so the residual six come from the
+regression's own unclassified-trait probes.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 qualification now import supported syntax types and compare canonical `TypeId`
@@ -424,9 +442,9 @@ that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
 boundary. This slice advanced the criterion that flat pointer-level and
 array-dimension fields are absent from migrated semantic paths, for the
-type-trait consumer family only; the flat classifier in
-`TypeTraitEvaluator.cpp` remains for the families listed under remaining work
-item 2. Implementation effort is not yet estimated reliably.
+type-trait consumer family and the lazy-constraint evaluator; the flat
+classifier in `TypeTraitEvaluator.cpp` remains for the families listed under
+remaining work item 2. Implementation effort is not yet estimated reliably.
 
 ## Next work
 
@@ -557,33 +575,31 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    boundary. Preserve full callable comparison, nested cv, array decay, and
    value-category behavior.
 2. **Migrate remaining flat consumers.** The structural `[meta.unary.prop]`
-   family is done in the shared type-trait evaluator, so the first split of this
-   item is landed. Next in order:
-   1. **Lazy-constraint trait evaluation.** `TemplateRegistry_Lazy.h` still
-      substitutes a template parameter by name into its own flat
-      `ResolvedTypeInfo` quintuple and answers `__is_same`, `__is_integral`,
-      `__is_floating_point`, `__is_void`, `__is_pointer`, `__is_reference`,
-      `__is_lvalue_reference`, `__is_rvalue_reference`, `__is_const`, and
-      `__is_volatile` from it, silently succeeding for every other trait. Route
-      it through the shared canonical classification and replace the silent
-      `default: return success` with a typed "unsupported" result.
-   2. **Nominal `EntityId` publication for trait operands.** The
+   family is done in the shared type-trait evaluator and in the lazy-constraint
+   evaluator, so the first two splits of this item are landed. Next in order:
+   1. **Nominal `EntityId` publication for trait operands.** The
       `canonical_structural_trait_fallback` counter is nonzero only because a
       record or enum operand reached through a `decltype` has no published
       `EntityId`, so the importer returns `UnmigratedNominal`. Publish the
       entity at declarator materialization rather than stamping it inside the
-      trait evaluator.
-   3. **The remaining trait families.** `__is_class`, `__is_union`, and the
+      trait evaluator. The lazy-constraint operand projection already does this
+      at its own boundary; the trait evaluator's operand does not.
+   2. **The remaining trait families.** `__is_class`, `__is_union`, and the
       triviality family still read `StructTypeInfo`; `__is_signed` and
       `__is_unsigned` still apply target signedness from a `TypeCategory`;
       `__is_const` and `__is_volatile` still read the flat cv field because
       `CanonicalTypeTable::qualify` collapses array element cv per [dcl.array].
-      Then prioritize template argument/substitution storage, constexpr type
-      queries, and IR layout/subscript paths. Add reduced non-library regressions
-      for language rules. Make callable `TypeId`s authoritative through signature
-      substitution so each `FunctionType` no longer carries a duplicate ordered
-      spine beside its flat projections. Keep unsupported shapes fail-closed until
-      their consumers are structural.
+      Every one of these is currently a `ConstraintSatisfaction::Unknown` in a
+      concept and a compatibility answer elsewhere, so landing them is what
+      drives `lazy_constraint_trait_fallback` to zero.
+   3. **Template argument and substitution storage.** The lazy constraint
+      evaluator still substitutes a template parameter by name against
+      `template_param_names`; boundary 6 replaces that with depth-and-index
+      parameters. Then constexpr type queries and IR layout/subscript paths. Add
+      reduced non-library regressions for language rules. Make callable `TypeId`s
+      authoritative through signature substitution so each `FunctionType` no
+      longer carries a duplicate ordered spine beside its flat projections. Keep
+      unsupported shapes fail-closed until their consumers are structural.
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
    alias array, reference, and member-pointer wrappers. Keep member `TypeId`s
@@ -640,16 +656,20 @@ is ready. Never run the full suite concurrently with the build.
 Migration counters and static identity inventories are baselined under
 `tests/migration_counters/`; run the host-native counter and inventory scripts
 after compiler changes. On 2026-09-30 all fixed-corpus entries remained within
-baseline, including the new `canonical_structural_trait_fallback` counter at its
-recorded baseline of 23 on `tests/test_canonical_structural_type_traits_ret0.cpp`
-and 0 on the three pre-existing type-trait regressions; the inline
-dollar-recovery inventory and the canonical-adapter source corpus remain within
-their supported/deferred baselines. Gate 0's Windows and ELF
+baseline, including `canonical_structural_trait_fallback` at its recorded
+baseline of 23 on `tests/test_canonical_structural_type_traits_ret0.cpp` and
+`lazy_constraint_trait_fallback` at 6 on
+`tests/test_canonical_lazy_constraint_traits_ret0.cpp`; both are 0 across the
+pre-existing concept and type-trait corpus. The inline dollar-recovery inventory
+and the canonical-adapter source corpus remain within their supported/deferred
+baselines. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the
 plan for complete boundary-specific validation.
 
 For recursive-path changes, report the largest changed native stack frame and
 whether stack use remains bounded as logical depth grows. Do not raise the
-stack limit to make a regression pass. This slice adds no recursion: the
-structural trait classifier is an iterative node walk over the canonical table
-with no new native frame, and the property switch is a flat jump table.
+stack limit to make a regression pass. The trait-classification slices add no
+recursion: the structural classifier is an iterative node walk over the
+canonical table with no new native frame, the property switch is a flat jump
+table, and the lazy constraint evaluator's `&&`, `||`, and `!` handling
+propagates the same result type it already had.

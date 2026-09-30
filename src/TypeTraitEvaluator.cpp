@@ -208,30 +208,6 @@ bool areSameTypeTraitOperands(
 	return true;
 }
 
-std::optional<TypeTraitResult> tryEvaluateCanonicalIsSame(
-	const TypeSpecifierNode& lhs,
-	const TypeSpecifierNode& rhs) {
-	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport lhs_type = importCanonicalType(table, lhs);
-	if (lhs_type.status == CanonicalTypeImportStatus::Invalid) {
-		return TypeTraitResult::failure();
-	}
-	if (lhs_type.status != CanonicalTypeImportStatus::Supported) {
-		return std::nullopt;
-	}
-	const CanonicalTypeImport rhs_type = importCanonicalType(table, rhs);
-	if (rhs_type.status == CanonicalTypeImportStatus::Invalid) {
-		return TypeTraitResult::failure();
-	}
-	if (rhs_type.status != CanonicalTypeImportStatus::Supported) {
-		return std::nullopt;
-	}
-	return lhs_type.type == rhs_type.type
-		? TypeTraitResult::success_true()
-		: TypeTraitResult::success_false();
-}
-
 } // namespace
 
 namespace {
@@ -414,6 +390,41 @@ bool canonicalNodeSatisfies(CanonicalTraitProperty property,
 }
 
 } // namespace
+
+std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
+	const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport lhs_type = importCanonicalType(table, lhs);
+	if (lhs_type.status == CanonicalTypeImportStatus::Invalid) {
+		return TypeTraitResult::failure();
+	}
+	if (lhs_type.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	const CanonicalTypeImport rhs_type = importCanonicalType(table, rhs);
+	if (rhs_type.status == CanonicalTypeImportStatus::Invalid) {
+		return TypeTraitResult::failure();
+	}
+	if (rhs_type.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	if (isDependentCanonicalNode(table.node(lhs_type.type).kind) ||
+		isDependentCanonicalNode(table.node(rhs_type.type).kind)) {
+		// [temp.over.link] compares dependent names without the result of lookup
+		// in the template context; a dependent operand keeps its compatibility
+		// answer until substitution.
+		return std::nullopt;
+	}
+	return lhs_type.type == rhs_type.type
+		? TypeTraitResult::success_true()
+		: TypeTraitResult::success_false();
+}
 
 std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 	TypeTraitKind kind,
@@ -1343,7 +1354,7 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		switch (trait_expr.kind()) {
 		case TypeTraitKind::IsSame:
 			if (const std::optional<TypeTraitResult> canonical_result =
-					tryEvaluateCanonicalIsSame(raw_type_spec, raw_second_type_spec);
+					tryEvaluateCanonicalSameTrait(raw_type_spec, raw_second_type_spec);
 				canonical_result.has_value()) {
 				return *canonical_result;
 			}
