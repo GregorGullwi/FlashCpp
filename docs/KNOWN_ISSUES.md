@@ -110,6 +110,19 @@ Non-projectable spines are rejected at migrated boundary guards rather than
 being reordered or truncated. Remove this entry when those consumers migrate
 and the compatibility projection fields are deleted.
 
+The shared unary type-trait evaluator now classifies the whole structural
+`[meta.unary.prop]` family from the canonical `TypeId`, so
+`tests/test_canonical_structural_type_traits_ret0.cpp` no longer depends on the
+flat fields for pointers, arrays, references, functions, member pointers, enums,
+or the builtin groupings. Two flat consumers remain: lazy-constraint trait
+evaluation in `TemplateRegistry_Lazy.h`, which still resolves a substituted type
+parameter by name into its own flat quintuple, and the `canonical_structural_trait_fallback`
+counter, which still records record and enum operands reached through a
+`decltype` that has not published its `EntityId`. Class-property traits
+(`__is_class`, `__is_union`, `__is_polymorphic`, and the triviality family) and
+the target-signedness traits (`__is_signed`, `__is_unsigned`) also still read
+flat or sema-owned metadata.
+
 The general flat conversion-descriptor path also rejects ordered declarators
 over aliases with callable, array, reference, or member-pointer wrappers. Static
 member semantic identity must remain canonical and must not be flattened to
@@ -373,3 +386,26 @@ substituted exception specifications, but canonical type identity for the
 materialized concrete alias remains incomplete. Keep this separate from the
 bounded overload-ranking slice until alias materialization preserves the full
 function signature through type deduction.
+
+## A function designator's `decltype` imports as a pointer to function
+
+The parser publishes a function declaration's type with the
+`TypeCategory::FunctionPointer` category and no pointer levels, and the
+canonical importer turns that shape into `Pointer(Function)` so that
+`int (*)(int)` and `int(int)` stay distinguishable in the flat projection. A
+`decltype` of a function designator therefore receives the pointer-to-function
+identity instead of the function identity:
+
+```cpp
+int freeFn(int);
+static_assert(__is_same(decltype(freeFn), int (*)(int)));  // currently true
+static_assert(__is_same(decltype(freeFn), int(int)));      // should be true
+```
+
+`__is_pointer(decltype(freeFn))` is therefore `true` and `__is_function(...)` is
+`false`, and the structural `[meta.unary.prop]` family now reports exactly that
+published identity. The identity defect predates the canonical trait
+classification and is independently observable through `__is_same`. It belongs
+to the callable declarator families in architecture boundary 3A, not to the
+trait evaluator; do not special-case function categories in the trait path to
+mask it.

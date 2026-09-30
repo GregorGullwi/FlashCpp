@@ -71,10 +71,14 @@ TypeTraitResult evaluateTypeTrait(
 
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr);
 
-// Evaluates unary traits whose answer depends on the outermost canonical
-// declarator component. An empty result allows compatibility evaluation for an
-// unmigrated projectable operand; unsupported non-projectable operands fail.
-std::optional<TypeTraitResult> tryEvaluateCanonicalDeclaratorTrait(
+// Evaluates the unary [meta.unary.prop] traits whose answer is a function of the
+// canonical type's structural shape: references, pointers, arrays, functions,
+// member pointers, enums, builtins, and the arithmetic/scalar/fundamental/
+// object/compound groupings derived from them. The canonical node is the only
+// authority; no TypeInfo, TypeIndex, pointer level, or array dimension is read.
+// An empty result allows compatibility evaluation for an unmigrated projectable
+// operand; unsupported non-projectable operands fail.
+std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec);
 

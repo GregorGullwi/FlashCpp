@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-09-29.
+Last updated: 2026-09-30.
 
 ## Current state
 
@@ -26,11 +26,17 @@ imports, while compatibility paths still materialize flat types for unmigrated
 families. Parser-side overload ranking and other syntax-facing conversion
 callers still use `TypeSpecifierNode`. Ordered pointer objects use
 `runtime_pointer_depth`; `__is_same` compares canonical `TypeId`s for supported
-operands, and shared/constant-evaluation `__is_pointer` and `__is_array` now
-classify the canonical outer wrapper for supported imports. Other traits,
-lazy-constraint trait evaluation, and template, constexpr, and IR consumers
-still read flat fields. Array and callable outer wrappers remain guarded where
-their consumers are not migrated.
+operands, and the shared type-trait evaluator now classifies the whole
+structural `[meta.unary.prop]` family from the canonical node: references,
+pointers, arrays, functions, member pointers, enums, and the builtin
+arithmetic/scalar/fundamental/object/compound groupings derived from them.
+Shared evaluation, constant-expression evaluation, and code-generation trait
+lowering all route through that one classification, so a trait no longer
+answers differently depending on whether it is folded or lowered. Class-property
+traits, the target-signedness traits, and `__is_const` / `__is_volatile` still
+read flat or sema-owned metadata, and lazy-constraint trait evaluation plus
+template, constexpr, and IR consumers still read flat fields. Array and callable
+outer wrappers remain guarded where their consumers are not migrated.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 qualification now import supported syntax types and compare canonical `TypeId`
@@ -416,7 +422,11 @@ measurement is stale.
 The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
-boundary. Implementation effort is not yet estimated reliably.
+boundary. This slice advanced the criterion that flat pointer-level and
+array-dimension fields are absent from migrated semantic paths, for the
+type-trait consumer family only; the flat classifier in
+`TypeTraitEvaluator.cpp` remains for the families listed under remaining work
+item 2. Implementation effort is not yet estimated reliably.
 
 ## Next work
 
@@ -512,21 +522,68 @@ Continue boundary 3A in this order:
     ranking. Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
-   Overload-ranking tie-breakers for reference parameter identity and pointer
+Shared evaluation, constant-expression evaluation, and code-generation trait
+lowering all route through that one classification, so a trait no longer
+answers differently depending on whether it is folded or lowered. The regression
+`tests/test_canonical_structural_type_traits_ret0.cpp` checks the family over
+native scalars, `wchar_t`, arrays of every bound shape, pointer-to-array and
+function-pointer depths, references, records, both enum forms, data- and
+function-member pointers, a class-template specialization and its member
+pointer, and interleaved pointer/array/function declarators, in both the
+constant-expression and the lowered path. Before this change the folded path
+answered `__is_arithmetic`, `__is_compound`, `__is_fundamental`, `__is_integral`,
+`__is_scalar`, `__is_enum`, `__is_member_object_pointer`, and `__is_function`
+from the flat projection and disagreed with the lowered path for arrays, record
+and enum operands, member pointers, and function pointers. The two remaining
+flat consumers of the family were removed rather than reconciled: the private
+constant-expression switch and the code-generation `__is_bounded_array` /
+`__is_unbounded_array` cases now delegate to the shared evaluator. The
+`canonical_structural_trait_fallback` counter records every structural trait
+answered from flat fields, has a fixed corpus and baseline in
+`tests/migration_counters/corpus_baseline.tsv`, and must reach zero at the 3A
+exit; it currently measures the record and enum operands reached through a
+`decltype` that has not published its `EntityId`, and the lazy-constraint path,
+which does not use the shared evaluator at all. A function designator's
+`decltype` still imports as a pointer-to-function, so the family reports that
+published identity; the defect is recorded in
+[known issues](KNOWN_ISSUES.md) and belongs to the callable declarator families.
+
+Overload-ranking tie-breakers for reference parameter identity and pointer
+
    qualification now compare supported imports structurally; unsupported types
    still use their compatibility tie-breakers. Continue making projectable
    semantic descriptors use structural identity and replace remaining
    flat-field reads with a single compatibility materializer at each legacy
    boundary. Preserve full callable comparison, nested cv, array decay, and
    value-category behavior.
-2. **Migrate remaining flat consumers.** Extend canonical classification from
-   `__is_pointer` and `__is_array` to the other type traits and lazy constraints,
-   then prioritize template argument/substitution storage, constexpr type
-   queries, and IR layout/subscript paths. Add reduced non-library regressions
-   for language rules. Make callable `TypeId`s authoritative through signature
-   substitution so each `FunctionType` no longer carries a duplicate ordered
-   spine beside its flat projections. Keep unsupported shapes fail-closed until
-   their consumers are structural.
+2. **Migrate remaining flat consumers.** The structural `[meta.unary.prop]`
+   family is done in the shared type-trait evaluator, so the first split of this
+   item is landed. Next in order:
+   1. **Lazy-constraint trait evaluation.** `TemplateRegistry_Lazy.h` still
+      substitutes a template parameter by name into its own flat
+      `ResolvedTypeInfo` quintuple and answers `__is_same`, `__is_integral`,
+      `__is_floating_point`, `__is_void`, `__is_pointer`, `__is_reference`,
+      `__is_lvalue_reference`, `__is_rvalue_reference`, `__is_const`, and
+      `__is_volatile` from it, silently succeeding for every other trait. Route
+      it through the shared canonical classification and replace the silent
+      `default: return success` with a typed "unsupported" result.
+   2. **Nominal `EntityId` publication for trait operands.** The
+      `canonical_structural_trait_fallback` counter is nonzero only because a
+      record or enum operand reached through a `decltype` has no published
+      `EntityId`, so the importer returns `UnmigratedNominal`. Publish the
+      entity at declarator materialization rather than stamping it inside the
+      trait evaluator.
+   3. **The remaining trait families.** `__is_class`, `__is_union`, and the
+      triviality family still read `StructTypeInfo`; `__is_signed` and
+      `__is_unsigned` still apply target signedness from a `TypeCategory`;
+      `__is_const` and `__is_volatile` still read the flat cv field because
+      `CanonicalTypeTable::qualify` collapses array element cv per [dcl.array].
+      Then prioritize template argument/substitution storage, constexpr type
+      queries, and IR layout/subscript paths. Add reduced non-library regressions
+      for language rules. Make callable `TypeId`s authoritative through signature
+      substitution so each `FunctionType` no longer carries a duplicate ordered
+      spine beside its flat projections. Keep unsupported shapes fail-closed until
+      their consumers are structural.
 3. **Complete importer and declarator coverage.** Add canonical import support
    for remaining valid ordered forms still rejected at a boundary, including
    alias array, reference, and member-pointer wrappers. Keep member `TypeId`s
@@ -582,13 +639,17 @@ is ready. Never run the full suite concurrently with the build.
 
 Migration counters and static identity inventories are baselined under
 `tests/migration_counters/`; run the host-native counter and inventory scripts
-after compiler changes. On 2026-09-28 all 64 fixed-corpus entries remained
-within baseline, the inline dollar-recovery inventory measured 16 against a
-baseline of 17, and the canonical-adapter source corpus remained within its
-supported/deferred baseline. Gate 0's Windows and ELF multi-translation-unit
-checks remain required compatibility evidence. See the plan for complete
-boundary-specific validation.
+after compiler changes. On 2026-09-30 all fixed-corpus entries remained within
+baseline, including the new `canonical_structural_trait_fallback` counter at its
+recorded baseline of 23 on `tests/test_canonical_structural_type_traits_ret0.cpp`
+and 0 on the three pre-existing type-trait regressions; the inline
+dollar-recovery inventory and the canonical-adapter source corpus remain within
+their supported/deferred baselines. Gate 0's Windows and ELF
+multi-translation-unit checks remain required compatibility evidence. See the
+plan for complete boundary-specific validation.
 
 For recursive-path changes, report the largest changed native stack frame and
 whether stack use remains bounded as logical depth grows. Do not raise the
-stack limit to make a regression pass.
+stack limit to make a regression pass. This slice adds no recursion: the
+structural trait classifier is an iterative node walk over the canonical table
+with no new native frame, and the property switch is a flat jump table.

@@ -5,6 +5,7 @@
 #include "CanonicalTypeAdapter.h"
 #include "ExpressionStructure.h"
 #include "FrontendContext.h"
+#include "MigrationStats.h"
 #include "OverloadResolution.h"
 
 namespace TypeTraitEval {
@@ -233,14 +234,197 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalIsSame(
 
 } // namespace
 
-std::optional<TypeTraitResult> tryEvaluateCanonicalDeclaratorTrait(
+namespace {
+
+// The unary [meta.unary.prop] family whose answer is a pure function of the
+// canonical type's structural shape. This enumeration is the single authority
+// for family membership: the answer switch is exhaustive over it, so a trait
+// cannot be classified canonically without being classified from a canonical
+// node, and a new property cannot be added without an answer.
+enum class CanonicalTraitProperty : uint8_t {
+	None,
+	IsReference,
+	IsLvalueReference,
+	IsRvalueReference,
+	IsPointer,
+	IsArray,
+	IsBoundedArray,
+	IsUnboundedArray,
+	IsFunction,
+	IsMemberObjectPointer,
+	IsMemberFunctionPointer,
+	IsEnum,
+	IsVoid,
+	IsNullptr,
+	IsIntegral,
+	IsFloatingPoint,
+	IsArithmetic,
+	IsFundamental,
+	IsScalar,
+	IsObject,
+	IsCompound,
+};
+
+CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
+	switch (kind) {
+	case TypeTraitKind::IsReference: return CanonicalTraitProperty::IsReference;
+	case TypeTraitKind::IsLvalueReference:
+		return CanonicalTraitProperty::IsLvalueReference;
+	case TypeTraitKind::IsRvalueReference:
+		return CanonicalTraitProperty::IsRvalueReference;
+	case TypeTraitKind::IsPointer: return CanonicalTraitProperty::IsPointer;
+	case TypeTraitKind::IsArray: return CanonicalTraitProperty::IsArray;
+	case TypeTraitKind::IsBoundedArray: return CanonicalTraitProperty::IsBoundedArray;
+	case TypeTraitKind::IsUnboundedArray: return CanonicalTraitProperty::IsUnboundedArray;
+	case TypeTraitKind::IsFunction: return CanonicalTraitProperty::IsFunction;
+	case TypeTraitKind::IsMemberObjectPointer:
+		return CanonicalTraitProperty::IsMemberObjectPointer;
+	case TypeTraitKind::IsMemberFunctionPointer:
+		return CanonicalTraitProperty::IsMemberFunctionPointer;
+	case TypeTraitKind::IsEnum: return CanonicalTraitProperty::IsEnum;
+	case TypeTraitKind::IsVoid: return CanonicalTraitProperty::IsVoid;
+	case TypeTraitKind::IsNullptr: return CanonicalTraitProperty::IsNullptr;
+	case TypeTraitKind::IsIntegral: return CanonicalTraitProperty::IsIntegral;
+	case TypeTraitKind::IsFloatingPoint: return CanonicalTraitProperty::IsFloatingPoint;
+	case TypeTraitKind::IsArithmetic: return CanonicalTraitProperty::IsArithmetic;
+	case TypeTraitKind::IsFundamental: return CanonicalTraitProperty::IsFundamental;
+	case TypeTraitKind::IsScalar: return CanonicalTraitProperty::IsScalar;
+	case TypeTraitKind::IsObject: return CanonicalTraitProperty::IsObject;
+	case TypeTraitKind::IsCompound: return CanonicalTraitProperty::IsCompound;
+	default:
+		return CanonicalTraitProperty::None;
+	}
+}
+
+bool isCanonicalIntegralBuiltin(CanonicalBuiltinKind builtin) {
+	switch (builtin) {
+	case CanonicalBuiltinKind::Bool:
+	case CanonicalBuiltinKind::Char:
+	case CanonicalBuiltinKind::SignedChar:
+	case CanonicalBuiltinKind::UnsignedChar:
+	case CanonicalBuiltinKind::WChar:
+	case CanonicalBuiltinKind::Char8:
+	case CanonicalBuiltinKind::Char16:
+	case CanonicalBuiltinKind::Char32:
+	case CanonicalBuiltinKind::Short:
+	case CanonicalBuiltinKind::UnsignedShort:
+	case CanonicalBuiltinKind::Int:
+	case CanonicalBuiltinKind::UnsignedInt:
+	case CanonicalBuiltinKind::Long:
+	case CanonicalBuiltinKind::UnsignedLong:
+	case CanonicalBuiltinKind::LongLong:
+	case CanonicalBuiltinKind::UnsignedLongLong:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool isCanonicalFloatingPointBuiltin(CanonicalBuiltinKind builtin) {
+	return builtin == CanonicalBuiltinKind::Float ||
+		builtin == CanonicalBuiltinKind::Double ||
+		builtin == CanonicalBuiltinKind::LongDouble;
+}
+
+// [basic.types] and [meta.unary.prop] classify a dependent identity by its
+// eventual shape, which the canonical table cannot answer before substitution.
+// These families keep their compatibility answer until the dependent families
+// import. A class-template specialization is not in this set: a specialization
+// is a complete class type, so its structural properties are already decided.
+bool isDependentCanonicalNode(CanonicalTypeKind kind) {
+	return kind == CanonicalTypeKind::TemplateParameter ||
+		kind == CanonicalTypeKind::DependentName ||
+		kind == CanonicalTypeKind::DependentTemplateMember ||
+		kind == CanonicalTypeKind::DependentMemberAlias;
+}
+
+// Classifies one canonical node whose top-level cv has already been peeled.
+// `outer` is the outermost structural component: [meta.unary.prop] states every
+// property of a reference type as a property of the reference itself, not of
+// the referent, so a reference only satisfies the reference properties.
+bool canonicalNodeSatisfies(CanonicalTraitProperty property,
+	const CanonicalTypeNode& outer) {
+	const CanonicalTypeKind kind = outer.kind;
+	const bool is_builtin = kind == CanonicalTypeKind::Builtin;
+	const CanonicalBuiltinKind builtin = outer.builtin;
+	const bool is_reference = kind == CanonicalTypeKind::LValueReference ||
+		kind == CanonicalTypeKind::RValueReference;
+	const bool is_bounded_array =
+		kind == CanonicalTypeKind::Array &&
+		hasCanonicalTypeNodeFlag(
+			outer.flags, CanonicalTypeNodeFlags::KnownArrayBound);
+	const bool is_unbounded_array =
+		kind == CanonicalTypeKind::Array && !is_bounded_array;
+	switch (property) {
+	case CanonicalTraitProperty::IsReference:
+		return is_reference;
+	case CanonicalTraitProperty::IsLvalueReference:
+		return kind == CanonicalTypeKind::LValueReference;
+	case CanonicalTraitProperty::IsRvalueReference:
+		return kind == CanonicalTypeKind::RValueReference;
+	case CanonicalTraitProperty::IsPointer:
+		return kind == CanonicalTypeKind::Pointer;
+	case CanonicalTraitProperty::IsArray:
+		return is_bounded_array || is_unbounded_array;
+	case CanonicalTraitProperty::IsBoundedArray:
+		return is_bounded_array;
+	case CanonicalTraitProperty::IsUnboundedArray:
+		return is_unbounded_array;
+	case CanonicalTraitProperty::IsFunction:
+		return kind == CanonicalTypeKind::Function;
+	case CanonicalTraitProperty::IsMemberObjectPointer:
+		return kind == CanonicalTypeKind::MemberObjectPointer;
+	case CanonicalTraitProperty::IsMemberFunctionPointer:
+		return kind == CanonicalTypeKind::MemberFunctionPointer;
+	case CanonicalTraitProperty::IsEnum:
+		return kind == CanonicalTypeKind::Enum;
+	case CanonicalTraitProperty::IsVoid:
+		return !is_reference && is_builtin &&
+			builtin == CanonicalBuiltinKind::Void;
+	case CanonicalTraitProperty::IsNullptr:
+		return !is_reference && is_builtin &&
+			builtin == CanonicalBuiltinKind::Nullptr;
+	case CanonicalTraitProperty::IsIntegral:
+		return !is_reference && is_builtin && isCanonicalIntegralBuiltin(builtin);
+	case CanonicalTraitProperty::IsFloatingPoint:
+		return !is_reference && is_builtin &&
+			isCanonicalFloatingPointBuiltin(builtin);
+	case CanonicalTraitProperty::IsArithmetic:
+		return !is_reference && is_builtin &&
+			(isCanonicalIntegralBuiltin(builtin) ||
+				isCanonicalFloatingPointBuiltin(builtin));
+	case CanonicalTraitProperty::IsFundamental:
+		return !is_reference && is_builtin;
+	case CanonicalTraitProperty::IsScalar:
+		return !is_reference &&
+			((is_builtin && builtin != CanonicalBuiltinKind::Void) ||
+				kind == CanonicalTypeKind::Enum ||
+				kind == CanonicalTypeKind::Pointer ||
+				kind == CanonicalTypeKind::MemberObjectPointer ||
+				kind == CanonicalTypeKind::MemberFunctionPointer);
+	case CanonicalTraitProperty::IsObject:
+		return !is_reference && kind != CanonicalTypeKind::Function &&
+			!(is_builtin && builtin == CanonicalBuiltinKind::Void);
+	case CanonicalTraitProperty::IsCompound:
+		return !is_builtin;
+	case CanonicalTraitProperty::None:
+		break;
+	}
+	throw InternalError("canonical trait: unclassified structural property");
+}
+
+} // namespace
+
+std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec) {
-	if (kind != TypeTraitKind::IsPointer && kind != TypeTraitKind::IsArray) {
+	const CanonicalTraitProperty property = canonicalTraitProperty(kind);
+	if (property == CanonicalTraitProperty::None) {
 		return std::nullopt;
 	}
 	FrontendContext* context = FrontendContext::active();
 	if (context == nullptr) {
+		recordCanonicalStructuralTraitFallback();
 		return std::nullopt;
 	}
 
@@ -250,29 +434,26 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalDeclaratorTrait(
 	if (imported_type.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}
-	if (imported_type.status != CanonicalTypeImportStatus::Supported) {
+	if (imported_type.status != CanonicalTypeImportStatus::Supported ||
+		isDependentCanonicalNode(table.node(imported_type.type).kind)) {
 		if (type_spec.has_ordered_declarator() &&
 			!type_spec.ordered_declarator_has_legacy_projection()) {
 			return TypeTraitResult::failure();
 		}
+		recordCanonicalStructuralTraitFallback();
 		return std::nullopt;
 	}
 
+	// Top-level cv never changes a structural classification.
 	TypeId outer_type = imported_type.type;
 	while (outer_type) {
 		const CanonicalTypeNode node = table.node(outer_type);
-		if (node.kind == CanonicalTypeKind::Qualified) {
-			// Top-level cv does not change the pointer/array classification.
-			outer_type = node.child;
-			continue;
+		if (node.kind != CanonicalTypeKind::Qualified) {
+			return canonicalNodeSatisfies(property, node)
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
 		}
-		const bool matches =
-			kind == TypeTraitKind::IsPointer
-				? node.kind == CanonicalTypeKind::Pointer
-				: node.kind == CanonicalTypeKind::Array;
-		return matches
-			? TypeTraitResult::success_true()
-			: TypeTraitResult::success_false();
+		outer_type = node.child;
 	}
 	return TypeTraitResult::failure();
 }
@@ -849,7 +1030,7 @@ TypeTraitResult evaluateTypeTrait(
 	const TypeSpecifierNode& type_spec,
 	const StructTypeInfo* struct_info) {
 	if (const std::optional<TypeTraitResult> canonical_result =
-			tryEvaluateCanonicalDeclaratorTrait(kind, type_spec);
+			tryEvaluateCanonicalStructuralTrait(kind, type_spec);
 		canonical_result.has_value()) {
 		return *canonical_result;
 	}
@@ -1037,7 +1218,7 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		return TypeTraitResult::failure();
 	}
 	if (const std::optional<TypeTraitResult> canonical_result =
-			tryEvaluateCanonicalDeclaratorTrait(trait_expr.kind(), raw_type_spec);
+			tryEvaluateCanonicalStructuralTrait(trait_expr.kind(), raw_type_spec);
 		canonical_result.has_value()) {
 		return *canonical_result;
 	}
