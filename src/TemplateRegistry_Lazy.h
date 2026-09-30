@@ -1,9 +1,9 @@
 #pragma once
 
+#include "CanonicalTypeTraits.h"
 #include "FrontendIds.h"
 #include "MigrationStats.h"
 #include "TemplateRegistry.h"
-#include "TypeTraitEvaluator.h"
 #include <algorithm>
 #include <cstdint>
 

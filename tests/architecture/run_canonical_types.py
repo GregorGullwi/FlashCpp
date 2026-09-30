@@ -60,7 +60,8 @@ def check_guards():
                 raise RuntimeError("canonical identity dependency in " + source.name + ": " + forbidden)
     for name in ("FlashCpp.vcxproj", "FlashCppMSVC.vcxproj"):
         project = read_text(ROOT / name)
-        for header in ("CanonicalTypes.h", "TypeQualifiers.h", "CanonicalTypeAdapter.h", "ArenaAccounting.h"):
+        for header in ("CanonicalTypes.h", "TypeQualifiers.h", "CanonicalTypeAdapter.h",
+                       "CanonicalTypeTraits.h", "ArenaAccounting.h"):
             if 'Include="src\\' + header + '"' not in project:
                 raise RuntimeError("missing project registration: " + header)
         if 'Include="src\\CanonicalTypes.cpp"' not in project:
@@ -206,6 +207,32 @@ def run_adapter_order_mutation(name, before, after):
     return (name, directory, 1)
 
 
+# Headers on the boundary-3A classification path that the shared trait evaluator
+# and the lazy-constraint evaluator both pull in. They sit on opposite sides of
+# the SymbolTable.h -> TemplateRegistry.h include edge, so one of them must not
+# include the other. Compiling each alone in its own translation unit is the
+# guard: a header that only works after a particular include order fails here.
+SELF_CONTAINED_HEADERS = (
+    "CanonicalTypeTraits.h",
+    "TypeTraitEvaluator.h",
+    "TemplateRegistry_Lazy.h",
+)
+
+
+def check_header_self_containment():
+    """Compile every classification header as the first include of a fresh TU.
+
+    The unity build hides a broken include cycle because it concatenates
+    sources in one fixed order, so the cycle has to be checked in isolation.
+    """
+    directory = OUTPUT / "_selfcontained"
+    directory.mkdir(parents=True, exist_ok=True)
+    for header in SELF_CONTAINED_HEADERS:
+        source = directory / (header.replace(".", "_") + ".cpp")
+        source.write_text('#include "%s"\nint main() { return 0; }\n' % header)
+        compile_tu(source, ROOT / "src", source.with_suffix(OBJECT_SUFFIX), directory)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mutations", action="store_true")
@@ -214,6 +241,7 @@ def main():
                         help="parallel mutation builds (0 = logical CPUs - 1)")
     options = parser.parse_args()
     check_guards()
+    check_header_self_containment()
     pristine = build_pristine()
     build_and_run("baseline", ROOT / "src", 0, pristine)
     workers = options.jobs if options.jobs > 0 else max(1, (os.cpu_count() or 2) - 1)
