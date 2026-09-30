@@ -1988,12 +1988,12 @@ bool StructTypeInfo::hasUserDeclaredConstructor() const {
 	return false;
 }
 
-// Auto-extract is_noexcept and cv_qualifier from the AST node stored in a
+// Auto-extract is_noexcept and member qualifiers from the AST node stored in a
 // StructMemberFunction. This centralises property propagation so that every
 // addMemberFunction / addConstructor / addDestructor / addOperatorOverload call
 // automatically picks up the flags — callers never need to do it manually.
-// All parse and instantiation paths must call set_is_const_member_function()
-// on the FunctionDeclarationNode before calling add*().
+// All parse and instantiation paths must set cv/ref qualifiers on the
+// FunctionDeclarationNode before calling add*().
 void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 	mf.conversion_target_type = {};
 	if (const auto* fn = get_function_decl_node(mf.function_decl)) {
@@ -2002,10 +2002,9 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 			mf.operator_kind = derived_kind;
 		}
 		mf.is_noexcept = fn->is_noexcept();
+		mf.ref_qualifier = fn->function_reference_qualifier();
 		// Auto-derive cv_qualifier from the stored const/volatile member function flags.
-		// All parse and instantiation paths must call set_is_const_member_function() and
-		// set_is_volatile_member_function() on the FunctionDeclarationNode before calling
-		// addMemberFunction / addOperatorOverload.
+		// Parse paths set these flags before addMemberFunction / addOperatorOverload.
 		const bool is_c = fn->is_const_member_function();
 		const bool is_v = fn->is_volatile_member_function();
 		if (is_c && is_v)

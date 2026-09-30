@@ -199,6 +199,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	apply_parsed_function_noexcept(func_decl, function_specifiers);
 	func_decl.set_is_const_member_function(member_quals.is_const());
 	func_decl.set_is_volatile_member_function(member_quals.is_volatile());
+	func_decl.set_function_reference_qualifier(member_quals.ref_qualifier);
 
 	// Note: trailing requires clause is parsed below (line ~5030) and stored
 	// on the TemplateFunctionDeclarationNode for constraint checking during instantiation.
@@ -825,6 +826,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						// Skip trailing specifiers (const, noexcept, etc.)
 						FlashCpp::MemberQualifiers member_quals;
 						skip_function_trailing_specifiers(member_quals);
+						func_ref.set_is_const_member_function(member_quals.is_const());
+						func_ref.set_is_volatile_member_function(member_quals.is_volatile());
+						func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
 						skip_trailing_requires_clause();
 
 						// Create template function declaration node

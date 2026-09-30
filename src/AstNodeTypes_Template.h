@@ -1124,8 +1124,9 @@ struct StructMemberFunctionDecl {
 	bool is_override = false;		  // True if declared with 'override' keyword
 	bool is_final = false;		   // True if declared with 'final' keyword
 
-	// CV qualifiers for member functions (Phase 4)
+	// Cv/ref qualifiers for member functions.
 	CVQualifier cv_qualifier = CVQualifier::None;
+	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 
 	// noexcept tracking for type traits
 	bool is_noexcept = false;		  // True if declared noexcept (e.g., void foo() noexcept)
@@ -1392,8 +1393,10 @@ public:
 		func_decl.is_final = is_final;
 		func_decl.cv_qualifier = cv_qualifier;
 		// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
-		if (const auto* fn = get_function_decl_node(function_decl))
+		if (const auto* fn = get_function_decl_node(function_decl)) {
 			func_decl.is_noexcept = fn->is_noexcept();
+			func_decl.ref_qualifier = fn->function_reference_qualifier();
+		}
 	}
 
 	void add_constructor(ASTNode constructor_decl, AccessSpecifier access) {
@@ -1420,8 +1423,10 @@ public:
 		func_decl.is_final = is_final;
 		func_decl.cv_qualifier = cv_qualifier;
 		// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
-		if (const auto* fn = get_function_decl_node(function_decl))
+		if (const auto* fn = get_function_decl_node(function_decl)) {
 			func_decl.is_noexcept = fn->is_noexcept();
+			func_decl.ref_qualifier = fn->function_reference_qualifier();
+		}
 	}
 
 	// Friend declaration support

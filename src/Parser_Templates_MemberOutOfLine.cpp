@@ -729,9 +729,12 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// template arguments are available. Parse-time checks here see dependent placeholders
 	// and can produce false mismatches for valid C++20 code.
 
-	// Skip function trailing specifiers (const, volatile, noexcept, etc.)
+	// Preserve function trailing specifiers (cv/ref qualifiers, noexcept, etc.).
 	FlashCpp::MemberQualifiers member_quals;
 	skip_function_trailing_specifiers(member_quals);
+	func_ref.set_is_const_member_function(member_quals.is_const());
+	func_ref.set_is_volatile_member_function(member_quals.is_volatile());
+	func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
 
 	// Handle trailing return type: auto Class<T>::method(params) -> RetType { ... }
 	if (peek() == "->"_tok) {
@@ -851,12 +854,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	bool is_specialization = !function_template_args.empty();
 
 	if (is_specialization) {
-		// 1. Set const qualifier for correct mangling and lookup.
-		//    Without this, is_const_member_function() returns false even for `const` specializations,
-		//    leading to a mangled-name mismatch between the call site and the definition.
-		func_ref.set_is_const_member_function(member_quals.is_const());
-
-		// 2. Extract non-type template args (e.g., get<0> → {0}) and store on the function node
+		// 1. Extract non-type template args (e.g., get<0> → {0}) and store on the function node
 		//    so mangling can include the template argument encoding.
 		{
 			std::vector<int64_t> non_type_args;
@@ -870,14 +868,14 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			}
 		}
 
-		// 3. Build the qualified name for registry lookup (e.g., "Point::get").
+		// 2. Build the qualified name for registry lookup (e.g., "Point::get").
 		std::string_view qualified_name = StringBuilder()
 											  .append(qualified_class_name)
 											  .append("::")
 											  .append(function_name_token.value())
 											  .commit();
 
-		// 4. Compute the proper ABI-conforming mangled name for this member function specialization,
+		// 3. Compute the proper ABI-conforming mangled name for this member function specialization,
 		//    including template argument encoding (e.g., ILm0E for <0>) and const qualifier (K).
 		{
 			NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
@@ -896,7 +894,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			func_ref.set_mangled_name(specialization_mangled_name.view());
 		}
 
-		// 5. For explicit specializations on non-template classes (no outer template params),
+		// 4. For explicit specializations on non-template classes (no outer template params),
 		//    parse the body immediately and add to the AST so the IrGenerator emits a definition.
 		//    When template_params is non-empty we have an outer template context that requires
 		//    lazy instantiation instead.

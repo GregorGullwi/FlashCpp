@@ -1380,8 +1380,9 @@ struct StructMemberFunction {
 	bool is_final = false;		   // True if declared with 'final' keyword
 	int vtable_index = -1;		   // Index in primary vtable (>=0), or -1 if not virtual / overrides a secondary base
 
-	// CV qualifiers for member functions (Phase 4)
+	// Cv/ref qualifiers for member functions.
 	CVQualifier cv_qualifier = CVQualifier::None;
+	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 
 	// noexcept tracking for type traits
 	bool is_noexcept = false;		  // True if declared noexcept (e.g., void foo() noexcept)

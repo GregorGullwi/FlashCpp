@@ -800,6 +800,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
 	new_func_ref.set_is_volatile_member_function(
 		hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));
+	new_func_ref.set_function_reference_qualifier(lazy_info.identity.ref_qualifier);
 	if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
 		TemplateParamNameVector outer_param_names;
 		TemplateArgInfoVector outer_args;
@@ -1141,6 +1142,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 	// Carry the const-method qualifier so mangling emits 'K' (Itanium) / 'QEBA' (MSVC).
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
 	new_func_ref.set_is_volatile_member_function(hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));
+	new_func_ref.set_function_reference_qualifier(lazy_info.identity.ref_qualifier);
 
 	if (new_func_ref.is_materialized()) {
 		finalize_function_after_definition(new_func_ref);

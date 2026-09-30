@@ -1806,6 +1806,7 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	id.is_operator = mem_func.operator_kind != OverloadableOperator::None;
 	id.is_const_method = mem_func.is_const();
 	id.cv_qualifier = mem_func.cv_qualifier;
+	id.ref_qualifier = mem_func.ref_qualifier;
 	if (is_constructor)
 		id.kind = DeferredMemberIdentity::Kind::Constructor;
 	else if (is_destructor)

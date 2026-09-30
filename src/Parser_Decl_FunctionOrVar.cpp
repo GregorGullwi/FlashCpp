@@ -531,6 +531,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// For out-of-line definitions, we also skip override/final as they're already recorded in the declaration
 		FlashCpp::MemberQualifiers member_quals;
 		skip_function_trailing_specifiers(member_quals);
+		func_ref.set_is_const_member_function(member_quals.is_const());
+		func_ref.set_is_volatile_member_function(member_quals.is_volatile());
+		func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
 
 		// Also skip override/final for out-of-line definitions
 		while (!peek().is_eof()) {
@@ -610,7 +613,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		func_ref.set_is_consteval(is_consteval);
 		func_ref.set_is_inline(is_inline);
 
-		// Search for existing member function declaration with the same name, const qualification, and matching signature
+		// Search for an existing member function declaration with matching name, cv/ref-qualifiers, and parameter count.
 		StructMemberFunction* existing_member = find_member_function_by_signature(
 			*struct_info, function_name_token.handle(), member_quals,
 			func_ref.parameter_nodes().size());
@@ -624,15 +627,16 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				if (member.getName() == function_name_token.handle()) {
 					has_name_match = true;
 					if (member.is_const() == member_quals.is_const() &&
-						member.is_volatile() == member_quals.is_volatile()) {
+						member.is_volatile() == member_quals.is_volatile() &&
+						member.ref_qualifier == member_quals.ref_qualifier) {
 						has_qualifier_match = true;
 					}
 				}
 			}
 			if (has_name_match && !has_qualifier_match) {
-				// Name matches but const/volatile qualifiers don't match
+				// The name matches, but the cv/ref-qualifiers don't match.
 				FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(),
-						  "' does not match any declaration in the class (const/volatile qualifier mismatch)");
+						  "' does not match any declaration in the class (cv/ref qualifier mismatch)");
 				return error(DiagnosticId::UnexpectedToken, function_name_token, "Unexpected token");
 			}
 			if (has_name_match && has_qualifier_match) {
@@ -649,10 +653,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			FLASH_LOG(Parser, Debug, "No matching in-class declaration for '", class_name.view(), "::", function_name_token.value(),
 					  "' - creating new member function entry");
 
-			// Note: const/volatile qualification is handled by the member function's StructMemberFunction entry
-			// Set is_const/volatile_member_function on the node so propagateAstProperties derives cv_qualifier.
-			func_ref.set_is_const_member_function(member_quals.is_const());
-			func_ref.set_is_volatile_member_function(member_quals.is_volatile());
+			// Keep the parsed qualifiers on the node so StructTypeInfo can preserve them.
 			struct_info->addMemberFunction(function_name_token.handle(), func_node,
 										   AccessSpecifier::Public,
 										   /*is_virtual=*/false,
