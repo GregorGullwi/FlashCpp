@@ -371,6 +371,89 @@ inline StringHandle substituteTemplateMemberFunctionOwner(
 	return substituted_owner;
 }
 
+template <typename MaterializeOwnerFn>
+inline void substituteCanonicalMemberFunctionPointerOwner(
+	TypeSpecifierNode& substituted_type,
+	const TypeSpecifierNode& original_type,
+	TemplateDeclId template_decl,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	MaterializeOwnerFn&& materialize_owner) {
+	if (substituted_type.category() != TypeCategory::MemberFunctionPointer ||
+		!template_decl || template_params.empty() ||
+		template_params.size() != template_args.size()) {
+		return;
+	}
+	bool has_only_type_parameters = true;
+	for (const TemplateParameterNode& param : template_params) {
+		if (param.is_variadic()) {
+			return;
+		}
+		has_only_type_parameters &= param.kind() == TemplateParameterKind::Type;
+	}
+	const TypeId original_owner = original_type.has_member_class_type_id()
+		? original_type.member_class_type_id()
+		: (substituted_type.has_member_class_type_id()
+			? substituted_type.member_class_type_id()
+			: TypeId{});
+	if (original_owner && has_only_type_parameters) {
+		CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+		std::vector<TypeId> canonical_args;
+		canonical_args.reserve(template_args.size());
+		for (size_t index = 0; index < template_args.size(); ++index) {
+			const TemplateTypeArg& arg = template_args[index];
+			if (!arg.isTypeArgument() || arg.is_pack ||
+				templateArgIsStructurallyDependent(arg)) {
+				return;
+			}
+			TypeSpecifierNode argument_type = typeSpecifierFromTemplateTypeArgProjection(arg);
+			argument_type.set_type_index(canonicalizeConcreteTemplateArgumentTypeIndex(arg));
+			const CanonicalTypeImport imported_argument = importCanonicalType(table, argument_type);
+			if (imported_argument.status != CanonicalTypeImportStatus::Supported) {
+				return;
+			}
+			canonical_args.push_back(imported_argument.type);
+		}
+
+		const TypeId substituted_owner = table.substitute(
+			original_owner,
+			template_decl,
+			std::span<const TypeId>(canonical_args.data(), canonical_args.size()));
+		if (substituted_owner != original_owner) {
+			substituted_type.set_member_class_type_id(substituted_owner);
+			return;
+		}
+	}
+
+	if (!original_type.has_member_class()) {
+		return;
+	}
+	const TypeInfo* owner_pattern = findTypeByName(original_type.member_class_name());
+	if (owner_pattern == nullptr || !owner_pattern->isTemplateInstantiation()) {
+		return;
+	}
+	std::vector<TemplateTypeArg> concrete_owner_args = materializeTemplateArgs(
+		*owner_pattern, template_params, template_args);
+	for (const TemplateTypeArg& arg : concrete_owner_args) {
+		if (templateArgIsStructurallyDependent(arg) || arg.is_pack) {
+			return;
+		}
+	}
+	const auto materialized_owner = materialize_owner(
+		*owner_pattern,
+		std::span<const TemplateTypeArg>(
+			concrete_owner_args.data(), concrete_owner_args.size()));
+	const TypeInfo* concrete_owner = materialized_owner.resolved_type_info;
+	const StringHandle concrete_owner_name = materialized_owner.canonicalNameHandle();
+	if (concrete_owner == nullptr || !concrete_owner_name.isValid()) {
+		return;
+	}
+	substituted_type.set_member_class_name(concrete_owner_name);
+	tryBindPublishedMemberClassEntity(
+		substituted_type,
+		concrete_owner->registeredTypeIndex().withCategory(concrete_owner->typeEnum()));
+}
+
 template <typename ParamContainer, typename ArgContainer>
 inline void materializeSubstitutedFunctionTypeMetadata(
 	Parser& parser,

@@ -436,7 +436,13 @@ The unit case `Canonical TypeIds bind member-pointer conversion temporaries to
 references` covers both pointer-to-member families, and
 `tests/test_canonical_member_object_pointer_reference_temp_overload_ret0.cpp`
 checks source-level overload selection for a base-to-derived data-member-pointer
-conversion. `tests/test_canonical_array_decay_reference_overload_ret0.cpp`
+conversion. Function-template parameter materialization now republishes the
+canonical owner `TypeId` for substituted member-function-pointer types whose
+owner specifier did not carry one before substitution. The regression
+`tests/test_canonical_member_function_pointer_reference_temp_overload_ret0.cpp`
+checks exact `Base<T>` owner ranking against conversion to `Derived<T>::*` and
+binding the converted temporary to a const reference after substitution, for
+both `int` and record signatures. `tests/test_canonical_array_decay_reference_overload_ret0.cpp`
 checks array-to-pointer temporary binding for const lvalue and rvalue references
 across builtin and record element types; the canonical planner unit test checks
 multidimensional row extents, cv addition/removal, and direct versus temporary
