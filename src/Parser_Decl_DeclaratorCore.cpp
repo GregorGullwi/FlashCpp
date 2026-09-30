@@ -1835,7 +1835,8 @@ ParseResult Parser::parse_declarator(
 
 			if (peek() == "("_tok) {
 				Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
-				return parse_postfix_declarator(base_type, dummy_identifier, linkage);
+				return parse_postfix_declarator(
+					base_type, dummy_identifier, linkage, probe_calling_conv);
 			}
 			if (base_type.is_reference() || base_type.is_rvalue_reference()) {
 				throw makeStructuredCompileError(
@@ -1888,7 +1889,8 @@ ParseResult Parser::parse_declarator(
 			// Create a dummy identifier token for the unnamed parameter
 			Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
 
-			return parse_postfix_declarator(base_type, dummy_identifier, linkage);
+			return parse_postfix_declarator(
+				base_type, dummy_identifier, linkage, calling_conv);
 		}
 
 		// Parse identifier
@@ -2079,7 +2081,7 @@ ParseResult Parser::parse_declarator(
 
 		// Now parse the function parameters: '(' params ')'
 		ParseResult declarator_result = parse_postfix_declarator(
-			base_type, identifier_token, linkage);
+			base_type, identifier_token, linkage, calling_conv);
 		if (!declarator_result.is_error() && qualified_declarator_owner.isValid() &&
 			declarator_result.node().has_value() &&
 			declarator_result.node()->is<DeclarationNode>()) {
@@ -2125,13 +2127,15 @@ ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
 	advance();
 
 	// Parse postfix operators (function, array)
-	return parse_postfix_declarator(base_type, out_identifier, linkage);
+	return parse_postfix_declarator(
+		base_type, out_identifier, linkage, last_calling_convention_);
 }
 
 // NEW: Parse postfix declarators (function, array)
 ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 											 const Token& identifier,
-											 Linkage linkage) {
+											 Linkage linkage,
+											 CallingConvention calling_convention) {
 	std::optional<std::string_view> asm_symbol_name;
 	// Check for function declarator: '(' params ')'
 	if (peek() == "("_tok) {
@@ -2176,6 +2180,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		sig.return_reference_qualifier = base_type.reference_qualifier();
 		sig.setParameterTypes(std::move(param_types));
 		sig.linkage = linkage;
+		sig.calling_convention = calling_convention;
 		sig.is_variadic = is_variadic;
 		apply_parsed_function_type_qualifiers(sig, qualifiers, specifiers);
 		fp_type.set_function_signature(sig);
