@@ -5,18 +5,9 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "CanonicalTypeTraits.h"
 #include "SymbolTable.h"
 #include <optional>
-
-// Result type for type trait evaluation
-struct TypeTraitResult {
-	bool success;
-	bool value;
-
-	static TypeTraitResult success_true() { return {true, true}; }
-	static TypeTraitResult success_false() { return {true, false}; }
-	static TypeTraitResult failure() { return {false, false}; }
-};
 
 // Shared helper functions for type checking in an isolated namespace
 namespace TypeTraitEval {
@@ -70,24 +61,6 @@ TypeTraitResult evaluateTypeTrait(
 	const StructTypeInfo* struct_info);
 
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr);
-
-// Evaluates the unary [meta.unary.prop] traits whose answer is a function of the
-// canonical type's structural shape: references, pointers, arrays, functions,
-// member pointers, enums, builtins, and the arithmetic/scalar/fundamental/
-// object/compound groupings derived from them. The canonical node is the only
-// authority; no TypeInfo, TypeIndex, pointer level, or array dimension is read.
-// An empty result allows compatibility evaluation for an unmigrated projectable
-// operand; unsupported non-projectable operands fail.
-std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
-	TypeTraitKind kind,
-	const TypeSpecifierNode& type_spec);
-
-// Evaluates `__is_same` from canonical `TypeId` identity. An empty result allows
-// compatibility evaluation for an unmigrated or dependent operand; a malformed
-// operand fails.
-std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
-	const TypeSpecifierNode& lhs,
-	const TypeSpecifierNode& rhs);
 
 // True when any type-trait operand is still a template-dependent type, including
 // leftover pack expansions that have not been expanded to TypeSpecifierNode yet.
