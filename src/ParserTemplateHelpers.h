@@ -1141,11 +1141,20 @@ inline void buildTemplateArgSubstitutionMaps(
 inline std::string buildDeferredStaticAssertInstantiationError(
 	std::string_view evaluation_error,
 	StringHandle message_handle,
+	StringHandle condition_text_handle,
 	bool include_evaluation_error) {
 	std::string error_msg = "static_assert failed during template instantiation";
-	if (include_evaluation_error) {
+	std::string_view condition_text = StringTable::getStringView(condition_text_handle);
+	if (!condition_text.empty()) {
 		error_msg += ": ";
+		error_msg += std::string(condition_text);
+	}
+	if (include_evaluation_error) {
+		error_msg += condition_text.empty() ? ": " : " (";
 		error_msg += std::string(evaluation_error);
+		if (!condition_text.empty()) {
+			error_msg += ")";
+		}
 	}
 	std::string_view message_view = StringTable::getStringView(message_handle);
 	if (!message_view.empty()) {
