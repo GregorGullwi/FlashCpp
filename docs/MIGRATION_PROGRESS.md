@@ -392,6 +392,13 @@ back to category-only ranking. The regression
 `tests/test_canonical_dependent_member_calling_convention_overload_ret0.cpp`
 checks distinct member-function-pointer types, direct lvalue selection, and
 overload selection after substituting `CallbackOwner<Packet>`.
+Member-function declarations now retain their `&` and `&&` qualifiers through
+AST copies and deferred template-member replay. Address formation includes the
+qualifier in the published member-function-pointer signature, and out-of-line
+declaration matching distinguishes the ref-qualified overloads. The regression
+`tests/test_canonical_member_function_pointer_ref_qualifier_overload_ret0.cpp`
+checks that `decltype(&Owner::method)` matches an explicitly ref-qualified
+member-function-pointer alias and selects its matching overload.
 Constructor-based conversion viability now receives the argument expression:
 pointer-taking constructors accept an integer literal zero as a null pointer
 constant and reject other integral arguments. Direct-initialization

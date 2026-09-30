@@ -620,6 +620,7 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	dest.set_is_hidden_friend(src.is_hidden_friend());
 	dest.set_is_const_member_function(src.is_const_member_function());
 	dest.set_is_volatile_member_function(src.is_volatile_member_function());
+	dest.set_function_reference_qualifier(src.function_reference_qualifier());
 	dest.set_is_implicit(src.is_implicit());
 	dest.set_inline_always(src.is_inline_always());
 	dest.set_deduced_placeholder_return_type(src.deduced_placeholder_return_type());
@@ -823,7 +824,7 @@ ParseResult Parser::parse_function_declaration_with_storage_specs(
 // Returns a mutable pointer to the matching StructMemberFunction, or nullptr if not found.
 //
 // Per C++20 [dcl.fct.def.general]/p2, an out-of-line definition must match a previously
-// introduced declaration by name, parameter-type-list, and cv-qualifiers.
+// introduced declaration by name, parameter-type-list, and cv/ref-qualifiers.
 // Entries stored as FunctionDeclarationNode are fully verifiable (param count checked).
 // Entries stored under a different node type (e.g. some operator representations) cannot
 // have their parameter-type-list verified here; they are accepted as matching declarations
@@ -837,7 +838,8 @@ StructMemberFunction* Parser::find_member_function_by_signature(
 	for (auto& member : struct_info.member_functions) {
 		if (member.getName() != name ||
 			member.is_const() != quals.is_const() ||
-			member.is_volatile() != quals.is_volatile()) {
+			member.is_volatile() != quals.is_volatile() ||
+			member.ref_qualifier != quals.ref_qualifier) {
 			continue;
 		}
 		if (member.function_decl.is<FunctionDeclarationNode>()) {

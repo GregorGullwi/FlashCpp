@@ -10604,6 +10604,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_function_decl.is_override = member_function.is_override;
 			member_function_decl.is_final = member_function.is_final;
 			member_function_decl.cv_qualifier = member_function.cv_qualifier;
+			member_function_decl.ref_qualifier = member_function.ref_qualifier;
 			member_function_decl.is_noexcept = member_function.is_noexcept;
 			effective_member_functions.push_back(member_function_decl);
 			effective_has_constructor = effective_has_constructor || member_function_decl.is_constructor;
@@ -10745,6 +10746,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					id.is_operator = mem_func.operator_kind != OverloadableOperator::None;
 					id.is_const_method = mem_func.is_const();
 					id.cv_qualifier = mem_func.cv_qualifier;
+					id.ref_qualifier = mem_func.ref_qualifier;
 					id.kind = DeferredMemberIdentity::Kind::Function;
 				}
 				lazy_info.template_params = effective_template_params;

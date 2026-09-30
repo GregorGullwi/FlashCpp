@@ -4251,11 +4251,17 @@ public:
 	void set_is_hidden_friend(bool is_hidden_friend) { is_hidden_friend_ = is_hidden_friend; }
 	bool is_hidden_friend() const { return is_hidden_friend_; }
 
-	// Const/volatile member function qualifiers (Itanium 'K'/'V' / MSVC QEBA/QECA)
+	// Cv and ref qualifiers on member functions.
 	void set_is_const_member_function(bool v) { is_const_member_function_ = v; }
 	bool is_const_member_function() const { return is_const_member_function_; }
 	void set_is_volatile_member_function(bool v) { is_volatile_member_function_ = v; }
 	bool is_volatile_member_function() const { return is_volatile_member_function_; }
+	void set_function_reference_qualifier(ReferenceQualifier qualifier) {
+		function_reference_qualifier_ = qualifier;
+	}
+	ReferenceQualifier function_reference_qualifier() const {
+		return function_reference_qualifier_;
+	}
 
 	// Deleted function support (= delete)
 	void set_is_deleted(bool deleted) { is_deleted_ = deleted; }
@@ -4369,6 +4375,7 @@ private:
 	bool is_hidden_friend_ = false;	 // True if this is a hidden friend defined in a class
 	bool is_const_member_function_ = false;	// True if this function is a const member function (K qualifier)
 	bool is_volatile_member_function_ = false;  // True if this function is a volatile member function (V qualifier)
+	ReferenceQualifier function_reference_qualifier_ = ReferenceQualifier::None;
 	bool inline_always_ = false;	 // True if function should always be inlined (e.g., template pure expressions)
 	TypeCategory deduced_placeholder_return_type_ = TypeCategory::Invalid;
 	std::optional<ExpressionHandle> noexcept_expression_; // Optional noexcept(expr) expression

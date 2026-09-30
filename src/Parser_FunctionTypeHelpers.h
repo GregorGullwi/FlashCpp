@@ -102,6 +102,7 @@ inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(c
 	sig.setReturnType(makePublishedFunctionTypeFromSpecifier(return_type));
 	sig.is_const = func_decl.is_const_member_function();
 	sig.is_volatile = func_decl.is_volatile_member_function();
+	sig.function_reference_qualifier = func_decl.function_reference_qualifier();
 	sig.is_noexcept = func_decl.is_noexcept();
 	if (func_decl.has_noexcept_expression()) {
 		sig.noexcept_expression = *func_decl.noexcept_expression();

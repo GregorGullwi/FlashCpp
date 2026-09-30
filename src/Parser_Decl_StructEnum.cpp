@@ -3217,11 +3217,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			bool is_defaulted = func_specs.is_defaulted();
 			bool is_deleted = func_specs.is_deleted();
 
-			// Propagate cv-qualifiers and noexcept to the function declaration node immediately
+			// Propagate cv/ref qualifiers and noexcept to the function declaration node immediately
 			// so that all downstream code (codegen, mangling, propagateAstProperties) sees
 			// the correct flags without requiring a separate post-registration patch.
 			member_func_ref.set_is_const_member_function(member_quals.is_const());
 			member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
+			member_func_ref.set_function_reference_qualifier(member_quals.ref_qualifier);
 			if (func_specs.is_noexcept) {
 				member_func_ref.set_noexcept(true);
 				if (func_specs.noexcept_expr)
@@ -4630,7 +4631,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					const auto& decl = delayed.func_node->decl_node();
 					id.original_lookup_name = decl.identifier_token().handle();
 					id.original_member_node = ASTNode(delayed.func_node);
-					// is_const is stored in StructMemberFunctionDecl, not FunctionDeclarationNode
+					id.is_const_method = delayed.func_node->is_const_member_function();
+					id.cv_qualifier = delayed.func_node->is_const_member_function()
+						? CVQualifier::Const
+						: CVQualifier::None;
+					if (delayed.func_node->is_volatile_member_function()) {
+						id.cv_qualifier |= CVQualifier::Volatile;
+					}
+					id.ref_qualifier = delayed.func_node->function_reference_qualifier();
 				}
 				id.template_owner_name = delayed.struct_name;
 				id.pattern_owner_struct_node = delayed.struct_node;
