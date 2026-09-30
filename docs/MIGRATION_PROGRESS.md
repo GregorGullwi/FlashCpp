@@ -372,7 +372,13 @@ Dependent `noexcept`, user-defined conversions, and other unsupported callable
 or template types still use compatibility planning. Calling-convention-sensitive
 regular and member-function-pointer ranking now preserves the signature through
 overload selection; `tests/test_canonical_function_pointer_calling_convention_overload_ret0.cpp`
-covers both forms.
+covers both forms. Parenthesized function-pointer declarators now carry their
+parsed calling convention into the constructed `FunctionSignature`, including
+named callback parameters with dependent parameter types. This lets canonical
+ranking distinguish `__vectorcall` from `__cdecl` after substitution. The
+regression `tests/test_canonical_dependent_calling_convention_function_pointer_overload_ret0.cpp`
+checks the declared parameter type and overload selection for both conventions
+after substituting `Packet`.
 Constructor-based conversion viability now receives the argument expression:
 pointer-taking constructors accept an integer literal zero as a null pointer
 constant and reject other integral arguments. Direct-initialization
@@ -598,10 +604,9 @@ Continue boundary 3A in this order:
     name lookup (`Typedefs::Field` / `Typedefs::Run`) via struct-relative
     TypeInfo publication and alias-owner projection; covered by
     `tests/test_canonical_class_scope_typedef_member_pointer_owner_overload_ret0.cpp`.
-    Additional dependent member-function-pointer
-    forms and remaining unsupported callable pairs (including calling-
-    convention-sensitive ranking) still need substitution-aware canonical
-    ranking. Ordinary function-pointer `decltype(&function<T>)`
+    Additional dependent member-function-pointer forms and remaining
+    unsupported callable pairs still need substitution-aware canonical ranking.
+    Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
 Shared evaluation, constant-expression evaluation, and code-generation trait

@@ -1812,7 +1812,11 @@ private:
 		Linkage linkage,
 		std::vector<ASTNode>* array_bound_expressions);
 	ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators
-	ParseResult parse_postfix_declarator(TypeSpecifierNode& base_type, const Token& identifier, Linkage linkage = Linkage::None);  // NEW: Helper for postfix declarators
+	ParseResult parse_postfix_declarator(
+		TypeSpecifierNode& base_type,
+		const Token& identifier,
+		Linkage linkage,
+		CallingConvention calling_convention); // Helper for postfix declarators
 	// Parse the parameter-type-list inside a function pointer declarator.
 	// Used for both standalone function pointer declarators and function declarations
 	// whose return type is itself a function pointer.
