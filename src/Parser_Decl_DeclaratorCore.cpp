@@ -1249,6 +1249,7 @@ ParseResult Parser::parse_declarator(
 			if (!candidate) {
 				advance(); // opening group
 				skip_noop_gnu_qualifiers();
+				(void)parse_calling_convention(CallingConvention::Default);
 				if (peek() == "*"_tok) {
 					advance();
 					[[maybe_unused]] const CVQualifier ignored_cv = parse_cv_qualifiers();
@@ -1282,6 +1283,8 @@ ParseResult Parser::parse_declarator(
 					std::vector<DeclaratorComponent> suffixes;
 					std::vector<ASTNode> child_array_bound_expressions;
 					std::vector<ASTNode> suffix_array_bound_expressions;
+					CallingConvention calling_convention =
+						CallingConvention::Default;
 					bool delimited = false;
 					bool after_direct = false;
 				};
@@ -1311,6 +1314,8 @@ ParseResult Parser::parse_declarator(
 				bool failed = false;
 				bool has_member_pointer = base_type.has_member_class();
 				bool member_pointer_is_function = false;
+				CallingConvention member_function_calling_convention =
+					CallingConvention::Default;
 				std::optional<FunctionSignature> member_function_signature;
 				std::optional<FlashCpp::ParsedParameterList> ordered_function_parameters;
 				FlashCpp::MemberQualifiers ordered_function_qualifiers;
@@ -1364,6 +1369,8 @@ ParseResult Parser::parse_declarator(
 										: DeclaratorComponent::memberPointer(
 											base_type.member_class_entity(), false,
 											member_cv));
+								member_function_calling_convention =
+									frame.calling_convention;
 								has_member_pointer = true;
 								discard_saved_token(member_pointer_start);
 								continue;
@@ -1373,8 +1380,12 @@ ParseResult Parser::parse_declarator(
 						}
 						if (peek() == "("_tok) {
 							advance();
+							const CallingConvention group_calling_convention =
+								parse_calling_convention(CallingConvention::Default);
 							frames.emplace_back();
 							frames.back().delimited = true;
+							frames.back().calling_convention =
+								group_calling_convention;
 							continue;
 						}
 						if (peek() == ")"_tok && !has_identifier && frame.delimited &&
@@ -1489,7 +1500,8 @@ ParseResult Parser::parse_declarator(
 						signature.return_type_index = return_type_spec.type_index();
 						signature.setParameterTypes(std::move(parameter_types));
 						signature.linkage = Linkage::None;
-						signature.calling_convention = last_calling_convention_;
+						signature.calling_convention =
+							member_function_calling_convention;
 						signature.is_variadic = is_variadic;
 						apply_parsed_function_type_qualifiers(signature, qualifiers, specifiers);
 						member_function_signature = std::move(signature);

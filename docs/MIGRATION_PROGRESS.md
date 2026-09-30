@@ -379,6 +379,14 @@ ranking distinguish `__vectorcall` from `__cdecl` after substitution. The
 regression `tests/test_canonical_dependent_calling_convention_function_pointer_overload_ret0.cpp`
 checks the declared parameter type and overload selection for both conventions
 after substituting `Packet`.
+Dependent member-function-pointer declarators now retain their parsed calling
+convention too. Canonical import binds published nominal entities inside
+structured `FunctionType` components after substitution, so an lvalue callback
+selects the matching `__vectorcall` or `__cdecl` overload instead of falling
+back to category-only ranking. The regression
+`tests/test_canonical_dependent_member_calling_convention_overload_ret0.cpp`
+checks distinct member-function-pointer types, direct lvalue selection, and
+overload selection after substituting `CallbackOwner<Packet>`.
 Constructor-based conversion viability now receives the argument expression:
 pointer-taking constructors accept an integer literal zero as a null pointer
 constant and reject other integral arguments. Direct-initialization
@@ -604,8 +612,8 @@ Continue boundary 3A in this order:
     name lookup (`Typedefs::Field` / `Typedefs::Run`) via struct-relative
     TypeInfo publication and alias-owner projection; covered by
     `tests/test_canonical_class_scope_typedef_member_pointer_owner_overload_ret0.cpp`.
-    Additional dependent member-function-pointer forms and remaining
-    unsupported callable pairs still need substitution-aware canonical ranking.
+    Remaining dependent member-function-pointer forms and unsupported callable
+    pairs still need substitution-aware canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
