@@ -2386,6 +2386,16 @@ bool Parser::materializeTemplateFunctionParameters(
 					TypeIndex{},
 					false,
 					true);
+				substituteCanonicalMemberFunctionPointerOwner(
+					substituted_param_type,
+					original_param_type,
+					instantiation_context.template_func.template_decl_id(),
+					std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+					std::span<const TemplateTypeArg>(
+						materialized_template_args.data(), materialized_template_args.size()),
+					[this](const TypeInfo& owner, std::span<const TemplateTypeArg> args) {
+						return materializeCanonicalOwnerTypeForLookup(owner, args);
+					});
 				ASTNode param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
 				resolveDependentMemberAlias(param_type, typed_params, materialized_template_args);
 				normalizeSubstitutedTypeSpec(param_type.as<TypeSpecifierNode>());
@@ -2580,6 +2590,15 @@ bool Parser::materializeTemplateFunctionParameters(
 				override_type_index,
 				false,
 				true);
+			substituteCanonicalMemberFunctionPointerOwner(
+				substituted_param_type,
+				orig_param_type,
+				instantiation_context.template_func.template_decl_id(),
+				template_params,
+				template_args,
+				[this](const TypeInfo& owner, std::span<const TemplateTypeArg> args) {
+					return materializeCanonicalOwnerTypeForLookup(owner, args);
+				});
 			param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
 		}
 
