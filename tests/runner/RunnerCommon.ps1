@@ -328,6 +328,7 @@ function Get-FlashCppMigrationCounterValues {
 		dollar_identity = 'Dollar identity recoveries:\s*(\d+)'
 		declaration_builder_publish = 'DeclarationBuilder publishes:\s*(\d+)'
 		unscoped_enum_typeindex_fallback = 'Unscoped-enum TypeIndex fallbacks:\s*(\d+)'
+		canonical_structural_trait_fallback = 'Canonical structural trait fallbacks:\s*(\d+)'
 	}
 	$values = @{}
 	foreach ($entry in $patterns.GetEnumerator()) {

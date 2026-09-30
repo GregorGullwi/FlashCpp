@@ -1820,7 +1820,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	if (const std::optional<TypeTraitResult> canonical_result =
-			tryEvaluateCanonicalDeclaratorTrait(trait_expr.kind(), type_spec);
+			tryEvaluateCanonicalStructuralTrait(trait_expr.kind(), type_spec);
 		canonical_result.has_value()) {
 		return canonical_result->success
 			? EvalResult::from_bool(canonical_result->value)

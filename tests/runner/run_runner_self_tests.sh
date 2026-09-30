@@ -211,11 +211,12 @@ else
 	printf 'SKIP: functional multi-TU and PIE checks require clang++ and timeout\n'
 fi
 
-migration_output=$'Diagnostics emitted outside DiagnosticEngine: 1\nToken replays: 2\nPost-parse parser typing queries: 3\nAST-to-IR semantic queries: 4\nCodegen-to-parser callbacks: 5\nTemplateEngine old-engine routes: 6\nDollar identity recoveries: 7\nDeclarationBuilder publishes: 8\nUnscoped-enum TypeIndex fallbacks: 9\n'
+migration_output=$'Diagnostics emitted outside DiagnosticEngine: 1\nToken replays: 2\nPost-parse parser typing queries: 3\nAST-to-IR semantic queries: 4\nCodegen-to-parser callbacks: 5\nTemplateEngine old-engine routes: 6\nDollar identity recoveries: 7\nDeclarationBuilder publishes: 8\nUnscoped-enum TypeIndex fallbacks: 9\nCanonical structural trait fallbacks: 10\n'
 declare -A RUNNER_MIGRATION_COUNTER_VALUES=()
 if runner_parse_migration_counter_values "$migration_output" &&
 	[ "${RUNNER_MIGRATION_COUNTER_VALUES[outside_engine]}" = 1 ] &&
 	[ "${RUNNER_MIGRATION_COUNTER_VALUES[unscoped_enum_typeindex_fallback]}" = 9 ] &&
+	[ "${RUNNER_MIGRATION_COUNTER_VALUES[canonical_structural_trait_fallback]}" = 10 ] &&
 	[ "${RUNNER_MIGRATION_COUNTER_VALUES[template_old_engine]}" = 6 ]; then
 	migration_parse_ok=true
 else

@@ -18,6 +18,7 @@ inline uint64_t gTemplateEngineOldEngineRouteCount = 0;
 inline uint64_t gDollarIdentityRecoveryCount = 0;
 inline uint64_t gDeclarationBuilderPublishCount = 0;
 inline uint64_t gUnscopedEnumTypeIndexFallbackCount = 0;
+inline uint64_t gCanonicalStructuralTraitFallbackCount = 0;
 
 inline void recordTokenReplay() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gTokenReplayCount);
@@ -51,6 +52,14 @@ inline void recordUnscopedEnumTypeIndexFallback() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gUnscopedEnumTypeIndexFallbackCount);
 }
 
+// Boundary 3A: a structural [meta.unary.prop] trait answered from flat
+// TypeInfo/TypeIndex/pointer-level/array-dimension fields because the canonical
+// type could not be imported. Direction down to zero as the trait consumers
+// migrate; removal boundary is 3A exit.
+inline void recordCanonicalStructuralTraitFallback() {
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gCanonicalStructuralTraitFallbackCount);
+}
+
 inline uint64_t tokenReplayCount() {
 	return gTokenReplayCount;
 }
@@ -79,6 +88,10 @@ inline uint64_t declarationBuilderPublishCount() {
 	return gDeclarationBuilderPublishCount;
 }
 
+inline uint64_t canonicalStructuralTraitFallbackCount() {
+	return gCanonicalStructuralTraitFallbackCount;
+}
+
 inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "\nToken replays: ", gTokenReplayCount);
 	FLASH_LOG(General, Info, "Post-parse parser typing queries: ", gPostParseParserTypingQueryCount);
@@ -89,6 +102,8 @@ inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "DeclarationBuilder publishes: ", gDeclarationBuilderPublishCount);
 	FLASH_LOG(General, Info, "Unscoped-enum TypeIndex fallbacks: ",
 		gUnscopedEnumTypeIndexFallbackCount);
+	FLASH_LOG(General, Info, "Canonical structural trait fallbacks: ",
+		gCanonicalStructuralTraitFallbackCount);
 	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
 	for (std::size_t index = 0; index < static_cast<std::size_t>(FlashCpp::InlineVectorSpillFamily::Count); ++index) {
 		const uint64_t count =
