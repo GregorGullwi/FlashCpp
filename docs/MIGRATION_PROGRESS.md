@@ -71,6 +71,40 @@ machine-checkable evidence rather than a behavioral difference. The regression
 covers both operand spellings, a union, a class-template specialization, and
 `__is_same` between distinct records and between both enum forms.
 
+The class, union, and qualification traits are answered from the canonical type
+as well. A record's class/union split comes from its published
+`CanonicalRecordLayout` union flag, a class-template specialization is a class
+type and never a union, and a record with no published layout fails closed to the
+compatibility classifier rather than guessing. cv qualification comes from the
+canonical qualifier plus [dcl.array]'s rule that an array is identically
+cv-qualified to its element, walked iteratively so array rank stays off the
+native stack, and [dcl.ref]'s rule that cv introduced through a reference is
+dropped. Signedness is decided once, from the canonical builtin, and includes the
+floating-point types an integer-only reading of the question would miss; plain
+`char` is signed on this target and the wide character type follows the data
+model. `long double` is deliberately absent from that coverage: the shipped model
+gives it the `double` size and representation on every target and the backend
+cannot compute with it, so a signedness assertion about it would only restate
+the `double` one. See the x87 known issue. The flat `TypeTraitEval::isSigned` and `isUnsigned` predicates no longer
+carry that policy - they project a category onto the canonical builtin that
+decides it and defer, so the compatibility path cannot restate it, and the
+projection is deliberately not the inverse of `canonicalBuiltinToTypeCategory`
+because the signed/unsigned question only needs the unambiguous categories. This fixes six constant-expression answers that disagreed
+with code generation: an array, a const array, a `double`, and a `long double`
+were reported signed, and cv on a pointer object was missed while cv introduced
+through a reference was reported as qualifying the reference.
+`tests/test_canonical_class_qualification_traits_ret0.cpp` covers the family over
+plain and signed and unsigned builtins, `wchar_t`, `char`, floating types, both
+enum forms, a union, a struct, a derived struct, a const record, a
+class-template specialization, arrays of every bound shape, const and volatile
+qualifiers, references, and a const pointer, in both the folded and the lowered
+path. The triviality family - `__is_trivially_copyable`, `__is_trivial`,
+`__is_pod`, `__is_standard_layout`, `__is_aggregate`, `__is_empty`,
+`__is_polymorphic`, `__is_final`, `__is_abstract`, and the destructibility and
+constructibility families - still reads `StructTypeInfo`, because
+`CanonicalRecordLayout` publishes object size and member offsets but not member
+triviality, vtable state, or user-declared special members.
+
 Nominal identity is now a property of the syntax node rather than of whichever
 consumer reads it: a record or enum specifier carries its `EntityId` from the
 moment the parser materializes it, so every importer sees it. That includes the
@@ -600,15 +634,20 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    value-category behavior.
 2. **Migrate remaining flat consumers.** The structural `[meta.unary.prop]`
    family is done in the shared type-trait evaluator and in the lazy-constraint
-   evaluator, and nominal identity is published at parser materialization, so the
-   first three splits of this item are landed. Next in order:
-   1. **The remaining trait families.** `__is_class`, `__is_union`, and the
-      triviality family still read `StructTypeInfo`; `__is_signed` and
-      `__is_unsigned` still apply target signedness from a `TypeCategory`;
-      `__is_const` and `__is_volatile` still read the flat cv field because
-      `CanonicalTypeTable::qualify` collapses array element cv per [dcl.array].
-      Every one of these is currently a `ConstraintSatisfaction::Unknown` in a
-      concept and a compatibility answer elsewhere, so landing them is what
+   evaluator, nominal identity is published at parser materialization, and the
+   class, union, and qualification traits are answered canonically, so the first
+   four splits of this item are landed. Next in order:
+   1. **The triviality and lifetime trait families.** `__is_trivially_copyable`,
+      `__is_trivial`, `__is_pod`, `__is_standard_layout`, `__is_aggregate`,
+      `__is_empty`, `__is_polymorphic`, `__is_final`, `__is_abstract`,
+      `__is_destructible`, `__is_trivially_destructible`,
+      `__is_nothrow_destructible`, `__has_trivial_destructor`,
+      `__has_virtual_destructor`, and the constructibility family still read
+      `StructTypeInfo`. `CanonicalRecordLayout` publishes object size, member
+      offsets, and the union flag, but not member triviality, vtable state, or
+      user-declared special members, so this needs a published member-property
+      schema rather than a classifier change. Each is a
+      `ConstraintSatisfaction::Unknown` in a concept today, and this is what
       drives `lazy_constraint_trait_fallback` to zero.
    2. **Confirm a gap with a counter before adding identity plumbing.** A
       consumer that takes a `const TypeSpecifierNode&` cannot stamp its operand,
@@ -683,7 +722,7 @@ is ready. Never run the full suite concurrently with the build.
 Migration counters and static identity inventories are baselined under
 `tests/migration_counters/`; run the host-native counter and inventory scripts
 after compiler changes. On 2026-09-30 all fixed-corpus entries remained within
-baseline, including `canonical_structural_trait_fallback` at 0 on the two
+baseline, including `canonical_structural_trait_fallback` at 0 on the three
 structural-trait regressions, its baseline lowered from 23 so a reappearance
 fails, and `lazy_constraint_trait_fallback` at 6 on
 `tests/test_canonical_lazy_constraint_traits_ret0.cpp`. The residual
@@ -702,3 +741,11 @@ recursion: the structural classifier is an iterative node walk over the
 canonical table with no new native frame, the property switch is a flat jump
 table, and the lazy constraint evaluator's `&&`, `||`, and `!` handling
 propagates the same result type it already had.
+
+One known coverage gap: the compatibility `TypeTraitEval::isSigned` and
+`isUnsigned` adapters are not exercised anywhere in the corpus. Replacing their
+bodies with `return false` leaves all 3124 single-file tests green, because the
+canonical classification answers every signedness question the corpus asks and
+the fallback only runs when a canonical import is unavailable. They are kept as
+the compatibility path for unmigrated operands, and a regression that forces an
+unimportable operand through them is still owed.

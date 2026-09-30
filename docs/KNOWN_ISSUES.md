@@ -116,10 +116,14 @@ evaluator routes the same family through that classification, so
 `tests/test_canonical_structural_type_traits_ret0.cpp` and
 `tests/test_canonical_lazy_constraint_traits_ret0.cpp` no longer depend on the
 flat fields for pointers, arrays, references, functions, member pointers, enums,
-or the builtin groupings. Trait operands now publish their nominal `EntityId` at
-materialization, so `canonical_structural_trait_fallback` is zero on the
+or the builtin groupings, and
+`tests/test_canonical_class_qualification_traits_ret0.cpp` adds the class, union,
+cv, and signedness families. Trait operands now publish their nominal `EntityId`
+at materialization, so `canonical_structural_trait_fallback` is zero on the
 structural-trait regressions and its recorded baseline was lowered from 23 so a
-reappearance fails the counter run. Two flat consumers remain: the
+reappearance fails the counter run. The triviality and lifetime families still
+read `StructTypeInfo`, which needs a published member-property schema rather
+than a classifier change. Two flat consumers remain: the
 `lazy_constraint_trait_fallback` counter, which records the traits the canonical
 table does not own, and the residual 2 on
 `tests/test_canonical_lazy_constraint_traits_ret0.cpp`, which is a
@@ -310,9 +314,25 @@ now consistently use the Microsoft x64 64-bit `double` representation, including
 bit-preserving builtin bit-casts, but direct `long double` floating comparisons
 still have an LLP64 lowering discrepancy. LP64 has type identity and some
 constexpr/overload/builtin coverage, but no real x87 load/store/`%st0` emission
-path. Constexpr evaluation often collapses
-`long double` to `double`. Do not paper over return ABI with size guesses or INTEGER
+path. Do not paper over return ABI with size guesses or INTEGER
 fallbacks; wait until `long double` lowering can emit the SysV x87 convention.
+
+`long double` is not a usable type today, and that constrains how it may be used
+elsewhere. The collapsing is the general model rather than a constant-expression
+corner case: `sizeof(long double) == sizeof(double)` on every target, locked in
+by `tests/test_windows_long_double_abi_bit_cast_ret0.cpp`, which also runs and
+passes in the Linux suite. Measured on 2026-09-30, ordinary runtime arithmetic is
+wrong - `long double a = 3.0L, b = 4.0L; a + b == 7.0L` evaluates false. A
+`long double` here is the `double` representation under a distinct name that the
+backend cannot compute with.
+
+Consequences for other work: a trait regression must not assert a `long double`
+property as if it exercised the x87 type, because every such property is
+insensitive to the collapsing and merely restates the `double` answer. Keep
+floating-point coverage on `float` and `double` and say why `long double` is
+excluded. A type-level test that genuinely distinguishes the two, such as
+`__is_same(long double, double)`, would pin the defect rather than hide it, and
+is owed.
 
 ## Recursive class-template chains can overflow the native stack
 

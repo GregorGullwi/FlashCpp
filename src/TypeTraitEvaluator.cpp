@@ -43,20 +43,20 @@ inline bool isFloatingPoint(TypeCategory cat) {
 	return (cat == TypeCategory::Float || cat == TypeCategory::Double || cat == TypeCategory::LongDouble);
 }
 
+// Compatibility adapters. The signedness of a type is decided once, from its
+// canonical builtin; these project a flat category onto the builtin that decides
+// it so the legacy path cannot restate the policy. The projection is only used
+// where a canonical import is unavailable.
 inline bool isSigned(TypeCategory cat) {
-	if (cat == TypeCategory::WChar)
-		return g_target_data_model != TargetDataModel::LLP64;
-	return (cat == TypeCategory::Char || cat == TypeCategory::Short || cat == TypeCategory::Int ||
-			cat == TypeCategory::Long || cat == TypeCategory::LongLong);
+	const std::optional<CanonicalBuiltinKind> builtin =
+		canonicalBuiltinForSignedness(cat);
+	return builtin.has_value() && canonicalBuiltinIsSigned(*builtin);
 }
 
 inline bool isUnsigned(TypeCategory cat) {
-	if (cat == TypeCategory::WChar)
-		return g_target_data_model == TargetDataModel::LLP64;
-	return (cat == TypeCategory::Bool || cat == TypeCategory::UnsignedChar || cat == TypeCategory::UnsignedShort ||
-			cat == TypeCategory::UnsignedInt || cat == TypeCategory::UnsignedLong ||
-			cat == TypeCategory::UnsignedLongLong ||
-			cat == TypeCategory::Char8 || cat == TypeCategory::Char16 || cat == TypeCategory::Char32);
+	const std::optional<CanonicalBuiltinKind> builtin =
+		canonicalBuiltinForSignedness(cat);
+	return builtin.has_value() && canonicalBuiltinIsUnsigned(*builtin);
 }
 
 } // namespace TypeTraitEval
@@ -239,6 +239,12 @@ enum class CanonicalTraitProperty : uint8_t {
 	IsScalar,
 	IsObject,
 	IsCompound,
+	IsClass,
+	IsUnion,
+	IsConst,
+	IsVolatile,
+	IsSigned,
+	IsUnsigned,
 };
 
 CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
@@ -267,6 +273,12 @@ CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
 	case TypeTraitKind::IsScalar: return CanonicalTraitProperty::IsScalar;
 	case TypeTraitKind::IsObject: return CanonicalTraitProperty::IsObject;
 	case TypeTraitKind::IsCompound: return CanonicalTraitProperty::IsCompound;
+	case TypeTraitKind::IsClass: return CanonicalTraitProperty::IsClass;
+	case TypeTraitKind::IsUnion: return CanonicalTraitProperty::IsUnion;
+	case TypeTraitKind::IsConst: return CanonicalTraitProperty::IsConst;
+	case TypeTraitKind::IsVolatile: return CanonicalTraitProperty::IsVolatile;
+	case TypeTraitKind::IsSigned: return CanonicalTraitProperty::IsSigned;
+	case TypeTraitKind::IsUnsigned: return CanonicalTraitProperty::IsUnsigned;
 	default:
 		return CanonicalTraitProperty::None;
 	}
@@ -314,21 +326,64 @@ bool isDependentCanonicalNode(CanonicalTypeKind kind) {
 		kind == CanonicalTypeKind::DependentMemberAlias;
 }
 
-// Classifies one canonical node whose top-level cv has already been peeled.
-// `outer` is the outermost structural component: [meta.unary.prop] states every
-// property of a reference type as a property of the reference itself, not of
-// the referent, so a reference only satisfies the reference properties.
+// Classifies one canonical type. `type` is the imported identity, not a peeled
+// node: cv qualification and array bounds are part of the answer for some
+// properties, so each property decides how far to walk.
 bool canonicalNodeSatisfies(CanonicalTraitProperty property,
-	const CanonicalTypeNode& outer) {
-	const CanonicalTypeKind kind = outer.kind;
+	const CanonicalTypeTable& table, TypeId type) {
+	// [dcl.array] an array type is identically cv-qualified to its element, and
+	// [dcl.ref] cv-qualifiers introduced through a reference are ignored. The
+	// array walk is iterative so array rank stays off the native stack.
+	TypeId walk = type;
+	const CanonicalTypeNode outer = table.node(walk);
+	const bool is_reference =
+		outer.kind == CanonicalTypeKind::LValueReference ||
+		outer.kind == CanonicalTypeKind::RValueReference;
+	switch (property) {
+	case CanonicalTraitProperty::IsConst:
+	case CanonicalTraitProperty::IsVolatile: {
+		if (is_reference) {
+			return false;
+		}
+		CVQualifier accumulated = CVQualifier::None;
+		while (true) {
+			const CanonicalTypeNode node = table.node(walk);
+			if (node.kind == CanonicalTypeKind::Array) {
+				walk = node.child;
+				continue;
+			}
+			if (node.kind == CanonicalTypeKind::Qualified) {
+				accumulated |= node.qualifiers;
+			}
+			break;
+		}
+		const CVQualifier bit = property == CanonicalTraitProperty::IsConst
+			? CVQualifier::Const
+			: CVQualifier::Volatile;
+		return (static_cast<uint8_t>(accumulated) & static_cast<uint8_t>(bit)) != 0;
+	}
+	default:
+		break;
+	}
+
+	// Every remaining property reads the outermost component; top-level cv does
+	// not change a structural classification.
+	// `IsConst` and `IsVolatile` returned above; listing them keeps this switch
+	// exhaustive, so a new property cannot be added without an answer.
+	// Peeling the qualifier has to advance the identity too, not just the node:
+	// a record's EntityId is read from the Record node, not from a wrapper.
+	TypeId peeled = walk;
+	if (outer.kind == CanonicalTypeKind::Qualified) {
+		peeled = outer.child;
+	}
+	const CanonicalTypeNode node = table.node(peeled);
+	const CanonicalTypeKind kind = node.kind;
 	const bool is_builtin = kind == CanonicalTypeKind::Builtin;
-	const CanonicalBuiltinKind builtin = outer.builtin;
-	const bool is_reference = kind == CanonicalTypeKind::LValueReference ||
-		kind == CanonicalTypeKind::RValueReference;
+	const CanonicalBuiltinKind builtin = node.builtin;
 	const bool is_bounded_array =
 		kind == CanonicalTypeKind::Array &&
 		hasCanonicalTypeNodeFlag(
-			outer.flags, CanonicalTypeNodeFlags::KnownArrayBound);
+			node.flags, CanonicalTypeNodeFlags::KnownArrayBound);
 	const bool is_unbounded_array =
 		kind == CanonicalTypeKind::Array && !is_bounded_array;
 	switch (property) {
@@ -383,6 +438,34 @@ bool canonicalNodeSatisfies(CanonicalTraitProperty property,
 			!(is_builtin && builtin == CanonicalBuiltinKind::Void);
 	case CanonicalTraitProperty::IsCompound:
 		return !is_builtin;
+	case CanonicalTraitProperty::IsSigned:
+		return !is_reference && is_builtin && canonicalBuiltinIsSigned(builtin);
+	case CanonicalTraitProperty::IsUnsigned:
+		return !is_reference && is_builtin && canonicalBuiltinIsUnsigned(builtin);
+	case CanonicalTraitProperty::IsClass:
+	case CanonicalTraitProperty::IsUnion: {
+		// A class-template specialization is a class type and never a union.
+		if (kind == CanonicalTypeKind::TemplateSpecialization) {
+			return property == CanonicalTraitProperty::IsClass;
+		}
+		if (kind != CanonicalTypeKind::Record) {
+			return false;
+		}
+		// A record with no published complete-object layout may be a forward
+		// declaration, so the class/union split is not yet decidable. Fail
+		// closed to the compatibility classifier rather than guessing.
+		const EntityId entity = table.recordEntity(peeled);
+		if (!entity || !table.hasRecordLayout(entity)) {
+			throw InternalError(
+				"canonical trait: class trait needs a published record layout");
+		}
+		const CanonicalRecordLayout layout = table.recordLayout(entity);
+		const bool is_union = hasCanonicalRecordLayoutFlag(
+			layout.flags, CanonicalRecordLayoutFlags::Union);
+		return property == CanonicalTraitProperty::IsUnion ? is_union : !is_union;
+	}
+	case CanonicalTraitProperty::IsConst:
+	case CanonicalTraitProperty::IsVolatile:
 	case CanonicalTraitProperty::None:
 		break;
 	}
@@ -455,18 +538,12 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 		return std::nullopt;
 	}
 
-	// Top-level cv never changes a structural classification.
-	TypeId outer_type = imported_type.type;
-	while (outer_type) {
-		const CanonicalTypeNode node = table.node(outer_type);
-		if (node.kind != CanonicalTypeKind::Qualified) {
-			return canonicalNodeSatisfies(property, node)
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
-		}
-		outer_type = node.child;
-	}
-	return TypeTraitResult::failure();
+	// Each property decides how far to walk the canonical chain: cv
+	// qualification and array bounds are part of some answers, so the peel is not
+	// hoisted out here.
+	return canonicalNodeSatisfies(property, table, imported_type.type)
+		? TypeTraitResult::success_true()
+		: TypeTraitResult::success_false();
 }
 
 namespace {

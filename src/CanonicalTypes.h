@@ -273,6 +273,11 @@ struct CanonicalEnumLayout {
 	friend bool operator==(CanonicalEnumLayout, CanonicalEnumLayout) = default;
 };
 
+inline bool hasCanonicalRecordLayoutFlag(CanonicalRecordLayoutFlags flags,
+	CanonicalRecordLayoutFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
 enum class CanonicalAccess : uint8_t {
 	Public = 0,
 	Protected = 1,

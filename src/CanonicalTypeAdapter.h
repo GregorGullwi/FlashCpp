@@ -37,6 +37,77 @@ inline std::optional<TypeCategory> canonicalBuiltinToTypeCategory(
 	return std::nullopt;
 }
 
+// The categories whose signedness is decided by the canonical classification map
+// one-to-one onto a canonical builtin, so a flat compatibility predicate can
+// defer to the canonical authority without carrying a category switch of its own.
+// `signed char` shares the plain `char` category and is signed as well, so this
+// projection loses nothing for the signedness question. It is deliberately not
+// the inverse of canonicalBuiltinToTypeCategory: the signed/unsigned decision
+// only needs the categories listed here.
+inline std::optional<CanonicalBuiltinKind> canonicalBuiltinForSignedness(
+	TypeCategory category) {
+	switch (category) {
+	case TypeCategory::Bool: return CanonicalBuiltinKind::Bool;
+	case TypeCategory::Char: return CanonicalBuiltinKind::Char;
+	case TypeCategory::WChar: return CanonicalBuiltinKind::WChar;
+	case TypeCategory::Char8: return CanonicalBuiltinKind::Char8;
+	case TypeCategory::Char16: return CanonicalBuiltinKind::Char16;
+	case TypeCategory::Char32: return CanonicalBuiltinKind::Char32;
+	case TypeCategory::Short: return CanonicalBuiltinKind::Short;
+	case TypeCategory::UnsignedShort: return CanonicalBuiltinKind::UnsignedShort;
+	case TypeCategory::Int: return CanonicalBuiltinKind::Int;
+	case TypeCategory::UnsignedInt: return CanonicalBuiltinKind::UnsignedInt;
+	case TypeCategory::Long: return CanonicalBuiltinKind::Long;
+	case TypeCategory::UnsignedLong: return CanonicalBuiltinKind::UnsignedLong;
+	case TypeCategory::LongLong: return CanonicalBuiltinKind::LongLong;
+	case TypeCategory::UnsignedLongLong: return CanonicalBuiltinKind::UnsignedLongLong;
+	case TypeCategory::Float: return CanonicalBuiltinKind::Float;
+	case TypeCategory::Double: return CanonicalBuiltinKind::Double;
+	case TypeCategory::LongDouble: return CanonicalBuiltinKind::LongDouble;
+	default: return std::nullopt;
+	}
+}
+
+// [meta.unary.prop] signedness is a property of the canonical builtin, so it is
+// answered from the canonical identity and never from the category the builtin
+// projects onto. Plain `char` is signed on this target and the wide character
+// type follows the data model; the floating-point types are signed too, which an
+// integer-only reading of the question would miss.
+inline bool canonicalBuiltinIsSigned(CanonicalBuiltinKind builtin) {
+	switch (builtin) {
+	case CanonicalBuiltinKind::Char:
+	case CanonicalBuiltinKind::SignedChar:
+	case CanonicalBuiltinKind::Short:
+	case CanonicalBuiltinKind::Int:
+	case CanonicalBuiltinKind::Long:
+	case CanonicalBuiltinKind::LongLong:
+	case CanonicalBuiltinKind::Float:
+	case CanonicalBuiltinKind::Double:
+	case CanonicalBuiltinKind::LongDouble:
+		return true;
+	case CanonicalBuiltinKind::WChar:
+		return g_target_data_model != TargetDataModel::LLP64;
+	default:
+		return false;
+	}
+}
+
+inline bool canonicalBuiltinIsUnsigned(CanonicalBuiltinKind builtin) {
+	switch (builtin) {
+	case CanonicalBuiltinKind::Bool:
+	case CanonicalBuiltinKind::UnsignedChar:
+	case CanonicalBuiltinKind::UnsignedShort:
+	case CanonicalBuiltinKind::UnsignedInt:
+	case CanonicalBuiltinKind::UnsignedLong:
+	case CanonicalBuiltinKind::UnsignedLongLong:
+		return true;
+	case CanonicalBuiltinKind::WChar:
+		return g_target_data_model == TargetDataModel::LLP64;
+	default:
+		return false;
+	}
+}
+
 enum class CanonicalTypeImportStatus : uint8_t {
 	Supported, UnmigratedArray, UnmigratedCallable, UnmigratedNominal, Unresolved, Invalid,
 };

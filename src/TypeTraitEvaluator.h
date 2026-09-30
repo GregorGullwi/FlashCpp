@@ -18,6 +18,8 @@ namespace TypeTraitEval {
 bool isScalarType(TypeCategory cat, bool is_reference, size_t pointer_depth);
 bool isIntegral(TypeCategory cat);
 bool isFloatingPoint(TypeCategory cat);
+// Signedness is decided from the canonical builtin; these project a flat category
+// onto the builtin that decides it, for the compatibility path only.
 bool isSigned(TypeCategory cat);
 bool isUnsigned(TypeCategory cat);
 
