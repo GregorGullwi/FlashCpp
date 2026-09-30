@@ -19,6 +19,7 @@ inline uint64_t gDollarIdentityRecoveryCount = 0;
 inline uint64_t gDeclarationBuilderPublishCount = 0;
 inline uint64_t gUnscopedEnumTypeIndexFallbackCount = 0;
 inline uint64_t gCanonicalStructuralTraitFallbackCount = 0;
+inline uint64_t gLazyConstraintTraitFallbackCount = 0;
 
 inline void recordTokenReplay() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gTokenReplayCount);
@@ -50,6 +51,14 @@ inline void recordDeclarationBuilderPublish() {
 
 inline void recordUnscopedEnumTypeIndexFallback() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gUnscopedEnumTypeIndexFallbackCount);
+}
+
+// Boundary 3A: a lazy-constraint unary type trait answered without the shared
+// canonical classification, either from the compatibility classifier or not at
+// all (an explicit unknown result). Direction down to zero as the trait families
+// and the concept evaluator migrate; removal boundary is 3A exit.
+inline void recordLazyConstraintTraitFallback() {
+	FLASHCPP_MIGRATION_COUNTER_BODY(++gLazyConstraintTraitFallbackCount);
 }
 
 // Boundary 3A: a structural [meta.unary.prop] trait answered from flat
@@ -92,6 +101,10 @@ inline uint64_t canonicalStructuralTraitFallbackCount() {
 	return gCanonicalStructuralTraitFallbackCount;
 }
 
+inline uint64_t lazyConstraintTraitFallbackCount() {
+	return gLazyConstraintTraitFallbackCount;
+}
+
 inline void printMigrationTelemetry() {
 	FLASH_LOG(General, Info, "\nToken replays: ", gTokenReplayCount);
 	FLASH_LOG(General, Info, "Post-parse parser typing queries: ", gPostParseParserTypingQueryCount);
@@ -104,6 +117,8 @@ inline void printMigrationTelemetry() {
 		gUnscopedEnumTypeIndexFallbackCount);
 	FLASH_LOG(General, Info, "Canonical structural trait fallbacks: ",
 		gCanonicalStructuralTraitFallbackCount);
+	FLASH_LOG(General, Info, "Lazy-constraint trait fallbacks: ",
+		gLazyConstraintTraitFallbackCount);
 	FLASH_LOG(General, Info, "InlineVector spill events: ", FlashCpp::inlineVectorSpillCount());
 	for (std::size_t index = 0; index < static_cast<std::size_t>(FlashCpp::InlineVectorSpillFamily::Count); ++index) {
 		const uint64_t count =

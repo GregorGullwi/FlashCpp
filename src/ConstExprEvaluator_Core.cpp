@@ -5371,7 +5371,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 					concept_opt->as<ConceptDeclarationNode>(),
 					*concrete_args,
 					context.parser);
-				return EvalResult::from_bool(constraint_result.satisfied);
+				return EvalResult::from_bool(constraint_result.satisfied());
 			}
 		}
 	}

@@ -82,6 +82,13 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec);
 
+// Evaluates `__is_same` from canonical `TypeId` identity. An empty result allows
+// compatibility evaluation for an unmigrated or dependent operand; a malformed
+// operand fails.
+std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
+	const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs);
+
 // True when any type-trait operand is still a template-dependent type, including
 // leftover pack expansions that have not been expanded to TypeSpecifierNode yet.
 bool typeTraitHasDependentOperands(const TypeTraitExprNode& trait_expr);

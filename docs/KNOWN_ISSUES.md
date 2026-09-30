@@ -111,17 +111,21 @@ being reordered or truncated. Remove this entry when those consumers migrate
 and the compatibility projection fields are deleted.
 
 The shared unary type-trait evaluator now classifies the whole structural
-`[meta.unary.prop]` family from the canonical `TypeId`, so
-`tests/test_canonical_structural_type_traits_ret0.cpp` no longer depends on the
+`[meta.unary.prop]` family from the canonical `TypeId`, and the lazy-constraint
+evaluator routes the same family through that classification, so
+`tests/test_canonical_structural_type_traits_ret0.cpp` and
+`tests/test_canonical_lazy_constraint_traits_ret0.cpp` no longer depend on the
 flat fields for pointers, arrays, references, functions, member pointers, enums,
-or the builtin groupings. Two flat consumers remain: lazy-constraint trait
-evaluation in `TemplateRegistry_Lazy.h`, which still resolves a substituted type
-parameter by name into its own flat quintuple, and the `canonical_structural_trait_fallback`
-counter, which still records record and enum operands reached through a
-`decltype` that has not published its `EntityId`. Class-property traits
-(`__is_class`, `__is_union`, `__is_polymorphic`, and the triviality family) and
-the target-signedness traits (`__is_signed`, `__is_unsigned`) also still read
-flat or sema-owned metadata.
+or the builtin groupings. Two flat consumers remain: the
+`canonical_structural_trait_fallback` counter, which still records record and
+enum operands reached through a `decltype` that has not published its
+`EntityId`, and the `lazy_constraint_trait_fallback` counter, which records the
+traits the canonical table does not own and the operands it cannot import.
+Class-property traits (`__is_class`, `__is_union`, `__is_polymorphic`, and the
+triviality family) and the target-signedness traits (`__is_signed`,
+`__is_unsigned`) still read flat or sema-owned metadata, so a concept built on
+them is satisfied as an explicit unknown outcome: not proof of satisfaction, and
+not inverted into a failure by `!`, `&&`, or `||`.
 
 The general flat conversion-descriptor path also rejects ordered declarators
 over aliases with callable, array, reference, or member-pointer wrappers. Static
@@ -409,3 +413,18 @@ classification and is independently observable through `__is_same`. It belongs
 to the callable declarator families in architecture boundary 3A, not to the
 trait evaluator; do not special-case function categories in the trait path to
 mask it.
+
+## Several constrained function templates in one translation unit mis-resolve
+
+Overload resolution between two constrained function templates becomes
+order-dependent once enough constrained templates coexist in a translation
+unit. With one constrained overload and an unconstrained `...` fallback per
+probe, adding an eighth or ninth constrained probe function makes an earlier
+probe select its fallback, and swapping the declaration order of two
+mutually-exclusive constrained overloads changes the selected candidate. The
+failure is independent of the canonical type work: it reproduces on
+`origin/main`, and it is not tied to which trait the constraint names. Concept
+partial ordering and constraint-based tie-breaking need their own boundary-5
+slice; until then a constrained-overload regression must stay within the
+prose-verified probe count and pair each constrained overload with an
+unconstrained fallback rather than with a second constrained overload.

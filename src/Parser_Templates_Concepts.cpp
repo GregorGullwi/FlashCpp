@@ -442,7 +442,7 @@ ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 				template_param_names,
 				parser,
 				template_params);
-			if (!nested_result.satisfied) {
+			if (!nested_result.satisfied()) {
 				return nested_result;
 			}
 			continue;

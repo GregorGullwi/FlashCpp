@@ -5120,7 +5120,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						);
 
 						// Create a BoolLiteralNode with the result
-						bool concept_satisfied = constraint_result.satisfied;
+						bool concept_satisfied = constraint_result.satisfied();
 						Token bool_token(Token::Type::Keyword, concept_satisfied ? "true"sv : "false"sv,
 										 final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 						result = emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, concept_satisfied));
@@ -9193,7 +9193,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								);
 
 								// Create a BoolLiteralNode with the result
-								bool concept_satisfied = constraint_result.satisfied;
+								bool concept_satisfied = constraint_result.satisfied();
 								Token bool_token(Token::Type::Keyword, concept_satisfied ? "true"sv : "false"sv,
 												 identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 								result = emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, concept_satisfied));

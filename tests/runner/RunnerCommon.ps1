@@ -329,6 +329,7 @@ function Get-FlashCppMigrationCounterValues {
 		declaration_builder_publish = 'DeclarationBuilder publishes:\s*(\d+)'
 		unscoped_enum_typeindex_fallback = 'Unscoped-enum TypeIndex fallbacks:\s*(\d+)'
 		canonical_structural_trait_fallback = 'Canonical structural trait fallbacks:\s*(\d+)'
+		lazy_constraint_trait_fallback = 'Lazy-constraint trait fallbacks:\s*(\d+)'
 	}
 	$values = @{}
 	foreach ($entry in $patterns.GetEnumerator()) {

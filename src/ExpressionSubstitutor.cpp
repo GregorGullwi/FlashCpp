@@ -2522,12 +2522,12 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 		evaluateConstraint(concept_opt->as<ConceptDeclarationNode>(), *concrete_args, &parser_);
 	const Token bool_token(
 		Token::Type::Keyword,
-		constraint_result.satisfied ? "true"sv : "false"sv,
+		constraint_result.satisfied() ? "true"sv : "false"sv,
 		call.called_from().line(),
 		call.called_from().column(),
 		call.called_from().file_index());
 	return ASTNode::emplace_node<ExpressionNode>(
-		BoolLiteralNode(bool_token, constraint_result.satisfied));
+		BoolLiteralNode(bool_token, constraint_result.satisfied()));
 }
 
 ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& call) {
