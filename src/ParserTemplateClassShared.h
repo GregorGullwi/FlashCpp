@@ -201,6 +201,7 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 			typeSpecifierFromTemplateTypeArgProjection(arg);
 		substituted_type.set_type_index(
 			canonicalizeConcreteTemplateArgumentTypeIndex(arg));
+		tryBindPublishedTypeEntity(substituted_type);
 		const TypeSpecifierNode pattern_type = typeSpecifierFromFunctionType(type);
 		applyOuterDeclaratorShapeForSubstitution(
 			substituted_type, pattern_type);
@@ -249,6 +250,16 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 		} else {
 			type.type_index = substituteTemplateParameterTypeIndex(
 				type.type_index, template_params, template_args);
+			// A substituted nominal component only carries a TypeIndex; bind its
+			// published entity here so the canonical adapter never has to reach
+			// into the compiler's type table during import.
+			TypeSpecifierNode bound_component = typeSpecifierFromFunctionType(type);
+			tryBindPublishedTypeEntity(bound_component);
+			type.type_entity = bound_component.type_entity();
+			if (bound_component.has_injected_class_declaration()) {
+				type.injected_class_declaration =
+					bound_component.injected_class_declaration();
+			}
 		}
 		enqueue_callable_signature(type);
 	};

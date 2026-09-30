@@ -2812,6 +2812,7 @@ inline TypeSpecifierNode typeSpecifierFromStructMemberProjection(
 inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_spec) {
 	FunctionType type;
 	type.type_index = type_spec.type_index();
+	type.type_entity = type_spec.type_entity();
 	type.cv_qualifier = type_spec.cv_qualifier();
 	type.reference_qualifier = type_spec.reference_qualifier();
 	type.array_dimensions.assign(

@@ -416,6 +416,9 @@ inline TypeId applyCanonicalPointerArrayReference(CanonicalTypeTable& table, Typ
 
 inline TypeSpecifierNode typeSpecifierFromFunctionType(const FunctionType& type) {
 	TypeSpecifierNode spec(type.type_index, TypeQualifier::None, 0, Token{}, type.cv_qualifier);
+	if (type.type_entity) {
+		spec.set_type_entity(type.type_entity);
+	}
 	spec.set_reference_qualifier(type.reference_qualifier);
 	for (const CVQualifier pointer_cv : type.pointer_qualifiers) {
 		spec.add_pointer_level(pointer_cv);
@@ -455,11 +458,9 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 
 inline CanonicalTypeImport importCanonicalFunctionTypeComponent(CanonicalTypeTable& table,
 	const FunctionType& type, CanonicalTypeImportContext context) {
-	TypeSpecifierNode syntax = typeSpecifierFromFunctionType(type);
-	tryBindPublishedTypeEntity(syntax);
 	return importCanonicalTypeImpl(
 		table,
-		syntax,
+		typeSpecifierFromFunctionType(type),
 		context);
 }
 

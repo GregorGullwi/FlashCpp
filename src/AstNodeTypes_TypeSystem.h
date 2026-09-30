@@ -1180,6 +1180,11 @@ struct FunctionSignature;
 // adjustment is performed by the parser before this value is created.
 struct FunctionType {
 	TypeIndex type_index{};
+	// Published nominal identity for a Struct/Enum component. The canonical
+	// adapter reads this instead of resolving TypeIndex through the global type
+	// table, so a substituted callable component keeps its entity without a
+	// dependency on the compiler's published-type lookup.
+	EntityId type_entity{};
 	CVQualifier cv_qualifier = CVQualifier::None;
 	std::vector<CVQualifier> pointer_qualifiers;
 	std::vector<DeclaratorComponent> ordered_declarator_components;
