@@ -56,6 +56,23 @@ counter has a fixed corpus and baseline and must reach zero at the 3A exit; the
 existing concept corpus already measures zero, so the residual six come from the
 regression's own unclassified-trait probes.
 
+A type-trait operand is a declarator specifier the parser materializes, and it
+now publishes its nominal `EntityId` at that point rather than being re-stamped
+by whichever consumer needs identity. The two materialization sites are the
+decltype builder and the trait's own type-id parse, so a bare type-id operand
+and a `decltype` operand of one type carry the same identity.
+`canonical_structural_trait_fallback` is therefore zero on
+`tests/test_canonical_structural_type_traits_ret0.cpp` and on
+`tests/test_canonical_nominal_trait_operand_entity_ret0.cpp`, whose baseline was
+lowered from 23 to 0 so any reappearance fails the counter run. The trait answers
+themselves are unchanged: the compatibility classifier agreed on every shape in
+that corpus, so this is an authority migration, and the counter is the
+machine-checkable evidence rather than a behavioral difference. The regression
+covers both operand spellings, a union, a class-template specialization, and
+`__is_same` between distinct records and between both enum forms. Two calls are
+still exposed because they take a const specifier: the three trait-evaluator
+entry points, and the conversion-planner operands in `OverloadResolution.h`.
+
 Overload-ranking tie-breakers for reference parameter identity and pointer
 qualification now import supported syntax types and compare canonical `TypeId`
 structure, preserving nested declarators, array bounds, and pointee cv. Types the
@@ -442,9 +459,9 @@ that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
 boundary. This slice advanced the criterion that flat pointer-level and
 array-dimension fields are absent from migrated semantic paths, for the
-type-trait consumer family and the lazy-constraint evaluator; the flat
-classifier in `TypeTraitEvaluator.cpp` remains for the families listed under
-remaining work item 2. Implementation effort is not yet estimated reliably.
+type-trait consumer family, the lazy-constraint evaluator, and trait-operand
+nominal identity; the flat classifier in `TypeTraitEvaluator.cpp` remains for
+the families listed under remaining work item 2. Implementation effort is not yet estimated reliably.
 
 ## Next work
 
@@ -576,15 +593,10 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    value-category behavior.
 2. **Migrate remaining flat consumers.** The structural `[meta.unary.prop]`
    family is done in the shared type-trait evaluator and in the lazy-constraint
-   evaluator, so the first two splits of this item are landed. Next in order:
-   1. **Nominal `EntityId` publication for trait operands.** The
-      `canonical_structural_trait_fallback` counter is nonzero only because a
-      record or enum operand reached through a `decltype` has no published
-      `EntityId`, so the importer returns `UnmigratedNominal`. Publish the
-      entity at declarator materialization rather than stamping it inside the
-      trait evaluator. The lazy-constraint operand projection already does this
-      at its own boundary; the trait evaluator's operand does not.
-   2. **The remaining trait families.** `__is_class`, `__is_union`, and the
+   evaluator, and trait operands now publish their nominal identity at
+   materialization, so the first three splits of this item are landed. Next in
+   order:
+   1. **The remaining trait families.** `__is_class`, `__is_union`, and the
       triviality family still read `StructTypeInfo`; `__is_signed` and
       `__is_unsigned` still apply target signedness from a `TypeCategory`;
       `__is_const` and `__is_volatile` still read the flat cv field because
@@ -592,6 +604,11 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       Every one of these is currently a `ConstraintSatisfaction::Unknown` in a
       concept and a compatibility answer elsewhere, so landing them is what
       drives `lazy_constraint_trait_fallback` to zero.
+   2. **Conversion-planner operands.** The `OverloadResolution.h` same-type,
+      qualification, and conversion-planner entry points import a const
+      specifier that carries no nominal identity for record and enum operands.
+      They need the same publication, either by taking a mutable specifier or by
+      materializing one at their own boundary.
    3. **Template argument and substitution storage.** The lazy constraint
       evaluator still substitutes a template parameter by name against
       `template_param_names`; boundary 6 replaces that with depth-and-index
@@ -656,11 +673,13 @@ is ready. Never run the full suite concurrently with the build.
 Migration counters and static identity inventories are baselined under
 `tests/migration_counters/`; run the host-native counter and inventory scripts
 after compiler changes. On 2026-09-30 all fixed-corpus entries remained within
-baseline, including `canonical_structural_trait_fallback` at its recorded
-baseline of 23 on `tests/test_canonical_structural_type_traits_ret0.cpp` and
-`lazy_constraint_trait_fallback` at 6 on
-`tests/test_canonical_lazy_constraint_traits_ret0.cpp`; both are 0 across the
-pre-existing concept and type-trait corpus. The inline dollar-recovery inventory
+baseline, including `canonical_structural_trait_fallback` at 0 on the two
+structural-trait regressions, its baseline lowered from 23 so a reappearance
+fails, and `lazy_constraint_trait_fallback` at 6 on
+`tests/test_canonical_lazy_constraint_traits_ret0.cpp`. The residual
+`canonical_structural_trait_fallback` of 2 on the lazy regression is a
+member-object-pointer operand, which needs member-owner publication rather than
+nominal type identity. The inline dollar-recovery inventory
 and the canonical-adapter source corpus remain within their supported/deferred
 baselines. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the

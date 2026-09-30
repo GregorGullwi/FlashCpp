@@ -116,11 +116,15 @@ evaluator routes the same family through that classification, so
 `tests/test_canonical_structural_type_traits_ret0.cpp` and
 `tests/test_canonical_lazy_constraint_traits_ret0.cpp` no longer depend on the
 flat fields for pointers, arrays, references, functions, member pointers, enums,
-or the builtin groupings. Two flat consumers remain: the
-`canonical_structural_trait_fallback` counter, which still records record and
-enum operands reached through a `decltype` that has not published its
-`EntityId`, and the `lazy_constraint_trait_fallback` counter, which records the
-traits the canonical table does not own and the operands it cannot import.
+or the builtin groupings. Trait operands now publish their nominal `EntityId` at
+materialization, so `canonical_structural_trait_fallback` is zero on the
+structural-trait regressions and its recorded baseline was lowered from 23 so a
+reappearance fails the counter run. Two flat consumers remain: the
+`lazy_constraint_trait_fallback` counter, which records the traits the canonical
+table does not own, and the residual 2 on
+`tests/test_canonical_lazy_constraint_traits_ret0.cpp`, which is a
+member-object-pointer operand: that one needs member-owner identity rather than
+nominal type identity, and its owner is not published at materialization.
 Class-property traits (`__is_class`, `__is_union`, `__is_polymorphic`, and the
 triviality family) and the target-signedness traits (`__is_signed`,
 `__is_unsigned`) still read flat or sema-owned metadata, so a concept built on
