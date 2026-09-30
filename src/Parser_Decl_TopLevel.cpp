@@ -4,6 +4,51 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+
+size_t staticAssertTokenStartOffset(const Token& token, const TokenPosition& after_token) {
+	const size_t token_length = after_token.line_ == token.line() &&
+		after_token.column_ >= token.column()
+		? after_token.column_ - token.column()
+		: token.value().size();
+	if (token_length > after_token.cursor_) {
+		return SIZE_MAX;
+	}
+	return after_token.cursor_ - token_length;
+}
+
+std::string extractStaticAssertConditionText(
+	const Lexer& lexer,
+	const Token& first_token,
+	const TokenPosition& after_first_token,
+	const Token& delimiter_token,
+	const TokenPosition& after_delimiter_token) {
+	const std::string_view source = lexer.get_source();
+	const size_t begin = staticAssertTokenStartOffset(first_token, after_first_token);
+	const size_t end = staticAssertTokenStartOffset(delimiter_token, after_delimiter_token);
+	if (begin == SIZE_MAX || end == SIZE_MAX || begin > end || end > source.size()) {
+		return {};
+	}
+
+	std::string condition_text;
+	condition_text.reserve(end - begin);
+	bool pending_space = false;
+	for (char character : source.substr(begin, end - begin)) {
+		if (character == ' ' || character == '\t' || character == '\r' || character == '\n') {
+			pending_space = !condition_text.empty();
+			continue;
+		}
+		if (pending_space) {
+			condition_text.push_back(' ');
+			pending_space = false;
+		}
+		condition_text.push_back(character);
+	}
+	return condition_text;
+}
+
+} // namespace
+
 ParseResult Parser::parse_top_level_node() {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(TopLevelNode);
@@ -319,11 +364,20 @@ ParseResult Parser::parse_static_assert() {
 		return ParseResult::error("Expected '(' after 'static_assert'", current_token_);
 	}
 
+	// Save the condition's source spelling so failures can identify the assertion
+	// directly, including when the assertion is deferred until template use.
+	const Token condition_start_token = peek_info();
+	const TokenPosition after_condition_start = lexer_.getCurrentPosition();
+
 	// Parse the condition expression
 	ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	if (condition_result.is_error()) {
 		return condition_result;
 	}
+	const std::string condition_text = extractStaticAssertConditionText(
+		lexer_, condition_start_token, after_condition_start,
+		peek_info(), lexer_.getCurrentPosition());
+	const ASTNode condition_expr = *condition_result.node();
 
 	// Check for optional comma and message
 	std::string message;
@@ -366,6 +420,16 @@ ParseResult Parser::parse_static_assert() {
 	bool is_in_template_struct = !struct_parsing_context_stack_.empty() &&
 								 isTemplateParameterTrackingActive();
 
+	auto deferStaticAssert = [&](StructDeclarationNode* struct_node) {
+		if (struct_node == nullptr) {
+			return;
+		}
+		struct_node->add_deferred_static_assert(
+			condition_expr,
+			StringTable::getOrInternStringHandle(message),
+			StringTable::getOrInternStringHandle(condition_text));
+	};
+
 	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable, *this);  // Enable template function instantiation
 
@@ -388,8 +452,7 @@ ParseResult Parser::parse_static_assert() {
 			if (!struct_parsing_context_stack_.empty()) {
 				const auto& struct_ctx = struct_parsing_context_stack_.back();
 				if (struct_ctx.struct_node) {
-					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
-					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+					deferStaticAssert(struct_ctx.struct_node);
 					FLASH_LOG(Templates, Trace, "Stored deferred static_assert in struct '",
 							  struct_ctx.struct_node->name(), "' for later evaluation");
 				}
@@ -409,8 +472,7 @@ ParseResult Parser::parse_static_assert() {
 		if (!struct_parsing_context_stack_.empty()) {
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
 			if (struct_ctx.struct_node) {
-				StringHandle message_handle = StringTable::getOrInternStringHandle(message);
-				struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+				deferStaticAssert(struct_ctx.struct_node);
 			}
 		}
 
@@ -424,8 +486,7 @@ ParseResult Parser::parse_static_assert() {
 			FLASH_LOG(Parser, Debug, "Deferring static_assert with unevaluable condition in struct body: ", eval_result.error_message);
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
 			if (struct_ctx.struct_node) {
-				StringHandle message_handle = StringTable::getOrInternStringHandle(message);
-				struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+				deferStaticAssert(struct_ctx.struct_node);
 			}
 			return saved_position.success();
 		}
@@ -449,11 +510,18 @@ ParseResult Parser::parse_static_assert() {
 			if (!struct_parsing_context_stack_.empty()) {
 				const auto& struct_ctx = struct_parsing_context_stack_.back();
 				if (struct_ctx.struct_node) {
-					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
-					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+					deferStaticAssert(struct_ctx.struct_node);
 				}
 			}
 			return saved_position.success();
+		}
+		if (!condition_text.empty()) {
+			if (!message.empty()) {
+				return errorf(DiagnosticId::StaticAssertFailure, static_assert_keyword,
+					"static_assert failed: {} ({})", condition_text, message);
+			}
+			return errorf(DiagnosticId::StaticAssertFailure, static_assert_keyword,
+				"static_assert failed: {}", condition_text);
 		}
 		if (!message.empty()) {
 			return errorf(DiagnosticId::StaticAssertFailure, static_assert_keyword,

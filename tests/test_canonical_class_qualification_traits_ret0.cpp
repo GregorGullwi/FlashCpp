@@ -92,7 +92,13 @@ static_assert(__is_signed(int));
 static_assert(__is_signed(short));
 static_assert(__is_signed(char));
 static_assert(__is_signed(long long));
+#ifdef _MSC_VER
+static_assert(!__is_signed(wchar_t));
+static_assert(__is_unsigned(wchar_t));
+#else
 static_assert(__is_signed(wchar_t));
+static_assert(!__is_unsigned(wchar_t));
+#endif
 static_assert(__is_signed(float));
 static_assert(__is_signed(double));
 // `long double` is deliberately excluded: the shipped model gives it the
@@ -146,7 +152,11 @@ int main() {
 	mismatches |= __is_signed(int[3]) ? 32768u : 0u;
 	mismatches |= __is_signed(int*) ? 65536u : 0u;
 	mismatches |= __is_signed(int&) ? 131072u : 0u;
+#ifdef _MSC_VER
+	mismatches |= __is_signed(wchar_t) ? 262144u : 0u;
+#else
 	mismatches |= __is_signed(wchar_t) ? 0u : 262144u;
+#endif
 	mismatches |= __is_unsigned(unsigned int) ? 0u : 524288u;
 	mismatches |= __is_unsigned(double) ? 1048576u : 0u;
 	mismatches |= __is_unsigned(int[3]) ? 2097152u : 0u;

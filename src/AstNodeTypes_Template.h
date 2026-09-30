@@ -1570,8 +1570,9 @@ public:
 	}
 
 	// Deferred static_assert support (for templates)
-	void add_deferred_static_assert(ASTNode condition_expr, StringHandle message) {
-		deferred_static_asserts_.emplace_back(condition_expr, message);
+	void add_deferred_static_assert(
+		ASTNode condition_expr, StringHandle message, StringHandle condition_text) {
+		deferred_static_asserts_.emplace_back(condition_expr, message, condition_text);
 	}
 
 	std::span<const DeferredStaticAssert> deferred_static_asserts() const {

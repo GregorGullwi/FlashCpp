@@ -5167,7 +5167,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				if (!eval_result.success()) {
 					std::string error_msg = buildDeferredStaticAssertInstantiationError(
-						eval_result.error_message, deferred_assert.message, true);
+						eval_result.error_message,
+						deferred_assert.message,
+						deferred_assert.condition_text,
+						true);
 					if (!is_implicit_instantiation) {
 						throw makeStructuredCompileError(
 							context_.diagnostics(),
@@ -5184,7 +5187,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Check if the assertion failed
 				if (!eval_result.as_bool()) {
 					std::string error_msg = buildDeferredStaticAssertInstantiationError(
-						std::string_view(), deferred_assert.message, false);
+						std::string_view(),
+						deferred_assert.message,
+						deferred_assert.condition_text,
+						false);
 					// A definitively false static_assert is ill-formed for a committed
 					// instantiation. Speculative probes (ShapeOnly/SoftProbe/candidate)
 					// still soft-fail so overload resolution and shape probing continue;
@@ -13822,7 +13828,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		if (!eval_result.success()) {
 			std::string error_msg = buildDeferredStaticAssertInstantiationError(
-				eval_result.error_message, deferred_assert.message, true);
+				eval_result.error_message,
+				deferred_assert.message,
+				deferred_assert.condition_text,
+				true);
 			if (force_eager) {
 				throw makeStructuredCompileError(
 					context_.diagnostics(),
@@ -13839,7 +13848,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Check if the assertion failed
 		if (!eval_result.as_bool()) {
 			std::string error_msg = buildDeferredStaticAssertInstantiationError(
-				std::string_view(), deferred_assert.message, false);
+				std::string_view(),
+				deferred_assert.message,
+				deferred_assert.condition_text,
+				false);
 			// See the committed-instantiation note in try_instantiate_class_template:
 			// a definitively false static_assert is an error once the instantiation
 			// commits, while speculative probes remain soft failures.

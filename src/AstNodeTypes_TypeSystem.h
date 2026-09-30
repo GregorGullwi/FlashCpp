@@ -1295,9 +1295,10 @@ struct FunctionSignature {
 struct DeferredStaticAssert {
 	ASTNode condition_expr;	// The condition expression to evaluate
 	StringHandle message;	  // The assertion message (interned in StringTable for concatenated literals)
+	StringHandle condition_text;	// The original condition spelling (interned in StringTable)
 
-	DeferredStaticAssert(ASTNode expr, StringHandle msg)
-		: condition_expr(expr), message(msg) {}
+	DeferredStaticAssert(ASTNode expr, StringHandle msg, StringHandle text)
+		: condition_expr(expr), message(msg), condition_text(text) {}
 };
 
 // Struct member information
