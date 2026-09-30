@@ -184,7 +184,12 @@ reference still cannot bind to the converted temporary. The regression
 `tests/test_canonical_fixed_enum_reference_temporary_overload_ret0.cpp` checks
 underlying-type ranking from an enum lvalue and rejects the mutable-reference
 candidate, while `tests/test_scoped_enum_reference_call_arg_e1401.cpp` preserves
-the scoped-enum diagnostic for a reference parameter.
+the scoped-enum diagnostic for a reference parameter. The regression
+`tests/test_canonical_unfixed_enum_reference_temporary_overload_ret0.cpp` also
+checks promotion-ranked const-reference binding from an unfixed enum lvalue,
+rvalue-reference binding from an enum prvalue, and rejection of a mutable
+lvalue-reference candidate; its fixed-corpus row keeps the enum TypeIndex
+fallback at zero.
 At ordinary calls, an array lvalue can bind to `int*&&` through that converted
 pointer temporary, as covered by
 `tests/test_array_decay_rvalue_reference_temporary_ret0.cpp`.
