@@ -143,9 +143,15 @@ to the compatibility `TypeIndex` classifier.
 Parser-side overload ranking now uses the structural planner for non-projectable
 ordered pairs plus scalar builtin conversions, `nullptr`-to-pointer conversion,
 and supported projectable pointer pairs, including derived-to-base conversion,
-array decay, and pointer/array-to-`bool` conversions. Same-shape reference
-binding, including exact-shape prvalues that materialize for `const` lvalue
-references, now plans from canonical `TypeId`s
+array decay, and pointer/array-to-`bool` conversions. Reference binding also
+uses canonical plans for `bool` conversion temporaries from pointer, array,
+function, and member-pointer sources. Eligible const lvalue and rvalue
+references bind; mutable lvalue references remain non-viable. The regression
+`tests/test_canonical_pointer_to_bool_reference_temporary_overload_ret0.cpp`
+checks that object pointers, arrays, function pointers, and member pointers
+prefer the materialized `bool` reference over an ellipsis.
+Same-shape reference binding, including exact-shape prvalues that materialize
+for `const` lvalue references, now plans from canonical `TypeId`s
 while carrying expression value category separately. Rvalue binding retains
 exact-match rank when it adds top-level cv. Imports stay within builtin, record,
 or enum base types. Speculative imports roll back; standard builtin-to-builtin

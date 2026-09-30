@@ -2941,6 +2941,23 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 			}
 			return *conversion_plan;
 		}
+		const bool is_pointer_like_to_bool =
+			unqualified_target_node.kind == CanonicalTypeKind::Builtin &&
+			unqualified_target_node.builtin == CanonicalBuiltinKind::Bool &&
+			(unqualified_source_node.kind == CanonicalTypeKind::Pointer ||
+			 unqualified_source_node.kind ==
+				CanonicalTypeKind::MemberObjectPointer ||
+			 unqualified_source_node.kind ==
+				CanonicalTypeKind::MemberFunctionPointer ||
+			 unqualified_source_node.kind == CanonicalTypeKind::Array ||
+			 unqualified_source_node.kind == CanonicalTypeKind::Function);
+		if (is_pointer_like_to_bool) {
+			if (!can_bind_conversion_temporary) {
+				return ConversionPlan::no_match();
+			}
+			return buildCanonicalStructuralConversionPlan(
+				table, source_type, target_type);
+		}
 		if (unqualified_source_node.kind != CanonicalTypeKind::Builtin ||
 			unqualified_target_node.kind != CanonicalTypeKind::Builtin) {
 			return std::nullopt;

@@ -358,6 +358,47 @@ TEST_CASE("Canonical TypeIds plan prvalue materialization for const references")
 		StandardConversionKind::FloatingIntegralConversion);
 }
 
+TEST_CASE("Canonical TypeIds bind pointer-to-bool conversion temporaries") {
+	FrontendContext frontend;
+	TypeSpecifierNode int_pointer(
+		TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+	int_pointer.add_pointer_level(CVQualifier::None);
+	int_pointer.set_reference_qualifier(ReferenceQualifier::LValueReference);
+
+	TypeSpecifierNode const_bool_reference(
+		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::Const);
+	const_bool_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> const_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(int_pointer, const_bool_reference);
+	REQUIRE(const_reference_plan.has_value());
+	CHECK(const_reference_plan->is_valid);
+	CHECK(const_reference_plan->rank == ConversionRank::Conversion);
+	CHECK(const_reference_plan->kind ==
+		StandardConversionKind::BooleanConversion);
+
+	TypeSpecifierNode bool_rvalue_reference(
+		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	bool_rvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::RValueReference);
+	const std::optional<ConversionPlan> rvalue_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(int_pointer, bool_rvalue_reference);
+	REQUIRE(rvalue_reference_plan.has_value());
+	CHECK(rvalue_reference_plan->is_valid);
+	CHECK(rvalue_reference_plan->rank == ConversionRank::Conversion);
+	CHECK(rvalue_reference_plan->kind ==
+		StandardConversionKind::BooleanConversion);
+
+	TypeSpecifierNode bool_lvalue_reference(
+		TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
+	bool_lvalue_reference.set_reference_qualifier(
+		ReferenceQualifier::LValueReference);
+	const std::optional<ConversionPlan> mutable_reference_plan =
+		tryBuildCanonicalReferenceBindingPlan(int_pointer, bool_lvalue_reference);
+	REQUIRE(mutable_reference_plan.has_value());
+	CHECK_FALSE(mutable_reference_plan->is_valid);
+}
+
 TEST_CASE("Canonical TypeIds bind array references without decay") {
 	FrontendContext frontend;
 	TypeSpecifierNode array_type(
