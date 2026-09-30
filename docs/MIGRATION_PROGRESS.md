@@ -69,9 +69,16 @@ themselves are unchanged: the compatibility classifier agreed on every shape in
 that corpus, so this is an authority migration, and the counter is the
 machine-checkable evidence rather than a behavioral difference. The regression
 covers both operand spellings, a union, a class-template specialization, and
-`__is_same` between distinct records and between both enum forms. Two calls are
-still exposed because they take a const specifier: the three trait-evaluator
-entry points, and the conversion-planner operands in `OverloadResolution.h`.
+`__is_same` between distinct records and between both enum forms.
+
+Nominal identity is now a property of the syntax node rather than of whichever
+consumer reads it: a record or enum specifier carries its `EntityId` from the
+moment the parser materializes it, so every importer sees it. That includes the
+consumers that take a `const TypeSpecifierNode&` and so cannot stamp it
+themselves - the trait evaluator's three entry points, and the
+`OverloadResolution.h` same-type, qualification, and conversion-planner
+tie-breakers. A const-ref signature is therefore not evidence that an operand
+lacks its identity; remaining work item 2 says how to confirm a real gap.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 qualification now import supported syntax types and compare canonical `TypeId`
@@ -593,9 +600,8 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    value-category behavior.
 2. **Migrate remaining flat consumers.** The structural `[meta.unary.prop]`
    family is done in the shared type-trait evaluator and in the lazy-constraint
-   evaluator, and trait operands now publish their nominal identity at
-   materialization, so the first three splits of this item are landed. Next in
-   order:
+   evaluator, and nominal identity is published at parser materialization, so the
+   first three splits of this item are landed. Next in order:
    1. **The remaining trait families.** `__is_class`, `__is_union`, and the
       triviality family still read `StructTypeInfo`; `__is_signed` and
       `__is_unsigned` still apply target signedness from a `TypeCategory`;
@@ -604,11 +610,15 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       Every one of these is currently a `ConstraintSatisfaction::Unknown` in a
       concept and a compatibility answer elsewhere, so landing them is what
       drives `lazy_constraint_trait_fallback` to zero.
-   2. **Conversion-planner operands.** The `OverloadResolution.h` same-type,
-      qualification, and conversion-planner entry points import a const
-      specifier that carries no nominal identity for record and enum operands.
-      They need the same publication, either by taking a mutable specifier or by
-      materializing one at their own boundary.
+   2. **Confirm a gap with a counter before adding identity plumbing.** A
+      consumer that takes a `const TypeSpecifierNode&` cannot stamp its operand,
+      and that signature alone is not a gap: the operand already carries its
+      published `EntityId`. Do not add a non-mutating identity accessor, an
+      entity-taking importer overload, or a counter on that reasoning. Put a
+      counter at the import site first and run the fixed corpus; if it reads
+      zero, there is nothing to close and the new API would be permanent dead
+      weight. If it reads nonzero, capture a reduced regression that fails and
+      land the accessor with it.
    3. **Template argument and substitution storage.** The lazy constraint
       evaluator still substitutes a template parameter by name against
       `template_param_names`; boundary 6 replaces that with depth-and-index
