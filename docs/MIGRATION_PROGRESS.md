@@ -716,8 +716,10 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       lowered, including destructor triviality wrong in both directions and
       `__is_aggregate` wrong only when folded. Those defects, the two ways a
       differential here can measure its own harness instead of the compiler, and
-      the unrelated uninitialized-`bool`-local bug found alongside, are recorded
-      in [known issues](KNOWN_ISSUES.md). Fixing the answers needs the
+      the uninitialized-`bool`-local symptom found alongside - which turned out to
+      be a dropped `bool` cast rather than a storage problem, and is diagnosed
+      under "A cast whose source is `bool` is dropped" in
+      [known issues](KNOWN_ISSUES.md) - are recorded there. Fixing the answers needs the
       member-property schema: destructor and copyability have to walk members and
       bases by identity, and standard-layout has to see the data members of base
       classes, none of which the published record layout exposes.
