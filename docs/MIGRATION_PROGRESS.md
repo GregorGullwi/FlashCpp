@@ -704,6 +704,23 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       schema rather than a classifier change. Each is a
       `ConstraintSatisfaction::Unknown` in a concept today, and this is what
       drives `lazy_constraint_trait_fallback` to zero.
+
+      Code generation used to carry its own copy of these rules; it now delegates
+      all fourteen plus the assignability forms to the shared evaluator through
+      `isRecordPropertyTraitOwnedBySharedEvaluator`, which removes thirteen
+      duplicate implementations and leaves one rule per trait to correct. The
+      delegation is behaviour-preserving: it was verified cell-for-cell against
+      the previous compiler and the full suite is unchanged. It corrects no
+      answer on its own, and the rules that remain are wrong today - a
+      280-cell differential against clang finds 35 wrong cells folded and 23
+      lowered, including destructor triviality wrong in both directions and
+      `__is_aggregate` wrong only when folded. Those defects, the two ways a
+      differential here can measure its own harness instead of the compiler, and
+      the unrelated uninitialized-`bool`-local bug found alongside, are recorded
+      in [known issues](KNOWN_ISSUES.md). Fixing the answers needs the
+      member-property schema: destructor and copyability have to walk members and
+      bases by identity, and standard-layout has to see the data members of base
+      classes, none of which the published record layout exposes.
    2. **Confirm a gap with a counter before adding identity plumbing.** A
       consumer that takes a `const TypeSpecifierNode&` cannot stamp its operand,
       and that signature alone is not a gap: the operand already carries its

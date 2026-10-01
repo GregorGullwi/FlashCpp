@@ -44,6 +44,19 @@ bool isStructTrivial(const StructTypeInfo* struct_info);
 // Scalar pseudo-destructor calls are always noexcept (no-ops).
 bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols);
 
+// True for the record-property trait families that the shared evaluator owns
+// outright: the unary triviality and lifetime traits plus the binary
+// assignability forms. Code generation delegates these to evaluateTypeTrait
+// rather than keeping its own copies, so that a record rule has exactly one
+// implementation to correct. The copies were not drifting when this was
+// measured - they agreed with the shared evaluator cell for cell - but two
+// copies of one rule means every correction has to be made twice and found
+// twice. Keep this list exactly in step with the unary switch in
+// evaluateTypeTrait and the binary driver in evaluateAssignableTrait; a kind
+// listed here that the shared evaluator cannot answer would lower to a constant
+// false, and a kind missing from it would silently keep its own implementation.
+bool isRecordPropertyTraitOwnedBySharedEvaluator(TypeTraitKind kind);
+
 // Main type trait evaluation functions
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,

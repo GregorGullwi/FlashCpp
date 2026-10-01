@@ -1290,6 +1290,31 @@ static TypeTraitResult evaluateAssignableTrait(
 		: TypeTraitResult::success_false();
 }
 
+bool isRecordPropertyTraitOwnedBySharedEvaluator(TypeTraitKind kind) {
+	switch (kind) {
+	case TypeTraitKind::IsTriviallyCopyable:
+	case TypeTraitKind::IsTrivial:
+	case TypeTraitKind::IsPod:
+	case TypeTraitKind::IsStandardLayout:
+	case TypeTraitKind::IsAggregate:
+	case TypeTraitKind::IsEmpty:
+	case TypeTraitKind::IsPolymorphic:
+	case TypeTraitKind::IsFinal:
+	case TypeTraitKind::IsAbstract:
+	case TypeTraitKind::IsDestructible:
+	case TypeTraitKind::IsTriviallyDestructible:
+	case TypeTraitKind::IsNothrowDestructible:
+	case TypeTraitKind::HasTrivialDestructor:
+	case TypeTraitKind::HasVirtualDestructor:
+	case TypeTraitKind::IsAssignable:
+	case TypeTraitKind::IsTriviallyAssignable:
+	case TypeTraitKind::IsNothrowAssignable:
+		return true;
+	default:
+		return false;
+	}
+}
+
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 	if (trait_expr.is_no_arg_trait()) {
 		return trait_expr.kind() == TypeTraitKind::IsConstantEvaluated
