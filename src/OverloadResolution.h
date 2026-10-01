@@ -2802,11 +2802,8 @@ trySelectCanonicalUserDefinedConversionOperator(
 			}
 			const TypeSpecifierNode& return_type =
 				function.decl_node().type_specifier_node();
-			FrontendContext* const context = FrontendContext::active();
-			if (context == nullptr) {
-				continue;
-			}
-			CanonicalTypeTable& table = context->canonicalTypes();
+			FrontendContext& context = requireFrontendContext();
+			CanonicalTypeTable& table = context.canonicalTypes();
 			CanonicalTypeTransaction return_type_transaction(table);
 			TypeSpecifierNode canonical_return_type = return_type;
 			tryBindPublishedTypeEntity(canonical_return_type);
