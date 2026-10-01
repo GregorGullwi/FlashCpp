@@ -175,53 +175,53 @@ unaffected; only taking the address of a member function (including
 `bool b = &S::f;`) is. A proper fix must lower the selected function according
 to the target ABI and account for virtual member functions.
 
-## Record-property traits answer several cells wrongly
+## Record-property trait differential has unverified cells
 
-Measured on 2026-09-30 with a 280-cell differential - 14 record-property traits
-over 20 record shapes, each cell compared against clang in both the
-constant-expression path (a per-cell `static_assert`) and the code-generation
-path (a plain `int v = trait(X);` assignment). Folded: 35 cells wrong. Lowered:
-23 cells wrong.
+A 280-cell differential measured on 2026-09-30 compared 14 record-property
+traits over 20 record shapes against clang in both constant evaluation (a
+per-cell `static_assert`) and code generation (a plain `int v = trait(X);`
+assignment). That pre-fix baseline found 35 folded mismatches and 23 lowered
+mismatches. The matrix has not been rerun since the corrections below, so those
+counts are historical and do not describe the current compiler.
 
-The two paths disagree in both directions rather than one being a superset:
+The shared evaluator and constant-evaluation routing now agree with clang for
+the reproduced cases in
+[`test_record_property_traits_regression_ret0.cpp`](../tests/test_record_property_traits_regression_ret0.cpp):
 
-- `__is_aggregate` is wrong only when folded. Twelve ordinary aggregates -
-  including `struct E {};`, `struct Agg { int; double; };`, and a struct with a
-  user-declared destructor - fold to false and lower to true. The
-  constant-expression path answers this trait itself and does not reach the
-  shared record rule.
-- `__has_virtual_destructor` is wrong on *different* cells in each path: folded
-  gets `struct VtD { virtual ~VtD(); };` wrong and lowered gets
-  `struct WithVB : virtual VirtBase` wrong. Lowered walks only direct non-virtual
-  bases and so misses an inherited virtual destructor from a virtual base;
-  folded misses the record's own destructor entirely.
-- The other 23 cells are wrong in both paths, which means they are defects in
-  one shared rule rather than a divergence:
-  - `__is_pod` - 7 shapes, including a union (reported non-POD), any derived
-    record with data members in two classes in the hierarchy, and any record
-    with a non-trivial destructor. The rule tests only vtables, constructors, and
-    same-class member access, so it misses triviality and the base-class rules.
-  - `__is_standard_layout` - 3 shapes: a union, and two derived records whose
-    hierarchy has data members in more than one class. The rule rejects every
-    union outright and never inspects base classes.
-  - `__is_trivially_destructible` and `__has_trivial_destructor` - the same 6
-    shapes each, and wrong in *both* directions. A record with a virtual
-    function and no destructor is reported non-trivially destructible, because
-    the rule treats a vtable as making the destructor non-trivial; a record
-    whose *member* has a non-trivial destructor is reported trivially
-    destructible, because the rule never looks at members.
+- Aggregate answers for an empty record, a record with a user-declared
+  destructor, and builtin/record array types.
+- POD and standard-layout classification for a scalar union and derived
+  records whose data members appear at multiple inheritance levels, including
+  C++20 zero-offset conflicts where a base type also appears through the first
+  member, a nested array member, or a nested union member.
+- Trivial destruction for a class with only a virtual function, a member with a
+  non-trivial destructor (including an array of such members), and defaulted
+  destructors defaulted on the first declaration versus out of line.
+- Virtual-destructor detection for a direct virtual destructor, inheritance
+  through a virtual base, and a virtual function without a virtual destructor.
 
-One measurement trap remains: a chunk of `static_assert`s stops at its first
-failure, so per-chunk folded counts report one mismatch per chunk rather than
-the real number; only a file per cell gives the true count.
+Each case is checked with a per-cell `static_assert` and runtime trait
+assignment, exercising both paths. The additional zero-offset cases are covered in
+[`test_record_property_standard_layout_zero_offset_ret0.cpp`](../tests/test_record_property_standard_layout_zero_offset_ret0.cpp).
 
-Fixing this is the triviality and lifetime family work already named in
-[the migration ledger](MIGRATION_PROGRESS.md): the destructor and copyability
-rules need the published member-property schema, because they have to walk
-members and bases by identity rather than by re-deriving the rules from flat
-flags. The consolidation in this change removes the duplicate code-generation
-implementations so there is one rule left to correct, but it does not by itself
-correct any answer.
+The trivially-copyable and trivial record walks use explicit worklists to keep
+native stack use bounded as record nesting grows. The
+[`test_deep_record_property_traits_worklist_ret0.cpp`](../tests/test_deep_record_property_traits_worklist_ret0.cpp)
+regression checks these answers and POD at 511 nested record levels; it passes
+with the normal test process stack. The full suite also passes after these
+changes. Clang stack-usage output measured the iterative traversal frame at
+376 bytes and the standard-layout walk, the largest changed frame, at 536
+bytes; the previous recursive predicate frame was 136 bytes per level.
+
+The full matrix still needs to be rerun to establish the remaining cells. The
+record-property evaluator continues to read sema-owned `StructTypeInfo` for
+member, base, and special-member facts; the canonical record schema publishes
+layout data but not those properties. This remains a migration gap, and the
+remaining trait families need a published member-property schema before they
+can leave the compatibility path. The old differential also exposed a harness
+trap: a chunk of `static_assert`s stops at its first failure, so per-chunk folded
+counts under-report mismatches; use one assertion per cell when recreating the
+matrix.
 
 ## Functions that need more than 256 temporaries are miscompiled
 

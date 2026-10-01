@@ -1,6 +1,8 @@
 #include "TypeTraitEvaluator.h"
 
 #include <ranges>
+#include <unordered_set>
+#include <vector>
 
 #include "CanonicalTypeAdapter.h"
 #include "ExpressionStructure.h"
@@ -634,71 +636,256 @@ static bool allNonDeferredBasesSatisfy(const StructTypeInfo* struct_info, Pred p
 	return true;
 }
 
-// Recursive C++20 class-property predicate for trivially-copyable class types.
-// Pointer/reference members are treated as scalar indirections, so their
-// pointee class metadata is intentionally not recursed into.
-bool isStructTriviallyCopyableImpl(const StructTypeInfo* struct_info) {
-	if (!struct_info)
+bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
+	if (!struct_info || struct_info->has_vtable ||
+		struct_info->hasCopyConstructor() ||
+		struct_info->hasMoveConstructor() ||
+		struct_info->hasCopyAssignmentOperator() ||
+		struct_info->hasMoveAssignmentOperator() ||
+		struct_info->has_deleted_destructor) {
 		return false;
-	if (struct_info->has_vtable)
-		return false;
-	if (struct_info->hasCopyConstructor())
-		return false;
-	if (struct_info->hasMoveConstructor())
-		return false;
-	if (struct_info->hasCopyAssignmentOperator())
-		return false;
-	if (struct_info->hasMoveAssignmentOperator())
-		return false;
-	if (struct_info->hasUserDefinedDestructor())
-		return false;
-
-	for (const auto& member : struct_info->members) {
-		// Pointer/reference members are scalar indirections; their pointee type
-		// does not participate in class triviality/trivially-copyable checks.
-		if (member.pointer_depth > 0 || member.is_reference())
-			continue;
-		if (!is_struct_type(member.type_index.category()))
-			continue;
-		const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-		const StructTypeInfo* member_struct = member_type_info ? member_type_info->getStructInfo() : nullptr;
-		if (!isStructTriviallyCopyableImpl(member_struct))
-			return false;
 	}
-
-	if (!allNonDeferredBasesSatisfy(struct_info, isStructTriviallyCopyableImpl))
-		return false;
-
+	if (const StructMemberFunction* destructor = struct_info->findDestructor()) {
+		return !destructor->is_virtual &&
+			destructor->function_decl.is<DestructorDeclarationNode>() &&
+			destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration();
+	}
 	return true;
 }
 
-// Recursive C++20 class-property predicate for trivial class types.
-// This extends the trivially-copyable predicate with the additional
-// trivial-default-constructor requirement.
-bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
+template<typename Pred>
+bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred) {
 	if (!struct_info)
 		return false;
-	if (!isStructTriviallyCopyableImpl(struct_info))
-		return false;
-	if (struct_info->hasUserDefinedConstructor())
+	std::vector<const StructTypeInfo*> pending{struct_info};
+	std::unordered_set<const StructTypeInfo*> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (!current)
+			return false;
+		if (!visited.insert(current).second)
+			continue;
+		if (!pred(current))
+			return false;
+
+		for (const StructMember& member : current->members) {
+			if (member.pointer_depth > 0 || member.is_reference() ||
+				!is_struct_type(member.type_index.category())) {
+				continue;
+			}
+			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+			const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
+			if (!member_struct)
+				return false;
+			pending.push_back(member_struct);
+		}
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (base.is_deferred)
+				continue;
+			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr;
+			if (!base_struct)
+				return false;
+			pending.push_back(base_struct);
+		}
+	}
+	return true;
+}
+
+// C++20 class-property walks use an explicit worklist because record nesting
+// comes from source input and is not bounded by the native stack. Pointer and
+// reference members are scalar indirections and do not add record edges.
+bool isStructTriviallyCopyableImpl(const StructTypeInfo* struct_info) {
+	return allRecordSubobjectsSatisfy(
+		struct_info,
+		[](const StructTypeInfo* current) {
+			return hasTrivialSpecialMemberSetForCopying(current);
+		});
+}
+
+// A trivial class is trivially copyable and has no user-declared constructor.
+// Apply both checks to the complete record graph in the same iterative walk.
+bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
+	return allRecordSubobjectsSatisfy(
+		struct_info,
+		[](const StructTypeInfo* current) {
+			return hasTrivialSpecialMemberSetForCopying(current) &&
+				!current->hasUserDefinedConstructor();
+		});
+}
+
+bool isStructTriviallyDestructibleImpl(const StructTypeInfo* struct_info) {
+	if (!struct_info)
 		return false;
 
-	for (const auto& member : struct_info->members) {
-		// Pointer/reference members are scalar indirections; their pointee type
-		// does not participate in class triviality checks.
-		if (member.pointer_depth > 0 || member.is_reference())
+	std::vector<const StructTypeInfo*> pending{struct_info};
+	std::unordered_set<const StructTypeInfo*> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (!current || !visited.insert(current).second) {
 			continue;
-		if (!is_struct_type(member.type_index.category()))
+		}
+		if (current->has_deleted_destructor)
+			return false;
+		if (const StructMemberFunction* destructor = current->findDestructor()) {
+			if (destructor->is_virtual ||
+				!destructor->function_decl.is<DestructorDeclarationNode>() ||
+				!destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration()) {
+				return false;
+			}
+		}
+
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (base.is_deferred)
+				return false;
+			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr;
+			if (!base_struct)
+				return false;
+			pending.push_back(base_struct);
+		}
+		for (const StructMember& member : current->members) {
+			if (member.pointer_depth > 0 || member.is_reference() ||
+				!is_struct_type(member.type_index.category())) {
+				continue;
+			}
+			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+			const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
+			if (!member_struct)
+				return false;
+			pending.push_back(member_struct);
+		}
+	}
+	return true;
+}
+
+bool hasVirtualDestructorImpl(const StructTypeInfo* struct_info) {
+	if (!struct_info)
+		return false;
+
+	std::vector<const StructTypeInfo*> pending{struct_info};
+	std::unordered_set<const StructTypeInfo*> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (!current || !visited.insert(current).second)
 			continue;
-		const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-		const StructTypeInfo* member_struct = member_type_info ? member_type_info->getStructInfo() : nullptr;
-		if (!isStructTrivialImpl(member_struct))
+		if (const StructMemberFunction* destructor = current->findDestructor();
+			destructor && destructor->is_virtual) {
+			return true;
+		}
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (base.is_deferred)
+				continue;
+			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			if (const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr) {
+				pending.push_back(base_struct);
+			}
+		}
+	}
+	return false;
+}
+
+bool hasBaseTypeAmongZeroOffsetMembers(
+	const StructTypeInfo* struct_info,
+	const std::vector<TypeIndex>& base_subobject_types) {
+	std::vector<const StructTypeInfo*> pending{struct_info};
+	std::unordered_set<const StructTypeInfo*> visited;
+	std::vector<TypeIndex> zero_offset_member_types;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (!current || !visited.insert(current).second)
+			continue;
+
+		for (size_t index = 0; index < current->members.size(); ++index) {
+			const StructMember& member = current->members[index];
+			if (!current->is_union && index != 0 && !member.is_no_unique_address)
+				continue;
+			if (member.pointer_depth > 0 || member.is_reference() ||
+				!is_struct_type(member.type_index.category())) {
+				continue;
+			}
+
+			zero_offset_member_types.push_back(member.type_index);
+			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+			const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
+			if (!member_struct)
+				return true;
+			pending.push_back(member_struct);
+		}
+	}
+	for (TypeIndex member_type : zero_offset_member_types) {
+		if (std::ranges::find(base_subobject_types, member_type) != base_subobject_types.end())
+			return true;
+	}
+	return false;
+}
+
+bool isStructStandardLayoutImpl(const StructTypeInfo* struct_info) {
+	if (!struct_info)
+		return false;
+
+	std::vector<const StructTypeInfo*> pending_roots{struct_info};
+	std::unordered_set<const StructTypeInfo*> checked_roots;
+	while (!pending_roots.empty()) {
+		const StructTypeInfo* root = pending_roots.back();
+		pending_roots.pop_back();
+		if (!root || !checked_roots.insert(root).second)
+			continue;
+
+		std::vector<const StructTypeInfo*> inheritance_worklist{root};
+		std::vector<TypeIndex> base_subobject_types;
+		const StructTypeInfo* data_member_owner = nullptr;
+		std::optional<AccessSpecifier> data_member_access;
+		while (!inheritance_worklist.empty()) {
+			const StructTypeInfo* current = inheritance_worklist.back();
+			inheritance_worklist.pop_back();
+			if (!current || current->has_vtable)
+				return false;
+			if (!current->members.empty()) {
+				if (data_member_owner && data_member_owner != current)
+					return false;
+				data_member_owner = current;
+			}
+
+			for (const StructMember& member : current->members) {
+				if (member.is_reference())
+					return false;
+				if (data_member_access.has_value() &&
+					*data_member_access != member.access) {
+					return false;
+				}
+				data_member_access = member.access;
+				if (member.pointer_depth > 0 ||
+					!is_struct_type(member.type_index.category())) {
+					continue;
+				}
+				const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+				const StructTypeInfo* member_struct = member_type ? member_type->getStructInfo() : nullptr;
+				if (!member_struct)
+					return false;
+				pending_roots.push_back(member_struct);
+			}
+
+			for (const BaseClassSpecifier& base : current->base_classes) {
+				if (base.is_deferred || base.is_virtual ||
+					std::ranges::find(base_subobject_types, base.type_index) != base_subobject_types.end()) {
+					return false;
+				}
+				base_subobject_types.push_back(base.type_index);
+				const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+				const StructTypeInfo* base_struct = base_type ? base_type->getStructInfo() : nullptr;
+				if (!base_struct)
+					return false;
+				inheritance_worklist.push_back(base_struct);
+			}
+		}
+		if (hasBaseTypeAmongZeroOffsetMembers(root, base_subobject_types))
 			return false;
 	}
-
-	if (!allNonDeferredBasesSatisfy(struct_info, isStructTrivialImpl))
-		return false;
-
 	return true;
 }
 
@@ -963,17 +1150,8 @@ TypeTraitResult evaluateTypeTrait(
 		break;
 
 	case TypeTraitKind::IsStandardLayout:
-		if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
-			result = !struct_info->has_vtable;
-			if (result && struct_info->members.size() > 1) {
-				AccessSpecifier first_access = struct_info->members[0].access;
-				for (const auto& member : struct_info->members) {
-					if (member.access != first_access) {
-						result = false;
-						break;
-					}
-				}
-			}
+		if (struct_info && !is_reference && pointer_depth == 0) {
+			result = isStructStandardLayoutImpl(struct_info);
 		} else if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;
 		}
@@ -1002,18 +1180,9 @@ TypeTraitResult evaluateTypeTrait(
 	case TypeTraitKind::IsPod:
 		if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;
-		} else if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
-			bool is_pod = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
-			if (is_pod && struct_info->members.size() > 1) {
-				AccessSpecifier first_access = struct_info->members[0].access;
-				for (const auto& member : struct_info->members) {
-					if (member.access != first_access) {
-						is_pod = false;
-						break;
-					}
-				}
-			}
-			result = is_pod;
+		} else if (struct_info && !is_reference && pointer_depth == 0) {
+			result = isStructTrivial(struct_info) &&
+				isStructStandardLayoutImpl(struct_info);
 		}
 		break;
 
@@ -1038,11 +1207,7 @@ TypeTraitResult evaluateTypeTrait(
 		if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;
 		} else if (struct_info && !is_reference && pointer_depth == 0) {
-			if (!struct_info->is_union) {
-				result = !struct_info->has_vtable && !struct_info->hasUserDefinedDestructor();
-			} else {
-				result = true;  // Unions are trivially destructible if all members are
-			}
+			result = isStructTriviallyDestructibleImpl(struct_info);
 		}
 		break;
 
@@ -1055,20 +1220,8 @@ TypeTraitResult evaluateTypeTrait(
 		break;
 
 	case TypeTraitKind::HasVirtualDestructor:
-		if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
-			result = struct_info->has_vtable && struct_info->hasUserDefinedDestructor();
-			// If no explicit destructor but has vtable, check base classes
-			if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
-				for (const auto& base : struct_info->base_classes) {
-					if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
-						const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
-						if (base_struct_info && base_struct_info->has_vtable) {
-							result = true;
-							break;
-						}
-					}
-				}
-			}
+		if (struct_info && !is_reference && pointer_depth == 0) {
+			result = hasVirtualDestructorImpl(struct_info);
 		}
 		break;
 

@@ -2996,6 +2996,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					return ParseResult::error("Expected ';' after '= default'", peek_info());
 				}
 
+				dtor_ref.set_was_defaulted_on_first_declaration(true);
 				// First-declaration `= default` is implicitly inline ([dcl.fct.def.default]).
 				dtor_ref.set_is_inline(true);
 				auto [block_node, block_ref] = create_node_ref(BlockNode());

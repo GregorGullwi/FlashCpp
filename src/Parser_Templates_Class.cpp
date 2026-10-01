@@ -2756,6 +2756,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 								return ParseResult::error("Expected ';' after '= default'", peek_info());
 							}
 
+							dtor_ref.set_was_defaulted_on_first_declaration(true);
 							dtor_ref.set_is_inline(true);
 							auto [block_node, block_ref] = create_node_ref(BlockNode());
 							NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
@@ -4215,6 +4216,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							return ParseResult::error("Expected ';' after '= default'", peek_info());
 						}
 
+						dtor_ref.set_was_defaulted_on_first_declaration(true);
 						dtor_ref.set_is_inline(true);
 						// Create an empty block for the destructor body
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
