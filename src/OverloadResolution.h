@@ -2802,10 +2802,26 @@ trySelectCanonicalUserDefinedConversionOperator(
 			}
 			const TypeSpecifierNode& return_type =
 				function.decl_node().type_specifier_node();
-			if (!return_type.pointer_levels().empty() ||
-				!return_type.array_dimensions().empty() ||
-				(!is_builtin_type(return_type.category()) &&
-					return_type.category() != TypeCategory::Enum)) {
+			FrontendContext* const context = FrontendContext::active();
+			if (context == nullptr) {
+				continue;
+			}
+			CanonicalTypeTable& table = context->canonicalTypes();
+			CanonicalTypeTransaction return_type_transaction(table);
+			TypeSpecifierNode canonical_return_type = return_type;
+			tryBindPublishedTypeEntity(canonical_return_type);
+			const CanonicalTypeImport return_type_import =
+				importCanonicalType(table, canonical_return_type);
+			if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
+				continue;
+			}
+			const TypeId unreferenced_return_type = canonicalTypeWithoutReference(
+				table, return_type_import.type);
+			const CanonicalTypeKind return_type_kind = table.node(
+				stripCanonicalTopCv(table, unreferenced_return_type).first).kind;
+			if (return_type_kind != CanonicalTypeKind::Pointer &&
+				return_type_kind != CanonicalTypeKind::Builtin &&
+				return_type_kind != CanonicalTypeKind::Enum) {
 				continue;
 			}
 			const std::optional<ConversionPlan> trailing_plan =

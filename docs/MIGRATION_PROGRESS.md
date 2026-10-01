@@ -420,6 +420,10 @@ checks return lowering, while
 checks local and global assignment lowering. This covers scalar tails accepted
 by the canonical projectable planner; unsupported tail families remain on
 compatibility paths.
+Pointer-valued conversion functions can also use the standard pointer-to-`bool`
+tail; `tests/test_conversion_operator_pointer_bool_tail_ret0.cpp` checks both
+copy-initialization and overload selection against ellipsis, and the selected
+call preserves its pointer depth for boolean lowering.
 `FunctionDeclarationNode` does not yet retain an `explicit` specifier for
 conversion functions, so implicit viability of explicit conversion functions
 remains a separate parser/sema gap.

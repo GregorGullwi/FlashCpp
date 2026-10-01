@@ -3580,6 +3580,10 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
 		conversion_return_type_index,
 		static_cast<int>(conversion_return_type.size_in_bits()),
 		token);
+	if (result.has_value()) {
+		result->pointer_depth = PointerDepth{
+			static_cast<int>(conversion_return_type.runtime_pointer_depth())};
+	}
 	if (!result.has_value() ||
 		cast_info.trailing_standard_conversion == StandardConversionKind::None) {
 		return result;
