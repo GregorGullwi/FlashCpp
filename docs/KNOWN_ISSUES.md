@@ -94,12 +94,12 @@ The per-file recovery map is indexed in
 
 ## Legacy flat consumers cannot yet handle interleaved pointer/array declarators
 
-Boundary 3A is not complete: descriptors use `structural_type_id` for shapes
-that the flat fields cannot represent, but projectable types still use those
-fields as semantic identity. Template argument and substitution storage,
-general IR layout/subscript consumers, and lazy-constraint trait evaluation
-still read parallel flat pointer/array fields, so they remain vulnerable to
-projection drift.
+Boundary 3A is not complete: descriptors carry authoritative
+`structural_type_id` identity where canonical import is supported and retain
+flat fields as compatibility projections, but unmigrated consumers still read
+those fields directly. Template argument and substitution storage and general
+IR layout/subscript consumers still read parallel flat pointer/array fields, so
+they remain vulnerable to projection drift.
 Ordered declarators over alias array, reference, function, or member-pointer
 wrappers remain unsupported. A three-hop alias-template forwarding chain can
 lose the pointee array extent even when one forwarding alias preserves it:
@@ -123,17 +123,20 @@ at materialization, so `canonical_structural_trait_fallback` is zero on the
 structural-trait regressions and its recorded baseline was lowered from 23 so a
 reappearance fails the counter run. The triviality and lifetime families still
 read `StructTypeInfo`, which needs a published member-property schema rather
-than a classifier change. Two flat consumers remain: the
+than a classifier change. Two measurable trait residues remain: the
 `lazy_constraint_trait_fallback` counter, which records the traits the canonical
 table does not own, and the residual 2 on
 `tests/test_canonical_lazy_constraint_traits_ret0.cpp`, which is a
 member-object-pointer operand: that one needs member-owner identity rather than
 nominal type identity, and its owner is not published at materialization.
-Class-property traits (`__is_class`, `__is_union`, `__is_polymorphic`, and the
-triviality family) and the target-signedness traits (`__is_signed`,
-`__is_unsigned`) still read flat or sema-owned metadata, so a concept built on
-them is satisfied as an explicit unknown outcome: not proof of satisfaction, and
-not inverted into a failure by `!`, `&&`, or `||`.
+The remaining sema-owned class-property and lifetime traits include
+`__is_polymorphic`, `__is_final`, `__is_abstract`, `__is_empty`, the triviality
+family, and the destructibility and constructibility families; these require
+record facts that the canonical table does not yet publish. By contrast,
+`__is_class`, `__is_union`, `__is_const`, `__is_volatile`, `__is_signed`, and
+`__is_unsigned` now use canonical type identity. A concept built on an
+unsupported sema-owned trait still receives an explicit unknown outcome: not
+proof of satisfaction, and not inverted into a failure by `!`, `&&`, or `||`.
 
 The general flat conversion-descriptor path also rejects ordered declarators
 over aliases with callable, array, reference, or member-pointer wrappers. Static
@@ -160,17 +163,17 @@ moved to a shared coordinator.
 
 ## Runtime member-function-pointer address-of is not lowered
 
-`int (S::*p)() = &S::f;` does not materialize the member function's address.
-The unary `&` path only resolves non-static data members through
-`LazyMemberResolver`, so a member function falls through to a generic
-`addressof %f` instruction. `handleAddressOf` then misses `f` in the local
-scope, stubs the target register with zero, and returns without storing the
-result temp, leaving the variable's slot uninitialized. Whether such a pointer
-compares non-null therefore depends on unrelated stack layout. Null
-member-function pointers and their `[conv.bool]` conversions are unaffected;
-only taking the address of a member function (including `bool b = &S::f;`) is.
-A proper fix must emit the member function's address with its mangled name and
-account for virtual member functions.
+`int (S::*p)() = &S::f;` still does not materialize a runtime member-function
+pointer. Sema can resolve a target overload and check access, but IR generation
+does not lower that selection to the member-function-pointer representation. It
+falls through to a generic `AddressOf` instruction; `handleAddressOf` misses
+the qualified member in the local scope, emits a zero placeholder, and returns
+without storing the result temp, leaving the variable's slot uninitialized.
+Whether such a pointer compares non-null therefore depends on unrelated stack
+layout. Null member-function pointers and their `[conv.bool]` conversions are
+unaffected; only taking the address of a member function (including
+`bool b = &S::f;`) is. A proper fix must lower the selected function according
+to the target ABI and account for virtual member functions.
 
 ## Record-property traits answer several cells wrongly
 
