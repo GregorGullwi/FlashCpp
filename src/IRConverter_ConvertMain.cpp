@@ -11468,10 +11468,12 @@ void IrToObjConverter<TWriterClass>::handleZeroExtend(const IrInstruction& instr
 		std::array<uint8_t, 4> movzx = {encoding.rex_prefix, 0x0F, movzx_opcode, encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
 	} else if (fromSize == 32 && toSize == 64) {
-			// mov r32, r32 (implicitly zero-extends to 64 bits on x86-64)
-		std::array<uint8_t, 2> mov = {0x89, 0xC0};
-		mov[1] = 0xC0 + (static_cast<uint8_t>(source_reg) << 3) + static_cast<uint8_t>(result_reg);
-		textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
+		// mov r32, r/m32 (implicitly zero-extends to 64 bits on x86-64)
+		auto encoding = encodeRegToRegInstruction(source_reg, result_reg, false);
+		if (encoding.rex_prefix != 0)
+			textSectionData.push_back(encoding.rex_prefix);
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(encoding.modrm_byte);
 	} else {
 			// Fallback: just copy
 		auto encoding = encodeRegToRegInstruction(result_reg, source_reg);

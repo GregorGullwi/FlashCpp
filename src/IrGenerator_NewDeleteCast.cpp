@@ -5,6 +5,12 @@
 
 namespace {
 
+constexpr bool isIntegralConversionType(TypeCategory category) {
+	// bool is integral for standard conversions, even though is_integer_type()
+	// deliberately excludes types without an integer rank or signedness.
+	return is_integer_type(category) || is_bool_type(category);
+}
+
 [[noreturn]] void throwNarrowingNewBraceInitCompileError(
 	TypeCategory source,
 	TypeCategory target) {
@@ -1012,7 +1018,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		if (source_type == TypeCategory::Enum && is_integer_type(target_type)) {
 			return generateTypeConversion(expr_operands, source_type, target_type, staticCastNode.cast_token());
 		}
-		if (is_integer_type(source_type) && target_type == TypeCategory::Enum) {
+		if (isIntegralConversionType(source_type) && target_type == TypeCategory::Enum) {
 			const TypeCategory target_underlying = resolveEnumUnderlyingTypeCategory(target_type_index);
 			if (target_underlying != TypeCategory::Invalid) {
 				ExprResult converted = generateTypeConversion(expr_operands, source_type, target_underlying, staticCastNode.cast_token());
@@ -1052,7 +1058,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	}
 
 		// For int-to-float conversions, generate IntToFloat IR
-	if (is_integer_type(source_type) && is_floating_point_type(target_type)) {
+	if (isIntegralConversionType(source_type) && is_floating_point_type(target_type)) {
 		TempVar result_temp = var_counter.next();
 		IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 			using T = std::decay_t<decltype(arg)>;
@@ -1138,10 +1144,10 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// For integer-to-integer conversions where sizes differ, we must emit a
 		// proper extension (sign/zero) or truncation IR instruction.  Simply
 		// changing the type metadata leaves the underlying storage at the source
-		// size, and a later 32-bit load from an 8-bit stack slot reads 3 bytes of
-		// uninitialized memory (KI-001).  Delegate to generateTypeConversion which
-		// handles SignExtend/ZeroExtend/Truncate based on signedness and size.
-	if (is_integer_type(source_type) && is_integer_type(target_type) && source_size != target_size) {
+		// size, so later reads can include adjacent uninitialized bytes. Delegate
+		// to generateTypeConversion, which selects SignExtend/ZeroExtend/Truncate
+		// based on signedness and size.
+	if (isIntegralConversionType(source_type) && is_integer_type(target_type) && source_size != target_size) {
 		return generateTypeConversion(expr_operands, source_type, target_type, staticCastNode.cast_token());
 	}
 
