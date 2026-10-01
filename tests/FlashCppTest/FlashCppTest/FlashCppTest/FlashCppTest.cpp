@@ -27,6 +27,45 @@
 #include "doctest.h"
 #include "../../../architecture/CanonicalTypeTests.h"
 
+TEST_CASE("Windows unwind offsets include a probe prefix after PUSH RBP") {
+	ObjectFileWriter writer;
+	const auto ordinary = writer.build_unwind_codes(false, 64, 11);
+	CHECK(ordinary.prolog_size == 22);
+	CHECK(ordinary.frame_reg_and_offset == 0x05);
+	CHECK(ordinary.count_of_codes == 3);
+	const std::vector<uint8_t> ordinary_codes{22, 0x72, 15, 0x03, 1, 0x50, 0, 0};
+	CHECK(ordinary.codes == ordinary_codes);
+
+	const auto split = writer.build_unwind_codes(true, 4096, 11);
+	CHECK(split.prolog_size == 34);
+	CHECK(split.effective_frame_size == 240);
+	CHECK(split.frame_reg_and_offset == 0xf5);
+	CHECK(split.count_of_codes == 6);
+	const std::vector<uint8_t> split_codes{
+		34, 0x01, 0xe2, 0x01, 27, 0x03, 19, 0x01, 30, 0, 1, 0x50};
+	CHECK(split.codes == split_codes);
+
+	// Generated funclets publish zero prefix; their offsets must stay unchanged.
+	const auto plain = writer.build_unwind_codes(false, 64, 0);
+	const std::vector<uint8_t> plain_codes{11, 0x72, 4, 0x03, 1, 0x50, 0, 0};
+	CHECK(plain.prolog_size == 11);
+	CHECK(plain.codes == plain_codes);
+}
+
+TEST_CASE("Windows large unwind allocations preserve the full byte count") {
+	ObjectFileWriter writer;
+	const auto scaled_limit = writer.build_unwind_codes(false, 524280, 0);
+	const std::vector<uint8_t> scaled_codes{11, 0x01, 0xff, 0xff, 4, 0x03, 1, 0x50};
+	CHECK(scaled_limit.count_of_codes == 4);
+	CHECK(scaled_limit.codes == scaled_codes);
+
+	const auto full = writer.build_unwind_codes(false, 524288, 11);
+	const std::vector<uint8_t> full_codes{22, 0x11, 0, 0, 8, 0, 15, 0x03, 1, 0x50, 0, 0};
+	CHECK(full.count_of_codes == 5);
+	CHECK(full.codes == full_codes);
+	CHECK_THROWS_AS(writer.build_unwind_codes(true, 4096, 233), InternalError);
+}
+
 namespace {
 void isolateGlobalSymbolTable() {
 	gSymbolTable = SymbolTable();

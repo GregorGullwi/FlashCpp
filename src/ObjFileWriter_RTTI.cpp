@@ -112,7 +112,7 @@ std::string_view ObjectFileWriter::msvcBuiltinTypeCode(TypeCategory cat) {
 	}
 }
 
-void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, std::span<const SehTryBlockInfo> seh_try_blocks, uint32_t stack_frame_size) {
+void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, std::span<const SehTryBlockInfo> seh_try_blocks, uint32_t stack_frame_size, uint8_t prologue_prefix_size) {
 	// Check if exception info has already been added for this function
 	for (const auto& existing : added_exception_functions_) {
 		if (existing == mangled_name) {
@@ -154,7 +154,7 @@ void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name
 	}
 
 	// Build unwind codes
-	UnwindCodeResult unwind_info = build_unwind_codes(is_cpp, stack_frame_size);
+	UnwindCodeResult unwind_info = build_unwind_codes(is_cpp, stack_frame_size, prologue_prefix_size);
 	uint32_t effective_frame_size = unwind_info.effective_frame_size;
 
 	// Build UNWIND_INFO header + codes

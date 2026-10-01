@@ -86,77 +86,12 @@ struct SizedStackSlot {
 	static SizedStackSlot u8(int32_t off) { return {off, 8, false}; }
 };
 
-template <size_t N>
-constexpr auto make_temp_string() {
-	// Max: "temp_" + 3-digit number + '\0'
-	std::array<char, 10> buf{};
-	buf[0] = 't';
-	buf[1] = 'e';
-	buf[2] = 'm';
-	buf[3] = 'p';
-	buf[4] = '_';
-
-	size_t i = 5;
-	size_t n = N;
-
-	char digits[4] = {};
-	int d = 0;
-	do {
-		digits[d++] = '0' + (n % 10);
-		n /= 10;
-	} while (n > 0);
-
-	for (int j = d - 1; j >= 0; --j) {
-		buf[i++] = digits[j];
-	}
-	buf[i] = '\0'; // null terminate for safety
-	return buf;
-}
-
-template <size_t... Is>
-constexpr auto make_temp_array(std::index_sequence<Is...>) {
-	return std::array<std::array<char, 10>, sizeof...(Is)>{
-		make_temp_string<Is>()...};
-}
-
-template <size_t N>
-constexpr auto make_temp_array() {
-	return make_temp_array(std::make_index_sequence<N>{});
-}
-
-constexpr auto raw_temp_names = make_temp_array<256>();
-
-// Create string_view version from raw names
-constexpr auto make_view_array() {
-	std::array<std::string_view, raw_temp_names.size()> result{};
-	for (size_t i = 0; i < raw_temp_names.size(); ++i) {
-		// Views into raw array
-		result[i] = std::string_view{raw_temp_names[i].data()};
-	}
-	return result;
-}
-
-constexpr auto temp_name_array = make_view_array();
-
 struct TempVar {
 	TempVar() : var_number(1) {}	 // Start at 1, not 0
 	explicit TempVar(size_t num) : var_number(num) {}
 
 	TempVar next() {
 		return TempVar(++var_number);
-	}
-	std::string_view name() const {
-		// temp_name_array is 0-indexed, indexed by var_number - 1
-		// var_number=0 is a sentinel (invalid/uninitialized), return empty string
-		if (var_number == 0) {
-			return ""; // Sentinel value - no valid name
-		}
-		// Bounds check - temp_name_array has 256 entries (0-255)
-		if (var_number - 1 >= 256) {
-			FLASH_LOG(General, Error, "TempVar::name() - var_number out of bounds: ", var_number, " (max is 256)");
-			return "temp_INVALID"; // Return a safe fallback
-		}
-		return temp_name_array[var_number - 1];
 	}
 	size_t var_number = 1;  // 1-based: first temp var is number 1
 };

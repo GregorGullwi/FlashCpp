@@ -557,7 +557,7 @@ public:
 	// --- Method declarations (ObjFileWriter_Debug.cpp) ---
 	static void patch_xdata_u32(std::vector<char>& xdata, uint32_t offset, uint32_t value);
 	static void appendLE_xdata(std::vector<char>& buf, uint32_t value);
-	UnwindCodeResult build_unwind_codes(bool is_cpp, uint32_t stack_frame_size);
+	UnwindCodeResult build_unwind_codes(bool is_cpp, uint32_t stack_frame_size, uint8_t prologue_prefix_size);
 
 	// --- Method declarations (ObjFileWriter_EH.cpp) ---
 	void build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start, std::span<const SehTryBlockInfo> seh_try_blocks, std::vector<ScopeTableReloc>& scope_relocs);
@@ -567,7 +567,7 @@ public:
 	void build_pdata_entries(uint32_t function_start, uint32_t function_size, std::string_view mangled_name, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, bool is_cpp, uint32_t xdata_offset, const UnwindCodeResult& unwind_info, uint32_t cpp_funcinfo_local_offset);
 
 	// --- Method declarations (ObjFileWriter_RTTI.cpp) ---
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks = {}, std::span<const UnwindMapEntryInfo> unwind_map = {}, std::span<const SehTryBlockInfo> seh_try_blocks = {}, uint32_t stack_frame_size = 0);
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, std::span<const SehTryBlockInfo> seh_try_blocks, uint32_t stack_frame_size, uint8_t prologue_prefix_size);
 	void finalize_debug_info();
 	std::string_view add_string_literal(std::string_view str_content);
 	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata, bool is_selectany, bool has_absolute_relocation);

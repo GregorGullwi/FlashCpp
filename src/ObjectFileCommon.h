@@ -142,7 +142,7 @@ concept FileWriter = requires(T writer,
 	writer.add_relocation(reloc_offset, name, reloc_type);
 
 		// Exception handling
-	writer.add_function_exception_info(name, offset, size, try_blocks, unwind_map, seh_try_blocks, size);
+	writer.add_function_exception_info(name, offset, size, try_blocks, unwind_map, seh_try_blocks, size, uint8_t{0});
 
 		// Global data
 	writer.add_global_variable_data(name, size_t{0}, false, std::span<const char>{}, false, false, false);

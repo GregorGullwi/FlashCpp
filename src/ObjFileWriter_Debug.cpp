@@ -1,4 +1,5 @@
 #include "ObjFileWriter.h"
+#include "CompileError.h"
 #include "Log.h"
 
 // ObjFileWriter_Debug.cpp - Out-of-line method definitions for ObjectFileWriter
@@ -24,7 +25,7 @@ void ObjectFileWriter::appendLE_xdata(std::vector<char>& buf, uint32_t value) {
 
 // --- Exception info sub-functions ---
 
-ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_cpp, uint32_t stack_frame_size) {
+ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_cpp, uint32_t stack_frame_size, uint8_t prologue_prefix_size) {
 	// Build unwind codes array dynamically based on actual prologue.
 	// For C++ EH functions (split-frame prologue):
 	//   Offset 0:   push rbp                 (1 byte)
@@ -44,6 +45,13 @@ ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_
 	// Unwind codes are listed in REVERSE order of prologue operations:
 	// Each UNWIND_CODE is 2 bytes: [offset_in_prolog, (info << 4) | operation]
 	//   UWOP_PUSH_NONVOL = 0, UWOP_ALLOC_LARGE = 1, UWOP_ALLOC_SMALL = 2, UWOP_SET_FPREG = 3
+	// A probe prefix after PUSH RBP preserves RSP and all nonvolatile registers.
+	// It shifts later operation offsets without adding an unwind operation.
+	const uint32_t cpp_frame_size = std::min(stack_frame_size / 16, uint32_t(15)) * 16;
+	const uint32_t base_prolog_size = is_cpp ? (stack_frame_size > cpp_frame_size ? 23 : 16) : 11;
+	if (base_prolog_size + prologue_prefix_size > 255) {
+		throw InternalError("Windows unwind prologue exceeds its byte offset range");
+	}
 
 	UnwindCodeResult result;
 	result.effective_frame_size = stack_frame_size;
@@ -55,12 +63,18 @@ ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_
 			uint8_t info = static_cast<uint8_t>(alloc_size / 8 - 1);
 			result.codes.push_back(code_offset);
 			result.codes.push_back(static_cast<uint8_t>((info << 4) | 0x02));
-		} else {
+		} else if (alloc_size / 8 <= 0xffff) {
 			result.codes.push_back(code_offset);
 			result.codes.push_back(0x01);
 			uint16_t size_in_8bytes = static_cast<uint16_t>(alloc_size / 8);
 			result.codes.push_back(static_cast<uint8_t>(size_in_8bytes & 0xFF));
 			result.codes.push_back(static_cast<uint8_t>((size_in_8bytes >> 8) & 0xFF));
+		} else {
+			result.codes.push_back(code_offset);
+			result.codes.push_back(0x11); // UWOP_ALLOC_LARGE, info=1: full byte count
+			for (unsigned shift = 0; shift < 32; shift += 8) {
+				result.codes.push_back(static_cast<uint8_t>(alloc_size >> shift));
+			}
 		}
 	};
 
@@ -68,31 +82,31 @@ ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_
 		uint8_t frame_offset = static_cast<uint8_t>(std::min(stack_frame_size / 16, uint32_t(15)));
 		result.effective_frame_size = static_cast<uint32_t>(frame_offset) * 16;
 		uint32_t extra_stack_size = stack_frame_size - result.effective_frame_size;
-		result.prolog_size = extra_stack_size > 0 ? 23 : 16;
+		result.prolog_size = static_cast<uint8_t>(base_prolog_size + prologue_prefix_size);
 		result.frame_reg_and_offset = static_cast<uint8_t>((frame_offset << 4) | 0x05); // RBP=5
 
 		// If needed, unwind the post-frame allocation first.
-		appendAllocCode(0x17, extra_stack_size);
+		appendAllocCode(static_cast<uint8_t>(0x17 + prologue_prefix_size), extra_stack_size);
 
 		// UWOP_SET_FPREG at offset 16 (after lea rbp, [rsp+N])
-		result.codes.push_back(0x10);  // offset 16
+		result.codes.push_back(static_cast<uint8_t>(0x10 + prologue_prefix_size));
 		result.codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
 
 		// Unwind the establisher-frame allocation.
-		appendAllocCode(0x08, result.effective_frame_size);
+		appendAllocCode(static_cast<uint8_t>(0x08 + prologue_prefix_size), result.effective_frame_size);
 
 		// UWOP_PUSH_NONVOL(RBP) at offset 1
 		result.codes.push_back(0x01);
 		result.codes.push_back(static_cast<uint8_t>(0x05 << 4 | 0x00));
 	} else {
 		// Traditional prologue: push rbp(1) + mov rbp,rsp(3) + sub rsp(7) = 11
-		result.prolog_size = 11;
+		result.prolog_size = static_cast<uint8_t>(base_prolog_size + prologue_prefix_size);
 		result.frame_reg_and_offset = 0x05; // RBP=5, FrameOffset=0
 
 		appendAllocCode(result.prolog_size, stack_frame_size);
 
 		// UWOP_SET_FPREG at offset 4 (after mov rbp, rsp)
-		result.codes.push_back(0x04);
+		result.codes.push_back(static_cast<uint8_t>(0x04 + prologue_prefix_size));
 		result.codes.push_back(0x03);  // UWOP_SET_FPREG, info=0
 
 		// UWOP_PUSH_NONVOL(RBP) at offset 1 (after push rbp)

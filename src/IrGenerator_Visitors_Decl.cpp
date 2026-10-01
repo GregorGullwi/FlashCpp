@@ -4015,7 +4015,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
 
 	FLASH_LOG_FORMAT(Codegen, Debug,
-					 "Marked constructor call result {} as RVO-eligible prvalue", ret_var.name());
+					 "Marked constructor call result {} as RVO-eligible prvalue", ret_var.var_number);
 
 	// Return the result variable with the constructed type, including type_index for struct types
 	return makeExprResult(result_type_index.withCategory(result_type_category), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);

@@ -1,6 +1,29 @@
 // IRConverter_Emit_CallReturn.h - Call/Return/Stack emit helper functions (free functions)
 // Part of IRConverter.h unity build - do not add #pragma once
 
+inline constexpr uint8_t kWindowsStackProbePrefixSize = 11;
+
+inline void emitWindowsStackProbePlaceholder(std::vector<uint8_t>& code) {
+	// Two multi-byte NOPs reserve MOV R11D, imm32; CALL rel32. Small frames
+	// execute only these NOPs, without a branch or a runtime helper call.
+	constexpr std::array<uint8_t, kWindowsStackProbePrefixSize> padding = {
+		0x66, 0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x90
+	};
+	code.insert(code.end(), padding.begin(), padding.end());
+}
+
+inline void patchWindowsStackProbePrefix(std::vector<uint8_t>& code, uint32_t offset, uint32_t frame_size) {
+	assert(offset + kWindowsStackProbePrefixSize <= code.size());
+	// The probe's private ABI uses R11D, preserving all language-level argument
+	// registers, RAX (including variadic AL), nonvolatile registers, and RSP.
+	std::array<uint8_t, kWindowsStackProbePrefixSize> prefix = {
+		0x41, 0xBB, 0, 0, 0, 0, 0xE8, 0, 0, 0, 0
+	};
+	const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(frame_size);
+	std::copy(bytes.begin(), bytes.end(), prefix.begin() + 2);
+	std::copy(prefix.begin(), prefix.end(), code.begin() + offset);
+}
+
 /**
  * @brief Emits PUSH reg instruction (branchless).
  * @param textSectionData The vector to append opcodes to

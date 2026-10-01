@@ -5,6 +5,17 @@
 #include "FrontendContext.h"
 
 namespace {
+// Compiler-owned target helper with a private register ABI, never a source
+// declaration or a type lookup fallback. Its COFF symbol is object-local.
+constexpr std::string_view kWindowsStackProbeSymbol = "$flashcpp_stack_probe";
+
+uint32_t checkedStackFrameSize(uint64_t size_bytes) {
+	if (size_bytes > INT_MAX) {
+		throw InternalError("Function frame exceeds the target stack displacement range");
+	}
+	return static_cast<uint32_t>(size_bytes);
+}
+
 uint32_t codeViewTypeIndex(TypeCategory type_cat) {
 	switch (type_cat) {
 	case TypeCategory::Int:
@@ -1142,24 +1153,6 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					// Check if this is a reference - if so, we need to dereference it
 				auto ref_info = getIndirectStackInfo(lhs_stack_var_addr);
 
-					// If not found with TempVar offset, try looking up by name
-				if (!ref_info.has_value()) {
-					std::string_view var_name = lhs_var_op.name();
-						// Remove the '%' prefix if present
-					if (!var_name.empty() && var_name[0] == '%') {
-						var_name = var_name.substr(1);
-					}
-					auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
-					if (named_var_it != variable_scopes.back().variables.end()) {
-						int32_t named_offset = named_var_it->second.offset;
-						ref_info = getIndirectStackInfo(named_offset);
-						if (ref_info.has_value()) {
-								// Found it! Update lhs_stack_var_addr to use the named variable offset
-							lhs_stack_var_addr = named_offset;
-						}
-					}
-				}
-
 				if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 						// This is a reference - load the pointer first, then dereference
 					ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -1375,24 +1368,6 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					// Check if this is a reference - if so, we need to dereference it
 				auto ref_info = getIndirectStackInfo(rhs_stack_var_addr);
 
-					// If not found with TempVar offset, try looking up by name
-				if (!ref_info.has_value()) {
-					std::string_view var_name = rhs_var_op.name();
-						// Remove the '%' prefix if present
-					if (!var_name.empty() && var_name[0] == '%') {
-						var_name = var_name.substr(1);
-					}
-					auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
-					if (named_var_it != variable_scopes.back().variables.end()) {
-						int32_t named_offset = named_var_it->second.offset;
-						ref_info = getIndirectStackInfo(named_offset);
-						if (ref_info.has_value()) {
-								// Found it! Update rhs_stack_var_addr to use the named variable offset
-							rhs_stack_var_addr = named_offset;
-						}
-					}
-				}
-
 				if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 						// This is a reference - load the pointer first, then dereference
 					ctx.rhs_physical_reg = allocateRegisterWithSpilling();
@@ -1581,8 +1556,6 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 	if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 		const TempVar temp_var = std::get<TempVar>(ctx.result_value.value);
 		const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
-		StringHandle reassign_handle = StringTable::getOrInternStringHandle(temp_var.name());
-		variable_scopes.back().variables[reassign_handle].offset = stack_offset;
 			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
 		if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
 				// IMPORTANT: Before reassigning this register to the result TempVar's offset,
@@ -2008,7 +1981,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 	std::vector<VarDecl> local_vars;
 
 		// Clear temp_var_sizes for this function
-	temp_var_sizes_.clear();
+	temporary_slots_.clear();
 
 		// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
 		// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
@@ -2148,13 +2121,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 							throw InternalError(
 								"ConstructorCallOp stack destination has a non-positive object size");
 						}
-						const StringHandle object_temp_handle =
-							StringTable::getOrInternStringHandle(object_temp->name());
-						auto [size_it, inserted] =
-							temp_var_sizes_.try_emplace(object_temp_handle, object_size_bits);
-						if (!inserted && size_it->second < object_size_bits) {
-							size_it->second = object_size_bits;
-						}
+						recordTemporarySize(*object_temp, object_size_bits);
 					}
 				}
 
@@ -2222,183 +2189,177 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 				// For typed payload instructions, try common payload types
 			if (instruction.hasTypedPayload()) {
-				try {
-					if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-						if (const CatchBeginOp* catch_op = std::any_cast<CatchBeginOp>(&instruction.getTypedPayload())) {
-							if (catch_op->exception_temp.var_number != 0) {
-								StringHandle catch_temp_handle = StringTable::getOrInternStringHandle(catch_op->exception_temp.name());
+				if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+					if (const CatchBeginOp* catch_op = std::any_cast<CatchBeginOp>(&instruction.getTypedPayload())) {
+						if (catch_op->exception_temp.var_number != 0) {
+							size_t catch_temp_number = catch_op->exception_temp.var_number;
 
-								if (catch_op->is_reference() || catch_op->is_rvalue_reference()) {
-									bool already_reserved = false;
-									for (StringHandle existing : current_function_reserved_catch_ref_temps_) {
-										if (existing == catch_temp_handle) {
-											already_reserved = true;
-											break;
-										}
+							if (catch_op->is_reference() || catch_op->is_rvalue_reference()) {
+								bool already_reserved = false;
+								for (size_t existing : current_function_reserved_catch_ref_temps_) {
+									if (existing == catch_temp_number) {
+										already_reserved = true;
+										break;
 									}
-									if (!already_reserved) {
-										current_function_reserved_catch_ref_temps_.push_back(catch_temp_handle);
-										current_function_reserved_catch_ref_temp_size_ += 8;
+								}
+								if (!already_reserved) {
+									current_function_reserved_catch_ref_temps_.push_back(catch_temp_number);
+									current_function_reserved_catch_ref_temp_size_ += 8;
+								}
+								recordTemporarySize(catch_op->exception_temp, 64);
+								handled_by_typed_payload = true;
+							} else {
+								int catch_size_bits = 0;
+								if (const TypeInfo* ti = tryGetTypeInfo(catch_op->type_index)) {
+									if (ti->sizeInBits().is_set()) {
+										catch_size_bits = ti->sizeInBits().value;
 									}
-									temp_var_sizes_[catch_temp_handle] = 64;
-									handled_by_typed_payload = true;
 								} else {
-									int catch_size_bits = 0;
-									if (const TypeInfo* ti = tryGetTypeInfo(catch_op->type_index)) {
-										if (ti->sizeInBits().is_set()) {
-											catch_size_bits = ti->sizeInBits().value;
-										}
-									} else {
-										catch_size_bits = get_type_size_bits(catch_op->exceptionType());
+									catch_size_bits = get_type_size_bits(catch_op->exceptionType());
+								}
+								if (catch_size_bits > 0) {
+									if (current_function_reserved_catch_obj_padding_size_ == 0) {
+										current_function_reserved_catch_obj_padding_size_ = 8;
 									}
-									if (catch_size_bits > 0) {
-										if (current_function_reserved_catch_obj_padding_size_ == 0) {
-											current_function_reserved_catch_obj_padding_size_ = 8;
-										}
-										temp_var_sizes_[catch_temp_handle] = catch_size_bits;
-										handled_by_typed_payload = true;
-									}
+									recordTemporarySize(catch_op->exception_temp, catch_size_bits);
+									handled_by_typed_payload = true;
 								}
 							}
 						}
 					}
+				}
 
-					// Try BinaryOp (arithmetic, comparisons, logic)
-					if (const BinaryOp* bin_op = std::any_cast<BinaryOp>(&instruction.getTypedPayload())) {
-						if (std::holds_alternative<TempVar>(bin_op->result)) {
-							auto temp_var = std::get<TempVar>(bin_op->result);
-							// Convert temp var name to StringHandle
-							// For comparison operations, result is always bool (8 bits)
-							// For arithmetic/logical operations, result size matches operand size
-							auto opcode = instruction.getOpcode();
-							bool is_comparison = (opcode == IrOpcode::Equal || opcode == IrOpcode::NotEqual ||
-												  opcode == IrOpcode::LessThan || opcode == IrOpcode::LessEqual ||
-												  opcode == IrOpcode::GreaterThan || opcode == IrOpcode::GreaterEqual ||
-												  opcode == IrOpcode::UnsignedLessThan || opcode == IrOpcode::UnsignedLessEqual ||
-												  opcode == IrOpcode::UnsignedGreaterThan || opcode == IrOpcode::UnsignedGreaterEqual ||
-												  opcode == IrOpcode::FloatEqual || opcode == IrOpcode::FloatNotEqual ||
-												  opcode == IrOpcode::FloatLessThan || opcode == IrOpcode::FloatLessEqual ||
-												  opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
-							int result_size = is_comparison ? 8 : bin_op->lhs.size_in_bits.value;
-							temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = result_size;
-							handled_by_typed_payload = true;
+				// Try BinaryOp (arithmetic, comparisons, logic)
+				if (const BinaryOp* bin_op = std::any_cast<BinaryOp>(&instruction.getTypedPayload())) {
+					if (std::holds_alternative<TempVar>(bin_op->result)) {
+						auto temp_var = std::get<TempVar>(bin_op->result);
+						// For comparison operations, result is always bool (8 bits)
+						// For arithmetic/logical operations, result size matches operand size
+						auto opcode = instruction.getOpcode();
+						bool is_comparison = (opcode == IrOpcode::Equal || opcode == IrOpcode::NotEqual ||
+											  opcode == IrOpcode::LessThan || opcode == IrOpcode::LessEqual ||
+											  opcode == IrOpcode::GreaterThan || opcode == IrOpcode::GreaterEqual ||
+											  opcode == IrOpcode::UnsignedLessThan || opcode == IrOpcode::UnsignedLessEqual ||
+											  opcode == IrOpcode::UnsignedGreaterThan || opcode == IrOpcode::UnsignedGreaterEqual ||
+											  opcode == IrOpcode::FloatEqual || opcode == IrOpcode::FloatNotEqual ||
+											  opcode == IrOpcode::FloatLessThan || opcode == IrOpcode::FloatLessEqual ||
+											  opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
+						int result_size = is_comparison ? 8 : bin_op->lhs.size_in_bits.value;
+						recordTemporarySize(temp_var, result_size);
+						handled_by_typed_payload = true;
+					}
+				}
+				// Try UnaryOp (logical not, bitwise not, negate)
+				else if (const UnaryOp* unary_op = std::any_cast<UnaryOp>(&instruction.getTypedPayload())) {
+					// For logical not, result is always bool (8 bits)
+					// For bitwise not and negate, result size matches operand size
+					recordTemporarySize(unary_op->result, unary_op->value.size_in_bits.value);
+					handled_by_typed_payload = true;
+				}
+				// Try CallOp (function calls)
+				else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
+					if (call_op->returnType() != TypeCategory::Void) {
+						recordTemporarySize(call_op->result, call_op->return_size_in_bits.value);
+					}
+					handled_by_typed_payload = true;
+				}
+				else if (const StackAllocOp* allocation = std::any_cast<StackAllocOp>(&instruction.getTypedPayload())) {
+					if (const auto* temp = std::get_if<TempVar>(&allocation->result)) {
+						recordTemporarySize(*temp, allocation->size_in_bits.value);
+					} else {
+						throw InternalError("StackAlloc requires numeric temporary storage");
+					}
+					handled_by_typed_payload = true;
+				}
+				// Try IndirectCallOp (function pointer calls)
+				else if (const IndirectCallOp* indirect_call_op = std::any_cast<IndirectCallOp>(&instruction.getTypedPayload())) {
+					int result_size = indirect_call_op->return_size_in_bits.value;
+					if (result_size == 0) {
+						int computed_size = get_type_size_bits(indirect_call_op->returnType());
+						if (computed_size > 0) {
+							result_size = computed_size;
+						} else {
+							result_size = static_cast<int>(sizeof(void*) * 8);
 						}
 					}
-					// Try UnaryOp (logical not, bitwise not, negate)
-					else if (const UnaryOp* unary_op = std::any_cast<UnaryOp>(&instruction.getTypedPayload())) {
-						// Convert temp var name to StringHandle
-						// For logical not, result is always bool (8 bits)
-						// For bitwise not and negate, result size matches operand size
-						temp_var_sizes_[StringTable::getOrInternStringHandle(unary_op->result.name())] = unary_op->value.size_in_bits.value;
-						handled_by_typed_payload = true;
-					}
-					// Try CallOp (function calls)
-					else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-						// Convert temp var name to StringHandle
-						temp_var_sizes_[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits.value;
-						handled_by_typed_payload = true;
-					}
-					// Try IndirectCallOp (function pointer calls)
-					else if (const IndirectCallOp* indirect_call_op = std::any_cast<IndirectCallOp>(&instruction.getTypedPayload())) {
-						int result_size = indirect_call_op->return_size_in_bits.value;
+					recordTemporarySize(indirect_call_op->result, result_size);
+					handled_by_typed_payload = true;
+				}
+				// Try VirtualCallOp (vtable-dispatched calls)
+				else if (const VirtualCallOp* virtual_call_op = std::any_cast<VirtualCallOp>(&instruction.getTypedPayload())) {
+					if (const auto* result_temp = std::get_if<TempVar>(&virtual_call_op->result.value)) {
+						int result_size = virtual_call_op->result.size_in_bits.value;
 						if (result_size == 0) {
-							int computed_size = get_type_size_bits(indirect_call_op->returnType());
+							int computed_size = get_type_size_bits(virtual_call_op->result.typeEnum());
 							if (computed_size > 0) {
 								result_size = computed_size;
 							} else {
 								result_size = static_cast<int>(sizeof(void*) * 8);
 							}
 						}
-						temp_var_sizes_[StringTable::getOrInternStringHandle(indirect_call_op->result.name())] = result_size;
+						recordTemporarySize(*result_temp, result_size);
 						handled_by_typed_payload = true;
 					}
-					// Try VirtualCallOp (vtable-dispatched calls)
-					else if (const VirtualCallOp* virtual_call_op = std::any_cast<VirtualCallOp>(&instruction.getTypedPayload())) {
-						if (const auto* result_temp = std::get_if<TempVar>(&virtual_call_op->result.value)) {
-							int result_size = virtual_call_op->result.size_in_bits.value;
-							if (result_size == 0) {
-								int computed_size = get_type_size_bits(virtual_call_op->result.typeEnum());
-								if (computed_size > 0) {
-									result_size = computed_size;
-								} else {
-									result_size = static_cast<int>(sizeof(void*) * 8);
-								}
-							}
-							temp_var_sizes_[StringTable::getOrInternStringHandle(result_temp->name())] = result_size;
-							handled_by_typed_payload = true;
-						}
-					}
-					// Try ArrayAccessOp (array element load)
-					else if (const ArrayAccessOp* array_op = std::any_cast<ArrayAccessOp>(&instruction.getTypedPayload())) {
-							// Phase 5: Convert temp var name to StringHandle
-						temp_var_sizes_[StringTable::getOrInternStringHandle(array_op->result.name())] = array_op->element_size_in_bits;
-						handled_by_typed_payload = true;
-					}
-					// Try ArrayElementAddressOp (get address of array element)
-					else if (const ArrayElementAddressOp* addr_op = std::any_cast<ArrayElementAddressOp>(&instruction.getTypedPayload())) {
-							// Phase 5: Convert temp var name to StringHandle
-						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_op->result.name())] = 64; // Pointer is always 64-bit
-						handled_by_typed_payload = true;
-					}
-					// Try DereferenceOp (for dereferencing pointers/references)
-					else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
-						// Convert temp var name to StringHandle
-						// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
-						int result_size = (deref_op->pointer.pointer_depth.value > 1) ? 64 : deref_op->pointer.size_in_bits.value;
-						temp_var_sizes_[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
-						handled_by_typed_payload = true;
-					}
-					// Try AssignmentOp (for materializing literals to temporaries)
-					else if (const AssignmentOp* assign_op = std::any_cast<AssignmentOp>(&instruction.getTypedPayload())) {
-						// Track the LHS TempVar if it's a TempVar
-						if (const auto* temp_var_ptr = std::get_if<TempVar>(&assign_op->lhs.value)) {
-							auto temp_var = *temp_var_ptr;
-								// Phase 5: Convert temp var name to StringHandle
-							temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = assign_op->lhs.size_in_bits.value;
-							handled_by_typed_payload = true;
-						}
-					}
-					// Try AddressOfOp (for taking address of temporaries)
-					else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
-						// Phase 5: Convert temp var name to StringHandle
-						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_of_op->result.name())] = 64; // Pointer is always 64-bit
-						handled_by_typed_payload = true;
-					}
-						// Try AddressOfMemberOp (for taking address of struct members)
-					else if (const AddressOfMemberOp* addr_member_op = std::any_cast<AddressOfMemberOp>(&instruction.getTypedPayload())) {
-						// Convert temp var name to StringHandle
-						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_member_op->result.name())] = 64; // Pointer is always 64-bit
-						handled_by_typed_payload = true;
-					}
-						// Try GlobalLoadOp (for loading global variables)
-					else if (const GlobalLoadOp* global_load_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload())) {
-						if (const auto* temp_var_ptr = std::get_if<TempVar>(&global_load_op->result.value)) {
-							auto temp_var = *temp_var_ptr;
-							temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = global_load_op->result.size_in_bits.value;
-							handled_by_typed_payload = true;
-						}
-					}
-					// Try MemberLoadOp (member access — e.g. %2 = member_access bool8 %obj.flag)
-					// Large struct members (>64 bits) are stored as pointer addresses (64-bit) by
-					// handleMemberAccess, so clamp to 64 in that case.  Zero size can arise from
-					// incomplete/void members; treat those as 64-bit pointers as well.
-					else if (const MemberLoadOp* member_load_op = std::any_cast<MemberLoadOp>(&instruction.getTypedPayload())) {
-						if (std::holds_alternative<TempVar>(member_load_op->result.value)) {
-							auto temp_var = std::get<TempVar>(member_load_op->result.value);
-							const int raw_size = member_load_op->result.size_in_bits.value;
-							const int result_size = (raw_size > 0 && raw_size <= 64) ? raw_size : 64;
-							temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = result_size;
-							handled_by_typed_payload = true;
-						}
-					}
-					// Add more payload types here as they produce TempVars
-				} catch (const std::exception& e) {
-					FLASH_LOG(Codegen, Warning, "[calculateFunctionStackSpace]: Exception while processing typed payload for opcode ",
-							  static_cast<int>(instruction.getOpcode()), ": ", e.what());
-				} catch (...) {
-					FLASH_LOG(Codegen, Warning, "[calculateFunctionStackSpace]: Unknown exception while processing typed payload for opcode ",
-							  static_cast<int>(instruction.getOpcode()));
 				}
+				// Try ArrayAccessOp (array element load)
+				else if (const ArrayAccessOp* array_op = std::any_cast<ArrayAccessOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(array_op->result, array_op->element_size_in_bits);
+					handled_by_typed_payload = true;
+				}
+				// Try ArrayElementAddressOp (get address of array element)
+				else if (const ArrayElementAddressOp* addr_op = std::any_cast<ArrayElementAddressOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(addr_op->result, 64); // Pointer is always 64-bit
+					handled_by_typed_payload = true;
+				}
+				// Try DereferenceOp (for dereferencing pointers/references)
+				else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
+					// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
+					int result_size = (deref_op->pointer.pointer_depth.value > 1) ? 64 : deref_op->pointer.size_in_bits.value;
+					recordTemporarySize(deref_op->result, result_size);
+					handled_by_typed_payload = true;
+				}
+				// Try AssignmentOp (for materializing literals to temporaries)
+				else if (const AssignmentOp* assign_op = std::any_cast<AssignmentOp>(&instruction.getTypedPayload())) {
+					// Track the LHS TempVar if it's a TempVar
+					if (const auto* temp_var_ptr = std::get_if<TempVar>(&assign_op->lhs.value)) {
+						auto temp_var = *temp_var_ptr;
+						recordTemporarySize(temp_var, assign_op->lhs.size_in_bits.value);
+						handled_by_typed_payload = true;
+					}
+				}
+				// Try AddressOfOp (for taking address of temporaries)
+				else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(addr_of_op->result, 64); // Pointer is always 64-bit
+					handled_by_typed_payload = true;
+				}
+					// Try AddressOfMemberOp (for taking address of struct members)
+				else if (const AddressOfMemberOp* addr_member_op = std::any_cast<AddressOfMemberOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(addr_member_op->result, 64); // Pointer is always 64-bit
+					handled_by_typed_payload = true;
+				}
+					// Try GlobalLoadOp (for loading global variables)
+				else if (const GlobalLoadOp* global_load_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload())) {
+					if (const auto* temp_var_ptr = std::get_if<TempVar>(&global_load_op->result.value)) {
+						auto temp_var = *temp_var_ptr;
+						recordTemporarySize(temp_var, global_load_op->result.size_in_bits.value);
+						handled_by_typed_payload = true;
+					}
+				}
+				// Try MemberLoadOp (member access — e.g. %2 = member_access bool8 %obj.flag)
+				// Large struct members (>64 bits) are stored as pointer addresses (64-bit) by
+				// handleMemberAccess, so clamp to 64 in that case.  Zero size can arise from
+				// incomplete/void members; treat those as 64-bit pointers as well.
+				else if (const MemberLoadOp* member_load_op = std::any_cast<MemberLoadOp>(&instruction.getTypedPayload())) {
+					if (std::holds_alternative<TempVar>(member_load_op->result.value)) {
+						auto temp_var = std::get<TempVar>(member_load_op->result.value);
+						const int raw_size = member_load_op->result.size_in_bits.value;
+						const int result_size = (raw_size > 0 && raw_size <= 64) ? raw_size : 64;
+						recordTemporarySize(temp_var, result_size);
+						handled_by_typed_payload = true;
+					}
+				}
+				// Add more payload types here as they produce TempVars
+
 			}
 
 			// Fallback: Track TempVars from legacy operand format
@@ -2410,7 +2371,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				instruction.isOperandType<int>(2)) {
 				auto temp_var = instruction.getOperandAs<TempVar>(0);
 				int size_in_bits = instruction.getOperandAs<int>(2);
-				temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = size_in_bits;
+				recordTemporarySize(temp_var, size_in_bits);
 			}
 		}
 	}
@@ -2459,30 +2420,19 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		}
 	}
 
-	// Calculate space needed for TempVars
-	// Each TempVar uses 8 bytes (64-bit alignment)
-	// Calculate space for temp vars using actual sizes, not just count * 8
-	int temp_var_space = 0;
-	for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
-		int size_in_bytes = (size_bits + 7) / 8;
-		size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
-		temp_var_space += size_in_bytes;
+	// Include every recorded slot, rounded to the target's eight-byte stack unit.
+	uint64_t temp_var_space = 0;
+	for (const TemporarySlot& slot : temporary_slots_) {
+		temp_var_space += (static_cast<uint64_t>(slot.size_bits) + 63) / 64 * 8;
 	}
-
-	// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
-
-	// Store TempVar sizes for later use during code generation
-	// TempVars will have their offsets set when actually allocated via getStackOffsetFromTempVar
-	// Use INT_MIN as a sentinel value to indicate "not yet allocated"
-	for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
-			// Initialize with sentinel offset (INT_MIN), actual offset set later
-		var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{INT_MIN, SizeInBits{size_bits}});
+	if (temp_var_space > INT_MAX) {
+		throw InternalError("Temporary storage exceeds the target stack displacement range");
 	}
 
 	// Calculate total stack space needed
-	func_stack_space.temp_vars_size = temp_var_space;  // TempVar space (added to total separately)
+	func_stack_space.temp_vars_size = static_cast<uint32_t>(temp_var_space);  // TempVar space (added to total separately)
 	func_stack_space.named_vars_size = -stack_offset;  // Just named variables space
-	func_stack_space.outgoing_args_space = static_cast<uint16_t>(max_outgoing_arg_bytes);  // Outgoing call argument space
+	func_stack_space.outgoing_args_space = static_cast<uint32_t>(max_outgoing_arg_bytes);  // Outgoing call argument space
 
 	// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
 	//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
@@ -2499,100 +2449,91 @@ int IrToObjConverter<TWriterClass>::allocateStackSlotForTempVar(int32_t index, i
 }
 
 template <class TWriterClass>
+typename IrToObjConverter<TWriterClass>::TemporarySlot& IrToObjConverter<TWriterClass>::temporarySlot(TempVar temp) {
+	if (temp.var_number == 0) {
+		throw InternalError("Invalid temporary storage identity");
+	}
+	if (temp.var_number > temporary_slots_.size()) {
+		temporary_slots_.resize(temp.var_number);
+	}
+	return temporary_slots_[temp.var_number - 1];
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::recordTemporarySize(TempVar temp, int size_bits) {
+	if (size_bits <= 0) {
+		throw InternalError("Temporary storage requires a positive IR size");
+	}
+	TemporarySlot& slot = temporarySlot(temp);
+	slot.size_bits = std::max(slot.size_bits, size_bits);
+}
+
+template <class TWriterClass>
 int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits) {
-	StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
-	auto size_it = temp_var_sizes_.find(lookup_handle);
-	int actual_size_in_bits = size_in_bits;
-	if (size_it != temp_var_sizes_.end() && size_it->second > size_in_bits) {
-		actual_size_in_bits = size_it->second;  // Use pre-calculated size if larger
+	TemporarySlot& slot = temporarySlot(tempVar);
+	// Producer IR describes the stored representation. A consumer may pass the
+	// size of an aggregate pointee, which must never enlarge an address slot.
+	const int actual_size_bits = slot.size_bits > 0 ? slot.size_bits : size_in_bits;
+	const int64_t size_bytes = (static_cast<int64_t>(actual_size_bits) + 63) / 64 * 8;
+	if (actual_size_bits <= 0 || variable_scopes.empty()) {
+		throw InternalError("Temporary allocation requires sized function storage");
 	}
+	if (slot.offset != INT_MIN) {
+		return slot.offset;
+	}
+	const int64_t next_offset = static_cast<int64_t>(next_temp_var_offset_) + size_bytes;
+	const int64_t frame_bytes = current_function_named_vars_size_ + next_offset;
+	if (frame_bytes > INT_MAX) {
+		throw InternalError("Temporary storage exceeds the target stack displacement range");
+	}
+	next_temp_var_offset_ = static_cast<int32_t>(next_offset);
+	if (slot.size_bits == 0) {
+		slot.size_bits = actual_size_bits;
+	}
+	slot.offset = -static_cast<int32_t>(frame_bytes);
+	max_temp_var_index_ = std::max(max_temp_var_index_, tempVar.var_number);
+	variable_scopes.back().scope_stack_space = std::min(variable_scopes.back().scope_stack_space, slot.offset);
+	return slot.offset;
+}
 
-		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
-	if (!variable_scopes.empty()) {
-		auto* current_scope = &variable_scopes.back();
-		for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
-			auto existing_it = scope_it->variables.find(lookup_handle);
-			if (existing_it == scope_it->variables.end() || existing_it->second.offset == INT_MIN) {
-				continue;
-			}
-
-			int existing_offset = existing_it->second.offset;
-			current_scope->variables[lookup_handle].offset = existing_offset;
-
-				// Check if we need to extend the allocation for a larger size
-				// This can happen when a TempVar is first allocated with default size,
-				// then later used for a large struct (e.g., constructor call result)
-			int size_in_bytes = (actual_size_in_bits + 7) / 8;
-			size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
-
-			int32_t end_offset = existing_offset - size_in_bytes;
-			if (end_offset < current_scope->scope_stack_space) {
-				FLASH_LOG_FORMAT(Codegen, Debug,
-								 "Extending scope_stack_space from {} to {} for pre-allocated {} (offset={}, size={})",
-								 current_scope->scope_stack_space, end_offset, tempVar.name(), existing_offset, size_in_bytes);
-				current_scope->scope_stack_space = end_offset;
-			}
-
-			FLASH_LOG_FORMAT(Codegen, Debug,
-							 "TempVar {} already allocated at offset {}, size={} bytes",
-							 tempVar.name(), existing_offset, size_in_bytes);
-			return existing_offset;	// Use pre-allocated offset (if it's been properly set)
-		}
-
-			// CRITICAL FIX: If TempVar entry has INT_MIN, check if it corresponds to the most recently
-			// allocated named variable (tracked in handleVariableDecl)
-			// This handles the duplicate entry problem where named variables get both a name entry
-			// and a TempVar entry
-		auto it = current_scope->variables.find(lookup_handle);
-		if (it != current_scope->variables.end() && it->second.offset == INT_MIN) {
-			if (last_allocated_variable_name_.isValid() && last_allocated_variable_offset_ != 0) {
-					// Use the last allocated variable's offset for this TempVar
-					// Update the TempVar entry so future lookups are O(1)
-				it->second.offset = last_allocated_variable_offset_;
-				return last_allocated_variable_offset_;
-			}
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::patchWindowsStackProbe(uint32_t frame_size) {
+	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+		if (frame_size >= 4096) {
+			patchWindowsStackProbePrefix(textSectionData, windows_stack_probe_offset_, frame_size);
+			// Use a symbol relocation rather than a unified-text displacement: the
+			// caller can be moved into its own COMDAT section during finalization.
+			writer.add_relocation(windows_stack_probe_offset_ + 7, kWindowsStackProbeSymbol);
+			++windows_stack_probe_count_;
 		}
 	}
-		// Allocate TempVars sequentially after named_vars + shadow space
-		// Use next_temp_var_offset_ to track the next available slot
-		// Each TempVar gets size_in_bits bytes (rounded up to 8-byte alignment)
-		// Check temp_var_sizes_ for pre-calculated size (from calculateFunctionStackSpace)
-		// This ensures large struct returns are allocated with correct size from the start
-	StringHandle temp_var_handle = lookup_handle;
+}
 
-	int size_in_bytes = (actual_size_in_bits + 7) / 8;  // Round up to nearest byte
-	size_in_bytes = (size_in_bytes + 7) & ~7;	  // Round up to 8-byte alignment
-
-		// Advance next_temp_var_offset_ FIRST to reserve space for this allocation
-		// This ensures large structs don't overlap with previously allocated variables
-		// The offset points to the BASE of the struct (lowest address), and the struct
-		// extends UPWARD in memory by size_in_bytes
-	next_temp_var_offset_ += size_in_bytes;
-	int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
-
-		// Track the maximum TempVar index for stack size calculation
-	if (tempVar.var_number > max_temp_var_index_) {
-		max_temp_var_index_ = tempVar.var_number;
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitWindowsStackProbeHelper() {
+	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+		if (windows_stack_probe_count_ == 0) {
+			return;
+		}
+		// Emit after all ordinary function ranges have been finalized. This leaf
+		// helper does not modify RSP or nonvolatile registers, so Windows unwinds
+		// it through its return address without a separate unwind record.
+		writer.add_static_text_symbol(kWindowsStackProbeSymbol, static_cast<uint32_t>(textSectionData.size()));
+		emitMovRegReg(X64Register::R10, X64Register::RSP);
+		emitAddImmToReg(textSectionData, X64Register::R10, 8); // Account for CALL's return address.
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::NEG, X64Register::R11, 64);
+		emitAddRegs(textSectionData, X64Register::R11, X64Register::R10);
+		const size_t loop_start = textSectionData.size();
+		emitAddImmToReg(textSectionData, X64Register::R10, -4096);
+		emitCmpRegReg(X64Register::R10, X64Register::R11);
+		emitJumpIfBelow(5); // Skip the page read and backward jump to read the target.
+		emitCmpRegWithMem(X64Register::RAX, X64Register::R10);
+		const int64_t loop_offset = static_cast<int64_t>(loop_start) - static_cast<int64_t>(textSectionData.size()) - 2;
+		assert(loop_offset >= -128 && loop_offset <= 127);
+		emitJumpUnconditional(static_cast<int8_t>(loop_offset));
+		emitCmpRegWithMem(X64Register::RAX, X64Register::R11);
+		emitRet();
 	}
-
-		// Extend scope_stack_space if the computed offset exceeds current allocation
-		// This ensures assertions checking scope_stack_space <= offset remain valid
-		// NOTE: offset is the LOWEST address of the allocation (next_temp_var_offset_ was
-		// already incremented above), so it is itself the end_offset we must track.
-	int32_t end_offset = offset;
-	if (end_offset < variable_scopes.back().scope_stack_space) {
-		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "Extending scope_stack_space from {} to {} for {} (offset={}, size={})",
-						 variable_scopes.back().scope_stack_space, end_offset, tempVar.name(), offset, size_in_bytes);
-		variable_scopes.back().scope_stack_space = end_offset;
-	}
-
-		// Register the TempVar's offset in variables map so subsequent lookups
-		// return the same offset even if scope_stack_space changes
-		// Note: temp_var_handle was already created above for the size lookup
-	variable_scopes.back().variables[temp_var_handle].offset = offset;
-
-	return offset;
 }
 
 template <class TWriterClass>
@@ -4457,12 +4398,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Get result offset - use actual return size for proper stack allocation
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "handleFunctionCall: allocating result {} (var_number={}) with return_size_in_bits={}",
-						 call_op.result.name(), call_op.result.var_number, return_size_bits);
+						 call_op.result.var_number, call_op.result.var_number, return_size_bits);
 		int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, return_size_bits);
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "handleFunctionCall: result_offset={} for {} (var_number={})",
-						 result_offset, call_op.result.name(), call_op.result.var_number);
-		variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
+						 result_offset, call_op.result.var_number, call_op.result.var_number);
+		temporarySlot(call_op.result).offset = result_offset;
 
 			// Platform-specific format check for ABI differences
 		constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
@@ -4952,7 +4893,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 			FLASH_LOG_FORMAT(Codegen, Debug,
 							 "FunctionCall result: {} is_prvalue={}",
-							 call_op.result.name(), is_prvalue_return);
+							 call_op.result.var_number, is_prvalue_return);
 
 			// Store return value - RAX for integers, XMM0 for floats.
 			// `const void*` is TypeCategory::Void with a 64-bit pointer size; skipping
@@ -5721,7 +5662,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 	assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
 	const TempVar& result_var = std::get<TempVar>(op.result.value);
 	int result_offset = getStackOffsetFromTempVar(result_var);
-	variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
+	temporarySlot(result_var).offset = result_offset;
 
 		// Get object offset
 	int object_offset = 0;
@@ -7025,8 +6966,6 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 		// REMOVED: Flawed TempVar linking heuristic
 		// Track the most recently allocated named variable for TempVar linking
-		//last_allocated_variable_name_ = var_name_str;
-		//last_allocated_variable_offset_ = var_it->second.offset;
 
 	if (is_reference) {
 			// For references, we need to determine the size of the VALUE being referenced,
@@ -7689,11 +7628,11 @@ void IrToObjConverter<TWriterClass>::emitCurrentFunctionUnwind(uint32_t function
 		flushPendingGlobalRelocationsForCurrentFunction(current_function_offset_, function_length);
 		std::span<const uint8_t> text_bytes(textSectionData.data() + current_function_offset_, function_length);
 		writer.emitNativeVagueLinkageFunction(StringTable::getStringView(current_function_mangled_name_), text_bytes);
-		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), 0, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack);
+		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), 0, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack, kWindowsStackProbePrefixSize);
 		writer.finishNativeComdatFunction();
 		textSectionData.resize(current_function_offset_);
 	} else {
-		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack);
+		writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, total_stack, kWindowsStackProbePrefixSize);
 	}
 }
 
@@ -7816,6 +7755,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		if (total_stack % 16 != 0) {
 			total_stack = (total_stack + 15) & ~static_cast<size_t>(15);
 		}
+
+		checkedStackFrameSize(total_stack);
+		patchWindowsStackProbe(static_cast<uint32_t>(total_stack));
 
 		emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 
@@ -7972,12 +7914,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// TempVars are now pre-counted in calculateFunctionStackSpace, include them in total
 		// Also include outgoing_args_space for function calls made from this function
 		// Note: named_vars_size already includes parameter home space, so don't add shadow_stack_space
-	uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.temp_vars_size + func_stack_space.outgoing_args_space;
+	uint64_t total_stack_bytes = static_cast<uint64_t>(func_stack_space.named_vars_size) +
+		func_stack_space.temp_vars_size + func_stack_space.outgoing_args_space;
 
 		// Even if parameters stay in registers, we need space to spill them if needed
 		// Member functions have implicit 'this' pointer as first parameter
-	if (param_count > 0 && total_stack_space < param_count * 8) {
-		total_stack_space = static_cast<uint32_t>(param_count * 8);
+	if (param_count > 0 && total_stack_bytes < param_count * 8) {
+		total_stack_bytes = param_count * 8;
 	}
 
 		// Ensure stack alignment to 16 bytes
@@ -7986,11 +7929,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// Windows x64: Different alignment rules, keep existing 16-byte alignment
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			// Round up to 16k + 8 form for System V AMD64
-		total_stack_space = ((total_stack_space + 7) & -16) + 8;
+		total_stack_bytes = ((total_stack_bytes + 7) & ~uint64_t{15}) + 8;
 	} else {
 			// Round up to 16k form for Windows x64
-		total_stack_space = (total_stack_space + 15) & -16;
+		total_stack_bytes = (total_stack_bytes + 15) & ~uint64_t{15};
 	}
+	const uint32_t total_stack_space = checkedStackFrameSize(total_stack_bytes);
 
 		// Save function prologue information before setup
 	current_function_offset_ = static_cast<uint32_t>(textSectionData.size());
@@ -8293,6 +8237,10 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// For non-EH functions: push rbp; mov rbp, rsp; sub rsp, N (traditional style).
 		// Always generate prologue - even if total_stack_space is 0, we need RBP for parameter access
 	textSectionData.push_back(0x55); // push rbp
+	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+		windows_stack_probe_offset_ = static_cast<uint32_t>(textSectionData.size());
+		emitWindowsStackProbePlaceholder(textSectionData);
+	}
 
 		// Track CFI: After push rbp, CFA = RSP+16, RBP at CFA-16
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -8409,11 +8357,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		if (!current_function_reserved_catch_ref_temps_.empty()) {
 			const uint32_t base_named_vars_size = current_function_named_vars_size_ - current_function_reserved_catch_ref_temp_size_ - current_function_reserved_catch_obj_padding_size_ - current_function_reserved_catch_return_slot_size_;
 			uint32_t reserved_offset = 8;
-			for (StringHandle temp_handle : current_function_reserved_catch_ref_temps_) {
+			for (size_t temp_number : current_function_reserved_catch_ref_temps_) {
 				int32_t offset = -(static_cast<int32_t>(base_named_vars_size) + static_cast<int32_t>(reserved_offset));
-				auto& temp_info = variable_scopes.back().variables[temp_handle];
+				auto& temp_info = temporarySlot(TempVar{temp_number});
 				temp_info.offset = offset;
-				temp_info.size_in_bits = SizeInBits{64};
+				temp_info.size_bits = 64;
 				reserved_offset += 8;
 			}
 		}
@@ -9201,13 +9149,13 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 			} else if (std::holds_alternative<TempVar>(ret_val)) {
 					// Handle temporary variable (stored on stack)
 				auto return_var = std::get<TempVar>(ret_val);
-				auto temp_var_name = StringTable::getOrInternStringHandle(return_var.name());
+				const int32_t return_offset = getStackOffsetFromTempVar(return_var, ret_op.return_size);
 				const StackVariableScope& current_scope = variable_scopes.back();
-				auto it = current_scope.variables.find(temp_var_name);
+				const int return_size_bits = temporarySlot(return_var).size_bits;
 
 				FLASH_LOG_FORMAT(Codegen, Debug,
-								 "handleReturn TempVar path: return_var={}, found_in_scope={}",
-								 return_var.name(), (it != current_scope.variables.end()));
+								 "handleReturn TempVar path: return_var={}, offset={}",
+								 return_var.var_number, return_offset);
 
 					// Check if return type is float/double
 				bool is_float_return =
@@ -9402,8 +9350,8 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 
 				if (handled_reference_return) {
 						// Address already loaded into RAX for reference return
-				} else if (it != current_scope.variables.end()) {
-					int var_offset = it->second.offset;
+				} else {
+					int var_offset = return_offset;
 
 						// Ensure stack space is allocated for large structs being returned
 						// The TempVar might have been pre-allocated with default size, so re-check with actual size
@@ -9507,14 +9455,14 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					} else {
 							// Not a reference - normal variable return
 							// Get the actual size of the variable being returned
-						int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
+						int var_size = return_size_bits;
 
 							// Check if function uses hidden return parameter (RVO/NRVO)
 							// Only skip copy if this specific return value is RVO-eligible (was constructed via RVO)
 						bool is_rvo_eligible = isTempVarRVOEligible(return_var);
 						FLASH_LOG_FORMAT(Codegen, Debug,
 										 "Return statement check: hidden_param={}, rvo_eligible={}, return_var={}",
-										 current_function_has_hidden_return_param_, is_rvo_eligible, return_var.name());
+										 current_function_has_hidden_return_param_, is_rvo_eligible, return_var.var_number);
 
 						if (current_function_has_hidden_return_param_ && is_rvo_eligible) {
 							FLASH_LOG_FORMAT(Codegen, Debug,
@@ -9598,33 +9546,6 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								ret_op.return_type_index, SizeInBits{var_size}, var_offset,
 								regAlloc.tryGetStackVariableRegister(var_offset));
 						}
-					}
-				} else {
-						// Value not in variables - use fallback offset calculation
-					int var_offset = getStackOffsetFromTempVar(return_var);
-
-						// Get the actual size of the variable being returned
-					int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
-
-						// Check if function uses hidden return parameter (RVO/NRVO)
-						// For System V ABI: must return the hidden parameter (return slot address) in RAX
-					if (current_function_has_hidden_return_param_) {
-						FLASH_LOG(Codegen, Debug,
-								  "Return statement (fallback): function has hidden return parameter, loading return slot address into RAX");
-						auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
-						if (return_slot_it != variable_scopes.back().variables.end()) {
-							int return_slot_param_offset = return_slot_it->second.offset;
-							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-							emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
-						}
-					} else if (is_float_return) {
-							// Load floating-point value into XMM0
-						bool is_float = (ret_op.return_size == 32);
-						spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
-						emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
-					} else {
-						emitIntegerOrAggregateReturnValue(
-							ret_op.return_type_index, SizeInBits{var_size}, var_offset, std::nullopt);
 					}
 				}
 			} else if (std::holds_alternative<StringHandle>(ret_val)) {
@@ -9901,31 +9822,13 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 }
 
 template <class TWriterClass>
-void IrToObjConverter<TWriterClass>::handleStackAlloc([[maybe_unused]] const IrInstruction& instruction) {
-		// StackAlloc is not used in the current implementation
-		// Variables are allocated in handleVariableDecl instead
-		// Just return without doing anything
-	return;
-
-		// Get the size of the allocation
-		/*auto sizeInBytes = instruction.getOperandAs<int>(1) / 8;
-
-		// Ensure the stack remains aligned to 16 bytes
-		sizeInBytes = (sizeInBytes + 15) & -16;
-
-		// Generate the opcode for `sub rsp, imm32`
-		std::array<uint8_t, 7> subRspInst = { 0x48, 0x81, 0xEC };
-		std::memcpy(subRspInst.data() + 3, &sizeInBytes, sizeof(sizeInBytes));
-
-		// Add the instruction to the .text section
-		textSectionData.insert(textSectionData.end(), subRspInst.begin(), subRspInst.end());
-
-		// Add the identifier and its stack offset to the current scope
-		// With RBP-relative addressing, local variables use NEGATIVE offsets
-		StackVariableScope& current_scope = variable_scopes.back();
-		current_scope.current_stack_offset -= sizeInBytes;  // Move to next slot (going more negative)
-		int stack_offset = current_scope.current_stack_offset;
-		current_scope.variables[instruction.getOperandAs<std::string_view>(2)].offset = stack_offset;*/
+void IrToObjConverter<TWriterClass>::handleStackAlloc(const IrInstruction& instruction) {
+	const StackAllocOp& op = instruction.getTypedPayload<StackAllocOp>();
+	const auto* temp = std::get_if<TempVar>(&op.result);
+	if (temp == nullptr || op.size_in_bits.value <= 0) {
+		throw InternalError("StackAlloc requires sized numeric temporary storage");
+	}
+	getStackOffsetFromTempVar(*temp, op.size_in_bits.value);
 }
 
 template <class TWriterClass>
@@ -12257,7 +12160,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 		lhs_offset = getStackOffsetFromTempVar(lhs_var);
 		if (lhs_offset == -1) {
-			FLASH_LOG(Codegen, Error, "TempVar LHS with var_number=", lhs_var.var_number, " (name='", lhs_var.name(), "') not found");
+			FLASH_LOG(Codegen, Error, "TempVar LHS with var_number=", lhs_var.var_number, " (name='", lhs_var.var_number, "') not found");
 		}
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.lhs.value)) {
 		unsigned long long lhs_value = *ull_val;
@@ -12288,34 +12191,9 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 	if (const auto* string = std::get_if<StringHandle>(&op.lhs.value)) {
 		FLASH_LOG(Codegen, Debug, "LHS is string_view: '", *string, "'");
 	} else if (const auto* temp_var = std::get_if<TempVar>(&op.lhs.value)) {
-		FLASH_LOG(Codegen, Debug, "LHS is TempVar: '", temp_var->name(), "'");
+		FLASH_LOG(Codegen, Debug, "LHS is TempVar: '", temp_var->var_number, "'");
 	} else {
 		FLASH_LOG(Codegen, Debug, "LHS is other type");
-	}
-
-		// If not found with TempVar offset and LHS is a TempVar, try looking up by name
-	if (!lhs_ref_info.has_value() && std::holds_alternative<TempVar>(op.lhs.value)) {
-		TempVar lhs_var = std::get<TempVar>(op.lhs.value);
-		std::string_view var_name = lhs_var.name();
-		FLASH_LOG(Codegen, Debug, "LHS is TempVar with name: '", var_name, "'");
-			// Remove the '%' prefix if present
-		if (!var_name.empty() && var_name[0] == '%') {
-			var_name = var_name.substr(1);
-			FLASH_LOG(Codegen, Debug, "After removing %, name: '", var_name, "'");
-		}
-		auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
-		if (named_var_it != variable_scopes.back().variables.end()) {
-			int32_t named_offset = named_var_it->second.offset;
-			FLASH_LOG(Codegen, Debug, "Found in named vars at offset: ", named_offset);
-			lhs_ref_info = getIndirectStackInfo(named_offset);
-			if (lhs_ref_info.has_value()) {
-					// Found it! Update lhs_offset to use the named variable offset
-				lhs_offset = named_offset;
-				FLASH_LOG(Codegen, Debug, "Found reference info at named offset!");
-			}
-		} else {
-			FLASH_LOG(Codegen, Debug, "Not found in named vars");
-		}
 	}
 
 	FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", lhs_ref_info.has_value(), ", lhs.is_reference=", op.lhs.is_reference());
@@ -12386,7 +12264,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
 				// RHS is a TempVar
 			TempVar rhs_var = std::get<TempVar>(op.rhs.value);
-			FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is TempVar: '", rhs_var.name(), "'");
+			FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is TempVar: '", rhs_var.var_number, "'");
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 				// Check if RHS is a reference (but not address-only)
 			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
@@ -12497,29 +12375,6 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 			// Check if RHS is a reference - if so, dereference it
 		auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
-
-			// If not found with TempVar offset, try looking up by name
-			// This handles the case where TempVar offset differs from named variable offset
-		if (!rhs_ref_info.has_value()) {
-			std::string_view var_name = rhs_var.name();
-				// Remove the '%' prefix if present
-			if (!var_name.empty() && var_name[0] == '%') {
-				var_name = var_name.substr(1);
-			}
-				// Only try to match if this looks like it could be a named variable
-				// (not a pure temporary like "temp_10")
-			if (!var_name.empty() && var_name.find("temp_") != 0) {
-				auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
-				if (named_var_it != variable_scopes.back().variables.end()) {
-					int32_t named_offset = named_var_it->second.offset;
-					rhs_ref_info = getIndirectStackInfo(named_offset);
-					if (rhs_ref_info.has_value()) {
-							// Found it! Update rhs_offset to use the named variable offset
-						rhs_offset = named_offset;
-					}
-				}
-			}
-		}
 
 		if (rhs_ref_info.has_value() &&
 			op.dereference_rhs_references &&
@@ -13699,7 +13554,7 @@ void IrToObjConverter<TWriterClass>::handleStringLiteral(const IrInstruction& in
 	// Add string literal to .rdata and get symbol
 	std::string_view symbol_name = writer.add_string_literal(op.content);
 	int64_t stack_offset = getStackOffsetFromTempVar(result_var);
-	variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = stack_offset;
+	temporarySlot(result_var).offset = stack_offset;
 
 	// LEA RAX, [RIP + symbol] with relocation
 	uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
@@ -13795,15 +13650,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 	// Get the result variable's stack offset (needed for both paths)
 	auto result_var = std::get<TempVar>(op.result.value);
 	int32_t result_offset;
-	StringHandle result_var_handle = StringTable::getOrInternStringHandle(result_var.name());
-	auto it = current_scope.variables.find(result_var_handle);
-	if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
-		result_offset = it->second.offset;
-	} else {
-		// Allocate stack space for the result TempVar (or if offset is sentinel INT_MIN)
-		result_offset = allocateStackSlotForTempVar(result_var.var_number);
-		// Note: allocateStackSlotForTempVar already updates the variables map
-	}
+	result_offset = getStackOffsetFromTempVar(result_var);
 
 	// Non-union struct members must preserve their address so nested member access keeps
 	// using the subobject as an aggregate base instead of loading raw bytes as though
@@ -13901,7 +13748,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 								   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 			regAlloc.release(temp_reg);
-			variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = float_result_offset;
+			temporarySlot(result_var).offset = float_result_offset;
 			return;
 		} else {
 			// For integers: use standard integer load
@@ -13944,7 +13791,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			// Store loaded value to result_offset for later use (e.g., indirect_call)
 			emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 			regAlloc.release(temp_reg);
-			variable_scopes.back().variables[result_var_handle].offset = result_offset;
+			temporarySlot(result_var).offset = result_offset;
 			return;
 		}
 	} else if (is_pointer_access) {
@@ -14000,7 +13847,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		// Store loaded value to result_offset for later use (e.g., indirect_call)
 		emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 		regAlloc.release(temp_reg);
-		variable_scopes.back().variables[result_var_handle].offset = result_offset;
+		temporarySlot(result_var).offset = result_offset;
 		return;
 	} else {
 		// For regular struct variables on the stack, load from computed offset
@@ -14031,7 +13878,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 	// avoiding aliasing the TempVar to the struct member location.
 	emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 	regAlloc.release(temp_reg);
-	variable_scopes.back().variables[result_var_handle].offset = result_offset;
+	temporarySlot(result_var).offset = result_offset;
 	return;
 }
 
@@ -15298,9 +15145,9 @@ void IrToObjConverter<TWriterClass>::handleConditionalBranch(const IrInstruction
 
 			// Look up the actual size of this temp var (default to 32 if not found)
 		int load_size = 32;
-		auto size_it = temp_var_sizes_.find(StringTable::getOrInternStringHandle(temp_var.name()));
-		if (size_it != temp_var_sizes_.end()) {
-			load_size = size_it->second;
+		const int size_bits = temporarySlot(temp_var).size_bits;
+		if (size_bits > 0) {
+			load_size = size_bits;
 		}
 
 			// For narrow conditions (bool8/16/32), always reload into RAX using size-aware MOV
@@ -15450,7 +15297,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 
 		// Get result offset
 	int result_offset = allocateStackSlotForTempVar(op.result.var_number, return_size_bits);
-	variable_scopes.back().variables[StringTable::getOrInternStringHandle(op.result.name())].offset = result_offset;
+	temporarySlot(op.result).offset = result_offset;
 
 	constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 	const size_t max_int_regs = is_coff_format ? 4 : 6;
@@ -17499,6 +17346,9 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			total_stack = (total_stack + 15) & ~15;	// Round up to next 16n
 		}
 
+		checkedStackFrameSize(total_stack);
+		patchWindowsStackProbe(static_cast<uint32_t>(total_stack));
+
 		emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 
 				// Windows EH (MSVC ABI): the establisher-frame size is capped at 15*16=240 bytes
@@ -17615,6 +17465,8 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type, reloc.addend);
 	}
 	pending_global_relocations_.clear();
+
+	emitWindowsStackProbeHelper();
 
 	writer.add_data(textSectionData, SectionType::TEXT);
 	if constexpr (std::is_same_v<TWriterClass, ObjectFileWriter>) {
