@@ -1980,7 +1980,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 	};
 	std::vector<VarDecl> local_vars;
 
-		// Clear temp_var_sizes for this function
+		// Reset numeric temporary storage for this function, retaining capacity.
 	temporary_slots_.clear();
 
 		// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
@@ -2258,7 +2258,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 				// Try CallOp (function calls)
 				else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-					if (call_op->returnType() != TypeCategory::Void) {
+					if (!call_op->returnsValuelessVoid()) {
 						recordTemporarySize(call_op->result, call_op->return_size_in_bits.value);
 					}
 					handled_by_typed_payload = true;
@@ -2491,7 +2491,6 @@ int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVa
 		slot.size_bits = actual_size_bits;
 	}
 	slot.offset = -static_cast<int32_t>(frame_bytes);
-	max_temp_var_index_ = std::max(max_temp_var_index_, tempVar.var_number);
 	variable_scopes.back().scope_stack_space = std::min(variable_scopes.back().scope_stack_space, slot.offset);
 	return slot.offset;
 }
@@ -4397,12 +4396,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 			// Get result offset - use actual return size for proper stack allocation
 		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "handleFunctionCall: allocating result {} (var_number={}) with return_size_in_bits={}",
-						 call_op.result.var_number, call_op.result.var_number, return_size_bits);
+						 "handleFunctionCall: allocating temporary {} with return_size_in_bits={}",
+						 call_op.result.var_number, return_size_bits);
 		int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, return_size_bits);
 		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "handleFunctionCall: result_offset={} for {} (var_number={})",
-						 result_offset, call_op.result.var_number, call_op.result.var_number);
+						 "handleFunctionCall: result_offset={} for temporary {}",
+						 result_offset, call_op.result.var_number);
 		temporarySlot(call_op.result).offset = result_offset;
 
 			// Platform-specific format check for ABI differences
@@ -4898,11 +4897,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Store return value - RAX for integers, XMM0 for floats.
 			// `const void*` is TypeCategory::Void with a 64-bit pointer size; skipping
 			// that store drops the callee's RAX before the caller compares it.
-		const bool returns_valueless_void =
-			call_op.return_type_index.category() == TypeCategory::Void &&
-			!call_op.returns_reference &&
-			!(call_op.return_size_in_bits.is_set() && call_op.return_size_in_bits.value > 0);
-		if (!returns_valueless_void && !call_op.usesReturnSlot()) {
+		if (!call_op.returnsValuelessVoid() && !call_op.usesReturnSlot()) {
 			if (call_op.returns_reference) {
 					// A reference result is a 64-bit pointer in RAX, never a by-value
 					// aggregate. Store it directly; running SysV struct classification
@@ -6964,9 +6959,6 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		tempvar_indirect_stack_info_.erase(var_it->second.offset);
 	}
 
-		// REMOVED: Flawed TempVar linking heuristic
-		// Track the most recently allocated named variable for TempVar linking
-
 	if (is_reference) {
 			// For references, we need to determine the size of the VALUE being referenced,
 			// not the size of the reference itself (which is always 64 bits for a pointer)
@@ -7550,7 +7542,6 @@ uint16_t IrToObjConverter<TWriterClass>::getX64RegisterCodeViewCode(X64Register 
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::resetFunctionState() {
-	max_temp_var_index_ = 0;
 	next_temp_var_offset_ = 8;
 	current_function_reserved_catch_ref_temp_size_ = 0;
 	current_function_reserved_catch_ref_temps_.clear();
@@ -12160,7 +12151,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 		lhs_offset = getStackOffsetFromTempVar(lhs_var);
 		if (lhs_offset == -1) {
-			FLASH_LOG(Codegen, Error, "TempVar LHS with var_number=", lhs_var.var_number, " (name='", lhs_var.var_number, "') not found");
+			FLASH_LOG(Codegen, Error, "TempVar LHS with var_number=", lhs_var.var_number, " not found");
 		}
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.lhs.value)) {
 		unsigned long long lhs_value = *ull_val;

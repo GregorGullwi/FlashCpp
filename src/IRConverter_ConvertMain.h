@@ -1115,7 +1115,6 @@ private:
 	uint32_t current_function_prologue_offset_ = 0;	// Offset of SUB RSP instruction for patching
 	uint32_t windows_stack_probe_offset_ = 0;
 	uint32_t windows_stack_probe_count_ = 0;
-	size_t max_temp_var_index_ = 0;	// Highest TempVar number used (for stack size calculation)
 	int next_temp_var_offset_ = 8;  // Next available offset for TempVar allocation (starts at 8, increments by 8)
 	uint32_t current_function_named_vars_size_ = 0;	// Size of named vars + shadow space for current function
 	uint32_t current_function_reserved_catch_ref_temp_size_ = 0;	 // Windows FH3 reference-catch slots kept near named vars

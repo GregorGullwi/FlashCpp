@@ -523,6 +523,12 @@ struct CallOp {
 	bool usesReturnSlot() const {
 		return return_slot.has_value();
 	}
+	// Void pointers carry a sized value despite their Void base category.
+	bool returnsValuelessVoid() const {
+		return returnType() == TypeCategory::Void && !returns_reference &&
+			!(return_size_in_bits.is_set() && return_size_in_bits.value > 0);
+	}
+
 };
 
 // Member access (load member from struct/class)

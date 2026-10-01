@@ -45,7 +45,7 @@ TEST_CASE("Windows unwind offsets include a probe prefix after PUSH RBP") {
 		34, 0x01, 0xe2, 0x01, 27, 0x03, 19, 0x01, 30, 0, 1, 0x50};
 	CHECK(split.codes == split_codes);
 
-	// Generated funclets publish zero prefix; their offsets must stay unchanged.
+	// A zero prefix preserves the original unwind offsets as a boundary case.
 	const auto plain = writer.build_unwind_codes(false, 64, 0);
 	const std::vector<uint8_t> plain_codes{11, 0x72, 4, 0x03, 1, 0x50, 0, 0};
 	CHECK(plain.prolog_size == 11);
