@@ -11453,16 +11453,19 @@ void IrToObjConverter<TWriterClass>::handleZeroExtend(const IrInstruction& instr
 		// Allocate result register
 	X64Register result_reg = allocateRegisterWithSpilling();
 
-		// Generate movzx instruction
-	if (fromSize == 8 && toSize == 32) {
-			// movzx r32, r8: 0F B6 /r
+// Generate movzx instruction.  The opcode follows the source width: B6
+		// zero-extends a byte, B7 a word.  Both widths are widened all the way to
+		// a qword destination, because encodeRegToRegInstruction's default
+		// include_rex_w supplies the REX.W that makes the result 64-bit clean.
+		// Only widening to 32 was listed here before, so an 8- or 16-bit source
+		// going to a 64-bit integer fell into the plain-mov fallback below, which
+		// copies just the low bits and leaves the upper half of the result holding
+		// whatever the register already contained. That is why a cast such as
+		// (unsigned long)some_unsigned_char read uninitialized register bits.
+	if (fromSize == 8 || fromSize == 16) {
 		auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
-		std::array<uint8_t, 4> movzx = {encoding.rex_prefix, 0x0F, 0xB6, encoding.modrm_byte};
-		textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
-	} else if (fromSize == 16 && toSize == 32) {
-			// movzx r32, r16: 0F B7 /r
-		auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
-		std::array<uint8_t, 4> movzx = {encoding.rex_prefix, 0x0F, 0xB7, encoding.modrm_byte};
+		const uint8_t movzx_opcode = (fromSize == 8) ? 0xB6 : 0xB7;
+		std::array<uint8_t, 4> movzx = {encoding.rex_prefix, 0x0F, movzx_opcode, encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
 	} else if (fromSize == 32 && toSize == 64) {
 			// mov r32, r32 (implicitly zero-extends to 64 bits on x86-64)

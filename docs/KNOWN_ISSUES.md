@@ -210,9 +210,10 @@ The two paths disagree in both directions rather than one being a superset:
 
 Two measurement traps, both of which produce nonsense rather than the
 disagreement being looked for, and both worth knowing before building another
-differential here. Assigning a trait result to `bool` and using one as a
-conditional are unreliable (see the next entry), so a harness that writes
-`v[i] = trait(X) ? 1 : 0` measures the harness, not the trait. And a chunk of
+differential here. Assigning a trait result to `bool` or using one as a
+conditional is unreliable, because the `(int)` cast in such a harness is itself
+broken (see the `bool` cast entry below), so `v[i] = trait(X) ? 1 : 0` measures the
+harness, not the trait. And a chunk of
 `static_assert`s stops at its first failure, so per-chunk folded counts report
 one mismatch per chunk rather than the real number; only a file per cell gives
 the true count.
@@ -225,30 +226,75 @@ flags. The consolidation in this change removes the duplicate code-generation
 implementations so there is one rule left to correct, but it does not by itself
 correct any answer.
 
-## `bool` locals read back as uninitialized garbage in some functions
+## A cast whose source is `bool` is dropped, so the result reads uninitialized memory
 
-Measured on 2026-09-30. In a function with several `bool` locals and a call that
-takes several of their values, reading a `bool` local yields nondeterministic
-stack garbage, varying between runs of the same binary, while the same program
-compiled with clang prints the correct values:
+`generateStaticCastIr` guards its integer width-mismatch path with
+`is_integer_type()`, and that predicate omits `TypeCategory::Bool`. C++20
+[conv.integral]/1 counts `bool` as an integer type, but the predicate exists for
+call sites that want "has a rank and a signedness", so it leaves `bool` out.
+A cast out of `bool` therefore misses the guard and falls through to the
+metadata-only retype at the end of the function: the operand keeps its 8-bit
+storage while the result claims the target's width, and every wider read then
+takes whatever sits beside the 8-bit slot.
 
-    bool gb = true;
-    int main() {
-        int p = true ? 1 : 0;          // 1  correct
-        int q = __is_empty(E) ? 1 : 0; // 1  correct
-        bool s = gb;                   // reads back as garbage
-        bool t = __is_empty(E);        // reads back as garbage
-        printf("%d %d %d %d", p, q, (int)s, (int)t);
-    }
+This was first recorded as an unminimized `bool`-storage bug, on the belief that
+it did not reduce below a function with several `bool` locals and a call taking
+their values. That belief was wrong. Delta-debugging reduces it to two statements:
 
-Nondeterminism across runs means a store is being dropped rather than a value
-being miscomputed, and `sizeof(bool)` is correct at 1, so this is not a width
-mismatch. It does not reproduce in the minimal forms: a single `bool` local, a
-single trait-to-`bool` assignment, and a `bool` local initialised from a literal
-each behave correctly, and dropping the `bool` locals from the reproducer above
-makes it pass. A minimal reduction is owed before this can be diagnosed; do not
-assume it is the same root cause as the 256-temporary limit, which does not fire
-in this reproducer.
+    bool t = gb;
+    printf("%d\n", (int)t);   // garbage; without the cast, or with a char or
+                              // short in place of bool, it prints 1
+
+The `bool` local was always fine. The minimizer missed it because the harness it
+generated used the broken `(int)` cast itself, so every candidate came out equally
+broken and read as a non-reproducer. When reducing a miscompile, the harness must
+be checked against a reference compiler first, or it will keep reproducing the
+defect it is meant to isolate.
+
+Every cast from `bool` to a wider type is affected, in every context, and the
+value is nondeterministic:
+
+    bool b = true;
+    int x = (int)b;            // garbage
+    printf("%d\n", (int)b);   // garbage
+    f((int)b);                 // garbage, for any f taking int
+    static_cast<int>(b);       // garbage
+    (long)b, (double)b         // garbage
+
+The width-mismatch case is the one that matters and the fix is to spell these two
+guards with a predicate that counts `bool`, and let `generateTypeConversion` own
+the extension. That has been tried and is correct in isolation - `(int)b`,
+`(long)b`, `(double)b` and `static_cast<int>(b)` all become correct, and a
+33-assertion regression goes from 18 failures to none - but it is **not landed**,
+because it triggers the spill defect below and would trade one miscompilation for
+another. Widening `is_integer_type()` itself is not the fix: that predicate has
+22 uses including pointer arithmetic, a struct-size heuristic, and a type trait
+that deliberately excludes `bool`.
+
+## A register spill can be emitted against an uninitialized base register
+
+Found while fixing the `bool`-cast defect above, and not yet root-caused. Once
+the `bool`-cast fix starts emitting real conversion instructions, a function with
+a handful of them allocates into the extended registers and the spill sequence
+goes wrong: the emitted code stores through a register that a preceding `call` has
+already clobbered, so the store faults.
+
+Minimal reproducer on a build carrying the `bool`-cast fix, four `check(...)`
+calls that mix `(int)b`, `(unsigned)b` and `(long)b`:
+
+    movzbl -0x29(%rbp),%r8d
+    movzbq %r8b,%r9
+    mov    %edx,(%rdx)      <-- base register is stale, faults here
+    mov    %r9d,-0x89(%rbp)
+
+Each of those four casts is individually correct, and so is the reproducer with
+any one of the first three removed, which is the signature of a register-pressure
+threshold rather than a bad instruction sequence. Plainly register-heavy code
+with no casts in it does not reproduce it, so it is not simply "too many
+registers"; something in the spill path picks a wrong base. A minimal reduction is
+owed before this can be diagnosed. Note that the spill is emitted *between* the
+conversion and the store of its result, so the fix for the `bool` cast and this
+defect have to land together.
 
 ## Functions that need more than 256 temporaries are miscompiled
 
