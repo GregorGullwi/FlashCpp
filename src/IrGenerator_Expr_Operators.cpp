@@ -3889,17 +3889,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
 			AssignmentOp assign_op;
 			assign_op.result = std::get<TempVar>(lhsExprResult.value);
-			assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, std::get<TempVar>(lhsExprResult.value));
+			assign_op.lhs = toTypedValue(lhsExprResult);
 
-			// Check if LHS TempVar corresponds to a reference variable
 			TempVar lhs_temp = std::get<TempVar>(lhsExprResult.value);
-			std::string_view temp_name = lhs_temp.name();
-			// Remove '%' prefix if present
-			if (!temp_name.empty() && temp_name[0] == '%') {
-				temp_name = temp_name.substr(1);
-			}
-			if (isVariableReference(temp_name)) {
-				assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+			if (isTempVarReference(lhs_temp)) {
+				assign_op.lhs.ref_qualifier = isTempVarRValueReference(lhs_temp)
+					? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
 			}
 
 			assign_op.rhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, result_var);
@@ -3963,17 +3958,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			[[maybe_unused]] TempVar result_var = var_counter.next();
 			AssignmentOp assign_op;
 			assign_op.result = std::get<TempVar>(lhsExprResult.value);
-			assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, std::get<TempVar>(lhsExprResult.value));
+			assign_op.lhs = toTypedValue(lhsExprResult);
 
-			// Check if LHS TempVar corresponds to a reference variable
 			TempVar lhs_temp = std::get<TempVar>(lhsExprResult.value);
-			std::string_view temp_name = lhs_temp.name();
-			// Remove '%' prefix if present
-			if (!temp_name.empty() && temp_name[0] == '%') {
-				temp_name = temp_name.substr(1);
-			}
-			if (isVariableReference(temp_name)) {
-				assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+			if (isTempVarReference(lhs_temp)) {
+				assign_op.lhs.ref_qualifier = isTempVarRValueReference(lhs_temp)
+					? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
 			}
 
 			assign_op.rhs = toTypedValue(rhsExprResult);

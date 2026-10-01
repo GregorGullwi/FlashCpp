@@ -797,7 +797,7 @@ return_conversion_done:
 			if (isTempVarRVOEligible(return_temp)) {
 				FLASH_LOG_FORMAT(Codegen, Debug,
 								 "RVO opportunity detected: returning prvalue {} (constructor call result)",
-								 return_temp.name());
+								 return_temp.var_number);
 			}
 
 			// Mark the temp as a return value for potential NRVO analysis

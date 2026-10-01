@@ -327,13 +327,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		return {};
 
 	TempVar struct_tmp = var_counter.next();
-	StringHandle struct_tmp_handle = StringTable::getOrInternStringHandle(struct_tmp.name());
 
-	VariableDeclOp vdecl;
-	vdecl.type_index = TypeIndex(ret_spec.type_index().index(), ret_type);
-	vdecl.size_in_bits = ret_size;
-	vdecl.var_name = struct_tmp_handle;
-	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(vdecl), call_token));
+	StackAllocOp allocation;
+	allocation.type_index = TypeIndex(ret_spec.type_index().index(), ret_type);
+	allocation.size_in_bits = ret_size;
+	allocation.result = struct_tmp;
+	ir_.addInstruction(IrInstruction(IrOpcode::StackAlloc, std::move(allocation), call_token));
 
 	for (const auto& member : si->members) {
 		const std::string_view member_sv = StringTable::getStringView(member.getName());
@@ -344,13 +343,13 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		ms.value.setType(member.type_index.category());
 		ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.memberType())};
-		ms.object = struct_tmp_handle;
+		ms.object = struct_tmp;
 		ms.member_name = member.getName();
 		ms.offset = static_cast<int>(member.offset);
 		ms.struct_type_info = struct_type_info;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), call_token));
 	}
-	return makeExprResult(ret_spec.type_index().withCategory(ret_type), ret_size, IrOperand{struct_tmp_handle}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(ret_spec.type_index().withCategory(ret_type), ret_size, IrOperand{struct_tmp}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, ExpressionContext context) {

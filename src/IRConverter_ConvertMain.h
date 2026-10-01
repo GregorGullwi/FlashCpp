@@ -99,10 +99,10 @@ private:
 
 	// Calculate the total stack space needed for a function by analyzing its IR instructions
 	struct StackSpaceSize {
-		uint16_t temp_vars_size = 0;
-		uint16_t named_vars_size = 0;
-		uint16_t shadow_stack_space = 0;
-		uint16_t outgoing_args_space = 0;  // Space for largest outgoing function call
+		uint32_t temp_vars_size = 0;
+		uint32_t named_vars_size = 0;
+		uint32_t shadow_stack_space = 0;
+		uint32_t outgoing_args_space = 0;  // Space for largest outgoing function call
 	};
 	struct VariableInfo {
 		int offset = INT_MIN;  // Stack offset from RBP (INT_MIN = unallocated)
@@ -198,13 +198,9 @@ private:
 	// handles stack space tracking and offset registration.
 	int allocateStackSlotForTempVar(int32_t index, int size_in_bits = 64);
 
-	// Get stack offset for a TempVar using formula-based allocation.
-	// TempVars are allocated within the pre-allocated temp_vars space.
-	// The space starts after named_vars + shadow_space.
-	//
-	// This function also:
-	// - Extends scope_stack_space if the offset exceeds current tracked allocation
-	// - Registers the TempVar in variables for consistent subsequent lookups
+	// Get the function-local numeric slot, allocating it after named storage.
+	// Recorded producer sizes describe storage (including address slots), while
+	// size_in_bits supplies the size for an explicitly sized unrecorded producer.
 	int32_t getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits = 64);
 	SizeInBits getStackVariableLoadSizeBits(StringHandle variable_name) const;
 
@@ -1103,20 +1099,27 @@ private:
 	std::vector<size_t> reference_temp_var_numbers_;
 	// Map from variable names to their offsets (for reference lookup by name)
 	std::unordered_map<std::string, int32_t, TransparentStringHash, std::equal_to<>> variable_name_to_offset_;
-	// Track TempVar sizes from instructions that produce them (for correct loads in conditionals)
-	std::unordered_map<StringHandle, int> temp_var_sizes_;
-
-	// Track most recently allocated named variable for TempVar linking
-	StringHandle last_allocated_variable_name_;
-	int32_t last_allocated_variable_offset_ = 0;
+	struct TemporarySlot {
+		int32_t offset = INT_MIN;
+		int size_bits = 0;
+	};
+	// Function-local numeric identity. Dense storage avoids string interning and
+	// per-temporary hash nodes; clear() retains capacity for subsequent functions.
+	std::vector<TemporarySlot> temporary_slots_;
+	TemporarySlot& temporarySlot(TempVar temp);
+	void recordTemporarySize(TempVar temp, int size_bits);
+	void patchWindowsStackProbe(uint32_t frame_size);
+	void emitWindowsStackProbeHelper();
 
 	// Prologue patching for stack allocation
 	uint32_t current_function_prologue_offset_ = 0;	// Offset of SUB RSP instruction for patching
+	uint32_t windows_stack_probe_offset_ = 0;
+	uint32_t windows_stack_probe_count_ = 0;
 	size_t max_temp_var_index_ = 0;	// Highest TempVar number used (for stack size calculation)
 	int next_temp_var_offset_ = 8;  // Next available offset for TempVar allocation (starts at 8, increments by 8)
 	uint32_t current_function_named_vars_size_ = 0;	// Size of named vars + shadow space for current function
 	uint32_t current_function_reserved_catch_ref_temp_size_ = 0;	 // Windows FH3 reference-catch slots kept near named vars
-	std::vector<StringHandle> current_function_reserved_catch_ref_temps_;
+	std::vector<size_t> current_function_reserved_catch_ref_temps_;
 	uint32_t current_function_reserved_catch_obj_padding_size_ = 0;	// Padding to avoid FH3 dispCatchObj == 0 for by-value catch temps
 	uint32_t current_function_reserved_catch_return_slot_size_ = 0;	// Dedicated FH3 catch-funclet return spill/flag slots kept above temp vars
 

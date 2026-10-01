@@ -223,28 +223,6 @@ trap: a chunk of `static_assert`s stops at its first failure, so per-chunk folde
 counts under-report mismatches; use one assertion per cell when recreating the
 matrix.
 
-## Functions that need more than 256 temporaries are miscompiled
-
-`TempVar` numbers are unbounded, but `TempVar::name()` serves them from the
-fixed 256-entry `temp_name_array` and, on overflow, returns the single fallback
-string `temp_INVALID` (`src/IRTypes_Registers.h:155-158`). Every temporary past
-the limit therefore aliases to the same name, so the emitted code silently
-reuses one slot. This is miscompilation, not merely a bad diagnostic, and there
-is no diagnostic at the point where the limit is crossed.
-
-Measured on 2026-09-30 with a function that evaluates a type trait repeatedly:
-255 evaluations and fewer are correct, 256 is the first wrong answer. The
-threshold is exact and reproducible. A 280-cell type-trait differential loop
-produced outright wrong values at that size and segfaulted when run.
-
-Consequences for other work: a test or probe that evaluates more than 256
-type traits, or otherwise materializes more than 256 temporaries, in a single
-function cannot be trusted, and a differential built that way will report
-nonsense rather than the disagreement it is looking for. Chunk differential
-probes well below the limit. Fixing it means either growing the name table on
-demand or failing the function body when the limit is crossed; do not paper over
-it by returning a unique name per overflowing temporary.
-
 ## Static-member template initializer replay still re-parses source text
 
 Variable-template initializers now substitute structurally from the
@@ -525,3 +503,37 @@ partial ordering and constraint-based tie-breaking need their own boundary-5
 slice; until then a constrained-overload regression must stay within the
 prose-verified probe count and pair each constrained overload with an
 unconstrained fallback rather than with a second constrained overload.
+
+## Mixed aggregate return through a by-value function template corrupts a field
+
+A small reproducer, well below 256 temporaries, fails on the unchanged baseline
+as well as the current compiler:
+
+```cpp
+struct Payload { long long wide; double fraction; int small; };
+template<class T> T identity(T value) { return value; }
+int exercise(int input) {
+    Payload result = identity(Payload{0x123456789LL + input, 2.5, input});
+    long long wide = identity(result.wide) + 7;
+    return wide == 0x123456789LL + input + 7 ? 0 : 3;
+}
+int main() { return exercise(2); }
+```
+
+The wide-field check returns 3. Direct aggregate initialization passes. This
+requires a separate investigation of by-value aggregate argument/return storage;
+it is independent of numeric temporary identity.
+
+## Large function-template bodies exceed balanced-delimiter skipping's token limit
+
+`Parser::skip_balanced_delimiters` in `src/Parser_Core.cpp` stops after 10000
+tokens without checking that the delimiters are balanced. Capturing a sufficiently
+large function-template body therefore stops inside the body and later emits
+misleading parse errors. This reproduces on the unchanged baseline with a
+function template containing 833 repetitions of `total = total + (seed * 3 + 1);`
+followed by `return total;` (the exact statement threshold depends on the rest of
+the body). An ordinary function containing 4096 such statements compiles.
+
+The parser must finish capturing the balanced body, or report a deliberate limit
+instead of silently continuing from an incomplete capture. This is separate from
+temporary allocation and should be addressed in bounded parser control flow.
