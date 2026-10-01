@@ -172,6 +172,106 @@ only taking the address of a member function (including `bool b = &S::f;`) is.
 A proper fix must emit the member function's address with its mangled name and
 account for virtual member functions.
 
+## Record-property traits answer several cells wrongly
+
+Measured on 2026-09-30 with a 280-cell differential - 14 record-property traits
+over 20 record shapes, each cell compared against clang in both the
+constant-expression path (a per-cell `static_assert`) and the code-generation
+path (a plain `int v = trait(X);` assignment). Folded: 35 cells wrong. Lowered:
+23 cells wrong.
+
+The two paths disagree in both directions rather than one being a superset:
+
+- `__is_aggregate` is wrong only when folded. Twelve ordinary aggregates -
+  including `struct E {};`, `struct Agg { int; double; };`, and a struct with a
+  user-declared destructor - fold to false and lower to true. The
+  constant-expression path answers this trait itself and does not reach the
+  shared record rule.
+- `__has_virtual_destructor` is wrong on *different* cells in each path: folded
+  gets `struct VtD { virtual ~VtD(); };` wrong and lowered gets
+  `struct WithVB : virtual VirtBase` wrong. Lowered walks only direct non-virtual
+  bases and so misses an inherited virtual destructor from a virtual base;
+  folded misses the record's own destructor entirely.
+- The other 23 cells are wrong in both paths, which means they are defects in
+  one shared rule rather than a divergence:
+  - `__is_pod` - 7 shapes, including a union (reported non-POD), any derived
+    record with data members in two classes in the hierarchy, and any record
+    with a non-trivial destructor. The rule tests only vtables, constructors, and
+    same-class member access, so it misses triviality and the base-class rules.
+  - `__is_standard_layout` - 3 shapes: a union, and two derived records whose
+    hierarchy has data members in more than one class. The rule rejects every
+    union outright and never inspects base classes.
+  - `__is_trivially_destructible` and `__has_trivial_destructor` - the same 6
+    shapes each, and wrong in *both* directions. A record with a virtual
+    function and no destructor is reported non-trivially destructible, because
+    the rule treats a vtable as making the destructor non-trivial; a record
+    whose *member* has a non-trivial destructor is reported trivially
+    destructible, because the rule never looks at members.
+
+Two measurement traps, both of which produce nonsense rather than the
+disagreement being looked for, and both worth knowing before building another
+differential here. Assigning a trait result to `bool` and using one as a
+conditional are unreliable (see the next entry), so a harness that writes
+`v[i] = trait(X) ? 1 : 0` measures the harness, not the trait. And a chunk of
+`static_assert`s stops at its first failure, so per-chunk folded counts report
+one mismatch per chunk rather than the real number; only a file per cell gives
+the true count.
+
+Fixing this is the triviality and lifetime family work already named in
+[the migration ledger](MIGRATION_PROGRESS.md): the destructor and copyability
+rules need the published member-property schema, because they have to walk
+members and bases by identity rather than by re-deriving the rules from flat
+flags. The consolidation in this change removes the duplicate code-generation
+implementations so there is one rule left to correct, but it does not by itself
+correct any answer.
+
+## `bool` locals read back as uninitialized garbage in some functions
+
+Measured on 2026-09-30. In a function with several `bool` locals and a call that
+takes several of their values, reading a `bool` local yields nondeterministic
+stack garbage, varying between runs of the same binary, while the same program
+compiled with clang prints the correct values:
+
+    bool gb = true;
+    int main() {
+        int p = true ? 1 : 0;          // 1  correct
+        int q = __is_empty(E) ? 1 : 0; // 1  correct
+        bool s = gb;                   // reads back as garbage
+        bool t = __is_empty(E);        // reads back as garbage
+        printf("%d %d %d %d", p, q, (int)s, (int)t);
+    }
+
+Nondeterminism across runs means a store is being dropped rather than a value
+being miscomputed, and `sizeof(bool)` is correct at 1, so this is not a width
+mismatch. It does not reproduce in the minimal forms: a single `bool` local, a
+single trait-to-`bool` assignment, and a `bool` local initialised from a literal
+each behave correctly, and dropping the `bool` locals from the reproducer above
+makes it pass. A minimal reduction is owed before this can be diagnosed; do not
+assume it is the same root cause as the 256-temporary limit, which does not fire
+in this reproducer.
+
+## Functions that need more than 256 temporaries are miscompiled
+
+`TempVar` numbers are unbounded, but `TempVar::name()` serves them from the
+fixed 256-entry `temp_name_array` and, on overflow, returns the single fallback
+string `temp_INVALID` (`src/IRTypes_Registers.h:155-158`). Every temporary past
+the limit therefore aliases to the same name, so the emitted code silently
+reuses one slot. This is miscompilation, not merely a bad diagnostic, and there
+is no diagnostic at the point where the limit is crossed.
+
+Measured on 2026-09-30 with a function that evaluates a type trait repeatedly:
+255 evaluations and fewer are correct, 256 is the first wrong answer. The
+threshold is exact and reproducible. A 280-cell type-trait differential loop
+produced outright wrong values at that size and segfaulted when run.
+
+Consequences for other work: a test or probe that evaluates more than 256
+type traits, or otherwise materializes more than 256 temporaries, in a single
+function cannot be trusted, and a differential built that way will report
+nonsense rather than the disagreement it is looking for. Chunk differential
+probes well below the limit. Fixing it means either growing the name table on
+demand or failing the function body when the limit is crossed; do not paper over
+it by returning a unique name per overflowing temporary.
+
 ## Static-member template initializer replay still re-parses source text
 
 Variable-template initializers now substitute structurally from the

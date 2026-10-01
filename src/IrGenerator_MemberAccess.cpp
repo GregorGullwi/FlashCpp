@@ -2699,9 +2699,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 			ValueStorage::ContainsData);
 	};
 
-	if (traitNode.kind() == TypeTraitKind::IsAssignable ||
-		traitNode.kind() == TypeTraitKind::IsTriviallyAssignable ||
-		traitNode.kind() == TypeTraitKind::IsNothrowAssignable) {
+	if (isRecordPropertyTraitOwnedBySharedEvaluator(traitNode.kind())) {
 		TypeTraitResult eval_result = evaluateTypeTrait(traitNode);
 		return makeBoolTraitResult(eval_result.success && eval_result.value);
 	}
@@ -2872,87 +2870,11 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		}
 		break;
 
-	case TypeTraitKind::IsPolymorphic:
-		// A polymorphic class has at least one virtual function
-		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			result = struct_info && struct_info->has_vtable;
-		}
-		break;
 
-	case TypeTraitKind::IsFinal:
-		// A final class cannot be derived from; check the class-level 'final' specifier
-		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			result = struct_info->is_final;
-		}
-		break;
 
-	case TypeTraitKind::IsAbstract:
-		// An abstract class has at least one pure virtual function
-		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			result = struct_info && struct_info->is_abstract;
-		}
-		break;
 
-	case TypeTraitKind::IsEmpty:
-		// An empty class has no non-static data members (excluding empty base classes)
-		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			if (struct_info && !struct_info->is_union) {
-				// Check if there are no non-static data members
-				// and no virtual functions (vtable pointer would be a member)
-				result = struct_info->members.empty() && !struct_info->has_vtable;
-			}
-		}
-		break;
 
-	case TypeTraitKind::IsAggregate:
-		// An aggregate is:
-		// - An array type, or
-		// - A class type (struct/class/union) with:
-		//   - No user-declared or inherited constructors
-		//   - No private or protected non-static data members
-		//   - No virtual functions
-		//   - No virtual, private, or protected base classes
-		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			if (struct_info) {
-				result = struct_info->isAggregate();
-			}
-		}
-		// Arrays are aggregates
-		else if (pointer_depth == 0 && !is_reference && type_spec.is_array()) {
-			result = true;
-		}
-		break;
 
-	case TypeTraitKind::IsStandardLayout:
-		// A standard-layout class has specific requirements:
-		// - No virtual functions or virtual base classes
-		// - All non-static data members have same access control
-		// - No base classes with non-static data members
-		// - No base classes of the same type as first non-static data member
-		if (type == TypeCategory::Struct && type_spec.type_index().is_valid() &&
-			!is_reference && pointer_depth == 0) {
-			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-				if (!struct_info->is_union) {
-					// Basic check: no virtual functions
-					result = !struct_info->has_vtable;
-					// If all members have the same access specifier, it's a simple standard layout
-					if (result && struct_info->members.size() > 1) {
-						AccessSpecifier first_access = struct_info->members[0].access;
-						for (const auto& member : struct_info->members) {
-							if (member.access != first_access) {
-								result = false;
-								break;
-							}
-						}
-					}
-				}
-			}
-		}
-		// Scalar types are standard layout
-		else if (isScalarType(type_category, is_reference, pointer_depth)) {
-			result = true;
-		}
-		break;
 
 	case TypeTraitKind::HasUniqueObjectRepresentations:
 		// Types with no padding bits have unique object representations
@@ -2963,57 +2885,8 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// Note: float/double may have padding or non-unique representations
 		break;
 
-	case TypeTraitKind::IsTriviallyCopyable:
-		// A trivially copyable type can be copied with memcpy
-		// - Scalar types (arithmetic, pointers, enums)
-		// - Classes with no virtual, no user-defined copy/move ctors,
-		//   no user-defined copy/move assignment ops, no user-defined dtor,
-		//   and all base classes also trivially copyable
-		if (isScalarType(type_category, is_reference, pointer_depth)) {
-			result = true;
-		} else if (isIrStructType(toIrType(type)) &&
-				   type_spec.type_index().is_valid() &&
-				   !is_reference && pointer_depth == 0) {
-			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-			result = type_info ? isStructTriviallyCopyable(type_info->getStructInfo()) : false;
-		}
-		break;
 
-	case TypeTraitKind::IsTrivial:
-		// A trivial type is trivially copyable and has a trivial default constructor,
-		// and all base classes are also trivial.
-		if (isScalarType(type_category, is_reference, pointer_depth)) {
-			result = true;
-		} else if (isIrStructType(toIrType(type)) &&
-				   type_spec.type_index().is_valid() &&
-				   !is_reference && pointer_depth == 0) {
-			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-			result = type_info ? isStructTrivial(type_info->getStructInfo()) : false;
-		}
-		break;
 
-	case TypeTraitKind::IsPod:
-		// POD (Plain Old Data) = trivial + standard layout (C++03 compatible)
-		// In C++11+, this is deprecated but still useful
-		if (isScalarType(type_category, is_reference, pointer_depth)) {
-			result = true;
-		} else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			if (struct_info && !struct_info->is_union) {
-				// POD: no virtual functions, no user-defined ctors, all members same access
-				bool is_pod = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
-				if (is_pod && struct_info->members.size() > 1) {
-					AccessSpecifier first_access = struct_info->members[0].access;
-					for (const auto& member : struct_info->members) {
-						if (member.access != first_access) {
-							is_pod = false;
-							break;
-						}
-					}
-				}
-				result = is_pod;
-			}
-		}
-		break;
 
 	case TypeTraitKind::IsLiteralType:
 		// __is_literal_type - deprecated in C++17, removed in C++20
@@ -3190,106 +3063,10 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		}
 		break;
 
-	case TypeTraitKind::IsDestructible:
-		// __is_destructible(T) - Check if T can be destroyed
-		// All scalar types are destructible
-		if (isScalarType(type_category, is_reference, pointer_depth)) {
-			result = true;
-		}
-		// Class types: check for accessible destructor
-		else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			if (struct_info) {
-				// Assume destructible unless we can prove otherwise
-				// (no deleted destructor check available yet)
-				result = true;
-			}
-		}
-		break;
 
-	case TypeTraitKind::IsTriviallyDestructible:
-		// __is_trivially_destructible(T) - Check if T can be trivially destroyed
-		// Scalar types are trivially destructible
-		if (isScalarType(type_category, is_reference, pointer_depth)) {
-			result = true;
-		}
-		// Class types: no virtual, no user-defined destructor
-		else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			if (struct_info && !struct_info->is_union) {
-				// Trivially destructible if no vtable and no user-defined destructor
-				result = !struct_info->has_vtable && !struct_info->hasUserDefinedDestructor();
-			} else if (struct_info && struct_info->is_union) {
-				// Unions are trivially destructible if all members are
-				result = true;
-			}
-		}
-		break;
 
-	case TypeTraitKind::IsNothrowDestructible:
-		// __is_nothrow_destructible(T) - Check if T can be destroyed without throwing
-		// Scalar types don't throw on destruction
-		if (isScalarType(type_category, is_reference, pointer_depth)) {
-			result = true;
-		}
-		// Class types: check via recursive isStructNothrowDestructible to handle
-		// implicit destructors whose noexcept status depends on base/member dtors.
-		else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			if (struct_info) {
-				result = isStructNothrowDestructible(struct_info);
-			}
-		}
-		break;
 
-	case TypeTraitKind::HasTrivialDestructor:
-		// __has_trivial_destructor(T) - GCC/Clang intrinsic, equivalent to IsTriviallyDestructible
-		// Scalar types are trivially destructible
-		if (isScalarType(type_category, is_reference, pointer_depth)) {
-			result = true;
-		}
-		// Class types: no virtual, no user-defined destructor
-		else if (type == TypeCategory::Struct && type_spec.type_index().is_valid() &&
-				 !is_reference && pointer_depth == 0) {
-			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-				if (!struct_info->is_union) {
-					// Trivially destructible if no vtable and no user-defined destructor
-					result = !struct_info->has_vtable && !struct_info->hasUserDefinedDestructor();
-				} else {
-					// Unions are trivially destructible if all members are
-					result = true;
-				}
-			}
-		}
-		break;
 
-	case TypeTraitKind::HasVirtualDestructor:
-		// __has_virtual_destructor(T) - Check if T has a virtual destructor
-		// Only class types can have virtual destructors
-		if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-			if (struct_info && !struct_info->is_union) {
-				// Check if the destructor is explicitly marked as virtual
-				// A class has a virtual destructor if:
-				// 1. Its destructor is declared virtual, or
-				// 2. It inherits from a base class with a virtual destructor
-				// For now, we check if the class has a vtable (which implies virtual methods)
-				// and if it has a user-defined destructor
-				result = struct_info->has_vtable && struct_info->hasUserDefinedDestructor();
-
-				// If the class has a vtable but no explicit destructor, check base classes
-				if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
-					// Check if any base class has a virtual destructor
-					for (const auto& base : struct_info->base_classes) {
-						if (const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base.type_index)) {
-							if (base_struct_info->has_vtable) {
-								// If base has vtable, it might have virtual destructor
-								// For simplicity, we assume presence of vtable indicates virtual destructor
-								result = true;
-								break;
-							}
-						}
-					}
-				}
-			}
-		}
-		break;
 
 	case TypeTraitKind::IsLayoutCompatible:
 		// __is_layout_compatible(T, U) - Check if T and U have the same layout
