@@ -991,6 +991,11 @@ public:
 	// first-declaration `= default`).
 	void set_is_inline(bool is_inline) { is_inline_ = is_inline; }
 	bool is_inline() const { return is_inline_; }
+	// Only first-declaration `= default` can produce a trivial destructor.
+	void set_was_defaulted_on_first_declaration(bool was_defaulted) {
+		was_defaulted_on_first_declaration_ = was_defaulted;
+	}
+	bool was_defaulted_on_first_declaration() const { return was_defaulted_on_first_declaration_; }
 
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
@@ -1031,10 +1036,12 @@ private:
 	StringHandle name_;			// Points directly into source text from lexer token
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	StringHandle mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
-	bool is_noexcept_ = true;  // C++11+: destructors are implicitly noexcept(true)
-	bool has_noexcept_specifier_ = false;  // True iff an explicit noexcept / noexcept(expr) was written
-	bool is_constexpr_ = false;  // True iff the destructor was declared with 'constexpr'
-	bool is_inline_ = false;  // True if the destructor has C++ inline semantics
+	bool is_noexcept_ : 1 = true;  // C++11+: destructors are implicitly noexcept(true)
+	bool has_noexcept_specifier_ : 1 = false;  // True iff an explicit noexcept / noexcept(expr) was written
+	bool is_constexpr_ : 1 = false;  // True iff the destructor was declared with 'constexpr'
+	bool is_inline_ : 1 = false;  // True if the destructor has C++ inline semantics
+	bool was_defaulted_on_first_declaration_ : 1 = false;
+	bool has_template_body_ : 1 = false;  // True when template_body_position_ is valid
 	std::optional<ExpressionHandle> noexcept_expression_; // For explicit noexcept(expr)
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
 	TemplateParamNameVector outer_template_param_names_;
@@ -1043,7 +1050,6 @@ private:
 	mutable AstOwnershipPhase ownership_phase_ = AstOwnershipPhase::ConcreteMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 	SaveHandle template_body_position_;  // Saved position for deferred template body replay
-	bool has_template_body_ = false;	 // True when template_body_position_ is valid
 	StringHandle lazy_member_registry_key_;
 };
 

@@ -709,24 +709,31 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       `ConstraintSatisfaction::Unknown` in a concept today, and this is what
       drives `lazy_constraint_trait_fallback` to zero.
 
-      Code generation used to carry its own copy of these rules; it now delegates
-      all fourteen plus the assignability forms to the shared evaluator through
-      `isRecordPropertyTraitOwnedBySharedEvaluator`, which removes thirteen
-      duplicate implementations and leaves one rule per trait to correct. The
-      delegation is behaviour-preserving: it was verified cell-for-cell against
-      the previous compiler and the full suite is unchanged. It corrects no
-      answer on its own, and the rules that remain are wrong today - a
-      280-cell differential against clang finds 35 wrong cells folded and 23
-      lowered, including destructor triviality wrong in both directions and
-      `__is_aggregate` wrong only when folded. Those defects, the two ways a
-      differential here can measure its own harness instead of the compiler, and
-      the uninitialized-`bool`-local symptom found alongside - which turned out to
-      be a dropped `bool` cast rather than a storage problem, and is diagnosed
-      under "A cast whose source is `bool` is dropped" in
-      [known issues](KNOWN_ISSUES.md) - are recorded there. Fixing the answers needs the
-      member-property schema: destructor and copyability have to walk members and
-      bases by identity, and standard-layout has to see the data members of base
-      classes, none of which the published record layout exposes.
+      Code generation delegates these rules and the assignability forms to the
+      shared evaluator through `isRecordPropertyTraitOwnedBySharedEvaluator`.
+      The shared implementation now walks record members and bases for
+      standard-layout and destructor-triviality answers, composes POD from
+      triviality and standard-layout, and detects inherited virtual destructors.
+      Standard-layout checks include the C++20 zero-offset member-type rule
+      through nested records, arrays, and unions.
+      Constant evaluation delegates aggregate and virtual-destructor queries to
+      that same evaluator. The new regression verifies the reproduced cells in
+      both evaluation paths, including zero-offset base/member conflicts,
+      member arrays, and out-of-line defaulted destructors. The earlier
+      280-cell differential found 35 folded and 23 lowered mismatches before
+      these fixes; it has not yet been rerun, so the remaining cells are
+      unmeasured. The triviality and trivially-copyable
+      record walks use explicit worklists; a 511-level nested-record regression
+      passes, and stack-usage output shows fixed native frames (376 bytes for
+      the shared worklist traversal, 536 bytes for standard-layout). The full
+      suite passes after these changes. This implementation still reads
+      `StructTypeInfo`. Moving the family to canonical types requires publishing
+      member, base, and special-member properties in the canonical record schema;
+      canonical layout currently exposes only layout data and the union flag.
+      The separate uninitialized-`bool`-local symptom found during the earlier
+      audit was a dropped `bool` cast rather than a storage problem and is
+      diagnosed under "A cast whose source is `bool` is dropped" in
+      [known issues](KNOWN_ISSUES.md).
    2. **Confirm a gap with a counter before adding identity plumbing.** A
       consumer that takes a `const TypeSpecifierNode&` cannot stamp its operand,
       and that signature alone is not a gap: the operand already carries its

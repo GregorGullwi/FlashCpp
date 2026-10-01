@@ -1951,12 +1951,6 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		result = is_array & int(array_size.value_or(0) == 0) & !is_reference & (pointer_depth == 0);
 		break;
 
-	case TypeTraitKind::IsAggregate:
-			// Arrays are aggregates
-		result = is_array & !is_reference & (pointer_depth == 0);
-			// For struct types, we need runtime type info, so fall through to default
-		break;
-
 	case TypeTraitKind::IsEnum:
 		result = (type_cat == TypeCategory::Enum) & !is_reference & (pointer_depth == 0);
 		break;
@@ -2007,6 +2001,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			return EvalResult::error("Failed to evaluate __is_complete_or_unbounded");
 		}
 
+	case TypeTraitKind::IsAggregate:
 	case TypeTraitKind::IsFinal:
 	case TypeTraitKind::IsPolymorphic:
 	case TypeTraitKind::IsAbstract:
@@ -2018,12 +2013,13 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	case TypeTraitKind::IsConstructible:
 	case TypeTraitKind::IsTriviallyConstructible:
 	case TypeTraitKind::IsNothrowConstructible:
+	case TypeTraitKind::HasVirtualDestructor:
 	case TypeTraitKind::IsAssignable:
 	case TypeTraitKind::IsTriviallyAssignable:
 	case TypeTraitKind::IsNothrowAssignable:
 		{
-			// Delegate to the variadic evaluateTypeTrait overload so additional type arguments
-			// (the constructor argument types) and binary assignment operands are taken into account.
+			// Delegate to the expression-level evaluator so it preserves array operands,
+			// additional type arguments, and binary assignment operands.
 			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr);
 			if (trait_result.success) {
 				return EvalResult::from_bool(trait_result.value);
