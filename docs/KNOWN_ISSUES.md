@@ -537,3 +537,50 @@ the body). An ordinary function containing 4096 such statements compiles.
 The parser must finish capturing the balanced body, or report a deliberate limit
 instead of silently continuing from an incomplete capture. This is separate from
 temporary allocation and should be addressed in bounded parser control flow.
+
+## MSVC function mangling omits the parameter-list terminator
+
+For `int test(long long)`, the compiler emits `?test@@YAH_JZ` instead of
+`?test@@YAH_J@Z`. The missing parameter-list terminator makes dumpbin interpret
+the symbol as variadic. The same malformed suffix is present on the unchanged
+baseline and prevents linking matching declarations against MSVC-generated C++
+symbols. This needs a separate mangling correction and interoperability regression.
+
+## A conditional void-pointer return can omit the non-null return load
+
+The unchanged baseline returns the wrong result for this reduced program:
+
+```cpp
+void* preserve(void* value, int guard) {
+    if (guard != 17) return nullptr;
+    return value;
+}
+int main() {
+    int value = 41;
+    return preserve(&value, 17) == &value ? 0 : 1;
+}
+```
+
+It returns 1. Disassembly shows the non-null branch reaching the epilogue without
+loading `value` into RAX. This is separate from correctly recording the size of a
+call result whose base category is Void but whose stored representation is a
+64-bit pointer.
+
+## Temporary frame pre-counting still omits some producers and padding
+
+The temporary-size pre-scan does not publish every typed producer (including
+conversion, string-literal, heap-allocation, and function-address operations).
+Those slots are allocated during emission. The initial temporary cursor also
+includes padding not represented in the pre-count. These limitations predate
+numeric temporary storage. Extending the frame's lowest occupied offset during
+emission does not consistently reserve outgoing argument/home space below newly
+allocated slots. The numeric table removes identity collisions but does not by
+itself complete frame layout for these producers. Consolidate producer storage
+publication and keep outgoing storage below every allocated local slot; add a
+regression that makes a callee write its home/stack-argument area.
+
+The Windows throw-slot path also advances the temporary cursor without the checked
+arithmetic used by numeric temporary allocation. Lambda `__invoke` generation
+resets temporary numbers without clearing global reference metadata. Both require
+separate boundary regressions and investigation; no new name-based type recovery
+should be introduced to compensate for either path.
