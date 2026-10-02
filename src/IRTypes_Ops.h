@@ -921,7 +921,12 @@ struct FunctionAddressOp {
 struct VariableDeclOp {
 	TypeIndex type_index{};	// TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};
-	StringHandle var_name;  // Pure StringHandle
+	// Frame name: identifies this declaration's storage. A declaration that
+	// shadows an outer local of the same spelling gets its own frame name so
+	// both objects keep a frame slot.
+	StringHandle var_name;
+	// Spelling as written, used for diagnostics and debug information.
+	StringHandle declared_name;
 	unsigned long long custom_alignment = 0;
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	PointerDepth pointer_depth = PointerDepth{};

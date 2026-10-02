@@ -141,11 +141,16 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				std::string_view exception_var_name = decl.identifier_token().value();
 
 				if (!exception_var_name.empty()) {
+					StringHandle exception_name_handle = StringTable::getOrInternStringHandle(exception_var_name);
+						// Sibling and enclosing handlers may name their parameter the
+						// same, so the parameter claims frame identity like any local.
+					StringHandle exception_frame_name = declareLocalFrameName(exception_decl, exception_name_handle);
 						// Create a variable declaration for the exception parameter
 					VariableDeclOp decl_op;
 					decl_op.type_index = type_index;
 					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
-					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
+					decl_op.var_name = exception_frame_name;
+					decl_op.declared_name = exception_name_handle;
 					decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())};
 
 						// Create a TypedValue for the initializer
@@ -177,7 +182,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 							const StructTypeInfo* struct_info = type_info->getStructInfo();
 							if (struct_info && struct_info->hasDestructor()) {
 								registerVariableWithDestructor(
-									std::string(exception_var_name),
+									std::string(StringTable::getStringView(exception_frame_name)),
 									std::string(StringTable::getStringView(type_info->name())));
 							}
 						}

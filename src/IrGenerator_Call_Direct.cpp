@@ -1383,8 +1383,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			param_ref_qualifier != CVReferenceQualifier::None &&
 			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-			StringHandle identifier_name = identifier.nameHandle();
-			const DeclarationNode* decl_ptr = lookupDeclaration(identifier_name);
+			// Reference-binding arguments name the declaration's frame, so a
+			// shadowing local is not confused with the outer declaration.
+			StringHandle identifier_name = resolvedFrameName(identifier.name());
+			const DeclarationNode* decl_ptr = lookupDeclaration(identifier.nameHandle());
 			if (decl_ptr) {
 				const auto& type_node = decl_ptr->type_specifier_node();
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
@@ -1708,7 +1710,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// For identifiers that returned local variable references (string_view), handle specially
 		if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-			StringHandle identifier_name = identifier.nameHandle();
+			// These argument builders take the name of the object being passed,
+			// so it must be the frame of the declaration visible here.
+			StringHandle identifier_name = resolvedFrameName(identifier.name());
 			std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 			if (!symbol.has_value()) {
 				FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");

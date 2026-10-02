@@ -1299,7 +1299,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						}
 						member_load.object = std::get<TempVar>(obj_result.value);
 					} else {
-						member_load.object = StringTable::getOrInternStringHandle(object_name);
+						member_load.object = resolvedFrameName(object_name);
 					}
 
 					member_load.member_name = func_name_handle; // Member name
@@ -1399,7 +1399,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 			vcall_op.object = std::get<TempVar>(obj_result.value);
 		} else {
-			vcall_op.object = StringTable::getOrInternStringHandle(object_name);
+			vcall_op.object = resolvedFrameName(object_name);
 		}
 		vcall_op.vtable_index = vtable_index;
 		// Set is_pointer_access based on whether the object is accessed through a pointer (ptr->method)
@@ -2020,9 +2020,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					this_arg_storage = ValueStorage::ContainsAddress;
 				}
 			} else {
-				// Local pointer/reference objects already lower correctly when passed through
-				// directly by name.
-				this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
+				// Local pointer/reference objects already lower correctly when passed
+				// through directly. The receiver is named by its declaration's frame,
+				// so a shadowing local does not call through the outer object.
+				this_arg_value = IrValue(resolvedFrameName(object_name));
 				this_arg_is_pointer_value = true;
 			}
 		} else {
@@ -2034,7 +2035,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			addr_op.operand.ir_type = toIrType(object_type.type());
 			addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 			addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.runtime_pointer_depth())};
-			addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
+			addr_op.operand.value = resolvedFrameName(object_name);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 			this_arg_value = IrValue(this_addr);
 			this_arg_is_pointer_value = true;

@@ -1040,7 +1040,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 			// - For non-struct pointer types, return pointer_depth
 			// - Otherwise return 0
-		out = makeExprResult(type_node->type_index(), SizeInBits{static_cast<int>(type_node->size_in_bits())}, IrOperand{identifier_handle}, PointerDepth{static_cast<int>(type_node->pointer_depth())}, ValueStorage::ContainsData);
+			// A local that shadows an outer declaration names its own frame, so
+			// ++/--/& must resolve through the scope chain rather than the spelling.
+		out = makeExprResult(type_node->type_index(), SizeInBits{static_cast<int>(type_node->size_in_bits())}, IrOperand{resolvedFrameName(identifier_handle)}, PointerDepth{static_cast<int>(type_node->pointer_depth())}, ValueStorage::ContainsData);
 		return true;
 	};
 
@@ -3330,11 +3332,14 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			const DeclarationNode* decl = lookupDeclaration(identifier.name());
 			if (decl) {
 				const auto& type_node = decl->type_specifier_node();
+				// The bound object is named by frame, so a shadowing local is
+				// not confused with the outer declaration of the same spelling.
+				const StringHandle bound_frame_name = resolvedFrameName(identifier.name());
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					ExprResult reference_address = makeExprResult(
 						type_node.type_index(),
 						SizeInBits{64},
-						IrOperand{StringTable::getOrInternStringHandle(identifier.name())},
+						IrOperand{bound_frame_name},
 						PointerDepth{},
 						ValueStorage::ContainsAddress);
 					return adjustDirectDerivedToBaseBinding(std::move(reference_address));
@@ -3343,7 +3348,7 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 				TempVar addr_var = emitAddressOf(
 					type_node.category(),
 					static_cast<int>(type_node.size_in_bits()),
-					IrValue(StringTable::getOrInternStringHandle(identifier.name())),
+					IrValue(bound_frame_name),
 					source_token);
 				ExprResult object_address = makeExprResult(
 					type_node.type_index(),
