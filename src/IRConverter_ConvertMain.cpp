@@ -1868,7 +1868,12 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 
 template <class TWriterClass>
 bool IrToObjConverter<TWriterClass>::hasIndirectStackStorage(int32_t stack_offset) const {
-	return getIndirectStackInfo(stack_offset).has_value();
+	// Same two channels getIndirectStackInfo() consults, queried without
+	// materializing the IndirectStorageInfo payload for a boolean answer.
+	if (indirect_stack_info_.find(stack_offset) != indirect_stack_info_.end()) {
+		return true;
+	}
+	return tempvar_indirect_stack_info_.find(stack_offset) != tempvar_indirect_stack_info_.end();
 }
 
 template <class TWriterClass>
@@ -6933,7 +6938,6 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 		// Get variable name as StringHandle
 	StringHandle var_name_handle = op.var_name;
-	std::string var_name_str = std::string(StringTable::getStringView(var_name_handle));
 
 	TypeCategory var_type = op.opType();
 	StackVariableScope& current_scope = variable_scopes.back();
@@ -6945,15 +6949,12 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 	[[maybe_unused]] bool is_array = op.is_array;
 	bool is_initialized = op.initializer.has_value();
 
-	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", pointer_depth=", op.pointer_depth.value, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
+	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_handle, "', is_reference=", is_reference, ", pointer_depth=", op.pointer_depth.value, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
 
-		// Store mapping from variable name to offset for reference lookups
-	variable_name_to_offset_[var_name_str] = var_it->second.offset;
-
-		// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
-		// of this slot was a reference, stale metadata would cause later by-value variables
-		// at the same offset to be treated as pointers. Clear that before handling any
-		// non-reference declaration that reuses the slot.
+	// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
+	// of this slot was a reference, stale metadata would cause later by-value variables
+	// at the same offset to be treated as pointers. Clear that before handling any
+	// non-reference declaration that reuses the slot.
 	if (!is_reference) {
 		indirect_stack_info_.erase(var_it->second.offset);
 		tempvar_indirect_stack_info_.erase(var_it->second.offset);
@@ -7463,7 +7464,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		}
 
 		uint16_t flags = 0;
-		writer.add_local_variable(var_name_str, type_index, flags, locations);
+		writer.add_local_variable(std::string(StringTable::getStringView(var_name_handle)), type_index, flags, locations);
 	}
 }
 

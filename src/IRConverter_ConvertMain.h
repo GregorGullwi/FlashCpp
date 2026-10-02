@@ -1097,8 +1097,6 @@ private:
 	// These must be cleared at function boundaries alongside indirect_stack_info_ to prevent
 	// stale metadata from polluting later functions (TempVar var_numbers are reused across functions).
 	std::vector<size_t> reference_temp_var_numbers_;
-	// Map from variable names to their offsets (for reference lookup by name)
-	std::unordered_map<std::string, int32_t, TransparentStringHash, std::equal_to<>> variable_name_to_offset_;
 	struct TemporarySlot {
 		int32_t offset = INT_MIN;
 		int size_bits = 0;
