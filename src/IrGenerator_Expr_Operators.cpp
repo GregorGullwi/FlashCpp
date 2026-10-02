@@ -2510,7 +2510,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						TempVar result_var = var_counter.next();
 
 						// Take address of LHS to pass as 'this' pointer
-						std::variant<StringHandle, TempVar> lhs_value;
+						std::variant<StringHandle, TempVar, LocalVarId> lhs_value;
 						if (const auto* string = std::get_if<StringHandle>(&lhsExprResult.value)) {
 							lhs_value = *string;
 						} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
@@ -3082,7 +3082,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			// Take address of LHS to pass as 'this' pointer
 			// The LHS operand contains a struct value - extract it properly
-			std::variant<StringHandle, TempVar> lhs_value;
+			std::variant<StringHandle, TempVar, LocalVarId> lhs_value;
 			if (const auto* string_val = std::get_if<StringHandle>(&lhsExprResult.value)) {
 				lhs_value = *string_val;
 			} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
@@ -3104,7 +3104,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			addr_op.operand.ir_type = toIrType(lhsCat);
 			addr_op.operand.size_in_bits = SizeInBits{lhsSize};
 			addr_op.operand.pointer_depth = PointerDepth{}; // TODO: Verify pointer depth
-			// Convert std::variant<StringHandle, TempVar> to IrValue
+			// Convert std::variant<StringHandle, TempVar, LocalVarId> to IrValue
 			if (const auto* string_ptr = std::get_if<StringHandle>(&lhs_value)) {
 				addr_op.operand.value = *string_ptr;
 			} else {
@@ -3204,7 +3204,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 
 			// Get the LHS value - can be an identifier, member access, or other expression
-			std::variant<StringHandle, TempVar> lhs_value;
+			std::variant<StringHandle, TempVar, LocalVarId> lhs_value;
 			TypeIndex spaceship_lhs_type_index{};
 
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
@@ -4940,7 +4940,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const CallExprNode& callExprNode) {
 	}
 
 	// va_list_ir[2] contains the variable/temp identifier
-	std::variant<StringHandle, TempVar> va_list_var;
+	std::variant<StringHandle, TempVar, LocalVarId> va_list_var;
 	if (const auto* temp_var = std::get_if<TempVar>(&vaListExprResult.value)) {
 		va_list_var = *temp_var;
 	} else if (const auto* string = std::get_if<StringHandle>(&vaListExprResult.value)) {
@@ -5642,7 +5642,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 
 		// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 		// Get the va_list variable from arg0ExprResult.value
-		std::variant<StringHandle, TempVar> va_list_var;
+		std::variant<StringHandle, TempVar, LocalVarId> va_list_var;
 		if (va_list_name_handle.isValid()) {
 			va_list_var = va_list_name_handle;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&arg0ExprResult.value)) {
@@ -5670,7 +5670,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 		// On Windows: variadic args are on the stack, so use &last_param + 8
 		// On Linux: variadic args are in registers saved to reg_save_area, point there instead
 
-		std::variant<StringHandle, TempVar> va_list_var;
+		std::variant<StringHandle, TempVar, LocalVarId> va_list_var;
 		if (va_list_name_handle.isValid()) {
 			va_list_var = va_list_name_handle;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&arg0ExprResult.value)) {
@@ -5958,7 +5958,7 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 			return expr_result.type_index;
 		}
 
-		auto resolveBaseTypeIndex = [&](const auto& self, const std::variant<StringHandle, TempVar>& base) -> TypeIndex {
+		auto resolveBaseTypeIndex = [&](const auto& self, const std::variant<StringHandle, TempVar, LocalVarId>& base) -> TypeIndex {
 			if (const auto* base_name = std::get_if<StringHandle>(&base)) {
 				if (auto symbol = lookupSymbol(*base_name)) {
 					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol);

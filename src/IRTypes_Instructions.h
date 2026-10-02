@@ -74,7 +74,24 @@ public:
 		return std::holds_alternative<TClass>(operands_[index]);
 	}
 
+	// Formats a local declaration id as its display name when the enclosing
+	// function published one, falling back to the numeric id. Identity is the
+	// id; the display name exists only so IR dumps stay readable.
+	static void appendLocalVarName(std::ostringstream& oss, LocalVarId id,
+								   std::span<const StringHandle> local_debug_names) {
+		if (id.value != 0 && id.value <= local_debug_names.size() &&
+			local_debug_names[id.value - 1].isValid()) {
+			oss << StringTable::getStringView(local_debug_names[id.value - 1]);
+		} else {
+			oss << '#' << id.value;
+		}
+	}
+
 	std::string getReadableString() const {
+		return getReadableString(std::span<const StringHandle>{});
+	}
+
+	std::string getReadableString(std::span<const StringHandle> local_debug_names) const {
 		std::ostringstream oss{};
 
 		switch (opcode_) {
@@ -331,6 +348,8 @@ public:
 			oss << '%';
 			if (const auto* string_ptr = std::get_if<StringHandle>(&op.result))
 				oss << StringTable::getStringView(*string_ptr);
+			else if (const auto* id = std::get_if<LocalVarId>(&op.result))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else
 				oss << std::get<TempVar>(op.result).var_number;
 			oss << " = alloca ";
@@ -413,6 +432,8 @@ public:
 
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
+			else if (const auto* id = std::get_if<LocalVarId>(&op.array))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
@@ -433,6 +454,8 @@ public:
 
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
+			else if (const auto* id = std::get_if<LocalVarId>(&op.array))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
@@ -455,6 +478,8 @@ public:
 			// Array
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
+			else if (const auto* id = std::get_if<LocalVarId>(&op.array))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else if (std::holds_alternative<TempVar>(op.array))
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
@@ -505,6 +530,8 @@ public:
 			// Print base
 			if (const auto* string = std::get_if<StringHandle>(&op.base)) {
 				oss << "base: %" << StringTable::getStringView(*string);
+			} else if (const auto* id = std::get_if<LocalVarId>(&op.base)) {
+				oss << "base: "; appendLocalVarName(oss, *id, local_debug_names);
 			} else {
 				oss << "base: %" << std::get<TempVar>(op.base).var_number;
 			}
@@ -537,6 +564,8 @@ public:
 			oss << '%' << op.result.var_number << " = virtual_base_adjust ";
 			if (const auto* string = std::get_if<StringHandle>(&op.source)) {
 				oss << "%" << StringTable::getStringView(*string);
+			} else if (const auto* id = std::get_if<LocalVarId>(&op.source)) {
+				appendLocalVarName(oss, *id, local_debug_names);
 			} else {
 				oss << '%' << std::get<TempVar>(op.source).var_number;
 			}
@@ -630,6 +659,8 @@ public:
 			// Object
 			if (const auto* temp_var = std::get_if<TempVar>(&op.object))
 				oss << '%' << temp_var->var_number;
+			else if (const auto* id = std::get_if<LocalVarId>(&op.object))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else if (std::holds_alternative<StringHandle>(op.object))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.object));
 
@@ -659,6 +690,8 @@ public:
 			// Object
 			if (const auto* temp_var = std::get_if<TempVar>(&op.object))
 				oss << '%' << temp_var->var_number;
+			else if (const auto* id = std::get_if<LocalVarId>(&op.object))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else if (std::holds_alternative<StringHandle>(op.object))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.object));
 
@@ -684,6 +717,8 @@ public:
 			// Object can be either string_view or TempVar
 			if (const auto* string_ptr = std::get_if<StringHandle>(&op.object))
 				oss << StringTable::getStringView(*string_ptr);
+			else if (const auto* id = std::get_if<LocalVarId>(&op.object))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else if (std::holds_alternative<TempVar>(op.object))
 				oss << std::get<TempVar>(op.object).var_number;
 
@@ -722,6 +757,8 @@ public:
 			// Object can be either string or TempVar
 			if (const auto* string_ptr = std::get_if<StringHandle>(&op.object))
 				oss << StringTable::getStringView(*string_ptr);
+			else if (const auto* id = std::get_if<LocalVarId>(&op.object))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else if (std::holds_alternative<TempVar>(op.object))
 				oss << std::get<TempVar>(op.object).var_number;
 		} break;
@@ -741,6 +778,8 @@ public:
 			// Object (this pointer)
 			if (const auto* temp_var = std::get_if<TempVar>(&op.object))
 				oss << temp_var->var_number;
+			else if (const auto* id = std::get_if<LocalVarId>(&op.object))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else if (std::holds_alternative<StringHandle>(op.object))
 				oss << StringTable::getStringView(std::get<StringHandle>(op.object));
 
@@ -781,6 +820,8 @@ public:
 
 			if (const auto* temp_var = std::get_if<TempVar>(&op.result))
 				oss << temp_var->var_number;
+			else if (const auto* id = std::get_if<LocalVarId>(&op.result))
+				appendLocalVarName(oss, *id, local_debug_names);
 			else if (std::holds_alternative<StringHandle>(op.result))
 				oss << StringTable::getStringView(std::get<StringHandle>(op.result));
 
@@ -849,6 +890,8 @@ public:
 			oss << '%' << op.result.var_number << " = typeid ";
 			if (const auto* string = std::get_if<StringHandle>(&op.operand)) {
 				oss << StringTable::getStringView(*string);
+			} else if (const auto* id = std::get_if<LocalVarId>(&op.operand)) {
+				appendLocalVarName(oss, *id, local_debug_names);
 			} else {
 				oss << '%' << std::get<TempVar>(op.operand).var_number;
 			}
@@ -1064,6 +1107,8 @@ public:
 			// Function pointer can be either a TempVar or a variable name (string_view)
 			if (const auto* temp_var = std::get_if<TempVar>(&op.function_pointer)) {
 				oss << '%' << temp_var->var_number;
+			} else if (const auto* id = std::get_if<LocalVarId>(&op.function_pointer)) {
+				appendLocalVarName(oss, *id, local_debug_names);
 			} else {
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.function_pointer));
 			}
@@ -1357,6 +1402,23 @@ public:
 		return instructions;
 	}
 
+	// Per-function display name for a local declaration id. This is not
+	// identity: it exists so IR dumps can print the source spelling (with a
+	// disambiguating suffix for a shadowing declaration) instead of a number.
+	void setLocalDebugName(uint32_t id, StringHandle name) {
+		if (id == 0) {
+			return;
+		}
+		if (local_debug_names_.size() < id) {
+			local_debug_names_.resize(id);
+		}
+		local_debug_names_[id - 1] = name;
+	}
+
+	std::span<const StringHandle> localDebugNames() const {
+		return local_debug_names_;
+	}
+
 	// Reserve space for instructions (optimization)
 	void reserve(size_t capacity) {
 		instructions.reserve(capacity);
@@ -1403,6 +1465,7 @@ public:
 
 private:
 	std::vector<IrInstruction> instructions;
+	std::vector<StringHandle> local_debug_names_;
 	size_t reserved_capacity_ = 0;
 };
 

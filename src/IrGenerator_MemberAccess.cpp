@@ -481,7 +481,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// Materialize the base address: the dereferenced pointer's VALUE
 			// is the address of the pointee array object ([dcl.ptr]/1), so no
 			// load of the array may be emitted.
-			std::variant<StringHandle, TempVar> decay_base;
+			std::variant<StringHandle, TempVar, LocalVarId> decay_base;
 			IrValue decay_rhs_value;
 			bool base_materialized = false;
 			TempVar addr_temp = var_counter.next();
@@ -1230,7 +1230,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	// If the array expression resolved to a TempVar that actually refers to a member,
 	// recover the qualified name and offset from its lvalue metadata so we don't lose
 	// struct/offset information (important for member arrays).
-	std::variant<StringHandle, TempVar> base_variant;
+	std::variant<StringHandle, TempVar, LocalVarId> base_variant;
 	int base_member_offset = 0;
 	bool base_is_pointer_to_member = false;
 	// Fast-path: if the array expression is a member access, rebuild qualified name directly
@@ -1367,7 +1367,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 bool AstToIr::validateAndSetupIdentifierMemberAccess(
 	std::string_view object_name,
-	std::variant<StringHandle, TempVar>& base_object,
+	std::variant<StringHandle, TempVar, LocalVarId>& base_object,
 	TypeIndex& base_type_index,
 	bool& is_pointer_dereference) {
 
@@ -1460,7 +1460,7 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 
 bool AstToIr::extractBaseFromOperands(
 	const ExprResult& operands,
-	std::variant<StringHandle, TempVar>& base_object,
+	std::variant<StringHandle, TempVar, LocalVarId>& base_object,
 	TypeIndex& base_type_index,
 	std::string_view error_context) {
 
@@ -1499,7 +1499,7 @@ ExprResult AstToIr::makeMemberResult(SizeInBits size_bits, TempVar result_var, T
 bool AstToIr::setupBaseFromIdentifier(
 	const IdentifierNode& identifier,
 	const Token& member_token,
-	std::variant<StringHandle, TempVar>& base_object,
+	std::variant<StringHandle, TempVar, LocalVarId>& base_object,
 	TypeIndex& base_type_index,
 	bool& is_pointer_dereference) {
 
@@ -1550,7 +1550,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	bool is_arrow = memberAccessNode.is_arrow();
 
 	// Variables to hold the base object info
-	std::variant<StringHandle, TempVar> base_object;
+	std::variant<StringHandle, TempVar, LocalVarId> base_object;
 	TypeIndex base_type_index{};
 	bool is_pointer_dereference = false; // Track if we're accessing through pointer (ptr->member)
 	bool base_setup_complete = false;
@@ -2048,7 +2048,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	// This optimization is ONLY applied in LValueAddress context (for stores)
 	// In Load context, we keep the chain of member_access instructions
 	int accumulated_offset = static_cast<int>(member_result.adjusted_offset);
-	std::variant<StringHandle, TempVar> ultimate_base = base_object;
+	std::variant<StringHandle, TempVar, LocalVarId> ultimate_base = base_object;
 	StringHandle ultimate_member_name = StringTable::getOrInternStringHandle(member_name);
 	bool did_unwrap = false;
 

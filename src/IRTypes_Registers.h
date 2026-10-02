@@ -96,6 +96,14 @@ struct TempVar {
 	size_t var_number = 1;  // 1-based: first temp var is number 1
 };
 
+struct LocalVarId {
+	uint32_t value = 0;
+	constexpr LocalVarId() = default;
+	explicit constexpr LocalVarId(uint32_t raw_value) : value(raw_value) {}
+	explicit constexpr operator bool() const { return value != 0; }
+	friend constexpr bool operator==(LocalVarId, LocalVarId) = default;
+};
+
 #include "StringTable.h"	 // For StringHandle support
 
 // ============================================================================
@@ -128,7 +136,7 @@ enum class ValueCategory : uint8_t {
 };
 
 // Type alias for operand values (used in LValueInfo and elsewhere)
-using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle>;
+using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle, LocalVarId>;
 
 // Information about an lvalue's storage location
 struct LValueInfo {
@@ -145,7 +153,7 @@ struct LValueInfo {
 	Kind kind;
 
 	// Base object (variable name or temp var)
-	std::variant<StringHandle, TempVar> base;
+	std::variant<StringHandle, TempVar, LocalVarId> base;
 
 	// Offset in bytes from base (for members, array elements)
 	int offset;
@@ -174,7 +182,7 @@ struct LValueInfo {
 	size_t bitfield_bit_offset = 0;
 
 	// Constructor for simple cases
-	LValueInfo(Kind k, std::variant<StringHandle, TempVar> b, int off = 0)
+	LValueInfo(Kind k, std::variant<StringHandle, TempVar, LocalVarId> b, int off = 0)
 		: kind(k), base(b), offset(off) {}
 };
 
@@ -294,7 +302,7 @@ struct TempVarMetadata {
 	}
 };
 
-using IrOperand = std::variant<int, unsigned long long, double, bool, char, TypeCategory, TempVar, StringHandle>;
+using IrOperand = std::variant<int, unsigned long long, double, bool, char, TypeCategory, TempVar, StringHandle, LocalVarId>;
 
 // ============================================================================
 // OperandStorage - Abstraction for storing IR instruction operands

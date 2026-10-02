@@ -92,7 +92,7 @@ private:
 	};
 
 	struct AddressComponents {
-		std::variant<StringHandle, TempVar> base;			  // Base variable or temp
+		std::variant<StringHandle, TempVar, LocalVarId> base;			  // Base variable or temp
 		ValueStorage base_storage = ValueStorage::ContainsData; // Whether the base names storage or contains an address
 		std::vector<ComputeAddressOp::ArrayIndex> array_indices;	 // Array indices
 		int total_member_offset = 0;						 // Accumulated member offsets
@@ -108,7 +108,7 @@ private:
 
 	struct FullExpressionTempDestructorInfo {
 		StringHandle struct_name;
-		std::variant<StringHandle, TempVar> object;
+		std::variant<StringHandle, TempVar, LocalVarId> object;
 		bool object_is_pointer = false;
 	};
 
@@ -250,7 +250,7 @@ private:
 
 	void registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name);
 	void registerFullExpressionTempDestructor(StringHandle struct_name,
-											  std::variant<StringHandle, TempVar> object,
+											  std::variant<StringHandle, TempVar, LocalVarId> object,
 											  bool object_is_pointer = false);
 	void emitAndClearFullExpressionTempDestructors();
 
@@ -425,19 +425,19 @@ private:
 										ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
-		std::variant<StringHandle, TempVar>& base_object,
+		std::variant<StringHandle, TempVar, LocalVarId>& base_object,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	bool extractBaseFromOperands(
 		const ExprResult& operands,
-		std::variant<StringHandle, TempVar>& base_object,
+		std::variant<StringHandle, TempVar, LocalVarId>& base_object,
 		TypeIndex& base_type_index,
 		std::string_view error_context);
 	static ExprResult makeMemberResult(SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage);
 	bool setupBaseFromIdentifier(
 		const IdentifierNode& identifier,
 		const Token& member_token,
-		std::variant<StringHandle, TempVar>& base_object,
+		std::variant<StringHandle, TempVar, LocalVarId>& base_object,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	ExprResult generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
@@ -454,7 +454,7 @@ private:
 	ExprResult generateTypeTraitIr(const TypeTraitExprNode& traitNode);
 	ExprResult generateNewExpressionIr(const NewExpressionNode& newExpr);
 	ExprResult generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
-	std::variant<StringHandle, TempVar> extractBaseOperand(
+	std::variant<StringHandle, TempVar, LocalVarId> extractBaseOperand(
 		const ExprResult& expr_operands,
 		TempVar fallback_var,
 		const char* cast_name = "cast");
@@ -466,7 +466,7 @@ private:
 		bool is_rvalue_ref,
 		const char* cast_name = "cast");
 	void generateAddressOfForReference(
-		const std::variant<StringHandle, TempVar>& base,
+		const std::variant<StringHandle, TempVar, LocalVarId>& base,
 		TempVar result_var,
 		TypeCategory target_type,
 		int target_size,
@@ -768,13 +768,13 @@ private:
 		const Token& token);
 	void emitRecursiveZeroFill(
 		const StructTypeInfo& struct_info,
-		std::variant<StringHandle, TempVar> base_object,
+		std::variant<StringHandle, TempVar, LocalVarId> base_object,
 		int base_offset,
 		bool base_object_is_pointer,
 		const Token& token);
 	void emitZeroInitializedMember(
 		const StructMember& member,
-		std::variant<StringHandle, TempVar> base_object,
+		std::variant<StringHandle, TempVar, LocalVarId> base_object,
 		int base_offset,
 		bool base_object_is_pointer,
 		const Token& token);
@@ -789,7 +789,7 @@ private:
 	bool tryEmitArrayMemberStores(
 		const StructMember& member,
 		const InitializerListNode& init_list,
-		std::variant<StringHandle, TempVar> base_object,
+		std::variant<StringHandle, TempVar, LocalVarId> base_object,
 		int base_offset,
 		bool base_object_is_pointer,
 		const Token& token);
@@ -803,7 +803,7 @@ private:
 	void generateNestedMemberStores(
 		const StructTypeInfo& struct_info,
 		const InitializerListNode& init_list,
-		std::variant<StringHandle, TempVar> base_object,
+		std::variant<StringHandle, TempVar, LocalVarId> base_object,
 		int base_offset,
 		bool base_object_is_pointer,
 		const Token& token);
@@ -1035,14 +1035,14 @@ private:
 
 	// Emit ArrayStore instruction
 	void emitArrayStore(TypeCategory element_type, int element_size_bits,
-						std::variant<StringHandle, TempVar> array,
+						std::variant<StringHandle, TempVar, LocalVarId> array,
 						const TypedValue& index, const TypedValue& value,
 						int64_t member_offset, bool is_pointer_to_array,
 						const Token& token);
 
 	// Emit MemberStore instruction
 	void emitMemberStore(const TypedValue& value,
-						 std::variant<StringHandle, TempVar> object,
+						 std::variant<StringHandle, TempVar, LocalVarId> object,
 						 StringHandle member_name, int offset,
 						 CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None,
 						 bool is_pointer_to_member = false,
@@ -1052,7 +1052,7 @@ private:
 
 	// Emit DereferenceStore instruction
 	void emitDereferenceStore(const TypedValue& value, TypeCategory pointee_type, [[maybe_unused]] int pointee_size_bits,
-							  std::variant<StringHandle, TempVar> pointer,
+							  std::variant<StringHandle, TempVar, LocalVarId> pointer,
 							  const Token& token);
 
 	const DeclarationNode& requireDeclarationNode(const ASTNode& node, std::string_view context) const;

@@ -2632,7 +2632,7 @@ void AstToIr::emitRecursiveZeroFill(
 	const Token& token) {
 	emitRecursiveZeroFill(
 		struct_info,
-		std::variant<StringHandle, TempVar>{base_object},
+		std::variant<StringHandle, TempVar, LocalVarId>{base_object},
 		base_offset,
 		false,
 		token);
@@ -2640,7 +2640,7 @@ void AstToIr::emitRecursiveZeroFill(
 
 void AstToIr::emitRecursiveZeroFill(
 	const StructTypeInfo& struct_info,
-	std::variant<StringHandle, TempVar> base_object,
+	std::variant<StringHandle, TempVar, LocalVarId> base_object,
 	int base_offset,
 	bool base_object_is_pointer,
 	const Token& token) {
@@ -2651,7 +2651,7 @@ void AstToIr::emitRecursiveZeroFill(
 
 void AstToIr::emitZeroInitializedMember(
 	const StructMember& member,
-	std::variant<StringHandle, TempVar> base_object,
+	std::variant<StringHandle, TempVar, LocalVarId> base_object,
 	int base_offset,
 	bool base_object_is_pointer,
 	const Token& token) {
@@ -2744,7 +2744,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 	return tryEmitArrayMemberStores(
 		member,
 		init_list,
-		std::variant<StringHandle, TempVar>{base_object},
+		std::variant<StringHandle, TempVar, LocalVarId>{base_object},
 		base_offset,
 		false,
 		token);
@@ -2753,7 +2753,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 bool AstToIr::tryEmitArrayMemberStores(
 	const StructMember& member,
 	const InitializerListNode& init_list,
-	std::variant<StringHandle, TempVar> base_object,
+	std::variant<StringHandle, TempVar, LocalVarId> base_object,
 	int base_offset,
 	bool base_object_is_pointer,
 	const Token& token) {
@@ -2973,7 +2973,7 @@ void AstToIr::generateNestedMemberStores(
 	generateNestedMemberStores(
 		struct_info,
 		init_list,
-		std::variant<StringHandle, TempVar>{base_object},
+		std::variant<StringHandle, TempVar, LocalVarId>{base_object},
 		base_offset,
 		false,
 		token);
@@ -2982,7 +2982,7 @@ void AstToIr::generateNestedMemberStores(
 void AstToIr::generateNestedMemberStores(
 	const StructTypeInfo& struct_info,
 	const InitializerListNode& init_list,
-	std::variant<StringHandle, TempVar> base_object,
+	std::variant<StringHandle, TempVar, LocalVarId> base_object,
 	int base_offset,
 	bool base_object_is_pointer,
 	const Token& token) {

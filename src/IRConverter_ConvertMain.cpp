@@ -9171,7 +9171,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						(current_function_returns_reference_ ||
 						 ret_op.return_storage == ValueStorage::ContainsAddress)) {
 						const LValueInfo& lv_info = lv_info_opt.value();
-						auto loadBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool base_is_pointer) -> bool {
+						auto loadBaseAddress = [&](const std::variant<StringHandle, TempVar, LocalVarId>& base, bool base_is_pointer) -> bool {
 							int base_offset = 0;
 							if (std::holds_alternative<StringHandle>(base)) {
 								auto base_name = std::get<StringHandle>(base);
@@ -9221,7 +9221,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						case LValueInfo::Kind::ArrayElement: {
 							const int element_size_bits = std::max(8, get_type_size_bits(ret_op.return_type_index.category()));
 							const int element_size_bytes = element_size_bits / 8;
-							auto loadArrayBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool is_pointer_to_array) -> bool {
+							auto loadArrayBaseAddress = [&](const std::variant<StringHandle, TempVar, LocalVarId>& base, bool is_pointer_to_array) -> bool {
 								if (const auto* base_name = std::get_if<StringHandle>(&base)) {
 									std::string_view base_view = StringTable::getStringView(*base_name);
 									FLASH_LOG_FORMAT(Codegen, Debug, "loadArrayBaseAddress: base_view='{}', is_ptr={}", base_view, is_pointer_to_array);

@@ -130,7 +130,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		generateNestedMemberStores(
 			struct_info,
 			aggregate_init_list,
-			std::variant<StringHandle, TempVar>{pointer_var},
+			std::variant<StringHandle, TempVar, LocalVarId>{pointer_var},
 			0,
 			true,
 			Token());
@@ -703,12 +703,12 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 	return ExprResult{};
 }
 
-std::variant<StringHandle, TempVar> AstToIr::extractBaseOperand(
+std::variant<StringHandle, TempVar, LocalVarId> AstToIr::extractBaseOperand(
 	const ExprResult& expr_operands,
 	TempVar fallback_var,
 	const char* cast_name) {
 
-	std::variant<StringHandle, TempVar> base;
+	std::variant<StringHandle, TempVar, LocalVarId> base;
 	if (const auto* string = std::get_if<StringHandle>(&expr_operands.value)) {
 		base = *string;
 	} else if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
@@ -749,7 +749,7 @@ void AstToIr::markReferenceMetadata(
 }
 
 void AstToIr::generateAddressOfForReference(
-	const std::variant<StringHandle, TempVar>& base,
+	const std::variant<StringHandle, TempVar, LocalVarId>& base,
 	TempVar result_var,
 	TypeCategory target_type,
 	int target_size,
@@ -972,9 +972,9 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 				VirtualBaseAdjustOp adjust_op;
 				adjust_op.result = adjusted_ptr;
 				adjust_op.source = std::visit(
-					[](const auto& value) -> std::variant<StringHandle, TempVar> {
+					[](const auto& value) -> std::variant<StringHandle, TempVar, LocalVarId> {
 						using Value = std::decay_t<decltype(value)>;
-						if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle>) {
+						if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle> || std::is_same_v<Value, LocalVarId>) {
 							return value;
 						}
 						throw InternalError("Unsupported virtual-base pointer cast operand");
@@ -1306,7 +1306,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 			}
 
 				// typeid(expr) on a polymorphic class expression needs runtime RTTI from the object.
-			std::variant<StringHandle, TempVar> operand_value;
+			std::variant<StringHandle, TempVar, LocalVarId> operand_value;
 			if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
 				operand_value = *temp_var;
 			} else if (const auto* string_ptr = std::get_if<StringHandle>(&expr_operands.value)) {
@@ -1342,7 +1342,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 
 			// Fallback when semantic typing is unavailable.
 			// Extract IrValue from expression result
-		std::variant<StringHandle, TempVar> operand_value;
+		std::variant<StringHandle, TempVar, LocalVarId> operand_value;
 		if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
 			operand_value = *temp_var;
 		} else if (const auto* string_ptr = std::get_if<StringHandle>(&expr_operands.value)) {
