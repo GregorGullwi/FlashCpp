@@ -8,6 +8,62 @@ void AstToIr::normalizePendingSemanticRoots() {
 	sema_.parserSemanticServices().normalizePendingSemanticRoots();
 }
 
+void AstToIr::resetLocalFrameNames() {
+	local_frame_names_.clear();
+	local_frame_name_declarations_.clear();
+	has_shadowed_local_frames_ = false;
+}
+
+StringHandle AstToIr::declareLocalFrameName(const ASTNode& declaration, StringHandle spelling) {
+	// Only locals claim frame names; a non-local entity passed here would make
+	// two unrelated declarations collide on the same frame.
+	if (!declaration.has_value()) {
+		throw InternalError("Local frame identity requires a declaration");
+	}
+	const uint32_t declaration_count = local_frame_name_declarations_[spelling];
+	local_frame_name_declarations_[spelling] = declaration_count + 1;
+
+	StringHandle frame_name = spelling;
+	if (declaration_count != 0) {
+		has_shadowed_local_frames_ = true;
+		// A shadowing declaration needs storage of its own. The suffix keeps the
+		// frame table entry traceable to the spelling it came from.
+		frame_name = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(spelling)
+				.append('$')
+				.append(std::to_string(declaration_count))
+				.commit());
+	}
+	local_frame_names_.insert_or_assign(declaration.raw_pointer(), frame_name);
+	return frame_name;
+}
+
+StringHandle AstToIr::resolvedFrameName(StringHandle name) const {
+	if (!has_shadowed_local_frames_) {
+		return name;
+	}
+	const StringHandle interned = name.isValid() ? name : StringTable::getOrInternStringHandle(StringTable::getStringView(name));
+	return resolvedFrameName(StringTable::getStringView(interned));
+}
+
+StringHandle AstToIr::resolvedFrameName(std::string_view name) const {
+	const StringHandle interned = StringTable::getOrInternStringHandle(name);
+	if (!has_shadowed_local_frames_) {
+		return interned;
+	}
+	const std::optional<ASTNode> symbol = lookupSymbol(interned);
+	return localFrameNameFor(symbol.value_or(ASTNode{}), interned);
+}
+
+StringHandle AstToIr::localFrameNameFor(const ASTNode& resolved_symbol, StringHandle spelling) const {
+	if (!has_shadowed_local_frames_ || !resolved_symbol.has_value()) {
+		return spelling;
+	}
+	const auto frame_name = local_frame_names_.find(resolved_symbol.raw_pointer());
+	return frame_name == local_frame_names_.end() ? spelling : frame_name->second;
+}
+
 ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols) const {
 	ConstExpr::EvaluationContext ctx(symbols, parser_);
 	if (global_symbol_table_) {

@@ -1152,6 +1152,11 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		return ExprResult{};
 	}
 
+	// Frame name of the resolved declaration. Parameters, `this`, globals and
+	// other non-local entities keep their spelling; a local that shadows an
+	// outer declaration of the same spelling names its own frame instead.
+	const StringHandle identifier_frame_name = localFrameNameFor(*symbol, identifier_handle);
+
 	if (symbol->is<DeclarationNode>()) {
 		const auto& decl_node = symbol->as<DeclarationNode>();
 		const auto& type_node = decl_node.type_specifier_node();
@@ -1230,7 +1235,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// dereference handling.
 			if (decl_node.is_array_object() || type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{identifier_frame_name}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
@@ -1256,7 +1261,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 								 lvalue_temp.var_number, identifierNode.name());
 
 					// Generate Assignment to copy the pointer value from the reference parameter to the temp
-				StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+				StringHandle var_handle = identifier_frame_name;
 				AssignmentOp assign_op;
 				assign_op.result = lvalue_temp;
 				assign_op.lhs = withStorage(
@@ -1299,13 +1304,13 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 			int ptr_depth = type_node.runtime_pointer_depth() > 0 ? static_cast<int>(type_node.runtime_pointer_depth()) : 1;
 			TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
-												  StringTable::getOrInternStringHandle(identifierNode.name()));
+												  identifier_frame_name);
 
 				// Mark as lvalue with Indirect metadata for unified assignment handler
 				// This allows compound assignments (like x *= 2) to work on dereferenced references
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::Indirect,
-				StringTable::getOrInternStringHandle(identifierNode.name()),	 // The reference variable name
+				identifier_frame_name,	 // The reference variable name
 				0  // offset is 0 for simple dereference
 			);
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
@@ -1348,7 +1353,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		return makeIdentifierResult(
 			return_type,
 			size_bits,
-			StringTable::getOrInternStringHandle(identifierNode.name()),
+			identifier_frame_name,
 			type_index,
 			pointer_depth);
 	}
@@ -1419,7 +1424,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					// reference value.
 				if (decl_node.is_array_object() || type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-					return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{identifier_frame_name}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
@@ -1432,7 +1437,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						// The reference variable holds a pointer address
 						// We need to load it into a temp and mark it with Indirect LValue metadata
 					TempVar addr_temp = var_counter.next();
-					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+					StringHandle var_handle = identifier_frame_name;
 
 						// Use AssignmentOp to copy the pointer value to a temp
 					AssignmentOp assign_op;
@@ -1468,13 +1473,13 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 				int ptr_depth = type_node.runtime_pointer_depth() > 0 ? static_cast<int>(type_node.runtime_pointer_depth()) : 1;
 				TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
-													  StringTable::getOrInternStringHandle(identifierNode.name()));
+													  identifier_frame_name);
 
 					// Mark as lvalue with ReferenceDeref metadata for unified assignment handler
 					// ReferenceDeref (vs plain Indirect) signals downstream code that the base is a C++ reference variable.
 				LValueInfo lvalue_info(
 					LValueInfo::Kind::ReferenceDeref,
-					StringTable::getOrInternStringHandle(identifierNode.name()),	 // The reference variable name
+					identifier_frame_name,	 // The reference variable name
 					0  // offset is 0 for simple dereference
 				);
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
@@ -1495,7 +1500,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			ExprResult result = makeIdentifierResult(
 				result_type,
 				size_bits,
-				StringTable::getOrInternStringHandle(identifierNode.name()),
+				identifier_frame_name,
 				carriesSemanticTypeIndex(result_type)
 					? result_type_index
 					: TypeIndex{},
@@ -2110,9 +2115,10 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
 			return makeExprResult(type_index, SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		} else {
-				// Local variable - just return the name
+				// Local variable - return the frame name of the resolved declaration
 			TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
-			return makeExprResult(type_index, SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+			StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
+			return makeExprResult(type_index, SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{localFrameNameFor(*found_symbol, qualified_name_handle)}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 

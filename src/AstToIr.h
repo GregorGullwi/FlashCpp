@@ -1360,6 +1360,34 @@ private:
 
 	Ir ir_;
 	TempVar var_counter{0};
+	// Frame identity for function-local objects. Two declarations in one
+	// function may share a spelling (an inner block shadowing an outer local),
+	// and each needs its own frame slot, so a shadowed declaration gets a
+	// distinct frame name while the spelling stays available for diagnostics
+	// and debug information. Keyed by declaration identity, so every reference
+	// to that declaration resolves to the same frame regardless of the scope
+	// the reference appears in.
+	std::unordered_map<const void*, StringHandle> local_frame_names_;
+	// Number of declarations that have claimed each spelling in this function.
+	std::unordered_map<StringHandle, uint32_t> local_frame_name_declarations_;
+	// Set once a function declares the same spelling twice. Until then every
+	// local frame name equals its spelling, so reference lowering can skip the
+	// frame lookup entirely.
+	bool has_shadowed_local_frames_ = false;
+	// Claims the frame name for a local declaration. The first declaration of
+	// a spelling keeps the spelling itself so unchanged lowering and debug
+	// names are unaffected; later declarations get a unique frame name.
+	StringHandle declareLocalFrameName(const ASTNode& declaration, StringHandle spelling);
+	// Frame name for a resolved symbol: the declaration's own frame name when
+	// it is a known local, otherwise the spelling for non-local entities.
+	StringHandle localFrameNameFor(const ASTNode& resolved_symbol, StringHandle spelling) const;
+	// Frame name for a name resolved through the scope chain. Lowering sites
+	// that start from a spelling rather than a resolved symbol use this so the
+	// innermost visible declaration wins, as it does during semantic analysis.
+	StringHandle resolvedFrameName(StringHandle name) const;
+	StringHandle resolvedFrameName(std::string_view name) const;
+	// Clears per-function frame identity together with the temporary counter.
+	void resetLocalFrameNames();
 	uint32_t string_literal_counter_ = 0;  // Counter for unique .str.N global names
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup

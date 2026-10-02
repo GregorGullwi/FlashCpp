@@ -2410,6 +2410,13 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		stack_offset = aligned_offset - (local_var.size_in_bits.value / 8);
 
 		// Store both offset and size in unified structure, including is_array flag
+		auto existing = var_scope.variables.find(local_var.var_name);
+		if (existing != var_scope.variables.end()) {
+			// Two declarations in one function resolved to the same frame name.
+			// They are distinct objects, so one frame slot cannot hold both.
+			throw InternalError("Two local declarations in one function share the frame name '" +
+								std::string(StringTable::getStringView(local_var.var_name)) + "'");
+		}
 		var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});
 	}
 
@@ -6938,6 +6945,9 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 		// Get variable name as StringHandle
 	StringHandle var_name_handle = op.var_name;
+	// Debug information and diagnostics use the declared spelling; a shadowing
+	// declaration carries a frame name that is not the source spelling.
+	StringHandle declared_name_handle = op.declared_name.isValid() ? op.declared_name : var_name_handle;
 
 	TypeCategory var_type = op.opType();
 	StackVariableScope& current_scope = variable_scopes.back();
@@ -6949,7 +6959,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 	[[maybe_unused]] bool is_array = op.is_array;
 	bool is_initialized = op.initializer.has_value();
 
-	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_handle, "', is_reference=", is_reference, ", pointer_depth=", op.pointer_depth.value, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
+	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", declared_name_handle, "', is_reference=", is_reference, ", pointer_depth=", op.pointer_depth.value, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
 
 	// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
 	// of this slot was a reference, stale metadata would cause later by-value variables
@@ -7464,7 +7474,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		}
 
 		uint16_t flags = 0;
-		writer.add_local_variable(std::string(StringTable::getStringView(var_name_handle)), type_index, flags, locations);
+		writer.add_local_variable(std::string(StringTable::getStringView(declared_name_handle)), type_index, flags, locations);
 	}
 }
 

@@ -816,6 +816,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 
 	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
+	resetLocalFrameNames();
 
 	// Set current function return type and size for type checking in return statements
 	// This is critical for lambdas returning other lambdas or structs
@@ -960,6 +961,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 		// TempVar is 1-based. For static functions (like __invoke), no 'this' pointer,
 		// so TempVar() starts at 1 which is the first available slot.
 	var_counter = TempVar();
+	resetLocalFrameNames();
 
 	// Set current function return type and size for type checking in return statements
 	// This is critical for lambdas returning other lambdas or structs

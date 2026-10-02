@@ -1440,7 +1440,9 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 		return false;
 	}
 
-	base_object = StringTable::getOrInternStringHandle(object_name);
+	// The member access base must name the frame of the declaration that is
+	// visible here, so a shadowing local does not read the outer object.
+	base_object = localFrameNameFor(*symbol, StringTable::getOrInternStringHandle(object_name));
 	base_type_index = object_type.type_index();
 
 	// Check if this is a pointer to struct (e.g., P* pp) or a reference to struct (e.g., P& pr)
