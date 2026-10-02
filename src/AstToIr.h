@@ -1367,9 +1367,23 @@ private:
 	// and debug information. Keyed by declaration identity, so every reference
 	// to that declaration resolves to the same frame regardless of the scope
 	// the reference appears in.
-	std::unordered_map<const void*, StringHandle> local_frame_names_;
-	// Number of declarations that have claimed each spelling in this function.
-	std::unordered_map<StringHandle, uint32_t> local_frame_name_declarations_;
+	//
+	// A function declares only a handful of locals, so these are dense arrays
+	// with a linear scan rather than hash tables. Only shadowing declarations
+	// enter shadowed_local_frames_, which keeps the scanned table at the size
+	// of the actual shadowing (usually one or two entries), and both buffers
+	// retain capacity across functions so steady-state declaration adds no
+	// allocations.
+	struct ShadowedLocalFrame {
+		const void* declaration;
+		StringHandle frame_name;
+	};
+	struct LocalSpellingUse {
+		StringHandle spelling;
+		uint32_t declarations;
+	};
+	std::vector<ShadowedLocalFrame> shadowed_local_frames_;
+	std::vector<LocalSpellingUse> local_spelling_uses_;
 	// Set once a function declares the same spelling twice. Until then every
 	// local frame name equals its spelling, so reference lowering can skip the
 	// frame lookup entirely.

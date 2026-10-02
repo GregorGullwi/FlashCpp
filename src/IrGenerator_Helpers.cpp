@@ -9,8 +9,8 @@ void AstToIr::normalizePendingSemanticRoots() {
 }
 
 void AstToIr::resetLocalFrameNames() {
-	local_frame_names_.clear();
-	local_frame_name_declarations_.clear();
+	shadowed_local_frames_.clear();
+	local_spelling_uses_.clear();
 	has_shadowed_local_frames_ = false;
 }
 
@@ -20,23 +20,27 @@ StringHandle AstToIr::declareLocalFrameName(const ASTNode& declaration, StringHa
 	if (!declaration.has_value()) {
 		throw InternalError("Local frame identity requires a declaration");
 	}
-	const uint32_t declaration_count = local_frame_name_declarations_[spelling];
-	local_frame_name_declarations_[spelling] = declaration_count + 1;
-
-	StringHandle frame_name = spelling;
-	if (declaration_count != 0) {
+	for (LocalSpellingUse& use : local_spelling_uses_) {
+		if (use.spelling != spelling) {
+			continue;
+		}
+		// A later declaration of a spelling already in this function shadows the
+		// earlier one and needs storage of its own. The suffix keeps the frame
+		// entry traceable to the spelling it came from.
+		const uint32_t prior_declarations = use.declarations;
+		use.declarations = prior_declarations + 1;
 		has_shadowed_local_frames_ = true;
-		// A shadowing declaration needs storage of its own. The suffix keeps the
-		// frame table entry traceable to the spelling it came from.
-		frame_name = StringTable::getOrInternStringHandle(
+		StringHandle frame_name = StringTable::getOrInternStringHandle(
 			StringBuilder()
 				.append(spelling)
 				.append('$')
-				.append(std::to_string(declaration_count))
+				.append(std::to_string(prior_declarations))
 				.commit());
+		shadowed_local_frames_.push_back(ShadowedLocalFrame{declaration.raw_pointer(), frame_name});
+		return frame_name;
 	}
-	local_frame_names_.insert_or_assign(declaration.raw_pointer(), frame_name);
-	return frame_name;
+	local_spelling_uses_.push_back(LocalSpellingUse{spelling, 1});
+	return spelling;
 }
 
 StringHandle AstToIr::resolvedFrameName(StringHandle name) const {
@@ -60,8 +64,14 @@ StringHandle AstToIr::localFrameNameFor(const ASTNode& resolved_symbol, StringHa
 	if (!has_shadowed_local_frames_ || !resolved_symbol.has_value()) {
 		return spelling;
 	}
-	const auto frame_name = local_frame_names_.find(resolved_symbol.raw_pointer());
-	return frame_name == local_frame_names_.end() ? spelling : frame_name->second;
+	const void* declaration = resolved_symbol.raw_pointer();
+	for (const ShadowedLocalFrame& entry : shadowed_local_frames_) {
+		if (entry.declaration == declaration) {
+			return entry.frame_name;
+		}
+	}
+	// Not a shadowing declaration: the first declaration of a spelling keeps it.
+	return spelling;
 }
 
 ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols) const {
