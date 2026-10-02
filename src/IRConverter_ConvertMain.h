@@ -113,6 +113,10 @@ private:
 	struct StackVariableScope {
 		int scope_stack_space = 0;
 		std::unordered_map<StringHandle, VariableInfo> variables;  // Phase 5: StringHandle for integer-based lookups
+		// Per-function named-local slots indexed by (LocalVarId::value - 1).
+		// Locals resolve through this table; `variables` stays the channel for
+		// parameters, `this`, globals and other spelling-keyed entities.
+		std::vector<VariableInfo> local_slots_by_id;
 	};
 
 	struct IndirectStorageInfo {
@@ -202,7 +206,7 @@ private:
 	// Recorded producer sizes describe storage (including address slots), while
 	// size_in_bits supplies the size for an explicitly sized unrecorded producer.
 	int32_t getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits = 64);
-	SizeInBits getStackVariableLoadSizeBits(StringHandle variable_name) const;
+	SizeInBits getStackVariableLoadSizeBits(VariableKey variable_key) const;
 
 	void flushAllDirtyRegisters();
 
@@ -438,6 +442,8 @@ private:
 
 	/// Resolve a TypedValue (StringHandle or TempVar) to its frame offset.
 	int32_t getVariableOffsetOrThrow(StringHandle var_handle, std::string_view context) const;
+	int32_t getVariableOffsetOrThrow(LocalVarId id, std::string_view context) const;
+	int32_t getVariableOffsetOrThrow(VariableKey key, std::string_view context) const;
 
 	int resolveTypedValueFrameOffset(const TypedValue& arg);
 
@@ -536,7 +542,7 @@ private:
 	void handleFunctionDecl(const IrInstruction& instruction);
 
 	// Helper function to get the actual size of a variable for proper zero/sign-extension
-	int getActualVariableSize(StringHandle var_name, int default_size) const;
+	int getActualVariableSize(VariableKey var_key, int default_size) const;
 
 	int32_t ensureCatchFuncletReturnSlot();
 
@@ -654,8 +660,19 @@ private:
 	X64Register loadTypedValueIntoRegister(const TypedValue& typed_value);
 
 	const VariableInfo* findVariableInfo(StringHandle name) const;
+	const VariableInfo* findVariableInfo(LocalVarId id) const;
+	const VariableInfo* findVariableInfo(VariableKey key) const;
+
+	// Lift a local-capable IR carrier into the declaration-storage key used by
+	// the frame tables. Returns nullopt when the carrier names no local/global
+	// variable (temp, immediate, type name, ...).
+	static std::optional<VariableKey> variableKeyOf(const IrValue& value);
+	static std::optional<VariableKey> variableKeyOf(const IrOperand& operand);
+	static std::optional<VariableKey> variableKeyOf(const TypedValue& value);
+	static std::optional<VariableKey> variableKeyOf(const std::variant<StringHandle, TempVar, LocalVarId>& value);
 
 	std::optional<int32_t> findIdentifierStackOffset(StringHandle name) const;
+	std::optional<int32_t> findIdentifierStackOffset(VariableKey key) const;
 
 	enum class IncDecKind { PreIncrement,
 							PostIncrement,
@@ -891,7 +908,7 @@ private:
 	// Inline destructor call helper (shared by Phase 1 and Phase 2 cleanup LP)
 	// ============================================================================
 
-	void emitInlineDestructorCall(const std::pair<StringHandle, StringHandle>& cleanup_var);
+	void emitInlineDestructorCall(const std::pair<StringHandle, VariableKey>& cleanup_var);
 
 	void emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 
@@ -1140,7 +1157,7 @@ private:
 		uint32_t try_start_offset;  // Code offset where try block starts
 		uint32_t try_end_offset;	 // Code offset where try block ends
 		std::vector<CatchHandler> catch_handlers;  // Associated catch clauses
-		std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;	 // {struct_name, var_name} destroyed when unwinding this try state
+		std::vector<std::pair<StringHandle, VariableKey>> cleanup_vars;	 // {struct_name, variable key} destroyed when unwinding this try state
 	};
 
 	// Destructor unwinding support
@@ -1194,7 +1211,7 @@ private:
 	uint32_t eh_prologue_extra_sub_rsp_offset_ = 0;	// Offset of the post-SEH-frame SUB RSP imm32 in C++ EH prologue, patched with any extra stack allocation
 	std::vector<uint32_t> catch_funclet_lea_rbp_patches_;  // Offsets of LEA RBP,[RDX+N] in catch funclets, patched with the effective frame size
 	std::vector<uint32_t> cleanup_funclet_lea_rbp_patches_;	// Offsets of LEA RBP,[RDX+N] in cleanup funclets, patched with the effective frame size
-	std::vector<std::pair<StringHandle, StringHandle>> pending_windows_function_cleanup_vars_;  // Function-scope cleanup vars for Windows FH3 unwind funclets
+	std::vector<std::pair<StringHandle, VariableKey>> pending_windows_function_cleanup_vars_;  // Function-scope cleanup vars for Windows FH3 unwind funclets
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number

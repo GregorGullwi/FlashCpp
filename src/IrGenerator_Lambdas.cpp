@@ -184,7 +184,7 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 	return collected_lambdas_.back();
 }
 
-ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
+ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name, LocalVarId target_var_id) {
 	// Collect lambda information for deferred generation
 	// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
 	// If target_var_name is provided, use it as the closure variable name (for variable declarations)
@@ -298,6 +298,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 		lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
 		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->sizeInBits().value)};
 		lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
+		lambda_decl_op.local_id = target_var_id;
 		lambda_decl_op.custom_alignment = 0;
 		lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
 		lambda_decl_op.is_array = false;
@@ -319,6 +320,13 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 		lambda_decl_op.is_array = false;
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
 	}
+
+	// Storage key for the closure object: the target local's numeric id when
+	// this closure is a named local, otherwise the closure's synthetic spelling.
+	const std::variant<StringHandle, TempVar, LocalVarId> closure_object =
+		(target_var_id.value != 0)
+			? std::variant<StringHandle, TempVar, LocalVarId>{target_var_id}
+			: std::variant<StringHandle, TempVar, LocalVarId>{StringTable::getOrInternStringHandle(closure_var_name)};
 
 	// Now initialize captured members
 	// The key insight: we need to generate the initialization code that will be
@@ -365,7 +373,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 						store_this.value.ir_type = IrType::Void;
 						store_this.value.size_in_bits = SizeInBits{64};
 						store_this.value.value = this_capture_value;
-						store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
+						store_this.object = closure_object;
 						store_this.member_name = StringTable::getOrInternStringHandle("__this");
 						store_this.offset = static_cast<int>(member->offset);
 						store_this.ref_qualifier = CVReferenceQualifier::None;
@@ -407,7 +415,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 								store_copy_this.value.setType(enclosing_member.type_index.category());
 								store_copy_this.value.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 								store_copy_this.value.value = loaded_value;
-								store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
+								store_copy_this.object = closure_object;
 								store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 								store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
 								store_copy_this.ref_qualifier = ((enclosing_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((enclosing_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -458,7 +466,8 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 								visitExpressionNode(init_expr, ExpressionContext::LValueAddress),
 								lambda.lambda_token());
 							if (!std::holds_alternative<TempVar>(address_result.value) &&
-								!std::holds_alternative<StringHandle>(address_result.value)) {
+								!std::holds_alternative<StringHandle>(address_result.value) &&
+								!std::holds_alternative<LocalVarId>(address_result.value)) {
 								continue;
 							}
 
@@ -467,7 +476,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							member_store.value.setType(member->memberType());
 							member_store.value.size_in_bits = SizeInBits{64}; // pointer size
 							member_store.value.value = toIrValue(address_result.value);
-							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+							member_store.object = closure_object;
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.ref_qualifier = CVReferenceQualifier::LValueReference;
@@ -492,12 +501,14 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 								member_store.value.value = *d_val;
 							} else if (const auto* string = std::get_if<StringHandle>(&init_value)) {
 								member_store.value.value = *string;
+							} else if (const auto* local_id = std::get_if<LocalVarId>(&init_value)) {
+								member_store.value.value = *local_id;
 							} else {
 								// For other types, skip this capture
 								continue;
 							}
 
-							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+							member_store.object = closure_object;
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -564,7 +575,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							addr_op.operand.ir_type = toIrType(orig_type.type());
 							addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
 							addr_op.operand.pointer_depth = PointerDepth{};
-							addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
+							addr_op.operand.value = toIrValue(resolvedVariableKey(var_name_str));
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 						}
 
@@ -573,7 +584,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 						member_store.value.setType(member->type_index.category());
 						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_store.value.value = addr_temp;
-						member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+						member_store.object = closure_object;
 						member_store.member_name = member->getName();
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -603,11 +614,12 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 
 							member_store.value.value = loaded_value;
 						} else {
-								// Regular variable - use directly
-							member_store.value.value = StringTable::getOrInternStringHandle(var_name);
+								// Regular variable - use its declaration identity so a
+								// shadowed local is captured from the visible declaration.
+							member_store.value.value = toIrValue(resolvedVariableKey(var_name_str));
 						}
 
-						member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+						member_store.object = closure_object;
 						member_store.member_name = member->getName();
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -629,7 +641,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 	// - type_index: the type index for the closure struct
 	int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->sizeInBits().value);
 	TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
-	return makeExprResult(closure_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(closure_size_bits)}, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(closure_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(closure_size_bits)}, ((target_var_id.value != 0) ? IrOperand{target_var_id} : IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}), PointerDepth{}, ValueStorage::ContainsData);
 }
 
 void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
@@ -816,7 +828,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 
 	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
-	resetLocalFrameNames();
+	ScopedLocalVarIdReset local_var_id_reset{*this};
 
 	// Set current function return type and size for type checking in return statements
 	// This is critical for lambdas returning other lambdas or structs
@@ -961,7 +973,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 		// TempVar is 1-based. For static functions (like __invoke), no 'this' pointer,
 		// so TempVar() starts at 1 which is the first available slot.
 	var_counter = TempVar();
-	resetLocalFrameNames();
+	ScopedLocalVarIdReset local_var_id_reset{*this};
 
 	// Set current function return type and size for type checking in return statements
 	// This is critical for lambdas returning other lambdas or structs

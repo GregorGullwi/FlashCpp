@@ -74,19 +74,6 @@ public:
 		return std::holds_alternative<TClass>(operands_[index]);
 	}
 
-	// Formats a local declaration id as its display name when the enclosing
-	// function published one, falling back to the numeric id. Identity is the
-	// id; the display name exists only so IR dumps stay readable.
-	static void appendLocalVarName(std::ostringstream& oss, LocalVarId id,
-								   std::span<const StringHandle> local_debug_names) {
-		if (id.value != 0 && id.value <= local_debug_names.size() &&
-			local_debug_names[id.value - 1].isValid()) {
-			oss << StringTable::getStringView(local_debug_names[id.value - 1]);
-		} else {
-			oss << '#' << id.value;
-		}
-	}
-
 	std::string getReadableString() const {
 		return getReadableString(std::span<const StringHandle>{});
 	}
@@ -96,104 +83,104 @@ public:
 
 		switch (opcode_) {
 		case IrOpcode::Add:
-			oss << formatBinaryOp("add", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("add", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::Subtract:
-			oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::Multiply:
-			oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::Divide:
-			oss << formatBinaryOp("div", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("div", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::UnsignedDivide:
-			oss << formatBinaryOp("udiv", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("udiv", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::ShiftLeft:
-			oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::ShiftRight:
-			oss << formatBinaryOp("shr", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("shr", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::UnsignedShiftRight:
-			oss << formatBinaryOp("lshr", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("lshr", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::Modulo:
-			oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::UnsignedModulo:
-			oss << formatBinaryOp("urem", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("urem", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::BitwiseAnd:
-			oss << formatBinaryOp("and", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("and", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::BitwiseOr:
-			oss << formatBinaryOp("or", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("or", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::BitwiseXor:
-			oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::BitwiseNot:
-			oss << formatUnaryOp("not", getTypedPayload<UnaryOp>());
+			oss << formatUnaryOp("not", getTypedPayload<UnaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::Equal:
-			oss << formatBinaryOp("icmp eq", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp eq", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::NotEqual:
-			oss << formatBinaryOp("icmp ne", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp ne", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::LessThan:
-			oss << formatBinaryOp("icmp slt", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp slt", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::LessEqual:
-			oss << formatBinaryOp("icmp sle", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp sle", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::GreaterThan:
-			oss << formatBinaryOp("icmp sgt", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp sgt", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::GreaterEqual:
-			oss << formatBinaryOp("icmp sge", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp sge", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::UnsignedLessThan:
-			oss << formatBinaryOp("icmp ult", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp ult", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::UnsignedLessEqual:
-			oss << formatBinaryOp("icmp ule", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp ule", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::UnsignedGreaterThan:
-			oss << formatBinaryOp("icmp ugt", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp ugt", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::UnsignedGreaterEqual:
-			oss << formatBinaryOp("icmp uge", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("icmp uge", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::LogicalAnd:
-			oss << formatBinaryOp("and i1", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("and i1", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::LogicalOr:
-			oss << formatBinaryOp("or i1", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("or i1", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::LogicalNot:
-			oss << formatUnaryOp("lnot", getTypedPayload<UnaryOp>());
+			oss << formatUnaryOp("lnot", getTypedPayload<UnaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::Negate:
-			oss << formatUnaryOp("neg", getTypedPayload<UnaryOp>());
+			oss << formatUnaryOp("neg", getTypedPayload<UnaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::SignExtend:
-			oss << formatConversionOp("sext", getTypedPayload<ConversionOp>());
+			oss << formatConversionOp("sext", getTypedPayload<ConversionOp>(), local_debug_names);
 			break;
 		case IrOpcode::ZeroExtend:
-			oss << formatConversionOp("zext", getTypedPayload<ConversionOp>());
+			oss << formatConversionOp("zext", getTypedPayload<ConversionOp>(), local_debug_names);
 			break;
 		case IrOpcode::Truncate:
-			oss << formatConversionOp("trunc", getTypedPayload<ConversionOp>());
+			oss << formatConversionOp("trunc", getTypedPayload<ConversionOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::Return: {
@@ -207,16 +194,7 @@ public:
 				}
 				oss << op.return_size << " ";
 
-				const auto& val = op.return_value.value();
-				if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-					oss << *ull_val;
-				} else if (const auto* temp_var = std::get_if<TempVar>(&val)) {
-					oss << '%' << temp_var->var_number;
-				} else if (const auto* string = std::get_if<StringHandle>(&val)) {
-					oss << '%' << StringTable::getStringView(*string);
-				} else if (const auto* d_val = std::get_if<double>(&val)) {
-					oss << *d_val;
-				}
+				printIrValue(oss, op.return_value.value(), local_debug_names);
 			} else {
 				// Void return
 				oss << "void";
@@ -336,7 +314,7 @@ public:
 				oss << arg.size_in_bits << " ";
 
 				// Value - use the helper function that handles all types including double
-				printTypedValue(oss, arg);
+				printTypedValue(oss, arg, local_debug_names);
 			}
 
 			oss << ")";
@@ -369,13 +347,7 @@ public:
 
 			// Condition value
 			const auto& val = op.condition.value;
-			if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-				oss << *ull_val;
-			} else if (const auto* temp_var = std::get_if<TempVar>(&val)) {
-				oss << '%' << temp_var->var_number;
-			} else if (const auto* string = std::get_if<StringHandle>(&val)) {
-				oss << '%' << StringTable::getStringView(*string);
-			}
+			printIrValue(oss, val, local_debug_names);
 
 			oss << ", label %" << op.getLabelTrue();	 // Phase 4: Use helper
 			oss << ", label %" << op.getLabelFalse();  // Phase 4: Use helper
@@ -432,19 +404,14 @@ public:
 
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
-			else if (const auto* id = std::get_if<LocalVarId>(&op.array))
+			else if (const auto* id = std::get_if<LocalVarId>(&op.array)) {
+				oss << '%';
 				appendLocalVarName(oss, *id, local_debug_names);
-			else
+			} else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
 			oss << ", [" << static_cast<int>(op.index.typeEnum()) << "][" << op.index.size_in_bits << "] ";
-
-			if (const auto* ull_val = std::get_if<unsigned long long>(&op.index.value))
-				oss << *ull_val;
-			else if (std::holds_alternative<TempVar>(op.index.value))
-				oss << '%' << std::get<TempVar>(op.index.value).var_number;
-			else if (std::holds_alternative<StringHandle>(op.index.value))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.index.value));
+			printTypedValue(oss, op.index, local_debug_names);
 		} break;
 
 		case IrOpcode::ArrayStore: {
@@ -454,18 +421,19 @@ public:
 
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
-			else if (const auto* id = std::get_if<LocalVarId>(&op.array))
+			else if (const auto* id = std::get_if<LocalVarId>(&op.array)) {
+				oss << '%';
 				appendLocalVarName(oss, *id, local_debug_names);
-			else
+			} else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
 			oss << ", [" << static_cast<int>(op.index.typeEnum()) << "][" << op.index.size_in_bits << "] ";
 
-			printTypedValue(oss, op.index);
+			printTypedValue(oss, op.index, local_debug_names);
 
 			oss << ", [" << static_cast<int>(op.value.typeEnum()) << "][" << op.value.size_in_bits << "] ";
 
-			printTypedValue(oss, op.value);
+			printTypedValue(oss, op.value, local_debug_names);
 			break;
 		} break;
 
@@ -478,13 +446,15 @@ public:
 			// Array
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
-			else if (const auto* id = std::get_if<LocalVarId>(&op.array))
+			else if (const auto* id = std::get_if<LocalVarId>(&op.array)) {
+				oss << '%';
 				appendLocalVarName(oss, *id, local_debug_names);
+			}
 			else if (std::holds_alternative<TempVar>(op.array))
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
 			oss << "[";
-			printTypedValue(oss, op.index);
+			printTypedValue(oss, op.index, local_debug_names);
 			oss << "]";
 		} break;
 
@@ -510,6 +480,10 @@ public:
 				oss << '%' << StringTable::getStringView(*string_ptr);
 			else if (std::holds_alternative<TempVar>(op.operand.value))
 				oss << '%' << std::get<TempVar>(op.operand.value).var_number;
+			else if (const auto* local_id = std::get_if<LocalVarId>(&op.operand.value)) {
+				oss << '%';
+				appendLocalVarName(oss, *local_id, local_debug_names);
+			}
 		} break;
 
 		case IrOpcode::AddressOfMember: {
@@ -531,7 +505,8 @@ public:
 			if (const auto* string = std::get_if<StringHandle>(&op.base)) {
 				oss << "base: %" << StringTable::getStringView(*string);
 			} else if (const auto* id = std::get_if<LocalVarId>(&op.base)) {
-				oss << "base: "; appendLocalVarName(oss, *id, local_debug_names);
+				oss << "base: %";
+				appendLocalVarName(oss, *id, local_debug_names);
 			} else {
 				oss << "base: %" << std::get<TempVar>(op.base).var_number;
 			}
@@ -545,8 +520,11 @@ public:
 					oss << *ull_val;
 				} else if (const auto* temp_var = std::get_if<TempVar>(&arr_idx.index)) {
 					oss << "%" << temp_var->var_number;
-				} else {
-					oss << "%" << StringTable::getStringView(std::get<StringHandle>(arr_idx.index));
+				} else if (const auto* string = std::get_if<StringHandle>(&arr_idx.index)) {
+					oss << "%" << StringTable::getStringView(*string);
+				} else if (const auto* local_id = std::get_if<LocalVarId>(&arr_idx.index)) {
+					oss << "%";
+					appendLocalVarName(oss, *local_id, local_debug_names);
 				}
 				oss << " [" << static_cast<int>(arr_idx.indexType()) << "]" << arr_idx.index_size_bits;
 				oss << " (elem_size: " << arr_idx.element_size_bits << " bits)";
@@ -565,6 +543,7 @@ public:
 			if (const auto* string = std::get_if<StringHandle>(&op.source)) {
 				oss << "%" << StringTable::getStringView(*string);
 			} else if (const auto* id = std::get_if<LocalVarId>(&op.source)) {
+				oss << '%';
 				appendLocalVarName(oss, *id, local_debug_names);
 			} else {
 				oss << '%' << std::get<TempVar>(op.source).var_number;
@@ -595,10 +574,7 @@ public:
 			oss << " ";
 
 			// Print pointer value
-			if (const auto* string = std::get_if<StringHandle>(&op.pointer.value))
-				oss << '%' << StringTable::getStringView(*string);
-			else if (std::holds_alternative<TempVar>(op.pointer.value))
-				oss << '%' << std::get<TempVar>(op.pointer.value).var_number;
+			printTypedValue(oss, op.pointer, local_debug_names);
 		} break;
 
 		case IrOpcode::DereferenceStore: {
@@ -619,22 +595,12 @@ public:
 			oss << " ";
 
 			// Print pointer value
-			if (const auto* string = std::get_if<StringHandle>(&op.pointer.value))
-				oss << "%" << StringTable::getStringView(*string);
-			else if (std::holds_alternative<TempVar>(op.pointer.value))
-				oss << "%" << std::get<TempVar>(op.pointer.value).var_number;
+			printTypedValue(oss, op.pointer, local_debug_names);
 
 			oss << ", ";
 
 			// Value being stored
-			if (const auto* ull_val = std::get_if<unsigned long long>(&op.value.value))
-				oss << *ull_val;
-			else if (std::holds_alternative<double>(op.value.value))
-				oss << std::get<double>(op.value.value);
-			else if (std::holds_alternative<TempVar>(op.value.value))
-				oss << "%" << std::get<TempVar>(op.value.value).var_number;
-			else if (std::holds_alternative<StringHandle>(op.value.value))
-				oss << "%" << StringTable::getStringView(std::get<StringHandle>(op.value.value));
+			printTypedValue(oss, op.value, local_debug_names);
 		} break;
 
 		case IrOpcode::MemberAccess: {
@@ -647,6 +613,8 @@ public:
 				oss << temp_var->var_number;
 			else if (std::holds_alternative<StringHandle>(op.result.value))
 				oss << StringTable::getStringView(std::get<StringHandle>(op.result.value));
+			else if (const auto* local_id = std::get_if<LocalVarId>(&op.result.value))
+				appendLocalVarName(oss, *local_id, local_debug_names);
 
 			oss << " = member_access ";
 
@@ -659,8 +627,10 @@ public:
 			// Object
 			if (const auto* temp_var = std::get_if<TempVar>(&op.object))
 				oss << '%' << temp_var->var_number;
-			else if (const auto* id = std::get_if<LocalVarId>(&op.object))
+			else if (const auto* id = std::get_if<LocalVarId>(&op.object)) {
+				oss << '%';
 				appendLocalVarName(oss, *id, local_debug_names);
+			}
 			else if (std::holds_alternative<StringHandle>(op.object))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.object));
 
@@ -690,8 +660,10 @@ public:
 			// Object
 			if (const auto* temp_var = std::get_if<TempVar>(&op.object))
 				oss << '%' << temp_var->var_number;
-			else if (const auto* id = std::get_if<LocalVarId>(&op.object))
+			else if (const auto* id = std::get_if<LocalVarId>(&op.object)) {
+				oss << '%';
 				appendLocalVarName(oss, *id, local_debug_names);
+			}
 			else if (std::holds_alternative<StringHandle>(op.object))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.object));
 
@@ -706,7 +678,7 @@ public:
 			oss << ", ";
 
 			// Value - use printTypedValue helper
-			printTypedValue(oss, op.value);
+			printTypedValue(oss, op.value, local_debug_names);
 		} break;
 
 		case IrOpcode::ConstructorCall: {
@@ -737,15 +709,7 @@ public:
 					}
 				}
 				oss << arg.size_in_bits << " ";
-				// Print the IrValue directly (not TypedValue)
-				if (const auto* temp_var = std::get_if<TempVar>(&arg.value))
-					oss << '%' << temp_var->var_number;
-				else if (std::holds_alternative<StringHandle>(arg.value))
-					oss << '%' << StringTable::getStringView(std::get<StringHandle>(arg.value));
-				else if (std::holds_alternative<unsigned long long>(arg.value))
-					oss << std::get<unsigned long long>(arg.value);
-				else if (std::holds_alternative<double>(arg.value))
-					oss << std::get<double>(arg.value);
+				printTypedValue(oss, arg, local_debug_names);
 			}
 		} break;
 
@@ -802,12 +766,7 @@ public:
 					oss << arg.size_in_bits << " ";
 
 					// Value
-					if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value))
-						oss << *ull_val;
-					else if (std::holds_alternative<TempVar>(arg.value))
-						oss << '%' << std::get<TempVar>(arg.value).var_number;
-					else if (std::holds_alternative<StringHandle>(arg.value))
-						oss << '%' << StringTable::getStringView(std::get<StringHandle>(arg.value));
+					printTypedValue(oss, arg, local_debug_names);
 				}
 				oss << ")";
 			}
@@ -910,86 +869,86 @@ public:
 		} break;
 
 		case IrOpcode::PreIncrement:
-			oss << formatUnaryOp("pre_inc", getTypedPayload<UnaryOp>());
+			oss << formatUnaryOp("pre_inc", getTypedPayload<UnaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::PostIncrement:
-			oss << formatUnaryOp("post_inc", getTypedPayload<UnaryOp>());
+			oss << formatUnaryOp("post_inc", getTypedPayload<UnaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::PreDecrement:
-			oss << formatUnaryOp("pre_dec", getTypedPayload<UnaryOp>());
+			oss << formatUnaryOp("pre_dec", getTypedPayload<UnaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::PostDecrement:
-			oss << formatUnaryOp("post_dec", getTypedPayload<UnaryOp>());
+			oss << formatUnaryOp("post_dec", getTypedPayload<UnaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::AddAssign:
-			oss << formatBinaryOp("add", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("add", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::SubAssign:
-			oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::MulAssign:
-			oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::DivAssign:
-			oss << formatBinaryOp("sdiv", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("sdiv", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::ModAssign:
-			oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::AndAssign:
-			oss << formatBinaryOp("and", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("and", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::OrAssign:
-			oss << formatBinaryOp("or", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("or", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::XorAssign:
-			oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::ShlAssign:
-			oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::ShrAssign:
-			oss << formatBinaryOp("ashr", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("ashr", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		// Float arithmetic operations
 		case IrOpcode::FloatAdd:
-			oss << formatBinaryOp("fadd", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fadd", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::FloatSubtract:
-			oss << formatBinaryOp("fsub", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fsub", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::FloatMultiply:
-			oss << formatBinaryOp("fmul", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fmul", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::FloatDivide:
-			oss << formatBinaryOp("fdiv", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fdiv", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		// Float comparison operations
 		case IrOpcode::FloatEqual:
-			oss << formatBinaryOp("fcmp oeq", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fcmp oeq", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::FloatNotEqual:
-			oss << formatBinaryOp("fcmp one", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fcmp one", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::FloatLessThan:
-			oss << formatBinaryOp("fcmp olt", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fcmp olt", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::FloatLessEqual:
-			oss << formatBinaryOp("fcmp ole", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fcmp ole", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::FloatGreaterThan:
-			oss << formatBinaryOp("fcmp ogt", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fcmp ogt", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 		case IrOpcode::FloatGreaterEqual:
-			oss << formatBinaryOp("fcmp oge", getTypedPayload<BinaryOp>());
+			oss << formatBinaryOp("fcmp oge", getTypedPayload<BinaryOp>(), local_debug_names);
 			break;
 
 		case IrOpcode::Assignment: {
@@ -1002,6 +961,8 @@ public:
 				oss << temp_var->var_number;
 			else if (std::holds_alternative<StringHandle>(op.lhs.value))
 				oss << StringTable::getStringView(std::get<StringHandle>(op.lhs.value));
+			else if (const auto* local_id = std::get_if<LocalVarId>(&op.lhs.value))
+				appendLocalVarName(oss, *local_id, local_debug_names);
 			else if (std::holds_alternative<unsigned long long>(op.lhs.value))
 				oss << std::get<unsigned long long>(op.lhs.value);
 
@@ -1014,6 +975,10 @@ public:
 				oss << '%' << std::get<TempVar>(op.rhs.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.rhs.value))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.rhs.value));
+			else if (const auto* local_id = std::get_if<LocalVarId>(&op.rhs.value)) {
+				oss << '%';
+				appendLocalVarName(oss, *local_id, local_debug_names);
+			}
 			else if (std::holds_alternative<double>(op.rhs.value))
 				oss << std::get<double>(op.rhs.value);
 		} break;
@@ -1021,6 +986,10 @@ public:
 		case IrOpcode::VariableDecl: {
 			const VariableDeclOp& op = getTypedPayload<VariableDeclOp>();
 			std::string_view var_name = op.getVarName();	 // Phase 4: Use helper
+			if (op.local_id.value != 0 && op.local_id.value <= local_debug_names.size() &&
+				local_debug_names[op.local_id.value - 1].isValid()) {
+				var_name = StringTable::getStringView(local_debug_names[op.local_id.value - 1]);
+			}
 			oss << "%" << var_name << " = alloc ";
 
 			if (op.is_array && op.array_count.has_value()) {
@@ -1043,14 +1012,7 @@ public:
 				oss << "\nassign %" << var_name << " = ";  // Phase 4: Use var_name
 				const auto& init = op.initializer.value();
 				// Check if operand is a literal value or a variable/TempVar
-				if (const auto* ull_val = std::get_if<unsigned long long>(&init.value))
-					oss << *ull_val;
-				else if (std::holds_alternative<double>(init.value))
-					oss << std::get<double>(init.value);
-				else if (std::holds_alternative<TempVar>(init.value))
-					oss << '%' << std::get<TempVar>(init.value).var_number;
-				else if (std::holds_alternative<StringHandle>(init.value))
-					oss << '%' << StringTable::getStringView(std::get<StringHandle>(init.value));
+				printTypedValue(oss, init, local_debug_names);
 			}
 			break;
 		}
@@ -1077,6 +1039,9 @@ public:
 				oss << '%' << temp_var->var_number;
 			} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.result.value)) {
 				oss << '%' << StringTable::getStringView(*string_ptr);
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&op.result.value)) {
+				oss << '%';
+				appendLocalVarName(oss, *local_id, local_debug_names);
 			}
 			oss << " = global_load @" << op.getGlobalName();	 // Phase 4: Use helper
 		} break;
@@ -1095,6 +1060,9 @@ public:
 				oss << '%' << temp_var->var_number;
 			} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.result.value)) {
 				oss << '%' << StringTable::getStringView(*string_ptr);
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&op.result.value)) {
+				oss << '%';
+				appendLocalVarName(oss, *local_id, local_debug_names);
 			}
 			oss << " = function_address @" << op.getFunctionName();	// Phase 4: Use helper
 		} break;
@@ -1120,15 +1088,7 @@ public:
 					oss << type_info->name();
 				}
 				oss << arg.size_in_bits << " ";
-				if (const auto* temp_var_ptr = std::get_if<TempVar>(&arg.value)) {
-					oss << '%' << temp_var_ptr->var_number;
-				} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
-					oss << '%' << StringTable::getStringView(*string);
-				} else if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value)) {
-					oss << *ull_val;
-				} else if (const auto* d_val = std::get_if<double>(&arg.value)) {
-					oss << *d_val;
-				}
+				printTypedValue(oss, arg, local_debug_names);
 			}
 		} break;
 
@@ -1156,15 +1116,7 @@ public:
 				oss << from_type_info->name();
 			}
 			oss << op.from.size_in_bits << " ";
-			if (const auto* temp_var = std::get_if<TempVar>(&op.from.value)) {
-				oss << '%' << temp_var->var_number;
-			} else if (const auto* string = std::get_if<StringHandle>(&op.from.value)) {
-				oss << '%' << StringTable::getStringView(*string);
-			} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.from.value)) {
-				oss << *ull_val;
-			} else if (const auto* d_val = std::get_if<double>(&op.from.value)) {
-				oss << *d_val;
-			}
+			printTypedValue(oss, op.from, local_debug_names);
 			oss << " to ";
 			if (const TypeInfo* to_type_info = findNativeType(op.to_type_index.category())) {
 				oss << to_type_info->name();
@@ -1374,27 +1326,32 @@ class Ir {
 public:
 	void addInstruction(const IrInstruction& instruction) {
 		instructions.push_back(instruction);
+		registerFunctionDebugNameTable();
 	}
 
 	void addInstruction(IrInstruction&& instruction) {
 		instructions.push_back(std::move(instruction));
+		registerFunctionDebugNameTable();
 	}
 
 	// Backward compatibility
 	void addInstruction(IrOpcode&& opcode,
 						std::vector<IrOperand>&& operands, Token first_token) {
 		instructions.emplace_back(opcode, std::move(operands), first_token);
+		registerFunctionDebugNameTable();
 	}
 
 	// Add instruction with typed payload (template for any payload type)
 	template <typename PayloadType>
 	void addInstruction(IrOpcode&& opcode, PayloadType&& payload, Token first_token) {
 		instructions.emplace_back(opcode, std::forward<PayloadType>(payload), first_token);
+		registerFunctionDebugNameTable();
 	}
 
 	// Builder-style: start building an instruction
 	IrInstruction& beginInstruction(IrOpcode opcode, Token first_token, size_t expected_operand_count = 0) {
 		instructions.emplace_back(opcode, first_token, expected_operand_count);
+		registerFunctionDebugNameTable();
 		return instructions.back();
 	}
 
@@ -1402,21 +1359,44 @@ public:
 		return instructions;
 	}
 
-	// Per-function display name for a local declaration id. This is not
-	// identity: it exists so IR dumps can print the source spelling (with a
-	// disambiguating suffix for a shadowing declaration) instead of a number.
+	// Per-function display names are debug labels only. LocalVarId remains the
+	// declaration identity and is reused independently in each function.
 	void setLocalDebugName(uint32_t id, StringHandle name) {
 		if (id == 0) {
 			return;
 		}
-		if (local_debug_names_.size() < id) {
-			local_debug_names_.resize(id);
+		if (!active_local_debug_name_table_.has_value()) {
+			throw InternalError("Local debug name set outside a function");
 		}
-		local_debug_names_[id - 1] = name;
+		auto& names = local_debug_name_tables_[*active_local_debug_name_table_].names;
+		if (names.size() < id) {
+			names.resize(id);
+		}
+		names[id - 1] = name;
 	}
 
-	std::span<const StringHandle> localDebugNames() const {
-		return local_debug_names_;
+	std::span<const StringHandle> localDebugNamesForFunction(size_t function_index) const {
+		if (function_index >= local_debug_name_tables_.size()) {
+			throw InternalError("IR function has no local debug-name table");
+		}
+		return std::span<const StringHandle>{local_debug_name_tables_[function_index].names};
+	}
+
+	std::optional<size_t> activeLocalDebugNameTable() const {
+		return active_local_debug_name_table_;
+	}
+
+	void activateLatestLocalDebugNameTable() {
+		if (!local_debug_name_tables_.empty()) {
+			active_local_debug_name_table_ = local_debug_name_tables_.size() - 1;
+		}
+	}
+
+	void activateLocalDebugNameTable(std::optional<size_t> table_index) {
+		if (table_index.has_value() && *table_index >= local_debug_name_tables_.size()) {
+			throw InternalError("Invalid local debug-name table index");
+		}
+		active_local_debug_name_table_ = table_index;
 	}
 
 	// Reserve space for instructions (optimization)
@@ -1435,6 +1415,16 @@ public:
 	void truncateTo(size_t n) {
 		if (n < instructions.size()) {
 			instructions.erase(instructions.begin() + static_cast<ptrdiff_t>(n), instructions.end());
+			while (!local_debug_name_tables_.empty() &&
+				   local_debug_name_tables_.back().function_instruction_index >= n) {
+				local_debug_name_tables_.pop_back();
+			}
+			if (active_local_debug_name_table_.has_value() &&
+				*active_local_debug_name_table_ >= local_debug_name_tables_.size()) {
+				active_local_debug_name_table_ = local_debug_name_tables_.empty()
+					? std::nullopt
+					: std::optional<size_t>{local_debug_name_tables_.size() - 1};
+			}
 		}
 	}
 
@@ -1464,8 +1454,21 @@ public:
 	}
 
 private:
+	struct LocalDebugNameTable {
+		size_t function_instruction_index;
+		std::vector<StringHandle> names;
+	};
+
+	void registerFunctionDebugNameTable() {
+		if (instructions.back().getOpcode() == IrOpcode::FunctionDecl) {
+			local_debug_name_tables_.push_back(LocalDebugNameTable{instructions.size() - 1, {}});
+			active_local_debug_name_table_ = local_debug_name_tables_.size() - 1;
+		}
+	}
+
 	std::vector<IrInstruction> instructions;
-	std::vector<StringHandle> local_debug_names_;
+	std::vector<LocalDebugNameTable> local_debug_name_tables_;
+	std::optional<size_t> active_local_debug_name_table_;
 	size_t reserved_capacity_ = 0;
 };
 

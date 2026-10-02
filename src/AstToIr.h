@@ -68,7 +68,7 @@ public:
 
 private:
 	struct MultiDimArrayAccess {
-		StringHandle base_array_name;
+		VariableKey base_array_name;
 		std::vector<ASTNode> indices;  // Indices from outermost to innermost
 		const DeclarationNode* base_decl = nullptr;
 		bool is_valid = false;
@@ -76,9 +76,12 @@ private:
 
 	struct MultiDimMemberArrayAccess {
 		std::string_view object_name;
+		VariableKey object_key;
 		std::string_view member_name;
+		StringHandle qualified_member_name;
 		std::vector<ASTNode> indices;  // Indices from outermost to innermost
 		const StructMember* member_info = nullptr;
+		int64_t member_offset = 0;
 		bool is_valid = false;
 	};
 
@@ -102,9 +105,10 @@ private:
 	};
 
 	struct ScopeVariableInfo {
-		std::string variable_name;
-		std::string struct_name;
+		VariableKey variable_key;
+		StringHandle struct_name;
 	};
+
 
 	struct FullExpressionTempDestructorInfo {
 		StringHandle struct_name;
@@ -248,7 +252,7 @@ private:
 	// Must be called AFTER the function's return instruction.
 	void emitPendingFunctionCleanupLP(const Token& token);
 
-	void registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name);
+	void registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name);
 	void registerFullExpressionTempDestructor(StringHandle struct_name,
 											  std::variant<StringHandle, TempVar, LocalVarId> object,
 											  bool object_is_pointer = false);
@@ -265,7 +269,7 @@ private:
 	std::vector<ScopeVariableInfo> captured_try_cleanup_vars_;
 
 	// Phase 2 capture state: vars captured by exitFunctionScope() awaiting LP emission
-	std::vector<std::pair<StringHandle, StringHandle>> pending_function_cleanup_vars_;
+	std::vector<std::pair<StringHandle, VariableKey>> pending_function_cleanup_vars_;
 	std::vector<FullExpressionTempDestructorInfo> pending_full_expression_temp_dtors_;
 	TemplateVector<CatchScopeContext, 4> catch_scope_stack_;
 	size_t active_try_statement_depth_ = 0;
@@ -490,7 +494,7 @@ private:
 	ExprResult generateConstCastIr(const ConstCastNode& constCastNode);
 	ExprResult generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode);
 	LambdaInfo collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda);
-	ExprResult generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name = "");
+	ExprResult generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name, LocalVarId target_var_id);
 	void generateLambdaFunctions(LambdaInfo& lambda_info);
 	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
@@ -783,7 +787,7 @@ private:
 	bool tryEmitArrayMemberStores(
 		const StructMember& member,
 		const InitializerListNode& init_list,
-		StringHandle base_object,
+		std::variant<StringHandle, TempVar, LocalVarId> base_object,
 		int base_offset,
 		const Token& token);
 	bool tryEmitArrayMemberStores(
@@ -797,7 +801,7 @@ private:
 	void generateNestedMemberStores(
 		const StructTypeInfo& struct_info,
 		const InitializerListNode& init_list,
-		StringHandle base_object,
+		std::variant<StringHandle, TempVar, LocalVarId> base_object,
 		int base_offset,
 		const Token& token);
 	void generateNestedMemberStores(
@@ -1360,48 +1364,68 @@ private:
 
 	Ir ir_;
 	TempVar var_counter{0};
-	// Frame identity for function-local objects. Two declarations in one
-	// function may share a spelling (an inner block shadowing an outer local),
-	// and each needs its own frame slot, so a shadowed declaration gets a
-	// distinct frame name while the spelling stays available for diagnostics
-	// and debug information. Keyed by declaration identity, so every reference
-	// to that declaration resolves to the same frame regardless of the scope
-	// the reference appears in.
+	// Numeric identity for function-local objects. Every named local declaration
+	// receives a per-function LocalVarId, and references to that declaration are
+	// lowered with the id rather than the spelling, so a shadowing declaration
+	// cannot be confused with an outer one. The id also keys the converter's
+	// frame table. A display name is published per id so IR dumps stay readable.
 	//
-	// A function declares only a handful of locals, so these are dense arrays
-	// with a linear scan rather than hash tables. Only shadowing declarations
-	// enter shadowed_local_frames_, which keeps the scanned table at the size
-	// of the actual shadowing (usually one or two entries), and both buffers
-	// retain capacity across functions so steady-state declaration adds no
-	// allocations.
-	struct ShadowedLocalFrame {
-		const void* declaration;
-		StringHandle frame_name;
-	};
-	struct LocalSpellingUse {
+	// A function declares only a handful of locals, so identities are a dense
+	// array with a linear scan rather than a hash table.
+	uint32_t next_local_var_id_ = 0;
+	std::vector<const DeclarationNode*> local_var_declarations_;
+	struct LocalVarSpellingUse {
 		StringHandle spelling;
 		uint32_t declarations;
 	};
-	std::vector<ShadowedLocalFrame> shadowed_local_frames_;
-	std::vector<LocalSpellingUse> local_spelling_uses_;
-	// Set once a function declares the same spelling twice. Until then every
-	// local frame name equals its spelling, so reference lowering can skip the
-	// frame lookup entirely.
-	bool has_shadowed_local_frames_ = false;
-	// Claims the frame name for a local declaration. The first declaration of
-	// a spelling keeps the spelling itself so unchanged lowering and debug
-	// names are unaffected; later declarations get a unique frame name.
-	StringHandle declareLocalFrameName(const ASTNode& declaration, StringHandle spelling);
-	// Frame name for a resolved symbol: the declaration's own frame name when
-	// it is a known local, otherwise the spelling for non-local entities.
-	StringHandle localFrameNameFor(const ASTNode& resolved_symbol, StringHandle spelling) const;
-	// Frame name for a name resolved through the scope chain. Lowering sites
-	// that start from a spelling rather than a resolved symbol use this so the
-	// innermost visible declaration wins, as it does during semantic analysis.
-	StringHandle resolvedFrameName(StringHandle name) const;
-	StringHandle resolvedFrameName(std::string_view name) const;
-	// Clears per-function frame identity together with the temporary counter.
-	void resetLocalFrameNames();
+	std::vector<LocalVarSpellingUse> local_var_spelling_uses_;
+	// Isolates per-function local identity while an enclosed function body
+	// (lambda operator()/__invoke, nested out-of-line body) is generated.
+	// The enclosing function's table is saved on construction and restored on
+	// destruction, so the enclosed body cannot discard ids that the enclosing
+	// function still needs, and the two bodies cannot reuse the same ids.
+	struct ScopedLocalVarIdReset {
+		AstToIr& self;
+		std::vector<const DeclarationNode*> saved_declarations;
+		std::vector<LocalVarSpellingUse> saved_spelling_uses;
+		uint32_t saved_next_local_var_id;
+		std::optional<size_t> saved_local_debug_name_table;
+		explicit ScopedLocalVarIdReset(AstToIr& s)
+			: self(s),
+			  saved_declarations(std::move(s.local_var_declarations_)),
+			  saved_spelling_uses(std::move(s.local_var_spelling_uses_)),
+			  saved_next_local_var_id(s.next_local_var_id_),
+			  saved_local_debug_name_table(s.ir_.activeLocalDebugNameTable()) {
+			s.next_local_var_id_ = 0;
+			s.ir_.activateLatestLocalDebugNameTable();
+		}
+		~ScopedLocalVarIdReset() {
+			self.local_var_declarations_ = std::move(saved_declarations);
+			self.local_var_spelling_uses_ = std::move(saved_spelling_uses);
+			self.next_local_var_id_ = saved_next_local_var_id;
+			self.ir_.activateLocalDebugNameTable(saved_local_debug_name_table);
+		}
+		ScopedLocalVarIdReset(const ScopedLocalVarIdReset&) = delete;
+		ScopedLocalVarIdReset& operator=(const ScopedLocalVarIdReset&) = delete;
+	};
+	// Claims a numeric identity for a local declaration and publishes its
+	// display name. The first declaration of a spelling keeps the spelling for
+	// display; later declarations get a '#' suffix so a dump can tell shadowing
+	// declarations apart. '#' rather than '$': '$' is the template-instantiation
+	// separator, so a display name must not look like instantiation metadata.
+	LocalVarId declareLocalVarId(const ASTNode& declaration, StringHandle spelling);
+	// Numeric id for a resolved symbol, or LocalVarId{} when the symbol is not a
+	// named local (parameter, `this`, global, static local, function, ...).
+	LocalVarId localVarIdFor(const ASTNode& resolved_symbol, StringHandle spelling) const;
+	const DeclarationNode* localDeclarationFor(LocalVarId id) const;
+	const DeclarationNode* declarationForVariableKey(const VariableKey& key) const;
+	// Storage key for a name resolved through the scope chain: the declaration's
+	// id when it is a named local, otherwise the spelling.
+	VariableKey resolvedVariableKey(StringHandle name) const;
+	VariableKey resolvedVariableKey(std::string_view name) const;
+	VariableKey variableKeyForSymbol(const ASTNode& resolved_symbol, StringHandle spelling) const;
+	// Clears per-function local identity together with the temporary counter.
+	void resetLocalVarIds();
 	uint32_t string_literal_counter_ = 0;  // Counter for unique .str.N global names
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
@@ -1494,10 +1518,10 @@ private:
 	std::optional<TypedValue> tryBuildSemaBoundCallArgument(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode& param_type, const CallArgReferenceBindingInfo* sema_ref_binding, const Token& token);
 	ExprResult applyCallArgumentConversions(ExprResult argument_result, const ASTNode& argument, const TypeSpecifierNode* param_type, const Token& token);
 	TypedValue buildOrdinaryCallArgument(const ASTNode& argument, const TypeSpecifierNode* param_type, const std::optional<ExprResult>& evaluated_arg, const Token& token);
-	TypedValue buildReferenceCallArgumentFromDeclaration(const DeclarationNode& decl_node, StringHandle identifier_name);
+	TypedValue buildReferenceCallArgumentFromDeclaration(const DeclarationNode& decl_node, VariableKey identifier_key);
 	TypedValue buildReferenceCallArgumentFromResult(const ExprResult& argument_result, const Token& token, bool reuse_address_valued_temp);
 	bool canUseDirectIdentifierCallArgument(const DeclarationNode* decl_node, CVReferenceQualifier param_ref_qualifier, const CallArgReferenceBindingInfo* sema_ref_binding) const;
-	TypedValue buildDirectIdentifierCallArgument(const DeclarationNode& arg_decl_node, StringHandle identifier_name, CVReferenceQualifier param_ref_qualifier, const ASTNode& argument, const Token& token);
+	TypedValue buildDirectIdentifierCallArgument(const DeclarationNode& arg_decl_node, VariableKey identifier_key, CVReferenceQualifier param_ref_qualifier, const ASTNode& argument, const Token& token);
 	TypedValue buildConstructorArgumentValue(const ExprResult& argument_result,
 											 const ASTNode& argument,
 											 const TypeSpecifierNode* param_type,

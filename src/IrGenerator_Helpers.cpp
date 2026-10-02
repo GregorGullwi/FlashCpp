@@ -8,73 +8,100 @@ void AstToIr::normalizePendingSemanticRoots() {
 	sema_.parserSemanticServices().normalizePendingSemanticRoots();
 }
 
-void AstToIr::resetLocalFrameNames() {
-	shadowed_local_frames_.clear();
-	local_spelling_uses_.clear();
-	has_shadowed_local_frames_ = false;
+void AstToIr::resetLocalVarIds() {
+	local_var_declarations_.clear();
+	local_var_spelling_uses_.clear();
+	next_local_var_id_ = 0;
 }
 
-StringHandle AstToIr::declareLocalFrameName(const ASTNode& declaration, StringHandle spelling) {
-	// Only locals claim frame names; a non-local entity passed here would make
+LocalVarId AstToIr::declareLocalVarId(const ASTNode& declaration, StringHandle spelling) {
+	// Only locals claim a numeric id; a non-local entity passed here would make
 	// two unrelated declarations collide on the same frame.
 	if (!declaration.has_value()) {
-		throw InternalError("Local frame identity requires a declaration");
+		throw InternalError("Local identity requires a declaration");
 	}
-	for (LocalSpellingUse& use : local_spelling_uses_) {
+	StringHandle display_name = spelling;
+	for (LocalVarSpellingUse& use : local_var_spelling_uses_) {
 		if (use.spelling != spelling) {
 			continue;
 		}
 		// A later declaration of a spelling already in this function shadows the
-		// earlier one and needs storage of its own. The suffix keeps the frame
-		// entry traceable to the spelling it came from.
+		// earlier one and needs storage of its own. The suffix keeps the display
+		// name traceable to the spelling it came from.
 		const uint32_t prior_declarations = use.declarations;
 		use.declarations = prior_declarations + 1;
-		has_shadowed_local_frames_ = true;
 		// '#' rather than '$': '$' is the template-instantiation separator
 		// (template_name$<hash>) and simpleBaseName() truncates at the first
-		// one, so a frame name must not look like instantiation metadata.
-		StringHandle frame_name = StringTable::getOrInternStringHandle(
+		// one, so a display name must not look like instantiation metadata.
+		display_name = StringTable::getOrInternStringHandle(
 			StringBuilder()
 				.append(spelling)
 				.append('#')
 				.append(std::to_string(prior_declarations))
 				.commit());
-		shadowed_local_frames_.push_back(ShadowedLocalFrame{declaration.raw_pointer(), frame_name});
-		return frame_name;
+		break;
 	}
-	local_spelling_uses_.push_back(LocalSpellingUse{spelling, 1});
-	return spelling;
+	if (display_name == spelling) {
+		local_var_spelling_uses_.push_back(LocalVarSpellingUse{spelling, 1});
+	}
+	const LocalVarId id{++next_local_var_id_};
+	ir_.setLocalDebugName(id.value, display_name);
+	const DeclarationNode* declaration_node = get_decl_from_symbol(declaration);
+	if (!declaration_node) {
+		throw InternalError("Local identity requires a variable declaration");
+	}
+	local_var_declarations_.push_back(declaration_node);
+	return id;
 }
 
-StringHandle AstToIr::resolvedFrameName(StringHandle name) const {
-	if (!has_shadowed_local_frames_) {
-		return name;
+LocalVarId AstToIr::localVarIdFor(const ASTNode& resolved_symbol, StringHandle /*spelling*/) const {
+	const DeclarationNode* declaration = get_decl_from_symbol(resolved_symbol);
+	if (!declaration) {
+		return LocalVarId{};
 	}
-	const StringHandle interned = name.isValid() ? name : StringTable::getOrInternStringHandle(StringTable::getStringView(name));
-	return resolvedFrameName(StringTable::getStringView(interned));
-}
-
-StringHandle AstToIr::resolvedFrameName(std::string_view name) const {
-	const StringHandle interned = StringTable::getOrInternStringHandle(name);
-	if (!has_shadowed_local_frames_) {
-		return interned;
-	}
-	const std::optional<ASTNode> symbol = lookupSymbol(interned);
-	return localFrameNameFor(symbol.value_or(ASTNode{}), interned);
-}
-
-StringHandle AstToIr::localFrameNameFor(const ASTNode& resolved_symbol, StringHandle spelling) const {
-	if (!has_shadowed_local_frames_ || !resolved_symbol.has_value()) {
-		return spelling;
-	}
-	const void* declaration = resolved_symbol.raw_pointer();
-	for (const ShadowedLocalFrame& entry : shadowed_local_frames_) {
-		if (entry.declaration == declaration) {
-			return entry.frame_name;
+	for (size_t index = 0; index < local_var_declarations_.size(); ++index) {
+		if (local_var_declarations_[index] == declaration) {
+			return LocalVarId{static_cast<uint32_t>(index + 1)};
 		}
 	}
-	// Not a shadowing declaration: the first declaration of a spelling keeps it.
-	return spelling;
+	return LocalVarId{};
+}
+
+const DeclarationNode* AstToIr::localDeclarationFor(LocalVarId id) const {
+	if (id.value == 0) {
+		return nullptr;
+	}
+	if (id.value == 0 || id.value > local_var_declarations_.size()) {
+		throw InternalError("Local identity has no registered declaration");
+	}
+	return local_var_declarations_[id.value - 1];
+}
+
+const DeclarationNode* AstToIr::declarationForVariableKey(const VariableKey& key) const {
+	if (const auto* spelling = std::get_if<StringHandle>(&key)) {
+		return lookupDeclaration(*spelling);
+	}
+	return localDeclarationFor(std::get<LocalVarId>(key));
+}
+
+VariableKey AstToIr::variableKeyForSymbol(const ASTNode& resolved_symbol, StringHandle spelling) const {
+	const LocalVarId id = localVarIdFor(resolved_symbol, spelling);
+	if (id.value != 0) {
+		return VariableKey{id};
+	}
+	return VariableKey{spelling};
+}
+
+VariableKey AstToIr::resolvedVariableKey(StringHandle name) const {
+	const StringHandle interned = name.isValid() ? name : StringTable::getOrInternStringHandle(StringTable::getStringView(name));
+	const std::optional<ASTNode> symbol = lookupSymbol(interned);
+	return variableKeyForSymbol(symbol.value_or(ASTNode{}), interned);
+}
+
+VariableKey AstToIr::resolvedVariableKey(std::string_view name) const {
+	const StringHandle interned = StringTable::getOrInternStringHandle(name);
+	const std::optional<ASTNode> symbol = lookupSymbol(interned);
+	return variableKeyForSymbol(symbol.value_or(ASTNode{}), interned);
 }
 
 ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols) const {
@@ -271,8 +298,8 @@ void AstToIr::exitScope() {
 		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
 			// Generate destructor call
 			DestructorCallOp dtor_op;
-			dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
-			dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
+			dtor_op.struct_name = it->struct_name;
+			dtor_op.object = toVariableBase(it->variable_key);
 			ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 		}
 		scope_stack_.pop_back();
@@ -311,8 +338,8 @@ void AstToIr::emitActiveCatchScopeDestructors() {
 		const auto& scope_vars = scope_stack_[scope_index - 1];
 		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
 			DestructorCallOp dtor_op;
-			dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
-			dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
+			dtor_op.struct_name = it->struct_name;
+			dtor_op.object = toVariableBase(it->variable_key);
 			ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 		}
 	}
@@ -325,8 +352,7 @@ void AstToIr::exitFunctionScope() {
 	// Capture vars in LIFO order for the cleanup LP, but only those with destructors
 	pending_function_cleanup_vars_.clear();
 	for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
-		pending_function_cleanup_vars_.push_back({StringTable::getOrInternStringHandle(it->struct_name),
-												  StringTable::getOrInternStringHandle(it->variable_name)});
+		pending_function_cleanup_vars_.push_back({it->struct_name, it->variable_key});
 	}
 
 	// Call normal exitScope to emit destructor IR instructions
@@ -350,14 +376,14 @@ void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
 	function_has_typed_catch_ = false;
 }
 
-void AstToIr::registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name) {
+void AstToIr::registerVariableWithDestructor(VariableKey variable_key, StringHandle struct_name) {
 	if (!scope_stack_.empty()) {
 		for (const auto& variable : scope_stack_.back()) {
-			if (variable.variable_name == var_name) {
+			if (variable.variable_key == variable_key) {
 				return;
 			}
 		}
-		scope_stack_.back().push_back({var_name, struct_name});
+		scope_stack_.back().push_back({variable_key, struct_name});
 	}
 }
 
@@ -392,8 +418,8 @@ void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
 		const auto& scope_vars = scope_stack_[scope_index - 1];
 		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
 			DestructorCallOp dtor_op;
-			dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
-			dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
+			dtor_op.struct_name = it->struct_name;
+			dtor_op.object = toVariableBase(it->variable_key);
 			ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 		}
 	}
@@ -560,6 +586,8 @@ void AstToIr::emitDereferenceStore(const TypedValue& value, TypeCategory pointee
 	// Convert std::variant<StringHandle, TempVar, LocalVarId> to IrValue
 	if (const auto* string = std::get_if<StringHandle>(&pointer)) {
 		store_op.pointer.value = *string;
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&pointer)) {
+		store_op.pointer.value = *local_id;
 	} else {
 		store_op.pointer.value = std::get<TempVar>(pointer);
 	}

@@ -381,7 +381,7 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		const TypeSpecifierNode* type_node = &decl->type_specifier_node();
 
 		AddressComponents result;
-		result.base = identifier_handle;
+		result.base = toVariableBase(resolvedVariableKey(identifier_handle));
 		result.total_member_offset = accumulated_offset;
 		result.final_type_index = type_node->type_index();
 		result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
@@ -476,9 +476,14 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 
 			// Calculate actual element size from array declaration
-		if (std::holds_alternative<StringHandle>(array_operands.value)) {
-			StringHandle array_name = std::get<StringHandle>(array_operands.value);
-			const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
+		const DeclarationNode* array_decl = nullptr;
+		if (const auto* array_name = std::get_if<StringHandle>(&array_operands.value)) {
+			array_decl = declarationForVariableKey(VariableKey{*array_name});
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&array_operands.value)) {
+			array_decl = declarationForVariableKey(VariableKey{*local_id});
+		}
+		if (array_decl) {
+			const DeclarationNode* decl_ptr = array_decl;
 			if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 				const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
 				element_type_index = type_node.type_index();
@@ -539,6 +544,8 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 			arr_idx.index = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&index_operands.value)) {
 			arr_idx.index = *string;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&index_operands.value)) {
+			arr_idx.index = *local_id;
 		} else {
 			return std::nullopt;
 		}
@@ -601,17 +608,19 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 		throw InternalError("Missing finalized layout for public derived-to-base conversion");
 	}
 	if (!std::holds_alternative<TempVar>(source_address.value) &&
-		!std::holds_alternative<StringHandle>(source_address.value)) {
+		!std::holds_alternative<StringHandle>(source_address.value) &&
+		!std::holds_alternative<LocalVarId>(source_address.value)) {
 		throw InternalError("Derived-to-base address adjustment requires addressable storage");
 	}
-	if (const auto* source_name = std::get_if<StringHandle>(&source_address.value)) {
+	if (std::holds_alternative<StringHandle>(source_address.value) ||
+		std::holds_alternative<LocalVarId>(source_address.value)) {
 		// A named lvalue denotes the object, not an address value.  Emit the
 		// language-level address operation so ordinary objects use LEA while
 		// references and `this` load their already-materialized address.
 		const TempVar address_temp = emitAddressOf(
 			source_address.category(),
 			source_address.size_in_bits.value,
-			IrValue(*source_name),
+			toIrValue(source_address.value),
 			source_token);
 		source_address = makeExprResult(
 			source_address.type_index,
@@ -794,6 +803,13 @@ std::optional<AstToIr::AddressComponents> AstToIr::makeAddressComponentsFromEval
 		return result;
 	}
 
+	if (const auto* local_id = std::get_if<LocalVarId>(&expr_result.value)) {
+		result.base = *local_id;
+		result.base_storage = ValueStorage::ContainsAddress;
+		result.total_member_offset = accumulated_offset;
+		return result;
+	}
+
 	return std::nullopt;
 }
 
@@ -891,6 +907,20 @@ ExprResult AstToIr::materializeAddressResult(
 			expr_result.category(),
 			expr_result.size_in_bits.value,
 			IrValue(*base_name),
+			token);
+		return makeAddressOnlyResult(
+			address_temp,
+			expr_result.type_index,
+			expr_result.size_in_bits,
+			expr_result.pointer_depth,
+			ValueCategory::LValue);
+	}
+
+	if (const auto* local_id = std::get_if<LocalVarId>(&expr_result.value)) {
+		TempVar address_temp = emitAddressOf(
+			expr_result.category(),
+			expr_result.size_in_bits.value,
+			IrValue(*local_id),
 			token);
 		return makeAddressOnlyResult(
 			address_temp,
@@ -1042,7 +1072,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			// - Otherwise return 0
 			// A local that shadows an outer declaration names its own frame, so
 			// ++/--/& must resolve through the scope chain rather than the spelling.
-		out = makeExprResult(type_node->type_index(), SizeInBits{static_cast<int>(type_node->size_in_bits())}, IrOperand{resolvedFrameName(identifier_handle)}, PointerDepth{static_cast<int>(type_node->pointer_depth())}, ValueStorage::ContainsData);
+		out = makeExprResult(type_node->type_index(), SizeInBits{static_cast<int>(type_node->size_in_bits())}, toIrOperand(resolvedVariableKey(identifier_handle)), PointerDepth{static_cast<int>(type_node->pointer_depth())}, ValueStorage::ContainsData);
 		return true;
 	};
 
@@ -1111,9 +1141,14 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 							// For arrays, array_operands[1] is the pointer size (64), not element size
 							// We need to calculate the actual element size from the array declaration
-						if (std::holds_alternative<StringHandle>(array_operands.value)) {
-							StringHandle array_name = std::get<StringHandle>(array_operands.value);
-							const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
+						const DeclarationNode* array_decl = nullptr;
+						if (const auto* array_name = std::get_if<StringHandle>(&array_operands.value)) {
+							array_decl = declarationForVariableKey(VariableKey{*array_name});
+						} else if (const auto* local_id = std::get_if<LocalVarId>(&array_operands.value)) {
+							array_decl = declarationForVariableKey(VariableKey{*local_id});
+						}
+						if (array_decl) {
+							const DeclarationNode* decl_ptr = array_decl;
 							if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 									// This is an array - calculate element size
 								const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
@@ -1162,6 +1197,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 									// Set array (either variable name or temp)
 								if (const auto* string = std::get_if<StringHandle>(&array_operands.value)) {
 									elem_addr_payload.array = *string;
+								} else if (const auto* local_id = std::get_if<LocalVarId>(&array_operands.value)) {
+									elem_addr_payload.array = *local_id;
 								} else if (const auto* temp_var = std::get_if<TempVar>(&array_operands.value)) {
 									elem_addr_payload.array = *temp_var;
 								}
@@ -1242,6 +1279,21 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
 
 									// Return pointer to member
+								return makeExprResult(nativeTypeIndex(member_result.member->memberType()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsAddress);
+							} else if (std::holds_alternative<LocalVarId>(object_operands.value) ||
+								std::holds_alternative<TempVar>(object_operands.value)) {
+								ComputeAddressOp compute_address;
+								compute_address.result = result_var;
+								if (const auto* local_id = std::get_if<LocalVarId>(&object_operands.value)) {
+									compute_address.base = *local_id;
+								} else {
+									compute_address.base = std::get<TempVar>(object_operands.value);
+								}
+								compute_address.base_storage = object_operands.storage;
+								compute_address.total_member_offset = static_cast<int>(member_result.adjusted_offset);
+								compute_address.result_type_index = member_result.member->type_index.withCategory(member_result.member->memberType());
+								compute_address.result_size_bits = SizeInBits{static_cast<int>(member_result.member->size * 8)};
+								ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_address), memberAccess.member_token()));
 								return makeExprResult(nativeTypeIndex(member_result.member->memberType()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsAddress);
 							}
 						}
@@ -1357,7 +1409,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					payload.result = addr_var;
 					payload.element_type_index = element_type_index.withCategory(element_category);
 					payload.element_size_in_bits = element_size_bits;
-					payload.array = multi_dim.base_array_name;
+					payload.array = toVariableBase(multi_dim.base_array_name);
 					payload.index.setType(TypeCategory::UnsignedLongLong);
 					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};
@@ -1381,9 +1433,14 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 				// For arrays, array_operands[1] is the pointer size (64), not element size
 				// We need to calculate the actual element size from the array declaration
-			if (std::holds_alternative<StringHandle>(array_operands.value)) {
-				StringHandle array_name = std::get<StringHandle>(array_operands.value);
-				const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
+			const DeclarationNode* array_decl = nullptr;
+			if (const auto* array_name = std::get_if<StringHandle>(&array_operands.value)) {
+				array_decl = declarationForVariableKey(VariableKey{*array_name});
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&array_operands.value)) {
+				array_decl = declarationForVariableKey(VariableKey{*local_id});
+			}
+			if (array_decl) {
+				const DeclarationNode* decl_ptr = array_decl;
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_specifier_node().is_array())) {
 						// This is an array - calculate element size
 					const TypeSpecifierNode& type_node = decl_ptr->type_specifier_node();
@@ -1421,6 +1478,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				// Set array (either variable name or temp)
 			if (const auto* string = std::get_if<StringHandle>(&array_operands.value)) {
 				payload.array = *string;
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&array_operands.value)) {
+				payload.array = *local_id;
 			} else if (const auto* temp_var = std::get_if<TempVar>(&array_operands.value)) {
 				payload.array = *temp_var;
 			}
@@ -1641,7 +1700,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 		if (lambda_ptr && lambda_ptr->captures().empty()) {
 				// Generate the lambda functions (operator(), __invoke, etc.)
-			generateLambdaExpressionIr(*lambda_ptr);
+			generateLambdaExpressionIr(*lambda_ptr, std::string_view{}, LocalVarId{});
 
 				// Return the address of the __invoke function
 			TempVar func_addr_var = generateLambdaInvokeFunctionAddress(*lambda_ptr);
@@ -1932,6 +1991,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			// Get the operand value - it's at index 2 in operandIrOperands
 		if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 			op.operand.value = *string;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&operandIrOperands.value)) {
+			op.operand.value = *local_id;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
 			if (auto lvalue_info = getTempVarLValueInfo(*temp_var);
 				lvalue_info.has_value() &&
@@ -1942,7 +2003,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				op.operand.value = *temp_var;
 			}
 		} else {
-			throw InternalError("AddressOf operand must be StringHandle or TempVar");
+			throw InternalError("AddressOf operand must be a local variable or temporary");
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
@@ -1993,13 +2054,12 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			std::variant<StringHandle, TempVar, LocalVarId> base;
 			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 				base = *string;
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&operandIrOperands.value)) {
+				base = *local_id;
 			} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&operandIrOperands.value)) {
 				base = *temp_var_ptr;
 			} else {
-				// Fall back to old behavior if we can't extract base
-				// This can happen with complex expressions that don't have a simple base
-				FLASH_LOG(Codegen, Debug, "Dereference LValueAddress fallback: operand is not StringHandle or TempVar");
-				return operandIrOperands;
+				throw InternalError("Dereference lvalue pointer has unsupported operand value kind");
 			}
 
 			// Emit assignment to copy the pointer value into lvalue_temp.
@@ -2009,6 +2069,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			IrValue rhs_value;
 			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 				rhs_value = *string;
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&operandIrOperands.value)) {
+				rhs_value = *local_id;
 			} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
 				rhs_value = *temp_var;
 			} else if (const auto* ull_val = std::get_if<unsigned long long>(&operandIrOperands.value)) {
@@ -2140,6 +2202,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 				decay_base = *string;
 				decay_rhs_value = *string;
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&operandIrOperands.value)) {
+				decay_base = *local_id;
+				decay_rhs_value = *local_id;
 			} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
 				decay_base = *temp_var;
 				decay_rhs_value = *temp_var;
@@ -2212,6 +2277,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// always consumes an address-carrying storage location.
 		if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 			op.pointer.value = *string;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&operandIrOperands.value)) {
+			op.pointer.value = *local_id;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
 			op.pointer.value = *temp_var;
 		} else if (const auto* imm_ptr = std::get_if<unsigned long long>(&operandIrOperands.value)) {
@@ -2236,6 +2303,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		std::variant<StringHandle, TempVar, LocalVarId> base;
 		if (const auto* string = std::get_if<StringHandle>(&op.pointer.value)) {
 			base = *string;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&op.pointer.value)) {
+			base = *local_id;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.pointer.value)) {
 			base = *temp_var;
 		}
@@ -2406,6 +2475,16 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			auto lhs_value = std::get<StringHandle>(operandIrResult.value);
 			assign_op.result = lhs_value;
 			assign_op.lhs = makeTypedValue(operandIrResult.typeEnum(), operandIrResult.size_in_bits, lhs_value);
+			populateIncDecTypedValueMetadata(assign_op.lhs);
+			assign_op.rhs = toTypedValue(rhs_operands);
+			populateIncDecTypedValueMetadata(assign_op.rhs);
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), unaryOperatorNode.get_token()));
+			return true;
+		}
+		if (const auto* local_id = std::get_if<LocalVarId>(&operandIrResult.value)) {
+			AssignmentOp assign_op;
+			assign_op.result = *local_id;
+			assign_op.lhs = makeTypedValue(operandIrResult.typeEnum(), operandIrResult.size_in_bits, *local_id);
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
@@ -3333,14 +3412,14 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			const DeclarationNode* decl = lookupDeclaration(identifier.name());
 			if (decl) {
 				const auto& type_node = decl->type_specifier_node();
-				// The bound object is named by frame, so a shadowing local is
-				// not confused with the outer declaration of the same spelling.
-				const StringHandle bound_frame_name = resolvedFrameName(identifier.name());
+				// The bound object is named by its declaration, so a shadowing
+				// local is not confused with the outer declaration.
+				const VariableKey bound_key = resolvedVariableKey(identifier.name());
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					ExprResult reference_address = makeExprResult(
 						type_node.type_index(),
 						SizeInBits{64},
-						IrOperand{bound_frame_name},
+						toIrOperand(bound_key),
 						PointerDepth{},
 						ValueStorage::ContainsAddress);
 					return adjustDirectDerivedToBaseBinding(std::move(reference_address));
@@ -3349,7 +3428,7 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 				TempVar addr_var = emitAddressOf(
 					type_node.category(),
 					static_cast<int>(type_node.size_in_bits()),
-					IrValue(bound_frame_name),
+					toIrValue(bound_key),
 					source_token);
 				ExprResult object_address = makeExprResult(
 					type_node.type_index(),
@@ -3582,11 +3661,11 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 					IrOperand{address_temp},
 					PointerDepth{},
 					ValueStorage::ContainsAddress);
-			} else if (const auto* source_temp = std::get_if<TempVar>(&source_address.value)) {
+			} else if (std::holds_alternative<TempVar>(source_address.value) || std::holds_alternative<LocalVarId>(source_address.value)) {
 				TempVar address_temp = emitAddressOf(
 					source_address.category(),
 					source_address.size_in_bits.value,
-					IrValue(*source_temp),
+					toIrValue(source_address.value),
 					source_token);
 				source_address = makeExprResult(
 					source_address.type_index,

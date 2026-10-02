@@ -269,7 +269,7 @@ void AstToIr::visitNonStructOrNamespaceNode(const ASTNode& node) {
 	} else if (node.is<LambdaExpressionNode>()) {
 		// Lambda expression as a statement
 		// Evaluate the lambda (creates closure instance) but discard the result
-		generateLambdaExpressionIr(node.as<LambdaExpressionNode>());
+		generateLambdaExpressionIr(node.as<LambdaExpressionNode>(), std::string_view{}, LocalVarId{});
 		emitAndClearFullExpressionTempDestructors();
 	} else {
 		puts(node.type_name());
@@ -2420,18 +2420,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 						// Extract just the value (third element of init_operands)
 						// Verify we have at least 3 elements before accessing
 
-						IrValue member_value;
-						if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-							member_value = *temp_var;
-						} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-							member_value = *ull_val;
-						} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-							member_value = *d_val;
-						} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-							member_value = *string;
-						} else {
-							member_value = 0ULL; // fallback
-						}
+						IrValue member_value = toIrValue(init_operands.value);
 
 						MemberStoreOp member_store;
 						member_store.value.setType(member.type_index.category());
@@ -2738,13 +2727,13 @@ void AstToIr::emitZeroInitializedMember(
 bool AstToIr::tryEmitArrayMemberStores(
 	const StructMember& member,
 	const InitializerListNode& init_list,
-	StringHandle base_object,
+	std::variant<StringHandle, TempVar, LocalVarId> base_object,
 	int base_offset,
 	const Token& token) {
 	return tryEmitArrayMemberStores(
 		member,
 		init_list,
-		std::variant<StringHandle, TempVar, LocalVarId>{base_object},
+		std::move(base_object),
 		base_offset,
 		false,
 		token);
@@ -2967,13 +2956,13 @@ bool AstToIr::tryEmitArrayMemberStores(
 void AstToIr::generateNestedMemberStores(
 	const StructTypeInfo& struct_info,
 	const InitializerListNode& init_list,
-	StringHandle base_object,
+	std::variant<StringHandle, TempVar, LocalVarId> base_object,
 	int base_offset,
 	const Token& token) {
 	generateNestedMemberStores(
 		struct_info,
 		init_list,
-		std::variant<StringHandle, TempVar, LocalVarId>{base_object},
+		std::move(base_object),
 		base_offset,
 		false,
 		token);
@@ -3106,6 +3095,8 @@ void AstToIr::generateNestedMemberStores(
 						member_value = *ull_val;
 					} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 						member_value = *d_val;
+					} else if (const auto* local_id = std::get_if<LocalVarId>(&init_operands.value)) {
+						member_value = *local_id;
 					} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
 						auto symbol = lookupSymbol(*string);
 						const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;
@@ -3160,6 +3151,8 @@ void AstToIr::generateNestedMemberStores(
 					member_value = *ull_val;
 				} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 					member_value = *d_val;
+				} else if (const auto* local_id = std::get_if<LocalVarId>(&init_operands.value)) {
+					member_value = *local_id;
 				} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
 					auto symbol = lookupSymbol(*string);
 					const DeclarationNode* decl = symbol ? get_decl_from_symbol(*symbol) : nullptr;

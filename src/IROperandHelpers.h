@@ -57,29 +57,35 @@ inline bool isCompoundAssignmentOp(std::string_view op) {
 	return compoundOpToBaseOpcode(op).has_value();
 }
 
-// Helper function to extract IrValue from IrOperand using index-based mapping
-// IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>
-// IrValue   = std::variant<unsigned long long, double, TempVar, StringHandle>
-// Index mapping: IrOperand[1] -> IrValue[0], IrOperand[2] -> IrValue[1], IrOperand[6] -> IrValue[2], IrOperand[7] -> IrValue[3]
+// Convert value-bearing operands into the IR value representation. Integer-like
+// literals share the unsigned carrier; their TypedValue retains the type and
+// width needed to interpret or normalize the bits later.
 inline IrValue toIrValue(const IrOperand& operand) {
-	// Map IrOperand variant indices to IrValue variant indices
-	switch (operand.index()) {
-	case 1:	// IrOperand[1] = unsigned long long -> IrValue[0] = unsigned long long
-		assert(std::holds_alternative<unsigned long long>(operand) && "Expected unsigned long long");
-		return std::get<1>(operand);
-	case 2:	// IrOperand[2] = double -> IrValue[1] = double
-		assert(std::holds_alternative<double>(operand) && "Expected double");
-		return std::get<2>(operand);
-	case 6:	// IrOperand[6] = TempVar -> IrValue[2] = TempVar
-		assert(std::holds_alternative<TempVar>(operand) && "Expected TempVar");
-		return std::get<6>(operand);
-	case 7:	// IrOperand[7] = StringHandle -> IrValue[3] = StringHandle
-		assert(std::holds_alternative<StringHandle>(operand) && "Expected StringHandle");
-		return std::get<7>(operand);
-	default:
-		assert(false && "IrOperand does not contain a value type compatible with IrValue");
-		return static_cast<unsigned long long>(0);  // Unreachable, but prevents warning
+	if (const auto* value = std::get_if<int>(&operand)) {
+		return static_cast<unsigned long long>(*value);
 	}
+	if (const auto* value = std::get_if<unsigned long long>(&operand)) {
+		return *value;
+	}
+	if (const auto* value = std::get_if<double>(&operand)) {
+		return *value;
+	}
+	if (const auto* value = std::get_if<bool>(&operand)) {
+		return static_cast<unsigned long long>(*value);
+	}
+	if (const auto* value = std::get_if<char>(&operand)) {
+		return static_cast<unsigned long long>(static_cast<unsigned char>(*value));
+	}
+	if (const auto* value = std::get_if<TempVar>(&operand)) {
+		return *value;
+	}
+	if (const auto* value = std::get_if<StringHandle>(&operand)) {
+		return *value;
+	}
+	if (const auto* value = std::get_if<LocalVarId>(&operand)) {
+		return *value;
+	}
+	throw InternalError("IrOperand does not contain a value compatible with IrValue");
 }
 
 struct ExprResult {

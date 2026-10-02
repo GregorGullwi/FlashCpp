@@ -571,15 +571,20 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 				DestructorCallOp dtor_op;
 				dtor_op.struct_name = type_info->name();
 				dtor_op.object_is_pointer = true;
+				bool has_object = true;
 				if (const auto* temp_var = std::get_if<TempVar>(&ptr_value)) {
 					dtor_op.object = *temp_var;
 				} else if (const auto* string = std::get_if<StringHandle>(&ptr_value)) {
 					dtor_op.object = *string;
+				} else if (const auto* local_id = std::get_if<LocalVarId>(&ptr_value)) {
+					dtor_op.object = *local_id;
 				} else {
 						// ptr_value is a literal (unsigned long long or double) - skip destructor call
-						// ptr_value is a literal (unsigned long long or double) - skip destructor call
+					has_object = false;
 				}
-				ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+				if (has_object) {
+					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+				}
 			}
 		}
 	}
@@ -711,6 +716,8 @@ std::variant<StringHandle, TempVar, LocalVarId> AstToIr::extractBaseOperand(
 	std::variant<StringHandle, TempVar, LocalVarId> base;
 	if (const auto* string = std::get_if<StringHandle>(&expr_operands.value)) {
 		base = *string;
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&expr_operands.value)) {
+		base = *local_id;
 	} else if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
 			// If the TempVar came from a GlobalLoad (its LValueInfo says Kind::Global),
 			// use the global name directly so generateAddressOfForReference emits
@@ -756,13 +763,17 @@ void AstToIr::generateAddressOfForReference(
 	const Token& token,
 	const char* cast_name) {
 
-	if (std::holds_alternative<StringHandle>(base)) {
+	if (std::holds_alternative<StringHandle>(base) || std::holds_alternative<LocalVarId>(base)) {
 		AddressOfOp addr_op;
 		addr_op.result = result_var;
 		addr_op.operand.setType(target_type);
 		addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(target_size)};
-		addr_op.operand.pointer_depth = PointerDepth{};	// TODO: Verify pointer depth
-		addr_op.operand.value = std::get<StringHandle>(base);
+		addr_op.operand.pointer_depth = PointerDepth{};
+		if (const auto* string = std::get_if<StringHandle>(&base)) {
+			addr_op.operand.value = *string;
+		} else {
+			addr_op.operand.value = std::get<LocalVarId>(base);
+		}
 		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 	} else {
 			// source is TempVar - it already holds an address, copy it to result_var
@@ -965,7 +976,8 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 					throw InternalError("Finalized virtual-base pointer cast is missing its runtime table index");
 				}
 				if (!std::holds_alternative<TempVar>(expr_operands.value) &&
-					!std::holds_alternative<StringHandle>(expr_operands.value)) {
+					!std::holds_alternative<StringHandle>(expr_operands.value) &&
+					!std::holds_alternative<LocalVarId>(expr_operands.value)) {
 					throw InternalError("Virtual-base pointer cast requires a pointer value");
 				}
 				TempVar adjusted_ptr = var_counter.next();
@@ -1038,6 +1050,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 			using T = std::decay_t<decltype(arg)>;
 			if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+						  std::is_same_v<T, LocalVarId> ||
 						  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 				return arg;
 			} else {
@@ -1063,6 +1076,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 			using T = std::decay_t<decltype(arg)>;
 			if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+						  std::is_same_v<T, LocalVarId> ||
 						  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 				return arg;
 			} else {
@@ -1087,6 +1101,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 			using T = std::decay_t<decltype(arg)>;
 			if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+						  std::is_same_v<T, LocalVarId> ||
 						  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 				return arg;
 			} else {
@@ -1311,6 +1326,8 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 				operand_value = *temp_var;
 			} else if (const auto* string_ptr = std::get_if<StringHandle>(&expr_operands.value)) {
 				operand_value = *string_ptr;
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&expr_operands.value)) {
+				operand_value = *local_id;
 			} else {
 				operand_value = TempVar{0};
 			}
@@ -1347,6 +1364,8 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 			operand_value = *temp_var;
 		} else if (const auto* string_ptr = std::get_if<StringHandle>(&expr_operands.value)) {
 			operand_value = *string_ptr;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&expr_operands.value)) {
+			operand_value = *local_id;
 		} else {
 				// Shouldn't happen - typeid operand should be a variable
 			operand_value = TempVar{0};
@@ -1400,16 +1419,15 @@ ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode
 	TempVar source_ptr;
 	if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
 		source_ptr = *temp_var;
-	} else if (std::holds_alternative<StringHandle>(expr_operands.value)) {
+	} else if (std::holds_alternative<StringHandle>(expr_operands.value) || std::holds_alternative<LocalVarId>(expr_operands.value)) {
 			// For a named variable, load it into a temp first
 		source_ptr = var_counter.next();
-		StringHandle var_name_handle = std::get<StringHandle>(expr_operands.value);
 
 			// Generate assignment to load the variable into the temp
 		AssignmentOp load_op;
 		load_op.result = source_ptr;
 		load_op.lhs = makeTypedValue(expr_operands.typeEnum(), expr_operands.size_in_bits, source_ptr);
-		load_op.rhs = makeTypedValue(expr_operands.typeEnum(), expr_operands.size_in_bits, var_name_handle);
+		load_op.rhs = makeTypedValue(expr_operands.typeEnum(), expr_operands.size_in_bits, toIrValue(expr_operands.value));
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_op), dynamicCastNode.cast_token()));
 	} else {
 		source_ptr = TempVar{0};
