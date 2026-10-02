@@ -357,7 +357,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				 indirect_signature->returnType() == TypeCategory::Template ||
 				 isPlaceholderAutoType(indirect_signature->returnType()));
 			ExprResult function_ptr_result = visitExpressionNode(object_node.as<ExpressionNode>());
-			std::variant<StringHandle, TempVar> function_pointer;
+			std::variant<StringHandle, TempVar, LocalVarId> function_pointer;
 			if (std::holds_alternative<TempVar>(function_ptr_result.value)) {
 				function_pointer = std::get<TempVar>(function_ptr_result.value);
 			} else if (std::holds_alternative<StringHandle>(function_ptr_result.value)) {
@@ -769,7 +769,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
 			if (resolved_member && resolved_member->memberType() == TypeCategory::FunctionPointer) {
 				ExprResult func_ptr_result = visitExpressionNode(*object_expr);
-				std::variant<StringHandle, TempVar> function_pointer;
+				std::variant<StringHandle, TempVar, LocalVarId> function_pointer;
 				if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
 					function_pointer = std::get<TempVar>(func_ptr_result.value);
 				} else if (std::holds_alternative<StringHandle>(func_ptr_result.value)) {

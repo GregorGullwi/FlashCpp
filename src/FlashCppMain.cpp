@@ -801,8 +801,9 @@ int main_impl(int argc, char* argv[]) {
 
 	if (FLASH_LOG_ENABLED(Codegen, Debug)) {
 		FLASH_LOG(Codegen, Debug, "\n=== IR Instructions ===\n");
+		const std::span<const StringHandle> local_debug_names = ir.localDebugNames();
 		for (const auto& instruction : ir.getInstructions()) {
-			FLASH_LOG(Codegen, Debug, instruction.getReadableString());
+			FLASH_LOG(Codegen, Debug, instruction.getReadableString(local_debug_names));
 		}
 		FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
 	}

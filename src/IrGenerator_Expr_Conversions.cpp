@@ -622,10 +622,10 @@ ExprResult AstToIr::adjustDerivedToBaseAddress(
 	}
 
 	TempVar adjusted_address = var_counter.next();
-	const std::variant<StringHandle, TempVar> source = std::visit(
-		[](const auto& value) -> std::variant<StringHandle, TempVar> {
+	const std::variant<StringHandle, TempVar, LocalVarId> source = std::visit(
+		[](const auto& value) -> std::variant<StringHandle, TempVar, LocalVarId> {
 			using Value = std::decay_t<decltype(value)>;
-			if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle>) {
+			if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle> || std::is_same_v<Value, LocalVarId>) {
 				return value;
 			}
 			throw InternalError("Unsupported derived-to-base address operand");
@@ -701,10 +701,10 @@ ExprResult AstToIr::adjustDerivedToBasePointer(
 		if (!base_conversion.virtual_base_index.has_value()) {
 			throw InternalError("Finalized virtual-base pointer conversion is missing its runtime table index");
 		}
-		const std::variant<StringHandle, TempVar> source = std::visit(
-			[](const auto& value) -> std::variant<StringHandle, TempVar> {
+		const std::variant<StringHandle, TempVar, LocalVarId> source = std::visit(
+			[](const auto& value) -> std::variant<StringHandle, TempVar, LocalVarId> {
 				using Value = std::decay_t<decltype(value)>;
-				if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle>) {
+				if constexpr (std::is_same_v<Value, TempVar> || std::is_same_v<Value, StringHandle> || std::is_same_v<Value, LocalVarId>) {
 					return value;
 				}
 				throw InternalError("Virtual-base pointer conversion requires a runtime pointer value");
@@ -1990,7 +1990,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			TempVar lvalue_temp = var_counter.next();
 
 			// Extract the pointer base (StringHandle or TempVar)
-			std::variant<StringHandle, TempVar> base;
+			std::variant<StringHandle, TempVar, LocalVarId> base;
 			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 				base = *string;
 			} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&operandIrOperands.value)) {
@@ -2135,7 +2135,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		if (pointee_is_array) {
 			TempVar addr_temp = var_counter.next();
 
-			std::variant<StringHandle, TempVar> decay_base;
+			std::variant<StringHandle, TempVar, LocalVarId> decay_base;
 			IrValue decay_rhs_value;
 			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 				decay_base = *string;
@@ -2233,7 +2233,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// Mark dereference result as lvalue (Option 2: Value Category Tracking)
 		// *ptr is an lvalue - it designates the dereferenced object
 		// Extract StringHandle or TempVar from pointer.value (IrValue)
-		std::variant<StringHandle, TempVar> base;
+		std::variant<StringHandle, TempVar, LocalVarId> base;
 		if (const auto* string = std::get_if<StringHandle>(&op.pointer.value)) {
 			base = *string;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.pointer.value)) {
@@ -3174,6 +3174,7 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 				const IrValue source = std::visit([](const auto& v) -> IrValue {
 					using T = std::decay_t<decltype(v)>;
 					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+								  std::is_same_v<T, LocalVarId> ||
 								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 						return IrValue(v);
 					} else if constexpr (std::is_same_v<T, int>) {

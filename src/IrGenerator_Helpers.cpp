@@ -362,7 +362,7 @@ void AstToIr::registerVariableWithDestructor(const std::string& var_name, const 
 }
 
 void AstToIr::registerFullExpressionTempDestructor(StringHandle struct_name,
-												   std::variant<StringHandle, TempVar> object,
+												   std::variant<StringHandle, TempVar, LocalVarId> object,
 												   bool object_is_pointer) {
 	pending_full_expression_temp_dtors_.push_back(FullExpressionTempDestructorInfo{
 		struct_name,
@@ -505,7 +505,7 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 
 // Emit ArrayStore instruction
 void AstToIr::emitArrayStore(TypeCategory element_type, int element_size_bits,
-							 std::variant<StringHandle, TempVar> array,
+							 std::variant<StringHandle, TempVar, LocalVarId> array,
 							 const TypedValue& index, const TypedValue& value,
 							 int64_t member_offset, bool is_pointer_to_array,
 							 const Token& token) {
@@ -523,7 +523,7 @@ void AstToIr::emitArrayStore(TypeCategory element_type, int element_size_bits,
 
 // Emit MemberStore instruction
 void AstToIr::emitMemberStore(const TypedValue& value,
-							  std::variant<StringHandle, TempVar> object,
+							  std::variant<StringHandle, TempVar, LocalVarId> object,
 							  StringHandle member_name, int offset,
 							  CVReferenceQualifier ref_qualifier,
 							  bool is_pointer_to_member,
@@ -547,7 +547,7 @@ void AstToIr::emitMemberStore(const TypedValue& value,
 
 // Emit DereferenceStore instruction
 void AstToIr::emitDereferenceStore(const TypedValue& value, TypeCategory pointee_type, [[maybe_unused]] int pointee_size_bits,
-								   std::variant<StringHandle, TempVar> pointer,
+								   std::variant<StringHandle, TempVar, LocalVarId> pointer,
 								   const Token& token) {
 	DereferenceStoreOp store_op;
 	store_op.value = value;
@@ -557,7 +557,7 @@ void AstToIr::emitDereferenceStore(const TypedValue& value, TypeCategory pointee
 	store_op.pointer.type_index = TypeIndex{0, pointee_type};
 	store_op.pointer.size_in_bits = SizeInBits{64};	// Pointer is always 64 bits
 	store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
-	// Convert std::variant<StringHandle, TempVar> to IrValue
+	// Convert std::variant<StringHandle, TempVar, LocalVarId> to IrValue
 	if (const auto* string = std::get_if<StringHandle>(&pointer)) {
 		store_op.pointer.value = *string;
 	} else {

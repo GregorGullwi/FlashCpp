@@ -534,7 +534,7 @@ struct CallOp {
 // Member access (load member from struct/class)
 struct MemberLoadOp {
 	TypedValue result;							  // The loaded member value (type, size, result_var)
-	std::variant<StringHandle, TempVar> object; // Base object instance
+	std::variant<StringHandle, TempVar, LocalVarId> object; // Base object instance
 	StringHandle member_name;						  // Which member to access
 	int offset;									 // Byte offset in struct
 	const TypeInfo* struct_type_info;				  // Parent struct type (nullptr if not available)
@@ -552,7 +552,7 @@ struct MemberLoadOp {
 // Member store (store value to struct/class member)
 struct MemberStoreOp {
 	TypedValue value;							   // Value to store (type, size, value_var)
-	std::variant<StringHandle, TempVar> object; // Target object instance
+	std::variant<StringHandle, TempVar, LocalVarId> object; // Target object instance
 	StringHandle member_name;						  // Which member to store to
 	int offset;									 // Byte offset in struct
 	const TypeInfo* struct_type_info;				  // Parent struct type (nullptr if not available)
@@ -605,7 +605,7 @@ struct ArrayAccessOp {
 	TypeIndex element_type_index{};	// Element type (TypeCategory embedded)
 	TypeCategory elementType() const { return element_type_index.category(); }
 	int element_size_in_bits = 0;	  // Element size
-	std::variant<StringHandle, TempVar> array;  // Array (StringHandle for variables, TempVar for temporaries)
+	std::variant<StringHandle, TempVar, LocalVarId> array;  // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;		  // Index value (type + value)
 	int64_t member_offset = 0;	   // Offset in bytes for member arrays (0 for non-member)
 	bool is_pointer_to_array = false;	  // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
@@ -616,7 +616,7 @@ struct ArrayStoreOp {
 	TypeIndex element_type_index{};	// Element type (TypeCategory embedded)
 	TypeCategory elementType() const { return element_type_index.category(); }
 	int element_size_in_bits = 0;	  // Element size
-	std::variant<StringHandle, TempVar> array;  // Array (StringHandle for variables, TempVar for temporaries)
+	std::variant<StringHandle, TempVar, LocalVarId> array;  // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;		  // Index value (type + value)
 	TypedValue value;		  // Value to store
 	int64_t member_offset = 0;	   // Offset in bytes for member arrays (0 for non-member)
@@ -629,7 +629,7 @@ struct ArrayElementAddressOp {
 	TypeIndex element_type_index{};	// Element type (TypeCategory embedded)
 	TypeCategory elementType() const { return element_type_index.category(); }
 	int element_size_in_bits = 0;	  // Element size
-	std::variant<StringHandle, TempVar> array;  // Array (StringHandle for variables, TempVar for temporaries)
+	std::variant<StringHandle, TempVar, LocalVarId> array;  // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;		  // Index value (type + value)
 	bool is_pointer_to_array = false;	  // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
 };
@@ -655,7 +655,7 @@ struct ComputeAddressOp {
 	TempVar result;								  // Result temporary variable
 
 	// Base address (one of these)
-	std::variant<StringHandle, TempVar> base;		  // Variable name or temp
+	std::variant<StringHandle, TempVar, LocalVarId> base;		  // Variable name or temp
 	ValueStorage base_storage = ValueStorage::ContainsData; // Whether the base names storage or contains an address
 
 	// Array indexing (optional, can have multiple for nested arrays)
@@ -682,7 +682,7 @@ struct ComputeAddressOp {
 // hidden virtual-base table.
 struct VirtualBaseAdjustOp {
 	TempVar result;
-	std::variant<StringHandle, TempVar> source;
+	std::variant<StringHandle, TempVar, LocalVarId> source;
 	bool source_is_address = false;
 	TypeIndex source_type_index{};
 	TypeIndex target_type_index{};
@@ -704,7 +704,7 @@ struct DereferenceStoreOp {
 // Constructor call (invoke constructor on object)
 struct ConstructorCallOp {
 	TypeIndex target_type_index{};				  // Authoritative constructed type identity
-	std::variant<StringHandle, TempVar> object;	// Object instance ('this' or temp)
+	std::variant<StringHandle, TempVar, LocalVarId> object;	// Object instance ('this' or temp)
 	std::vector<TypedValue> arguments;			   // Constructor arguments
 	const ConstructorDeclarationNode* resolved_constructor = nullptr;
 	bool use_return_slot = false;					  // True if constructing into caller's return slot (RVO)
@@ -719,7 +719,7 @@ struct ConstructorCallOp {
 // Destructor call (invoke destructor on object)
 struct DestructorCallOp {
 	StringHandle struct_name;						  // Pure StringHandle
-	std::variant<StringHandle, TempVar> object;		// Object instance ('this' or temp)
+	std::variant<StringHandle, TempVar, LocalVarId> object;		// Object instance ('this' or temp)
 	bool object_is_pointer = false;					// True if object holds a pointer (heap-allocated)
 };
 
@@ -729,7 +729,7 @@ struct VirtualCallOp {
 	TypeIndex object_type_index{};				   // Type of the object (TypeCategory embedded)
 	TypeCategory objectType() const { return object_type_index.category(); }
 	int object_size;								 // Size of object in bits
-	std::variant<StringHandle, TempVar> object;	// Object instance ('this')
+	std::variant<StringHandle, TempVar, LocalVarId> object;	// Object instance ('this')
 	int vtable_index;								// Index into vtable
 	std::vector<TypedValue> arguments;			   // Call arguments
 	bool is_pointer_access = false;					// True if object is a pointer (ptr->method)
@@ -747,13 +747,13 @@ struct VirtualCallOp {
 
 // String literal
 struct StringLiteralOp {
-	std::variant<StringHandle, TempVar> result;	// Result variable
+	std::variant<StringHandle, TempVar, LocalVarId> result;	// Result variable
 	std::string_view content;						  // String content
 };
 
 // Stack allocation
 struct StackAllocOp {
-	std::variant<StringHandle, TempVar> result;	// Result variable
+	std::variant<StringHandle, TempVar, LocalVarId> result;	// Result variable
 	TypeIndex type_index{};	// TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};							 // Size in bits
 	TypeCategory opType() const { return type_index.category(); }
@@ -767,7 +767,7 @@ struct StackAllocOp {
 // 2. Assignment through pointer: *ptr = 5 (lhs is pointer, is_pointer_store=true)
 // 3. Reference member assignment: obj.ref = 5 (loads ref pointer, then stores through it)
 struct AssignmentOp {
-	std::variant<StringHandle, TempVar> result;	// Result variable (usually same as lhs)
+	std::variant<StringHandle, TempVar, LocalVarId> result;	// Result variable (usually same as lhs)
 	TypedValue lhs;								   // Left-hand side (destination)
 	TypedValue rhs;								   // Right-hand side (source)
 	bool is_pointer_store = false;					   // True if lhs is a pointer and we should store through it
@@ -1023,7 +1023,7 @@ struct TypeConversionOp {
 // RTTI: typeid operation
 struct TypeidOp {
 	TempVar result;				// Result variable (pointer to type_info)
-	std::variant<StringHandle, TempVar> operand;	 // Type name (StringHandle) or expression (TempVar)
+	std::variant<StringHandle, TempVar, LocalVarId> operand;	 // Type name (StringHandle) or expression (TempVar)
 	TypeIndex type_index{};	  // Static type for compile-time RTTI symbol lookup
 	bool is_type = false;		  // true if typeid(Type), false if typeid(expr)
 };
@@ -1041,7 +1041,7 @@ struct DynamicCastOp {
 // Function pointer call
 struct IndirectCallOp {
 	TempVar result;					  // Result variable
-	std::variant<StringHandle, TempVar> function_pointer;  // Function pointer variable
+	std::variant<StringHandle, TempVar, LocalVarId> function_pointer;  // Function pointer variable
 	std::vector<TypedValue> arguments;   // Arguments with type information
 	SizeInBits return_size_in_bits{};
 	SizeInBits referenced_value_size_in_bits{};
