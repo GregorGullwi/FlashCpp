@@ -384,6 +384,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	// global/static path returns.
 	LocalVarId local_var_id{};
 	const StringHandle declared_spelling = decl.identifier_token().handle();
+	// A reference bound to an array is a pointer object, not an array object:
+	// it stores the address of the referenced array rather than owning inline
+	// elements. Treating it as an array object would drop the reference
+	// initializer and leave reads dereferencing uninitialized storage.
+	const bool declared_array_object =
+		decl.is_array_object() && !type_node.is_reference() && !type_node.is_rvalue_reference();
 	// Records the declaration's identity rather than the spelling, because
 	// unwinding resolves the variable through the function's frame table. The
 	// id is assigned below (for locals) after this lambda is constructed, so it
@@ -1443,8 +1449,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			result = generateTypeConversion(result, TypeCategory::Nullptr,
 				TypeCategory::MemberObjectPointer, decl.identifier_token());
 		}
+		// A string literal is an array lvalue even though its lowered result does
+		// not carry lvalue metadata, so a reference bound to one must still bind
+		// the literal's address rather than the temporary's frame slot.
 		if (binds_reference &&
-			isExprResultLValue(result) &&
+			(isExprResultLValue(result) || std::holds_alternative<StringLiteralNode>(initializer)) &&
 			!exprResultAlreadyHoldsRuntimeAddress(result)) {
 			result = materializeAddressResult(
 				initializer,
@@ -1461,11 +1470,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	operands.emplace_back(static_cast<unsigned long long>(decl.custom_alignment()));
 	operands.emplace_back(type_node.is_reference());
 	operands.emplace_back(type_node.is_rvalue_reference());
-	operands.emplace_back(decl.is_array_object());	// Add is_array flag
+	operands.emplace_back(declared_array_object);	// Add is_array flag
 
 		// For arrays, calculate total element count (product of all dimensions for multidimensional arrays)
 	size_t array_count = 0;
-	if (decl.is_array_object()) {
+	if (declared_array_object) {
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			array_count = 1;
 			for (size_t dim_size : type_node.array_dimensions()) {
@@ -1520,7 +1529,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	}
 
 		// Add initializer if present (for non-arrays)
-	if (node.initializer() && !decl.is_array_object()) {
+	if (node.initializer() && !declared_array_object) {
 		const ASTNode& init_node = *node.initializer();
 
 				// Check if this is a brace initializer (InitializerListNode)
@@ -1552,7 +1561,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
-				decl_op.is_array = decl.is_array_object();
+				decl_op.is_array = declared_array_object;
 				if (initializer_typed_value.has_value()) {
 					decl_op.initializer = std::move(initializer_typed_value);
 				}
@@ -1573,7 +1582,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
-				decl_op.is_array = decl.is_array_object();
+				decl_op.is_array = declared_array_object;
 				if (type_node.is_member_object_pointer_type() &&
 					init_list.initializers().empty()) {
 					decl_op.initializer = makeTypedValue(
@@ -2511,15 +2520,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 	decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 	decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
-	decl_op.is_array = decl.is_array_object();
-	if (decl.is_array_object() && operands.size() >= 10) {
+	decl_op.is_array = declared_array_object;
+	if (declared_array_object && operands.size() >= 10) {
 		decl_op.array_element_type_index = nativeTypeIndex(std::get<TypeCategory>(operands[7]));
 		decl_op.array_element_size = std::get<int>(operands[8]);
 		if (const auto* ull_val = std::get_if<unsigned long long>(&operands[9])) {
 			decl_op.array_count = *ull_val;
 		}
 	}
-	if (node.initializer() && !decl.is_array_object() && operands.size() >= 11) {
+	if (node.initializer() && !declared_array_object && operands.size() >= 11) {
 			// For reference initialization, check if the initializer is an array element (arr[i])
 			// If so, we need to emit an ArrayElementAddress instruction to compute the actual address
 		if ((type_node.is_reference() || type_node.is_rvalue_reference()) &&
@@ -2591,7 +2600,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 	// Handle array initialization with initializer list
-	if (decl.is_array_object() && node.initializer().has_value()) {
+	if (declared_array_object && node.initializer().has_value()) {
 		const ASTNode& init_node = *node.initializer();
 		if (init_node.is<ExpressionNode>() &&
 			std::holds_alternative<StringLiteralNode>(init_node.as<ExpressionNode>()) &&

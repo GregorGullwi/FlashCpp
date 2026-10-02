@@ -585,23 +585,16 @@ resets temporary numbers without clearing global reference metadata. Both requir
 separate boundary regressions and investigation; no new name-based type recovery
 should be introduced to compensate for either path.
 
-## Reading a local reference bound to an array crashes
+## Multi-dimensional array extents in a reference declarator do not parse
 
-Declaring a local reference to an array materializes the array bytes into the
-reference's own frame slot, but reading through the reference treats that slot as
-a pointer and dereferences uninitialized storage:
+A one-dimensional reference-to-array declarator (`int (&r)[3] = values;`) parses
+and lowers correctly, but a multi-dimensional one is rejected:
 
 ```cpp
-int main() {
-	const char (&text)[6] = "hello";
-	return text[0] == 'h' ? 0 : 1;   // access violation
-}
+int m[2][2] = {{1, 2}, {3, 4}};
+int (&rm)[2][2] = m;   // error: Expected ';' after declaration
 ```
 
-The same crash occurs for `int (&r)[3] = local_array;`. Declaring the reference
-without reading it works, so this is a read-path lowering gap rather than a
-declaration failure: the reference needs either a materialized array object with
-its address stored in the reference slot, or consistent inline-array storage that
-the read path addresses directly. This predates the numeric local-identity
-refactor (it reproduces on the pre-refactor compiler) and needs a focused
-regression once the storage model is settled.
+The parser stops after the first `[2]` inside the parenthesized declarator and
+does not consume the remaining extent. This is a declarator-parsing gap, separate
+from the reference-binding lowering that now handles the one-dimensional form.
