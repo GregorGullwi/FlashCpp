@@ -2,12 +2,13 @@
 // declaration path: mixed native types and sizes, arrays, aggregates,
 // reference locals, and a local whose slot is reused by a later declaration.
 // Any variable that loses its recorded slot, size, or indirect-storage
-// classification changes the returned value.
+// classification changes the running total.
+//
+// Each stage checks the running total and returns a distinct code on failure,
+// so a wrong read is identified by the exit status alone.
 //
 // Shadowed locals are covered separately by
 // test_shadowed_local_frame_identity_ret0.cpp.
-
-#include <cstdio>
 
 struct Pair {
 	int first;
@@ -28,7 +29,7 @@ int widen(int& slot, int value) {
 
 int main() {
 	// Mixed widths: the load size of each named local decides how much of the
-	// slot is read, so a wrong size shows up in the total below.
+	// slot is read, so a wrong size shows up in the running total.
 	char tiny = 5;
 	short small_value = 300;
 	int medium = 40000;
@@ -59,15 +60,19 @@ int main() {
 				static_cast<int>(single) + static_cast<int>(twin) + (flag ? 1 : 0) +
 				numbers[0] + numbers[3] + letters[0] + letters[2] +
 				pair.first + pair.second + pair.third + static_cast<int>(pair.fourth);
+	if (total != 540544) return 11;
 
 	accumulate(counter_ref, total);
 	accumulate(counter_ref, numbers[1]);
 	total = counter;
+	if (total != 540546) return 12;
 
 	widen(counter_ref, 21);
 	total += counter;
+	if (total != 540588) return 13;
 
 	total += static_cast<int>(scale_ref * 2.0);
+	if (total != 540594) return 14;
 
 	// Inner-scope locals must not disturb the enclosing frame slots.
 	{
@@ -75,6 +80,7 @@ int main() {
 		double inner_scale = 0.5;
 		total += inner_value + static_cast<int>(inner_scale * 4.0);
 	}
+	if (total != 542596) return 15;
 
 	// A later declaration that lands on a reused slot must not inherit the
 	// reference classification of the variable that previously lived there.
@@ -82,11 +88,7 @@ int main() {
 		int reused = 77;
 		total += reused;
 	}
+	if (total != 542673) return 16;
 
-	const int expected = 542673;
-	if (total != expected) {
-		printf("total=%d expected=%d\n", total, expected);
-		return 1;
-	}
 	return 0;
 }
