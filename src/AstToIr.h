@@ -68,7 +68,7 @@ public:
 
 private:
 	struct MultiDimArrayAccess {
-		std::string_view base_array_name;
+		StringHandle base_array_name;
 		std::vector<ASTNode> indices;  // Indices from outermost to innermost
 		const DeclarationNode* base_decl = nullptr;
 		bool is_valid = false;

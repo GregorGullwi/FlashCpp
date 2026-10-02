@@ -296,10 +296,13 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 	// The base should be an identifier
 	if (std::holds_alternative<IdentifierNode>(*current)) {
 		const IdentifierNode& base_ident = std::get<IdentifierNode>(*current);
-		result.base_array_name = base_ident.name();
+		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_ident.name());
+		// The array base must name the frame of the declaration visible here,
+		// so a shadowing array is not confused with the outer one.
+		result.base_array_name = resolvedFrameName(base_name_handle);
 
 		// Look up the declaration
-		result.base_decl = lookupDeclaration(result.base_array_name);
+		result.base_decl = lookupDeclaration(base_name_handle);
 
 		// Reverse the indices so they're in order from outermost to innermost
 		// For arr[i][j], we collected [j, i], now reverse to [i, j]
@@ -825,7 +828,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				// Mark array element access as lvalue using metadata system
 				LValueInfo lvalue_info(
 					LValueInfo::Kind::ArrayElement,
-					StringTable::getOrInternStringHandle(multi_dim.base_array_name),
+					multi_dim.base_array_name,
 					0 // offset computed dynamically by index
 				);
 				lvalue_info.array_index = IrValue{flat_index};
@@ -839,7 +842,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				payload.element_size_in_bits = element_size_bits;
 				payload.member_offset = 0;
 				payload.is_pointer_to_array = pointer_to_array_rows;
-				payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
+				payload.array = multi_dim.base_array_name;
 				payload.index.setType(TypeCategory::UnsignedLongLong);
 				payload.index.ir_type = IrType::Integer;
 				payload.index.size_in_bits = SizeInBits{64};
