@@ -1357,7 +1357,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					payload.result = addr_var;
 					payload.element_type_index = element_type_index.withCategory(element_category);
 					payload.element_size_in_bits = element_size_bits;
-					payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
+					payload.array = multi_dim.base_array_name;
 					payload.index.setType(TypeCategory::UnsignedLongLong);
 					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};
