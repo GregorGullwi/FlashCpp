@@ -444,6 +444,23 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 										PointerDepth{1},
 										ValueStorage::ContainsData);
 									sema_applied_conversion = true;
+								} else if (lv_info.kind == LValueInfo::Kind::Member &&
+										std::holds_alternative<LocalVarId>(lv_info.base)) {
+									TempVar address_temp = var_counter.next();
+									ComputeAddressOp address_op;
+									address_op.result = address_temp;
+									address_op.base = std::get<LocalVarId>(lv_info.base);
+									address_op.total_member_offset = lv_info.offset;
+									address_op.result_type_index = return_type_index;
+									address_op.result_size_bits = SizeInBits{return_size};
+									ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), node.return_token()));
+									operands = makeExprResult(
+										return_type_index,
+										SizeInBits{return_size},
+										IrOperand{address_temp},
+										PointerDepth{1},
+										ValueStorage::ContainsData);
+									sema_applied_conversion = true;
 								}
 							}
 						}
@@ -743,6 +760,24 @@ return_conversion_done:
 						} else {
 							elem_addr.array = base_sh;
 						}
+					} else if (const auto* local_id = std::get_if<LocalVarId>(&lv_info.base)) {
+						const DeclarationNode* base_decl = localDeclarationFor(*local_id);
+						const bool is_direct_array = base_decl &&
+							(base_decl->is_array_object() || base_decl->type_specifier_node().is_array());
+						if (is_direct_array) {
+							elem_addr.array = *local_id;
+						} else {
+							TempVar base_addr_temp = var_counter.next();
+							ComputeAddressOp addr_op;
+							addr_op.result = base_addr_temp;
+							addr_op.base = *local_id;
+							addr_op.total_member_offset = lv_info.offset;
+							addr_op.result_type_index = current_function_return_type_index_;
+							addr_op.result_size_bits = SizeInBits{elem_addr.element_size_in_bits};
+							ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), node.return_token()));
+							elem_addr.array = base_addr_temp;
+							base_is_pointer = true;
+						}
 					} else {
 						// TempVar base (e.g., from AddressOfMember/emitArrayMemberDecay)
 						// holds a computed pointer, so the code generator must load it first.
@@ -785,27 +820,18 @@ return_conversion_done:
 		emitDestructorsForNonLocalExit(0);
 
 		// Extract IrValue from operands.value
-		IrValue return_value;
-		if (const auto* ull_val = std::get_if<unsigned long long>(&operands.value)) {
-			return_value = *ull_val;
-		} else if (std::holds_alternative<TempVar>(operands.value)) {
-			TempVar return_temp = std::get<TempVar>(operands.value);
-			return_value = return_temp;
-
+		IrValue return_value = toIrValue(operands.value);
+		if (const auto* return_temp = std::get_if<TempVar>(&return_value)) {
 			// C++17 mandatory copy elision: Check if this is a prvalue (e.g., constructor call result)
 			// being returned - prvalues used to initialize objects of the same type must have copies elided
-			if (isTempVarRVOEligible(return_temp)) {
+			if (isTempVarRVOEligible(*return_temp)) {
 				FLASH_LOG_FORMAT(Codegen, Debug,
 								 "RVO opportunity detected: returning prvalue {} (constructor call result)",
-								 return_temp.var_number);
+								 return_temp->var_number);
 			}
 
 			// Mark the temp as a return value for potential NRVO analysis
-			markTempVarAsReturnValue(return_temp);
-		} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
-			return_value = *string;
-		} else if (const auto* d_val = std::get_if<double>(&operands.value)) {
-			return_value = *d_val;
+			markTempVarAsReturnValue(*return_temp);
 		}
 		// Use the function's return type, not the expression type
 		emitReturn(return_value, currentFunctionReturnTypeIndex(), current_function_return_size_,

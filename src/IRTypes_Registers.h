@@ -135,6 +135,13 @@ enum class ValueCategory : uint8_t {
 	PRValue
 };
 
+// A name for a declaration's storage: either a non-local entity (parameter,
+// 'this', global, static local, label, function/type symbol) identified by its
+// spelling, or a named function-local identified by its numeric LocalVarId.
+// Locals use the id so two declarations that share a spelling (shadowing) stay
+// distinct; non-locals have no per-function id and keep the spelling.
+using VariableKey = std::variant<StringHandle, LocalVarId>;
+
 // Type alias for operand values (used in LValueInfo and elsewhere)
 using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle, LocalVarId>;
 
@@ -303,6 +310,32 @@ struct TempVarMetadata {
 };
 
 using IrOperand = std::variant<int, unsigned long long, double, bool, char, TypeCategory, TempVar, StringHandle, LocalVarId>;
+
+// Lift a declaration-storage key into an IrValue / IrOperand. Both target
+// variants carry StringHandle and LocalVarId, so this only selects the active
+// alternative rather than re-encoding identity.
+inline IrValue toIrValue(const VariableKey& key) {
+	if (const auto* string_ptr = std::get_if<StringHandle>(&key)) {
+		return IrValue(*string_ptr);
+	}
+	return IrValue(std::get<LocalVarId>(key));
+}
+
+inline IrOperand toIrOperand(const VariableKey& key) {
+	if (const auto* string_ptr = std::get_if<StringHandle>(&key)) {
+		return IrOperand(*string_ptr);
+	}
+	return IrOperand(std::get<LocalVarId>(key));
+}
+
+// Base-object variant used by LValueInfo; same alternatives as VariableKey plus
+// TempVar, which a storage key never carries.
+inline std::variant<StringHandle, TempVar, LocalVarId> toVariableBase(const VariableKey& key) {
+	if (const auto* string_ptr = std::get_if<StringHandle>(&key)) {
+		return std::variant<StringHandle, TempVar, LocalVarId>(*string_ptr);
+	}
+	return std::variant<StringHandle, TempVar, LocalVarId>(std::get<LocalVarId>(key));
+}
 
 // ============================================================================
 // OperandStorage - Abstraction for storing IR instruction operands

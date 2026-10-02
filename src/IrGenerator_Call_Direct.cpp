@@ -541,6 +541,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				// Check if the argument is an identifier (common forwarding case).
 				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 					const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
+					const VariableKey identifier_key = resolvedVariableKey(ident.nameHandle());
 
 					// Generate addressof for the identifier.
 					TempVar result_var = var_counter.next();
@@ -552,7 +553,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					TypeCategory operand_type = TypeCategory::Int;
 					static constexpr int DefaultInlineAlwaysOperandSizeBits = 32;
 					int operand_size = DefaultInlineAlwaysOperandSizeBits;
-					if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
+					const DeclarationNode* identifier_decl = std::holds_alternative<LocalVarId>(identifier_key)
+						? localDeclarationFor(std::get<LocalVarId>(identifier_key))
+						: lookupDeclaration(id_handle);
+					if (identifier_decl) {
+						const DeclarationNode* decl = identifier_decl;
 						const TypeSpecifierNode& type = decl->type_specifier_node();
 						operand_type = type.type();
 						operand_size = static_cast<int>(type.size_in_bits());
@@ -562,7 +567,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					op.operand.setType(operand_type);
 					op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
 					op.operand.pointer_depth = PointerDepth{};
-					op.operand.value = id_handle;
+					op.operand.value = toIrValue(identifier_key);
 
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 
@@ -679,7 +684,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			// Add the indirect call instruction
 			IndirectCallOp op{
 				.result = ret_var,
-				.function_pointer = func_name,
+				.function_pointer = toVariableBase(resolvedVariableKey(func_name)),
 				.arguments = std::move(arguments)};
 			if (func_type.has_function_signature()) {
 				populateIndirectCallReturnInfo(op, func_type.function_signature());
@@ -811,6 +816,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 							using T = std::decay_t<decltype(arg)>;
 							if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+										  std::is_same_v<T, LocalVarId> ||
 										  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 								return arg;
 							} else {
@@ -1383,9 +1389,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			param_ref_qualifier != CVReferenceQualifier::None &&
 			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-			// Reference-binding arguments name the declaration's frame, so a
+			// Reference-binding arguments name the declaration's storage, so a
 			// shadowing local is not confused with the outer declaration.
-			StringHandle identifier_name = resolvedFrameName(identifier.name());
+			VariableKey identifier_key = resolvedVariableKey(identifier.name());
 			const DeclarationNode* decl_ptr = lookupDeclaration(identifier.nameHandle());
 			if (decl_ptr) {
 				const auto& type_node = decl_ptr->type_specifier_node();
@@ -1393,7 +1399,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					// Argument is a reference variable being passed to a reference parameter
 					// Pass the identifier name directly - the IRConverter will use MOV to
 					// load the address stored in the reference variable
-					call_arguments.push_back(buildReferenceCallArgumentFromDeclaration(*decl_ptr, identifier_name));
+					call_arguments.push_back(buildReferenceCallArgumentFromDeclaration(*decl_ptr, identifier_key));
 					arg_index++;
 					return;	// Skip the rest of the processing
 				}
@@ -1710,9 +1716,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// For identifiers that returned local variable references (string_view), handle specially
 		if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 			const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-			// These argument builders take the name of the object being passed,
-			// so it must be the frame of the declaration visible here.
-			StringHandle identifier_name = resolvedFrameName(identifier.name());
+			// These argument builders take the identity of the object being passed,
+			// so it must be the declaration visible here.
+			VariableKey identifier_key = resolvedVariableKey(identifier.name());
 			std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 			if (!symbol.has_value()) {
 				FLASH_LOG(Codegen, Error, "Symbol '", identifier.name(), "' not found for function argument");
@@ -1748,7 +1754,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				TypedValue source_value = makeTypedValue(
 					arg_type_node.type_index().withCategory(arg_type_node.type()),
 					SizeInBits{struct_size_bits},
-					IrValue(identifier_name));
+					toIrValue(identifier_key));
 				TempVar by_value_temp = var_counter.next();
 				AssignmentOp copy_op;
 				copy_op.result = by_value_temp;
@@ -1767,7 +1773,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 			call_arguments.push_back(buildDirectIdentifierCallArgument(
 				arg_decl_node,
-				identifier_name,
+				identifier_key,
 				param_ref_qualifier,
 				argument,
 				callExprNode.called_from()));

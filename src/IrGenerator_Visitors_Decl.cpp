@@ -218,7 +218,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
-	resetLocalFrameNames();
+	ScopedLocalVarIdReset local_var_id_reset{*this};
 
 	// Set current function name for static local variable mangling
 	const DeclarationNode& func_decl = node.decl_node();
@@ -1809,7 +1809,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
-	resetLocalFrameNames();
+	ScopedLocalVarIdReset local_var_id_reset{*this};
 
 	// Set current function name for static local variable mangling
 	current_function_name_ = node.name();
@@ -2281,6 +2281,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		// Delegating constructors don't execute the body or initialize members
 		// Just return
 		emitVoidReturn(node.name_token());
+		symbol_table.exit_scope();
 		return;
 	}
 
@@ -3293,7 +3294,7 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 
 	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
-	resetLocalFrameNames();
+	ScopedLocalVarIdReset local_var_id_reset{*this};
 
 	// Set current function name for static local variable mangling
 	current_function_name_ = node.name();

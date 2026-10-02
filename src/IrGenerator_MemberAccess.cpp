@@ -200,77 +200,81 @@ AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(co
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Collected {} indices", indices_reversed.size());
 
-	// The base should be a member access (obj.member)
+	// Resolve a member array through its complete dotted object path, such as
+	// owner.nested.values. The root declaration supplies storage identity while
+	// each intermediate member contributes to the final byte offset.
 	if (std::holds_alternative<MemberAccessNode>(*current)) {
-		const MemberAccessNode& base_member = std::get<MemberAccessNode>(*current);
-		result.member_name = base_member.member_name();
-		FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found MemberAccessNode, member_name={}",
-						 std::string(result.member_name));
+		std::vector<std::string_view> member_path;
+		const MemberAccessNode* access = &std::get<MemberAccessNode>(*current);
+		result.member_name = access->member_name();
+		bool supported_path = true;
+		const IdentifierNode* object_ident = nullptr;
+		while (supported_path) {
+			if (access->is_arrow()) {
+				supported_path = false;
+				break;
+			}
+			member_path.push_back(access->member_name());
+			if (!access->object().is<ExpressionNode>()) {
+				supported_path = false;
+				break;
+			}
+			const ExpressionNode& object_expr = access->object().as<ExpressionNode>();
+			if (const auto* nested_access = std::get_if<MemberAccessNode>(&object_expr)) {
+				access = nested_access;
+				continue;
+			}
+			object_ident = std::get_if<IdentifierNode>(&object_expr);
+			break;
+		}
 
-		// Get the object
-		if (base_member.object().is<ExpressionNode>()) {
-			const ExpressionNode& obj_expr = base_member.object().as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(obj_expr)) {
-				const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
-				result.object_name = object_ident.name();
-				FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: object_name={}", std::string(result.object_name));
-
-				// Look up the object to get struct type
-				std::optional<ASTNode> symbol = symbol_table.lookup(result.object_name);
-				FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol.has_value()={}", symbol.has_value());
-				if (symbol.has_value()) {
-					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol->is<DeclarationNode>()={}", symbol->is<DeclarationNode>());
-					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol->is<VariableDeclarationNode>()={}", symbol->is<VariableDeclarationNode>());
-				}
-				// Try both DeclarationNode and VariableDeclarationNode
-				const DeclarationNode* decl_node = nullptr;
-				if (symbol.has_value()) {
-					if (symbol->is<DeclarationNode>()) {
-						decl_node = &symbol->as<DeclarationNode>();
-					} else if (symbol->is<VariableDeclarationNode>()) {
-						decl_node = &symbol->as<VariableDeclarationNode>().declaration();
-					}
-				}
-
-				if (decl_node) {
-					const auto& type_node = decl_node->type_specifier_node();
-
-					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}",
-									 is_struct_type(type_node.category()), type_node.type_index());
-
-					if (is_struct_type(type_node.category()) && type_node.type_index().is_valid()) {
-						TypeIndex type_index = type_node.type_index();
-						auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-							type_index,
-							StringTable::getOrInternStringHandle(std::string(result.member_name)));
-
-						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: gLazyMemberResolver.resolve returned {}", static_cast<bool>(member_result));
-
-						if (member_result) {
-							const StructMember* member = member_result.member;
+		if (supported_path && object_ident) {
+			result.object_name = object_ident->name();
+			std::reverse(member_path.begin(), member_path.end());
+			StringBuilder qualified_name_builder;
+			qualified_name_builder.append(result.object_name);
+			for (std::string_view path_member : member_path) {
+				qualified_name_builder.append(".").append(path_member);
+			}
+			result.qualified_member_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+			const std::optional<ASTNode> symbol = lookupSymbol(result.object_name);
+			const StringHandle object_spelling = StringTable::getOrInternStringHandle(result.object_name);
+			result.object_key = variableKeyForSymbol(symbol.value_or(ASTNode{}), object_spelling);
+			const DeclarationNode* decl_node = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+			if (decl_node) {
+				const TypeSpecifierNode& object_type = decl_node->type_specifier_node();
+				TypeIndex current_type = object_type.type_index();
+				int64_t accumulated_offset = 0;
+				if (is_struct_type(object_type.category()) && current_type.is_valid()) {
+					for (size_t member_index = 0; member_index < member_path.size(); ++member_index) {
+						const StringHandle member_handle = StringTable::getOrInternStringHandle(member_path[member_index]);
+						auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_type, member_handle);
+						if (!member_result || !member_result.member) {
+							break;
+						}
+						const StructMember* member = member_result.member;
+						accumulated_offset += static_cast<int64_t>(member_result.adjusted_offset);
+						if (member_index + 1 == member_path.size()) {
 							result.member_info = member;
-
-							FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: member->is_array={}, array_dimensions.size()={}",
-											 member->is_array, member->array_dimensions.size());
-
-							// Reverse the indices so they're in order from outermost to innermost
-							result.indices.reserve(indices_reversed.size());
-							for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
-								result.indices.push_back(*it);
-							}
-
-							// Valid if member is a multidimensional array with matching indices
-							result.is_valid = member->is_array &&
-											  !member->array_dimensions.empty() &&
-											  (member->array_dimensions.size() == result.indices.size()) &&
-											  (result.indices.size() > 1);
-
-							FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: is_valid={} (is_array={}, dim_size={}, indices_size={}, indices>1={})",
-											 result.is_valid, member->is_array, member->array_dimensions.size(),
-											 result.indices.size(), (result.indices.size() > 1));
+							result.member_offset = accumulated_offset;
+						} else if (member->pointer_depth == 0 && !member->is_reference() &&
+							   is_struct_type(member->type_index.category()) && member->type_index.is_valid()) {
+							current_type = member->type_index;
+						} else {
+							break;
 						}
 					}
 				}
+			}
+
+			if (result.member_info) {
+				const StructMember* member = result.member_info;
+				result.indices.reserve(indices_reversed.size());
+				for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
+					result.indices.push_back(*it);
+				}
+				result.is_valid = member->is_array && !member->array_dimensions.empty() &&
+					(member->array_dimensions.size() == result.indices.size()) && result.indices.size() > 1;
 			}
 		}
 	}
@@ -299,7 +303,7 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_ident.name());
 		// The array base must name the frame of the declaration visible here,
 		// so a shadowing array is not confused with the outer one.
-		result.base_array_name = resolvedFrameName(base_name_handle);
+		result.base_array_name = resolvedVariableKey(base_name_handle);
 
 		// Look up the declaration
 		result.base_decl = lookupDeclaration(base_name_handle);
@@ -517,6 +521,9 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				if (const auto* string = std::get_if<StringHandle>(&base_operands.value)) {
 					decay_base = *string;
 					decay_rhs_value = *string;
+				} else if (const auto* local_id = std::get_if<LocalVarId>(&base_operands.value)) {
+					decay_base = *local_id;
+					decay_rhs_value = *local_id;
 				} else if (const auto* temp_var = std::get_if<TempVar>(&base_operands.value)) {
 					decay_base = *temp_var;
 					decay_rhs_value = *temp_var;
@@ -696,13 +703,20 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 			// Generate single array access with flat index
 			TempVar result_var = var_counter.next();
-			StringHandle qualified_name = StringTable::getOrInternStringHandle(
-				StringBuilder().append(member_multi_dim.object_name).append(".").append(member_multi_dim.member_name));
+			// A local object is named by its numeric id so a shadowed array member
+			// is not read from the outer object of the same spelling. Non-locals
+			// keep the object.member qualified spelling.
+			std::variant<StringHandle, TempVar, LocalVarId> base_object;
+			if (const auto* local_id = std::get_if<LocalVarId>(&member_multi_dim.object_key)) {
+				base_object = *local_id;
+			} else {
+				base_object = member_multi_dim.qualified_member_name;
+			}
 
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::ArrayElement,
-				qualified_name,
-				static_cast<int64_t>(member->offset));
+				base_object,
+				member_multi_dim.member_offset);
 			lvalue_info.array_index = IrValue{flat_index};
 			lvalue_info.is_pointer_to_array = false;
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
@@ -711,8 +725,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			payload.result = result_var;
 			payload.element_type_index = nativeTypeIndex(element_type);
 			payload.element_size_in_bits = base_element_size;
-			payload.array = qualified_name;
-			payload.member_offset = static_cast<int64_t>(member->offset);
+			payload.array = base_object;
+			payload.member_offset = member_multi_dim.member_offset;
 			payload.is_pointer_to_array = false;
 			payload.index.setType(TypeCategory::UnsignedLongLong);
 			payload.index.ir_type = IrType::Integer;
@@ -828,7 +842,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				// Mark array element access as lvalue using metadata system
 				LValueInfo lvalue_info(
 					LValueInfo::Kind::ArrayElement,
-					multi_dim.base_array_name,
+					toVariableBase(multi_dim.base_array_name),
 					0 // offset computed dynamically by index
 				);
 				lvalue_info.array_index = IrValue{flat_index};
@@ -842,7 +856,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				payload.element_size_in_bits = element_size_bits;
 				payload.member_offset = 0;
 				payload.is_pointer_to_array = pointer_to_array_rows;
-				payload.array = multi_dim.base_array_name;
+				payload.array = toVariableBase(multi_dim.base_array_name);
 				payload.index.setType(TypeCategory::UnsignedLongLong);
 				payload.index.ir_type = IrType::Integer;
 				payload.index.size_in_bits = SizeInBits{64};
@@ -876,14 +890,14 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				auto emitResolvedArrayAccess = [&](TypeCategory element_type,
 												  int element_size_bits,
 												  TypeIndex element_type_index,
-												  StringHandle qualified_name,
+												  std::variant<StringHandle, TempVar, LocalVarId> base_object,
 												  int64_t member_offset) -> ExprResult {
 					ExprResult index_result = visitExpressionNode(index_expr_node.as<ExpressionNode>());
 					TempVar result_var = var_counter.next();
 
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::ArrayElement,
-						qualified_name,
+						base_object,
 						member_offset);
 					lvalue_info.array_index = toIrValue(index_result.value);
 					lvalue_info.is_pointer_to_array = false;
@@ -893,7 +907,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 					payload.result = result_var;
 					payload.element_type_index = element_type_index.withCategory(element_type);
 					payload.element_size_in_bits = element_size_bits;
-					payload.array = qualified_name;
+					payload.array = base_object;
 					payload.member_offset = member_offset;
 					payload.is_pointer_to_array = false;
 					payload.index.setType(index_result.category());
@@ -935,13 +949,24 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 										element_size_bits = base_element_size;
 								}
 
-								StringHandle qualified_name = StringTable::getOrInternStringHandle(
-									StringBuilder().append(object_name).append(".").append(member_name));
+								// Prefer the object's numeric id for a local so a
+								// shadowed member array is not read from the outer
+								// object; non-locals keep the qualified spelling.
+								std::variant<StringHandle, TempVar, LocalVarId> base_object;
+								const VariableKey object_key = variableKeyForSymbol(
+									*symbol,
+									StringTable::getOrInternStringHandle(object_name));
+								if (const auto* local_id = std::get_if<LocalVarId>(&object_key)) {
+									base_object = *local_id;
+								} else {
+									base_object = StringTable::getOrInternStringHandle(
+										StringBuilder().append(object_name).append(".").append(member_name));
+								}
 								return emitResolvedArrayAccess(
 									element_type,
 									element_size_bits,
 									member->type_index,
-									qualified_name,
+									base_object,
 									static_cast<int64_t>(member_result.adjusted_offset));
 							}
 						}
@@ -1233,6 +1258,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	std::variant<StringHandle, TempVar, LocalVarId> base_variant;
 	int base_member_offset = 0;
 	bool base_is_pointer_to_member = false;
+	bool base_resolved_from_member_lvalue = false;
 	// Fast-path: if the array expression is a member access, rebuild qualified name directly
 	if (std::holds_alternative<MemberAccessNode>(array_expr)) {
 		const auto& member_access = std::get<MemberAccessNode>(array_expr);
@@ -1241,17 +1267,24 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 				const auto& object_ident = std::get<IdentifierNode>(obj_expr);
 				std::string_view object_name = object_ident.name();
-				auto symbol = symbol_table.lookup(object_name);
-				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_specifier_node();
+				auto symbol = lookupSymbol(object_name);
+				const DeclarationNode* decl_node = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+				if (symbol.has_value() && decl_node) {
+					const auto& type_node = decl_node->type_specifier_node();
 					if (is_struct_type(type_node.category()) && type_node.type_index().is_valid()) {
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 							type_node.type_index(),
 							StringTable::getOrInternStringHandle(std::string(member_access.member_name())));
 						if (member_result) {
-							base_variant = StringTable::getOrInternStringHandle(
-								StringBuilder().append(object_name).append(".").append(member_access.member_name()));
+							const VariableKey object_key = variableKeyForSymbol(
+								*symbol,
+								StringTable::getOrInternStringHandle(object_name));
+							if (const auto* local_id = std::get_if<LocalVarId>(&object_key)) {
+								base_variant = *local_id;
+							} else {
+								base_variant = StringTable::getOrInternStringHandle(
+									StringBuilder().append(object_name).append(".").append(member_access.member_name()));
+							}
 							base_member_offset = static_cast<int>(member_result.adjusted_offset);
 							// Member access via '.' is not a pointer access for locals
 						}
@@ -1267,25 +1300,33 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				base_variant = *temp_var;
 			} else if (const auto* string_ptr = std::get_if<StringHandle>(&array_result.value)) {
 				base_variant = *string_ptr;
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&array_result.value)) {
+				base_variant = *local_id;
 			}
 		}
 	}
 	// Simple identifier array (non-member)
 	else if (std::holds_alternative<IdentifierNode>(array_expr)) {
 		const auto& ident = std::get<IdentifierNode>(array_expr);
-		base_variant = StringTable::getOrInternStringHandle(ident.name());
+		base_variant = toVariableBase(resolvedVariableKey(ident.name()));
 	}
 	if (std::holds_alternative<TempVar>(array_result.value)) {
 		TempVar base_temp = std::get<TempVar>(array_result.value);
 		if (auto base_lv = getTempVarLValueInfo(base_temp)) {
 			if (base_lv->kind == LValueInfo::Kind::Member && base_lv->member_name.has_value()) {
-				// Build qualified name: object.member
+				// Build qualified name: object.member, or carry the local id.
 				if (std::holds_alternative<StringHandle>(base_lv->base)) {
 					auto obj_name = std::get<StringHandle>(base_lv->base);
 					base_variant = StringTable::getOrInternStringHandle(
 						StringBuilder().append(StringTable::getStringView(obj_name)).append(".").append(StringTable::getStringView(base_lv->member_name.value())));
 					base_member_offset = base_lv->offset;
 					base_is_pointer_to_member = base_lv->is_pointer_to_member;
+					base_resolved_from_member_lvalue = true;
+				} else if (std::holds_alternative<LocalVarId>(base_lv->base)) {
+					base_variant = std::get<LocalVarId>(base_lv->base);
+					base_member_offset = base_lv->offset;
+					base_is_pointer_to_member = base_lv->is_pointer_to_member;
+					base_resolved_from_member_lvalue = true;
 				}
 			}
 		}
@@ -1293,10 +1334,14 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	if (!std::holds_alternative<StringHandle>(base_variant)) {
 		if (const auto* string = std::get_if<StringHandle>(&array_result.value)) {
 			base_variant = *string;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&array_result.value)) {
+			base_variant = *local_id;
 		}
 	}
 	// Prefer keeping TempVar base when available to preserve stack offsets for nested accesses
-	if (!std::holds_alternative<TempVar>(base_variant) && std::holds_alternative<TempVar>(array_result.value)) {
+	if (!base_resolved_from_member_lvalue &&
+		!std::holds_alternative<TempVar>(base_variant) &&
+		std::holds_alternative<TempVar>(array_result.value)) {
 		base_variant = std::get<TempVar>(array_result.value);
 	}
 
@@ -1337,6 +1382,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		payload.index.value = *temp_var;
 	} else if (const auto* string_ptr = std::get_if<StringHandle>(&index_result.value)) {
 		payload.index.value = *string_ptr;
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&index_result.value)) {
+		payload.index.value = *local_id;
 	}
 
 	// When context is LValueAddress, skip the load and return address/metadata only
@@ -1445,7 +1492,7 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 
 	// The member access base must name the frame of the declaration that is
 	// visible here, so a shadowing local does not read the outer object.
-	base_object = localFrameNameFor(*symbol, StringTable::getOrInternStringHandle(object_name));
+	base_object = toVariableBase(variableKeyForSymbol(*symbol, StringTable::getOrInternStringHandle(object_name)));
 	base_type_index = object_type.type_index();
 
 	// Check if this is a pointer to struct (e.g., P* pp) or a reference to struct (e.g., P& pr)
@@ -1468,6 +1515,8 @@ bool AstToIr::extractBaseFromOperands(
 		base_object = *temp_var;
 	} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
 		base_object = *string;
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&operands.value)) {
+		base_object = *local_id;
 	} else {
 		FLASH_LOG(Codegen, Error, error_context, " result has unsupported value type");
 		return false;
@@ -1699,10 +1748,17 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 						member_object->type_index,
 						IrValue(member_object_temp)));
 				} else {
+					// The object is a named local when it resolved through the
+					// scope chain, so pass its numeric identity rather than the
+					// spelling: the converter keys locals by LocalVarId.
+					const VariableKey this_key = resolvedVariableKey(identifier_handle);
+					IrValue this_operand = std::holds_alternative<LocalVarId>(this_key)
+						? IrValue(std::get<LocalVarId>(this_key))
+						: IrValue(std::get<StringHandle>(this_key));
 					TempVar this_ptr = emitAddressOf(
 						type_node->category(),
 						getStructObjectSizeBits(type_node->type_index()),
-						IrValue(identifier_handle),
+						this_operand,
 						memberAccessNode.member_token());
 					call_op.args.push_back(makeMemberThisCallArgument(
 						type_node->type_index(),
@@ -3470,6 +3526,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	IrValue source_value = std::visit([](auto&& arg) -> IrValue {
 		using T = std::decay_t<decltype(arg)>;
 		if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+					  std::is_same_v<T, LocalVarId> ||
 					  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>)
 			return arg;
 		else
@@ -3500,6 +3557,8 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 					lvalue_info->offset == 0) {
 					if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
 						source_value = *base_name;
+					} else if (const auto* base_local = std::get_if<LocalVarId>(&lvalue_info->base)) {
+						source_value = *base_local;
 					} else if (std::get_if<TempVar>(&lvalue_info->base)) {
 						// ReferenceDeref with a TempVar base is not yet supported for
 						// conversion-operator 'this' passing. Currently all ReferenceDeref
@@ -3512,6 +3571,10 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 			}
 			if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
 				source_value = *base_name;
+				break;
+			}
+			if (const auto* base_local = std::get_if<LocalVarId>(&lvalue_info->base)) {
+				source_value = *base_local;
 				break;
 			}
 			if (const auto* base_temp = std::get_if<TempVar>(&lvalue_info->base)) {
@@ -3528,6 +3591,10 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value,
 										 IrValue(std::get<StringHandle>(source_value)), token);
 
+		call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
+	} else if (std::holds_alternative<LocalVarId>(source_value)) {
+		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value,
+										 IrValue(std::get<LocalVarId>(source_value)), token);
 		call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
 	} else if (std::holds_alternative<TempVar>(source_value)) {
 		TempVar object_temp = std::get<TempVar>(source_value);

@@ -457,19 +457,46 @@ struct TypedValue {
 	ValueStorage storage = ValueStorage::ContainsData;
 };
 
+// Format a local identity using its display name for IR output. The id remains
+// the identity; this spelling is only a per-function debug label.
+inline void appendLocalVarName(
+	std::ostringstream& oss,
+	LocalVarId id,
+	std::span<const StringHandle> local_debug_names) {
+	if (id.value != 0 && id.value <= local_debug_names.size() &&
+		local_debug_names[id.value - 1].isValid()) {
+		oss << StringTable::getStringView(local_debug_names[id.value - 1]);
+	} else {
+		oss << '#' << id.value;
+	}
+}
+
+inline void printIrValue(
+	std::ostringstream& oss,
+	const IrValue& value,
+	std::span<const StringHandle> local_debug_names) {
+	if (const auto* integer_literal = std::get_if<unsigned long long>(&value)) {
+		oss << *integer_literal;
+	} else if (const auto* float_literal = std::get_if<double>(&value)) {
+		oss << *float_literal;
+	} else if (const auto* temp = std::get_if<TempVar>(&value)) {
+		oss << '%' << temp->var_number;
+	} else if (const auto* name = std::get_if<StringHandle>(&value)) {
+		oss << '%' << StringTable::getStringView(*name);
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&value)) {
+		oss << '%';
+		appendLocalVarName(oss, *local_id, local_debug_names);
+	} else {
+		throw InternalError("Unsupported IrValue alternative in IR formatter");
+	}
+}
+
 // Helper function to print TypedValue
-inline void printTypedValue(std::ostringstream& oss, const TypedValue& typedValue) {
-	if (const auto* ull_val = std::get_if<unsigned long long>(&typedValue.value))
-		oss << *ull_val;
-	else if (std::holds_alternative<double>(typedValue.value))
-		oss << std::get<double>(typedValue.value);
-	else if (std::holds_alternative<TempVar>(typedValue.value))
-		oss << '%' << std::get<TempVar>(typedValue.value).var_number;
-	else if (std::holds_alternative<StringHandle>(typedValue.value)) {
-		StringHandle handle = std::get<StringHandle>(typedValue.value);
-		oss << '%' << StringTable::getStringView(handle);
-	} else
-		assert(false && "unsupported typed value");
+inline void printTypedValue(
+	std::ostringstream& oss,
+	const TypedValue& typedValue,
+	std::span<const StringHandle> local_debug_names) {
+	printIrValue(oss, typedValue.value, local_debug_names);
 }
 
 // Binary operations (Add, Subtract, Multiply, Divide, comparisons, etc.)
@@ -660,7 +687,7 @@ struct ComputeAddressOp {
 
 	// Array indexing (optional, can have multiple for nested arrays)
 	struct ArrayIndex {
-		std::variant<unsigned long long, TempVar, StringHandle> index;
+		std::variant<unsigned long long, TempVar, StringHandle, LocalVarId> index;
 		SizeInBits element_size_bits;				  // Size of array element
 		TypeIndex index_type_index{};				  // Type of the index (for proper sign extension; TypeCategory embedded)
 		TypeCategory indexType() const { return index_type_index.category(); }
@@ -856,7 +883,10 @@ struct UnaryOp {
 };
 
 // Helper function to format unary operations for IR output
-inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
+inline std::string formatUnaryOp(
+	const char* op_name,
+	const UnaryOp& op,
+	std::span<const StringHandle> local_debug_names) {
 	std::ostringstream oss;
 
 	// Result variable
@@ -873,6 +903,9 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 		oss << '%' << temp_var->var_number;
 	} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.value.value)) {
 		oss << '%' << StringTable::getStringView(*string_ptr);
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&op.value.value)) {
+		oss << '%';
+		appendLocalVarName(oss, *local_id, local_debug_names);
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.value.value)) {
 		oss << *ull_val;
 	}
@@ -927,6 +960,9 @@ struct VariableDeclOp {
 	StringHandle var_name;
 	// Spelling as written, used for diagnostics and debug information.
 	StringHandle declared_name;
+	// Per-function declaration identity for a named local. Non-zero for a
+	// function-local object; zero for entities that have no local id.
+	LocalVarId local_id;
 	unsigned long long custom_alignment = 0;
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	PointerDepth pointer_depth = PointerDepth{};
@@ -1068,7 +1104,7 @@ struct CatchBeginOp {
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Catch binding reference qualifier
 	bool is_catch_all;			   // True for catch(...) - catches all exceptions
 	// Cleanup variables from the try block scope (ELF Phase 1: called in landing pad before dispatch)
-	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;	 // {struct_name, var_name} LIFO order
+	std::vector<std::pair<StringHandle, VariableKey>> cleanup_vars;	 // {struct_name, variable key} LIFO order
 
 	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
@@ -1085,7 +1121,7 @@ struct CatchEndOp {
 	// Calls each listed destructor (LIFO order), then either calls _Unwind_Resume or
 	// __cxa_call_terminate depending on whether the enclosing function is noexcept.
 struct FunctionCleanupLPOp {
-	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;	 // {struct_name, var_name} LIFO order
+	std::vector<std::pair<StringHandle, VariableKey>> cleanup_vars;	 // {struct_name, variable key} LIFO order
 };
 
 // ELF-only marker: no typed catch handler matched the thrown exception.
@@ -1156,7 +1192,10 @@ struct SehAbnormalTerminationOp {
 };
 
 // Helper function to format conversion operations for IR output
-inline std::string formatConversionOp(const char* op_name, const ConversionOp& op) {
+inline std::string formatConversionOp(
+	const char* op_name,
+	const ConversionOp& op,
+	std::span<const StringHandle> local_debug_names) {
 	std::ostringstream oss;
 
 	// Result variable
@@ -1175,6 +1214,9 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 		oss << *ull_val;
 	} else if (const auto* string_val = std::get_if<StringHandle>(&op.from.value)) {
 		oss << '%' << StringTable::getStringView(*string_val);
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&op.from.value)) {
+		oss << '%';
+		appendLocalVarName(oss, *local_id, local_debug_names);
 	}
 
 	oss << " to ";
@@ -1189,7 +1231,10 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 }
 
 // Helper function to format binary operations for IR output
-inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
+inline std::string formatBinaryOp(
+	const char* op_name,
+	const BinaryOp& op,
+	std::span<const StringHandle> local_debug_names) {
 	std::ostringstream oss;
 
 	// Result variable (now an IrValue that could be TempVar or string_view)
@@ -1198,6 +1243,8 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 		oss << temp_var->var_number;
 	} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.result)) {
 		oss << StringTable::getStringView(*string_ptr);
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&op.result)) {
+		appendLocalVarName(oss, *local_id, local_debug_names);
 	}
 	oss << " = " << op_name << " ";
 
@@ -1216,6 +1263,9 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 		oss << '%' << temp_var_ptr->var_number;
 	} else if (const auto* string_val = std::get_if<StringHandle>(&op.lhs.value)) {
 		oss << '%' << StringTable::getStringView(*string_val);
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&op.lhs.value)) {
+		oss << '%';
+		appendLocalVarName(oss, *local_id, local_debug_names);
 	}
 
 	oss << ", ";
@@ -1229,6 +1279,9 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 		oss << '%' << temp_var_ptr->var_number;
 	} else if (const auto* string_val = std::get_if<StringHandle>(&op.rhs.value)) {
 		oss << '%' << StringTable::getStringView(*string_val);
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&op.rhs.value)) {
+		oss << '%';
+		appendLocalVarName(oss, *local_id, local_debug_names);
 	}
 
 	return oss.str();

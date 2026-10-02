@@ -70,7 +70,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// This ensures operator() and __invoke functions will be generated.
 		// Without this, the lambda is never added to collected_lambdas_ and
 		// its functions are never generated, causing linker errors.
-		ExprResult lambda_result = generateLambdaExpressionIr(lambda);
+		ExprResult lambda_result = generateLambdaExpressionIr(lambda, std::string_view{}, LocalVarId{});
 
 		// Check if this is a generic lambda (has auto parameters or an explicit
 		// C++20 lambda template parameter list).
@@ -362,6 +362,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				function_pointer = std::get<TempVar>(function_ptr_result.value);
 			} else if (std::holds_alternative<StringHandle>(function_ptr_result.value)) {
 				function_pointer = std::get<StringHandle>(function_ptr_result.value);
+			} else if (std::holds_alternative<LocalVarId>(function_ptr_result.value)) {
+				function_pointer = std::get<LocalVarId>(function_ptr_result.value);
 			} else {
 				throw InternalError("Function-pointer call target did not produce a valid indirect call operand");
 			}
@@ -774,6 +776,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					function_pointer = std::get<TempVar>(func_ptr_result.value);
 				} else if (std::holds_alternative<StringHandle>(func_ptr_result.value)) {
 					function_pointer = std::get<StringHandle>(func_ptr_result.value);
+				} else if (std::holds_alternative<LocalVarId>(func_ptr_result.value)) {
+					function_pointer = std::get<LocalVarId>(func_ptr_result.value);
 				} else {
 					throw InternalError("Function pointer member access did not produce a valid call target");
 				}
@@ -1299,7 +1303,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						}
 						member_load.object = std::get<TempVar>(obj_result.value);
 					} else {
-						member_load.object = resolvedFrameName(object_name);
+						member_load.object = toVariableBase(resolvedVariableKey(object_name));
 					}
 
 					member_load.member_name = func_name_handle; // Member name
@@ -1399,7 +1403,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 			vcall_op.object = std::get<TempVar>(obj_result.value);
 		} else {
-			vcall_op.object = resolvedFrameName(object_name);
+			vcall_op.object = toVariableBase(resolvedVariableKey(object_name));
 		}
 		vcall_op.vtable_index = vtable_index;
 		// Set is_pointer_access based on whether the object is accessed through a pointer (ptr->method)
@@ -2023,7 +2027,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// Local pointer/reference objects already lower correctly when passed
 				// through directly. The receiver is named by its declaration's frame,
 				// so a shadowing local does not call through the outer object.
-				this_arg_value = IrValue(resolvedFrameName(object_name));
+				this_arg_value = toIrValue(resolvedVariableKey(object_name));
 				this_arg_is_pointer_value = true;
 			}
 		} else {
@@ -2035,7 +2039,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			addr_op.operand.ir_type = toIrType(object_type.type());
 			addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 			addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.runtime_pointer_depth())};
-			addr_op.operand.value = resolvedFrameName(object_name);
+			addr_op.operand.value = toIrValue(resolvedVariableKey(object_name));
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 			this_arg_value = IrValue(this_addr);
 			this_arg_is_pointer_value = true;
@@ -2134,7 +2138,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					if (canUseDirectIdentifierCallArgument(decl_node, param_ref_qualifier, sema_ref_binding)) {
 						call_op.args.push_back(buildDirectIdentifierCallArgument(
 							*decl_node,
-							identifier_name,
+							variableKeyForSymbol(*symbol, identifier_name),
 							param_ref_qualifier,
 							argument,
 							callExprNode.called_from()));

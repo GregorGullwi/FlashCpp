@@ -51,11 +51,10 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 	capture_try_cleanup_ = saved_capture_try_cleanup;
 	capture_try_cleanup_depth_ = saved_capture_try_cleanup_depth;
 	captured_try_cleanup_vars_ = std::move(saved_captured_try_cleanup_vars);
-	std::vector<std::pair<StringHandle, StringHandle>> try_cleanup_vars;
+	std::vector<std::pair<StringHandle, VariableKey>> try_cleanup_vars;
 	if (!try_scope_cleanup_vars.empty()) {
 		for (const auto& var : try_scope_cleanup_vars) {
-			try_cleanup_vars.push_back({StringTable::getOrInternStringHandle(var.struct_name),
-										StringTable::getOrInternStringHandle(var.variable_name)});
+			try_cleanup_vars.push_back({var.struct_name, var.variable_key});
 		}
 	}
 
@@ -143,14 +142,15 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				if (!exception_var_name.empty()) {
 					StringHandle exception_name_handle = StringTable::getOrInternStringHandle(exception_var_name);
 						// Sibling and enclosing handlers may name their parameter the
-						// same, so the parameter claims frame identity like any local.
-					StringHandle exception_frame_name = declareLocalFrameName(exception_decl, exception_name_handle);
+						// same, so the parameter claims numeric identity like any local.
+					LocalVarId exception_local_id = declareLocalVarId(exception_decl, exception_name_handle);
 						// Create a variable declaration for the exception parameter
 					VariableDeclOp decl_op;
 					decl_op.type_index = type_index;
 					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
-					decl_op.var_name = exception_frame_name;
+					decl_op.var_name = exception_name_handle;
 					decl_op.declared_name = exception_name_handle;
+					decl_op.local_id = exception_local_id;
 					decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())};
 
 						// Create a TypedValue for the initializer
@@ -182,8 +182,8 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 							const StructTypeInfo* struct_info = type_info->getStructInfo();
 							if (struct_info && struct_info->hasDestructor()) {
 								registerVariableWithDestructor(
-									std::string(StringTable::getStringView(exception_frame_name)),
-									std::string(StringTable::getStringView(type_info->name())));
+									VariableKey{exception_local_id},
+									type_info->name());
 							}
 						}
 					}
@@ -256,31 +256,21 @@ void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 		TypeIndex exception_type_index = expr_result.type_index;
 
 		IrValue exception_value;
-		bool is_rvalue = !std::holds_alternative<StringHandle>(expr_result.value);
+		bool is_rvalue = !std::holds_alternative<StringHandle>(expr_result.value) &&
+			!std::holds_alternative<LocalVarId>(expr_result.value);
 		bool value_is_materialized = false;
 		if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
 			is_rvalue = !isTempVarLValue(*temp_var);
 		}
 
-		if (const auto* temp_var_ptr = std::get_if<TempVar>(&expr_result.value)) {
-			exception_value = *temp_var_ptr;
-		} else if (const auto* string = std::get_if<StringHandle>(&expr_result.value)) {
-			exception_value = *string;
-		} else if (const auto* ull_val = std::get_if<unsigned long long>(&expr_result.value)) {
-			exception_value = *ull_val;
-		} else if (const auto* d_val = std::get_if<double>(&expr_result.value)) {
-			exception_value = *d_val;
-		} else {
-				// Unknown operand type - log warning and default to zero value
-			FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
-			exception_value = static_cast<unsigned long long>(0);
-		}
+		exception_value = toIrValue(expr_result.value);
 
 		if (!catch_scope_stack_.empty()) {
 			bool needs_materialization =
 				expr_type == TypeCategory::Struct &&
 				!is_rvalue &&
 				(std::holds_alternative<StringHandle>(exception_value) ||
+				 std::holds_alternative<LocalVarId>(exception_value) ||
 				 (std::holds_alternative<TempVar>(exception_value) &&
 				  isTempVarLValue(std::get<TempVar>(exception_value))));
 

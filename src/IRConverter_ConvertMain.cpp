@@ -1083,51 +1083,55 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 	}
 
 	ctx.result_physical_reg = X64Register::Count;
-	if (std::holds_alternative<StringHandle>(bin_op.lhs.value)) {
-		StringHandle lhs_var_op = std::get<StringHandle>(bin_op.lhs.value);
-		auto lhs_var_id = variable_scopes.back().variables.find(lhs_var_op);
-		if (lhs_var_id != variable_scopes.back().variables.end()) {
-			if (auto var_reg = regAlloc.tryGetStackVariableRegister(lhs_var_id->second.offset); var_reg.has_value()) {
+	if (std::holds_alternative<StringHandle>(bin_op.lhs.value) || std::holds_alternative<LocalVarId>(bin_op.lhs.value)) {
+		const VariableKey lhs_key = variableKeyOf(bin_op.lhs.value).value();
+		const VariableInfo* lhs_var_info = findVariableInfo(lhs_key);
+		if (lhs_var_info != nullptr) {
+			if (auto var_reg = regAlloc.tryGetStackVariableRegister(lhs_var_info->offset); var_reg.has_value()) {
 				ctx.result_physical_reg = var_reg.value(); // value is already in a register, we can use it without a move!
 			} else {
-				assert(variable_scopes.back().scope_stack_space <= lhs_var_id->second.offset);
+				assert(variable_scopes.back().scope_stack_space <= lhs_var_info->offset);
 
 				if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
 					ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (operand_type == TypeCategory::Float);
-					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset, is_float);
+					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_info->offset, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 						// Check if this is a reference - if so, we need to dereference it
-					auto ref_info = getIndirectStackInfo(lhs_var_id->second.offset);
+					auto ref_info = getIndirectStackInfo(lhs_var_info->offset);
 					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 							// This is a reference - load the pointer first, then dereference
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 							// Load the pointer into the register
-						emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
+						emitMovFromFrame(ctx.result_physical_reg, lhs_var_info->offset);
 							// Now dereference: load from [register + 0]
 						int value_size_bytes = ref_info->value_size_bits.value / 8;
 						emitMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0, value_size_bytes);
 					} else if (ref_info.has_value()) {
 							// This holds an address value directly (e.g. addressof) - load it as-is
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
-					} else if (lhs_var_id->second.is_array) {
+						emitMovFromFrame(ctx.result_physical_reg, lhs_var_info->offset);
+					} else if (lhs_var_info->is_array) {
 							// Source is an array - use LEA to get its address (array-to-pointer decay)
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						emitLeaFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
+						emitLeaFromFrame(ctx.result_physical_reg, lhs_var_info->offset);
 					} else {
 							// Not a reference, load normally
 							// For integers, use regular MOV
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second.offset, ctx.operand_size_in_bits);
+						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_info->offset, ctx.operand_size_in_bits);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
 				}
 			}
 		} else {
 				// Not found in local variables - check if it's a global variable
+			if (!std::holds_alternative<StringHandle>(bin_op.lhs.value)) {
+				throw InternalError("Arithmetic left operand local id has no frame slot");
+			}
+			StringHandle lhs_var_op = std::get<StringHandle>(bin_op.lhs.value);
 			std::string_view lhs_var_name = StringTable::getStringView(lhs_var_op);
 			ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, operand_type, ctx.operand_size_in_bits);
 
@@ -1279,24 +1283,24 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 	}
 
 	ctx.rhs_physical_reg = X64Register::Count;
-	if (std::holds_alternative<StringHandle>(bin_op.rhs.value)) {
-		StringHandle rhs_var_op = std::get<StringHandle>(bin_op.rhs.value);
-		auto rhs_var_id = variable_scopes.back().variables.find(rhs_var_op);
-		if (rhs_var_id != variable_scopes.back().variables.end()) {
-			if (auto var_reg = regAlloc.tryGetStackVariableRegister(rhs_var_id->second.offset); var_reg.has_value()) {
+	if (std::holds_alternative<StringHandle>(bin_op.rhs.value) || std::holds_alternative<LocalVarId>(bin_op.rhs.value)) {
+		const VariableKey rhs_key = variableKeyOf(bin_op.rhs.value).value();
+		const VariableInfo* rhs_var_info = findVariableInfo(rhs_key);
+		if (rhs_var_info != nullptr) {
+			if (auto var_reg = regAlloc.tryGetStackVariableRegister(rhs_var_info->offset); var_reg.has_value()) {
 				ctx.rhs_physical_reg = var_reg.value(); // value is already in a register, we can use it without a move!
 			} else {
-				assert(variable_scopes.back().scope_stack_space <= rhs_var_id->second.offset);
+				assert(variable_scopes.back().scope_stack_space <= rhs_var_info->offset);
 
 				if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
 					ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 					bool is_float = (operand_type == TypeCategory::Float);
-					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset, is_float);
+					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_info->offset, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 						// Check if this is a reference - if so, we need to dereference it
-					auto ref_info = getIndirectStackInfo(rhs_var_id->second.offset);
+					auto ref_info = getIndirectStackInfo(rhs_var_info->offset);
 					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 							// This is a reference - load the pointer first, then dereference
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
@@ -1309,7 +1313,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 						}
 
 							// Load the pointer into the register
-						emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
+						emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_info->offset);
 							// Now dereference: load from [register + 0]
 						int value_size_bytes = ref_info->value_size_bits.value / 8;
 						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
@@ -1321,7 +1325,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 						}
 
-						emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
+						emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_info->offset);
 					} else {
 							// Not a reference, load normally
 							// For integers, use regular MOV
@@ -1336,13 +1340,17 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 							// Use the RHS's actual size for loading, not the LHS/operand size
 							// This is important when types are mixed (e.g., int + long)
-						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, bin_op.rhs.size_in_bits.value);
+						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_info->offset, bin_op.rhs.size_in_bits.value);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 				}
 			}
 		} else {
 				// Not found in local variables - check if it's a global variable
+			if (!std::holds_alternative<StringHandle>(bin_op.rhs.value)) {
+				throw InternalError("Arithmetic right operand local id has no frame slot");
+			}
+			StringHandle rhs_var_op = std::get<StringHandle>(bin_op.rhs.value);
 			std::string_view rhs_var_name = StringTable::getStringView(rhs_var_op);
 			ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits.value, ctx.result_physical_reg);
 
@@ -1613,9 +1621,14 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 	bool should_release_source = false;
 
 		// Determine the final destination of the result (register or memory)
-	if (std::holds_alternative<StringHandle>(ctx.result_value.value)) {
-			// If the result is a named variable, find its stack offset - Phase 5: Convert to StringHandle
-		int final_result_offset = variable_scopes.back().variables[std::get<StringHandle>(ctx.result_value.value)].offset;
+	if (std::holds_alternative<StringHandle>(ctx.result_value.value) || std::holds_alternative<LocalVarId>(ctx.result_value.value)) {
+			// If the result is a named variable, find its stack offset.
+		const VariableKey result_key = variableKeyOf(ctx.result_value.value).value();
+		const VariableInfo* result_info = findVariableInfo(result_key);
+		if (result_info == nullptr) {
+			throw InternalError("Arithmetic result names an unallocated variable");
+		}
+		int final_result_offset = result_info->offset;
 
 			// Check if this is a reference - if so, we need to store through the pointer
 		auto ref_info = getIndirectStackInfo(final_result_offset);
@@ -1979,6 +1992,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 	struct VarDecl {
 		StringHandle var_name{};	 // Phase 5: StringHandle for efficient storage
+		LocalVarId local_id{};	 // Per-function identity of a named local (0 if none)
 		SizeInBits size_in_bits;
 		size_t alignment{};	// Custom alignment from alignas(n), 0 = use natural alignment
 		bool is_array{};	 // True if this variable is an array (for array-to-pointer decay)
@@ -2187,7 +2201,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 			func_stack_space.named_vars_size += (total_size_bits / 8);
 				// Phase 5: Store StringHandle directly for efficient variable tracking
-			local_vars.push_back(VarDecl{.var_name = StringTable::getOrInternStringHandle(var_name), .size_in_bits = SizeInBits{total_size_bits}, .alignment = custom_alignment, .is_array = is_array});
+			local_vars.push_back(VarDecl{.var_name = StringTable::getOrInternStringHandle(var_name), .local_id = op.local_id, .size_in_bits = SizeInBits{total_size_bits}, .alignment = custom_alignment, .is_array = is_array});
 		} else {
 				// Track TempVars and their sizes from typed payloads or legacy operand format
 			bool handled_by_typed_payload = false;
@@ -2409,15 +2423,26 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		// Allocate space for the variable
 		stack_offset = aligned_offset - (local_var.size_in_bits.value / 8);
 
-		// Store both offset and size in unified structure, including is_array flag
-		auto existing = var_scope.variables.find(local_var.var_name);
-		if (existing != var_scope.variables.end()) {
-			// Two declarations in one function resolved to the same frame name.
-			// They are distinct objects, so one frame slot cannot hold both.
-			throw InternalError("Two local declarations in one function share the frame name '" +
-								std::string(StringTable::getStringView(local_var.var_name)) + "'");
+		if (local_var.local_id.value != 0) {
+			// Named local: resolve through the numeric frame table. The id is
+			// per-function and dense, so a declaration that shares a spelling
+			// with a parameter or an outer local cannot collide here.
+			if (var_scope.local_slots_by_id.size() < local_var.local_id.value) {
+				var_scope.local_slots_by_id.resize(local_var.local_id.value);
+			}
+			var_scope.local_slots_by_id[local_var.local_id.value - 1] =
+				VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array};
+		} else {
+			auto existing = var_scope.variables.find(local_var.var_name);
+			if (existing != var_scope.variables.end()) {
+				// Two non-local declarations in one function resolved to the same
+				// frame name. They are distinct objects, so one frame slot cannot
+				// hold both.
+				throw InternalError("Two local declarations in one function share the frame name '" +
+									std::string(StringTable::getStringView(local_var.var_name)) + "'");
+			}
+			var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});
 		}
-		var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});
 	}
 
 	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -2548,16 +2573,10 @@ void IrToObjConverter<TWriterClass>::emitWindowsStackProbeHelper() {
 }
 
 template <class TWriterClass>
-SizeInBits IrToObjConverter<TWriterClass>::getStackVariableLoadSizeBits(StringHandle variable_name) const {
-	for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
-		auto variable_it = scope_it->variables.find(variable_name);
-		if (variable_it == scope_it->variables.end() || variable_it->second.offset == INT_MIN) {
-			continue;
-		}
-		if (variable_it->second.size_in_bits.value > 0) {
-			return variable_it->second.size_in_bits;
-		}
-		break;
+SizeInBits IrToObjConverter<TWriterClass>::getStackVariableLoadSizeBits(VariableKey variable_key) const {
+	const VariableInfo* info = findVariableInfo(variable_key);
+	if (info != nullptr && info->offset != INT_MIN && info->size_in_bits.value > 0) {
+		return info->size_in_bits;
 	}
 	throw InternalError("Named stack variable is missing a recorded size");
 }
@@ -4220,9 +4239,28 @@ int32_t IrToObjConverter<TWriterClass>::getVariableOffsetOrThrow(StringHandle va
 }
 
 template <class TWriterClass>
+int32_t IrToObjConverter<TWriterClass>::getVariableOffsetOrThrow(LocalVarId id, std::string_view context) const {
+	const VariableInfo* var_info = findVariableInfo(id);
+	if (!var_info) {
+		throw InternalError(std::string(context) + ": local id not found in frame table: #" + std::to_string(id.value));
+	}
+	return var_info->offset;
+}
+
+template <class TWriterClass>
+int32_t IrToObjConverter<TWriterClass>::getVariableOffsetOrThrow(VariableKey key, std::string_view context) const {
+	if (const auto* id = std::get_if<LocalVarId>(&key)) {
+		return getVariableOffsetOrThrow(*id, context);
+	}
+	return getVariableOffsetOrThrow(std::get<StringHandle>(key), context);
+}
+
+template <class TWriterClass>
 int IrToObjConverter<TWriterClass>::resolveTypedValueFrameOffset(const TypedValue& arg) {
 	if (const auto* string_ptr = std::get_if<StringHandle>(&arg.value)) {
 		return getVariableOffsetOrThrow(*string_ptr, "resolveTypedValueFrameOffset");
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&arg.value)) {
+		return getVariableOffsetOrThrow(*local_id, "resolveTypedValueFrameOffset");
 	} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&arg.value)) {
 		return getStackOffsetFromTempVar(*temp_var_ptr);
 	}
@@ -4231,9 +4269,9 @@ int IrToObjConverter<TWriterClass>::resolveTypedValueFrameOffset(const TypedValu
 
 template <class TWriterClass>
 bool IrToObjConverter<TWriterClass>::emitLoadAddressLikeArgument(X64Register target_reg, const TypedValue& arg, int32_t address_adjustment) {
-	if (std::holds_alternative<StringHandle>(arg.value)) {
-		StringHandle var_handle = std::get<StringHandle>(arg.value);
-		const VariableInfo* var_info = findVariableInfo(var_handle);
+	if (std::holds_alternative<StringHandle>(arg.value) || std::holds_alternative<LocalVarId>(arg.value)) {
+		const VariableKey var_key = variableKeyOf(arg.value).value();
+		const VariableInfo* var_info = findVariableInfo(var_key);
 		if (!var_info) {
 			return false;
 		}
@@ -4288,7 +4326,8 @@ bool IrToObjConverter<TWriterClass>::isImmediateAggregateValue(const TypedValue&
 	// A by-value aggregate whose whole payload was constant-folded to a scalar (e.g.
 	// Source(38) collapsed to its single INTEGER member) has no addressable frame slot.
 	return !std::holds_alternative<StringHandle>(arg.value) &&
-		!std::holds_alternative<TempVar>(arg.value);
+		!std::holds_alternative<TempVar>(arg.value) &&
+		!std::holds_alternative<LocalVarId>(arg.value);
 }
 
 template <class TWriterClass>
@@ -4550,9 +4589,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						if (promote_vararg_float) {
 							emitCvtss2sd(temp_xmm, temp_xmm);
 						}
-					} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
-						StringHandle var_name_handle = *string;
-						int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall stack float arg");
+					} else if (const std::optional<VariableKey> arg_key = variableKeyOf(arg.value); arg_key.has_value()) {
+						int var_offset = getVariableOffsetOrThrow(*arg_key, "handleFunctionCall stack float arg");
 						bool is_float = (arg.effectiveIrType() == IrType::Float);
 						emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						if (promote_vararg_float) {
@@ -4673,7 +4711,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				should_pass_address = true;
 			}
 
-			if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
+			if (should_pass_address &&
+				(std::holds_alternative<StringHandle>(arg.value) ||
+				 std::holds_alternative<LocalVarId>(arg.value))) {
 				if (!emitLoadAddressLikeArgument(target_reg, arg)) {
 					throw InternalError("Register call argument marked pass-by-address is not addressable");
 				}
@@ -4803,10 +4843,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					);
 					regAlloc.flushSingleDirtyRegister(target_reg);
 				}
-			} else if (std::holds_alternative<StringHandle>(arg.value)) {
+			} else if (const std::optional<VariableKey> arg_key = variableKeyOf(arg.value); arg_key.has_value()) {
 					// Load variable
-				StringHandle var_name_handle = std::get<StringHandle>(arg.value);
-				int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall register arg");
+				int var_offset = getVariableOffsetOrThrow(*arg_key, "handleFunctionCall register arg");
 				if (is_float_arg) {
 						// For floating-point, use movsd/movss into XMM register
 					bool is_float = (arg.effectiveIrType() == IrType::Float);
@@ -5022,7 +5061,7 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 		} else {
 			emitLeaFromFrame(source_reg, source_offset);
 		}
-	} else if (std::holds_alternative<StringHandle>(source_arg.value)) {
+	} else if (std::holds_alternative<StringHandle>(source_arg.value) || std::holds_alternative<LocalVarId>(source_arg.value)) {
 		if (!emitLoadAddressLikeArgument(source_reg, source_arg)) {
 			throw InternalError("Same-type constructor source variable is not addressable");
 		}
@@ -5140,6 +5179,17 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			// - Stack-allocated (RVO/NRVO): TempVar is the object location, use LEA to get address
 		object_offset = getStackOffsetFromTempVar(temp_var, struct_size_bits);
 		object_is_pointer = ctor_op.is_heap_allocated;
+	} else if (std::holds_alternative<LocalVarId>(ctor_op.object)) {
+		const LocalVarId object_id = std::get<LocalVarId>(ctor_op.object);
+		object_offset = getVariableOffsetOrThrow(object_id, "Constructor call local object");
+		object_is_pointer = isPointerBaseStorage(object_offset) || ctor_op.is_heap_allocated;
+
+			// If this is an array element constructor call, adjust offset for the specific element
+		if (ctor_op.array_index.has_value()) {
+			size_t element_size = toSizeT(actual_ctor_owner_type_info->sizeInBytes());
+			size_t index = ctor_op.array_index.value();
+			object_offset += static_cast<int>(index * element_size);
+		}
 	} else {
 		StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 		auto it = variable_scopes.back().variables.find(var_name_handle);
@@ -5307,8 +5357,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					} else if (const auto* temp_var = std::get_if<TempVar>(&arg.value)) {
 						int var_offset = getStackOffsetFromTempVar(*temp_var);
 						emitFloatMovFromFrame(temp_xmm, var_offset, arg.effectiveIrType() == IrType::Float);
-					} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
-						int var_offset = getVariableOffsetOrThrow(*string, "handleConstructorCall stack float arg");
+					} else if (const std::optional<VariableKey> arg_key = variableKeyOf(arg.value); arg_key.has_value()) {
+						int var_offset = getVariableOffsetOrThrow(*arg_key, "handleConstructorCall stack float arg");
 						emitFloatMovFromFrame(temp_xmm, var_offset, arg.effectiveIrType() == IrType::Float);
 					}
 					emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.effectiveIrType() == IrType::Float);
@@ -5391,9 +5441,9 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&paramValue)) {
 					int param_offset = getStackOffsetFromTempVar(*temp_var_ptr);
 					emitFloatMovFromFrame(target_reg, param_offset, paramType == TypeCategory::Float);
-				} else if (const auto* name_ptr = std::get_if<StringHandle>(&paramValue)) {
+				} else if (const std::optional<VariableKey> key_ptr = variableKeyOf(paramValue); key_ptr.has_value()) {
 					int param_offset = getVariableOffsetOrThrow(
-						*name_ptr,
+						*key_ptr,
 						"handleConstructorCall register float arg");
 					emitFloatMovFromFrame(target_reg, param_offset, paramType == TypeCategory::Float);
 				}
@@ -5403,6 +5453,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			const bool should_pass_address = is_reference_param || shouldPassStructByAddress(arg);
 			if (should_pass_address &&
 				(std::holds_alternative<StringHandle>(paramValue) ||
+				 std::holds_alternative<LocalVarId>(paramValue) ||
 				 std::holds_alternative<TempVar>(paramValue))) {
 				if (!emitLoadAddressLikeArgument(target_reg, arg, source_base_adjustment)) {
 					throw InternalError("Register constructor argument marked pass-by-address is not addressable");
@@ -5422,9 +5473,9 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				emitMovFromFrameSized(
 					SizedRegister{target_reg, 64, false},
 					SizedStackSlot{param_offset, paramSize, isSignedType(paramType)});
-			} else if (const auto* name_ptr = std::get_if<StringHandle>(&paramValue)) {
+			} else if (const std::optional<VariableKey> key_ptr = variableKeyOf(paramValue); key_ptr.has_value()) {
 				int param_offset = getVariableOffsetOrThrow(
-					*name_ptr,
+					*key_ptr,
 					"handleConstructorCall register integer arg");
 				emitMovFromFrameSized(
 					SizedRegister{target_reg, 64, false},
@@ -5477,12 +5528,10 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				int param_offset = getStackOffsetFromTempVar(temp_var);
 				bool is_float = (paramType == TypeCategory::Float);
 				emitFloatMovFromFrame(target_xmm, param_offset, is_float);
-			} else if (std::holds_alternative<StringHandle>(paramValue)) {
-					// Load from variable
-				StringHandle var_name_handle = std::get<StringHandle>(paramValue);
-				auto it = variable_scopes.back().variables.find(var_name_handle);
-				if (it != variable_scopes.back().variables.end()) {
-					int param_offset = it->second.offset;
+			} else if (const std::optional<VariableKey> key_ptr = variableKeyOf(paramValue); key_ptr.has_value()) {
+				const VariableInfo* info = findVariableInfo(*key_ptr);
+				if (info != nullptr) {
+					int param_offset = info->offset;
 					bool is_float = (paramType == TypeCategory::Float);
 					emitFloatMovFromFrame(target_xmm, param_offset, is_float);
 				}
@@ -5493,7 +5542,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				X64Register target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
 				bool should_pass_address = is_reference_param || shouldPassStructByAddress(arg);
 
-				if (should_pass_address && (std::holds_alternative<StringHandle>(paramValue) || std::holds_alternative<TempVar>(paramValue))) {
+				if (should_pass_address && (std::holds_alternative<StringHandle>(paramValue) || std::holds_alternative<LocalVarId>(paramValue) || std::holds_alternative<TempVar>(paramValue))) {
 					if (!emitLoadAddressLikeArgument(target_reg, arg, source_base_adjustment)) {
 						throw InternalError("Register constructor argument marked pass-by-address is not addressable");
 					}
@@ -5520,12 +5569,11 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					emitMovFromFrameSized(
 						SizedRegister{target_reg, 64, false},
 						SizedStackSlot{param_offset, paramSize, isSignedType(paramType)});
-				} else if (std::holds_alternative<StringHandle>(paramValue)) {
+				} else if (const std::optional<VariableKey> key_ptr = variableKeyOf(paramValue); key_ptr.has_value()) {
 						// Load from variable
-					StringHandle var_name_handle = std::get<StringHandle>(paramValue);
-					auto it = variable_scopes.back().variables.find(var_name_handle);
-					if (it != variable_scopes.back().variables.end()) {
-						int param_offset = it->second.offset;
+					const VariableInfo* info = findVariableInfo(*key_ptr);
+					if (info != nullptr) {
+						int param_offset = info->offset;
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},
 							SizedStackSlot{param_offset, paramSize, isSignedType(paramType)});
@@ -5590,10 +5638,10 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 		const TempVar temp_var = *temp_var_ptr;
 		object_offset = getStackOffsetFromTempVar(temp_var);
 	} else {
-		StringHandle var_name_handle = std::get<StringHandle>(dtor_op.object);
-		const VariableInfo* var_info = findVariableInfo(var_name_handle);
+		const VariableKey object_key = variableKeyOf(dtor_op.object).value();
+		const VariableInfo* var_info = findVariableInfo(object_key);
 		if (!var_info) {
-			throw InternalError("Destructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
+			throw InternalError("Destructor call: variable not found in variables map");
 		}
 		object_offset = var_info->offset;
 	}
@@ -5604,6 +5652,8 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 	if (const auto* string_ptr = std::get_if<StringHandle>(&dtor_op.object)) {
 		StringHandle obj_handle = *string_ptr;
 		object_is_pointer = object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
+	} else if (std::holds_alternative<LocalVarId>(dtor_op.object)) {
+		object_is_pointer = object_is_pointer || isPointerBaseStorage(object_offset);
 	}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
@@ -5677,8 +5727,8 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		const TempVar& temp_var = *temp_var_ptr;
 		object_offset = getStackOffsetFromTempVar(temp_var);
 	} else {
-		StringHandle var_name_handle = std::get<StringHandle>(op.object);
-		object_offset = getVariableOffsetOrThrow(var_name_handle, "handleVirtualCall object");
+		const VariableKey object_key = variableKeyOf(op.object).value();
+		object_offset = getVariableOffsetOrThrow(object_key, "handleVirtualCall object");
 	}
 
 	const X64Register this_reg = getIntParamReg<TWriterClass>(param_shift);
@@ -5760,9 +5810,9 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 								temp_xmm,
 								var_offset,
 								arg.effectiveIrType() == IrType::Float);
-						} else if (const auto* name = std::get_if<StringHandle>(&arg.value)) {
+						} else if (const std::optional<VariableKey> arg_key = variableKeyOf(arg.value); arg_key.has_value()) {
 							const int var_offset =
-								getVariableOffsetOrThrow(*name, "handleVirtualCall stack float arg");
+								getVariableOffsetOrThrow(*arg_key, "handleVirtualCall stack float arg");
 							emitFloatMovFromFrame(
 								temp_xmm,
 								var_offset,
@@ -5858,15 +5908,15 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 						int var_offset = getStackOffsetFromTempVar(*temp_var);
 						bool is_float = (arg.effectiveIrType() == IrType::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
-					} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
-						StringHandle var_name_handle = *string;
-						int var_offset = getVariableOffsetOrThrow(var_name_handle, "loadTypedValueIntoRegister float");
+					} else if (const std::optional<VariableKey> arg_key = variableKeyOf(arg.value); arg_key.has_value()) {
+						int var_offset = getVariableOffsetOrThrow(*arg_key, "loadTypedValueIntoRegister float");
 						bool is_float = (arg.effectiveIrType() == IrType::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
 					}
 				} else {
 					if ((arg.is_reference() || arg.storage == ValueStorage::ContainsAddress || shouldPassStructByAddress(arg)) &&
 						(std::holds_alternative<StringHandle>(arg.value) ||
+						 std::holds_alternative<LocalVarId>(arg.value) ||
 						 std::holds_alternative<TempVar>(arg.value))) {
 						if (!emitLoadAddressLikeArgument(target_reg, arg)) {
 							throw InternalError("Register virtual-call argument marked pass-by-address is not addressable");
@@ -5879,9 +5929,8 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 					} else if (const auto* temp_var = std::get_if<TempVar>(&arg.value)) {
 						int var_offset = getStackOffsetFromTempVar(*temp_var);
 						emitMovFromFrame(target_reg, var_offset);
-					} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
-						StringHandle var_name_handle = *string;
-						int var_offset = getVariableOffsetOrThrow(var_name_handle, "loadTypedValueIntoRegister integer");
+					} else if (const std::optional<VariableKey> arg_key = variableKeyOf(arg.value); arg_key.has_value()) {
+						int var_offset = getVariableOffsetOrThrow(*arg_key, "loadTypedValueIntoRegister integer");
 						emitMovFromFrame(target_reg, var_offset);
 					}
 				}
@@ -5973,16 +6022,14 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 			SizedRegister{X64Register::RAX, 64, false},
 			SizedStackSlot{count_offset, 64, false}	// size_t is 64-bit unsigned
 		);
-	} else if (std::holds_alternative<StringHandle>(op.count)) {
-			// Count is an identifier (variable name) - load from stack
-		StringHandle count_name_handle = std::get<StringHandle>(op.count);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.variables.find(count_name_handle);
-		if (it == current_scope.variables.end()) {
+	} else if (std::holds_alternative<StringHandle>(op.count) || std::holds_alternative<LocalVarId>(op.count)) {
+			// Count is an identifier - load from stack
+		const VariableInfo* count_info = findVariableInfo(variableKeyOf(op.count).value());
+		if (count_info == nullptr) {
 			throw InternalError("Array size variable not found in scope");
 			return;
 		}
-		int count_offset = it->second.offset;
+		int count_offset = count_info->offset;
 		emitMovFromFrameSized(
 			SizedRegister{X64Register::RAX, 64, false},
 			SizedStackSlot{count_offset, 64, false}	// size_t is 64-bit unsigned
@@ -6044,11 +6091,10 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 			TempVar count_var = *temp_var;
 			int count_offset = getStackOffsetFromTempVar(count_var);
 			emitMovFromFrameSized(SizedRegister{count_reg, 64, false}, SizedStackSlot{count_offset, 64, false});
-		} else if (const auto* string = std::get_if<StringHandle>(&op.count)) {
-			StringHandle count_name_handle = *string;
-			auto it = variable_scopes.back().variables.find(count_name_handle);
-			if (it != variable_scopes.back().variables.end()) {
-				emitMovFromFrameSized(SizedRegister{count_reg, 64, false}, SizedStackSlot{it->second.offset, 64, false});
+		} else if (std::holds_alternative<StringHandle>(op.count) || std::holds_alternative<LocalVarId>(op.count)) {
+			const VariableInfo* count_info = findVariableInfo(variableKeyOf(op.count).value());
+			if (count_info != nullptr) {
+				emitMovFromFrameSized(SizedRegister{count_reg, 64, false}, SizedStackSlot{count_info->offset, 64, false});
 			}
 		} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.count)) {
 			emitMovImm64(count_reg, *ull_val);
@@ -6084,15 +6130,13 @@ void IrToObjConverter<TWriterClass>::handleHeapFree(const IrInstruction& instruc
 	if (const auto* temp_var = std::get_if<TempVar>(&op.pointer)) {
 		TempVar ptr_var = *temp_var;
 		ptr_offset = getStackOffsetFromTempVar(ptr_var);
-	} else if (std::holds_alternative<StringHandle>(op.pointer)) {
-		StringHandle var_name_handle = std::get<StringHandle>(op.pointer);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.variables.find(var_name_handle);
-		if (it == current_scope.variables.end()) {
+	} else if (std::holds_alternative<StringHandle>(op.pointer) || std::holds_alternative<LocalVarId>(op.pointer)) {
+		const VariableInfo* ptr_info = findVariableInfo(variableKeyOf(op.pointer).value());
+		if (ptr_info == nullptr) {
 			throw InternalError("Variable not found in scope");
 			return;
 		}
-		ptr_offset = it->second.offset;
+		ptr_offset = ptr_info->offset;
 	} else {
 		throw InternalError("HeapFree pointer must be TempVar or std::string_view");
 		return;
@@ -6125,15 +6169,13 @@ void IrToObjConverter<TWriterClass>::handleHeapFreeArray(const IrInstruction& in
 	if (const auto* temp_var = std::get_if<TempVar>(&op.pointer)) {
 		TempVar ptr_var = *temp_var;
 		ptr_offset = getStackOffsetFromTempVar(ptr_var);
-	} else if (std::holds_alternative<StringHandle>(op.pointer)) {
-		StringHandle var_name_handle = std::get<StringHandle>(op.pointer);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.variables.find(var_name_handle);
-		if (it == current_scope.variables.end()) {
+	} else if (std::holds_alternative<StringHandle>(op.pointer) || std::holds_alternative<LocalVarId>(op.pointer)) {
+		const VariableInfo* ptr_info = findVariableInfo(variableKeyOf(op.pointer).value());
+		if (ptr_info == nullptr) {
 			throw InternalError("Variable not found in scope");
 			return;
 		}
-		ptr_offset = it->second.offset;
+		ptr_offset = ptr_info->offset;
 	} else {
 		throw InternalError("HeapFreeArray pointer must be TempVar or std::string_view");
 		return;
@@ -6182,19 +6224,17 @@ void IrToObjConverter<TWriterClass>::handlePlacementNew(const IrInstruction& ins
 		TempVar address_var = *temp_var;
 		int address_offset = getStackOffsetFromTempVar(address_var);
 		emitMovFromFrame(X64Register::RAX, address_offset);
-	} else if (std::holds_alternative<StringHandle>(op.address)) {
-			// Address is an identifier (variable name)
-		StringHandle address_name_handle = std::get<StringHandle>(op.address);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.variables.find(address_name_handle);
-		if (it == current_scope.variables.end()) {
+	} else if (std::holds_alternative<StringHandle>(op.address) || std::holds_alternative<LocalVarId>(op.address)) {
+			// Address is an identifier
+		const VariableInfo* address_info = findVariableInfo(variableKeyOf(op.address).value());
+		if (address_info == nullptr) {
 			throw InternalError("Placement address variable not found in scope");
 			return;
 		}
-		int address_offset = it->second.offset;
+		int address_offset = address_info->offset;
 			// Arrays decay to pointers, so we compute their base address (LEA).
 			// Regular pointer variables store an address value that needs to be loaded (MOV).
-		if (it->second.is_array) {
+		if (address_info->is_array) {
 			emitLeaFromFrame(X64Register::RAX, address_offset);
 		} else {
 			emitMovFromFrame(X64Register::RAX, address_offset);
@@ -6292,19 +6332,22 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 				}
 			}
 		} else {
-			const StringHandle expr_name_handle = std::get<StringHandle>(op.operand);
-			const StackVariableScope& current_scope = variable_scopes.back();
-			bool is_global = isGlobalVariable(expr_name_handle);
+			const VariableKey expr_key = variableKeyOf(op.operand).value();
+			const StringHandle expr_name_handle = std::holds_alternative<StringHandle>(expr_key)
+				? std::get<StringHandle>(expr_key)
+				: StringHandle{};
+			[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
+			bool is_global = expr_name_handle.isValid() && isGlobalVariable(expr_name_handle);
 
 			if (is_global) {
 				uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
 				pending_global_relocations_.push_back({reloc_offset, expr_name_handle, IMAGE_REL_AMD64_REL32});
 			} else {
-				auto it = current_scope.variables.find(expr_name_handle);
-				if (it == current_scope.variables.end()) {
+				const VariableInfo* var_info = findVariableInfo(expr_key);
+				if (var_info == nullptr) {
 					throw InternalError("typeid expression variable not found in current scope");
 				}
-				int expr_offset = it->second.offset;
+				int expr_offset = var_info->offset;
 				auto ref_info = getIndirectStackInfo(expr_offset);
 				if (ref_info.has_value()) {
 					emitMovFromFrame(X64Register::RAX, expr_offset);
@@ -6951,23 +6994,25 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 	TypeCategory var_type = op.opType();
 	StackVariableScope& current_scope = variable_scopes.back();
-	auto var_it = current_scope.variables.find(var_name_handle);
-	assert(var_it != current_scope.variables.end());
+	const VariableInfo* var_info = (op.local_id.value != 0)
+		? findVariableInfo(op.local_id)
+		: findVariableInfo(var_name_handle);
+	assert(var_info != nullptr);
 
 	bool is_reference = op.is_reference();
 	bool is_rvalue_reference = op.is_rvalue_reference();
 	[[maybe_unused]] bool is_array = op.is_array;
 	bool is_initialized = op.initializer.has_value();
 
-	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", declared_name_handle, "', is_reference=", is_reference, ", pointer_depth=", op.pointer_depth.value, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
+	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", declared_name_handle, "', is_reference=", is_reference, ", pointer_depth=", op.pointer_depth.value, ", offset=", var_info->offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
 
 	// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
 	// of this slot was a reference, stale metadata would cause later by-value variables
 	// at the same offset to be treated as pointers. Clear that before handling any
 	// non-reference declaration that reuses the slot.
 	if (!is_reference) {
-		indirect_stack_info_.erase(var_it->second.offset);
-		tempvar_indirect_stack_info_.erase(var_it->second.offset);
+		indirect_stack_info_.erase(var_info->offset);
+		tempvar_indirect_stack_info_.erase(var_info->offset);
 	}
 
 	if (is_reference) {
@@ -6986,8 +7031,8 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 			}
 		}
 
-		setReferenceInfo(var_it->second.offset, TypeIndex{0, var_type}, value_size_bits, is_rvalue_reference, TempVar{0});
-		int32_t dst_offset = var_it->second.offset;
+		setReferenceInfo(var_info->offset, TypeIndex{0, var_type}, value_size_bits, is_rvalue_reference, TempVar{0});
+		int32_t dst_offset = var_info->offset;
 		X64Register pointer_reg = allocateRegisterWithSpilling();
 		bool pointer_initialized = false;
 		if (is_initialized) {
@@ -7021,24 +7066,22 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					}
 				}
 				pointer_initialized = true;
-			} else if (std::holds_alternative<StringHandle>(init.value)) {
-				StringHandle rvalue_var_name_handle = std::get<StringHandle>(init.value);
-
-				auto src_it = current_scope.variables.find(rvalue_var_name_handle);
-				if (src_it != current_scope.variables.end()) {
-					FLASH_LOG(Codegen, Debug, "Initializing reference from: '", StringTable::getStringView(rvalue_var_name_handle), "', ir_type=", static_cast<int>(init.effectiveIrType()), ", size=", init.size_in_bits);
+			} else if (std::holds_alternative<StringHandle>(init.value) || std::holds_alternative<LocalVarId>(init.value)) {
+				const VariableKey rvalue_key = variableKeyOf(init.value).value();
+				const VariableInfo* src_info = findVariableInfo(rvalue_key);
+				if (src_info != nullptr) {
 						// Check if source is a reference
-					auto src_ref_info = getIndirectStackInfo(src_it->second.offset);
+					auto src_ref_info = getIndirectStackInfo(src_info->offset);
 					if (src_ref_info.has_value()) {
 							// Source is a reference - copy the pointer value
 						FLASH_LOG(Codegen, Debug, "Using MOV (source is reference)");
-						emitMovFromFrame(pointer_reg, src_it->second.offset);
+						emitMovFromFrame(pointer_reg, src_info->offset);
 					} else {
 							// Named variable: take its address via LEA.
 							// This is correct for all types including pointer variables
 							// (int*& pr = p; needs the address OF p, not p's value).
 						FLASH_LOG(Codegen, Debug, "Using LEA (named variable)");
-						emitLeaFromFrame(pointer_reg, src_it->second.offset);
+						emitLeaFromFrame(pointer_reg, src_info->offset);
 					}
 					pointer_initialized = true;
 				}
@@ -7113,7 +7156,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 	X64Register allocated_reg_val = X64Register::RAX; // Default
 
 	if (is_initialized) {
-		auto dst_offset = var_it->second.offset;
+		auto dst_offset = var_info->offset;
 		const TypedValue& init = op.initializer.value();
 		auto loadReferenceSourceIntoRegister = [&](X64Register dest_reg, int32_t source_stack_offset, int source_value_size_bits, bool is_float) {
 			if (source_value_size_bits <= 0) {
@@ -7222,26 +7265,21 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					src_is_pointer = true;
 					src_ref_info = ref_info;
 				}
-			} else if (std::holds_alternative<StringHandle>(init.value)) {
-				StringHandle rvalue_var_name_handle = std::get<StringHandle>(init.value);
-				auto src_it = current_scope.variables.find(rvalue_var_name_handle);
-				if (src_it == current_scope.variables.end()) {
-					FLASH_LOG(Codegen, Error, "Variable '", StringTable::getStringView(rvalue_var_name_handle), "' not found in symbol table");
+			} else if (std::holds_alternative<StringHandle>(init.value) || std::holds_alternative<LocalVarId>(init.value)) {
+				const VariableKey rvalue_key = variableKeyOf(init.value).value();
+				const VariableInfo* src_it = findVariableInfo(rvalue_key);
+				if (src_it == nullptr) {
+					FLASH_LOG(Codegen, Error, "Variable initializer not found in symbol table");
 					FLASH_LOG(Codegen, Error, "Available variables in current scope:");
-					for (const auto& [name, var_info] : current_scope.variables) {
-							// Phase 5: Convert StringHandle to string_view for logging
+					for (const auto& [name, iter_var] : current_scope.variables) {
 						FLASH_LOG(Codegen, Error, "  - ", StringTable::getStringView(name), " at var_info.offset ");
 					}
+					throw InternalError("Code generation error: variable initializer not found in scope");
 				}
-				if (src_it == current_scope.variables.end()) {
-					throw InternalError("Code generation error: variable initializer '" +
-										std::string(StringTable::getStringView(rvalue_var_name_handle)) +
-										"' not found in scope");
-				}
-				src_offset = src_it->second.offset;
+				src_offset = src_it->offset;
 
 					// Check if source is an array - for array-to-pointer decay, we need LEA
-				if (src_it->second.is_array) {
+				if (src_it->is_array) {
 						// Source is an array being assigned to a pointer - use LEA to get address
 					X64Register addr_reg = allocateRegisterWithSpilling();
 					emitLeaFromFrame(addr_reg, src_offset);
@@ -7458,7 +7496,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		if (is_initialized) {
 			CodeView::VariableLocation loc;
 			loc.type = CodeView::VariableLocation::REGISTER;
-			loc.offset = var_it->second.offset;	// Provide stack offset as fallback for DWARF
+			loc.offset = var_info->offset;	// Provide stack offset as fallback for DWARF
 			loc.start_offset = start_offset;
 			loc.length = 100; // Placeholder until lifetime analysis is implemented
 			loc.register_code = getX64RegisterCodeViewCode(allocated_reg_val);
@@ -7466,7 +7504,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		} else {
 			CodeView::VariableLocation loc;
 			loc.type = CodeView::VariableLocation::STACK_RELATIVE;
-			loc.offset = var_it->second.offset;
+			loc.offset = var_info->offset;
 			loc.start_offset = start_offset;
 			loc.length = 100; // Placeholder
 			loc.register_code = 0;
@@ -8974,18 +9012,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 }
 
 template <class TWriterClass>
-int IrToObjConverter<TWriterClass>::getActualVariableSize(StringHandle var_name, int default_size) const {
+int IrToObjConverter<TWriterClass>::getActualVariableSize(VariableKey var_key, int default_size) const {
 	if (variable_scopes.empty()) {
 		return default_size;
 	}
 
-	const auto& current_scope = variable_scopes.back();
-	auto var_it = current_scope.variables.find(var_name);
-	if (var_it != current_scope.variables.end()) {
-			// Return the stored size if it's non-zero, otherwise use default
-		if (var_it->second.size_in_bits.is_set()) {
-			return var_it->second.size_in_bits.value;
-		}
+	const VariableInfo* info = findVariableInfo(var_key);
+	if (info != nullptr && info->size_in_bits.is_set()) {
+		return info->size_in_bits.value;
 	}
 
 	return default_size;
@@ -9152,7 +9186,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					// Handle temporary variable (stored on stack)
 				auto return_var = std::get<TempVar>(ret_val);
 				const int32_t return_offset = getStackOffsetFromTempVar(return_var, ret_op.return_size);
-				const StackVariableScope& current_scope = variable_scopes.back();
+				[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 				const int return_size_bits = temporarySlot(return_var).size_bits;
 
 				FLASH_LOG_FORMAT(Codegen, Debug,
@@ -9184,6 +9218,12 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 									}
 									base_offset = offset_opt.value();
 								}
+							} else if (const auto* base_local = std::get_if<LocalVarId>(&base)) {
+								auto offset_opt = findIdentifierStackOffset(VariableKey{*base_local});
+								if (!offset_opt.has_value()) {
+									return false;
+								}
+								base_offset = offset_opt.value();
 							} else {
 								base_offset = getStackOffsetFromTempVar(std::get<TempVar>(base));
 							}
@@ -9260,6 +9300,20 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 									return true;
 								}
 
+								if (const auto* base_local = std::get_if<LocalVarId>(&base)) {
+									auto base_offset_opt = findIdentifierStackOffset(VariableKey{*base_local});
+									if (!base_offset_opt.has_value()) {
+										return false;
+									}
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+									if (is_pointer_to_array || isPointerBaseStorage(base_offset_opt.value())) {
+										emitMovFromFrame(X64Register::RAX, base_offset_opt.value());
+									} else {
+										emitLeaFromFrame(X64Register::RAX, base_offset_opt.value());
+									}
+									return true;
+								}
+
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 								emitMovFromFrame(X64Register::RAX, getStackOffsetFromTempVar(std::get<TempVar>(base)));
 								return true;
@@ -9283,9 +9337,8 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 											SizedStackSlot{static_cast<int32_t>(index_offset), 64, true});
 										emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 										emitAddRAXRCX(textSectionData);
-									} else if (std::holds_alternative<StringHandle>(*lv_info.array_index)) {
-										auto index_name = std::get<StringHandle>(*lv_info.array_index);
-										auto index_offset_opt = findIdentifierStackOffset(index_name);
+									} else if (std::holds_alternative<StringHandle>(*lv_info.array_index) || std::holds_alternative<LocalVarId>(*lv_info.array_index)) {
+										auto index_offset_opt = findIdentifierStackOffset(variableKeyOf(*lv_info.array_index).value());
 										if (!index_offset_opt.has_value()) {
 											break;
 										}
@@ -9550,13 +9603,15 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						}
 					}
 				}
-			} else if (std::holds_alternative<StringHandle>(ret_val)) {
-					// Handle named variable
-				StringHandle var_name_handle = std::get<StringHandle>(ret_val);
-				const StackVariableScope& current_scope = variable_scopes.back();
-				auto it = current_scope.variables.find(var_name_handle);
-				if (it != current_scope.variables.end()) {
-					int var_offset = it->second.offset;
+			} else if (std::holds_alternative<StringHandle>(ret_val) || std::holds_alternative<LocalVarId>(ret_val)) {
+					// Handle named variable or local id
+				const VariableKey ret_key = variableKeyOf(ret_val).value();
+				const StringHandle var_name_handle = std::holds_alternative<StringHandle>(ret_key)
+					? std::get<StringHandle>(ret_key)
+					: StringHandle{};
+				const VariableInfo* it = findVariableInfo(ret_key);
+				if (it != nullptr) {
+					int var_offset = it->offset;
 
 						// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
@@ -9564,7 +9619,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					auto ref_info = getIndirectStackInfo(var_offset);
 					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && !current_function_returns_reference_) {
 							// This is a reference and function does not return a reference - load pointer and dereference to get value
-						FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
+						FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference at offset ", var_offset);
 						X64Register ptr_reg = X64Register::RAX;
 						spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 						emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
@@ -9574,7 +9629,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							// Value is now in RAX, ready to return
 					} else if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && current_function_returns_reference_) {
 							// This is a reference and function returns a reference - return the address itself
-						FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
+						FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address at offset ", var_offset);
 						X64Register ptr_reg = X64Register::RAX;
 						spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 						emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer (address)
@@ -9582,7 +9637,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					} else {
 							// Not a reference - normal variable return
 							// Get the actual size of the variable being returned
-						int var_size = getActualVariableSize(var_name_handle, ret_op.return_size);
+						int var_size = getActualVariableSize(ret_key, ret_op.return_size);
 
 							// Check if return type is float/double
 						bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
@@ -9592,7 +9647,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								// Function uses hidden return param - need to copy struct to return slot
 							FLASH_LOG_FORMAT(Codegen, Debug,
 											 "Return statement (StringHandle): copying struct '{}' from offset {} to return slot (size={} bits)",
-											 StringTable::getStringView(var_name_handle), var_offset, var_size);
+											 (var_name_handle.isValid() ? StringTable::getStringView(var_name_handle) : std::string_view{"<local>"}), var_offset, var_size);
 
 								// Load return slot address from __return_slot parameter
 							auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
@@ -9658,6 +9713,9 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						}
 					}
 				} else {
+					if (!var_name_handle.isValid()) {
+						throw InternalError("Return local id has no frame slot");
+					}
 					const bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
 					if (current_function_returns_reference_) {
 						spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
@@ -10195,8 +10253,8 @@ void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instructi
 
 		// Manually store remainder from RDX to the result variable's stack location
 		// Don't use storeArithmeticResult because it tries to be too clever with register tracking
-	if (const auto* string = std::get_if<StringHandle>(&ctx.result_value.value)) {
-		int final_result_offset = variable_scopes.back().variables[*string].offset;
+	if (std::holds_alternative<StringHandle>(ctx.result_value.value) || std::holds_alternative<LocalVarId>(ctx.result_value.value)) {
+		int final_result_offset = getVariableOffsetOrThrow(variableKeyOf(ctx.result_value.value).value(), "handleModulo result");
 		emitMovToFrameSized(
 			SizedRegister{X64Register::RDX, 64, false},	// source: RDX register
 			SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, ctx.result_value.is_signed}  // dest
@@ -10238,8 +10296,8 @@ void IrToObjConverter<TWriterClass>::handleUnsignedModulo(const IrInstruction& i
 	emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, divisor_reg, ctx.result_value.size_in_bits.value);
 
 		// Store remainder from RDX to the result variable's stack location.
-	if (const auto* sh = std::get_if<StringHandle>(&ctx.result_value.value)) {
-		int final_result_offset = variable_scopes.back().variables[*sh].offset;
+	if (std::holds_alternative<StringHandle>(ctx.result_value.value) || std::holds_alternative<LocalVarId>(ctx.result_value.value)) {
+		int final_result_offset = getVariableOffsetOrThrow(variableKeyOf(ctx.result_value.value).value(), "handleUnsignedModulo result");
 		emitMovToFrameSized(
 			SizedRegister{X64Register::RDX, 64, false},
 			SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, false});
@@ -10381,13 +10439,12 @@ void IrToObjConverter<TWriterClass>::storeUnaryResult(const IrOperand& result_op
 				SizedRegister{result_physical_reg, size_in_bits, false},
 				SizedStackSlot{result_stack_var_addr, size_in_bits, false});
 		}
-	} else if (std::holds_alternative<StringHandle>(result_operand)) {
-		StringHandle result_var_name = std::get<StringHandle>(result_operand);
-		auto var_id = variable_scopes.back().variables.find(result_var_name);
-		if (var_id != variable_scopes.back().variables.end()) {
+	} else if (std::holds_alternative<StringHandle>(result_operand) || std::holds_alternative<LocalVarId>(result_operand)) {
+		const VariableInfo* var_id = findVariableInfo(variableKeyOf(result_operand).value());
+		if (var_id != nullptr) {
 			emitMovToFrameSized(
 				SizedRegister{result_physical_reg, size_in_bits, false},
-				SizedStackSlot{var_id->second.offset, size_in_bits, false});
+				SizedStackSlot{var_id->offset, size_in_bits, false});
 		}
 	}
 }
@@ -10592,18 +10649,17 @@ X64Register IrToObjConverter<TWriterClass>::loadOperandIntoRegister(const IrInst
 								   mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			regAlloc.flushSingleDirtyRegister(reg);
 		}
-	} else if (instruction.isOperandType<StringHandle>(operand_index)) {
-		auto var_name = instruction.getOperandAs<StringHandle>(operand_index);
-		auto var_id = variable_scopes.back().variables.find(var_name);
-		if (var_id != variable_scopes.back().variables.end()) {
-			if (auto ref_info = getIndirectStackInfo(var_id->second.offset); ref_info.has_value()) {
-				return loadFromIndirectStorage(var_id->second.offset, ref_info.value());
+	} else if (const std::optional<VariableKey> var_key = variableKeyOf(instruction.getOperand(operand_index)); var_key.has_value()) {
+		const VariableInfo* var_info = findVariableInfo(*var_key);
+		if (var_info != nullptr) {
+			if (auto ref_info = getIndirectStackInfo(var_info->offset); ref_info.has_value()) {
+				return loadFromIndirectStorage(var_info->offset, ref_info.value());
 			}
-			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
+			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_info->offset); reg_opt.has_value()) {
 				reg = reg_opt.value();
 			} else {
 				reg = allocateRegisterWithSpilling();
-				auto mov_opcodes = generatePtrMovFromFrame(reg, var_id->second.offset);
+				auto mov_opcodes = generatePtrMovFromFrame(reg, var_info->offset);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(),
 									   mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				regAlloc.flushSingleDirtyRegister(reg);
@@ -10636,21 +10692,20 @@ X64Register IrToObjConverter<TWriterClass>::loadTypedValueIntoRegister(const Typ
 			);
 			regAlloc.flushSingleDirtyRegister(reg);
 		}
-	} else if (std::holds_alternative<StringHandle>(typed_value.value)) {
-		StringHandle var_name = std::get<StringHandle>(typed_value.value);
-		auto var_id = variable_scopes.back().variables.find(var_name);
-		if (var_id != variable_scopes.back().variables.end()) {
-			if (auto ref_info = getIndirectStackInfo(var_id->second.offset); ref_info.has_value()) {
-				return loadFromIndirectStorage(var_id->second.offset, ref_info.value());
+	} else if (const std::optional<VariableKey> var_key = variableKeyOf(typed_value.value); var_key.has_value()) {
+		const VariableInfo* var_info = findVariableInfo(*var_key);
+		if (var_info != nullptr) {
+			if (auto ref_info = getIndirectStackInfo(var_info->offset); ref_info.has_value()) {
+				return loadFromIndirectStorage(var_info->offset, ref_info.value());
 			}
-			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
+			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_info->offset); reg_opt.has_value()) {
 				reg = reg_opt.value();
 			} else {
 				reg = allocateRegisterWithSpilling();
 					// Use size-aware loading: source (stack slot) -> destination (64-bit register)
 				emitMovFromFrameSized(
 					SizedRegister{reg, 64, false},  // dest: 64-bit register
-					SizedStackSlot{var_id->second.offset, typed_value.size_in_bits, is_signed}  // source: sized stack slot
+					SizedStackSlot{var_info->offset, typed_value.size_in_bits, is_signed}  // source: sized stack slot
 				);
 				regAlloc.flushSingleDirtyRegister(reg);
 			}
@@ -10685,8 +10740,73 @@ const typename IrToObjConverter<TWriterClass>::VariableInfo* IrToObjConverter<TW
 }
 
 template <class TWriterClass>
+const typename IrToObjConverter<TWriterClass>::VariableInfo* IrToObjConverter<TWriterClass>::findVariableInfo(LocalVarId id) const {
+	if (id.value == 0) {
+		return nullptr;
+	}
+	for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
+		if (id.value <= scope_it->local_slots_by_id.size()) {
+			return &scope_it->local_slots_by_id[id.value - 1];
+		}
+	}
+	return nullptr;
+}
+
+template <class TWriterClass>
+const typename IrToObjConverter<TWriterClass>::VariableInfo* IrToObjConverter<TWriterClass>::findVariableInfo(VariableKey key) const {
+	if (const auto* id = std::get_if<LocalVarId>(&key)) {
+		return findVariableInfo(*id);
+	}
+	return findVariableInfo(std::get<StringHandle>(key));
+}
+
+template <class TWriterClass>
+std::optional<VariableKey> IrToObjConverter<TWriterClass>::variableKeyOf(const IrValue& value) {
+	if (const auto* id = std::get_if<LocalVarId>(&value)) {
+		return VariableKey{*id};
+	}
+	if (const auto* name = std::get_if<StringHandle>(&value)) {
+		return VariableKey{*name};
+	}
+	return std::nullopt;
+}
+
+template <class TWriterClass>
+std::optional<VariableKey> IrToObjConverter<TWriterClass>::variableKeyOf(const IrOperand& operand) {
+	if (const auto* id = std::get_if<LocalVarId>(&operand)) {
+		return VariableKey{*id};
+	}
+	if (const auto* name = std::get_if<StringHandle>(&operand)) {
+		return VariableKey{*name};
+	}
+	return std::nullopt;
+}
+
+template <class TWriterClass>
+std::optional<VariableKey> IrToObjConverter<TWriterClass>::variableKeyOf(const TypedValue& value) {
+	return variableKeyOf(value.value);
+}
+
+template <class TWriterClass>
+std::optional<VariableKey> IrToObjConverter<TWriterClass>::variableKeyOf(const std::variant<StringHandle, TempVar, LocalVarId>& value) {
+	if (const auto* id = std::get_if<LocalVarId>(&value)) {
+		return VariableKey{*id};
+	}
+	if (const auto* name = std::get_if<StringHandle>(&value)) {
+		return VariableKey{*name};
+	}
+	return std::nullopt;
+}
+
+template <class TWriterClass>
 std::optional<int32_t> IrToObjConverter<TWriterClass>::findIdentifierStackOffset(StringHandle name) const {
 	const VariableInfo* info = findVariableInfo(name);
+	return info ? std::optional<int32_t>(info->offset) : std::nullopt;
+}
+
+template <class TWriterClass>
+std::optional<int32_t> IrToObjConverter<TWriterClass>::findIdentifierStackOffset(VariableKey key) const {
+	const VariableInfo* info = findVariableInfo(key);
 	return info ? std::optional<int32_t>(info->offset) : std::nullopt;
 }
 
@@ -10711,6 +10831,11 @@ typename IrToObjConverter<TWriterClass>::UnaryOperandLocation IrToObjConverter<T
 	if (instruction.isOperandType<TempVar>(operand_index)) {
 		auto temp = instruction.getOperandAs<TempVar>(operand_index);
 		return UnaryOperandLocation::stack(getStackOffsetFromTempVar(temp));
+	}
+
+	if (instruction.isOperandType<LocalVarId>(operand_index)) {
+		auto local_id = instruction.getOperandAs<LocalVarId>(operand_index);
+		return UnaryOperandLocation::stack(getVariableOffsetOrThrow(local_id, "resolveUnaryOperandLocation"));
 	}
 
 	if (instruction.isOperandType<std::string_view>(operand_index)) {
@@ -10974,6 +11099,16 @@ bool IrToObjConverter<TWriterClass>::loadAddressForOperand(const IrInstruction& 
 		textSectionData.insert(textSectionData.end(), lea.op_codes.begin(), lea.op_codes.begin() + lea.size_in_bytes);
 		return true;
 	}
+	if (instruction.isOperandType<StringHandle>(operand_index) || instruction.isOperandType<LocalVarId>(operand_index)) {
+		const VariableKey key = variableKeyOf(instruction.getOperand(operand_index)).value();
+		const VariableInfo* info = findVariableInfo(key);
+		if (info == nullptr) {
+			return false;
+		}
+		auto lea = generateLeaFromFrame(target_reg, info->offset);
+		textSectionData.insert(textSectionData.end(), lea.op_codes.begin(), lea.op_codes.begin() + lea.size_in_bytes);
+		return true;
+	}
 	return false;
 }
 
@@ -11077,6 +11212,10 @@ typename IrToObjConverter<TWriterClass>::UnaryOperandLocation IrToObjConverter<T
 	if (const auto* temp_var = std::get_if<TempVar>(&typed_value.value)) {
 		auto temp = *temp_var;
 		return UnaryOperandLocation::stack(getStackOffsetFromTempVar(temp));
+	}
+
+	if (const auto* local_id = std::get_if<LocalVarId>(&typed_value.value)) {
+		return UnaryOperandLocation::stack(getVariableOffsetOrThrow(*local_id, "resolveTypedValueLocation"));
 	}
 
 	if (const auto* string = std::get_if<StringHandle>(&typed_value.value)) {
@@ -11198,16 +11337,13 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 		std::array<uint8_t, 10> movInst = {rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0};
 		std::memcpy(&movInst[2], &imm_value, sizeof(imm_value));
 		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
-	} else if (std::holds_alternative<StringHandle>(unary_op.value.value)) {
+	} else if (std::holds_alternative<StringHandle>(unary_op.value.value) || std::holds_alternative<LocalVarId>(unary_op.value.value)) {
 			// Load from variable (could be local or global)
 		result_physical_reg = allocateRegisterWithSpilling();
-		StringHandle var_name = std::get<StringHandle>(unary_op.value.value);
-
-			// Check if it's a local variable first
-		auto var_id = variable_scopes.back().variables.find(var_name);
-		if (var_id != variable_scopes.back().variables.end()) {
+		const VariableInfo* var_info = findVariableInfo(variableKeyOf(unary_op.value.value).value());
+		if (var_info != nullptr) {
 				// It's a local variable on the stack - use the correct size
-			auto stack_offset = var_id->second.offset;
+			auto stack_offset = var_info->offset;
 			emitMovFromFrameBySize(result_physical_reg, stack_offset, size_in_bits);
 		} else {
 				// It's a global variable - this shouldn't happen for unary ops on locals
@@ -11481,19 +11617,18 @@ void IrToObjConverter<TWriterClass>::handleFloatToInt(const IrInstruction& instr
 			emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 		}
 	} else {
-		if (!std::holds_alternative<StringHandle>(op.from.value))
-			throw InternalError("handleFloatToInt: Expected StringHandle or TempVar type");
-		StringHandle var_name = std::get<StringHandle>(op.from.value);
-		auto var_it = variable_scopes.back().variables.find(var_name);
-		if (var_it == variable_scopes.back().variables.end())
+		if (!std::holds_alternative<StringHandle>(op.from.value) && !std::holds_alternative<LocalVarId>(op.from.value))
+			throw InternalError("handleFloatToInt: Expected StringHandle, LocalVarId, or TempVar type");
+		const VariableInfo* var_it = findVariableInfo(variableKeyOf(op.from.value).value());
+		if (var_it == nullptr)
 			throw InternalError("handleFloatToInt: Variable not found in variables");
 			// Check if the value is already in an XMM register
-		if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->second.offset); existing_reg.has_value()) {
+		if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->offset); existing_reg.has_value()) {
 			source_xmm = existing_reg.value();
 		} else {
 			source_xmm = allocateXMMRegisterWithSpilling();
 			bool is_float = (op.from.effectiveIrType() == IrType::Float);
-			emitFloatMovFromFrame(source_xmm, var_it->second.offset, is_float);
+			emitFloatMovFromFrame(source_xmm, var_it->offset, is_float);
 		}
 	}
 
@@ -11587,13 +11722,12 @@ void IrToObjConverter<TWriterClass>::handleFloatToFloat(const IrInstruction& ins
 		source_xmm = allocateXMMRegisterWithSpilling();
 		bool is_float = (op.from.effectiveIrType() == IrType::Float);
 		emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
-	} else if (std::holds_alternative<StringHandle>(op.from.value)) {
-		StringHandle var_name = std::get<StringHandle>(op.from.value);
-		auto var_it = variable_scopes.back().variables.find(var_name);
-		assert(var_it != variable_scopes.back().variables.end());
+	} else if (std::holds_alternative<StringHandle>(op.from.value) || std::holds_alternative<LocalVarId>(op.from.value)) {
+		const VariableInfo* var_it = findVariableInfo(variableKeyOf(op.from.value).value());
+		assert(var_it != nullptr);
 		source_xmm = allocateXMMRegisterWithSpilling();
 		bool is_float = (op.from.effectiveIrType() == IrType::Float);
-		emitFloatMovFromFrame(source_xmm, var_it->second.offset, is_float);
+		emitFloatMovFromFrame(source_xmm, var_it->offset, is_float);
 	}
 
 		// Allocate result XMM register
@@ -11944,12 +12078,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			// Get LHS destination
 		int32_t lhs_offset = -1;
 
-		if (std::holds_alternative<StringHandle>(op.lhs.value)) {
-			StringHandle lhs_var_name_handle = std::get<StringHandle>(op.lhs.value);
-			std::string_view lhs_var_name = StringTable::getStringView(lhs_var_name_handle);
-			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(lhs_var_name));
-			if (it != variable_scopes.back().variables.end()) {
-				lhs_offset = it->second.offset;
+		if (const std::optional<VariableKey> lhs_key = variableKeyOf(op.lhs.value); lhs_key.has_value()) {
+			const VariableInfo* info = findVariableInfo(*lhs_key);
+			if (info != nullptr) {
+				lhs_offset = info->offset;
 			}
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.lhs.value)) {
 			TempVar lhs_var = *temp_var;
@@ -11999,12 +12131,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			// Get LHS destination
 		int32_t lhs_offset = -1;
 
-		if (std::holds_alternative<StringHandle>(op.lhs.value)) {
-			StringHandle lhs_var_name_handle = std::get<StringHandle>(op.lhs.value);
-			std::string_view lhs_var_name = StringTable::getStringView(lhs_var_name_handle);
-			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(lhs_var_name));
-			if (it != variable_scopes.back().variables.end()) {
-				lhs_offset = it->second.offset;
+		if (const std::optional<VariableKey> lhs_key = variableKeyOf(op.lhs.value); lhs_key.has_value()) {
+			const VariableInfo* info = findVariableInfo(*lhs_key);
+			if (info != nullptr) {
+				lhs_offset = info->offset;
 			}
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.lhs.value)) {
 			TempVar lhs_var = *temp_var;
@@ -12018,12 +12148,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 			// Get RHS source offset
 		int32_t rhs_offset = -1;
-		if (std::holds_alternative<StringHandle>(op.rhs.value)) {
-			StringHandle rhs_var_name_handle = std::get<StringHandle>(op.rhs.value);
-			std::string_view rhs_var_name = StringTable::getStringView(rhs_var_name_handle);
-			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
-			if (it != variable_scopes.back().variables.end()) {
-				rhs_offset = it->second.offset;
+		if (const std::optional<VariableKey> rhs_key = variableKeyOf(op.rhs.value); rhs_key.has_value()) {
+			const VariableInfo* info = findVariableInfo(*rhs_key);
+			if (info != nullptr) {
+				rhs_offset = info->offset;
 			}
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.rhs.value)) {
 			TempVar rhs_var = *temp_var;
@@ -12142,14 +12270,12 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		// Get LHS destination
 	int32_t lhs_offset = -1;
 
-	if (std::holds_alternative<StringHandle>(op.lhs.value)) {
-		StringHandle lhs_var_name_handle = std::get<StringHandle>(op.lhs.value);
-		std::string_view lhs_var_name = StringTable::getStringView(lhs_var_name_handle);
-		auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(lhs_var_name));
-		if (it != variable_scopes.back().variables.end()) {
-			lhs_offset = it->second.offset;
+	if (const std::optional<VariableKey> lhs_key = variableKeyOf(op.lhs.value); lhs_key.has_value()) {
+		const VariableInfo* info = findVariableInfo(*lhs_key);
+		if (info != nullptr) {
+			lhs_offset = info->offset;
 		} else {
-			FLASH_LOG(Codegen, Error, "String LHS variable '", lhs_var_name, "' not found in variables map");
+			FLASH_LOG(Codegen, Error, "LHS variable not found in variables map");
 		}
 	} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
 		TempVar lhs_var = std::get<TempVar>(op.lhs.value);
@@ -12167,13 +12293,13 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.lhs.value)) {
 		unsigned long long lhs_value = *ull_val;
 		std::ostringstream rhs_str;
-		printTypedValue(rhs_str, op.rhs);
+		printTypedValue(rhs_str, op.rhs, std::span<const StringHandle>{});
 		FLASH_LOG(Codegen, Error, "[Line ", instruction.getLineNumber(), "] LHS is an immediate value (", lhs_value, ") - invalid for assignment. RHS: ", rhs_str.str());
 		return;
 	} else if (const auto* d_val = std::get_if<double>(&op.lhs.value)) {
 		double lhs_value = *d_val;
 		std::ostringstream rhs_str;
-		printTypedValue(rhs_str, op.rhs);
+		printTypedValue(rhs_str, op.rhs, std::span<const StringHandle>{});
 		FLASH_LOG(Codegen, Error, "[Line ", instruction.getLineNumber(), "] LHS is an immediate value (", lhs_value, ") - invalid for assignment. RHS: ", rhs_str.str());
 		return;
 	} else {
@@ -12235,14 +12361,11 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			uint64_t imm_value = *ull_val;
 			FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is immediate value: ", imm_value);
 			moveImmediateToRegister(value_reg, imm_value);
-		} else if (std::holds_alternative<StringHandle>(op.rhs.value)) {
-				// RHS is a variable name
-			StringHandle rhs_var_name_handle = std::get<StringHandle>(op.rhs.value);
-			std::string_view rhs_var_name = StringTable::getStringView(rhs_var_name_handle);
-			FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is variable: '", rhs_var_name, "'");
-			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
-			if (it != variable_scopes.back().variables.end()) {
-				int32_t rhs_offset = it->second.offset;
+		} else if (const std::optional<VariableKey> rhs_key = variableKeyOf(op.rhs.value); rhs_key.has_value()) {
+				// RHS is a variable
+			const VariableInfo* rhs_info = findVariableInfo(*rhs_key);
+			if (rhs_info != nullptr) {
+				int32_t rhs_offset = rhs_info->offset;
 					// Check if RHS is also a reference (but not address-only)
 				auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
 				if (rhs_ref_info.has_value() && shouldImplicitlyDeref(rhs_ref_info.value())) {
@@ -12258,7 +12381,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 						SizedStackSlot{rhs_offset, value_size_bits, isSignedType(value_type)});
 				}
 			} else {
-				FLASH_LOG(Codegen, Error, "RHS variable '", rhs_var_name, "' not found for reference assignment");
+				FLASH_LOG(Codegen, Error, "RHS variable not found for reference assignment");
 				regAlloc.release(ref_addr_reg);
 				regAlloc.release(value_reg);
 				return;
@@ -12320,12 +12443,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 	}
 
 		// Load RHS value into a register
-	if (std::holds_alternative<StringHandle>(op.rhs.value)) {
-		StringHandle rhs_var_name_handle = std::get<StringHandle>(op.rhs.value);
-		std::string_view rhs_var_name = StringTable::getStringView(rhs_var_name_handle);
-		auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
-		if (it != variable_scopes.back().variables.end()) {
-			int32_t rhs_offset = it->second.offset;
+	if (const std::optional<VariableKey> rhs_key = variableKeyOf(op.rhs.value); rhs_key.has_value()) {
+		const VariableInfo* rhs_info = findVariableInfo(*rhs_key);
+		if (rhs_info != nullptr) {
+			int32_t rhs_offset = rhs_info->offset;
 
 			// Check if RHS is a reference - if so, dereference it unless this
 			// assignment is explicitly copying an address.
@@ -12708,6 +12829,15 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 	if (const auto* string_ptr = std::get_if<StringHandle>(&op.array)) {
 		array_name_handle = *string_ptr;
 		array_name_view = StringTable::getStringView(array_name_handle);
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&op.array)) {
+		array_base_offset = getVariableOffsetOrThrow(*local_id, "handleArrayAccess local array base");
+		// A named local that is itself an array owns inline element storage, so
+		// do not dereference its frame slot as a pointer. A local reference to
+		// an object still reaches a member array through the pointer path.
+		const VariableInfo* local_info = findVariableInfo(*local_id);
+		if (isPointerBaseStorage(array_base_offset) && !(local_info != nullptr && local_info->is_array)) {
+			is_array_pointer = true;
+		}
 	} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
 		TempVar array_temp_var = *temp_var;
 		array_base_offset = getStackOffsetFromTempVar(array_temp_var);
@@ -12913,13 +13043,13 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 
 			// Release the index register
 		regAlloc.release(index_reg);
-	} else if (std::holds_alternative<StringHandle>(op.index.value)) {
-			// Variable index stored as identifier name
-		StringHandle index_var_name_handle = std::get<StringHandle>(op.index.value);
-		auto index_it = variable_scopes.back().variables.find(index_var_name_handle);
-		assert(index_it != variable_scopes.back().variables.end() && "Index variable not found");
-		int64_t index_var_offset = index_it->second.offset;
-		SizeInBits index_size_in_bits = getStackVariableLoadSizeBits(index_var_name_handle);
+	} else if (std::holds_alternative<StringHandle>(op.index.value) || std::holds_alternative<LocalVarId>(op.index.value)) {
+			// Variable index stored as identifier or local id
+		const VariableKey index_key = variableKeyOf(op.index.value).value();
+		const VariableInfo* index_info = findVariableInfo(index_key);
+		assert(index_info != nullptr && "Index variable not found");
+		int64_t index_var_offset = index_info->offset;
+		SizeInBits index_size_in_bits = getStackVariableLoadSizeBits(index_key);
 
 			// Allocate a second register for the index
 		X64Register index_reg = allocateRegisterWithSpilling();
@@ -13006,7 +13136,16 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 		int64_t array_base_offset = 0;
 		if (const auto* string = std::get_if<StringHandle>(&op.array)) {
 			StringHandle array_name_handle = *string;
-			array_base_offset = variable_scopes.back().variables[array_name_handle].offset;
+			const VariableInfo* array_info = findVariableInfo(array_name_handle);
+			if (array_info == nullptr) {
+				throw InternalError("Array element address base not found in scope");
+			}
+			array_base_offset = array_info->offset;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&op.array)) {
+			array_base_offset = getVariableOffsetOrThrow(*local_id, "handleArrayElementAddress local base");
+			if (isPointerBaseStorage(array_base_offset)) {
+				is_pointer_to_array = true;
+			}
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
 			TempVar array_temp = *temp_var;
 			array_base_offset = getStackOffsetFromTempVar(array_temp);
@@ -13075,16 +13214,16 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 
 				// Add offset to get final address
 			emitAddRAXRCX(textSectionData);
-		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
-				// Handle variable name (StringHandle) as index
-			StringHandle index_var_name = std::get<StringHandle>(op.index.value);
-			auto it = variable_scopes.back().variables.find(index_var_name);
-			if (it == variable_scopes.back().variables.end()) {
+		} else if (std::holds_alternative<StringHandle>(op.index.value) || std::holds_alternative<LocalVarId>(op.index.value)) {
+				// Handle identifier or local id as index
+			const VariableKey index_key = variableKeyOf(op.index.value).value();
+			const VariableInfo* index_info = findVariableInfo(index_key);
+			if (index_info == nullptr) {
 				throw InternalError("Index variable not found in scope");
 				return;
 			}
-			int64_t index_offset = it->second.offset;
-			SizeInBits index_size_in_bits = getStackVariableLoadSizeBits(index_var_name);
+			int64_t index_offset = index_info->offset;
+			SizeInBits index_size_in_bits = getStackVariableLoadSizeBits(index_key);
 
 				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 			emitMovFromFrameSized(
@@ -13141,10 +13280,18 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		std::string_view array_name_view;
 		int64_t array_base_offset = 0;
 		bool array_is_tempvar = false;
+		bool array_is_local_id = false;
+		bool local_base_is_array = false;
 
 		if (const auto* string_ptr = std::get_if<StringHandle>(&op.array)) {
 			array_name_handle = *string_ptr;
 			array_name_view = StringTable::getStringView(array_name_handle);
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&op.array)) {
+			array_base_offset = getVariableOffsetOrThrow(*local_id, "handleArrayStore local array base");
+			array_is_local_id = true;
+			if (const VariableInfo* local_info = findVariableInfo(*local_id)) {
+				local_base_is_array = local_info->is_array;
+			}
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
 			// Array is a TempVar (e.g., from member_access for struct.array_member)
 			// The TempVar holds a pointer to the array base
@@ -13174,12 +13321,10 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			if (std::holds_alternative<TempVar>(op.value.value)) {
 				TempVar value_var = std::get<TempVar>(op.value.value);
 				struct_source_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits.value);
-			} else if (std::holds_alternative<StringHandle>(op.value.value)) {
-				StringHandle value_name = std::get<StringHandle>(op.value.value);
-				const StackVariableScope& current_scope = variable_scopes.back();
-				auto value_it = current_scope.variables.find(value_name);
-				if (value_it != current_scope.variables.end()) {
-					struct_source_offset = value_it->second.offset;
+			} else if (std::holds_alternative<StringHandle>(op.value.value) || std::holds_alternative<LocalVarId>(op.value.value)) {
+				const VariableInfo* value_info = findVariableInfo(variableKeyOf(op.value.value).value());
+				if (value_info != nullptr) {
+					struct_source_offset = value_info->offset;
 				}
 			}
 		}
@@ -13263,13 +13408,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 					);
 				}
 			}
-		} else if (!is_struct_store && std::holds_alternative<StringHandle>(op.value.value)) {
-			// Value from named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
-			StringHandle value_name = std::get<StringHandle>(op.value.value);
-			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(value_name);
-			if (it != current_scope.variables.end()) {
-				int32_t value_offset = it->second.offset;
+		} else if (!is_struct_store && (std::holds_alternative<StringHandle>(op.value.value) || std::holds_alternative<LocalVarId>(op.value.value))) {
+			// Value from a named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
+			const VariableInfo* value_info = findVariableInfo(variableKeyOf(op.value.value).value());
+			if (value_info != nullptr) {
+				int32_t value_offset = value_info->offset;
 				if (is_float_store) {
 					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
 						if (value_reg.value() != X64Register::XMM0) {
@@ -13306,7 +13449,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		// Get array base offset (only needed if array is StringHandle, not TempVar)
 		bool is_global_array = false;
 		StringHandle global_array_name;
-		if (!array_is_tempvar) {
+		if (!array_is_tempvar && !array_is_local_id) {
 			StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
 			// Use find() to avoid creating phantom entries with INT_MIN offset for missing keys
 			const auto& scope_vars = variable_scopes.back().variables;
@@ -13336,7 +13479,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		// Check if the object (not the array) is a pointer (reference parameter or 'this')
 		// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 		bool is_object_pointer = false;
-		if (is_member_array) {
+		// A named local that is itself an array owns inline element storage, so
+		// its base must not be dereferenced even when the local is a reference
+		// bound to the array. A local reference to an object still uses the
+		// pointer path to reach a member array.
+		if (is_member_array || (array_is_local_id && !local_base_is_array)) {
 			if (isPointerBaseStorage(array_base_offset)) {
 				is_object_pointer = true;
 			}
@@ -13486,16 +13633,15 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			} else {
 				emitStoreToRAX();
 			}
-		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
-			// Index is a named variable - get its stack offset
-			StringHandle index_handle = std::get<StringHandle>(op.index.value);
-			auto it = variable_scopes.back().variables.find(index_handle);
-			if (it == variable_scopes.back().variables.end()) {
+		} else if (std::holds_alternative<StringHandle>(op.index.value) || std::holds_alternative<LocalVarId>(op.index.value)) {
+			// Index is a named variable or local id - get its stack offset
+			const VariableInfo* index_info = findVariableInfo(variableKeyOf(op.index.value).value());
+			if (index_info == nullptr) {
 				throw InternalError("Index variable not found in scope");
 				return;
 			}
-			int64_t index_var_offset = it->second.offset;
-			int index_size_in_bits = it->second.size_in_bits.value;
+			int64_t index_var_offset = index_info->offset;
+			int index_size_in_bits = index_info->size_in_bits.value;
 
 			// Load index into RCX (value is already in RDX)
 			emitLoadIndexIntoRCX(textSectionData, index_var_offset, index_size_in_bits);
@@ -13578,7 +13724,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 	bool is_pointer_access = false;	// true if object is 'this' or a reference parameter (both are pointers)
 	bool is_global_access = false;   // true if object is a global variable
 	StringHandle global_object_name;	 // name for global variable access
-	const StackVariableScope& current_scope = variable_scopes.back();
+	[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 
 	// Get object base offset
 	if (std::holds_alternative<StringHandle>(op.object)) {
@@ -13613,6 +13759,11 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			if (in_indirect_storage || op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
+		}
+	} else if (std::holds_alternative<LocalVarId>(op.object)) {
+		object_base_offset = getVariableOffsetOrThrow(std::get<LocalVarId>(op.object), "MemberAccess local object");
+		if (isPointerBaseStorage(object_base_offset) || op.is_pointer_to_member) {
+			is_pointer_access = true;
 		}
 	} else {
 		// Nested case: object is the result of a previous member access
@@ -13929,16 +14080,15 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		// address and store it at the selected subobject offset.
 		// Get the object's base stack offset
 		int32_t object_base_offset = 0;
-		const StackVariableScope& current_scope = variable_scopes.back();
+		[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 
-		if (std::holds_alternative<StringHandle>(op.object)) {
-			StringHandle object_name_handle = std::get<StringHandle>(op.object);
-			auto it = current_scope.variables.find(object_name_handle);
-			if (it == current_scope.variables.end()) {
+		if (std::holds_alternative<StringHandle>(op.object) || std::holds_alternative<LocalVarId>(op.object)) {
+			const VariableInfo* info = findVariableInfo(variableKeyOf(op.object).value());
+			if (info == nullptr) {
 				throw InternalError("Struct object not found in scope");
 				return;
 			}
-			object_base_offset = it->second.offset;
+			object_base_offset = info->offset;
 		}
 
 		// Load vtable address using LEA with relocation
@@ -13979,7 +14129,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 	double literal_double_value = 0.0;
 	bool is_double_literal = false;
 	bool is_variable = false;
-	StringHandle variable_name;
+	std::optional<VariableKey> variable_key;
 
 	if (std::holds_alternative<TempVar>(op.value.value)) {
 			// TempVar - handled below
@@ -13990,18 +14140,18 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		is_literal = true;
 		is_double_literal = true;
 		literal_double_value = *d_val;
-	} else if (const auto* string = std::get_if<StringHandle>(&op.value.value)) {
+	} else if (std::holds_alternative<StringHandle>(op.value.value) || std::holds_alternative<LocalVarId>(op.value.value)) {
 		is_variable = true;
-		variable_name = *string;
+		variable_key = variableKeyOf(op.value.value);
 	} else {
-		throw InternalError("Value must be TempVar, unsigned long long, double, or StringHandle");
+		throw InternalError("Value must be TempVar, unsigned long long, double, StringHandle, or LocalVarId");
 		return;
 	}
 
 		// Get the object's base stack offset or pointer
 	int32_t object_base_offset = 0;
 	bool is_pointer_access = false;	// true if object is 'this' (a pointer)
-	const StackVariableScope& current_scope = variable_scopes.back();
+	[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 
 	if (std::holds_alternative<StringHandle>(op.object)) {
 		StringHandle object_name_handle = std::get<StringHandle>(op.object);
@@ -14029,12 +14179,12 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 					emitMovImm64(value_reg, imm64);
 				}
 			} else if (is_variable) {
-				auto it = current_scope.variables.find(variable_name);
-				if (it == current_scope.variables.end()) {
+				const VariableInfo* it = variable_key ? findVariableInfo(*variable_key) : nullptr;
+				if (it == nullptr) {
 					throw InternalError("Variable not found in scope");
 					return;
 				}
-				int32_t value_offset = it->second.offset;
+				int32_t value_offset = it->offset;
 				emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits.value);
 			} else {
 				auto value_var = std::get<TempVar>(op.value.value);
@@ -14161,6 +14311,11 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		if (isPointerBaseStorage(object_base_offset) || op.is_pointer_to_member) {
 			is_pointer_access = true;
 		}
+	} else if (std::holds_alternative<LocalVarId>(op.object)) {
+		object_base_offset = getVariableOffsetOrThrow(std::get<LocalVarId>(op.object), "MemberStore local object");
+		if (isPointerBaseStorage(object_base_offset) || op.is_pointer_to_member) {
+			is_pointer_access = true;
+		}
 	} else {
 			// Nested case: object is the result of a previous member access
 		auto object_temp = std::get<TempVar>(op.object);
@@ -14195,11 +14350,11 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		int32_t source_offset = 0;
 		FrameMemoryStorage source_storage = FrameMemoryStorage::Direct;
 		if (is_variable) {
-			auto source_it = current_scope.variables.find(variable_name);
-			if (source_it == current_scope.variables.end()) {
+			const VariableInfo* source_it = variable_key ? findVariableInfo(*variable_key) : nullptr;
+			if (source_it == nullptr) {
 				throw InternalError("Aggregate member initializer variable not found in scope");
 			}
-			source_offset = source_it->second.offset;
+			source_offset = source_it->offset;
 			if (isPointerBaseStorage(source_offset)) {
 				source_storage = FrameMemoryStorage::Indirect;
 			}
@@ -14254,11 +14409,11 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		} else {
 			int32_t value_offset = 0;
 			if (is_variable) {
-				auto it = current_scope.variables.find(variable_name);
-				if (it == current_scope.variables.end()) {
+				const VariableInfo* it = variable_key ? findVariableInfo(*variable_key) : nullptr;
+				if (it == nullptr) {
 					throw InternalError("Variable not found in scope");
 				}
-				value_offset = it->second.offset;
+				value_offset = it->offset;
 			} else {
 				auto value_var = std::get<TempVar>(op.value.value);
 				value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits.value);
@@ -14295,9 +14450,9 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		bool pointer_loaded = false;
 		if (is_variable) {
 				// Check if this variable is itself a reference (e.g., reference parameter)
-			auto it = current_scope.variables.find(variable_name);
-			if (it != current_scope.variables.end()) {
-				int32_t var_offset = it->second.offset;
+			const VariableInfo* it = variable_key ? findVariableInfo(*variable_key) : nullptr;
+			if (it != nullptr) {
+				int32_t var_offset = it->offset;
 					// Check if this stack variable is a reference
 				auto ref_info = getIndirectStackInfo(var_offset);
 				if (ref_info.has_value()) {
@@ -14342,16 +14497,19 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 	} else if (is_variable) {
 			// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
 			// This will be handled separately below
-		auto it = current_scope.variables.find(variable_name);
-		if (it == current_scope.variables.end()) {
+		const VariableInfo* it = variable_key ? findVariableInfo(*variable_key) : nullptr;
+		if (it == nullptr) {
 			throw InternalError("Variable not found in scope");
 			return;
 		}
-		int32_t value_offset = it->second.offset;
+		int32_t value_offset = it->offset;
 			// If pointer_depth > 0, we need to store the address of the variable (LEA)
 			// not the value at that address (MOV). This is used for initializer_list
 			// backing arrays where we need to store &array[0], not array[0].
-		if (op.value.pointer_depth.is_pointer()) {
+			// A named array used as a scalar/pointer member initializer decays the
+			// same way, so its inline storage is addressed rather than loaded.
+		const bool source_is_inline_array = it->is_array && !isPointerBaseStorage(value_offset);
+		if (op.value.pointer_depth.is_pointer() || source_is_inline_array) {
 			emitLeaFromFrame(value_reg, value_offset);
 		} else {
 			emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits.value);
@@ -14461,7 +14619,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 		const auto& op = instruction.getTypedPayload<AddressOfOp>();
 
 		int32_t var_offset;
-		const StackVariableScope& current_scope = variable_scopes.back();
+		[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 			// Use register allocator instead of directly using RAX to avoid clobbering dirty registers
 		X64Register target_reg = allocateRegisterWithSpilling();
 		bool is_global = false;
@@ -14474,31 +14632,26 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 			var_offset = getStackOffsetFromTempVar(temp);
 		} else {
 				// Taking address of a named variable
-			std::string_view operand_str;
-			if (const auto* string = std::get_if<StringHandle>(&op.operand.value)) {
-				operand_str = StringTable::getStringView(*string);
+			const VariableKey operand_key = variableKeyOf(op.operand.value).value();
+			if (const auto* string = std::get_if<StringHandle>(&operand_key)) {
 				global_name_handle = *string;
-			} else {
-				assert(std::holds_alternative<TempVar>(op.operand.value) && "AddressOf operand must be StringHandle or TempVar");
-				return;
+				// First, check if this is a global/static local variable
+				is_global = isGlobalVariable(global_name_handle);
 			}
 
-				// First, check if this is a global/static local variable
-			is_global = isGlobalVariable(global_name_handle);
-
 			if (!is_global) {
-				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(operand_str));
-				if (it == current_scope.variables.end()) {
+				const VariableInfo* info = findVariableInfo(operand_key);
+				if (info == nullptr) {
 						// Special case: This might be taking address of a class member (e.g., &Point::x)
 						// which is only valid for pointer-to-member types
 						// For now, stub this out - full implementation would need to generate
 						// a pointer-to-member constant value
-					FLASH_LOG(Codegen, Debug, "AddressOf operand '", operand_str, "' not found in scope - might be pointer-to-member, stubbing with zero");
+					FLASH_LOG(Codegen, Debug, "AddressOf operand not found in scope - might be pointer-to-member, stubbing with zero");
 						// Store zero as a placeholder for pointer-to-member
 					emitMovImm64(target_reg, 0);
 					return;
 				}
-				var_offset = it->second.offset;
+				var_offset = info->offset;
 			}
 		}
 
@@ -14562,7 +14715,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 		is_global = isGlobalVariable(global_name_handle);
 
 		if (!is_global) {
-			const StackVariableScope& current_scope = variable_scopes.back();
+			[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(global_name_handle);
 			if (it == current_scope.variables.end()) {
 				throw InternalError("Variable not found in scope");
@@ -14602,7 +14755,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOfMember(const IrInstruction& 
 	const AddressOfMemberOp& op = std::any_cast<const AddressOfMemberOp&>(instruction.getTypedPayload());
 
 		// Look up the base object's stack offset
-	const StackVariableScope& current_scope = variable_scopes.back();
+	[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 	auto it = current_scope.variables.find(op.base_object);
 	if (it == current_scope.variables.end()) {
 		throw InternalError("Base object not found in scope for AddressOfMember");
@@ -14661,21 +14814,20 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 	StringHandle base_global_name;
 	bool base_is_indirect =
 		op.base_storage == ValueStorage::ContainsAddress; // True if base contains a pointer/reference
-	if (std::holds_alternative<StringHandle>(op.base)) {
-			// Variable name - look up its stack offset
-		StringHandle base_name = std::get<StringHandle>(op.base);
-		const StackVariableScope& current_scope = variable_scopes.back();
-		auto it = current_scope.variables.find(base_name);
-		if (it == current_scope.variables.end()) {
-			if (isGlobalVariable(base_name)) {
+	if (std::holds_alternative<StringHandle>(op.base) || std::holds_alternative<LocalVarId>(op.base)) {
+			// Variable name or local id - look up its stack offset
+		const VariableKey base_key = variableKeyOf(op.base).value();
+		const VariableInfo* info = findVariableInfo(base_key);
+		if (info == nullptr) {
+			if (const auto* base_name = std::get_if<StringHandle>(&base_key); base_name != nullptr && isGlobalVariable(*base_name)) {
 				base_is_global = true;
-				base_global_name = base_name;
+				base_global_name = *base_name;
 			} else {
 				throw InternalError("Base variable not found in scope for ComputeAddress");
 				return;
 			}
 		} else {
-			base_offset = it->second.offset;
+			base_offset = info->offset;
 
 				// Check if base is a pointer (reference or 'this')
 				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
@@ -14735,17 +14887,18 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 
 				// Add RCX to RAX
 			emitAddRAXRCX(textSectionData);
-		} else if (std::holds_alternative<StringHandle>(arr_idx.index)) {
-				// Variable index from variable name
-			StringHandle index_var_name = std::get<StringHandle>(arr_idx.index);
-			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(index_var_name);
-			if (it == current_scope.variables.end()) {
+		} else if (std::holds_alternative<StringHandle>(arr_idx.index) || std::holds_alternative<LocalVarId>(arr_idx.index)) {
+				// Variable index from variable name or local id
+			const VariableKey index_key = std::holds_alternative<LocalVarId>(arr_idx.index)
+				? VariableKey{std::get<LocalVarId>(arr_idx.index)}
+				: VariableKey{std::get<StringHandle>(arr_idx.index)};
+			const VariableInfo* it = findVariableInfo(index_key);
+			if (it == nullptr) {
 				throw InternalError("Index variable not found in scope");
 				return;
 			}
-			int64_t index_offset = it->second.offset;
-			SizeInBits index_size_in_bits = getStackVariableLoadSizeBits(index_var_name);
+			int64_t index_offset = it->offset;
+			SizeInBits index_size_in_bits = getStackVariableLoadSizeBits(index_key);
 
 				// Load index into RCX with proper size and sign extension
 			bool is_signed = isSignedType(arr_idx.indexType());
@@ -14787,13 +14940,12 @@ void IrToObjConverter<TWriterClass>::handleVirtualBaseAdjust(const IrInstruction
 		std::any_cast<const VirtualBaseAdjustOp&>(instruction.getTypedPayload());
 	X64Register source_reg = allocateRegisterWithSpilling();
 
-	if (const auto* source_name = std::get_if<StringHandle>(&op.source)) {
-		const auto& current_scope = variable_scopes.back();
-		const auto source_it = current_scope.variables.find(*source_name);
-		if (source_it == current_scope.variables.end()) {
+	if (std::holds_alternative<StringHandle>(op.source) || std::holds_alternative<LocalVarId>(op.source)) {
+		const VariableInfo* source_it = findVariableInfo(variableKeyOf(op.source).value());
+		if (source_it == nullptr) {
 			throw InternalError("Virtual-base adjustment source variable is not in the current scope");
 		}
-		const int32_t source_offset = source_it->second.offset;
+		const int32_t source_offset = source_it->offset;
 		const bool source_holds_pointer =
 			!op.source_is_address || isPointerBaseStorage(source_offset);
 		if (source_holds_pointer) {
@@ -14860,7 +15012,7 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 
 			// Load the pointer into a register
 		X64Register ptr_reg;
-		const StackVariableScope& current_scope = variable_scopes.back();
+		[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 
 		if (std::holds_alternative<TempVar>(op.pointer.value)) {
 			TempVar temp = std::get<TempVar>(op.pointer.value);
@@ -14875,19 +15027,18 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 				emitMovFromFrame(ptr_reg, temp_offset);
 			}
 		} else {
-			StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
-			auto it = current_scope.variables.find(var_name_handle);
-			if (it == current_scope.variables.end()) {
+			const VariableInfo* it = findVariableInfo(variableKeyOf(op.pointer.value).value());
+			if (it == nullptr) {
 				throw InternalError("Pointer variable not found");
 				return;
 			}
 
 				// Check if the variable is already in a register
-			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(it->second.offset); reg_opt.has_value()) {
+			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(it->offset); reg_opt.has_value()) {
 				ptr_reg = reg_opt.value();
 			} else {
 				ptr_reg = allocateRegisterWithSpilling();
-				emitMovFromFrame(ptr_reg, it->second.offset);
+				emitMovFromFrame(ptr_reg, it->offset);
 			}
 		}
 
@@ -15052,13 +15203,12 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 	if (const auto* temp_var = std::get_if<TempVar>(&op.pointer.value)) {
 		pointer_slot_offset = getStackOffsetFromTempVar(*temp_var);
 	} else {
-		StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
-		auto it = variable_scopes.back().variables.find(var_name_handle);
-		if (it == variable_scopes.back().variables.end()) {
+		const VariableInfo* it = findVariableInfo(variableKeyOf(op.pointer.value).value());
+		if (it == nullptr) {
 			throw InternalError("Pointer variable not found in DereferenceStore");
 			return;
 		}
-		pointer_slot_offset = it->second.offset;
+		pointer_slot_offset = it->offset;
 	}
 	if (pointer_slot_offset == -1) {
 		throw InternalError("Pointer slot has no stack offset in DereferenceStore");
@@ -15075,10 +15225,10 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 			if (temp_offset != -1) {
 				value_slot_offset = temp_offset;
 			}
-		} else if (const auto* string = std::get_if<StringHandle>(&op.value.value)) {
-			auto it = variable_scopes.back().variables.find(*string);
-			if (it != variable_scopes.back().variables.end()) {
-				value_slot_offset = it->second.offset;
+		} else if (std::holds_alternative<StringHandle>(op.value.value) || std::holds_alternative<LocalVarId>(op.value.value)) {
+			const VariableInfo* it = findVariableInfo(variableKeyOf(op.value.value).value());
+			if (it != nullptr) {
+				value_slot_offset = it->offset;
 			}
 		}
 		if (!value_slot_offset.has_value()) {
@@ -15093,7 +15243,7 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 
 		// Allocate registers through the register allocator to avoid conflicts
 	X64Register ptr_reg = allocateRegisterWithSpilling();
-	const StackVariableScope& current_scope = variable_scopes.back();
+	[[maybe_unused]] const StackVariableScope& current_scope = variable_scopes.back();
 
 	emitMovFromFrame(ptr_reg, pointer_slot_offset);
 
@@ -15113,13 +15263,12 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 		emitMovFromFrameSized(
 			SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.typeEnum())},
 			SizedStackSlot{value_offset, value_size, isSignedType(op.value.typeEnum())});
-	} else if (std::holds_alternative<StringHandle>(op.value.value)) {
-		StringHandle var_name_handle = std::get<StringHandle>(op.value.value);
-		auto it = current_scope.variables.find(var_name_handle);
-		if (it != current_scope.variables.end()) {
+	} else if (std::holds_alternative<StringHandle>(op.value.value) || std::holds_alternative<LocalVarId>(op.value.value)) {
+		const VariableInfo* it = findVariableInfo(variableKeyOf(op.value.value).value());
+		if (it != nullptr) {
 			emitMovFromFrameSized(
 				SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.typeEnum())},
-				SizedStackSlot{static_cast<int32_t>(it->second.offset), value_size, isSignedType(op.value.typeEnum())});
+				SizedStackSlot{static_cast<int32_t>(it->offset), value_size, isSignedType(op.value.typeEnum())});
 		}
 	}
 
@@ -15167,12 +15316,8 @@ void IrToObjConverter<TWriterClass>::handleConditionalBranch(const IrInstruction
 				condition_reg = X64Register::RAX;
 			}
 		}
-	} else if (std::holds_alternative<StringHandle>(condition_value)) {
-		StringHandle var_name = std::get<StringHandle>(condition_value);
-
-			// Search from innermost to outermost scope so branch conditions can reference
-			// parameters/locals declared in parent scopes.
-		const VariableInfo* var_info = findVariableInfo(var_name);
+	} else if (std::holds_alternative<StringHandle>(condition_value) || std::holds_alternative<LocalVarId>(condition_value)) {
+		const VariableInfo* var_info = findVariableInfo(variableKeyOf(condition_value).value());
 
 		if (var_info) {
 				// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)
@@ -15392,8 +15537,8 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				if (promote_vararg_float) {
 					emitCvtss2sd(temp_xmm, temp_xmm);
 				}
-			} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
-				int arg_offset = getVariableOffsetOrThrow(*string, "handleIndirectCall stack float arg");
+			} else if (const std::optional<VariableKey> arg_key = variableKeyOf(arg.value); arg_key.has_value()) {
+				int arg_offset = getVariableOffsetOrThrow(*arg_key, "handleIndirectCall stack float arg");
 				bool is_float = (arg.effectiveIrType() == IrType::Float);
 				emitFloatMovFromFrame(temp_xmm, arg_offset, is_float);
 				if (promote_vararg_float) {
@@ -15484,7 +15629,9 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		}
 
 		if ((is_reference_arg || shouldPassStructByAddress(arg)) &&
-			(std::holds_alternative<StringHandle>(arg.value) || std::holds_alternative<TempVar>(arg.value))) {
+			(std::holds_alternative<StringHandle>(arg.value) ||
+			 std::holds_alternative<LocalVarId>(arg.value) ||
+			 std::holds_alternative<TempVar>(arg.value))) {
 			if (!emitLoadAddressLikeArgument(target_reg, arg)) {
 				throw InternalError("Register indirect-call argument marked pass-by-address is not addressable");
 			}
@@ -15536,9 +15683,8 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 					SizedRegister{target_reg, 64, false},
 					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(arg_type)});
 			}
-		} else if (std::holds_alternative<StringHandle>(arg.value)) {
-			StringHandle arg_var_name_handle = std::get<StringHandle>(arg.value);
-			int arg_offset = getVariableOffsetOrThrow(arg_var_name_handle, "handleIndirectCall register arg");
+		} else if (const std::optional<VariableKey> arg_key = variableKeyOf(arg.value); arg_key.has_value()) {
+			int arg_offset = getVariableOffsetOrThrow(*arg_key, "handleIndirectCall register arg");
 			if (is_float_arg) {
 				bool is_float = (arg.effectiveIrType() == IrType::Float);
 				emitFloatMovFromFrame(target_reg, arg_offset, is_float);
@@ -15579,19 +15725,22 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		int func_ptr_offset = getStackOffsetFromTempVar(*temp_var_ptr);
 		emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 	} else {
-		StringHandle var_name_handle = std::get<StringHandle>(op.function_pointer);
+		const VariableKey ptr_key = variableKeyOf(op.function_pointer).value();
 		bool is_global = false;
-		for (const auto& global : global_variables_) {
-			if (global.name == var_name_handle) {
-				is_global = true;
-				break;
+		if (const auto* var_name_handle = std::get_if<StringHandle>(&ptr_key)) {
+			for (const auto& global : global_variables_) {
+				if (global.name == *var_name_handle) {
+					is_global = true;
+					break;
+				}
 			}
 		}
 		if (is_global) {
+			StringHandle global_name = std::get<StringHandle>(ptr_key);
 			uint32_t reloc_offset = emitMovRipRelative(X64Register::RAX, 64);
-			pending_global_relocations_.push_back({reloc_offset, var_name_handle, IMAGE_REL_AMD64_REL32});
+			pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
 		} else {
-			int func_ptr_offset = variable_scopes.back().variables[var_name_handle].offset;
+			int func_ptr_offset = getVariableOffsetOrThrow(ptr_key, "handleIndirectCall function pointer");
 			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 		}
 	}
@@ -16276,9 +16425,8 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 				} else {
 					emitMovImm64(X64Register::RCX, 0);
 				}
-			} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
-				StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
-				const VariableInfo* source_info = findVariableInfo(source_name);
+			} else if (std::holds_alternative<StringHandle>(throw_op.exception_value) || std::holds_alternative<LocalVarId>(throw_op.exception_value)) {
+				const VariableInfo* source_info = findVariableInfo(variableKeyOf(throw_op.exception_value).value());
 				if (source_info) {
 					emitMovFromFrameBySize(X64Register::RCX, source_info->offset, static_cast<int>(exception_size * 8));
 				} else {
@@ -16302,9 +16450,8 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 				} else {
 					emitXorRegReg(X64Register::RSI);
 				}
-			} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
-				StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
-				const VariableInfo* source_info = findVariableInfo(source_name);
+			} else if (std::holds_alternative<StringHandle>(throw_op.exception_value) || std::holds_alternative<LocalVarId>(throw_op.exception_value)) {
+				const VariableInfo* source_info = findVariableInfo(variableKeyOf(throw_op.exception_value).value());
 				if (source_info) {
 					emitLeaFromFrame(X64Register::RSI, source_info->offset);
 				} else {
@@ -16410,9 +16557,8 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 				} else {
 					emitMovImm64(X64Register::RAX, 0);
 				}
-			} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
-				StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
-				const VariableInfo* source_info = findVariableInfo(source_name);
+			} else if (std::holds_alternative<StringHandle>(throw_op.exception_value) || std::holds_alternative<LocalVarId>(throw_op.exception_value)) {
+				const VariableInfo* source_info = findVariableInfo(variableKeyOf(throw_op.exception_value).value());
 				if (source_info) {
 					emitMovFromFrameBySize(X64Register::RAX, source_info->offset, static_cast<int>(exception_size * 8));
 				} else {
@@ -16445,9 +16591,8 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 				} else {
 					emitXorRegReg(X64Register::RSI);
 				}
-			} else if (std::holds_alternative<StringHandle>(throw_op.exception_value)) {
-				StringHandle source_name = std::get<StringHandle>(throw_op.exception_value);
-				const VariableInfo* source_info = findVariableInfo(source_name);
+			} else if (std::holds_alternative<StringHandle>(throw_op.exception_value) || std::holds_alternative<LocalVarId>(throw_op.exception_value)) {
+				const VariableInfo* source_info = findVariableInfo(variableKeyOf(throw_op.exception_value).value());
 				if (source_info) {
 					emitLeaFromFrame(X64Register::RSI, source_info->offset);
 				} else {
@@ -16550,12 +16695,14 @@ void IrToObjConverter<TWriterClass>::emitFuncletLeaRbpFromRdx(std::vector<uint32
 }
 
 template <class TWriterClass>
-void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<StringHandle, StringHandle>& cleanup_var) {
-	const auto& [struct_name_h, var_name_h] = cleanup_var;
-	const VariableInfo* var_info = findVariableInfo(var_name_h);
+void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<StringHandle, VariableKey>& cleanup_var) {
+	const auto& [struct_name_h, var_key] = cleanup_var;
+	const VariableInfo* var_info = findVariableInfo(var_key);
 	if (!var_info) {
 		FLASH_LOG(Codegen, Warning, "emitInlineDestructorCall: variable not found: ",
-				  StringTable::getStringView(var_name_h));
+				  (std::holds_alternative<StringHandle>(var_key)
+					   ? std::string_view(StringTable::getStringView(std::get<StringHandle>(var_key)))
+					   : std::string_view("<local id>")));
 		return;
 	}
 
@@ -16576,7 +16723,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 		current_function_unwind_map_.clear();
 		size_t cleanup_funclet_index = 0;
 
-		auto emitCleanupFunclet = [&](std::span<const std::pair<StringHandle, StringHandle>> cleanup_vars) -> StringHandle {
+		auto emitCleanupFunclet = [&](std::span<const std::pair<StringHandle, VariableKey>> cleanup_vars) -> StringHandle {
 			if (cleanup_vars.empty() || !current_function_mangled_name_.isValid()) {
 				return StringHandle();
 			}
@@ -16609,7 +16756,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 			return symbol_handle;
 		};
 
-		auto populateCleanupChain = [&](std::span<const std::pair<StringHandle, StringHandle>> cleanup_vars,
+		auto populateCleanupChain = [&](std::span<const std::pair<StringHandle, VariableKey>> cleanup_vars,
 										int32_t head_state,
 										int32_t tail_to_state) {
 			if (cleanup_vars.empty() || head_state < 0) {
@@ -16622,7 +16769,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 			std::vector<StringHandle> actions;
 			actions.reserve(cleanup_vars.size());
 			for (const auto& cleanup_var : cleanup_vars) {
-				std::vector<std::pair<StringHandle, StringHandle>> single_cleanup_var;
+				std::vector<std::pair<StringHandle, VariableKey>> single_cleanup_var;
 				single_cleanup_var.push_back(cleanup_var);
 				actions.push_back(emitCleanupFunclet(single_cleanup_var));
 			}

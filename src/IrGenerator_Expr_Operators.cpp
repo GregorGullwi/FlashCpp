@@ -750,20 +750,21 @@ TypedValue AstToIr::buildOrdinaryCallArgument(
 
 TypedValue AstToIr::buildReferenceCallArgumentFromDeclaration(
 	const DeclarationNode& decl_node,
-	StringHandle identifier_name) {
+	VariableKey identifier_key) {
 	const TypeSpecifierNode& type_node = decl_node.type_specifier_node();
+	const IrValue identifier_value = toIrValue(identifier_key);
 	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 		return makeTypedValue(
 			type_node.type_index().withCategory(type_node.type()),
 			SizeInBits{POINTER_SIZE_BITS},
-			IrValue(identifier_name),
+			identifier_value,
 			ReferenceQualifier::LValueReference);
 	}
 
 	TempVar addr_var = emitAddressOf(
 		type_node.category(),
 		static_cast<int>(type_node.size_in_bits()),
-		IrValue(identifier_name));
+		identifier_value);
 	return makeTypedValue(
 		type_node.type_index().withCategory(type_node.type()),
 		SizeInBits{POINTER_SIZE_BITS},
@@ -949,16 +950,21 @@ bool AstToIr::canUseDirectIdentifierCallArgument(
 
 TypedValue AstToIr::buildDirectIdentifierCallArgument(
 	const DeclarationNode& arg_decl_node,
-	StringHandle identifier_name,
+	VariableKey identifier_key,
 	CVReferenceQualifier param_ref_qualifier,
 	const ASTNode& argument,
 	const Token& token) {
 	const TypeSpecifierNode& type_node = arg_decl_node.type_specifier_node();
+	const IrValue identifier_value = toIrValue(identifier_key);
 
-	if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
-			type_node,
-			identifier_name)) {
-		return toTypedValue(*enumerator_constant);
+	// An enumerator is never a function-local object, so only a spelling key
+	// can name one.
+	if (const auto* spelling = std::get_if<StringHandle>(&identifier_key)) {
+		if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
+				type_node,
+				*spelling)) {
+			return toTypedValue(*enumerator_constant);
+		}
 	}
 
 	bool needs_array_decay = false;
@@ -976,7 +982,7 @@ TypedValue AstToIr::buildDirectIdentifierCallArgument(
 		TempVar addr_var = emitAddressOf(
 			type_node.category(),
 			static_cast<int>(type_node.size_in_bits()),
-			IrValue(identifier_name),
+			identifier_value,
 			token);
 		TypedValue arg = makeTypedValue(
 			type_node.type_index().withCategory(type_node.type()),
@@ -987,7 +993,7 @@ TypedValue AstToIr::buildDirectIdentifierCallArgument(
 	}
 
 	if (param_ref_qualifier != CVReferenceQualifier::None) {
-		return buildReferenceCallArgumentFromDeclaration(arg_decl_node, identifier_name);
+		return buildReferenceCallArgumentFromDeclaration(arg_decl_node, identifier_key);
 	}
 
 	if (type_node.is_reference() || type_node.is_rvalue_reference()) {
@@ -995,7 +1001,7 @@ TypedValue AstToIr::buildDirectIdentifierCallArgument(
 			type_node.category(),
 			POINTER_SIZE_BITS,
 			1,
-			identifier_name);
+			identifier_value);
 		return makeTypedValue(
 			type_node.type_index().withCategory(type_node.type()),
 			SizeInBits{static_cast<int>(type_node.size_in_bits())},
@@ -1006,7 +1012,7 @@ TypedValue AstToIr::buildDirectIdentifierCallArgument(
 		TypedValue arg = makeTypedValue(
 			type_node.type_index().withCategory(type_node.type()),
 			SizeInBits{POINTER_SIZE_BITS},
-			IrValue(identifier_name));
+			identifier_value);
 		arg.pointer_depth = PointerDepth{static_cast<int>(type_node.runtime_pointer_depth())};
 		return arg;
 	}
@@ -1014,7 +1020,7 @@ TypedValue AstToIr::buildDirectIdentifierCallArgument(
 	return makeTypedValue(
 		type_node.type_index().withCategory(type_node.type()),
 		SizeInBits{static_cast<int>(type_node.size_in_bits())},
-		IrValue(identifier_name));
+		identifier_value);
 }
 
 TypedValue AstToIr::buildConstructorArgumentValue(
@@ -1082,7 +1088,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 				addr_op.operand.ir_type = toIrType(arg_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{};
-				addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+				addr_op.operand.value = toIrValue(resolvedVariableKey(identifier.name()));
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 
 				value.setType(arg_type.type());
@@ -1099,16 +1105,28 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		const TempVar& arg_temp = std::get<TempVar>(argument_result.value);
 		if (auto lvalue_info = getTempVarLValueInfo(arg_temp);
 			lvalue_info.has_value() &&
-			lvalue_info->kind == LValueInfo::Kind::Member &&
-			std::holds_alternative<StringHandle>(lvalue_info->base)) {
+			lvalue_info->kind == LValueInfo::Kind::Member) {
 			TempVar address_temp = var_counter.next();
-			AddressOfMemberOp addr_member_op;
-			addr_member_op.result = address_temp;
-			addr_member_op.base_object = std::get<StringHandle>(lvalue_info->base);
-			addr_member_op.member_offset = lvalue_info->offset;
-			addr_member_op.member_type_index = argument_result.type_index;
-			addr_member_op.member_size_in_bits = argument_result.size_in_bits.value;
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), token));
+			if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
+				AddressOfMemberOp addr_member_op;
+				addr_member_op.result = address_temp;
+				addr_member_op.base_object = *base_name;
+				addr_member_op.member_offset = lvalue_info->offset;
+				addr_member_op.member_type_index = argument_result.type_index;
+				addr_member_op.member_size_in_bits = argument_result.size_in_bits.value;
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), token));
+			} else {
+				ComputeAddressOp address_op;
+				address_op.result = address_temp;
+				address_op.base = lvalue_info->base;
+				address_op.base_storage = lvalue_info->is_pointer_to_member
+					? ValueStorage::ContainsAddress
+					: ValueStorage::ContainsData;
+				address_op.total_member_offset = lvalue_info->offset;
+				address_op.result_type_index = argument_result.type_index;
+				address_op.result_size_bits = argument_result.size_in_bits;
+				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(address_op), token));
+			}
 
 			ValueCategory category = isTempVarXValue(arg_temp) ? ValueCategory::XValue : ValueCategory::LValue;
 			TempVarMetadata address_meta = TempVarMetadata::makeReference(
@@ -1548,7 +1566,8 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		// Identifier-backed arrays still name the object, so emit its address.
 		// TempVar-backed arrays (global loads, ordered pointer-to-array
 		// dereferences) already carry the runtime address.
-		if (std::holds_alternative<StringHandle>(branch_result.value)) {
+		if (std::holds_alternative<StringHandle>(branch_result.value) ||
+			std::holds_alternative<LocalVarId>(branch_result.value)) {
 			branch_result = materializeAddressResult(
 				branch_node.as<ExpressionNode>(),
 				std::move(branch_result),
@@ -1897,7 +1916,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		if (expected_cat != TypeCategory::Invalid && to_t != expected_cat)
 			return false;
 		if (ci.cast_kind == StandardConversionKind::ArrayToPointer) {
-			if (const auto* identifier_name = std::get_if<StringHandle>(&expr.value)) {
+			if (std::holds_alternative<StringHandle>(expr.value) ||
+				std::holds_alternative<LocalVarId>(expr.value)) {
 				int element_size_bits = get_type_size_bits(from_t);
 				if (element_size_bits <= 0) {
 					element_size_bits = expr.size_in_bits.value > 0 ? expr.size_in_bits.value : 32;
@@ -1905,7 +1925,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				TempVar addr_var = emitAddressOf(
 					from_t,
 					element_size_bits,
-					IrValue(*identifier_name),
+					toIrValue(expr.value),
 					binaryOperatorNode.get_token());
 				expr = makeExprResult(
 					TypeIndex{}.withCategory(to_t),
@@ -2240,10 +2260,11 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		if (element_size_bits <= 0) {
 			element_size_bits = static_cast<int>(type_node.size_in_bits());
 		}
+		const VariableKey array_key = resolvedVariableKey(ident.name());
 		TempVar addr_var = emitAddressOf(
 			type_node.type(),
 			element_size_bits > 0 ? element_size_bits : 32,
-			IrValue(StringTable::getOrInternStringHandle(ident.name())),
+			toIrValue(array_key),
 			binaryOperatorNode.get_token());
 		operand_result = makeExprResult(
 			TypeIndex{}.withCategory(type_node.type()),
@@ -2361,6 +2382,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		if (const auto* string = std::get_if<StringHandle>(&operand_result.value)) {
 			return finishReferenceArg(emitAddressOf(operand_type, operand_size, IrValue(*string)));
+		}
+
+		if (const auto* local_id = std::get_if<LocalVarId>(&operand_result.value)) {
+			return finishReferenceArg(emitAddressOf(operand_type, operand_size, IrValue(*local_id)));
 		}
 
 		if (std::holds_alternative<TempVar>(operand_result.value)) {
@@ -3085,6 +3110,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			std::variant<StringHandle, TempVar, LocalVarId> lhs_value;
 			if (const auto* string_val = std::get_if<StringHandle>(&lhsExprResult.value)) {
 				lhs_value = *string_val;
+			} else if (const auto* local_id_val = std::get_if<LocalVarId>(&lhsExprResult.value)) {
+				lhs_value = *local_id_val;
 			} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
 				if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
 					lhs_value = *global_name;
@@ -3107,6 +3134,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			// Convert std::variant<StringHandle, TempVar, LocalVarId> to IrValue
 			if (const auto* string_ptr = std::get_if<StringHandle>(&lhs_value)) {
 				addr_op.operand.value = *string_ptr;
+			} else if (const auto* local_id_ptr = std::get_if<LocalVarId>(&lhs_value)) {
+				addr_op.operand.value = *local_id_ptr;
 			} else {
 				addr_op.operand.value = std::get<TempVar>(lhs_value);
 			}
@@ -3211,7 +3240,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				// Simple identifier case: p1 <=> p2
 				const auto& lhs_id = std::get<IdentifierNode>(lhs_expr);
 				std::string_view lhs_name = lhs_id.name();
-				lhs_value = StringTable::getOrInternStringHandle(lhs_name);
+				// Named locals carry numeric identity, so pass the resolved key
+				// rather than the spelling; parameters/globals keep the spelling.
+				lhs_value = toVariableBase(resolvedVariableKey(lhs_name));
 
 				// Get the struct type info from symbol table
 				auto symbol = symbol_table.lookup(lhs_name);
@@ -3347,6 +3378,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 							lhsCat,
 							lhsSize,
 							IrValue(*string),
+							binaryOperatorNode.get_token()));
+					} else if (const auto* local_id = std::get_if<LocalVarId>(&lhs_value)) {
+						this_ptr_value = IrValue(emitAddressOf(
+							lhsCat,
+							lhsSize,
+							IrValue(*local_id),
 							binaryOperatorNode.get_token()));
 					} else {
 						TempVar lhs_temp = std::get<TempVar>(lhs_value);
@@ -3838,6 +3875,21 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 	// Special handling for pointer compound assignment (ptr += int or ptr -= int)
 	// MUST be before type promotions to avoid truncating the pointer
+	auto markReferenceLhs = [&](TypedValue& lhs) {
+		bool is_reference = false;
+		if (const auto* string = std::get_if<StringHandle>(&lhs.value)) {
+			is_reference = isVariableReference(StringTable::getStringView(*string));
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&lhs.value)) {
+			if (const DeclarationNode* decl = localDeclarationFor(*local_id)) {
+				is_reference = decl->type_specifier_node().is_reference() ||
+					decl->type_specifier_node().is_rvalue_reference();
+			}
+		}
+		if (is_reference) {
+			lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+		}
+	};
+
 	if ((op == "+=" || op == "-=") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsCat) && lhs_type_node) {
 		// Left side is a pointer (64-bit), right side is integer
 		// Need to scale the offset by sizeof(pointed-to-type)
@@ -3872,17 +3924,17 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
 		// Store result back to LHS (must be a variable)
-		if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
+		if (std::holds_alternative<StringHandle>(lhsExprResult.value) ||
+			std::holds_alternative<LocalVarId>(lhsExprResult.value)) {
+			const IrValue lhs_value = toIrValue(lhsExprResult.value);
 			AssignmentOp assign_op;
-			assign_op.result = std::get<StringHandle>(lhsExprResult.value);
-			assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, std::get<StringHandle>(lhsExprResult.value));
-
-			// Check if LHS is a reference variable
-			StringHandle lhs_handle = std::get<StringHandle>(lhsExprResult.value);
-			std::string_view lhs_name = StringTable::getStringView(lhs_handle);
-			if (isVariableReference(lhs_name)) {
-				assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+			if (const auto* string = std::get_if<StringHandle>(&lhs_value)) {
+				assign_op.result = *string;
+			} else {
+				assign_op.result = std::get<LocalVarId>(lhs_value);
 			}
+			assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, lhs_value);
+			markReferenceLhs(assign_op.lhs);
 
 			assign_op.rhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, result_var);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
@@ -3915,22 +3967,22 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_ARITH_DEBUG] Pointer assignment: lhsSize={}, pointer_depth={}", lhsSize, lhs_pointer_depth);
 
 		// Get the assignment target (must be a variable)
-		if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
+		if (std::holds_alternative<StringHandle>(lhsExprResult.value) ||
+			std::holds_alternative<LocalVarId>(lhsExprResult.value)) {
+			const IrValue lhs_value = toIrValue(lhsExprResult.value);
 			AssignmentOp assign_op;
-			assign_op.result = std::get<StringHandle>(lhsExprResult.value);
-			assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, std::get<StringHandle>(lhsExprResult.value));
-
-			// Check if LHS is a reference variable
-			StringHandle lhs_handle = std::get<StringHandle>(lhsExprResult.value);
-			std::string_view lhs_name = StringTable::getStringView(lhs_handle);
-			if (isVariableReference(lhs_name)) {
-				assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+			if (const auto* string = std::get_if<StringHandle>(&lhs_value)) {
+				assign_op.result = *string;
+			} else {
+				assign_op.result = std::get<LocalVarId>(lhs_value);
 			}
+			assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, lhs_value);
+			markReferenceLhs(assign_op.lhs);
 
 			assign_op.rhs = toTypedValue(rhsExprResult);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			// Return the assigned value
-			return makeExprResult(nativeTypeIndex(lhsCat), SizeInBits{lhsSize}, IrOperand{std::get<StringHandle>(lhsExprResult.value)}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(lhsCat), SizeInBits{lhsSize}, lhsExprResult.value, PointerDepth{}, ValueStorage::ContainsData);
 		} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
 			// A qualified global/static member lowers to a loaded temp that still
 			// carries Global lvalue metadata; store through the global rather than
@@ -4038,6 +4090,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			assign_op.result = *string;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
 			assign_op.result = *temp_var;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&lhsExprResult.value)) {
+			assign_op.result = *local_id;
 		} else {
 			// LHS is an immediate value - this shouldn't happen for valid assignments
 			throw InternalError("Assignment LHS cannot be an immediate value");
@@ -4237,6 +4291,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (const auto* sh = std::get_if<StringHandle>(&original_lhs_value)) {
 				assign_op.result = *sh;
 				assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, *sh);
+			} else if (const auto* id = std::get_if<LocalVarId>(&original_lhs_value)) {
+				assign_op.result = *id;
+				assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, *id);
 			} else if (const auto* tv = std::get_if<TempVar>(&original_lhs_value)) {
 				assign_op.result = *tv;
 				assign_op.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, *tv);
@@ -4488,6 +4545,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			AssignmentOp assign_op;
 			if (const auto* sh = std::get_if<StringHandle>(&lhsExprResult.value)) {
 				assign_op.result = *sh;
+				assign_op.lhs = toTypedValue(lhsExprResult);
+			} else if (const auto* id = std::get_if<LocalVarId>(&lhsExprResult.value)) {
+				assign_op.result = *id;
 				assign_op.lhs = toTypedValue(lhsExprResult);
 			} else if (const auto* tv = std::get_if<TempVar>(&lhsExprResult.value)) {
 				assign_op.result = *tv;
@@ -4945,10 +5005,15 @@ ExprResult AstToIr::generateVaArgIntrinsic(const CallExprNode& callExprNode) {
 		va_list_var = *temp_var;
 	} else if (const auto* string = std::get_if<StringHandle>(&vaListExprResult.value)) {
 		va_list_var = *string;
+	} else if (const auto* local_id = std::get_if<LocalVarId>(&vaListExprResult.value)) {
+		va_list_var = *local_id;
 	} else {
 		FLASH_LOG(Codegen, Error, "__builtin_va_arg first argument must be a variable");
 		return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
+	const IrValue va_list_value = std::visit(
+		[](const auto& value) -> IrValue { return IrValue{value}; },
+		va_list_var);
 
 	// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
 	// This must match the detection logic in generateVaStartIntrinsic
@@ -4971,13 +5036,11 @@ ExprResult AstToIr::generateVaArgIntrinsic(const CallExprNode& callExprNode) {
 		} else {
 			// va_list is a variable name - load its value (which is a pointer) into a TempVar
 			va_list_struct_ptr = var_counter.next();
-			StringHandle var_name_handle = std::get<StringHandle>(va_list_var);
-
 			// Use Assignment to load the pointer value from the variable
 			AssignmentOp load_pointer;
 			load_pointer.result = va_list_struct_ptr;
 			load_pointer.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
-			load_pointer.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, var_name_handle);
+			load_pointer.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_value);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_pointer), callExprNode.called_from()));
 		}
 
@@ -5256,11 +5319,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const CallExprNode& callExprNode) {
 			AssignmentOp load_ptr_op;
 			load_ptr_op.result = va_list_struct_ptr;
 			load_ptr_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
-			if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
-				load_ptr_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, *string);
-			} else {
-				load_ptr_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
-			}
+			load_ptr_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_value);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), callExprNode.called_from()));
 
 			// Load gp_offset (offset 0) for integers, or fp_offset (offset 4) for floats
@@ -5520,11 +5579,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const CallExprNode& callExprNode) {
 			AssignmentOp load_ptr_op;
 			load_ptr_op.result = current_ptr;
 			load_ptr_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, current_ptr);
-			if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
-				load_ptr_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, *string);
-			} else {
-				load_ptr_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
-			}
+			load_ptr_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_value);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), callExprNode.called_from()));
 
 			// Step 2: Read the value at the current pointer
@@ -5581,11 +5636,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const CallExprNode& callExprNode) {
 			// Step 4: Store the updated pointer back to va_list
 			AssignmentOp assign_op;
 			assign_op.result = var_counter.next(); // unused but required
-			if (const auto* temp_var = std::get_if<TempVar>(&va_list_var)) {
-				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, *temp_var);
-			} else {
-				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var));
-			}
+			assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_value);
 			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, next_ptr);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), callExprNode.called_from()));
 
@@ -5604,13 +5655,6 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 	// Get the first argument (va_list variable)
 	ASTNode arg0 = callExprNode.arguments()[0];
 	ExprResult arg0ExprResult = visitExpressionNode(arg0.as<ExpressionNode>());
-
-	// Get the va_list variable name (needed for assignment later)
-	StringHandle va_list_name_handle;
-	if (std::holds_alternative<IdentifierNode>(arg0.as<ExpressionNode>())) {
-		const auto& id = std::get<IdentifierNode>(arg0.as<ExpressionNode>());
-		va_list_name_handle = StringTable::getOrInternStringHandle(id.name());
-	}
 
 	// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
 	bool va_list_is_pointer = isVaListPointerType(arg0, arg0ExprResult);
@@ -5643,25 +5687,31 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 		// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 		// Get the va_list variable from arg0ExprResult.value
 		std::variant<StringHandle, TempVar, LocalVarId> va_list_var;
-		if (va_list_name_handle.isValid()) {
-			va_list_var = va_list_name_handle;
+		if (std::holds_alternative<IdentifierNode>(arg0.as<ExpressionNode>())) {
+			const auto& id = std::get<IdentifierNode>(arg0.as<ExpressionNode>());
+			const VariableKey va_list_key = resolvedVariableKey(id.name());
+			if (const auto* string = std::get_if<StringHandle>(&va_list_key)) {
+				va_list_var = *string;
+			} else {
+				va_list_var = std::get<LocalVarId>(va_list_key);
+			}
 		} else if (const auto* temp_var = std::get_if<TempVar>(&arg0ExprResult.value)) {
 			va_list_var = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&arg0ExprResult.value)) {
 			va_list_var = *string;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&arg0ExprResult.value)) {
+			va_list_var = *local_id;
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 			return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 		}
+		const IrValue va_list_value = std::visit(
+			[](const auto& value) -> IrValue { return IrValue{value}; },
+			va_list_var);
 
 		AssignmentOp final_assign;
-		if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
-			final_assign.result = *string;
-			final_assign.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, *string);
-		} else {
-			final_assign.result = std::get<TempVar>(va_list_var);
-			final_assign.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
-		}
+		std::visit([&](const auto& variable) { final_assign.result = variable; }, va_list_var);
+		final_assign.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_value);
 		final_assign.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_addr);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(final_assign), callExprNode.called_from()));
 
@@ -5671,16 +5721,27 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 		// On Linux: variadic args are in registers saved to reg_save_area, point there instead
 
 		std::variant<StringHandle, TempVar, LocalVarId> va_list_var;
-		if (va_list_name_handle.isValid()) {
-			va_list_var = va_list_name_handle;
+		if (std::holds_alternative<IdentifierNode>(arg0.as<ExpressionNode>())) {
+			const auto& id = std::get<IdentifierNode>(arg0.as<ExpressionNode>());
+			const VariableKey va_list_key = resolvedVariableKey(id.name());
+			if (const auto* string = std::get_if<StringHandle>(&va_list_key)) {
+				va_list_var = *string;
+			} else {
+				va_list_var = std::get<LocalVarId>(va_list_key);
+			}
 		} else if (const auto* temp_var = std::get_if<TempVar>(&arg0ExprResult.value)) {
 			va_list_var = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&arg0ExprResult.value)) {
 			va_list_var = *string;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&arg0ExprResult.value)) {
+			va_list_var = *local_id;
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 			return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 		}
+		const IrValue va_list_value = std::visit(
+			[](const auto& value) -> IrValue { return IrValue{value}; },
+			va_list_var);
 
 		if (context_->isItaniumMangling()) {
 			// Linux/System V AMD64: Use va_list structure internally even for char* va_list
@@ -5692,13 +5753,8 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 
 			// Assign to va_list variable
 			AssignmentOp assign_op;
-			if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
-				assign_op.result = *string;
-				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, *string);
-			} else {
-				assign_op.result = std::get<TempVar>(va_list_var);
-				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
-			}
+			std::visit([&](const auto& variable) { assign_op.result = variable; }, va_list_var);
+			assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_value);
 			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_struct_addr);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), callExprNode.called_from()));
 		} else {
@@ -5734,13 +5790,8 @@ ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 
 			// Assign to va_list variable
 			AssignmentOp assign_op;
-			if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
-				assign_op.result = *string;
-				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, *string);
-			} else {
-				assign_op.result = std::get<TempVar>(va_list_var);
-				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
-			}
+			std::visit([&](const auto& variable) { assign_op.result = variable; }, va_list_var);
+			assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_value);
 			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_start_addr);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), callExprNode.called_from()));
 		}
@@ -5965,6 +6016,12 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 						decl) {
 						return decl->type_specifier_node().type_index();
 					}
+				}
+				return {};
+			}
+			if (const auto* local_id = std::get_if<LocalVarId>(&base)) {
+				if (const DeclarationNode* decl = localDeclarationFor(*local_id)) {
+					return decl->type_specifier_node().type_index();
 				}
 				return {};
 			}
@@ -6289,7 +6346,7 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 	// Generate a Load instruction based on the lvalue kind
 	// Support both Member kind and Indirect kind (for dereferenced pointers like &y in lambda captures)
 	if (lv_info.kind == LValueInfo::Kind::Indirect || lv_info.kind == LValueInfo::Kind::ReferenceDeref) {
-		// For Indirect kind (dereferenced pointer), the base can be a TempVar or StringHandle
+		// For Indirect kind (dereferenced pointer), the base can be a TempVar or named variable.
 		// Generate a Dereference instruction to load the current value
 		DereferenceOp deref_op;
 		deref_op.result = current_value_temp;
@@ -6298,16 +6355,19 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 		deref_op.pointer.size_in_bits = SizeInBits{64}; // pointer size
 		deref_op.pointer.pointer_depth = PointerDepth{1};
 
-		// Extract the base (TempVar or StringHandle)
-		std::variant<TempVar, StringHandle> base_value;
+		// Extract the pointer storage identity without converting local identity back to spelling.
+		std::variant<TempVar, StringHandle, LocalVarId> base_value;
 		if (const auto* temp_var = std::get_if<TempVar>(&lv_info.base)) {
 			deref_op.pointer.value = *temp_var;
 			base_value = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&lv_info.base)) {
 			deref_op.pointer.value = *string;
 			base_value = *string;
+		} else if (const auto* local_id = std::get_if<LocalVarId>(&lv_info.base)) {
+			deref_op.pointer.value = *local_id;
+			base_value = *local_id;
 		} else {
-			FLASH_LOG(Codegen, Debug, "     Indirect kind requires TempVar or StringHandle base");
+			FLASH_LOG(Codegen, Debug, "     Indirect kind requires a variable or TempVar base");
 			return false;
 		}
 
@@ -6334,7 +6394,7 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 		result_tv.size_in_bits = SizeInBits{static_cast<int>(lvalue_size_bits)};
 		result_tv.value = result_temp;
 
-		// Handle both TempVar and StringHandle bases for DereferenceStore
+		// Store through the same identity used to load the pointer value.
 		if (std::holds_alternative<TempVar>(base_value)) {
 			emitDereferenceStore(
 				result_tv,
@@ -6343,14 +6403,16 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 				std::get<TempVar>(base_value),
 				token);
 		} else {
-			// StringHandle base: emitDereferenceStore expects a TempVar, so we pass the StringHandle as the pointer
-			// Generate DereferenceStore with StringHandle directly
 			DereferenceStoreOp store_op;
 			store_op.pointer.setType(lvalue_type);
 			store_op.pointer.type_index = nativeTypeIndex(lvalue_type);
 			store_op.pointer.size_in_bits = SizeInBits{64};
 			store_op.pointer.pointer_depth = PointerDepth{1};
-			store_op.pointer.value = std::get<StringHandle>(base_value);
+			if (const auto* string = std::get_if<StringHandle>(&base_value)) {
+				store_op.pointer.value = *string;
+			} else {
+				store_op.pointer.value = std::get<LocalVarId>(base_value);
+			}
 			store_op.value = result_tv;
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 		}

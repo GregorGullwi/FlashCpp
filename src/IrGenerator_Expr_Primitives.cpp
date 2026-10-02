@@ -219,7 +219,7 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, TypeidNode>) {
 			return generateTypeidIr(expr);
 		} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
-			return generateLambdaExpressionIr(expr);
+			return generateLambdaExpressionIr(expr, std::string_view{}, LocalVarId{});
 		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 			return generateConstructorCallIr(expr);
 		} else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
@@ -301,7 +301,7 @@ ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNod
 						  StringTable::getStringView(struct_info->getName()));
 				DestructorCallOp dtor_op;
 				dtor_op.struct_name = struct_info->getName();
-				dtor_op.object = StringTable::getOrInternStringHandle(object_name);
+				dtor_op.object = toVariableBase(resolvedVariableKey(object_name));
 				ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), dtor.type_name_token()));
 			} else {
 				FLASH_LOG(Codegen, Debug, "Struct ", type_name, " has no destructor, skipping call");
@@ -328,12 +328,11 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 
 	TempVar object_addr = var_counter.next();
 	if (ptmNode.is_arrow()) {
-		if (std::holds_alternative<StringHandle>(object_result.value)) {
-			StringHandle obj_ptr_name = std::get<StringHandle>(object_result.value);
+		if (std::holds_alternative<StringHandle>(object_result.value) || std::holds_alternative<LocalVarId>(object_result.value)) {
 			AssignmentOp assign_op;
 			assign_op.result = object_addr;
 			assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, object_addr);
-			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, obj_ptr_name);
+			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, toIrValue(object_result.value));
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 		} else if (const auto* temp_var = std::get_if<TempVar>(&object_result.value)) {
 			object_addr = *temp_var;
@@ -342,13 +341,12 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 			return ExprResult{};
 		}
 	} else {
-		if (std::holds_alternative<StringHandle>(object_result.value)) {
-			StringHandle obj_name = std::get<StringHandle>(object_result.value);
+		if (std::holds_alternative<StringHandle>(object_result.value) || std::holds_alternative<LocalVarId>(object_result.value)) {
 			AddressOfOp addr_op;
 			addr_op.result = object_addr;
 			addr_op.operand = TypedValue{
 				.size_in_bits = object_result.size_in_bits,
-				.value = obj_name,
+				.value = toIrValue(object_result.value),
 				.type_index = nativeTypeIndex(object_result.typeEnum()),
 				.pointer_depth = PointerDepth{},
 				.ir_type = toIrType(object_result.typeEnum())};
@@ -1155,7 +1153,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	// Frame name of the resolved declaration. Parameters, `this`, globals and
 	// other non-local entities keep their spelling; a local that shadows an
 	// outer declaration of the same spelling names its own frame instead.
-	const StringHandle identifier_frame_name = localFrameNameFor(*symbol, identifier_handle);
+	const VariableKey identifier_frame_name = variableKeyForSymbol(*symbol, identifier_handle);
 
 	if (symbol->is<DeclarationNode>()) {
 		const auto& decl_node = symbol->as<DeclarationNode>();
@@ -1235,7 +1233,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// dereference handling.
 			if (decl_node.is_array_object() || type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{identifier_frame_name}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, toIrOperand(identifier_frame_name), PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
@@ -1261,7 +1259,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 								 lvalue_temp.var_number, identifierNode.name());
 
 					// Generate Assignment to copy the pointer value from the reference parameter to the temp
-				StringHandle var_handle = identifier_frame_name;
+				IrValue var_handle = toIrValue(identifier_frame_name);
 				AssignmentOp assign_op;
 				assign_op.result = lvalue_temp;
 				assign_op.lhs = withStorage(
@@ -1304,13 +1302,13 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 			int ptr_depth = type_node.runtime_pointer_depth() > 0 ? static_cast<int>(type_node.runtime_pointer_depth()) : 1;
 			TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
-												  identifier_frame_name);
+												  toIrValue(identifier_frame_name));
 
 				// Mark as lvalue with Indirect metadata for unified assignment handler
 				// This allows compound assignments (like x *= 2) to work on dereferenced references
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::Indirect,
-				identifier_frame_name,	 // The reference variable name
+				toVariableBase(identifier_frame_name),	 // The reference variable name
 				0  // offset is 0 for simple dereference
 			);
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
@@ -1353,7 +1351,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		return makeIdentifierResult(
 			return_type,
 			size_bits,
-			identifier_frame_name,
+			toIrOperand(identifier_frame_name),
 			type_index,
 			pointer_depth);
 	}
@@ -1424,7 +1422,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					// reference value.
 				if (decl_node.is_array_object() || type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-					return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{identifier_frame_name}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, toIrOperand(identifier_frame_name), PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
@@ -1437,7 +1435,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						// The reference variable holds a pointer address
 						// We need to load it into a temp and mark it with Indirect LValue metadata
 					TempVar addr_temp = var_counter.next();
-					StringHandle var_handle = identifier_frame_name;
+					IrValue var_handle = toIrValue(identifier_frame_name);
 
 						// Use AssignmentOp to copy the pointer value to a temp
 					AssignmentOp assign_op;
@@ -1473,13 +1471,13 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 				int ptr_depth = type_node.runtime_pointer_depth() > 0 ? static_cast<int>(type_node.runtime_pointer_depth()) : 1;
 				TempVar result_temp = emitDereference(pointee_type, pointee_size, ptr_depth,
-													  identifier_frame_name);
+													  toIrValue(identifier_frame_name));
 
 					// Mark as lvalue with ReferenceDeref metadata for unified assignment handler
 					// ReferenceDeref (vs plain Indirect) signals downstream code that the base is a C++ reference variable.
 				LValueInfo lvalue_info(
 					LValueInfo::Kind::ReferenceDeref,
-					identifier_frame_name,	 // The reference variable name
+					toVariableBase(identifier_frame_name),	 // The reference variable name
 					0  // offset is 0 for simple dereference
 				);
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
@@ -1500,7 +1498,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			ExprResult result = makeIdentifierResult(
 				result_type,
 				size_bits,
-				identifier_frame_name,
+				toIrOperand(identifier_frame_name),
 				carriesSemanticTypeIndex(result_type)
 					? result_type_index
 					: TypeIndex{},
@@ -2118,7 +2116,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 				// Local variable - return the frame name of the resolved declaration
 			TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
 			StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
-			return makeExprResult(type_index, SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{localFrameNameFor(*found_symbol, qualified_name_handle)}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(type_index, SizeInBits{static_cast<int>(type_node.size_in_bits())}, toIrOperand(variableKeyForSymbol(*found_symbol, qualified_name_handle)), PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 

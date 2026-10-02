@@ -584,3 +584,24 @@ arithmetic used by numeric temporary allocation. Lambda `__invoke` generation
 resets temporary numbers without clearing global reference metadata. Both require
 separate boundary regressions and investigation; no new name-based type recovery
 should be introduced to compensate for either path.
+
+## Reading a local reference bound to an array crashes
+
+Declaring a local reference to an array materializes the array bytes into the
+reference's own frame slot, but reading through the reference treats that slot as
+a pointer and dereferences uninitialized storage:
+
+```cpp
+int main() {
+	const char (&text)[6] = "hello";
+	return text[0] == 'h' ? 0 : 1;   // access violation
+}
+```
+
+The same crash occurs for `int (&r)[3] = local_array;`. Declaring the reference
+without reading it works, so this is a read-path lowering gap rather than a
+declaration failure: the reference needs either a materialized array object with
+its address stored in the reference slot, or consistent inline-array storage that
+the read path addresses directly. This predates the numeric local-identity
+refactor (it reproduces on the pre-refactor compiler) and needs a focused
+regression once the storage model is settled.
