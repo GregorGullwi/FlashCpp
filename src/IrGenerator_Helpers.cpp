@@ -30,10 +30,13 @@ StringHandle AstToIr::declareLocalFrameName(const ASTNode& declaration, StringHa
 		const uint32_t prior_declarations = use.declarations;
 		use.declarations = prior_declarations + 1;
 		has_shadowed_local_frames_ = true;
+		// '#' rather than '$': '$' is the template-instantiation separator
+		// (template_name$<hash>) and simpleBaseName() truncates at the first
+		// one, so a frame name must not look like instantiation metadata.
 		StringHandle frame_name = StringTable::getOrInternStringHandle(
 			StringBuilder()
 				.append(spelling)
-				.append('$')
+				.append('#')
 				.append(std::to_string(prior_declarations))
 				.commit());
 		shadowed_local_frames_.push_back(ShadowedLocalFrame{declaration.raw_pointer(), frame_name});
