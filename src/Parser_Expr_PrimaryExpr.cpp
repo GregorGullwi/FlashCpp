@@ -29,6 +29,8 @@ struct QualifiedMemberFunctionAddressOverloadSet {
 	const QualifiedIdentifierNode* qualified_identifier = nullptr;
 	const StructTypeInfo* owner = nullptr;
 	std::vector<const FunctionDeclarationNode*> functions;
+	std::vector<const FunctionDeclarationNode*> direct_functions;
+	std::vector<const TemplateFunctionDeclarationNode*> function_templates;
 };
 
 const QualifiedIdentifierNode* tryGetQualifiedMemberFunctionAddress(
@@ -103,25 +105,65 @@ QualifiedMemberFunctionAddressOverloadSet tryCollectQualifiedMemberFunctionAddre
 
 	for (const StructMemberFunction& member_function : result.owner->member_functions) {
 		if (member_function.is_constructor || member_function.is_destructor ||
-			member_function.getName() != qualified.nameHandle() ||
-			!member_function.function_decl.is<FunctionDeclarationNode>()) {
+			member_function.getName() != qualified.nameHandle()) {
 			continue;
 		}
-		result.functions.push_back(
-			&member_function.function_decl.as<FunctionDeclarationNode>());
+		if (member_function.function_decl.is<TemplateFunctionDeclarationNode>()) {
+			const TemplateFunctionDeclarationNode& function_template =
+				member_function.function_decl.as<TemplateFunctionDeclarationNode>();
+			result.functions.push_back(&function_template.function_decl_node());
+			result.function_templates.push_back(&function_template);
+			continue;
+		}
+		if (member_function.function_decl.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& function =
+				member_function.function_decl.as<FunctionDeclarationNode>();
+			result.functions.push_back(&function);
+			result.direct_functions.push_back(&function);
+		}
 	}
 	return result;
 }
 
 ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
+	Parser& parser,
 	const TypeSpecifierNode& parameter_type,
 	const ASTNode* argument_node) {
 	const QualifiedMemberFunctionAddressOverloadSet address_overloads =
 		tryCollectQualifiedMemberFunctionAddressOverloads(argument_node);
 	if (address_overloads.qualified_identifier == nullptr ||
 		address_overloads.owner == nullptr ||
-		address_overloads.functions.empty()) {
+		(address_overloads.direct_functions.empty() &&
+			address_overloads.function_templates.empty())) {
 		return ArgumentConversionInfo::no_match();
+	}
+
+	const FunctionDeclarationNode* instantiated_function_template = nullptr;
+	if (address_overloads.function_templates.size() == 1 &&
+		parameter_type.has_function_signature()) {
+		const FunctionSignature& target_signature =
+			parameter_type.function_signature();
+		std::vector<TypeSpecifierNode> target_argument_types;
+		for (const FunctionType& target_argument_type :
+			target_signature.parameter_types()) {
+			target_argument_types.push_back(
+				typeSpecifierFromFunctionType(target_argument_type));
+		}
+		if (address_overloads.qualified_identifier->has_template_arguments() ||
+			!target_argument_types.empty()) {
+			std::optional<ASTNode> instantiated =
+				parser.tryInstantiateMemberFunctionTemplateForAddress(
+					*address_overloads.owner,
+					*address_overloads.qualified_identifier,
+					std::span<const TypeSpecifierNode>(
+						target_argument_types.data(),
+						target_argument_types.size()));
+			if (instantiated.has_value() &&
+				instantiated->is<FunctionDeclarationNode>()) {
+				instantiated_function_template =
+					&instantiated->as<FunctionDeclarationNode>();
+			}
+		}
 	}
 
 	TypeSpecifierNode selected_function_type;
@@ -155,8 +197,9 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 			return ArgumentConversionInfo::no_match();
 		}
 
-		int matching_functions = 0;
-		for (const FunctionDeclarationNode* candidate : address_overloads.functions) {
+		TypeSpecifierNode selected_direct_function_type;
+		int matching_direct_functions = 0;
+		for (const FunctionDeclarationNode* candidate : address_overloads.direct_functions) {
 			if (candidate == nullptr || candidate->is_template_pattern() ||
 				candidate->is_static() == target_is_member_pointer) {
 				continue;
@@ -205,11 +248,67 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 			if (!function_type_match.is_valid) {
 				continue;
 			}
-			selected_function_type = std::move(candidate_type);
-			++matching_functions;
+			selected_direct_function_type = std::move(candidate_type);
+			++matching_direct_functions;
 		}
-		if (matching_functions != 1) {
+		if (matching_direct_functions > 1) {
 			return ArgumentConversionInfo::no_match();
+		}
+		if (matching_direct_functions == 1) {
+			selected_function_type = std::move(selected_direct_function_type);
+		} else {
+			if (instantiated_function_template == nullptr ||
+				instantiated_function_template->is_static() ==
+					target_is_member_pointer) {
+				return ArgumentConversionInfo::no_match();
+			}
+			TypeSpecifierNode candidate_type = target_is_member_pointer
+				? FlashCpp::ParserFunctionTypeHelpers::
+					  buildMemberFunctionPointerTypeFromFunctionDeclaration(
+						  *instantiated_function_template)
+				: FlashCpp::ParserFunctionTypeHelpers::
+					  buildFunctionPointerTypeFromFunctionDeclaration(
+						  *instantiated_function_template);
+			const CanonicalTypeImport candidate_import =
+				importCanonicalType(table, candidate_type);
+			if (candidate_import.status !=
+				CanonicalTypeImportStatus::Supported) {
+				return ArgumentConversionInfo::no_match();
+			}
+			TypeId candidate_type_id = canonicalTypeWithoutReference(
+				table,
+				candidate_import.type);
+			candidate_type_id =
+				stripCanonicalTopCv(table, candidate_type_id).first;
+			const CanonicalTypeNode candidate_node = table.node(candidate_type_id);
+			TypeId candidate_function{};
+			if (target_is_member_pointer) {
+				if (candidate_node.kind !=
+					CanonicalTypeKind::MemberFunctionPointer) {
+					return ArgumentConversionInfo::no_match();
+				}
+				candidate_function = candidate_node.child;
+			} else {
+				if (candidate_node.kind != CanonicalTypeKind::Pointer) {
+					return ArgumentConversionInfo::no_match();
+				}
+				candidate_function = stripCanonicalTopCv(
+					table,
+					candidate_node.child).first;
+				if (table.node(candidate_function).kind !=
+					CanonicalTypeKind::Function) {
+					return ArgumentConversionInfo::no_match();
+				}
+			}
+			const ConversionPlan function_type_match =
+				buildCanonicalStructuralConversionPlan(
+					table,
+					table.pointer(candidate_function),
+					table.pointer(target_function));
+			if (!function_type_match.is_valid) {
+				return ArgumentConversionInfo::no_match();
+			}
+			selected_function_type = std::move(candidate_type);
 		}
 	}
 
@@ -253,6 +352,36 @@ void appendQualifiedMemberFunctionAddressAssociatedTypes(
 	}
 }
 } // namespace
+
+std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
+	const StructTypeInfo& owner,
+	const QualifiedIdentifierNode& member_id,
+	std::span<const TypeSpecifierNode> target_parameter_types) {
+	const std::string_view owner_name = StringTable::getStringView(owner.name);
+	const std::string_view member_name =
+		StringTable::getStringView(member_id.nameHandle());
+	if (member_id.has_template_arguments()) {
+		std::optional<TemplateArgumentVector> explicit_arguments =
+			materializeConcreteCallTemplateArguments(
+				member_id.template_arguments());
+		if (!explicit_arguments.has_value()) {
+			return std::nullopt;
+		}
+		return try_instantiate_member_function_template_explicit(
+			owner_name,
+			member_name,
+			std::span<const TemplateTypeArg>(
+				explicit_arguments->data(),
+				explicit_arguments->size()));
+	}
+	if (target_parameter_types.empty()) {
+		return std::nullopt;
+	}
+	return try_instantiate_member_function_template(
+		owner_name,
+		member_name,
+		target_parameter_types);
+}
 
 bool Parser::expressionReferencesKnownEmptyFunctionParameterPack(
 	const ASTNode& expression) const {
@@ -936,12 +1065,13 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 		}
 	}
 	filterPhase1OrdinaryFunctionOverloads(all_overloads);
-	auto build_argument_conversion = [](
+	auto build_argument_conversion = [this](
 		const TypeSpecifierNode& argument_type,
 		const TypeSpecifierNode& parameter_type,
 		const ASTNode* argument_node) {
 		if (argument_type.category() == TypeCategory::Invalid) {
 			return buildQualifiedMemberFunctionAddressArgumentConversion(
+				*this,
 				parameter_type,
 				argument_node);
 		}

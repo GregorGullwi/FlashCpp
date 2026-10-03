@@ -3813,6 +3813,10 @@ private:
 									  TypeSpecifierNode& type_specifier);
 
 public:	// Public methods for template instantiation
+	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateForAddress(
+		const StructTypeInfo& owner,
+		const QualifiedIdentifierNode& member_id,
+		std::span<const TypeSpecifierNode> target_parameter_types);
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,
