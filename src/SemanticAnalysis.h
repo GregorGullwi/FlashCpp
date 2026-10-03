@@ -502,6 +502,9 @@ private:
 	bool tryCollectOverloadResolutionArgTypes(
 		const ChunkedVector<ASTNode>& arguments,
 		OverloadResolutionArgTypeVector& arg_types_out);
+	bool tryCollectPointOfInstantiationOverloadResolutionArgTypes(
+		const ChunkedVector<ASTNode>& arguments,
+		OverloadResolutionArgTypeVector& arg_types_out);
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);

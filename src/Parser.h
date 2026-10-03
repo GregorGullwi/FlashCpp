@@ -2288,6 +2288,9 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	bool tryCollectFunctionCallArgTypes(
 		const ChunkedVector<ASTNode>& arguments,
 		std::vector<TypeSpecifierNode>& arg_types_out);
+	bool tryCollectPointOfInstantiationFunctionCallArgTypes(
+		const ChunkedVector<ASTNode>& arguments,
+		std::vector<TypeSpecifierNode>& arg_types_out);
 	std::optional<TemplateArgumentVector> materializeConcreteCallTemplateArguments(
 		std::span<const ASTNode> template_argument_nodes);
 	std::optional<TypeSpecifierNode> tryBuildFunctionTemplateAddressType(

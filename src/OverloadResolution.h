@@ -4767,11 +4767,12 @@ inline const ASTNode* getOverloadArgumentNodeOrNull(const ArgumentNodeContainer&
 
 // Perform overload resolution for a function call
 // Returns the best matching overload, or nullptr if no match or ambiguous
-template <typename ArgumentNodeContainer>
-inline OverloadResolutionResult resolve_overload_with_argument_nodes(
+template <typename ArgumentNodeContainer, typename ConversionBuilder>
+inline OverloadResolutionResult resolve_overload_with_argument_nodes_using_conversion(
 	std::span<const ASTNode> overloads,
 	std::span<const TypeSpecifierNode> argument_types,
-	const ArgumentNodeContainer& argument_nodes) {
+	const ArgumentNodeContainer& argument_nodes,
+	ConversionBuilder&& build_argument_conversion) {
 	if (overloads.empty()) {
 		return OverloadResolutionResult::no_match();
 	}
@@ -4824,7 +4825,7 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 			const ASTNode* arg_node = getOverloadArgumentNodeOrNull(argument_nodes, i);
 
 			const ArgumentConversionInfo conversion =
-				buildArgumentConversionInfo(arg_type, param_type, arg_node);
+				build_argument_conversion(arg_type, param_type, arg_node);
 			if (!conversion.is_valid) {
 				all_convertible = false;
 				break;
@@ -4884,7 +4885,7 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 						const auto& pt = prev_params[k].as<DeclarationNode>().type_specifier_node();
 						const ASTNode* arg_node = getOverloadArgumentNodeOrNull(argument_nodes, k);
 						const ArgumentConversionInfo conv =
-							buildArgumentConversionInfo(argument_types[k], pt, arg_node);
+							build_argument_conversion(argument_types[k], pt, arg_node);
 						if (!conv.is_valid) {
 							prev_valid = false;
 							break;
@@ -4932,6 +4933,25 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 	}
 
 	return OverloadResolutionResult(best_match);
+}
+
+template <typename ArgumentNodeContainer>
+inline OverloadResolutionResult resolve_overload_with_argument_nodes(
+	std::span<const ASTNode> overloads,
+	std::span<const TypeSpecifierNode> argument_types,
+	const ArgumentNodeContainer& argument_nodes) {
+	return resolve_overload_with_argument_nodes_using_conversion(
+		overloads,
+		argument_types,
+		argument_nodes,
+		[](const TypeSpecifierNode& argument_type,
+		   const TypeSpecifierNode& parameter_type,
+		   const ASTNode* argument_node) {
+			return buildArgumentConversionInfo(
+				argument_type,
+				parameter_type,
+				argument_node);
+		});
 }
 
 // Receiver object const/volatile for member overload ranking. Pointer receivers
