@@ -273,7 +273,8 @@ AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(co
 				for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
 					result.indices.push_back(*it);
 				}
-				result.is_valid = member->is_array && !member->array_dimensions.empty() &&
+				result.is_valid = (member->is_array || member->is_reference()) &&
+					!member->array_dimensions.empty() &&
 					(member->array_dimensions.size() == result.indices.size()) && result.indices.size() > 1;
 			}
 		}
@@ -713,12 +714,20 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				base_object = member_multi_dim.qualified_member_name;
 			}
 
+			// A reference or pointer array member holds the array's address, so
+			// the flattened access must index through it rather than treat the
+			// member slot as inline elements.
+			const bool member_base_is_address =
+				member_multi_dim.member_info->is_reference() ||
+				member_multi_dim.member_info->is_rvalue_reference() ||
+				(member_multi_dim.member_info->pointer_depth > 0 && !member_multi_dim.member_info->is_array);
+
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::ArrayElement,
 				base_object,
 				member_multi_dim.member_offset);
 			lvalue_info.array_index = IrValue{flat_index};
-			lvalue_info.is_pointer_to_array = false;
+			lvalue_info.is_pointer_to_array = member_base_is_address;
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 			ArrayAccessOp payload;
@@ -727,7 +736,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			payload.element_size_in_bits = base_element_size;
 			payload.array = base_object;
 			payload.member_offset = member_multi_dim.member_offset;
-			payload.is_pointer_to_array = false;
+			payload.is_pointer_to_array = member_base_is_address;
 			payload.index.setType(TypeCategory::UnsignedLongLong);
 			payload.index.ir_type = IrType::Integer;
 			payload.index.size_in_bits = SizeInBits{64};
@@ -899,16 +908,20 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 												  int element_size_bits,
 												  TypeIndex element_type_index,
 												  std::variant<StringHandle, TempVar, LocalVarId> base_object,
-												  int64_t member_offset) -> ExprResult {
+												  int64_t member_offset,
+												  bool base_is_address) -> ExprResult {
 					ExprResult index_result = visitExpressionNode(index_expr_node.as<ExpressionNode>());
 					TempVar result_var = var_counter.next();
 
+					// A reference or pointer member holds the array's address, so
+					// the element access must index through it rather than treat
+					// the member slot as inline elements.
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::ArrayElement,
 						base_object,
 						member_offset);
 					lvalue_info.array_index = toIrValue(index_result.value);
-					lvalue_info.is_pointer_to_array = false;
+					lvalue_info.is_pointer_to_array = base_is_address;
 					setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 					ArrayAccessOp payload;
@@ -917,7 +930,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 					payload.element_size_in_bits = element_size_bits;
 					payload.array = base_object;
 					payload.member_offset = member_offset;
-					payload.is_pointer_to_array = false;
+					payload.is_pointer_to_array = base_is_address;
 					payload.index.setType(index_result.category());
 					payload.index.ir_type = index_result.effectiveIrType();
 					payload.index.size_in_bits = index_result.size_in_bits;
@@ -975,7 +988,9 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 									element_size_bits,
 									member->type_index,
 									base_object,
-									static_cast<int64_t>(member_result.adjusted_offset));
+									static_cast<int64_t>(member_result.adjusted_offset),
+									member->is_reference() || member->is_rvalue_reference() ||
+										(member->pointer_depth > 0 && !member->is_array));
 							}
 						}
 					}
@@ -1011,7 +1026,9 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 									element_size_bits,
 									static_member->type_index,
 									qualified_name,
-									0);
+									0,
+									static_member->is_reference() || static_member->is_rvalue_reference() ||
+										(static_member->pointer_depth > 0 && !static_member->is_array));
 							}
 						}
 					}

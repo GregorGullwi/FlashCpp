@@ -2020,6 +2020,18 @@ public:
 
 	// Array support (for type trait checking)
 	bool is_array() const { return is_array_; }
+	// True when the declared entity itself owns inline array storage. A
+	// parenthesized pointer-to-array (T (*p)[N]) and a reference-to-array
+	// (T (&r)[N]) are scalar objects whose pointee carries the bounds, so they
+	// are not array objects even though array bounds are recorded.
+	bool is_array_object() const {
+		return is_array_ && !has_pointee_array_declarator() && !is_reference();
+	}
+	// True when the declared entity is a reference whose referred-to type is an
+	// array (T (&r)[N...]). Such an entity stores the array's address.
+	bool is_reference_to_array() const {
+		return is_reference() && is_array_ && !has_pointee_array_declarator();
+	}
 	void set_array(bool is_array, std::optional<size_t> array_size = std::nullopt) {
 		is_array_ = is_array;
 		array_dimensions_.clear();
@@ -3604,11 +3616,27 @@ public:
 	bool has_qualified_declarator_owner() const { return qualified_declarator_owner_.isValid(); }
 	uint32_t line_number() const { return identifier_.line(); }
 	bool is_array() const { return !array_dimensions_.empty() || is_unsized_array_; }
-	// True when the declared entity itself is an array object ([dcl.arr]).
-	// A pointer-to-array declarator such as T (*p)[N] stores N as a pointee
-	// bound; the entity is a scalar pointer, so this returns false for it.
-	bool is_array_object() const {
+	// True when the declaration carries array extents outside a pointer
+	// declarator: an array object or a reference-to-array. Use this where the
+	// extents themselves matter (for example substituting a dependent bound),
+	// regardless of whether the entity owns inline storage or stores an
+	// address. A pointer-to-array declarator such as T (*p)[N] binds N inside
+	// the pointer and returns false here.
+	bool has_outer_array_extents() const {
 		return is_array() && !type_node_.has_pointee_array_declarator();
+	}
+	// Historical name: true when the declaration carries array extents outside
+	// a pointer declarator (array object or reference-to-array). Most code uses
+	// this to mean "has array bounds", so it stays reference-inclusive.
+	bool is_array_object() const {
+		return has_outer_array_extents();
+	}
+	// True when the declared entity itself owns inline array storage. A
+	// reference-to-array (T (&r)[N]) stores the referenced array's address
+	// instead, so it returns false here. Use this where layout or frame storage
+	// depends on the entity owning its elements.
+	bool owns_inline_array_storage() const {
+		return has_outer_array_extents() && !type_node_.is_reference();
 	}
 	// Returns the first (outermost) dimension for backwards compatibility
 	const std::optional<ASTNode> array_size() const {

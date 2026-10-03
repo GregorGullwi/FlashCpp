@@ -1998,7 +1998,7 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						// Check if it's an array object.  A pointer-to-array
 						// entity such as T (*p)[N] is a scalar pointer
 						// ([dcl.ptr]/1), so array sizing must not apply.
-						if (decl->is_array_object()) {
+						if (decl->has_outer_array_extents()) {
 							const auto& array_type_spec = decl->type_specifier_node();
 							size_t element_size = get_typespec_size_bytes(array_type_spec);
 							if (element_size > 0) {
@@ -2281,7 +2281,7 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 							// total size.  A pointer-to-array entity such as
 							// T (*p)[N] is a scalar pointer ([dcl.ptr]/1), so
 							// array sizing must not apply.
-							if (decl->is_array_object()) {
+							if (decl->has_outer_array_extents()) {
 								const auto& type_spec = decl->type_specifier_node();
 								size_t element_size = get_typespec_size_bytes(type_spec);
 								if (element_size > 0) {

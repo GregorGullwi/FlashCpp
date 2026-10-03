@@ -2484,13 +2484,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// object; its pointee bounds must not scale its storage.
 			auto [static_member_size, static_member_alignment] =
 				calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
-			bool is_array = decl.is_array_object() || type_spec.is_array();
+			bool is_array = decl.owns_inline_array_storage() || type_spec.is_array_object();
 			// C++20 [dcl.ptr]/1: bounds bound by a parenthesized declarator
 			// belong to the pointee; the static member object is a scalar
 			// pointer, so its storage must not scale by them ([dcl.arr]).
 			const bool static_pointee_array_declarator = type_spec.has_pointee_array_declarator();
 			std::vector<size_t> array_dimensions;
-			if (decl.is_array_object()) {
+			if (decl.owns_inline_array_storage()) {
 				for (const auto& dim_expr : decl.array_dimensions()) {
 					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
@@ -2514,7 +2514,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 					}
 				}
-			} else if (type_spec.is_array()) {
+			} else if (type_spec.is_array_object()) {
 				for (size_t dim_size : type_spec.array_dimensions()) {
 					if (dim_size == 0) {
 						continue;
@@ -3828,7 +3828,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// member typing preserves the declarator shape; storage stays a
 		// scalar pointer.
 		bool pointee_array_declarator = false;
-		if (decl.is_array_object()) {
+		if (decl.owns_inline_array_storage()) {
 			is_array = true;
 			// Collect all array dimensions
 			const auto& dims = decl.array_dimensions();
@@ -3861,6 +3861,23 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				array_dimensions.push_back(dim_size);
 				member_size *= dim_size;
 				referenced_size_bits *= dim_size;
+			}
+		} else if (type_spec.is_reference_to_array()) {
+			// A reference to an array is a scalar member that stores the array
+			// address, but its referred-to bounds must be preserved so a
+			// subscript through the member indexes the referenced array.
+			if (!type_spec.array_dimensions().empty()) {
+				array_dimensions.assign(
+					type_spec.array_dimensions().begin(),
+					type_spec.array_dimensions().end());
+			} else {
+				for (const auto& dim_expr : decl.array_dimensions()) {
+					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
+					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+					if (eval_result.success() && eval_result.as_int() > 0) {
+						array_dimensions.push_back(static_cast<size_t>(eval_result.as_int()));
+					}
+				}
 			}
 		} else if (type_spec.has_pointee_array_declarator()) {
 			pointee_array_declarator = true;

@@ -7668,7 +7668,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Handle array size substitution for non-type template parameters
 		std::optional<ASTNode> substituted_array_size;
-		if (decl.is_array_object()) {
+		if (decl.has_outer_array_extents()) {
 			if (decl.array_size().has_value()) {
 				ASTNode array_size_node = *decl.array_size();
 
