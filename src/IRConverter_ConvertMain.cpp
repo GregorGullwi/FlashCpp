@@ -12831,11 +12831,9 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		array_name_view = StringTable::getStringView(array_name_handle);
 	} else if (const auto* local_id = std::get_if<LocalVarId>(&op.array)) {
 		array_base_offset = getVariableOffsetOrThrow(*local_id, "handleArrayAccess local array base");
-		// A named local that is itself an array owns inline element storage, so
-		// do not dereference its frame slot as a pointer. A local reference to
-		// an object still reaches a member array through the pointer path.
-		const VariableInfo* local_info = findVariableInfo(*local_id);
-		if (isPointerBaseStorage(array_base_offset) && !(local_info != nullptr && local_info->is_array)) {
+		// isPointerBaseStorage is the single address-vs-inline predicate: a
+		// reference/pointer base holds an address, an inline array does not.
+		if (isPointerBaseStorage(array_base_offset)) {
 			is_array_pointer = true;
 		}
 	} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
@@ -13281,7 +13279,6 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		int64_t array_base_offset = 0;
 		bool array_is_tempvar = false;
 		bool array_is_local_id = false;
-		bool local_base_is_array = false;
 
 		if (const auto* string_ptr = std::get_if<StringHandle>(&op.array)) {
 			array_name_handle = *string_ptr;
@@ -13289,9 +13286,6 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		} else if (const auto* local_id = std::get_if<LocalVarId>(&op.array)) {
 			array_base_offset = getVariableOffsetOrThrow(*local_id, "handleArrayStore local array base");
 			array_is_local_id = true;
-			if (const VariableInfo* local_info = findVariableInfo(*local_id)) {
-				local_base_is_array = local_info->is_array;
-			}
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
 			// Array is a TempVar (e.g., from member_access for struct.array_member)
 			// The TempVar holds a pointer to the array base
@@ -13479,11 +13473,10 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		// Check if the object (not the array) is a pointer (reference parameter or 'this')
 		// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 		bool is_object_pointer = false;
-		// A named local that is itself an array owns inline element storage, so
-		// its base must not be dereferenced even when the local is a reference
-		// bound to the array. A local reference to an object still uses the
-		// pointer path to reach a member array.
-		if (is_member_array || (array_is_local_id && !local_base_is_array)) {
+		// A member array's base object, or a named local array base, may hold an
+		// address (a reference/pointer object); isPointerBaseStorage is the
+		// single predicate that separates that from inline element storage.
+		if (is_member_array || array_is_local_id) {
 			if (isPointerBaseStorage(array_base_offset)) {
 				is_object_pointer = true;
 			}
