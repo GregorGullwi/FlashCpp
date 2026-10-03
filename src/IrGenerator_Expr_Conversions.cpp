@@ -1310,11 +1310,12 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			const ExpressionNode& array_expr = arraySubscript.array_expr().as<ExpressionNode>();
 			if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
 					// This is a multidimensional array access like &arr[i][j]
-				auto multi_dim = collectMultiDimArrayIndices(arraySubscript);
+				const MultiDimSubscriptChain multi_dim_chain = collectMultiDimSubscriptChain(arraySubscript);
+				auto multi_dim = resolveMultiDimIdentifierArrayBase(multi_dim_chain);
 
-				if (multi_dim.is_valid && multi_dim.base_decl) {
+				if (multi_dim) {
 						// Compute flat index using the same logic as generateArraySubscriptIr
-					const auto& dims = multi_dim.base_decl->array_dimensions();
+					const auto& dims = multi_dim->base_decl->array_dimensions();
 					std::vector<size_t> strides;
 					strides.reserve(dims.size());
 
@@ -1344,7 +1345,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					}
 
 						// Get element type and size
-					const TypeSpecifierNode& type_node = multi_dim.base_decl->type_specifier_node();
+					const TypeSpecifierNode& type_node = multi_dim->base_decl->type_specifier_node();
 					const TypeCategory element_category = type_node.category();
 					int element_size_bits = static_cast<int>(type_node.size_in_bits());
 					if (element_size_bits == 0) {
@@ -1356,8 +1357,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					TempVar flat_index = var_counter.next();
 					bool first_term = true;
 
-					for (size_t k = 0; k < multi_dim.indices.size(); ++k) {
-						auto idx_operands = visitExpressionNode(multi_dim.indices[k].as<ExpressionNode>());
+					for (size_t k = 0; k < multi_dim_chain.indices.size(); ++k) {
+						auto idx_operands = visitExpressionNode(multi_dim_chain.indices[k].as<ExpressionNode>());
 
 						if (strides[k] == 1) {
 							if (first_term) {
@@ -1409,7 +1410,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					payload.result = addr_var;
 					payload.element_type_index = element_type_index.withCategory(element_category);
 					payload.element_size_in_bits = element_size_bits;
-					payload.array = toVariableBase(multi_dim.base_array_name);
+					payload.array = toVariableBase(multi_dim->base_array_name);
 					payload.index.setType(TypeCategory::UnsignedLongLong);
 					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};

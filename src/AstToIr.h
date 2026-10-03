@@ -67,35 +67,31 @@ public:
 	static constexpr int kMaxPlaceholderRecursionDepth = 8;
 
 private:
+	struct MultiDimSubscriptChain {
+		const ExpressionNode* root_expression = nullptr;
+		std::vector<ASTNode> indices;  // Indices from outermost to innermost
+	};
+
 	struct MultiDimArrayAccess {
 		VariableKey base_array_name;
-		std::vector<ASTNode> indices;  // Indices from outermost to innermost
 		const DeclarationNode* base_decl = nullptr;
-		bool is_valid = false;
 	};
 
 	struct MultiDimMemberArrayAccess {
-		std::string_view object_name;
 		VariableKey object_key;
-		std::string_view member_name;
 		StringHandle qualified_member_name;
-		const ExpressionNode* member_expression = nullptr;
-		std::vector<ASTNode> indices;  // Indices from outermost to innermost
 		const StructMember* member_info = nullptr;
-		int64_t member_offset = 0;
+		int64_t object_relative_offset = 0;
 		// True when the object named by object_key is a reference/pointer, so the
 		// base operand holds an address rather than inline member storage.
 		bool object_is_address = false;
-		bool is_valid = false;
 	};
 
 	// A subscript chain rooted at a pointer-to-array dereference, e.g.
 	// (*p)[i][j] with p of type T(*)[2][4] (C++20 [dcl.ptr]/1, [expr.sub]).
 	struct MultiDimPointeeDerefArrayAccess {
 		CanonicalTypeDesc pointee_desc{};
-		std::vector<ASTNode> indices;  // Indices from outermost to innermost
 		const ExpressionNode* deref_operand = nullptr;  // Expression yielding the pointer
-		bool is_valid = false;
 	};
 
 	struct AddressComponents {
@@ -425,9 +421,13 @@ private:
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
 	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
-	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
-	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
-	MultiDimPointeeDerefArrayAccess collectMultiDimPointeeDerefIndices(const ArraySubscriptNode& subscript);
+	MultiDimSubscriptChain collectMultiDimSubscriptChain(const ArraySubscriptNode& subscript);
+	std::optional<MultiDimMemberArrayAccess> resolveMultiDimMemberArrayBase(
+		const MultiDimSubscriptChain& chain);
+	std::optional<MultiDimArrayAccess> resolveMultiDimIdentifierArrayBase(
+		const MultiDimSubscriptChain& chain);
+	std::optional<MultiDimPointeeDerefArrayAccess> resolveMultiDimPointeeDerefArrayBase(
+		const MultiDimSubscriptChain& chain);
 	std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const;
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 										ExpressionContext context = ExpressionContext::Load);
