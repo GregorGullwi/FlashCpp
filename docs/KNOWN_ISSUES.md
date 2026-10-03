@@ -597,16 +597,27 @@ resets temporary numbers without clearing global reference metadata. Both requir
 separate boundary regressions and investigation; no new name-based type recovery
 should be introduced to compensate for either path.
 
-## Multi-dimensional array extents in a reference declarator do not parse
+## Reference-to-array in an abstract declarator or typedef does not parse
 
-A one-dimensional reference-to-array declarator (`int (&r)[3] = values;`) parses
-and lowers correctly, but a multi-dimensional one is rejected:
+The named and parameter declarator forms of a reference-to-array now parse and
+lower, including multi-dimensional extents:
 
 ```cpp
 int m[2][2] = {{1, 2}, {3, 4}};
-int (&rm)[2][2] = m;   // error: Expected ';' after declaration
+int (&rm)[2][2] = m;              // ok
+void f(const int (&r)[2][2]);     // ok
 ```
 
-The parser stops after the first `[2]` inside the parenthesized declarator and
-does not consume the remaining extent. This is a declarator-parsing gap, separate
-from the reference-binding lowering that now handles the one-dimensional form.
+The abstract (type-id) and typedef forms are still rejected, even in one
+dimension. `consume_type_id_abstract_declarators` and the typedef declarator
+probe do not recognize a parenthesized `(&)[N...]` group, so both fail before
+the reference is recorded:
+
+```cpp
+typedef int (&ArrRef)[3];                     // error: Expected identifier after type in typedef
+int (&r)[3] = static_cast<int (&)[3]>(a);     // error: Expected '>' after type in static_cast
+```
+
+Extending the abstract/typedef declarator parser to accept a reference-to-array
+group is separate from the reference-binding lowering that already handles the
+named form.
