@@ -177,8 +177,8 @@ struct LValueInfo {
 	// Can be a constant (unsigned long long), TempVar, or StringHandle
 	std::optional<IrValue> array_index;
 
-	// For ArrayElement: whether the array base is a pointer (int* arr) or array (int arr[])
-	bool is_pointer_to_array = false;
+	// For ArrayElement: true when the base operand holds an address; false when it names inline storage.
+	bool base_holds_address = false;
 
 	// For Member: whether the base object is a pointer (ptr->member) or direct object (obj.member)
 	// When true, handleMemberStore should dereference the pointer before accessing the member

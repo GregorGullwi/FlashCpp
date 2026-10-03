@@ -2554,7 +2554,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				IrValue index_value = lv_info.array_index.value();
 				addr_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, index_value);
 
-				addr_op.is_pointer_to_array = lv_info.is_pointer_to_array;
+				addr_op.base_holds_address = lv_info.base_holds_address;
 
 					// Emit the instruction
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), decl.identifier_token()));
@@ -2618,7 +2618,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					SizeInBits{size_in_bits},
 					static_cast<unsigned long long>(static_cast<unsigned char>(value)));
 				store_op.member_offset = 0;
-				store_op.is_pointer_to_array = false;
+				store_op.base_holds_address = false;
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op),
 												 node.declaration().identifier_token()));
 			};
@@ -2710,7 +2710,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				store_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 				store_op.value = toTypedValue(init_operands);
 				store_op.member_offset = 0;
-				store_op.is_pointer_to_array = false;  // Local arrays are actual arrays, not pointers
+				store_op.base_holds_address = false;  // Local arrays are actual arrays, not pointers
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op),
 												 node.declaration().identifier_token()));
@@ -3757,7 +3757,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				access_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 				access_op.element_type_index = nativeTypeIndex(array_element_type);
 				access_op.element_size_in_bits = array_element_size;
-				access_op.is_pointer_to_array = false;
+				access_op.base_holds_address = false;
 				access_op.member_offset = 0;
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(access_op), Token()));
@@ -3770,7 +3770,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				store_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 				store_op.value = makeTypedValue(array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_temp);
 				store_op.member_offset = 0;
-				store_op.is_pointer_to_array = false;
+				store_op.base_holds_address = false;
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), Token()));
 			}
@@ -3833,7 +3833,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				addr_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 				addr_op.element_type_index = nativeTypeIndex(array_element_type);
 				addr_op.element_size_in_bits = array_element_size;
-				addr_op.is_pointer_to_array = false;
+				addr_op.base_holds_address = false;
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), binding_token));
 
@@ -3862,7 +3862,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				load_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 				load_op.element_type_index = nativeTypeIndex(array_element_type);
 				load_op.element_size_in_bits = array_element_size;
-				load_op.is_pointer_to_array = false;	 // Local array
+				load_op.base_holds_address = false;	 // Local array
 				load_op.member_offset = 0;
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(load_op), binding_token));
