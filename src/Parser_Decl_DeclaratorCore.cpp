@@ -382,55 +382,68 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			} else {
 				advance(); // consume ')'
 
-				// Reference-to-array: T (&name)[N]
+				// Reference-to-array: T (&name)[N][M]...
 				if (peek() == "["_tok) {
-					advance(); // consume '['
+					std::vector<ASTNode> array_dimensions;
+					bool parsed_all_dimensions = true;
+					while (peek() == "["_tok) {
+						advance(); // consume '['
 
-					// Parse array size expression
-					auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (size_result.is_error()) {
-						restore_token_position(saved_pos);
-					} else {
-						std::optional<ASTNode> array_size_expr = size_result.node();
+						// A reference to an array of unknown bound is ill-formed, so
+						// an empty extent is not a valid suffix here.
+						if (peek() == "]"_tok) {
+							parsed_all_dimensions = false;
+							break;
+						}
+
+						// Parse array size expression
+						auto size_result =
+							parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (size_result.is_error()) {
+							parsed_all_dimensions = false;
+							break;
+						}
+						array_dimensions.push_back(*size_result.node());
 
 						// Expect closing ']'
 						if (!consume("]"_tok)) {
-							restore_token_position(saved_pos);
-						} else {
-							// Successfully parsed reference-to-array pattern
-							// Set the type_spec to be a reference
-							if (is_rvalue_ref) {
-								type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);	// rvalue reference
-							} else {
-								type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);	// lvalue reference
-							}
-							type_spec.set_array(true);
-							if (array_size_expr.has_value()) {
-								addConstantArrayDimensionsToTypeSpec(
-									type_spec,
-									std::span<const ASTNode>(&*array_size_expr, 1));
-							}
-
-							// Use a synthetic unnamed token if no name was provided
-							if (!has_name) {
-								ref_identifier = Token(Token::Type::Identifier, ""sv,
-													   type_spec.token().line(), type_spec.token().column(),
-													   type_spec.token().file_index());
-							}
-
-							// Create declaration node
-							auto decl_node = emplace_node<DeclarationNode>(
-								emplace_node<TypeSpecifierNode>(type_spec),
-								ref_identifier,
-								array_size_expr);
-
-							if (custom_alignment.has_value()) {
-								decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
-							}
-
-							discard_saved_token(saved_pos);
-							return ParseResult::success(decl_node);
+							parsed_all_dimensions = false;
+							break;
 						}
+					}
+
+					if (!parsed_all_dimensions) {
+						restore_token_position(saved_pos);
+					} else {
+						// Successfully parsed reference-to-array pattern
+						// Set the type_spec to be a reference
+						if (is_rvalue_ref) {
+							type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);	// rvalue reference
+						} else {
+							type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);	// lvalue reference
+						}
+						type_spec.set_array(true);
+						addConstantArrayDimensionsToTypeSpec(type_spec, array_dimensions);
+
+						// Use a synthetic unnamed token if no name was provided
+						if (!has_name) {
+							ref_identifier = Token(Token::Type::Identifier, ""sv,
+												   type_spec.token().line(), type_spec.token().column(),
+												   type_spec.token().file_index());
+						}
+
+						// Create declaration node
+						auto decl_node = emplace_node<DeclarationNode>(
+							emplace_node<TypeSpecifierNode>(type_spec),
+							ref_identifier,
+							std::move(array_dimensions));
+
+						if (custom_alignment.has_value()) {
+							decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+						}
+
+						discard_saved_token(saved_pos);
+						return ParseResult::success(decl_node);
 					}
 				}
 				// Reference-to-function: T (&name)(Args...)
