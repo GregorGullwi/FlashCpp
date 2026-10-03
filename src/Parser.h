@@ -371,6 +371,16 @@ struct QualifiedIdParseResult {
 		: namespaces(ns.begin(), ns.end()), final_identifier(id), template_args(args), has_template_arguments(true) {}
 };
 
+struct NamedTemplateTypeDeduction {
+	StringHandle name;
+	TemplateTypeArg argument;
+};
+
+struct NamedTemplateArgPackDeduction {
+	StringHandle name;
+	TemplateArgumentVector arguments;
+};
+
 // Result of consuming ::member type access and ... pack expansion after template arguments
 // in a base class specifier. Shared across all base class parsing sites.
 struct BaseClassPostTemplateInfo {
@@ -2161,6 +2171,10 @@ private:
 	
 	using DeducedTemplateArgPackMap =
 		std::unordered_map<StringHandle, TemplateArgumentVector, StringHash, StringEqual>;
+	using NamedTemplateTypeDeductionVector =
+		std::vector<NamedTemplateTypeDeduction>;
+	using NamedTemplateArgPackDeductionVector =
+		std::vector<NamedTemplateArgPackDeduction>;
 
 	struct CallArgDeductionInfo {
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
@@ -2202,10 +2216,23 @@ private:
 	static std::optional<bool> preDeduceTemplateArgsFromMatchingTypes(
 		const TypeSpecifierNode& pattern_type,
 		const TypeSpecifierNode& concrete_type,
-		const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
-			tparam_nodes_by_name,
+		std::span<const TemplateParameterNode> template_params,
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
 		DeducedTemplateArgPackMap& param_name_to_pack_args,
+		int recursion_depth);
+	static std::optional<bool> preDeduceTemplateArgsFromMatchingTypes(
+		const TypeSpecifierNode& pattern_type,
+		const TypeSpecifierNode& concrete_type,
+		std::span<const TemplateParameterNode> template_params,
+		NamedTemplateTypeDeductionVector& param_name_to_arg,
+		DeducedTemplateArgPackMap& param_name_to_pack_args,
+		int recursion_depth);
+	static std::optional<bool> preDeduceTemplateArgsFromMatchingTypes(
+		const TypeSpecifierNode& pattern_type,
+		const TypeSpecifierNode& concrete_type,
+		std::span<const TemplateParameterNode> template_params,
+		NamedTemplateTypeDeductionVector& param_name_to_arg,
+		NamedTemplateArgPackDeductionVector& param_name_to_pack_args,
 		int recursion_depth);
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
@@ -2242,6 +2269,10 @@ private:
 		size_t function_pack_arg_start,
 		int recursion_depth,
 		NamespaceHandle source_namespace);
+	std::optional<TemplateArgumentVector> tryDeduceMemberFunctionTemplateAddressArguments(
+		const TemplateFunctionDeclarationNode& function_template,
+		std::span<const TypeSpecifierNode> target_parameter_types,
+		const TypeSpecifierNode& target_return_type);
 	struct TemplateDeductionCandidate {
 		TemplateArgumentVector template_args;
 		CallArgDeductionInfo deduction_info;
@@ -2274,10 +2305,22 @@ private:
 	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args);
 std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	const TemplateParameterVector& template_params,
+	std::span<const ASTNode> func_params,
+	std::span<const TypeSpecifierNode> arg_types,
+	int recursion_depth,
+	std::span<const NamedTemplateTypeDeduction> prebound_template_args);
+std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
+	const TemplateParameterVector& template_params,
 	const FunctionDeclarationNode& func_decl,
 	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth,
 	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args);
+std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
+	const TemplateParameterVector& template_params,
+	const FunctionDeclarationNode& func_decl,
+	std::span<const TypeSpecifierNode> arg_types,
+	int recursion_depth,
+	std::span<const NamedTemplateTypeDeduction> prebound_template_args);
 	// Function-parameter packs are defined by the declarator ellipsis
 	// (DeclarationNode::is_parameter_pack). Type structure alone is not enough:
 	// Wrap<Ts>... xs is a pack, while const Node<U, Others...>& other is not.
@@ -3816,7 +3859,8 @@ public:	// Public methods for template instantiation
 	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateForAddress(
 		const StructTypeInfo& owner,
 		const QualifiedIdentifierNode& member_id,
-		std::span<const TypeSpecifierNode> target_parameter_types);
+		std::span<const TypeSpecifierNode> target_parameter_types,
+		const TypeSpecifierNode& target_return_type);
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,

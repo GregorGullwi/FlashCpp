@@ -678,13 +678,16 @@ Continue boundary 3A in this order:
     `tests/test_canonical_dependent_member_function_pointer_reference_contextual_address_ret0.cpp`
     and `tests/test_canonical_dependent_member_function_pointer_reference_access_e1617.cpp`.
     A single dependent member-function-template candidate can now deduce its
-    function parameters from the target member-function-pointer signature;
-    covered by `tests/test_canonical_dependent_member_function_template_address_overload_ret0.cpp`
+    function parameters and direct return-only template parameters from the target
+    member-function-pointer signature; covered by
+    `tests/test_canonical_dependent_member_function_template_address_overload_ret0.cpp`,
+    `tests/test_canonical_dependent_member_function_template_return_only_deduction_ret0.cpp`,
     and `tests/test_canonical_dependent_member_function_template_address_access_e1617.cpp`.
-    Multiple member-template partial ordering, deduction from return-only
-    template parameters, free-function-template target deduction, other
-    dependent member-function-pointer forms, and unsupported callable
-    conversions still need substitution-aware canonical ranking.
+    Multiple member-template partial ordering, nested return-only type
+    materialization, free-function-template target deduction, other dependent
+    member-function-pointer forms, and unsupported callable conversions still
+    need substitution-aware canonical ranking. A `ResultWrapper<Result>` probe
+    currently reaches an incomplete result type after member-template deduction.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
