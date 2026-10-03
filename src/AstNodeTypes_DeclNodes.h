@@ -2688,21 +2688,40 @@ inline void promoteDeclaratorShapeToOrdered(
 	components.reserve(type.pointer_depth() + type.array_dimensions().size() + 1);
 	appendDeclaratorShapeForSubstitution(type, components);
 	if (!array_bound_expressions.empty()) {
-		size_t dimension_index = 0;
-		for (DeclaratorComponent& component : components) {
+		std::vector<DeclaratorComponent> components_with_bounds;
+		components_with_bounds.reserve(
+			components.size() + array_bound_expressions.size());
+		bool replaced_array_components = false;
+		for (const DeclaratorComponent& component : components) {
 			if (component.kind != DeclaratorComponentKind::Array &&
 				component.kind != DeclaratorComponentKind::UnknownBoundArray) {
+				components_with_bounds.push_back(component);
 				continue;
 			}
-			if (dimension_index < type.array_dimensions().size() &&
-				type.array_dimensions()[dimension_index] == 0 &&
-				dimension_index < array_bound_expressions.size()) {
-				component = DeclaratorComponent::array(0);
+			if (replaced_array_components) {
+				continue;
 			}
-			if (dimension_index < type.array_dimensions().size()) {
-				++dimension_index;
+			for (size_t dimension_index = 0;
+				dimension_index < array_bound_expressions.size();
+				++dimension_index) {
+				if (!array_bound_expressions[dimension_index].has_value()) {
+					components_with_bounds.push_back(
+						DeclaratorComponent::unknownBoundArray());
+					continue;
+				}
+				const size_t dimension = dimension_index < type.array_dimensions().size()
+					? type.array_dimensions()[dimension_index]
+					: 0;
+				components_with_bounds.push_back(
+					DeclaratorComponent::array(dimension));
 			}
+			replaced_array_components = true;
 		}
+		if (!replaced_array_components) {
+			throw InternalError(
+				"alias array bounds have no declarator array component");
+		}
+		components = std::move(components_with_bounds);
 	}
 	if (components.empty()) {
 		return;

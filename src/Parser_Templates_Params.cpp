@@ -538,7 +538,38 @@ ParseResult Parser::parse_template_parameter() {
 	// The base type specifier (e.g. 'int') has already been parsed into nttp_type.
 	// We now look for the (*Name)(...) or (Class::*Name)(...) declarator group.
 	bool parsed_as_function_pointer = false;
+	bool parsed_as_reference_to_array = false;
 	if (!is_variadic && peek() == "("_tok) {
+		SaveHandle reference_array_pos = save_token_position();
+		TypeSpecifierNode reference_array_type = nttp_type;
+		Token reference_array_identifier;
+		bool reference_array_has_identifier = false;
+		if (tryConsumeReferenceToArrayDeclarator(
+			reference_array_type,
+			&reference_array_identifier,
+			&reference_array_has_identifier,
+		nullptr)) {
+			nttp_type = std::move(reference_array_type);
+			if (reference_array_has_identifier) {
+				param_name = reference_array_identifier.value();
+				param_name_token = reference_array_identifier;
+			} else {
+				static int anonymous_reference_array_counter = 0;
+				param_name = StringBuilder()
+					.append("__anon_ref_array_param_"sv)
+					.append(static_cast<int64_t>(anonymous_reference_array_counter++))
+					.commit();
+				param_name_token = current_token_;
+				is_anonymous = true;
+			}
+			parsed_as_reference_to_array = true;
+			discard_saved_token(reference_array_pos);
+		} else {
+			restore_token_position(reference_array_pos);
+			discard_saved_token(reference_array_pos);
+		}
+	}
+	if (!is_variadic && !parsed_as_reference_to_array && peek() == "("_tok) {
 		SaveHandle fp_decl_pos = save_token_position();
 		advance(); // consume '('
 
@@ -754,7 +785,7 @@ ParseResult Parser::parse_template_parameter() {
 		}
 	}
 
-	if (!parsed_as_function_pointer) {
+	if (!parsed_as_function_pointer && !parsed_as_reference_to_array) {
 		if (peek().is_identifier()) {
 			// Named parameter
 			param_name_token = peek_info();
@@ -2731,6 +2762,19 @@ try_type_template_argument_parse:
 
 		// Successfully parsed a type
 		TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
+		// Reference-to-array type-ids use a parenthesized declarator group that
+		// this parser's pointer/function cases do not consume. Reuse the named
+		// declarator parser's abstract form so `T (&)[N]` keeps both wrappers.
+		bool parsed_reference_to_array_type = false;
+		std::vector<ASTNode> type_id_array_bound_expressions;
+		if (peek() == "("_tok) {
+			parsed_reference_to_array_type =
+				tryConsumeReferenceToArrayDeclarator(
+					type_node,
+					nullptr,
+					nullptr,
+					&type_id_array_bound_expressions);
+		}
 
 		MemberPointerKind member_pointer_kind = MemberPointerKind::None;
 
@@ -2784,7 +2828,7 @@ try_type_template_argument_parse:
 		// This is the syntax used for pointer-to-array types and function types in template arguments
 		// e.g., is_convertible<_FromElementType(*)[], _ToElementType(*)[]>
 		// e.g., declval<_Xp(&)()>() - function reference type
-		if (peek() == "("_tok) {
+		if (peek() == "("_tok && !parsed_reference_to_array_type) {
 			SaveHandle paren_saved_pos = save_token_position();
 			advance(); // consume '('
 
@@ -3021,6 +3065,26 @@ try_type_template_argument_parse:
 		bool is_array_type = false;
 		std::optional<size_t> parsed_array_size;
 		TemplateParamNameVector parsed_array_dimension_parameter_names;
+		for (const ASTNode& bound_expression : type_id_array_bound_expressions) {
+			StringHandle dimension_parameter_name{};
+			if (bound_expression.is<ExpressionNode>()) {
+				const ExpressionNode& dimension_expr = bound_expression.as<ExpressionNode>();
+				if (const auto* parameter_ref =
+						std::get_if<TemplateParameterReferenceNode>(&dimension_expr)) {
+					dimension_parameter_name = parameter_ref->param_name();
+				} else if (const auto* identifier =
+						   std::get_if<IdentifierNode>(&dimension_expr)) {
+					const StringHandle identifier_name =
+						StringTable::getOrInternStringHandle(identifier->name());
+					auto parameter_kind = currentTemplateParamKind(identifier_name);
+					if (parameter_kind.has_value() &&
+						*parameter_kind == TemplateParameterKind::NonType) {
+						dimension_parameter_name = identifier_name;
+					}
+				}
+			}
+			parsed_array_dimension_parameter_names.push_back(dimension_parameter_name);
+		}
 		while (peek() == "["_tok) {
 			is_array_type = true;
 			advance(); // consume '['
