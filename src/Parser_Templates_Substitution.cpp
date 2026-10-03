@@ -102,6 +102,35 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 	});
 }
 
+template <typename ParamContainer, typename ArgContainer>
+ASTNode tryMaterializeSubstitutedCallableTypeSpecifier(
+	Parser& parser,
+	const TypeSpecifierNode& original_type_spec,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	const ResolvedAliasTypeInfo original_type_alias =
+		resolveAliasTypeInfo(original_type_spec.type_index());
+	const TypeCategory original_type_category =
+		original_type_alias.type_index.is_valid()
+			? original_type_alias.typeEnum()
+			: original_type_spec.category();
+	if (!original_type_spec.has_function_signature() &&
+		original_type_category != TypeCategory::FunctionPointer &&
+		original_type_category != TypeCategory::MemberFunctionPointer) {
+		return {};
+	}
+
+	ASTNode substituted_type_node =
+		ASTNode::emplace_node<TypeSpecifierNode>(original_type_spec);
+	materializeSubstitutedFunctionTypeMetadata(
+		parser,
+		substituted_type_node.as<TypeSpecifierNode>(),
+		original_type_spec,
+		template_params,
+		template_args);
+	return substituted_type_node;
+}
+
 }
 
 std::optional<TypeSpecifierNode>
@@ -460,26 +489,16 @@ ASTNode Parser::substituteTemplateParametersWithState(
 	} else if (node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& original_type_spec =
 			node.as<TypeSpecifierNode>();
-		TypeSpecifierNode substituted_callable_type = original_type_spec;
-		const ResolvedAliasTypeInfo original_type_alias =
-			resolveAliasTypeInfo(original_type_spec.type_index());
-		const TypeCategory original_type_category =
-			original_type_alias.type_index.is_valid()
-				? original_type_alias.typeEnum()
-				: original_type_spec.category();
-		bool callable_metadata_was_materialized = false;
-		if (original_type_spec.has_function_signature() ||
-			original_type_category == TypeCategory::FunctionPointer ||
-			original_type_category == TypeCategory::MemberFunctionPointer) {
-			materializeSubstitutedFunctionTypeMetadata(
+		ASTNode substituted_callable_type_node =
+			tryMaterializeSubstitutedCallableTypeSpecifier(
 				*this,
-				substituted_callable_type,
 				original_type_spec,
 				template_params,
 				template_args);
-			callable_metadata_was_materialized = true;
-		}
-		const TypeSpecifierNode& type_spec = substituted_callable_type;
+		const TypeSpecifierNode& type_spec =
+			substituted_callable_type_node.has_value()
+				? substituted_callable_type_node.as<TypeSpecifierNode>()
+				: original_type_spec;
 		FLASH_LOG(Templates, Trace, "  substituteTemplateParameters TypeSpecifierNode: cat=", static_cast<int>(type_spec.category()),
 			" token='", type_spec.token().value(), "' pointer_depth=", static_cast<int>(type_spec.pointer_depth()));
 		const auto makeTypeSpecifierFromTemplateArg = [&](const TemplateTypeArg& arg) -> ASTNode {
@@ -775,8 +794,8 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			}
 		}
 
-		if (callable_metadata_was_materialized) {
-			return emplace_node<TypeSpecifierNode>(type_spec);
+		if (substituted_callable_type_node.has_value()) {
+			return substituted_callable_type_node;
 		}
 		return node;
 
