@@ -6,6 +6,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TemplateArgumentMaterialization.h"
+#include "ParserTemplateClassShared.h"
 #include "TypeTraitEvaluator.h"
 #include <unordered_map>
 
@@ -457,7 +458,28 @@ ASTNode Parser::substituteTemplateParametersWithState(
 		return new_decl_node;
 
 	} else if (node.is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode& original_type_spec =
+			node.as<TypeSpecifierNode>();
+		TypeSpecifierNode substituted_callable_type = original_type_spec;
+		const ResolvedAliasTypeInfo original_type_alias =
+			resolveAliasTypeInfo(original_type_spec.type_index());
+		const TypeCategory original_type_category =
+			original_type_alias.type_index.is_valid()
+				? original_type_alias.typeEnum()
+				: original_type_spec.category();
+		bool callable_metadata_was_materialized = false;
+		if (original_type_spec.has_function_signature() ||
+			original_type_category == TypeCategory::FunctionPointer ||
+			original_type_category == TypeCategory::MemberFunctionPointer) {
+			materializeSubstitutedFunctionTypeMetadata(
+				*this,
+				substituted_callable_type,
+				original_type_spec,
+				template_params,
+				template_args);
+			callable_metadata_was_materialized = true;
+		}
+		const TypeSpecifierNode& type_spec = substituted_callable_type;
 		FLASH_LOG(Templates, Trace, "  substituteTemplateParameters TypeSpecifierNode: cat=", static_cast<int>(type_spec.category()),
 			" token='", type_spec.token().value(), "' pointer_depth=", static_cast<int>(type_spec.pointer_depth()));
 		const auto makeTypeSpecifierFromTemplateArg = [&](const TemplateTypeArg& arg) -> ASTNode {
@@ -753,6 +775,9 @@ ASTNode Parser::substituteTemplateParametersWithState(
 			}
 		}
 
+		if (callable_metadata_was_materialized) {
+			return emplace_node<TypeSpecifierNode>(type_spec);
+		}
 		return node;
 
 	} else if (node.is<InitializerListNode>()) {
