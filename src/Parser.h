@@ -4364,6 +4364,17 @@ private:	 // Resume private methods
 	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume ptr-operator then array abstract-declarators on a type-id
 	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id
 	bool consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec); // Consume a parenthesized abstract-declarator group in a cast type-id
+	// Parse the body of a parenthesized reference-to-array declarator group:
+	// "&"|"&&" [identifier] ")" "[" N "]"... , shared by named declarators,
+	// abstract type-ids and typedef aliases. The caller must have already
+	// consumed the leading '(' and any calling convention. On success the
+	// reference qualifier and array extents are applied to type_spec; on
+	// failure the token position is restored to the '&'/'&&'.
+	bool parseReferenceToArrayDeclarator(
+		TypeSpecifierNode& type_spec,
+		Token& out_identifier,
+		bool& out_has_identifier,
+		std::vector<ASTNode>& out_array_dimensions);
 	// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
 	// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
 	// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.

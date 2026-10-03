@@ -990,30 +990,55 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						type_spec.add_pointer_level(ptr_cv);
 					}
 
-					parse_type_alias_function_type(type_spec, " in global alias");
-
-					// Parse reference declarators: & or &&
-					ReferenceQualifier ref_qual = parse_reference_qualifier();
-					if (ref_qual != ReferenceQualifier::None) {
-						type_spec.set_reference_qualifier(ref_qual);
+					// Reference-to-array alias: using A = int (&)[2][2];. The
+					// parenthesized declarator is not reached by the trailing
+					// reference/array parsing below, so consume it first.
+					bool parsed_reference_to_array_alias = false;
+					if (peek() == "("_tok) {
+						SaveHandle rta_probe = save_token_position();
+						advance(); // consume '('
+						(void)parse_calling_convention(CallingConvention::Default);
+						if (peek() == "&"_tok || peek() == "&&"_tok) {
+							Token ignored_identifier;
+							bool has_identifier = false;
+							std::vector<ASTNode> ignored_dimensions;
+							if (parseReferenceToArrayDeclarator(type_spec, ignored_identifier, has_identifier, ignored_dimensions)) {
+								parsed_reference_to_array_alias = true;
+								discard_saved_token(rta_probe);
+							} else {
+								restore_token_position(rta_probe);
+							}
+						} else {
+							restore_token_position(rta_probe);
+						}
 					}
 
-					// Parse array dimensions: using _Type = _Tp[_Nm];
-					while (peek() == "["_tok) {
-						advance(); // consume '['
-						if (peek() == "]"_tok) {
-							type_spec.set_array(true);
-							advance(); // consume ']'
-						} else {
-							auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-							if (dim_result.is_error()) {
-								return dim_result;
-							}
-							auto dim_val = try_evaluate_constant_expression(*dim_result.node());
-							size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
-							type_spec.add_array_dimension(dim_size);
-							if (!consume("]"_tok)) {
-								return ParseResult::error("Expected ']' after array dimension in type alias", current_token_);
+					if (!parsed_reference_to_array_alias) {
+						parse_type_alias_function_type(type_spec, " in global alias");
+
+						// Parse reference declarators: & or &&
+						ReferenceQualifier ref_qual = parse_reference_qualifier();
+						if (ref_qual != ReferenceQualifier::None) {
+							type_spec.set_reference_qualifier(ref_qual);
+						}
+
+						// Parse array dimensions: using _Type = _Tp[_Nm];
+						while (peek() == "["_tok) {
+							advance(); // consume '['
+							if (peek() == "]"_tok) {
+								type_spec.set_array(true);
+								advance(); // consume ']'
+							} else {
+								auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (dim_result.is_error()) {
+									return dim_result;
+								}
+								auto dim_val = try_evaluate_constant_expression(*dim_result.node());
+								size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
+								type_spec.add_array_dimension(dim_size);
+								if (!consume("]"_tok)) {
+									return ParseResult::error("Expected ']' after array dimension in type alias", current_token_);
+								}
 							}
 						}
 					}
