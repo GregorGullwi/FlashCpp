@@ -1756,17 +1756,10 @@ bool Parser::consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec)
 	SaveHandle group_start = save_token_position();
 	// A reference-to-array type-id such as `int (&)[3]` is not produced by the
 	// pointer declarator machinery, so recognize its abstract spelling here.
-	if (after_paren == "&"_tok || after_paren == "&&"_tok) {
-		advance(); // consume '('
-		(void)parse_calling_convention(CallingConvention::Default);
-		Token ignored_identifier;
-		bool has_identifier = false;
-		std::vector<ASTNode> ignored_dimensions;
-		if (parseReferenceToArrayDeclarator(type_spec, ignored_identifier, has_identifier, ignored_dimensions)) {
-			discard_saved_token(group_start);
-			return true;
-		}
-		restore_token_position(group_start);
+	if ((after_paren == "&"_tok || after_paren == "&&"_tok) &&
+		tryConsumeReferenceToArrayDeclarator(type_spec, nullptr, nullptr, nullptr)) {
+		discard_saved_token(group_start);
+		return true;
 	}
 	ParseResult declarator_result = parse_declarator(type_spec, Linkage::None);
 	if (!declarator_result.is_error() && declarator_result.node().has_value()) {
@@ -1784,21 +1777,13 @@ void Parser::consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec) 
 	// named form int(*p)[3] (C++20 [dcl.name], [dcl.ptr]/1).
 	if (peek() == "("_tok) {
 		// A reference-to-array abstract spelling (int (&)[3]) is not produced by
-		// the pointer declarator machinery, so recognize it directly.
-		SaveHandle ref_group_start = save_token_position();
-		advance(); // consume '('
-		(void)parse_calling_convention(CallingConvention::Default);
-		if (peek() == "&"_tok || peek() == "&&"_tok) {
-			Token ignored_identifier;
-			bool has_identifier = false;
-			std::vector<ASTNode> ignored_dimensions;
-			if (parseReferenceToArrayDeclarator(type_spec, ignored_identifier, has_identifier, ignored_dimensions)) {
-				discard_saved_token(ref_group_start);
-				return;
-			}
-		}
-		restore_token_position(ref_group_start);
+		// the pointer declarator machinery, so recognize it directly. The
+		// wrapper restores the position to '(' on failure.
 		SaveHandle group_start = save_token_position();
+		if (tryConsumeReferenceToArrayDeclarator(type_spec, nullptr, nullptr, nullptr)) {
+			discard_saved_token(group_start);
+			return;
+		}
 		ParseResult declarator_result = parse_declarator(type_spec, Linkage::None);
 		if (!declarator_result.is_error() && declarator_result.node().has_value()) {
 			discard_saved_token(group_start);

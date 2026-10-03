@@ -443,24 +443,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// Reference-to-array alias: using A = int (&)[2][2];. The parenthesized
 		// declarator is not reached by the trailing reference/array parsing below,
 		// so consume and apply it before that path.
-		bool parsed_reference_to_array_alias = false;
-		if (peek() == "("_tok) {
-			SaveHandle rta_probe = save_token_position();
-			advance(); // consume '('
-			(void)parse_calling_convention(CallingConvention::Default);
-			if (peek() == "&"_tok || peek() == "&&"_tok) {
-				Token ignored_identifier;
-				bool has_identifier = false;
-				if (parseReferenceToArrayDeclarator(type_spec, ignored_identifier, has_identifier, alias_array_dimensions)) {
-					parsed_reference_to_array_alias = true;
-					discard_saved_token(rta_probe);
-				} else {
-					restore_token_position(rta_probe);
-				}
-			} else {
-				restore_token_position(rta_probe);
-			}
-		}
+		const bool parsed_reference_to_array_alias =
+			tryConsumeReferenceToArrayDeclarator(
+				type_spec, nullptr, nullptr, &alias_array_dimensions);
 
 		if (!parsed_reference_to_array_alias) {
 			parse_type_alias_function_type(type_spec, "");
@@ -2191,21 +2176,15 @@ ParseResult Parser::parse_typedef_declaration() {
 	Token reference_to_array_alias_token;
 	if (!is_member_function_pointer_typedef && peek() == "("_tok) {
 		SaveHandle rta_probe = save_token_position();
-		advance(); // consume '('
-		(void)parse_calling_convention(CallingConvention::Default);
-		if (peek() == "&"_tok || peek() == "&&"_tok) {
-			Token identifier;
-			bool has_identifier = false;
-			std::vector<ASTNode> array_dimensions;
-			if (parseReferenceToArrayDeclarator(type_spec, identifier, has_identifier, array_dimensions) &&
-				has_identifier) {
-				is_reference_to_array_typedef = true;
-				reference_to_array_alias_token = identifier;
-				type_node = emplace_node<TypeSpecifierNode>(type_spec);
-				discard_saved_token(rta_probe);
-			} else {
-				restore_token_position(rta_probe);
-			}
+		Token identifier;
+		bool has_identifier = false;
+		std::vector<ASTNode> array_dimensions;
+		if (tryConsumeReferenceToArrayDeclarator(type_spec, &identifier, &has_identifier, &array_dimensions) &&
+			has_identifier) {
+			is_reference_to_array_typedef = true;
+			reference_to_array_alias_token = identifier;
+			type_node = emplace_node<TypeSpecifierNode>(type_spec);
+			discard_saved_token(rta_probe);
 		} else {
 			restore_token_position(rta_probe);
 		}
