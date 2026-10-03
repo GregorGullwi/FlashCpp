@@ -18,16 +18,22 @@ int type_id_size() {
 }
 
 int global_values[3] = {4, 5, 6};
+int global_matrix[2][3] = {{1, 2, 3}, {4, 5, 6}};
 
 template <int (&R)[3]>
 struct ArrayReferenceTag {
 	static constexpr int value = 1;
 };
 
+template <int (&R)[2][3]>
+struct MatrixReferenceTag {};
+
 template <>
 struct ArrayReferenceTag<global_values> {
 	static constexpr int value = 10;
 };
+
+MatrixReferenceTag<global_matrix> accepted_matrix_reference;
 
 static_assert(__is_same(ArrayRef<int, 3>, int (&)[3]));
 static_assert(__is_same(MatrixRef<int, 2, 3>, int (&)[2][3]));

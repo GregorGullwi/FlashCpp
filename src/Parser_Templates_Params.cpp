@@ -44,6 +44,19 @@ std::optional<std::span<const TemplateParameterNode>> templateParametersForCandi
 	return std::nullopt;
 }
 
+bool requiresReferenceArrayArgumentSyntax(
+	std::span<const TemplateParameterNode> template_params) {
+	return std::any_of(
+		template_params.begin(),
+		template_params.end(),
+		[](const TemplateParameterNode& param) {
+			return param.kind() == TemplateParameterKind::NonType &&
+				param.has_type() &&
+				param.type_specifier_node().is_reference_to_array() &&
+				!param.type_specifier_node().array_dimensions().empty();
+		});
+}
+
 template <typename RecurseFn>
 bool hasDependentStructuralExpressionChild(
 	const ExpressionNode& expression,
@@ -3820,12 +3833,71 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 			return false;
 		};
 
+	auto validateReferenceToArrayArgument = [&](const ASTNode& syntax_node,
+													const TemplateParameterNode& param) {
+		if (!syntax_node.is<ExpressionNode>() || !param.has_type()) {
+			return;
+		}
+		const TypeSpecifierNode& target_type = param.type_specifier_node();
+		if (!target_type.is_reference_to_array() ||
+			target_type.array_dimensions().empty() ||
+			expressionHasUnsubstitutedDependency(
+				expressionHasUnsubstitutedDependency,
+				syntax_node)) {
+			return;
+		}
+
+		std::optional<TypeSpecifierNode> source_type =
+			get_expression_type(syntax_node);
+		if (!source_type.has_value()) {
+			throw InternalError(
+				"reference-to-array NTTP argument has no resolved expression type");
+		}
+		if (!source_type->is_reference()) {
+			// A named object expression is an lvalue. Preserve the complete object
+			// type while making that value category explicit to reference binding.
+			source_type->set_reference_qualifier(
+				ReferenceQualifier::LValueReference);
+		}
+
+		bool compatible = false;
+		if (source_type->is_array()) {
+			const std::optional<ConversionPlan> binding_plan =
+				tryBuildCanonicalReferenceBindingPlan(*source_type, target_type);
+			if (!binding_plan.has_value()) {
+				throw InternalError(
+					"reference-to-array NTTP compatibility has no canonical binding result");
+			}
+			compatible = binding_plan->is_valid;
+		}
+		if (compatible) {
+			return;
+		}
+
+		Token argument_token = param.token();
+		const ExpressionNode& expression = syntax_node.as<ExpressionNode>();
+		if (const auto* identifier = std::get_if<IdentifierNode>(&expression)) {
+			argument_token = identifier->identifier_token();
+		} else if (const auto* qualified_identifier =
+				   std::get_if<QualifiedIdentifierNode>(&expression)) {
+			argument_token = qualified_identifier->identifier_token();
+		}
+		throw makeStructuredCompileError(
+			context_.diagnostics(),
+			DiagnosticId::ReferenceNonTypeTemplateArgumentTypeMismatch,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(argument_token),
+			"Reference non-type template argument does not bind to a compatible array type",
+			std::span<const DiagnosticArgument>{});
+	};
+
 	auto makeValueArgForSyntax = [&](const ASTNode* syntax_node,
 									 const TemplateTypeArg& existing_arg,
 									 const TemplateParameterNode& param)
 		-> std::optional<TemplateTypeArg> {
 		if (syntax_node != nullptr && syntax_node->is<ExpressionNode>()) {
 			const ASTNode& expr_node = *syntax_node;
+			validateReferenceToArrayArgument(expr_node, param);
 			const StringHandle expression_name =
 				nameFromExpression(expr_node.as<ExpressionNode>());
 			for (const TemplateParamSubstitution& substitution :
@@ -3998,8 +4070,11 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 					reclassified = makeTypeArgForName(arg_name);
 				} else if (param.kind() == TemplateParameterKind::NonType &&
 						   (!arg.is_value ||
-							arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
-							arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Nullptr)) {
+						arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
+						arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Nullptr ||
+						(param.has_type() &&
+						 param.type_specifier_node().is_reference_to_array() &&
+						 !param.type_specifier_node().array_dimensions().empty()))) {
 					reclassified = makeValueArgForSyntax(syntax_node, arg, param);
 				} else if (param.kind() == TemplateParameterKind::Template &&
 						   !arg.is_template_template_arg) {
@@ -4024,7 +4099,10 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		} else if (param.kind() == TemplateParameterKind::NonType &&
 				   (!arg.is_value ||
 					arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
-					arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Nullptr)) {
+					arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Nullptr ||
+					(param.has_type() &&
+					 param.type_specifier_node().is_reference_to_array() &&
+					 !param.type_specifier_node().array_dimensions().empty()))) {
 			reclassified = makeValueArgForSyntax(syntax_node, arg, param);
 		} else if (param.kind() == TemplateParameterKind::Template &&
 				   !arg.is_template_template_arg) {
@@ -4135,7 +4213,24 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 	std::span<const TemplateParameterNode> target_template_params,
 	std::vector<ASTNode>* out_type_nodes) {
 	ScopedExplicitTemplateArgumentTargetParams target_param_guard(*this, target_template_params);
-	auto parsed_args = parse_explicit_template_arguments(out_type_nodes);
+	if (out_type_nodes == nullptr &&
+		requiresReferenceArrayArgumentSyntax(target_template_params)) {
+		std::vector<ASTNode> argument_syntax_nodes;
+		auto parsed_args = parse_explicit_template_arguments(&argument_syntax_nodes);
+		if (parsed_args.has_value()) {
+			classifyExplicitTemplateArgumentsAgainstParameters(
+				target_template_params,
+				*parsed_args,
+				std::span<const ASTNode>{argument_syntax_nodes});
+		}
+		return parsed_args;
+	}
+	std::optional<TemplateArgumentVector> parsed_args;
+	if (out_type_nodes == nullptr) {
+		parsed_args = parse_explicit_template_arguments();
+	} else {
+		parsed_args = parse_explicit_template_arguments(out_type_nodes);
+	}
 	if (parsed_args.has_value()) {
 		classifyExplicitTemplateArgumentsAgainstParameters(
 			target_template_params,
@@ -4151,23 +4246,32 @@ std::optional<TemplateArgumentVector> Parser::parse_explicit_template_arguments(
 	std::span<const TemplateParameterNode> target_template_params,
 	TemplateAstNodeVector* out_type_nodes) {
 	ScopedExplicitTemplateArgumentTargetParams target_param_guard(*this, target_template_params);
-	if (out_type_nodes == nullptr) {
-		auto parsed_args = parse_explicit_template_arguments();
+	if (out_type_nodes == nullptr &&
+		requiresReferenceArrayArgumentSyntax(target_template_params)) {
+		std::vector<ASTNode> argument_syntax_nodes;
+		auto parsed_args = parse_explicit_template_arguments(&argument_syntax_nodes);
 		if (parsed_args.has_value()) {
 			classifyExplicitTemplateArgumentsAgainstParameters(
 				target_template_params,
 				*parsed_args,
-				std::span<const ASTNode>{});
+				std::span<const ASTNode>{argument_syntax_nodes});
 		}
 		return parsed_args;
 	}
 
-	auto parsed_args = parse_explicit_template_arguments(out_type_nodes);
+	std::optional<TemplateArgumentVector> parsed_args;
+	if (out_type_nodes == nullptr) {
+		parsed_args = parse_explicit_template_arguments();
+	} else {
+		parsed_args = parse_explicit_template_arguments(out_type_nodes);
+	}
 	if (parsed_args.has_value()) {
 		classifyExplicitTemplateArgumentsAgainstParameters(
 			target_template_params,
 			*parsed_args,
-			std::span<const ASTNode>{*out_type_nodes});
+			out_type_nodes == nullptr
+				? std::span<const ASTNode>{}
+				: std::span<const ASTNode>{*out_type_nodes});
 	}
 	return parsed_args;
 }
