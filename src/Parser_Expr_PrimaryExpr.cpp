@@ -544,11 +544,17 @@ Parser::tryDeduceMemberFunctionTemplateAddressArguments(
 			function_decl,
 			target_parameter_types,
 			0,
-			std::span<const NamedTemplateTypeDeduction>(
-				return_deductions.data(),
-				return_deductions.size()));
+			std::span<const NamedTemplateTypeDeduction>{});
 	if (!deduction_info.has_value()) {
 		return std::nullopt;
+	}
+	for (const NamedTemplateTypeDeduction& return_deduction : return_deductions) {
+		auto [position, inserted] = deduction_info->param_name_to_arg.emplace(
+			return_deduction.name,
+			return_deduction.argument);
+		if (!inserted && !(position->second == return_deduction.argument)) {
+			return std::nullopt;
+		}
 	}
 	for (NamedTemplateArgPackDeduction& pack_deduction :
 		 return_pack_deductions) {
@@ -1255,11 +1261,72 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 		}
 	}
 	filterPhase1OrdinaryFunctionOverloads(all_overloads);
-	auto build_argument_conversion = [this](
+	bool has_conflicting_return_deduction = false;
+	const QualifiedIdentifierNode* conflicting_member_address = nullptr;
+	auto build_argument_conversion = [this,
+								  &has_conflicting_return_deduction,
+								  &conflicting_member_address](
 		const TypeSpecifierNode& argument_type,
 		const TypeSpecifierNode& parameter_type,
 		const ASTNode* argument_node) {
-		if (argument_type.category() == TypeCategory::Invalid) {
+		const QualifiedIdentifierNode* member_address =
+			tryGetQualifiedMemberFunctionAddress(argument_node);
+		const QualifiedMemberFunctionAddressOverloadSet address_overloads =
+			member_address != nullptr
+				? tryCollectQualifiedMemberFunctionAddressOverloads(argument_node)
+				: QualifiedMemberFunctionAddressOverloadSet{};
+		if (argument_type.category() == TypeCategory::Invalid ||
+			(member_address != nullptr &&
+			 !address_overloads.function_templates.empty())) {
+			if (member_address != nullptr &&
+				address_overloads.function_templates.size() == 1 &&
+				parameter_type.has_function_signature()) {
+				const TemplateFunctionDeclarationNode& function_template =
+					*address_overloads.function_templates.front();
+				const FunctionDeclarationNode& function_decl =
+					function_template.function_decl_node();
+				const StringHandle direct_return_parameter = getStructuredTypeName(
+					function_decl.decl_node().type_specifier_node());
+				const bool return_is_member_template_parameter = std::any_of(
+					function_template.template_parameters().begin(),
+					function_template.template_parameters().end(),
+					[&](const TemplateParameterNode& template_parameter) {
+						return template_parameter.nameHandle() == direct_return_parameter &&
+							template_parameter.kind() == TemplateParameterKind::Type;
+					});
+				if (return_is_member_template_parameter) {
+					CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+					const CanonicalTypeImport target_import =
+						importCanonicalType(table, parameter_type);
+					if (target_import.status == CanonicalTypeImportStatus::Supported) {
+						TypeId target_id = canonicalTypeWithoutReference(
+							table,
+							target_import.type);
+						target_id = stripCanonicalTopCv(table, target_id).first;
+						if (table.node(target_id).kind ==
+							CanonicalTypeKind::MemberFunctionPointer) {
+							const FunctionSignature& target_signature =
+								parameter_type.function_signature();
+							std::vector<TypeSpecifierNode> target_argument_types;
+							for (const FunctionType& target_argument_type :
+								target_signature.parameter_types()) {
+								target_argument_types.push_back(
+									typeSpecifierFromFunctionType(target_argument_type));
+							}
+							const TypeSpecifierNode target_return_type =
+								typeSpecifierFromFunctionType(target_signature.return_type());
+							if (!tryDeduceMemberFunctionTemplateAddressArguments(
+								function_template,
+								target_argument_types,
+								target_return_type)
+								.has_value()) {
+								has_conflicting_return_deduction = true;
+								conflicting_member_address = member_address;
+							}
+						}
+					}
+				}
+			}
 			return buildQualifiedMemberFunctionAddressArgumentConversion(
 				*this,
 				parameter_type,
@@ -1326,6 +1393,25 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 				arg_types);
 		instantiated.has_value()) {
 		return instantiated;
+	}
+
+	if (has_conflicting_return_deduction &&
+		conflicting_member_address != nullptr) {
+		const std::string message = std::string(StringBuilder()
+			.append("No matching function for call to '")
+			.append(record.callee_name.view())
+			.append("'")
+			.commit());
+		DiagnosticEngine& diagnostics_engine = context_.diagnostics();
+		const uint32_t diagnostic_index = diagnostics_engine.report(
+			DiagnosticId::NoViableFunctionCall,
+			DiagnosticSeverity::Error,
+			lexer_.getSourceLocation(
+				conflicting_member_address->identifier_token()),
+			message,
+			{});
+		throw CompileError::fromStructuredDiagnostic(
+			diagnostics_engine.diagnostic(diagnostic_index));
 	}
 
 	return std::nullopt;
@@ -11381,7 +11467,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								const bool has_deferred_ordinary_call_args =
 									argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
 									argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
-								if (all_overloads.size() > 1 &&
+								bool has_qualified_member_function_address = false;
+								args.visit([&](ASTNode argument) {
+									if (tryGetQualifiedMemberFunctionAddress(&argument) != nullptr) {
+										has_qualified_member_function_address = true;
+									}
+								});
+								// These addresses need the callee parameter type before
+								// overload resolution can determine their type.
+								if ((all_overloads.size() > 1 ||
+									 has_qualified_member_function_address) &&
 									((current_template_definition_lookup_context_ != nullptr &&
 									  current_template_definition_lookup_context_->is_valid()) ||
 									 parsing_template_depth_ > 0 ||
