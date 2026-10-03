@@ -3303,7 +3303,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// C++20 [conv.array]/1 applies is context-dependent: a by-value
 				// function argument decays, while a reference parameter such as
 				// T (&)[N] binds to the array and uses its bound for deduction.
-				if (decl->is_array_object()) {
+				if (decl->has_outer_array_extents()) {
 					applyDeclarationArrayBoundsToTypeSpec(*decl, type, *this);
 				}
 
@@ -4338,7 +4338,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 			if (const DeclarationNode* decl = get_decl_from_symbol(*qualified_symbol)) {
 				TypeSpecifierNode type = decl->type_specifier_node();
-				if (decl->is_array_object()) {
+				if (decl->has_outer_array_extents()) {
 					applyDeclarationArrayBoundsToTypeSpec(*decl, type, *this);
 				}
 				return type;

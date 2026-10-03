@@ -1523,7 +1523,7 @@ void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpe
 	if (decl == nullptr) {
 		return;
 	}
-	if (decl->is_array_object() ||
+	if (decl->has_outer_array_extents() ||
 		decl->type_specifier_node().has_pointee_array_declarator()) {
 		applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node, *this);
 	}
