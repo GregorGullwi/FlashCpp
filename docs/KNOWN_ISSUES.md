@@ -614,3 +614,20 @@ recognize `(*name)(params)` (function pointers) but not the array suffix after
 the parenthesized pointer group. Routing that group through the shared
 declarator machinery, as the reference-to-array spelling now does, would close
 the gap.
+
+Reference-to-array is likewise still unsupported in template-specific type
+positions, even though the ordinary spellings parse:
+
+```cpp
+template <class T> using Ref = T (&)[3];   // error: Parenthesized alias template target declarator is not supported
+template <class T> int f(T (&r)[3]);       // ok (named/parameter form)
+g<int (&)[3]>();                           // error: Expected primary expression (template argument type-id)
+template <int (&R)[3]> struct S;           // error: Expected identifier for non-type template parameter
+```
+
+The alias-template target and template-argument/NTTP type-id parsers have their
+own declarator handling and do not route through
+tryConsumeReferenceToArrayDeclarator. Enabling them also requires preserving the
+substituted bound and element type through alias materialization: a parse-only
+change resolves the alias to a pointer rather than a reference to the array, so
+the shape is deliberately left rejected.
