@@ -183,186 +183,145 @@ std::vector<size_t> AstToIr::getEffectiveArrayDimensionsForCodegen(const Declara
 	return dim_sizes;
 }
 
-AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
+AstToIr::MultiDimSubscriptChain AstToIr::collectMultiDimSubscriptChain(
+	const ArraySubscriptNode& subscript) {
+	MultiDimSubscriptChain chain;
+	const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
+	chain.indices.push_back(subscript.index_expr());
+	while (std::holds_alternative<ArraySubscriptNode>(*current)) {
+		const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
+		chain.indices.push_back(inner.index_expr());
+		current = &inner.array_expr().as<ExpressionNode>();
+	}
+	std::reverse(chain.indices.begin(), chain.indices.end());
+	chain.root_expression = current;
+	return chain;
+}
+
+std::optional<AstToIr::MultiDimMemberArrayAccess> AstToIr::resolveMultiDimMemberArrayBase(
+	const MultiDimSubscriptChain& chain) {
+	if (chain.indices.size() <= 1 || chain.root_expression == nullptr ||
+		!std::holds_alternative<MemberAccessNode>(*chain.root_expression)) {
+		return std::nullopt;
+	}
+
+	const MemberAccessNode* access = &std::get<MemberAccessNode>(*chain.root_expression);
+	std::vector<std::string_view> member_path;
+	const IdentifierNode* object_ident = nullptr;
+	while (true) {
+		if (access->is_arrow() || !access->object().is<ExpressionNode>()) {
+			return std::nullopt;
+		}
+		member_path.push_back(access->member_name());
+		const ExpressionNode& object_expr = access->object().as<ExpressionNode>();
+		if (const auto* nested_access = std::get_if<MemberAccessNode>(&object_expr)) {
+			access = nested_access;
+			continue;
+		}
+		object_ident = std::get_if<IdentifierNode>(&object_expr);
+		break;
+	}
+	if (object_ident == nullptr) {
+		return std::nullopt;
+	}
+	std::reverse(member_path.begin(), member_path.end());
+
 	MultiDimMemberArrayAccess result;
-	std::vector<ASTNode> indices_reversed;
-	const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
-
-	// Collect the outermost index first
-	indices_reversed.push_back(subscript.index_expr());
-
-	// Walk down the chain of ArraySubscriptNodes
-	while (std::holds_alternative<ArraySubscriptNode>(*current)) {
-		const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
-		indices_reversed.push_back(inner.index_expr());
-		current = &inner.array_expr().as<ExpressionNode>();
+	const std::string_view object_name = object_ident->name();
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(object_name);
+	for (std::string_view path_member : member_path) {
+		qualified_name_builder.append(".").append(path_member);
+	}
+	result.qualified_member_name =
+		StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+	const std::optional<ASTNode> symbol = lookupSymbol(object_name);
+	const StringHandle object_spelling = StringTable::getOrInternStringHandle(object_name);
+	result.object_key = variableKeyForSymbol(symbol.value_or(ASTNode{}), object_spelling);
+	const DeclarationNode* decl_node = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+	if (decl_node == nullptr) {
+		return std::nullopt;
 	}
 
-	FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Collected {} indices", indices_reversed.size());
-
-	// Resolve a member array through its complete dotted object path, such as
-	// owner.nested.values. The root declaration supplies storage identity while
-	// each intermediate member contributes to the final byte offset.
-	if (std::holds_alternative<MemberAccessNode>(*current)) {
-		result.member_expression = current;
-		std::vector<std::string_view> member_path;
-		const MemberAccessNode* access = &std::get<MemberAccessNode>(*current);
-		result.member_name = access->member_name();
-		bool supported_path = true;
-		const IdentifierNode* object_ident = nullptr;
-		while (supported_path) {
-			if (access->is_arrow()) {
-				supported_path = false;
-				break;
-			}
-			member_path.push_back(access->member_name());
-			if (!access->object().is<ExpressionNode>()) {
-				supported_path = false;
-				break;
-			}
-			const ExpressionNode& object_expr = access->object().as<ExpressionNode>();
-			if (const auto* nested_access = std::get_if<MemberAccessNode>(&object_expr)) {
-				access = nested_access;
-				continue;
-			}
-			object_ident = std::get_if<IdentifierNode>(&object_expr);
-			break;
+	const TypeSpecifierNode& object_type = decl_node->type_specifier_node();
+	result.object_is_address = object_type.is_reference() || object_type.is_rvalue_reference() ||
+		object_type.runtime_pointer_depth() > 0;
+	TypeIndex current_type = object_type.type_index();
+	int64_t accumulated_offset = 0;
+	if (!is_struct_type(object_type.category()) || !current_type.is_valid()) {
+		return std::nullopt;
+	}
+	for (size_t member_index = 0; member_index < member_path.size(); ++member_index) {
+		const StringHandle member_handle = StringTable::getOrInternStringHandle(member_path[member_index]);
+		auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_type, member_handle);
+		if (!member_result || !member_result.member) {
+			return std::nullopt;
 		}
-
-		if (supported_path && object_ident) {
-			result.object_name = object_ident->name();
-			std::reverse(member_path.begin(), member_path.end());
-			StringBuilder qualified_name_builder;
-			qualified_name_builder.append(result.object_name);
-			for (std::string_view path_member : member_path) {
-				qualified_name_builder.append(".").append(path_member);
-			}
-			result.qualified_member_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
-			const std::optional<ASTNode> symbol = lookupSymbol(result.object_name);
-			const StringHandle object_spelling = StringTable::getOrInternStringHandle(result.object_name);
-			result.object_key = variableKeyForSymbol(symbol.value_or(ASTNode{}), object_spelling);
-			const DeclarationNode* decl_node = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
-			if (decl_node) {
-				const TypeSpecifierNode& object_type = decl_node->type_specifier_node();
-				result.object_is_address =
-					object_type.is_reference() || object_type.is_rvalue_reference() ||
-					object_type.runtime_pointer_depth() > 0;
-				TypeIndex current_type = object_type.type_index();
-				int64_t accumulated_offset = 0;
-				if (is_struct_type(object_type.category()) && current_type.is_valid()) {
-					for (size_t member_index = 0; member_index < member_path.size(); ++member_index) {
-						const StringHandle member_handle = StringTable::getOrInternStringHandle(member_path[member_index]);
-						auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_type, member_handle);
-						if (!member_result || !member_result.member) {
-							break;
-						}
-						const StructMember* member = member_result.member;
-						accumulated_offset += static_cast<int64_t>(member_result.adjusted_offset);
-						if (member_index + 1 == member_path.size()) {
-							result.member_info = member;
-							result.member_offset = accumulated_offset;
-						} else if (member->pointer_depth == 0 && !member->is_reference() &&
-							   is_struct_type(member->type_index.category()) && member->type_index.is_valid()) {
-							current_type = member->type_index;
-						} else {
-							break;
-						}
-					}
-				}
-			}
-
-			if (result.member_info) {
-				const StructMember* member = result.member_info;
-				result.indices.reserve(indices_reversed.size());
-				for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
-					result.indices.push_back(*it);
-				}
-				const bool pointer_to_array_rows =
-					member->pointee_array_declarator && member->pointer_depth == 1 &&
-					member->array_dimensions.size() + 1 == result.indices.size();
-				result.is_valid = !member->array_dimensions.empty() && result.indices.size() > 1 &&
-					(((member->is_array || member->is_reference()) &&
-					  member->array_dimensions.size() == result.indices.size()) || pointer_to_array_rows);
-			}
+		const StructMember* member = member_result.member;
+		accumulated_offset += static_cast<int64_t>(member_result.adjusted_offset);
+		if (member_index + 1 == member_path.size()) {
+			result.member_info = member;
+			result.object_relative_offset = accumulated_offset;
+		} else if (member->pointer_depth == 0 && !member->is_reference() &&
+			is_struct_type(member->type_index.category()) && member->type_index.is_valid()) {
+			current_type = member->type_index;
+		} else {
+			return std::nullopt;
 		}
 	}
 
+	const StructMember* member = result.member_info;
+	if (member == nullptr || member->array_dimensions.empty()) {
+		return std::nullopt;
+	}
+	const bool pointer_to_array_rows =
+		member->pointee_array_declarator && member->pointer_depth == 1 &&
+		member->array_dimensions.size() + 1 == chain.indices.size();
+	if (!((member->is_array || member->is_reference()) &&
+		  member->array_dimensions.size() == chain.indices.size()) && !pointer_to_array_rows) {
+		return std::nullopt;
+	}
 	return result;
 }
 
-AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySubscriptNode& subscript) {
+std::optional<AstToIr::MultiDimArrayAccess> AstToIr::resolveMultiDimIdentifierArrayBase(
+	const MultiDimSubscriptChain& chain) {
+	if (chain.indices.size() <= 1 || chain.root_expression == nullptr ||
+		!std::holds_alternative<IdentifierNode>(*chain.root_expression)) {
+		return std::nullopt;
+	}
+
+	const IdentifierNode& base_ident = std::get<IdentifierNode>(*chain.root_expression);
+	const StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_ident.name());
 	MultiDimArrayAccess result;
-	std::vector<ASTNode> indices_reversed;
-	const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
-
-	// Collect the outermost index first (the one in the current subscript)
-	indices_reversed.push_back(subscript.index_expr());
-
-	// Walk down the chain of ArraySubscriptNodes
-	while (std::holds_alternative<ArraySubscriptNode>(*current)) {
-		const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
-		indices_reversed.push_back(inner.index_expr());
-		current = &inner.array_expr().as<ExpressionNode>();
+	// Resolve the declaration visible here so shadowed arrays retain their own
+	// frame identity during lowering.
+	result.base_array_name = resolvedVariableKey(base_name_handle);
+	result.base_decl = lookupDeclaration(base_name_handle);
+	if (result.base_decl == nullptr) {
+		return std::nullopt;
 	}
 
-	// The base should be an identifier
-	if (std::holds_alternative<IdentifierNode>(*current)) {
-		const IdentifierNode& base_ident = std::get<IdentifierNode>(*current);
-		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_ident.name());
-		// The array base must name the frame of the declaration visible here,
-		// so a shadowing array is not confused with the outer one.
-		result.base_array_name = resolvedVariableKey(base_name_handle);
-
-		// Look up the declaration
-		result.base_decl = lookupDeclaration(base_name_handle);
-
-		// Reverse the indices so they're in order from outermost to innermost
-		// For arr[i][j], we collected [j, i], now reverse to [i, j]
-		result.indices.reserve(indices_reversed.size());
-		for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
-			result.indices.push_back(*it);
-		}
-
-		if (result.base_decl != nullptr) {
-			const TypeSpecifierNode& base_type = result.base_decl->type_specifier_node();
-			const bool pointer_to_array_rows =
-				base_type.has_pointee_array_declarator() &&
-				base_type.runtime_pointer_depth() == 1 &&
-				base_type.array_dimensions().size() + 1 == result.indices.size();
-			result.is_valid = result.indices.size() > 1 &&
-				(getEffectiveArrayDimensionCountForCodegen(*result.base_decl) == result.indices.size() ||
-				 pointer_to_array_rows);
-		}
+	const TypeSpecifierNode& base_type = result.base_decl->type_specifier_node();
+	const bool pointer_to_array_rows =
+		base_type.has_pointee_array_declarator() && base_type.runtime_pointer_depth() == 1 &&
+		base_type.array_dimensions().size() + 1 == chain.indices.size();
+	if (getEffectiveArrayDimensionCountForCodegen(*result.base_decl) != chain.indices.size() &&
+		!pointer_to_array_rows) {
+		return std::nullopt;
 	}
-
 	return result;
 }
 
-AstToIr::MultiDimPointeeDerefArrayAccess AstToIr::collectMultiDimPointeeDerefIndices(const ArraySubscriptNode& subscript) {
-	MultiDimPointeeDerefArrayAccess result;
-	std::vector<ASTNode> indices_reversed;
-	const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
-
-	// Collect the outermost index first (the one in the current subscript)
-	indices_reversed.push_back(subscript.index_expr());
-
-	// Walk down the chain of ArraySubscriptNodes
-	while (std::holds_alternative<ArraySubscriptNode>(*current)) {
-		const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
-		indices_reversed.push_back(inner.index_expr());
-		current = &inner.array_expr().as<ExpressionNode>();
+std::optional<AstToIr::MultiDimPointeeDerefArrayAccess> AstToIr::resolveMultiDimPointeeDerefArrayBase(
+	const MultiDimSubscriptChain& chain) {
+	if (chain.indices.size() <= 1 || chain.root_expression == nullptr ||
+		!std::holds_alternative<UnaryOperatorNode>(*chain.root_expression)) {
+		return std::nullopt;
 	}
-
-	// The root must be a pointer dereference: (*p)[i]...[k]
-	if (!std::holds_alternative<UnaryOperatorNode>(*current)) {
-		return result;
-	}
-	const UnaryOperatorNode& deref = std::get<UnaryOperatorNode>(*current);
-	if (deref.op() != "*") {
-		return result;
-	}
-	if (!deref.get_operand().is<ExpressionNode>()) {
-		return result;
+	const UnaryOperatorNode& deref = std::get<UnaryOperatorNode>(*chain.root_expression);
+	if (deref.op() != "*" || !deref.get_operand().is<ExpressionNode>()) {
+		return std::nullopt;
 	}
 	const ExpressionNode& deref_operand_expr = deref.get_operand().as<ExpressionNode>();
 
@@ -381,28 +340,22 @@ AstToIr::MultiDimPointeeDerefArrayAccess AstToIr::collectMultiDimPointeeDerefInd
 		}
 	}
 	if (!operand_type_id) {
-		return result;
+		return std::nullopt;
 	}
 	const CanonicalTypeDesc& desc = sema_.typeContext().get(operand_type_id);
 	// C++20 [dcl.ptr]/1: only a declarator whose bounds bind inside the
 	// pointer yields an array object on dereference, and every subscript in
 	// the chain consumes one bound.
-	if (!desc.pointee_array_declarator ||
-		desc.pointer_levels.size() != 1 ||
+	if (!desc.pointee_array_declarator || desc.pointer_levels.size() != 1 ||
 		desc.array_dimensions.empty() ||
 		desc.array_dimensions.size() +
-			static_cast<size_t>(desc.has_unsized_outer_array_dimension) < indices_reversed.size() ||
-		indices_reversed.size() <= 1) {
-		return result;
+			static_cast<size_t>(desc.has_unsized_outer_array_dimension) < chain.indices.size()) {
+		return std::nullopt;
 	}
 
-	result.indices.reserve(indices_reversed.size());
-	for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
-		result.indices.push_back(*it);
-	}
+	MultiDimPointeeDerefArrayAccess result;
 	result.pointee_desc = desc;
 	result.deref_operand = &deref_operand_expr;
-	result.is_valid = true;
 	return result;
 }
 
@@ -465,15 +418,16 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	FLASH_LOG_FORMAT(Codegen, Debug, "generateArraySubscriptIr: array_expr is ArraySubscriptNode = {}",
 					 std::holds_alternative<ArraySubscriptNode>(array_expr));
 	if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
+		const MultiDimSubscriptChain multi_dim_chain = collectMultiDimSubscriptChain(arraySubscriptNode);
 		// C++20 [dcl.ptr]/1, [expr.sub]/1: a subscript chain rooted at a
 		// pointer-to-array dereference indexes the pointee array object. Each
 		// subscript consumes one bound, so (*p)[i][j] over T(*)[2][4] reads
 		// element p[i][j] with row-major strides ([dcl.array]/1). The whole
 		// chain is flattened here, mirroring the identifier and member
 		// multidimensional collectors below.
-		auto pointee_deref_multi_dim = collectMultiDimPointeeDerefIndices(arraySubscriptNode);
-		if (pointee_deref_multi_dim.is_valid) {
-			const CanonicalTypeDesc& pointee_desc = pointee_deref_multi_dim.pointee_desc;
+		auto pointee_deref_multi_dim = resolveMultiDimPointeeDerefArrayBase(multi_dim_chain);
+		if (pointee_deref_multi_dim) {
+			const CanonicalTypeDesc& pointee_desc = pointee_deref_multi_dim->pointee_desc;
 			const TypeCategory element_type = pointee_desc.category();
 			TypeIndex element_type_index = pointee_desc.type_index;
 			int element_size_bits = get_type_size_bits(element_type);
@@ -511,9 +465,9 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			IrValue decay_rhs_value;
 			bool base_materialized = false;
 			TempVar addr_temp = var_counter.next();
-			if (std::holds_alternative<IdentifierNode>(*pointee_deref_multi_dim.deref_operand)) {
+			if (std::holds_alternative<IdentifierNode>(*pointee_deref_multi_dim->deref_operand)) {
 				const auto& base_ident =
-					std::get<IdentifierNode>(*pointee_deref_multi_dim.deref_operand);
+					std::get<IdentifierNode>(*pointee_deref_multi_dim->deref_operand);
 				const StringHandle base_name =
 					StringTable::getOrInternStringHandle(base_ident.name());
 				if (symbol_table.lookup(base_name).has_value()) {
@@ -539,7 +493,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				}
 			}
 			if (!base_materialized) {
-				auto base_operands = visitExpressionNode(*pointee_deref_multi_dim.deref_operand);
+				auto base_operands = visitExpressionNode(*pointee_deref_multi_dim->deref_operand);
 				if (const auto* string = std::get_if<StringHandle>(&base_operands.value)) {
 					decay_base = *string;
 					decay_rhs_value = *string;
@@ -566,8 +520,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 				AssignmentOp copy_op;
 				copy_op.result = addr_temp;
-				copy_op.lhs = makeTypedValue(pointee_deref_multi_dim.pointee_desc.category(), SizeInBits{POINTER_SIZE_BITS}, addr_temp);
-				copy_op.rhs = makeTypedValue(pointee_deref_multi_dim.pointee_desc.category(), SizeInBits{POINTER_SIZE_BITS}, decay_rhs_value);
+				copy_op.lhs = makeTypedValue(pointee_deref_multi_dim->pointee_desc.category(), SizeInBits{POINTER_SIZE_BITS}, addr_temp);
+				copy_op.rhs = makeTypedValue(pointee_deref_multi_dim->pointee_desc.category(), SizeInBits{POINTER_SIZE_BITS}, decay_rhs_value);
 				copy_op.is_pointer_store = false;
 				copy_op.dereference_rhs_references = false;
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_op), Token()));
@@ -581,7 +535,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 
 			// Generate code to compute flat index: sum(indices[k] * strides[k]).
-			auto idx0_operands = visitExpressionNode(pointee_deref_multi_dim.indices[0].as<ExpressionNode>());
+			auto idx0_operands = visitExpressionNode(multi_dim_chain.indices[0].as<ExpressionNode>());
 			TempVar flat_index = var_counter.next();
 			if (strides[0] == 1) {
 				BinaryOp add_op;
@@ -596,8 +550,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				mul_op.result = IrValue{flat_index};
 				ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 			}
-			for (size_t k = 1; k < pointee_deref_multi_dim.indices.size(); ++k) {
-				auto idx_operands = visitExpressionNode(pointee_deref_multi_dim.indices[k].as<ExpressionNode>());
+			for (size_t k = 1; k < multi_dim_chain.indices.size(); ++k) {
+				auto idx_operands = visitExpressionNode(multi_dim_chain.indices[k].as<ExpressionNode>());
 				TempVar new_flat = var_counter.next();
 				if (strides[k] == 1) {
 					BinaryOp add_op;
@@ -653,15 +607,15 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		}
 
 		// First check if this is a multidimensional member array access (obj.arr[i][j])
-		auto member_multi_dim = collectMultiDimMemberArrayIndices(arraySubscriptNode);
-		FLASH_LOG_FORMAT(Codegen, Debug, "Member multidim check: is_valid={}", member_multi_dim.is_valid);
+		auto member_multi_dim = resolveMultiDimMemberArrayBase(multi_dim_chain);
+		FLASH_LOG_FORMAT(Codegen, Debug, "Member multidim check: is_valid={}", member_multi_dim.has_value());
 
-		if (member_multi_dim.is_valid && member_multi_dim.member_info) {
+		if (member_multi_dim && member_multi_dim->member_info) {
 			FLASH_LOG(Codegen, Debug, "Flattening multidimensional member array access!");
 			// We have a valid multidimensional member array access
 			// For obj.arr[M][N] accessed as obj.arr[i][j], compute flat_index = i*N + j
 
-			const StructMember* member = member_multi_dim.member_info;
+			const StructMember* member = member_multi_dim->member_info;
 			TypeCategory element_type = member->memberType();
 			int base_element_size = get_type_size_bits(element_type);
 
@@ -670,7 +624,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// T (*p)[N]. The identifier path uses the same leading extent.
 			const bool pointer_to_array_rows =
 				member->pointee_array_declarator && member->pointer_depth == 1 &&
-				member->array_dimensions.size() + 1 == member_multi_dim.indices.size();
+				member->array_dimensions.size() + 1 == multi_dim_chain.indices.size();
 			std::vector<size_t> dim_sizes;
 			dim_sizes.reserve(member->array_dimensions.size() + static_cast<size_t>(pointer_to_array_rows));
 			if (pointer_to_array_rows) {
@@ -686,7 +640,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 
 			// Generate code to compute flat index
-			auto idx0_operands = visitExpressionNode(member_multi_dim.indices[0].as<ExpressionNode>());
+			auto idx0_operands = visitExpressionNode(multi_dim_chain.indices[0].as<ExpressionNode>());
 			TempVar flat_index = var_counter.next();
 
 			if (strides[0] == 1) {
@@ -704,8 +658,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 
 			// Add remaining indices
-			for (size_t k = 1; k < member_multi_dim.indices.size(); ++k) {
-				auto idx_operands = visitExpressionNode(member_multi_dim.indices[k].as<ExpressionNode>());
+			for (size_t k = 1; k < multi_dim_chain.indices.size(); ++k) {
+				auto idx_operands = visitExpressionNode(multi_dim_chain.indices[k].as<ExpressionNode>());
 
 				if (strides[k] == 1) {
 					TempVar new_flat = var_counter.next();
@@ -739,29 +693,29 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// is not read from the outer object of the same spelling. Non-locals
 			// keep the object.member qualified spelling.
 			std::variant<StringHandle, TempVar, LocalVarId> base_object;
-			int64_t access_member_offset = member_multi_dim.member_offset;
+			int64_t access_member_offset = member_multi_dim->object_relative_offset;
 			const bool member_stores_address =
 				member->is_reference() || member->is_rvalue_reference() ||
 				(member->pointer_depth > 0 && !member->is_array);
 			if (pointer_to_array_rows || member_stores_address) {
-				if (member_multi_dim.member_expression == nullptr) {
+				if (multi_dim_chain.root_expression == nullptr) {
 					throw InternalError("Address-based member array subscript has no member expression");
 				}
 				const bool is_reference_member = member->is_reference() || member->is_rvalue_reference();
 				base_object = materializeMemberArrayBase(
-					*member_multi_dim.member_expression,
+					*multi_dim_chain.root_expression,
 					is_reference_member ? ExpressionContext::LValueAddress : ExpressionContext::Load);
 				access_member_offset = 0;
-			} else if (const auto* local_id = std::get_if<LocalVarId>(&member_multi_dim.object_key)) {
+			} else if (const auto* local_id = std::get_if<LocalVarId>(&member_multi_dim->object_key)) {
 				base_object = *local_id;
 			} else {
-				base_object = member_multi_dim.qualified_member_name;
+				base_object = member_multi_dim->qualified_member_name;
 			}
 
 			// The base operand holds an address when the member is a reference or
 			// pointer, or when the object itself is a reference/pointer. Otherwise
 			// the flattened access indexes inline member storage.
-			const bool member_base_holds_address = member_stores_address || member_multi_dim.object_is_address;
+			const bool member_base_holds_address = member_stores_address || member_multi_dim->object_is_address;
 
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::ArrayElement,
@@ -792,13 +746,13 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		}
 
 		// This could be a multidimensional array access
-		auto multi_dim = collectMultiDimArrayIndices(arraySubscriptNode);
+		auto multi_dim = resolveMultiDimIdentifierArrayBase(multi_dim_chain);
 
-		if (multi_dim.is_valid && multi_dim.base_decl) {
+		if (multi_dim) {
 			// We have a valid multidimensional array access
 			// For arr[M][N][P] accessed as arr[i][j][k], compute flat_index = i*N*P + j*P + k
 
-			const auto& type_node = multi_dim.base_decl->type_specifier_node();
+			const auto& type_node = multi_dim->base_decl->type_specifier_node();
 			TypeCategory element_type = type_node.type();
 			int element_size_bits = static_cast<int>(type_node.size_in_bits());
 			TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
@@ -808,10 +762,10 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			}
 
 			// Get all dimension sizes
-			std::vector<size_t> dim_sizes = getEffectiveArrayDimensionsForCodegen(*multi_dim.base_decl);
+			std::vector<size_t> dim_sizes = getEffectiveArrayDimensionsForCodegen(*multi_dim->base_decl);
 			const bool pointer_to_array_rows =
 				type_node.has_pointee_array_declarator() && type_node.runtime_pointer_depth() == 1 &&
-				type_node.array_dimensions().size() + 1 == multi_dim.indices.size();
+				type_node.array_dimensions().size() + 1 == multi_dim_chain.indices.size();
 			if (pointer_to_array_rows) {
 				dim_sizes.clear();
 				dim_sizes.push_back(1);
@@ -827,7 +781,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				(type_node.is_reference() || type_node.is_rvalue_reference()) && type_node.is_array();
 			const bool index_through_stored_address = pointer_to_array_rows || reference_to_array;
 
-			if (dim_sizes.size() == multi_dim.indices.size()) {
+			if (dim_sizes.size() == multi_dim_chain.indices.size()) {
 				// All dimensions evaluated successfully, compute flat index
 				// For arr[D0][D1][D2] accessed as arr[i0][i1][i2]:
 				// flat_index = i0 * (D1*D2) + i1 * D2 + i2
@@ -841,7 +795,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 				// Generate code to compute flat index
 				// Start with the first index times its stride
-				auto idx0_operands = visitExpressionNode(multi_dim.indices[0].as<ExpressionNode>());
+				auto idx0_operands = visitExpressionNode(multi_dim_chain.indices[0].as<ExpressionNode>());
 				TempVar flat_index = var_counter.next();
 
 				if (strides[0] == 1) {
@@ -862,8 +816,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				}
 
 				// Add remaining indices: flat_index += indices[k] * strides[k]
-				for (size_t k = 1; k < multi_dim.indices.size(); ++k) {
-					auto idx_operands = visitExpressionNode(multi_dim.indices[k].as<ExpressionNode>());
+				for (size_t k = 1; k < multi_dim_chain.indices.size(); ++k) {
+					auto idx_operands = visitExpressionNode(multi_dim_chain.indices[k].as<ExpressionNode>());
 
 					if (strides[k] == 1) {
 						// flat_index += indices[k]
@@ -900,7 +854,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				// Mark array element access as lvalue using metadata system
 				LValueInfo lvalue_info(
 					LValueInfo::Kind::ArrayElement,
-					toVariableBase(multi_dim.base_array_name),
+					toVariableBase(multi_dim->base_array_name),
 					0 // offset computed dynamically by index
 				);
 				lvalue_info.array_index = IrValue{flat_index};
@@ -914,7 +868,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				payload.element_size_in_bits = element_size_bits;
 				payload.member_offset = 0;
 				payload.base_holds_address = index_through_stored_address;
-				payload.array = toVariableBase(multi_dim.base_array_name);
+				payload.array = toVariableBase(multi_dim->base_array_name);
 				payload.index.setType(TypeCategory::UnsignedLongLong);
 				payload.index.ir_type = IrType::Integer;
 				payload.index.size_in_bits = SizeInBits{64};
