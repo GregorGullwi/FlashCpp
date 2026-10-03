@@ -438,35 +438,59 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			type_spec.add_pointer_level(ptr_cv);
 		}
 
-		parse_type_alias_function_type(type_spec, "");
-
-		// Parse reference modifiers: & or &&
-		ReferenceQualifier ref_qual = parse_reference_qualifier();
-		FLASH_LOG_FORMAT(Parser, Debug, "Type alias '{}': ref_qual={} (0=None, 1=LValue, 2=RValue)",
-						 StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
-		type_spec.set_reference_qualifier(ref_qual);
-
 		std::vector<ASTNode> alias_array_dimensions;
 
-		// Parse array dimensions: using _Type = _Tp[_Nm]; or using _Type = _Tp[2][3];
-		while (peek() == "["_tok) {
-			advance(); // consume '['
-			if (peek() == "]"_tok) {
-				type_spec.set_array(true);
-				advance(); // consume ']'
+		// Reference-to-array alias: using A = int (&)[2][2];. The parenthesized
+		// declarator is not reached by the trailing reference/array parsing below,
+		// so consume and apply it before that path.
+		bool parsed_reference_to_array_alias = false;
+		if (peek() == "("_tok) {
+			SaveHandle rta_probe = save_token_position();
+			advance(); // consume '('
+			(void)parse_calling_convention(CallingConvention::Default);
+			if (peek() == "&"_tok || peek() == "&&"_tok) {
+				Token ignored_identifier;
+				bool has_identifier = false;
+				if (parseReferenceToArrayDeclarator(type_spec, ignored_identifier, has_identifier, alias_array_dimensions)) {
+					parsed_reference_to_array_alias = true;
+					discard_saved_token(rta_probe);
+				} else {
+					restore_token_position(rta_probe);
+				}
 			} else {
-				auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (dim_result.is_error()) {
-					return dim_result;
-				}
-				if (dim_result.node().has_value()) {
-					alias_array_dimensions.push_back(*dim_result.node());
-				}
-				auto dim_val = try_evaluate_constant_expression(*dim_result.node());
-				size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
-				type_spec.add_array_dimension(dim_size);
-				if (!consume("]"_tok)) {
-					return ParseResult::error("Expected ']' after array dimension in type alias", current_token_);
+				restore_token_position(rta_probe);
+			}
+		}
+
+		if (!parsed_reference_to_array_alias) {
+			parse_type_alias_function_type(type_spec, "");
+
+			// Parse reference modifiers: & or &&
+			ReferenceQualifier ref_qual = parse_reference_qualifier();
+			FLASH_LOG_FORMAT(Parser, Debug, "Type alias '{}': ref_qual={} (0=None, 1=LValue, 2=RValue)",
+							 StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
+			type_spec.set_reference_qualifier(ref_qual);
+
+			// Parse array dimensions: using _Type = _Tp[_Nm]; or using _Type = _Tp[2][3];
+			while (peek() == "["_tok) {
+				advance(); // consume '['
+				if (peek() == "]"_tok) {
+					type_spec.set_array(true);
+					advance(); // consume ']'
+				} else {
+					auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (dim_result.is_error()) {
+						return dim_result;
+					}
+					if (dim_result.node().has_value()) {
+						alias_array_dimensions.push_back(*dim_result.node());
+					}
+					auto dim_val = try_evaluate_constant_expression(*dim_result.node());
+					size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
+					type_spec.add_array_dimension(dim_size);
+					if (!consume("]"_tok)) {
+						return ParseResult::error("Expected ']' after array dimension in type alias", current_token_);
+					}
 				}
 			}
 		}
@@ -2160,6 +2184,33 @@ ParseResult Parser::parse_typedef_declaration() {
 		}
 	}
 
+	// Reference-to-array typedef: typedef int (&Alias)[2][2];
+	// The parenthesized reference declarator is not handled by the pointer
+	// declarator machinery used for function-pointer typedefs above.
+	bool is_reference_to_array_typedef = false;
+	Token reference_to_array_alias_token;
+	if (!is_member_function_pointer_typedef && peek() == "("_tok) {
+		SaveHandle rta_probe = save_token_position();
+		advance(); // consume '('
+		(void)parse_calling_convention(CallingConvention::Default);
+		if (peek() == "&"_tok || peek() == "&&"_tok) {
+			Token identifier;
+			bool has_identifier = false;
+			std::vector<ASTNode> array_dimensions;
+			if (parseReferenceToArrayDeclarator(type_spec, identifier, has_identifier, array_dimensions) &&
+				has_identifier) {
+				is_reference_to_array_typedef = true;
+				reference_to_array_alias_token = identifier;
+				type_node = emplace_node<TypeSpecifierNode>(type_spec);
+				discard_saved_token(rta_probe);
+			} else {
+				restore_token_position(rta_probe);
+			}
+		} else {
+			restore_token_position(rta_probe);
+		}
+	}
+
 	// Check for function pointer typedef: typedef return_type (*alias_name)(params);
 	// Pattern: '(' '*' identifier ')' '(' params ')'
 	bool is_function_pointer_typedef = false;
@@ -2255,6 +2306,11 @@ ParseResult Parser::parse_typedef_declaration() {
 		// Replace type_spec with the function pointer type
 		type_spec = fp_type;
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
+	} else if (is_reference_to_array_typedef) {
+		// The declarator helper already applied the reference qualifier and
+		// array extents to type_spec and captured the alias name.
+		alias_token = reference_to_array_alias_token;
+		alias_name = reference_to_array_alias_token.value();
 	} else {
 		// Parse the alias name (identifier)
 		alias_token = advance();

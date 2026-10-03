@@ -597,27 +597,20 @@ resets temporary numbers without clearing global reference metadata. Both requir
 separate boundary regressions and investigation; no new name-based type recovery
 should be introduced to compensate for either path.
 
-## Reference-to-array in an abstract declarator or typedef does not parse
+## Pointer-to-array in an alias (typedef/using) does not parse
 
-The named and parameter declarator forms of a reference-to-array now parse and
-lower, including multi-dimensional extents:
-
-```cpp
-int m[2][2] = {{1, 2}, {3, 4}};
-int (&rm)[2][2] = m;              // ok
-void f(const int (&r)[2][2]);     // ok
-```
-
-The abstract (type-id) and typedef forms are still rejected, even in one
-dimension. `consume_type_id_abstract_declarators` and the typedef declarator
-probe do not recognize a parenthesized `(&)[N...]` group, so both fail before
-the reference is recorded:
+Reference-to-array declarators now parse in every spelling: named, parameter,
+typedef, using-alias, and abstract type-id. The pointer-to-array counterpart is
+still rejected in the alias spellings, even though the abstract form works:
 
 ```cpp
-typedef int (&ArrRef)[3];                     // error: Expected identifier after type in typedef
-int (&r)[3] = static_cast<int (&)[3]>(a);     // error: Expected '>' after type in static_cast
+typedef int (*PtrToArr)[3];                  // error: Expected identifier after type in typedef
+using PtrToArr = int (*)[3];                 // error: Expected ';' after type alias
+int (*p)[3] = static_cast<int (*)[3]>(&a);   // ok
 ```
 
-Extending the abstract/typedef declarator parser to accept a reference-to-array
-group is separate from the reference-binding lowering that already handles the
-named form.
+The named form `int (*p)[3];` also works. The typedef and using-alias probes
+recognize `(*name)(params)` (function pointers) but not the array suffix after
+the parenthesized pointer group. Routing that group through the shared
+declarator machinery, as the reference-to-array spelling now does, would close
+the gap.
