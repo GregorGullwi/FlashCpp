@@ -1797,7 +1797,8 @@ bool typeRefersToCurrentTemplateParam(
 				return true;
 			}
 			if (has_current_template_params &&
-				(current_type_spec.has_template_parameter_identity() ||
+				((current_type_spec.has_template_parameter_identity() &&
+					!current_type_spec.has_function_signature()) ||
 				 isPlaceholderAutoType(current_type_spec.type()) ||
 				 current_type_spec.is_pack_expansion() ||
 				 !current_type_spec.sizeBits().is_set() ||
