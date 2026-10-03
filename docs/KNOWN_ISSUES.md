@@ -597,21 +597,18 @@ resets temporary numbers without clearing global reference metadata. Both requir
 separate boundary regressions and investigation; no new name-based type recovery
 should be introduced to compensate for either path.
 
-## Reference-to-array aliases in template positions remain unsupported
+## Reference NTTP arguments do not check array extent compatibility
 
-Reference-to-array is still unsupported in template-specific type positions,
-even though the ordinary spellings parse:
+The compiler accepts a mismatched array object as a reference non-type template
+argument:
 
 ```cpp
-template <class T> using Ref = T (&)[3];   // error: Parenthesized alias template target declarator is not supported
-template <class T> int f(T (&r)[3]);       // ok (named/parameter form)
-g<int (&)[3]>();                           // error: Expected primary expression (template argument type-id)
-template <int (&R)[3]> struct S;           // error: Expected identifier for non-type template parameter
+template<int (&R)[3]> struct Ref;
+int values[4];
+Ref<values> invalid;
 ```
 
-The alias-template target and template-argument/NTTP type-id parsers have their
-own declarator handling and do not route through
-tryConsumeReferenceToArrayDeclarator. Enabling them also requires preserving the
-substituted bound and element type through alias materialization: a parse-only
-change resolves the alias to a pointer rather than a reference to the array, so
-the shape is deliberately left rejected.
+Explicit argument classification records the referenced entity but does not
+compare its resolved array type with the declared parameter type. Add a negative
+regression and validate the argument using its semantic type and the complete
+array declarator.

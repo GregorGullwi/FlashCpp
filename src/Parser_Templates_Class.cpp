@@ -1473,6 +1473,43 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		// Structural abstract declarators: function/array pointers, and
 		// member-function pointers such as int (Owner::*)() / int (Holder<T>::*)().
 		if (peek() == "("_tok) {
+			// Alias-template targets are type-ids, so their parenthesized
+			// reference-to-array declarator has no identifier. Keep the bounds with
+			// the alias node for substitution just like the pointer/array path below.
+			SaveHandle reference_array_probe = save_token_position();
+			TypeSpecifierNode reference_array_target = type_spec;
+			bool reference_array_has_identifier = false;
+			std::vector<ASTNode> reference_array_bounds;
+			if (tryConsumeReferenceToArrayDeclarator(
+				reference_array_target,
+				nullptr,
+				&reference_array_has_identifier,
+				&reference_array_bounds) &&
+				!reference_array_has_identifier) {
+				for (const ASTNode& bound_expression : reference_array_bounds) {
+					const auto bound_value =
+						try_evaluate_constant_expression(bound_expression);
+					if (bound_value.has_value() && bound_value->value <= 0) {
+						discard_saved_token(reference_array_probe);
+						return error(
+							DiagnosticId::AliasTemplateArrayBoundUnresolved,
+							type_spec.token(),
+							"Alias template array bound must be a positive constant expression");
+					}
+				}
+				type_spec = std::move(reference_array_target);
+				alias_array_bound_expressions = std::move(reference_array_bounds);
+				promoteDeclaratorShapeToOrdered(
+					type_spec,
+					alias_array_bound_expressions);
+				has_structural_alias_declarator = true;
+				discard_saved_token(reference_array_probe);
+			} else {
+				restore_token_position(reference_array_probe);
+				discard_saved_token(reference_array_probe);
+			}
+		}
+		if (peek() == "("_tok && !has_structural_alias_declarator) {
 			SaveHandle member_or_pointer_probe = save_token_position();
 			advance(); // '('
 			(void)parse_calling_convention(CallingConvention::Default);
