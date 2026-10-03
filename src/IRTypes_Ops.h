@@ -635,7 +635,7 @@ struct ArrayAccessOp {
 	std::variant<StringHandle, TempVar, LocalVarId> array;  // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;		  // Index value (type + value)
 	int64_t member_offset = 0;	   // Offset in bytes for member arrays (0 for non-member)
-	bool is_pointer_to_array = false;	  // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
+	bool base_holds_address = false;	  // True when the base operand holds an address; false when it names inline storage.
 };
 
 // Array store (store value to array element)
@@ -647,7 +647,7 @@ struct ArrayStoreOp {
 	TypedValue index;		  // Index value (type + value)
 	TypedValue value;		  // Value to store
 	int64_t member_offset = 0;	   // Offset in bytes for member arrays (0 for non-member)
-	bool is_pointer_to_array = false;	  // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
+	bool base_holds_address = false;	  // True when the base operand holds an address; false when it names inline storage.
 };
 
 // Array element address (get address without loading)
@@ -658,7 +658,7 @@ struct ArrayElementAddressOp {
 	int element_size_in_bits = 0;	  // Element size
 	std::variant<StringHandle, TempVar, LocalVarId> array;  // Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;		  // Index value (type + value)
-	bool is_pointer_to_array = false;	  // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
+	bool base_holds_address = false;	  // True when the base operand holds an address; false when it names inline storage.
 };
 
 // Address-of operator (&x)

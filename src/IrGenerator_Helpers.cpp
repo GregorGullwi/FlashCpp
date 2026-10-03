@@ -533,7 +533,7 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 void AstToIr::emitArrayStore(TypeCategory element_type, int element_size_bits,
 							 std::variant<StringHandle, TempVar, LocalVarId> array,
 							 const TypedValue& index, const TypedValue& value,
-							 int64_t member_offset, bool is_pointer_to_array,
+							 int64_t member_offset, bool base_holds_address,
 							 const Token& token) {
 	ArrayStoreOp payload;
 	payload.element_type_index = TypeIndex{0, element_type};
@@ -542,7 +542,7 @@ void AstToIr::emitArrayStore(TypeCategory element_type, int element_size_bits,
 	payload.index = index;
 	payload.value = value;
 	payload.member_offset = member_offset;
-	payload.is_pointer_to_array = is_pointer_to_array;
+	payload.base_holds_address = base_holds_address;
 
 	ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), token));
 }

@@ -6139,7 +6139,7 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 			index_tv, // index
 			value_tv, // value (with LHS type/size, RHS value)
 			lv_info.offset, // member_offset
-			lv_info.is_pointer_to_array, // is_pointer_to_array
+			lv_info.base_holds_address, // base_holds_address
 			token);
 		return true;
 	}
@@ -6446,7 +6446,7 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 		load_op.array = lv_info.base;
 		load_op.index = index_tv;
 		load_op.member_offset = lv_info.offset;
-		load_op.is_pointer_to_array = lv_info.is_pointer_to_array;
+		load_op.base_holds_address = lv_info.base_holds_address;
 
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(load_op), token));
 
@@ -6479,7 +6479,7 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 			index_tv, // index
 			result_tv, // value (result of operation)
 			lv_info.offset, // member_offset
-			lv_info.is_pointer_to_array, // is_pointer_to_array
+			lv_info.base_holds_address, // base_holds_address
 			token);
 
 		return true;

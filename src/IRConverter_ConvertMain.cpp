@@ -9261,10 +9261,10 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						case LValueInfo::Kind::ArrayElement: {
 							const int element_size_bits = std::max(8, get_type_size_bits(ret_op.return_type_index.category()));
 							const int element_size_bytes = element_size_bits / 8;
-							auto loadArrayBaseAddress = [&](const std::variant<StringHandle, TempVar, LocalVarId>& base, bool is_pointer_to_array) -> bool {
+							auto loadArrayBaseAddress = [&](const std::variant<StringHandle, TempVar, LocalVarId>& base, bool base_holds_address) -> bool {
 								if (const auto* base_name = std::get_if<StringHandle>(&base)) {
 									std::string_view base_view = StringTable::getStringView(*base_name);
-									FLASH_LOG_FORMAT(Codegen, Debug, "loadArrayBaseAddress: base_view='{}', is_ptr={}", base_view, is_pointer_to_array);
+							FLASH_LOG_FORMAT(Codegen, Debug, "loadArrayBaseAddress: base_view='{}', base_holds_address={}", base_view, base_holds_address);
 									if (size_t dot_pos = base_view.find('.'); dot_pos != std::string_view::npos) {
 										StringHandle object_name = StringTable::getOrInternStringHandle(base_view.substr(0, dot_pos));
 										int object_offset = 0;
@@ -9277,7 +9277,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 											}
 											object_offset = object_offset_opt.value();
 										}
-										if (isPointerBaseStorage(object_offset)) {
+										if (base_holds_address) {
 											spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 											emitMovFromFrame(X64Register::RAX, object_offset);
 										} else {
@@ -9292,7 +9292,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 										return false;
 									}
 									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-									if (is_pointer_to_array || isPointerBaseStorage(base_offset_opt.value())) {
+									if (base_holds_address) {
 										emitMovFromFrame(X64Register::RAX, base_offset_opt.value());
 									} else {
 										emitLeaFromFrame(X64Register::RAX, base_offset_opt.value());
@@ -9306,7 +9306,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 										return false;
 									}
 									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-									if (is_pointer_to_array || isPointerBaseStorage(base_offset_opt.value())) {
+									if (base_holds_address) {
 										emitMovFromFrame(X64Register::RAX, base_offset_opt.value());
 									} else {
 										emitLeaFromFrame(X64Register::RAX, base_offset_opt.value());
@@ -9319,7 +9319,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								return true;
 							};
 
-							if (loadArrayBaseAddress(lv_info.base, lv_info.is_pointer_to_array)) {
+							if (loadArrayBaseAddress(lv_info.base, lv_info.base_holds_address)) {
 								if (lv_info.offset != 0) {
 									emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
 								}
@@ -12822,7 +12822,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 
 		// Get the array base address (from stack or register)
 	int64_t array_base_offset = 0;
-	bool is_array_pointer = op.is_pointer_to_array;	// Use flag from codegen
+	bool base_holds_address = op.base_holds_address;	// Use the IR's storage representation flag.
 	StringHandle array_name_handle;
 	std::string_view array_name_view;
 
@@ -12831,15 +12831,9 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		array_name_view = StringTable::getStringView(array_name_handle);
 	} else if (const auto* local_id = std::get_if<LocalVarId>(&op.array)) {
 		array_base_offset = getVariableOffsetOrThrow(*local_id, "handleArrayAccess local array base");
-		// isPointerBaseStorage is the single address-vs-inline predicate: a
-		// reference/pointer base holds an address, an inline array does not.
-		if (isPointerBaseStorage(array_base_offset)) {
-			is_array_pointer = true;
-		}
 	} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
 		TempVar array_temp_var = *temp_var;
 		array_base_offset = getStackOffsetFromTempVar(array_temp_var);
-		is_array_pointer = true;	 // TempVar always means pointer
 	}
 
 		// Check if this is a member array access (object.member format)
@@ -12848,8 +12842,6 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 	std::string_view member_name;
 	int64_t member_offset = op.member_offset;  // Get from payload
 
-		// Check if the object (not the array) is a pointer (like 'this' or a reference)
-	bool is_object_pointer = false;
 	bool is_global_array_access = false;
 	StringHandle global_array_name;
 	auto emitGlobalArrayBaseAddress = [&](bool load_pointer_from_global) {
@@ -12886,11 +12878,6 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				throw InternalError("Member array base object not found in scope or globals");
 			}
 
-				// Check if object is a pointer (reference parameter or 'this' - both need pointer dereferencing)
-				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
-			if (!is_global_array_access && isPointerBaseStorage(array_base_offset)) {
-				is_object_pointer = true;
-			}
 		} else {
 				// Regular array/pointer - get offset directly
 			if (auto array_offset = findIdentifierStackOffset(array_name_handle); array_offset.has_value()) {
@@ -12913,7 +12900,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
 		if (is_global_array_access) {
-			emitGlobalArrayBaseAddress(is_array_pointer || is_object_pointer);
+			emitGlobalArrayBaseAddress(base_holds_address);
 
 			int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
 			if (offset_bytes != 0) {
@@ -12923,16 +12910,13 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			if (!optimize_lea) {
 				emitElementLoadWhenNotLea();
 			}
-		} else if (is_array_pointer || is_object_pointer) {
-				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
-				// Load pointer and compute address
+		} else if (base_holds_address) {
+				// Base holds an address: load it, then add the member and index
+				// offsets. member_offset is 0 for a plain pointer array.
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-				// Add member offset + index offset to pointer
-				// For is_object_pointer: total offset = member_offset + (index * element_size)
-				// For is_array_pointer: total offset = index * element_size (member_offset is 0)
 			int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
 			if (offset_bytes != 0) {
 				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
@@ -12974,7 +12958,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 						 static_cast<int>(base_reg), static_cast<int>(index_reg), array_base_offset, index_var_offset);
 
 		if (is_global_array_access) {
-			emitGlobalArrayBaseAddress(is_array_pointer || is_object_pointer);
+			emitGlobalArrayBaseAddress(base_holds_address);
 			if (member_offset != 0) {
 				emitAddImmToReg(textSectionData, base_reg, member_offset);
 			}
@@ -12989,14 +12973,14 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			if (!optimize_lea) {
 				emitElementLoadWhenNotLea();
 			}
-		} else if (is_array_pointer || is_object_pointer) {
+		} else if (base_holds_address) {
 				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
 				// Add member offset for pointer objects (e.g., this->member)
-			if (is_object_pointer && member_offset != 0) {
+			if (member_offset != 0) {
 				emitAddImmToReg(textSectionData, base_reg, member_offset);
 			}
 
@@ -13053,18 +13037,18 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		X64Register index_reg = allocateRegisterWithSpilling();
 
 		if (is_global_array_access) {
-			emitGlobalArrayBaseAddress(is_array_pointer || is_object_pointer);
+			emitGlobalArrayBaseAddress(base_holds_address);
 			if (member_offset != 0) {
 				emitAddImmToReg(textSectionData, base_reg, member_offset);
 			}
-		} else if (is_array_pointer || is_object_pointer) {
+		} else if (base_holds_address) {
 				// Array is a pointer/temp var, or member array of a pointer object
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
 				// Add member offset for pointer objects (e.g., this->member)
-			if (is_object_pointer && member_offset != 0) {
+			if (member_offset != 0) {
 				emitAddImmToReg(textSectionData, base_reg, member_offset);
 			}
 		} else {
@@ -13128,7 +13112,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 		TempVar result_var = op.result;
 		int element_size_bits = op.element_size_in_bits;
 		int element_size_bytes = element_size_bits / 8;
-		bool is_pointer_to_array = op.is_pointer_to_array;
+		bool base_holds_address = op.base_holds_address;
 
 			// Get the array base address
 		int64_t array_base_offset = 0;
@@ -13141,9 +13125,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 			array_base_offset = array_info->offset;
 		} else if (const auto* local_id = std::get_if<LocalVarId>(&op.array)) {
 			array_base_offset = getVariableOffsetOrThrow(*local_id, "handleArrayElementAddress local base");
-			if (isPointerBaseStorage(array_base_offset)) {
-				is_pointer_to_array = true;
-			}
+			// The IR builder records whether the base operand holds an address.
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
 			TempVar array_temp = *temp_var;
 			array_base_offset = getStackOffsetFromTempVar(array_temp);
@@ -13156,7 +13138,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 		if (std::holds_alternative<unsigned long long>(op.index.value)) {
 			uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
-			if (is_pointer_to_array) {
+			if (base_holds_address) {
 					// Array is a pointer/reference - load it first, then add offset
 				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
@@ -13200,7 +13182,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 				// Multiply index by element size
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-			if (is_pointer_to_array) {
+			if (base_holds_address) {
 					// Array is a pointer/reference - load the pointer value first
 				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
@@ -13232,7 +13214,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 				// Multiply index by element size
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-			if (is_pointer_to_array) {
+			if (base_holds_address) {
 					// Array is a pointer/reference - load the pointer value first
 				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
@@ -13271,7 +13253,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 
 		int element_size_bits = op.element_size_in_bits;
 		int element_size_bytes = element_size_bits / 8;
-		bool is_pointer_to_array = op.is_pointer_to_array;
+		bool base_holds_address = op.base_holds_address;
 
 		// Get the array base address
 		StringHandle array_name_handle;
@@ -13470,27 +13452,9 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 		}
 
-		// Check if the object (not the array) is a pointer (reference parameter or 'this')
-		// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
-		bool is_object_pointer = false;
-		// A member array's base object, or a named local array base, may hold an
-		// address (a reference/pointer object); isPointerBaseStorage is the
-		// single predicate that separates that from inline element storage.
-		if (is_member_array || array_is_local_id) {
-			if (isPointerBaseStorage(array_base_offset)) {
-				is_object_pointer = true;
-			}
-		}
-
-		// When array is from a TempVar (member_access result), it holds a pointer to the array
-		// We need to treat it like is_pointer_to_array case
-		if (array_is_tempvar) {
-			is_pointer_to_array = true;
-		}
-
 		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_is_tempvar={}, array_base_offset={}, member_offset={}, is_global_array={}",
-						 is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_is_tempvar, array_base_offset, member_offset, is_global_array);
+						 "ArrayStore: is_member_array={}, object_name='{}', base_holds_address={}, array_is_tempvar={}, array_base_offset={}, member_offset={}, is_global_array={}",
+						 is_member_array, (is_member_array ? object_name : "N/A"), base_holds_address, array_is_tempvar, array_base_offset, member_offset, is_global_array);
 
 		// Shared helper: emit store to [RAX] using is_float_store flag
 		auto emitStoreToRAX = [&]() {
@@ -13527,33 +13491,13 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				} else {
 					emitStoreToRAX();
 				}
-			} else if (is_pointer_to_array) {
-				// Load the pointer value first
+			} else if (base_holds_address) {
+				// Base holds an address: load it, then add the member and index
+				// offsets. member_offset is 0 for a plain pointer array.
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 
-				// Add offset to pointer: ADD RAX, (index * element_size)
-				int64_t offset_bytes = index_value * element_size_bytes;
+				int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
 				emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
-
-				// Store to [RAX] with appropriate size
-				if (is_struct_store && struct_source_offset.has_value()) {
-					emitStructCopyToRAX(*struct_source_offset);
-				} else {
-					emitStoreToRAX();
-				}
-			} else if (is_object_pointer) {
-				// Member array of a pointer object (like this.values[i])
-				// Load the object pointer first
-				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-
-					// Add member offset + index offset: ADD RAX, (member_offset + index * element_size)
-				int64_t total_offset = member_offset + (index_value * element_size_bytes);
-
-				FLASH_LOG_FORMAT(Codegen, Debug,
-								 "ArrayStore (const index): object_pointer path, base_offset={}, member_offset={}, index={}, elem_size={}, total_offset={}",
-								 array_base_offset, member_offset, index_value, element_size_bytes, total_offset);
-
-				emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
 
 				// Store to [RAX] with appropriate size
 				if (is_struct_store && struct_source_offset.has_value()) {
@@ -13594,23 +13538,12 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 				}
 				emitAddRAXRCX(textSectionData);
-			} else if (is_pointer_to_array) {
-				// Load pointer into RAX
+			} else if (base_holds_address) {
+				// Base holds an address: load it, add the member offset, then RCX.
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-				// RAX += RCX (add index offset to pointer)
-				emitAddRAXRCX(textSectionData);
-			} else if (is_object_pointer) {
-				// Member array of a pointer object (like this.values[i])
-				// Load the object pointer first
-				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-				// Add member offset: ADD RAX, member_offset
 				if (member_offset != 0) {
-					FLASH_LOG_FORMAT(Codegen, Debug,
-									 "ArrayStore (var index): object_pointer path, base_offset={}, member_offset={}, elem_size={}",
-									 array_base_offset, member_offset, element_size_bytes);
 					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 				}
-				// RAX += RCX (add index offset)
 				emitAddRAXRCX(textSectionData);
 			} else {
 				// LEA RAX, [RBP + array_base_offset]
@@ -13648,20 +13581,12 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 				}
 				emitAddRAXRCX(textSectionData);
-			} else if (is_pointer_to_array) {
-				// Load pointer into RAX
+			} else if (base_holds_address) {
+				// Base holds an address: load it, add the member offset, then RCX.
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-				// RAX += RCX (add index offset to pointer)
-				emitAddRAXRCX(textSectionData);
-			} else if (is_object_pointer) {
-				// Member array of a pointer object (like this.values[i])
-				// Load the object pointer first
-				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-					// Add member offset: ADD RAX, member_offset
 				if (member_offset != 0) {
 					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 				}
-				// RAX += RCX (add index offset)
 				emitAddRAXRCX(textSectionData);
 			} else {
 				// LEA RAX, [RBP + array_base_offset]

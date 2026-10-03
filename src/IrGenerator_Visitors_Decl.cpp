@@ -3477,7 +3477,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_op.index = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i));
 		store_op.value = toTypedValue(element_operands[i]);
 		store_op.member_offset = 0;	// Not a member array - direct local array
-		store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
+		store_op.base_holds_address = false;  // This is an actual array, not a pointer
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), init_list.called_from()));
 	}
 
@@ -3543,7 +3543,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 			end_addr_op.element_size_in_bits = element_size_bits;
 			end_addr_op.array = array_name;
 			end_addr_op.index = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size));
-			end_addr_op.is_pointer_to_array = false;
+			end_addr_op.base_holds_address = false;
 			ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(end_addr_op), init_list.called_from()));
 
 			TypedValue end_value;

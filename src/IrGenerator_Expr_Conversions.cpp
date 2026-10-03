@@ -1414,7 +1414,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};
 					payload.index.value = flat_index;
-					payload.is_pointer_to_array = false;	 // Multidimensional arrays are actual arrays, not pointers
+					payload.base_holds_address = false;	 // Multidimensional arrays are actual arrays, not pointers
 
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 

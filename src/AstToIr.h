@@ -79,9 +79,13 @@ private:
 		VariableKey object_key;
 		std::string_view member_name;
 		StringHandle qualified_member_name;
+		const ExpressionNode* member_expression = nullptr;
 		std::vector<ASTNode> indices;  // Indices from outermost to innermost
 		const StructMember* member_info = nullptr;
 		int64_t member_offset = 0;
+		// True when the object named by object_key is a reference/pointer, so the
+		// base operand holds an address rather than inline member storage.
+		bool object_is_address = false;
 		bool is_valid = false;
 	};
 
@@ -1041,7 +1045,7 @@ private:
 	void emitArrayStore(TypeCategory element_type, int element_size_bits,
 						std::variant<StringHandle, TempVar, LocalVarId> array,
 						const TypedValue& index, const TypedValue& value,
-						int64_t member_offset, bool is_pointer_to_array,
+						int64_t member_offset, bool base_holds_address,
 						const Token& token);
 
 	// Emit MemberStore instruction

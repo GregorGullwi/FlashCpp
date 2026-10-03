@@ -739,7 +739,7 @@ return_conversion_done:
 					// When the base is a StringHandle like "this.values", the code generator's
 					// handleArrayElementAddress can't handle qualified names. Emit an AddressOfMember
 					// first to compute the base pointer, then use the TempVar result.
-					bool base_is_pointer = lv_info.is_pointer_to_array;
+					bool base_holds_address = lv_info.base_holds_address;
 					if (std::holds_alternative<StringHandle>(lv_info.base)) {
 						StringHandle base_sh = std::get<StringHandle>(lv_info.base);
 						std::string_view base_sv = StringTable::getStringView(base_sh);
@@ -756,7 +756,7 @@ return_conversion_done:
 							addr_op.member_size_in_bits = elem_addr.element_size_in_bits;
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), node.return_token()));
 							elem_addr.array = base_addr_temp;
-							base_is_pointer = true;
+							base_holds_address = true;
 						} else {
 							elem_addr.array = base_sh;
 						}
@@ -776,15 +776,15 @@ return_conversion_done:
 							addr_op.result_size_bits = SizeInBits{elem_addr.element_size_in_bits};
 							ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), node.return_token()));
 							elem_addr.array = base_addr_temp;
-							base_is_pointer = true;
+							base_holds_address = true;
 						}
 					} else {
 						// TempVar base (e.g., from AddressOfMember/emitArrayMemberDecay)
 						// holds a computed pointer, so the code generator must load it first.
 						elem_addr.array = std::get<TempVar>(lv_info.base);
-						base_is_pointer = true;
+						base_holds_address = true;
 					}
-					elem_addr.is_pointer_to_array = base_is_pointer;
+					elem_addr.base_holds_address = base_holds_address;
 
 					// Convert IrValue index to TypedValue
 					const IrValue& idx_val = *lv_info.array_index;
