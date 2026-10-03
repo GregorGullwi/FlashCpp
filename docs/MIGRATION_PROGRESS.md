@@ -672,9 +672,14 @@ Continue boundary 3A in this order:
     where non-template member-function-pointer parameter candidates are ranked
     by canonical signature and conversion; covered by
     `tests/test_canonical_dependent_member_function_pointer_contextual_address_overload_ret0.cpp`.
-    Function-template address deduction, reference-target binding, other
-    dependent member-function-pointer forms, and unsupported callable
-    conversions still need substitution-aware canonical ranking.
+    Reference targets now use the canonical reference-binding planner, so
+    address prvalues materialize for `const MFP&` and `MFP&&`, while an
+    inaccessible selected overload remains a semantic diagnostic; covered by
+    `tests/test_canonical_dependent_member_function_pointer_reference_contextual_address_ret0.cpp`
+    and `tests/test_canonical_dependent_member_function_pointer_reference_access_e1617.cpp`.
+    Function-template address deduction, other dependent member-function-pointer
+    forms, and unsupported callable conversions still need substitution-aware
+    canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.

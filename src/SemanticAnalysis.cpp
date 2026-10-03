@@ -10930,6 +10930,12 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		return std::nullopt;
 	if (!param_type.is_reference() && !param_type.is_rvalue_reference())
 		return std::nullopt;
+	TypeSpecifierNode access_target_type = param_type;
+	access_target_type.set_reference_qualifier(ReferenceQualifier::None);
+	access_target_type.set_cv_qualifier(CVQualifier::None);
+	checkMemberFunctionAddressAccessForTarget(
+		arg,
+		canonicalizeType(access_target_type));
 
 	CanonicalTypeId inferred_arg_type_id{};
 	auto arg_binding_type_opt = buildOverloadResolutionArgType(arg, &inferred_arg_type_id);

@@ -213,10 +213,17 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 		}
 	}
 
-	const std::optional<ConversionPlan> conversion =
-		tryBuildCanonicalProjectableConversionPlan(
-			selected_function_type,
-			parameter_type);
+	const bool parameter_is_reference =
+		parameter_type.is_reference() ||
+		parameter_type.is_rvalue_reference() ||
+		orderedDeclaratorIsReference(parameter_type);
+	const std::optional<ConversionPlan> conversion = parameter_is_reference
+		? tryBuildCanonicalReferenceBindingPlan(
+			  selected_function_type,
+			  parameter_type)
+		: tryBuildCanonicalProjectableConversionPlan(
+			  selected_function_type,
+			  parameter_type);
 	if (!conversion.has_value() || !conversion->is_valid) {
 		return ArgumentConversionInfo::no_match();
 	}
