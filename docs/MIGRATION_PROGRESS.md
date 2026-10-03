@@ -677,9 +677,14 @@ Continue boundary 3A in this order:
     inaccessible selected overload remains a semantic diagnostic; covered by
     `tests/test_canonical_dependent_member_function_pointer_reference_contextual_address_ret0.cpp`
     and `tests/test_canonical_dependent_member_function_pointer_reference_access_e1617.cpp`.
-    Function-template address deduction, other dependent member-function-pointer
-    forms, and unsupported callable conversions still need substitution-aware
-    canonical ranking.
+    A single dependent member-function-template candidate can now deduce its
+    function parameters from the target member-function-pointer signature;
+    covered by `tests/test_canonical_dependent_member_function_template_address_overload_ret0.cpp`
+    and `tests/test_canonical_dependent_member_function_template_address_access_e1617.cpp`.
+    Multiple member-template partial ordering, deduction from return-only
+    template parameters, free-function-template target deduction, other
+    dependent member-function-pointer forms, and unsupported callable
+    conversions still need substitution-aware canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
