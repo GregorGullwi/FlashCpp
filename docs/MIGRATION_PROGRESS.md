@@ -662,8 +662,14 @@ Continue boundary 3A in this order:
     callable return type now retain the overload set until substitution, then
     rank the concrete function-pointer candidates; covered by
     `tests/test_canonical_dependent_nested_callable_overload_ret0.cpp`.
-    Remaining dependent member-function-pointer forms and unsupported callable
-    conversions still need substitution-aware canonical ranking.
+    Dependent member-function-pointer variables whose signature contains
+    substituted return and parameter types now retain that signature through
+    AST substitution, allowing overload ranking to use the concrete callable
+    type. `tests/test_canonical_dependent_member_function_pointer_signature_overload_ret0.cpp`
+    checks selection for both scalar and record specializations in the presence
+    of a competing member overload. Other dependent member-function-pointer
+    forms and unsupported callable conversions still need substitution-aware
+    canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.

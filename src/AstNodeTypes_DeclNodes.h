@@ -3329,10 +3329,12 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 	// deduce_and_update_auto_return_type rewrites them.)
 	// A parser-created TypeSpecifierNode can also retain the identity of a template
 	// parameter after its TypeIndex has been normalized to a concrete-looking
-	// category. That identity is the canonical dependence marker for overload
-	// arguments until substitution rewrites the node; do not probe overloads from
-	// the category alone.
-	if (type_spec.has_template_parameter_identity() ||
+	// category. For ordinary types this remains the canonical dependence marker
+	// until substitution rewrites the node. Callable wrappers can retain that
+	// identity after their structured signature has been substituted, so inspect
+	// the signature and TypeIndex below before deciding they are still dependent.
+	if ((type_spec.has_template_parameter_identity() &&
+			!type_spec.has_function_signature()) ||
 		isPlaceholderAutoType(type_spec.type())) {
 		return true;
 	}
