@@ -303,6 +303,28 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	if (peek() == "("_tok) {
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Found '(' - checking for function pointer. current_token={}",
 						 std::string(current_token_.value()));
+
+		// Reference-to-array: T (&name)[N][M]...
+		Token ref_identifier;
+		bool has_name = false;
+		std::vector<ASTNode> array_dimensions;
+		if (tryConsumeReferenceToArrayDeclarator(type_spec, &ref_identifier, &has_name, &array_dimensions)) {
+			// Use a synthetic unnamed token if no name was provided
+			if (!has_name) {
+				ref_identifier = Token(Token::Type::Identifier, ""sv,
+									   type_spec.token().line(), type_spec.token().column(),
+									   type_spec.token().file_index());
+			}
+			auto decl_node = emplace_node<DeclarationNode>(
+				emplace_node<TypeSpecifierNode>(type_spec),
+				ref_identifier,
+				std::move(array_dimensions));
+			if (custom_alignment.has_value()) {
+				decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+			}
+			return ParseResult::success(decl_node);
+		}
+
 		// Save position in case this isn't a function pointer or reference declarator
 		SaveHandle saved_pos = save_token_position();
 		advance(); // consume '('
@@ -360,29 +382,8 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 			// parenthesized-declarator and pointer-to-member paths still see it.
 			restore_token_position(saved_pos);
 		} else if (!peek().is_eof() && (peek() == "&"_tok || peek() == "&&"_tok)) {
-			// Reference-to-array: T (&name)[N][M]...
-			Token ref_identifier;
-			bool has_name = false;
-			std::vector<ASTNode> array_dimensions;
-			if (parseReferenceToArrayDeclarator(type_spec, ref_identifier, has_name, array_dimensions)) {
-				// Use a synthetic unnamed token if no name was provided
-				if (!has_name) {
-					ref_identifier = Token(Token::Type::Identifier, ""sv,
-										   type_spec.token().line(), type_spec.token().column(),
-										   type_spec.token().file_index());
-				}
-				auto decl_node = emplace_node<DeclarationNode>(
-					emplace_node<TypeSpecifierNode>(type_spec),
-					ref_identifier,
-					std::move(array_dimensions));
-				if (custom_alignment.has_value()) {
-					decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
-				}
-				discard_saved_token(saved_pos);
-				return ParseResult::success(decl_node);
-			}
-
-			// Reference-to-function: T (&name)(Args...)
+			// Reference-to-function: T (&name)(Args...). Reference-to-array was
+			// handled by tryConsumeReferenceToArrayDeclarator above.
 			bool is_rvalue_ref = (peek() == "&&"_tok);
 			advance(); // consume '&' or '&&'
 			if (peek().is_identifier()) {
@@ -1208,6 +1209,43 @@ bool Parser::parseReferenceToArrayDeclarator(
 	out_has_identifier = has_identifier;
 	out_array_dimensions = std::move(array_dimensions);
 	discard_saved_token(group_body_start);
+	return true;
+}
+
+bool Parser::tryConsumeReferenceToArrayDeclarator(
+	TypeSpecifierNode& type_spec,
+	Token* out_identifier,
+	bool* out_has_identifier,
+	std::vector<ASTNode>* out_array_dimensions) {
+	if (peek() != "("_tok) {
+		return false;
+	}
+	SaveHandle group_start = save_token_position();
+	advance(); // consume '('
+	(void)parse_calling_convention(CallingConvention::Default);
+	if (peek() != "&"_tok && peek() != "&&"_tok) {
+		restore_token_position(group_start);
+		return false;
+	}
+
+	Token identifier;
+	bool has_identifier = false;
+	std::vector<ASTNode> array_dimensions;
+	if (!parseReferenceToArrayDeclarator(type_spec, identifier, has_identifier, array_dimensions)) {
+		restore_token_position(group_start);
+		return false;
+	}
+
+	if (out_identifier != nullptr) {
+		*out_identifier = identifier;
+	}
+	if (out_has_identifier != nullptr) {
+		*out_has_identifier = has_identifier;
+	}
+	if (out_array_dimensions != nullptr) {
+		*out_array_dimensions = std::move(array_dimensions);
+	}
+	discard_saved_token(group_start);
 	return true;
 }
 

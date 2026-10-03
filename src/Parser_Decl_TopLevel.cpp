@@ -993,25 +993,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					// Reference-to-array alias: using A = int (&)[2][2];. The
 					// parenthesized declarator is not reached by the trailing
 					// reference/array parsing below, so consume it first.
-					bool parsed_reference_to_array_alias = false;
-					if (peek() == "("_tok) {
-						SaveHandle rta_probe = save_token_position();
-						advance(); // consume '('
-						(void)parse_calling_convention(CallingConvention::Default);
-						if (peek() == "&"_tok || peek() == "&&"_tok) {
-							Token ignored_identifier;
-							bool has_identifier = false;
-							std::vector<ASTNode> ignored_dimensions;
-							if (parseReferenceToArrayDeclarator(type_spec, ignored_identifier, has_identifier, ignored_dimensions)) {
-								parsed_reference_to_array_alias = true;
-								discard_saved_token(rta_probe);
-							} else {
-								restore_token_position(rta_probe);
-							}
-						} else {
-							restore_token_position(rta_probe);
-						}
-					}
+					const bool parsed_reference_to_array_alias =
+						tryConsumeReferenceToArrayDeclarator(
+							type_spec, nullptr, nullptr, nullptr);
 
 					if (!parsed_reference_to_array_alias) {
 						parse_type_alias_function_type(type_spec, " in global alias");

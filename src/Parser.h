@@ -4375,6 +4375,16 @@ private:	 // Resume private methods
 		Token& out_identifier,
 		bool& out_has_identifier,
 		std::vector<ASTNode>& out_array_dimensions);
+	// Consume a complete parenthesized reference-to-array declarator group
+	// "( [cc] '&'|'&&' [identifier] ')' '[' N ']'..." starting at the opening
+	// '(', applying it to type_spec. Outputs are optional. Returns false with
+	// the token position restored when the shape does not match. This is the
+	// single entry point shared by named, abstract, typedef and alias parsers.
+	bool tryConsumeReferenceToArrayDeclarator(
+		TypeSpecifierNode& type_spec,
+		Token* out_identifier,
+		bool* out_has_identifier,
+		std::vector<ASTNode>* out_array_dimensions);
 	// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
 	// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
 	// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
