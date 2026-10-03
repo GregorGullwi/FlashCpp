@@ -3873,19 +3873,44 @@ inline ConversionPlan buildConversionPlan(
 	// genuinely incomplete parse-time types.
 	const TypeCategory effective_from_category = effectiveCategory(from);
 	const TypeCategory effective_to_category = effectiveCategory(to);
-	const bool target_is_struct_pointer =
-		effective_to_category == TypeCategory::Struct && to.is_pointer();
+	std::optional<CanonicalTypeKind> canonical_to_kind;
+	// Use canonical shape when the target imports; parser-time unresolved forms
+	// still need the compatibility projection below.
+	if (effective_from_category == TypeCategory::Struct &&
+		(effective_to_category != TypeCategory::Struct || to.is_pointer() ||
+			to.has_ordered_declarator())) {
+		if (FrontendContext* const context = FrontendContext::active();
+			context != nullptr) {
+			CanonicalTypeTable& table = context->canonicalTypes();
+			CanonicalTypeTransaction transaction(table);
+			const CanonicalTypeImport imported_target = importCanonicalType(table, to);
+			if (imported_target.status == CanonicalTypeImportStatus::Supported) {
+				const TypeId target_type = canonicalTypeWithoutReference(
+					table, imported_target.type);
+				canonical_to_kind = table.node(
+					stripCanonicalTopCv(table, target_type).first).kind;
+			}
+		}
+	}
+	const bool target_is_pointer = canonical_to_kind.has_value()
+		? *canonical_to_kind == CanonicalTypeKind::Pointer
+		: to.is_pointer();
 	if (effective_from_category == TypeCategory::Struct &&
 		(effective_to_category != TypeCategory::Struct ||
-		 target_is_struct_pointer)) {
+		 target_is_pointer)) {
 		if (from.type_index().is_valid()) {
-			const bool has_canonical_conversion_target =
-				is_builtin_type(effective_to_category) ||
-				effective_to_category == TypeCategory::Enum ||
-				to.is_pointer() ||
-				to.is_function_pointer() ||
-				to.is_member_object_pointer_type() ||
-				to.is_member_function_pointer();
+			const bool has_canonical_conversion_target = canonical_to_kind.has_value()
+				? (*canonical_to_kind == CanonicalTypeKind::Builtin ||
+					*canonical_to_kind == CanonicalTypeKind::Enum ||
+					*canonical_to_kind == CanonicalTypeKind::Pointer ||
+					*canonical_to_kind == CanonicalTypeKind::MemberObjectPointer ||
+					*canonical_to_kind == CanonicalTypeKind::MemberFunctionPointer)
+				: (is_builtin_type(effective_to_category) ||
+					effective_to_category == TypeCategory::Enum ||
+					to.is_pointer() ||
+					to.is_function_pointer() ||
+					to.is_member_object_pointer_type() ||
+					to.is_member_function_pointer());
 			if (has_canonical_conversion_target) {
 				if (const auto selected_conversion =
 					trySelectCanonicalUserDefinedConversionOperator(
