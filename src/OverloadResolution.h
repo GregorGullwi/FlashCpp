@@ -2817,6 +2817,8 @@ trySelectCanonicalUserDefinedConversionOperator(
 			const CanonicalTypeKind return_type_kind = table.node(
 				stripCanonicalTopCv(table, unreferenced_return_type).first).kind;
 			if (return_type_kind != CanonicalTypeKind::Pointer &&
+				return_type_kind != CanonicalTypeKind::MemberObjectPointer &&
+				return_type_kind != CanonicalTypeKind::MemberFunctionPointer &&
 				return_type_kind != CanonicalTypeKind::Builtin &&
 				return_type_kind != CanonicalTypeKind::Enum) {
 				continue;
@@ -3871,13 +3873,20 @@ inline ConversionPlan buildConversionPlan(
 	// genuinely incomplete parse-time types.
 	const TypeCategory effective_from_category = effectiveCategory(from);
 	const TypeCategory effective_to_category = effectiveCategory(to);
+	const bool target_is_struct_pointer =
+		effective_to_category == TypeCategory::Struct && to.is_pointer();
 	if (effective_from_category == TypeCategory::Struct &&
-		effective_to_category != TypeCategory::Struct) {
+		(effective_to_category != TypeCategory::Struct ||
+		 target_is_struct_pointer)) {
 		if (from.type_index().is_valid()) {
-			const bool has_canonical_scalar_target =
+			const bool has_canonical_conversion_target =
 				is_builtin_type(effective_to_category) ||
-				effective_to_category == TypeCategory::Enum;
-			if (has_canonical_scalar_target) {
+				effective_to_category == TypeCategory::Enum ||
+				to.is_pointer() ||
+				to.is_function_pointer() ||
+				to.is_member_object_pointer_type() ||
+				to.is_member_function_pointer();
+			if (has_canonical_conversion_target) {
 				if (const auto selected_conversion =
 					trySelectCanonicalUserDefinedConversionOperator(
 						from.type_index(), from.cv_qualifier(), to);
