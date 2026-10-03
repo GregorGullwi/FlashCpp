@@ -1923,6 +1923,9 @@ private:
 	ParseResult parse_struct_declaration();	// Add struct declaration parser (entry point)
 	ParseResult parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline);	// With pre-parsed specifiers
 	ParseResult parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access);  // Helper: Parse typedef/using in struct/template
+	bool tryParsePointerToArrayTypedefDeclarator(
+		TypeSpecifierNode& type_spec,
+		Token& alias_token);
 	// Publish a class-scope typedef under its simple name and struct-relative /
 	// namespace-qualified spellings so Nested::Alias resolves to the TypeInfo that
 	// carries mop/MFP owner TypeId authority.
@@ -4361,7 +4364,10 @@ private:	 // Resume private methods
 		std::vector<ASTNode>* array_bound_expressions);
 	void addConstantArrayDimensionsToTypeSpec(TypeSpecifierNode& type_spec, std::span<const ASTNode> dimension_exprs); // Constant-fold parsed "[expr]" bounds and apply all of them to the type-spec when every bound resolves
 	std::optional<CVQualifier> scan_parenthesized_pointer_group(CallingConvention& out_calling_conv, Token& out_pointer_token, Token& out_identifier, bool& out_has_identifier); // Scan "(" [cc] "*" cv-seq? [id] ")" shared by named and abstract declarators
-	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume ptr-operator then array abstract-declarators on a type-id
+	void consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec); // Consume abstract-declarators on a type-id
+	void consume_type_id_abstract_declarators(
+		TypeSpecifierNode& type_spec,
+		std::vector<ASTNode>* array_bound_expressions);
 	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id
 	bool consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec); // Consume a parenthesized abstract-declarator group in a cast type-id
 	// Parse the body of a parenthesized reference-to-array declarator group:

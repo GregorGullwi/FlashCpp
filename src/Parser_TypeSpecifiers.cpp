@@ -5045,7 +5045,11 @@ ParseResult Parser::parse_type_specifier() {
 				type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
 			}
 			type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
-			if (resolved_alias.isArray()) {
+			if (resolved_alias.pointee_array_declarator) {
+				type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
+					resolved_alias.array_dimensions);
+				type_spec_node.as<TypeSpecifierNode>().set_pointee_array_declarator(true);
+			} else if (resolved_alias.isArray()) {
 				type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
 			}
 			if (resolved_alias.function_signature.has_value()) {
@@ -5083,9 +5087,10 @@ ParseResult Parser::parse_type_specifier() {
 			bool is_typedef = type_info_ctx->isTypeAlias() ||
 							  (type_info_ctx->hasStoredSize() && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
 			bool has_alias_type_shape = resolved_alias.pointer_depth != 0 ||
-										resolved_alias.reference_qualifier != ReferenceQualifier::None ||
-										resolved_alias.function_signature.has_value() ||
-										resolved_alias.isArray();
+									resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+									resolved_alias.function_signature.has_value() ||
+									resolved_alias.pointee_array_declarator ||
+									resolved_alias.isArray();
 			// Alias-applied pointer/reference/function metadata now comes from the alias chain.
 			if (!is_typedef && has_alias_type_shape) {
 				is_typedef = true;
@@ -5102,7 +5107,11 @@ ParseResult Parser::parse_type_specifier() {
 					resolved_alias.type_index.is_valid() ? resolved_alias.type_index : user_type_index.withCategory(resolved_type),
 					type_size, type_name_token, effective_cv, ReferenceQualifier::None);
 				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
-				if (resolved_alias.isArray()) {
+				if (resolved_alias.pointee_array_declarator) {
+					type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
+						resolved_alias.array_dimensions);
+					type_spec_node.as<TypeSpecifierNode>().set_pointee_array_declarator(true);
+				} else if (resolved_alias.isArray()) {
 					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
 				}
 				// Add reference qualifiers from typedef

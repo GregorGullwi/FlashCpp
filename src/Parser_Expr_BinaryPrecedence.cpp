@@ -1771,6 +1771,12 @@ bool Parser::consume_cast_type_id_paren_declarator(TypeSpecifierNode& type_spec)
 }
 
 void Parser::consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec) {
+	consume_type_id_abstract_declarators(type_spec, nullptr);
+}
+
+void Parser::consume_type_id_abstract_declarators(
+	TypeSpecifierNode& type_spec,
+	std::vector<ASTNode>* array_bound_expressions) {
 	// Parenthesized abstract-declarator groups route through the same
 	// declarator machinery as named declarations so a type-id such as
 	// int(*)[3] binds its array suffix inside the pointer exactly like the
@@ -1780,11 +1786,13 @@ void Parser::consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec) 
 		// the pointer declarator machinery, so recognize it directly. The
 		// wrapper restores the position to '(' on failure.
 		SaveHandle group_start = save_token_position();
-		if (tryConsumeReferenceToArrayDeclarator(type_spec, nullptr, nullptr, nullptr)) {
+		if (tryConsumeReferenceToArrayDeclarator(
+			type_spec, nullptr, nullptr, array_bound_expressions)) {
 			discard_saved_token(group_start);
 			return;
 		}
-		ParseResult declarator_result = parse_declarator(type_spec, Linkage::None);
+		ParseResult declarator_result = parse_declarator(
+			type_spec, Linkage::None, array_bound_expressions);
 		if (!declarator_result.is_error() && declarator_result.node().has_value()) {
 			discard_saved_token(group_start);
 			return;
@@ -1792,7 +1800,7 @@ void Parser::consume_type_id_abstract_declarators(TypeSpecifierNode& type_spec) 
 		restore_token_position(group_start);
 	}
 	consume_pointer_ref_modifiers(type_spec);
-	consume_array_type_id_modifiers(type_spec);
+	consume_array_type_id_modifiers(type_spec, array_bound_expressions);
 }
 
 void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type) {

@@ -990,40 +990,20 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						type_spec.add_pointer_level(ptr_cv);
 					}
 
+					std::vector<ASTNode> alias_array_dimensions;
 					// Reference-to-array alias: using A = int (&)[2][2];. The
 					// parenthesized declarator is not reached by the trailing
 					// reference/array parsing below, so consume it first.
 					const bool parsed_reference_to_array_alias =
 						tryConsumeReferenceToArrayDeclarator(
-							type_spec, nullptr, nullptr, nullptr);
+							type_spec, nullptr, nullptr, &alias_array_dimensions);
 
 					if (!parsed_reference_to_array_alias) {
-						parse_type_alias_function_type(type_spec, " in global alias");
-
-						// Parse reference declarators: & or &&
-						ReferenceQualifier ref_qual = parse_reference_qualifier();
-						if (ref_qual != ReferenceQualifier::None) {
-							type_spec.set_reference_qualifier(ref_qual);
-						}
-
-						// Parse array dimensions: using _Type = _Tp[_Nm];
-						while (peek() == "["_tok) {
-							advance(); // consume '['
-							if (peek() == "]"_tok) {
-								type_spec.set_array(true);
-								advance(); // consume ']'
-							} else {
-								auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-								if (dim_result.is_error()) {
-									return dim_result;
-								}
-								auto dim_val = try_evaluate_constant_expression(*dim_result.node());
-								size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
-								type_spec.add_array_dimension(dim_size);
-								if (!consume("]"_tok)) {
-									return ParseResult::error("Expected ']' after array dimension in type alias", current_token_);
-								}
-							}
+						const bool parsed_function_type =
+							parse_type_alias_function_type(type_spec, " in global alias");
+						if (!parsed_function_type) {
+							consume_type_id_abstract_declarators(
+								type_spec, &alias_array_dimensions);
 						}
 					}
 
