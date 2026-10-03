@@ -624,19 +624,3 @@ arithmetic used by numeric temporary allocation. Lambda `__invoke` generation
 resets temporary numbers without clearing global reference metadata. Both require
 separate boundary regressions and investigation; no new name-based type recovery
 should be introduced to compensate for either path.
-
-## Reference NTTP arguments do not check array extent compatibility
-
-The compiler accepts a mismatched array object as a reference non-type template
-argument:
-
-```cpp
-template<int (&R)[3]> struct Ref;
-int values[4];
-Ref<values> invalid;
-```
-
-Explicit argument classification records the referenced entity but does not
-compare its resolved array type with the declared parameter type. Add a negative
-regression and validate the argument using its semantic type and the complete
-array declarator.
