@@ -597,26 +597,10 @@ resets temporary numbers without clearing global reference metadata. Both requir
 separate boundary regressions and investigation; no new name-based type recovery
 should be introduced to compensate for either path.
 
-## Pointer-to-array in an alias (typedef/using) does not parse
+## Reference-to-array aliases in template positions remain unsupported
 
-Reference-to-array declarators now parse in every spelling: named, parameter,
-typedef, using-alias, and abstract type-id. The pointer-to-array counterpart is
-still rejected in the alias spellings, even though the abstract form works:
-
-```cpp
-typedef int (*PtrToArr)[3];                  // error: Expected identifier after type in typedef
-using PtrToArr = int (*)[3];                 // error: Expected ';' after type alias
-int (*p)[3] = static_cast<int (*)[3]>(&a);   // ok
-```
-
-The named form `int (*p)[3];` also works. The typedef and using-alias probes
-recognize `(*name)(params)` (function pointers) but not the array suffix after
-the parenthesized pointer group. Routing that group through the shared
-declarator machinery, as the reference-to-array spelling now does, would close
-the gap.
-
-Reference-to-array is likewise still unsupported in template-specific type
-positions, even though the ordinary spellings parse:
+Reference-to-array is still unsupported in template-specific type positions,
+even though the ordinary spellings parse:
 
 ```cpp
 template <class T> using Ref = T (&)[3];   // error: Parenthesized alias template target declarator is not supported

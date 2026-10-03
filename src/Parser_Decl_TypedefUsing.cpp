@@ -241,6 +241,37 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 	return true;
 }
 
+bool Parser::tryParsePointerToArrayTypedefDeclarator(
+	TypeSpecifierNode& type_spec,
+	Token& alias_token) {
+	if (peek() != "("_tok) {
+		return false;
+	}
+
+	SaveHandle saved_position = save_token_position();
+	TypeSpecifierNode parsed_type_spec = type_spec;
+	ParseResult declarator_result = parse_declarator(
+		parsed_type_spec, Linkage::None);
+	if (!declarator_result.is_error() && declarator_result.node().has_value() &&
+		declarator_result.node()->is<DeclarationNode>()) {
+		const DeclarationNode& declaration =
+			declarator_result.node()->as<DeclarationNode>();
+		const TypeSpecifierNode& declarator_type = declaration.type_specifier_node();
+		const Token& declarator_name = declaration.identifier_token();
+		if (declarator_type.has_pointee_array_declarator() &&
+			declarator_name.kind().is_identifier() &&
+			!declarator_name.value().empty()) {
+			type_spec = declarator_type;
+			alias_token = declarator_name;
+			discard_saved_token(saved_position);
+			return true;
+		}
+	}
+
+	restore_token_position(saved_position);
+	return false;
+}
+
 ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access) {
 	advance(); // consume 'typedef' or 'using'
 
@@ -448,35 +479,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				type_spec, nullptr, nullptr, &alias_array_dimensions);
 
 		if (!parsed_reference_to_array_alias) {
-			parse_type_alias_function_type(type_spec, "");
-
-			// Parse reference modifiers: & or &&
-			ReferenceQualifier ref_qual = parse_reference_qualifier();
-			FLASH_LOG_FORMAT(Parser, Debug, "Type alias '{}': ref_qual={} (0=None, 1=LValue, 2=RValue)",
-							 StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
-			type_spec.set_reference_qualifier(ref_qual);
-
-			// Parse array dimensions: using _Type = _Tp[_Nm]; or using _Type = _Tp[2][3];
-			while (peek() == "["_tok) {
-				advance(); // consume '['
-				if (peek() == "]"_tok) {
-					type_spec.set_array(true);
-					advance(); // consume ']'
-				} else {
-					auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (dim_result.is_error()) {
-						return dim_result;
-					}
-					if (dim_result.node().has_value()) {
-						alias_array_dimensions.push_back(*dim_result.node());
-					}
-					auto dim_val = try_evaluate_constant_expression(*dim_result.node());
-					size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
-					type_spec.add_array_dimension(dim_size);
-					if (!consume("]"_tok)) {
-						return ParseResult::error("Expected ']' after array dimension in type alias", current_token_);
-					}
-				}
+			const bool parsed_function_type = parse_type_alias_function_type(type_spec, "");
+			if (!parsed_function_type) {
+				consume_type_id_abstract_declarators(
+					type_spec, &alias_array_dimensions);
 			}
 		}
 
@@ -1129,9 +1135,19 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 	}
 
+	// Reuse named declarator parsing for pointer-to-array typedefs so class
+	// aliases retain the same ordered type shape as namespace-scope aliases.
+	bool is_pointer_to_array_typedef = false;
+	Token pointer_to_array_alias_token;
+	is_pointer_to_array_typedef = tryParsePointerToArrayTypedefDeclarator(
+		type_spec, pointer_to_array_alias_token);
+	if (is_pointer_to_array_typedef) {
+		type_node = emplace_node<TypeSpecifierNode>(type_spec);
+	}
+
 	// Check for function pointer typedef: typedef ReturnType (*Name)(Params);
 	// Pattern: typedef void (*event_callback)(event e, ios_base& b, int i);
-	if (peek() == "("_tok) {
+	if (!is_pointer_to_array_typedef && peek() == "("_tok) {
 		SaveHandle fnptr_check = save_token_position();
 		advance(); // consume '('
 		if (peek() == "*"_tok) {
@@ -1174,13 +1190,19 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	}
 
 	// Parse the typedef alias name
-	auto alias_token = peek_info();
-	if (!alias_token.kind().is_identifier()) {
-		return ParseResult::error("Expected alias name in typedef", peek_info());
+	Token alias_token;
+	StringHandle alias_name;
+	if (is_pointer_to_array_typedef) {
+		alias_token = pointer_to_array_alias_token;
+		alias_name = alias_token.handle();
+	} else {
+		alias_token = peek_info();
+		if (!alias_token.kind().is_identifier()) {
+			return ParseResult::error("Expected alias name in typedef", peek_info());
+		}
+		alias_name = alias_token.handle();
+		advance(); // consume alias name
 	}
-
-	auto alias_name = alias_token.handle();
-	advance(); // consume alias name
 
 	// Skip C++11 attributes that may follow the alias name (e.g., typedef T name [[__deprecated__]];)
 	// This is a GNU extension where attributes can appear on the declarator in a typedef
@@ -2169,12 +2191,26 @@ ParseResult Parser::parse_typedef_declaration() {
 		}
 	}
 
+	// Pointer-to-array typedefs use the same named declarator parser as ordinary
+	// declarations. The alias name is obtained from the parsed declarator, and
+	// the type's pointee-array shape comes from its ordered declarator structure.
+	bool is_pointer_to_array_typedef = false;
+	Token pointer_to_array_alias_token;
+	if (!is_member_function_pointer_typedef) {
+		is_pointer_to_array_typedef = tryParsePointerToArrayTypedefDeclarator(
+			type_spec, pointer_to_array_alias_token);
+		if (is_pointer_to_array_typedef) {
+			type_node = emplace_node<TypeSpecifierNode>(type_spec);
+		}
+	}
+
 	// Reference-to-array typedef: typedef int (&Alias)[2][2];
 	// The parenthesized reference declarator is not handled by the pointer
 	// declarator machinery used for function-pointer typedefs above.
 	bool is_reference_to_array_typedef = false;
 	Token reference_to_array_alias_token;
-	if (!is_member_function_pointer_typedef && peek() == "("_tok) {
+	if (!is_member_function_pointer_typedef && !is_pointer_to_array_typedef &&
+		peek() == "("_tok) {
 		SaveHandle rta_probe = save_token_position();
 		Token identifier;
 		bool has_identifier = false;
@@ -2198,7 +2234,8 @@ ParseResult Parser::parse_typedef_declaration() {
 	bool function_pointer_is_variadic = false;
 	FlashCpp::MemberQualifiers function_pointer_qualifiers;
 	FlashCpp::FunctionSpecifiers function_pointer_specifiers;
-	if (!is_member_function_pointer_typedef && peek() == "("_tok) {
+	if (!is_member_function_pointer_typedef && !is_pointer_to_array_typedef &&
+		peek() == "("_tok) {
 		// Peek ahead to check if this is a function pointer pattern
 		SaveHandle paren_saved = save_token_position();
 		advance(); // consume '('
@@ -2261,6 +2298,9 @@ ParseResult Parser::parse_typedef_declaration() {
 	if (is_member_function_pointer_typedef) {
 		alias_name = member_function_pointer_alias_name;
 		alias_token = member_function_pointer_alias_token;
+	} else if (is_pointer_to_array_typedef) {
+		alias_name = pointer_to_array_alias_token.value();
+		alias_token = pointer_to_array_alias_token;
 	} else if (is_function_pointer_typedef) {
 		alias_name = function_pointer_alias_name;
 		// Create a synthetic token for the alias name (use file index 0 since it's synthetic)
