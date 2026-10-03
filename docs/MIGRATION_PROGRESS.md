@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-09-30.
+Last updated: 2026-10-03.
 
 ## Current state
 
@@ -652,6 +652,12 @@ Continue boundary 3A in this order:
     name lookup (`Typedefs::Field` / `Typedefs::Run`) via struct-relative
     TypeInfo publication and alias-owner projection; covered by
     `tests/test_canonical_class_scope_typedef_member_pointer_owner_overload_ret0.cpp`.
+    User-defined conversion operators returning data- or member-function
+    pointers now rank their trailing standard conversions canonically, so an
+    exact member-pointer result beats the legal Base-to-Derived member-pointer
+    conversion. `tests/test_conversion_operator_member_object_pointer_tail_ranking_ret0.cpp`
+    checks both pointer families and executes the selected data-member-pointer
+    overload.
     Remaining dependent member-function-pointer forms and unsupported callable
     pairs still need substitution-aware canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`
