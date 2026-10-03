@@ -149,20 +149,20 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 			target_argument_types.push_back(
 				typeSpecifierFromFunctionType(target_argument_type));
 		}
-		if (address_overloads.qualified_identifier->has_template_arguments() ||
-			!target_argument_types.empty()) {
-			std::optional<ASTNode> instantiated =
-				parser.tryInstantiateMemberFunctionTemplateForAddress(
-					*address_overloads.owner,
-					*address_overloads.qualified_identifier,
-					std::span<const TypeSpecifierNode>(
-						target_argument_types.data(),
-						target_argument_types.size()));
-			if (instantiated.has_value() &&
-				instantiated->is<FunctionDeclarationNode>()) {
-				instantiated_function_template =
-					&instantiated->as<FunctionDeclarationNode>();
-			}
+		const TypeSpecifierNode target_return_type =
+			typeSpecifierFromFunctionType(target_signature.return_type());
+		std::optional<ASTNode> instantiated =
+			parser.tryInstantiateMemberFunctionTemplateForAddress(
+				*address_overloads.owner,
+				*address_overloads.qualified_identifier,
+				std::span<const TypeSpecifierNode>(
+					target_argument_types.data(),
+					target_argument_types.size()),
+				target_return_type);
+		if (instantiated.has_value() &&
+			instantiated->is<FunctionDeclarationNode>()) {
+			instantiated_function_template =
+				&instantiated->as<FunctionDeclarationNode>();
 		}
 	}
 
@@ -356,7 +356,8 @@ void appendQualifiedMemberFunctionAddressAssociatedTypes(
 std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 	const StructTypeInfo& owner,
 	const QualifiedIdentifierNode& member_id,
-	std::span<const TypeSpecifierNode> target_parameter_types) {
+	std::span<const TypeSpecifierNode> target_parameter_types,
+	const TypeSpecifierNode& target_return_type) {
 	const std::string_view owner_name = StringTable::getStringView(owner.name);
 	const std::string_view member_name =
 		StringTable::getStringView(member_id.nameHandle());
@@ -374,13 +375,202 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 				explicit_arguments->data(),
 				explicit_arguments->size()));
 	}
-	if (target_parameter_types.empty()) {
-		return std::nullopt;
+
+	if (!target_return_type.type_index().is_valid()) {
+		return try_instantiate_member_function_template(
+			owner_name,
+			member_name,
+			target_parameter_types);
+	}
+
+	const TemplateFunctionDeclarationNode* function_template = nullptr;
+	for (const StructMemberFunction& member_function : owner.member_functions) {
+		if (member_function.is_constructor || member_function.is_destructor ||
+			member_function.getName() != member_id.nameHandle() ||
+			!member_function.function_decl.is<TemplateFunctionDeclarationNode>()) {
+			continue;
+		}
+		if (function_template != nullptr) {
+			return try_instantiate_member_function_template(
+				owner_name,
+				member_name,
+				target_parameter_types);
+		}
+		function_template =
+			&member_function.function_decl.as<TemplateFunctionDeclarationNode>();
+	}
+	if (function_template == nullptr) {
+		return try_instantiate_member_function_template(
+			owner_name,
+			member_name,
+			target_parameter_types);
+	}
+
+	std::optional<TemplateArgumentVector> template_args =
+		tryDeduceMemberFunctionTemplateAddressArguments(
+			*function_template,
+			target_parameter_types,
+			target_return_type);
+	if (!template_args.has_value()) {
+		return try_instantiate_member_function_template(
+			owner_name,
+			member_name,
+			target_parameter_types);
+	}
+
+	FlashCpp::ScopedState guard_explicit_call_arg_types(
+		current_explicit_call_arg_types_);
+	current_explicit_call_arg_types_ = &target_parameter_types;
+	std::optional<ASTNode> return_deduced =
+		try_instantiate_member_function_template_explicit(
+			owner_name,
+			member_name,
+			std::span<const TemplateTypeArg>(
+				template_args->data(),
+				template_args->size()));
+	if (return_deduced.has_value()) {
+		return return_deduced;
 	}
 	return try_instantiate_member_function_template(
 		owner_name,
 		member_name,
 		target_parameter_types);
+}
+
+std::optional<TemplateArgumentVector>
+Parser::tryDeduceMemberFunctionTemplateAddressArguments(
+	const TemplateFunctionDeclarationNode& function_template,
+	std::span<const TypeSpecifierNode> target_parameter_types,
+	const TypeSpecifierNode& target_return_type) {
+	const TemplateParameterVector& template_params =
+		function_template.template_parameters();
+	const FunctionDeclarationNode& function_decl =
+		function_template.function_decl_node();
+
+	NamedTemplateTypeDeductionVector return_deductions;
+	NamedTemplateArgPackDeductionVector return_pack_deductions;
+	const TypeSpecifierNode& pattern_return_type =
+		function_decl.decl_node().type_specifier_node();
+	const StringHandle direct_return_parameter =
+		getStructuredTypeName(pattern_return_type);
+	const TemplateParameterNode* direct_return_parameter_node = nullptr;
+	for (const TemplateParameterNode& template_param : template_params) {
+		if (template_param.nameHandle() == direct_return_parameter) {
+			direct_return_parameter_node = &template_param;
+			break;
+		}
+	}
+	bool deduced_from_return_type = false;
+	if (direct_return_parameter_node != nullptr &&
+		direct_return_parameter_node->kind() == TemplateParameterKind::Type) {
+		if (pattern_return_type.pointer_depth() >
+			target_return_type.pointer_depth()) {
+			return std::nullopt;
+		}
+		TemplateTypeArg deduced_return =
+			TemplateTypeArg::makeTypeSpecifier(target_return_type);
+		const size_t removed_pointer_depth =
+			pattern_return_type.pointer_depth();
+		deduced_return.pointer_depth = static_cast<uint8_t>(
+			deduced_return.pointer_depth - removed_pointer_depth);
+		if (!deduced_return.pointer_cv_qualifiers.empty()) {
+			TemplateVector<CVQualifier, 4> remaining_pointer_qualifiers;
+			for (size_t index = removed_pointer_depth;
+				 index < deduced_return.pointer_cv_qualifiers.size();
+				 ++index) {
+				remaining_pointer_qualifiers.push_back(
+					deduced_return.pointer_cv_qualifiers[index]);
+			}
+			deduced_return.pointer_cv_qualifiers =
+				std::move(remaining_pointer_qualifiers);
+		}
+		const uint8_t target_cv =
+			static_cast<uint8_t>(deduced_return.cv_qualifier);
+		const uint8_t pattern_cv =
+			static_cast<uint8_t>(pattern_return_type.cv_qualifier());
+		deduced_return.cv_qualifier =
+			static_cast<CVQualifier>(target_cv & ~pattern_cv);
+		if (pattern_return_type.reference_qualifier() !=
+			ReferenceQualifier::None) {
+			if (pattern_return_type.reference_qualifier() ==
+					ReferenceQualifier::LValueReference &&
+				target_return_type.reference_qualifier() !=
+					ReferenceQualifier::LValueReference) {
+				return std::nullopt;
+			}
+			if (pattern_return_type.reference_qualifier() ==
+					ReferenceQualifier::RValueReference &&
+				target_return_type.reference_qualifier() ==
+					ReferenceQualifier::LValueReference) {
+				deduced_return.ref_qualifier =
+					ReferenceQualifier::LValueReference;
+			} else if (pattern_return_type.reference_qualifier() ==
+				   target_return_type.reference_qualifier()) {
+				deduced_return.ref_qualifier = ReferenceQualifier::None;
+			} else {
+				return std::nullopt;
+			}
+		}
+		return_deductions.push_back(NamedTemplateTypeDeduction{
+			direct_return_parameter,
+			std::move(deduced_return)});
+		deduced_from_return_type = true;
+	} else {
+		const std::optional<bool> nested_deduction =
+			preDeduceTemplateArgsFromMatchingTypes(
+				pattern_return_type,
+				target_return_type,
+				std::span<const TemplateParameterNode>(
+					template_params.data(),
+					template_params.size()),
+				return_deductions,
+				return_pack_deductions,
+				0);
+		if (!nested_deduction.has_value()) {
+			return std::nullopt;
+		}
+		deduced_from_return_type = *nested_deduction;
+	}
+	if (!deduced_from_return_type ||
+		!functionTemplateAcceptsCallArgumentCount(
+			function_decl,
+			target_parameter_types.size())) {
+		return std::nullopt;
+	}
+
+	std::optional<CallArgDeductionInfo> deduction_info =
+		buildDeductionMapFromCallArgs(
+			template_params,
+			function_decl,
+			target_parameter_types,
+			0,
+			std::span<const NamedTemplateTypeDeduction>(
+				return_deductions.data(),
+				return_deductions.size()));
+	if (!deduction_info.has_value()) {
+		return std::nullopt;
+	}
+	for (NamedTemplateArgPackDeduction& pack_deduction :
+		 return_pack_deductions) {
+		auto existing = deduction_info->param_name_to_pack_args.find(
+			pack_deduction.name);
+		if (existing != deduction_info->param_name_to_pack_args.end()) {
+			if (existing->second != pack_deduction.arguments) {
+				return std::nullopt;
+			}
+			continue;
+		}
+		deduction_info->param_name_to_pack_args.emplace(
+			pack_deduction.name,
+			std::move(pack_deduction.arguments));
+	}
+	return deduceTemplateArgsFromCall(
+		template_params,
+		target_parameter_types,
+		*deduction_info,
+		deduction_info->function_pack_call_arg_start,
+		0,
+		function_decl.namespace_handle());
 }
 
 bool Parser::expressionReferencesKnownEmptyFunctionParameterPack(
