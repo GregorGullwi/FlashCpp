@@ -4,6 +4,19 @@
 #include "AstNodeTypes_Expr.h"
 #include <vector>
 
+inline bool isAddressOfQualifiedIdentifierExpression(const ASTNode& argument) {
+	if (!argument.is<ExpressionNode>()) {
+		return false;
+	}
+	const auto* address = std::get_if<UnaryOperatorNode>(
+		&argument.as<ExpressionNode>());
+	return address != nullptr && address->op() == "&" &&
+		!address->is_builtin_addressof() &&
+		address->get_operand().is<ExpressionNode>() &&
+		std::holds_alternative<QualifiedIdentifierNode>(
+			address->get_operand().as<ExpressionNode>());
+}
+
 // ============================================================================
 // CallInfo — a lightweight read-only view over any call-expression node.
 //

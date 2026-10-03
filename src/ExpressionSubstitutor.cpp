@@ -3509,7 +3509,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
 		std::vector<TypeSpecifierNode> substituted_arg_types;
-		if (parser_.tryCollectFunctionCallArgTypes(substituted_args, substituted_arg_types)) {
+		if (parser_.tryCollectPointOfInstantiationFunctionCallArgTypes(
+				substituted_args,
+				substituted_arg_types)) {
 			if (std::optional<ASTNode> resolved_target =
 					parser_.resolveDependentUnqualifiedCallAtPointOfInstantiation(
 						*call.dependent_unqualified_lookup_record(),

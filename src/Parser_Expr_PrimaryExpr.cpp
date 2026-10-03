@@ -24,6 +24,229 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	TypeSpecifierNode& type_spec,
 	Parser& parser);
 
+namespace {
+struct QualifiedMemberFunctionAddressOverloadSet {
+	const QualifiedIdentifierNode* qualified_identifier = nullptr;
+	const StructTypeInfo* owner = nullptr;
+	std::vector<const FunctionDeclarationNode*> functions;
+};
+
+const QualifiedIdentifierNode* tryGetQualifiedMemberFunctionAddress(
+	const ASTNode* argument_node) {
+	if (argument_node == nullptr || !argument_node->is<ExpressionNode>()) {
+		return nullptr;
+	}
+	const auto* address = std::get_if<UnaryOperatorNode>(
+		&argument_node->as<ExpressionNode>());
+	if (address == nullptr || address->op() != "&" ||
+		address->is_builtin_addressof() ||
+		!address->get_operand().is<ExpressionNode>()) {
+		return nullptr;
+	}
+	return std::get_if<QualifiedIdentifierNode>(
+		&address->get_operand().as<ExpressionNode>());
+}
+
+QualifiedMemberFunctionAddressOverloadSet tryCollectQualifiedMemberFunctionAddressOverloads(
+	const ASTNode* argument_node) {
+	QualifiedMemberFunctionAddressOverloadSet result;
+	result.qualified_identifier =
+		tryGetQualifiedMemberFunctionAddress(argument_node);
+	if (result.qualified_identifier == nullptr) {
+		return result;
+	}
+	const QualifiedIdentifierNode& qualified = *result.qualified_identifier;
+	const NamespaceHandle namespace_handle = qualified.namespace_handle();
+	if (!namespace_handle.isValid() || namespace_handle.isGlobal()) {
+		return result;
+	}
+
+	if (qualified.hasDependentQualifiedName()) {
+		const TypeIndex owner_type_index =
+			qualified.dependentQualifiedName()->owner_type;
+		if (owner_type_index.is_valid()) {
+			result.owner = tryGetStructTypeInfo(owner_type_index);
+		}
+	}
+
+	const TypeInfo* owner_type_info = nullptr;
+	if (result.owner == nullptr) {
+		auto find_type_info = [](StringHandle name) -> const TypeInfo* {
+			if (!name.isValid()) {
+				return nullptr;
+			}
+			const auto found = getTypesByNameMap().find(name);
+			return found == getTypesByNameMap().end() ? nullptr : found->second;
+		};
+		if (gNamespaceRegistry.getDepth(namespace_handle) > 1) {
+			owner_type_info = find_type_info(
+				gNamespaceRegistry.getQualifiedNameHandle(namespace_handle));
+		}
+		if (owner_type_info == nullptr) {
+			owner_type_info = find_type_info(
+				StringTable::getOrInternStringHandle(
+					gNamespaceRegistry.getName(namespace_handle)));
+		}
+		if (owner_type_info == nullptr) {
+			return result;
+		}
+		result.owner = owner_type_info->getStructInfo();
+		if (result.owner == nullptr &&
+			owner_type_info->registeredTypeIndex().is_valid()) {
+			result.owner = tryGetStructTypeInfo(
+				owner_type_info->registeredTypeIndex());
+		}
+	}
+	if (result.owner == nullptr) {
+		return result;
+	}
+
+	for (const StructMemberFunction& member_function : result.owner->member_functions) {
+		if (member_function.is_constructor || member_function.is_destructor ||
+			member_function.getName() != qualified.nameHandle() ||
+			!member_function.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		result.functions.push_back(
+			&member_function.function_decl.as<FunctionDeclarationNode>());
+	}
+	return result;
+}
+
+ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
+	const TypeSpecifierNode& parameter_type,
+	const ASTNode* argument_node) {
+	const QualifiedMemberFunctionAddressOverloadSet address_overloads =
+		tryCollectQualifiedMemberFunctionAddressOverloads(argument_node);
+	if (address_overloads.qualified_identifier == nullptr ||
+		address_overloads.owner == nullptr ||
+		address_overloads.functions.empty()) {
+		return ArgumentConversionInfo::no_match();
+	}
+
+	TypeSpecifierNode selected_function_type;
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	{
+		CanonicalTypeTransaction transaction(table);
+		const CanonicalTypeImport target_import =
+			importCanonicalType(table, parameter_type);
+		if (target_import.status != CanonicalTypeImportStatus::Supported) {
+			return ArgumentConversionInfo::no_match();
+		}
+		TypeId target_type = canonicalTypeWithoutReference(
+			table,
+			target_import.type);
+		target_type = stripCanonicalTopCv(table, target_type).first;
+		const CanonicalTypeNode target_node = table.node(target_type);
+		const bool target_is_member_pointer =
+			target_node.kind == CanonicalTypeKind::MemberFunctionPointer;
+		TypeId target_function{};
+		if (target_is_member_pointer) {
+			target_function = target_node.child;
+		} else if (target_node.kind == CanonicalTypeKind::Pointer) {
+			const TypeId pointee = stripCanonicalTopCv(
+				table,
+				target_node.child).first;
+			if (table.node(pointee).kind != CanonicalTypeKind::Function) {
+				return ArgumentConversionInfo::no_match();
+			}
+			target_function = pointee;
+		} else {
+			return ArgumentConversionInfo::no_match();
+		}
+
+		int matching_functions = 0;
+		for (const FunctionDeclarationNode* candidate : address_overloads.functions) {
+			if (candidate == nullptr || candidate->is_template_pattern() ||
+				candidate->is_static() == target_is_member_pointer) {
+				continue;
+			}
+			TypeSpecifierNode candidate_type = target_is_member_pointer
+				? FlashCpp::ParserFunctionTypeHelpers::
+					  buildMemberFunctionPointerTypeFromFunctionDeclaration(*candidate)
+				: FlashCpp::ParserFunctionTypeHelpers::
+					  buildFunctionPointerTypeFromFunctionDeclaration(*candidate);
+			const CanonicalTypeImport candidate_import =
+				importCanonicalType(table, candidate_type);
+			if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
+				continue;
+			}
+			TypeId candidate_type_id = canonicalTypeWithoutReference(
+				table,
+				candidate_import.type);
+			candidate_type_id = stripCanonicalTopCv(table, candidate_type_id).first;
+			const CanonicalTypeNode candidate_node = table.node(candidate_type_id);
+			TypeId candidate_function{};
+			if (target_is_member_pointer) {
+				if (candidate_node.kind !=
+					CanonicalTypeKind::MemberFunctionPointer) {
+					continue;
+				}
+				candidate_function = candidate_node.child;
+			} else {
+				if (candidate_node.kind != CanonicalTypeKind::Pointer) {
+					continue;
+				}
+				candidate_function = stripCanonicalTopCv(
+					table,
+					candidate_node.child).first;
+				if (table.node(candidate_function).kind !=
+					CanonicalTypeKind::Function) {
+					continue;
+				}
+			}
+			// [over.over]/2 matches the function type independently of its
+			// member class; the selected member pointer is converted afterward.
+			const ConversionPlan function_type_match =
+				buildCanonicalStructuralConversionPlan(
+					table,
+					table.pointer(candidate_function),
+					table.pointer(target_function));
+			if (!function_type_match.is_valid) {
+				continue;
+			}
+			selected_function_type = std::move(candidate_type);
+			++matching_functions;
+		}
+		if (matching_functions != 1) {
+			return ArgumentConversionInfo::no_match();
+		}
+	}
+
+	const std::optional<ConversionPlan> conversion =
+		tryBuildCanonicalProjectableConversionPlan(
+			selected_function_type,
+			parameter_type);
+	if (!conversion.has_value() || !conversion->is_valid) {
+		return ArgumentConversionInfo::no_match();
+	}
+	return ArgumentConversionInfo{
+		conversion->rank,
+		&parameter_type,
+		true,
+		conversion->trailing_standard_rank};
+}
+
+void appendQualifiedMemberFunctionAddressAssociatedTypes(
+	const ASTNode* argument_node,
+	std::vector<TypeSpecifierNode>& types) {
+	const QualifiedMemberFunctionAddressOverloadSet address_overloads =
+		tryCollectQualifiedMemberFunctionAddressOverloads(argument_node);
+	for (const FunctionDeclarationNode* function : address_overloads.functions) {
+		if (function == nullptr) {
+			continue;
+		}
+		types.push_back(function->decl_node().type_specifier_node());
+		for (const ASTNode& parameter : function->parameter_nodes()) {
+			if (parameter.is<DeclarationNode>()) {
+				types.push_back(
+					parameter.as<DeclarationNode>().type_specifier_node());
+			}
+		}
+	}
+}
+} // namespace
+
 bool Parser::expressionReferencesKnownEmptyFunctionParameterPack(
 	const ASTNode& expression) const {
 	return AstTraversal::visitASTUntil(
@@ -706,14 +929,50 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 		}
 	}
 	filterPhase1OrdinaryFunctionOverloads(all_overloads);
+	auto build_argument_conversion = [](
+		const TypeSpecifierNode& argument_type,
+		const TypeSpecifierNode& parameter_type,
+		const ASTNode* argument_node) {
+		if (argument_type.category() == TypeCategory::Invalid) {
+			return buildQualifiedMemberFunctionAddressArgumentConversion(
+				parameter_type,
+				argument_node);
+		}
+		return buildArgumentConversionInfo(
+			argument_type,
+			parameter_type,
+			argument_node);
+	};
+
+	std::vector<TypeSpecifierNode> adl_argument_types;
+	if (record.argument_dependent_lookup_included) {
+		for (size_t index = 0; index < arg_types.size(); ++index) {
+			if (arg_types[index].category() != TypeCategory::Invalid) {
+				adl_argument_types.push_back(arg_types[index]);
+				continue;
+			}
+			const ASTNode* argument_node =
+				getOverloadArgumentNodeOrNull(arguments, index);
+			appendQualifiedMemberFunctionAddressAssociatedTypes(
+				argument_node,
+				adl_argument_types);
+		}
+	}
 	if (record.argument_dependent_lookup_included && !arg_types.empty()) {
 		std::vector<ASTNode> adl_candidates =
-			gSymbolTable.lookup_adl_only(StringTable::getStringView(record.callee_name), arg_types);
+			gSymbolTable.lookup_adl_only(
+				StringTable::getStringView(record.callee_name),
+				adl_argument_types);
 		appendUniqueOverloads(all_overloads, adl_candidates);
 	}
 
 	if (!all_overloads.empty()) {
-		OverloadResolutionResult resolution = resolve_overload_with_argument_nodes(all_overloads, arg_types, arguments);
+		OverloadResolutionResult resolution =
+			resolve_overload_with_argument_nodes_using_conversion(
+				all_overloads,
+				arg_types,
+				arguments,
+				build_argument_conversion);
 		if (resolution.is_ambiguous) {
 			return std::nullopt;
 		}

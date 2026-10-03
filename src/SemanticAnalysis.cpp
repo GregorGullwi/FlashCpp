@@ -8932,6 +8932,31 @@ bool SemanticAnalysis::tryCollectOverloadResolutionArgTypes(
 	return true;
 }
 
+bool SemanticAnalysis::tryCollectPointOfInstantiationOverloadResolutionArgTypes(
+	const ChunkedVector<ASTNode>& arguments,
+	OverloadResolutionArgTypeVector& arg_types_out) {
+	arg_types_out.clear();
+	arg_types_out.reserve(arguments.size());
+	for (const ASTNode& argument : arguments) {
+		auto arg_type = buildOverloadResolutionArgType(argument, nullptr);
+		if (!arg_type.has_value() || arg_type->category() == TypeCategory::Invalid) {
+			if (isAddressOfQualifiedIdentifierExpression(argument)) {
+				arg_types_out.push_back(TypeSpecifierNode(
+					TypeCategory::Invalid,
+					TypeQualifier::None,
+					0,
+					Token{},
+					CVQualifier::None));
+				continue;
+			}
+			arg_types_out.clear();
+			return false;
+		}
+		arg_types_out.push_back(*arg_type);
+	}
+	return true;
+}
+
 // --- Scoped enum diagnostic helper ---
 // C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 
@@ -11773,7 +11798,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			return dependent_record_target;
 		}
 		OverloadResolutionArgTypeVector arg_types;
-		if (tryCollectOverloadResolutionArgTypes(arguments, arg_types)) {
+		if (tryCollectPointOfInstantiationOverloadResolutionArgTypes(
+				arguments,
+				arg_types)) {
 			if (std::optional<ASTNode> resolved_target =
 					parser().resolveDependentUnqualifiedCallAtPointOfInstantiation(
 						dependent_record,

@@ -355,6 +355,33 @@ bool Parser::tryCollectFunctionCallArgTypes(
 	return true;
 }
 
+bool Parser::tryCollectPointOfInstantiationFunctionCallArgTypes(
+	const ChunkedVector<ASTNode>& arguments,
+	std::vector<TypeSpecifierNode>& arg_types_out) {
+	arg_types_out.clear();
+	arg_types_out.reserve(arguments.size());
+	for (const ASTNode& argument : arguments) {
+		const size_t previous_count = arg_types_out.size();
+		appendFunctionCallArgType(argument, &arg_types_out);
+		if (arg_types_out.size() != previous_count + 1 ||
+			arg_types_out.back().category() == TypeCategory::Invalid) {
+			if (!isAddressOfQualifiedIdentifierExpression(argument)) {
+				arg_types_out.clear();
+				return false;
+			}
+			if (arg_types_out.size() == previous_count) {
+				arg_types_out.emplace_back(
+					TypeCategory::Invalid,
+					TypeQualifier::None,
+					0,
+					Token{},
+					CVQualifier::None);
+			}
+		}
+	}
+	return true;
+}
+
 std::optional<FunctionCallDefinitionLookupRecord>
 Parser::tryBuildCurrentFunctionCallDefinitionLookupRecord(
 	const Token& callee_token,

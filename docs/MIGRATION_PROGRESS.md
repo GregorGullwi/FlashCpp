@@ -667,9 +667,14 @@ Continue boundary 3A in this order:
     AST substitution, allowing overload ranking to use the concrete callable
     type. `tests/test_canonical_dependent_member_function_pointer_signature_overload_ret0.cpp`
     checks selection for both scalar and record specializations in the presence
-    of a competing member overload. Other dependent member-function-pointer
-    forms and unsupported callable conversions still need substitution-aware
-    canonical ranking.
+    of a competing member overload. A dependent `&Owner<T>::member` argument
+    now keeps its overload set through point-of-instantiation call resolution,
+    where non-template member-function-pointer parameter candidates are ranked
+    by canonical signature and conversion; covered by
+    `tests/test_canonical_dependent_member_function_pointer_contextual_address_overload_ret0.cpp`.
+    Function-template address deduction, reference-target binding, other
+    dependent member-function-pointer forms, and unsupported callable
+    conversions still need substitution-aware canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
