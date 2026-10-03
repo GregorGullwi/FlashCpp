@@ -155,34 +155,6 @@ checks the derived-owner candidate in an unevaluated overload query and executes
 the exact-return candidate; applying the selected derived-owner tail needs its
 own annotation and ABI-correct lowering work.
 
-## Dependent member-function-template address mismatches can be accepted
-
-A call with a known target parameter can accept a dependent address of a member
-function template even when deduction against that target fails:
-
-```cpp
-template <class T> struct Owner {
-	template <class Value>
-	Value run(Value value) const & { return value; }
-};
-
-int choose(int (Owner<int>::*)(double) const &) { return 0; }
-
-template <class Type>
-auto select() { return choose(&Owner<Type>::run); }
-
-int main() { return select<int>(); }
-```
-
-For `Owner<int>`, matching `run(Value)` against the target requires deducing
-`Value` as both `int` from the return type and `double` from the parameter,
-which must fail. Clang rejects the call, while FlashCpp currently accepts it.
-During substitution this call retains its definition-time `choose` callee and
-does not acquire a dependent unqualified lookup record, so the contextual
-member-address conversion used by point-of-instantiation overload resolution
-is bypassed. The call must be checked against the known target type after the
-owner is substituted.
-
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
 `FrontendScratchTransaction` now journals frontend scratch state,
