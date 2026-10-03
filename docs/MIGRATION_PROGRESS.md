@@ -658,8 +658,12 @@ Continue boundary 3A in this order:
     conversion. `tests/test_conversion_operator_member_object_pointer_tail_ranking_ret0.cpp`
     checks both pointer families and executes the selected data-member-pointer
     overload.
+    Dependent function-template addresses whose dependency is inside a nested
+    callable return type now retain the overload set until substitution, then
+    rank the concrete function-pointer candidates; covered by
+    `tests/test_canonical_dependent_nested_callable_overload_ret0.cpp`.
     Remaining dependent member-function-pointer forms and unsupported callable
-    pairs still need substitution-aware canonical ranking.
+    conversions still need substitution-aware canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.

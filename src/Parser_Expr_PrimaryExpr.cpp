@@ -15,6 +15,7 @@
 #include <array>
 #include <charconv>
 #include <type_traits>
+#include <vector>
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
@@ -1749,50 +1750,146 @@ bool identifierRefersToCurrentTemplateParam(
 bool typeRefersToCurrentTemplateParam(
 	const TypeSpecifierNode& type_spec,
 	const TemplateParamNameVector& current_template_param_names) {
-	if (type_spec.category() == TypeCategory::Template) {
+	const TypeCategory category = type_spec.category();
+	if (category == TypeCategory::Template) {
 		return true;
 	}
-	if (!current_template_param_names.empty() &&
-		type_spec.has_function_signature()) {
-		const FunctionSignature& signature = type_spec.function_signature();
-		if (signature.noexcept_expression.has_value() &&
-			astNodeHasDeferredTemplateDependency(
-				signature.noexcept_expression->node(),
-				current_template_param_names)) {
-			return true;
-		}
-	}
-	if (type_spec.category() != TypeCategory::UserDefined &&
-		type_spec.category() != TypeCategory::TypeAlias) {
+	const bool is_named_type =
+		category == TypeCategory::UserDefined || category == TypeCategory::TypeAlias;
+	const bool has_current_template_params = !current_template_param_names.empty();
+	if (!type_spec.has_function_signature() && !is_named_type) {
 		return false;
 	}
-	if (!current_template_param_names.empty() &&
-		(typeSpecStillUsesDependentPlaceholder(type_spec) || !type_spec.sizeBits().is_set())) {
-		return true;
+	if (!has_current_template_params && !is_named_type) {
+		return false;
 	}
-	if (!type_spec.type_index().is_valid()) {
-		return true;
-	}
-	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-		if (type_info->isTypeAlias()) {
-			if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
-				if (typeRefersToCurrentTemplateParam(*alias_type_spec, current_template_param_names)) {
-					return true;
-				}
-			}
-			if (type_info->type_index_.is_valid() &&
-				typeIndexContainsDependentPlaceholder(type_info->type_index_)) {
+	enum class DeferredTypeWorkKind : uint8_t {
+		TypeSpecifier,
+		FunctionSignature,
+		FunctionType,
+	};
+	struct DeferredTypeWorkItem {
+		const void* pointer;
+		DeferredTypeWorkKind kind;
+	};
+	std::vector<DeferredTypeWorkItem> worklist;
+	worklist.push_back({&type_spec, DeferredTypeWorkKind::TypeSpecifier});
+	auto already_queued = [&](DeferredTypeWorkItem item) {
+		return std::any_of(
+			worklist.begin(),
+			worklist.end(),
+			[&](DeferredTypeWorkItem queued) {
+				return queued.kind == item.kind && queued.pointer == item.pointer;
+			});
+	};
+	auto enqueue_work = [&](DeferredTypeWorkItem item) {
+		if (!already_queued(item)) {
+			worklist.push_back(item);
+		}
+	};
+	for (size_t next_work = 0; next_work < worklist.size(); ++next_work) {
+		const DeferredTypeWorkItem item = worklist[next_work];
+		switch (item.kind) {
+		case DeferredTypeWorkKind::TypeSpecifier: {
+			const TypeSpecifierNode& current_type_spec =
+				*static_cast<const TypeSpecifierNode*>(item.pointer);
+			if (current_type_spec.category() == TypeCategory::Template) {
 				return true;
 			}
+			if (has_current_template_params &&
+				(current_type_spec.has_template_parameter_identity() ||
+				 isPlaceholderAutoType(current_type_spec.type()) ||
+				 current_type_spec.is_pack_expansion() ||
+				 !current_type_spec.sizeBits().is_set() ||
+				 typeIndexContainsDependentPlaceholder(current_type_spec.type_index()))) {
+				return true;
+			}
+			if (current_type_spec.has_function_signature()) {
+				enqueue_work({
+					&current_type_spec.function_signature(),
+					DeferredTypeWorkKind::FunctionSignature});
+			}
+			if (current_type_spec.category() != TypeCategory::UserDefined &&
+				current_type_spec.category() != TypeCategory::TypeAlias) {
+				break;
+			}
+			if (!current_type_spec.type_index().is_valid()) {
+				return true;
+			}
+			const TypeInfo* type_info = tryGetTypeInfo(current_type_spec.type_index());
+			if (type_info != nullptr) {
+				if (type_info->isTypeAlias()) {
+					if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
+						enqueue_work({alias_type_spec, DeferredTypeWorkKind::TypeSpecifier});
+					}
+					if (type_info->type_index_.is_valid() &&
+						typeIndexContainsDependentPlaceholder(type_info->type_index_)) {
+						return true;
+					}
+				}
+			}
+			const StringHandle token_handle = current_type_spec.token().handle();
+			if (token_handle.isValid() &&
+				std::find(
+					current_template_param_names.begin(),
+					current_template_param_names.end(),
+					token_handle) != current_template_param_names.end()) {
+				return true;
+			}
+			if (type_info != nullptr &&
+				std::find(
+					current_template_param_names.begin(),
+					current_template_param_names.end(),
+					type_info->name()) != current_template_param_names.end()) {
+				return true;
+			}
+			break;
+		}
+		case DeferredTypeWorkKind::FunctionSignature: {
+			const FunctionSignature& signature =
+				*static_cast<const FunctionSignature*>(item.pointer);
+			if (has_current_template_params &&
+				signature.noexcept_expression.has_value() &&
+				astNodeHasDeferredTemplateDependency(
+					signature.noexcept_expression->node(),
+					current_template_param_names)) {
+				return true;
+			}
+			if (has_current_template_params &&
+				(typeIndexContainsDependentPlaceholder(signature.return_type_index) ||
+				 std::any_of(
+					signature.parameter_type_indices.begin(),
+					signature.parameter_type_indices.end(),
+					[](TypeIndex parameter_type_index) {
+						return typeIndexContainsDependentPlaceholder(parameter_type_index);
+					}))) {
+				return true;
+			}
+			if (signature.hasStructuredTypes()) {
+				enqueue_work({&signature.return_type(), DeferredTypeWorkKind::FunctionType});
+			}
+			for (const FunctionType& parameter_type : signature.parameter_types()) {
+				enqueue_work({&parameter_type, DeferredTypeWorkKind::FunctionType});
+			}
+			break;
+		}
+		case DeferredTypeWorkKind::FunctionType: {
+			const FunctionType& function_type =
+				*static_cast<const FunctionType*>(item.pointer);
+			if (has_current_template_params &&
+				(function_type.template_parameter_name.isValid() ||
+				 function_type.is_pack_expansion ||
+				 typeIndexContainsDependentPlaceholder(function_type.type_index))) {
+				return true;
+			}
+			if (function_type.callable_signature) {
+				enqueue_work({
+					function_type.callable_signature.get(),
+					DeferredTypeWorkKind::FunctionSignature});
+			}
+			break;
 		}
 	}
-	StringHandle token_handle = type_spec.token().handle();
-	if (token_handle.isValid() &&
-		std::find(current_template_param_names.begin(), current_template_param_names.end(), token_handle) != current_template_param_names.end()) {
-		return true;
-	}
-	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-		return std::find(current_template_param_names.begin(), current_template_param_names.end(), type_info->name()) != current_template_param_names.end();
 	}
 	return false;
 }
