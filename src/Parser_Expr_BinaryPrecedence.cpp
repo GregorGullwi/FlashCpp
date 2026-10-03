@@ -1642,7 +1642,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	// Handle trailing CV-qualifiers before reference (e.g., Type volatile&, Type const&)
 	// Only consume const/volatile when followed by & or && (possibly with more cv-qualifiers)
 	// This avoids consuming const/volatile in non-reference contexts like member function qualifiers
-	{
+	if (peek() == "const"_tok || peek() == "volatile"_tok) {
 		SaveHandle cv_check = save_token_position();
 		bool found_ref = false;
 		CVQualifier trailing_cv = CVQualifier::None;
