@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-10-03.
+Last updated: 2026-10-04.
 
 ## Current state
 
@@ -32,9 +32,11 @@ pointers, arrays, functions, member pointers, enums, and the builtin
 arithmetic/scalar/fundamental/object/compound groupings derived from them.
 Shared evaluation, constant-expression evaluation, and code-generation trait
 lowering all route through that one classification, so a trait no longer
-answers differently depending on whether it is folded or lowered. Class-property
-traits, the target-signedness traits, and `__is_const` / `__is_volatile` still
-read flat or sema-owned metadata, and template, constexpr, and IR consumers
+answers differently depending on whether it is folded or lowered. Class, union,
+cv, signedness, and the `__is_polymorphic`, `__is_final`, and
+`__is_abstract` traits now read canonical type identity or published record
+facts. `__is_empty`, triviality, lifetime, and constructibility traits still
+read sema-owned record metadata, and template, constexpr, and IR consumers
 still read flat fields. Array and callable outer wrappers remain guarded where
 their consumers are not migrated.
 
@@ -75,8 +77,11 @@ The class, union, and qualification traits are answered from the canonical type
 as well. A record's class/union split comes from its published
 `CanonicalRecordLayout` union flag, a class-template specialization is a class
 type and never a union, and a record with no published layout fails closed to the
-compatibility classifier rather than guessing. cv qualification comes from the
-canonical qualifier plus [dcl.array]'s rule that an array is identically
+compatibility classifier rather than guessing. The
+canonical record-property schema also publishes polymorphic, final, and abstract
+facts keyed by class `TypeId`; the shared evaluator and lazy constraints use
+those facts. cv qualification comes from the canonical qualifier plus
+[dcl.array]'s rule that an array is identically
 cv-qualified to its element, walked iteratively so array rank stays off the
 native stack, and [dcl.ref]'s rule that cv introduced through a reference is
 dropped. Signedness is decided once, from the canonical builtin, and includes the
@@ -714,8 +719,8 @@ and enum operands, member pointers, and function pointers. The two remaining
 flat consumers of the family were removed rather than reconciled: the private
 constant-expression switch and the code-generation `__is_bounded_array` /
 `__is_unbounded_array` cases now delegate to the shared evaluator. The
-`canonical_structural_trait_fallback` counter records every structural trait
-answered from flat fields, has a fixed corpus and baseline in
+`canonical_structural_trait_fallback` counter records unary property traits
+answered from compatibility fields, has a fixed corpus and baseline in
 `tests/migration_counters/corpus_baseline.tsv`, and must reach zero at the 3A
 exit; it currently measures the record and enum operands reached through a
 `decltype` that has not published its `EntityId`, and the lazy-constraint path,
@@ -735,20 +740,22 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
 2. **Migrate remaining flat consumers.** The structural `[meta.unary.prop]`
    family is done in the shared type-trait evaluator and in the lazy-constraint
    evaluator, nominal identity is published at parser materialization, and the
-   class, union, and qualification traits are answered canonically, so the first
-   four splits of this item are landed. Next in order:
-   1. **The triviality and lifetime trait families.** `__is_trivially_copyable`,
+   class, union, qualification, and published polymorphic/final/abstract traits
+   are answered canonically, so the first five splits of this item are landed.
+   Next in order:
+   1. **The remaining triviality and lifetime trait families.** `__is_trivially_copyable`,
       `__is_trivial`, `__is_pod`, `__is_standard_layout`, `__is_aggregate`,
-      `__is_empty`, `__is_polymorphic`, `__is_final`, `__is_abstract`,
-      `__is_destructible`, `__is_trivially_destructible`,
+      `__is_empty`, `__is_destructible`, `__is_trivially_destructible`,
       `__is_nothrow_destructible`, `__has_trivial_destructor`,
       `__has_virtual_destructor`, and the constructibility family still read
       `StructTypeInfo`. `CanonicalRecordLayout` publishes object size, member
-      offsets, and the union flag, but not member triviality, vtable state, or
-      user-declared special members, so this needs a published member-property
-      schema rather than a classifier change. Each is a
-      `ConstraintSatisfaction::Unknown` in a concept today, and this is what
-      drives `lazy_constraint_trait_fallback` to zero.
+      offsets, and the union flag. The separate `CanonicalRecordProperties`
+      schema now publishes polymorphic, final, and abstract facts for completed
+      record TypeIds. The remaining traits need member and special-member facts,
+      so this needs a broader schema for record members and special members
+      rather than a classifier change. Unowned traits remain
+      `ConstraintSatisfaction::Unknown` in concepts; migrating them will drive
+      `lazy_constraint_trait_fallback` toward zero.
 
       Code generation delegates these rules and the assignability forms to the
       shared evaluator through `isRecordPropertyTraitOwnedBySharedEvaluator`.
@@ -772,10 +779,9 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       fixed native frames: 424 bytes for nothrow destructibility (the previous
       recursive predicate used 136 bytes per nesting level), 376 bytes for the
       shared worklist traversal, and 536 bytes for standard-layout. The full
-      suite passes after these changes. This implementation still reads
-      `StructTypeInfo`. Moving the family to canonical types requires publishing
-      member, base, and special-member properties in the canonical record schema;
-      canonical layout currently exposes only layout data and the union flag.
+      suite passes after these changes. The remaining implementation still
+      reads `StructTypeInfo`. Moving it to canonical types requires publishing
+      member, base, and special-member properties alongside the class facts.
       The separate uninitialized-`bool`-local symptom found during the earlier
       audit was a dropped `bool` cast rather than a storage problem and is
       diagnosed under "A cast whose source is `bool` is dropped" in

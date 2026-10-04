@@ -1003,6 +1003,64 @@ CanonicalRecordLayout CanonicalTypeTable::recordLayout(EntityId entity) const {
 	return record_layouts_[found->second];
 }
 
+void CanonicalTypeTable::publishRecordProperties(
+	TypeId type,
+	CanonicalRecordPropertyFlags flags) {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const uint8_t valid_flags = static_cast<uint8_t>(
+		CanonicalRecordPropertyFlags::Polymorphic |
+		CanonicalRecordPropertyFlags::Final |
+		CanonicalRecordPropertyFlags::Abstract);
+	const CanonicalTypeKind kind = type ? nodeUnlocked(type).kind : CanonicalTypeKind::Builtin;
+	if (!type || (kind != CanonicalTypeKind::Record &&
+		kind != CanonicalTypeKind::TemplateSpecialization) ||
+		(static_cast<uint8_t>(flags) & ~valid_flags) != 0) {
+		throw InternalError("canonical type: invalid record property publication");
+	}
+	const CanonicalRecordProperties properties{type, flags};
+	const auto existing = record_property_ids_.find(type.value);
+	if (existing != record_property_ids_.end()) {
+		if (record_properties_[existing->second] != properties) {
+			throw InternalError("canonical type: conflicting record property publication");
+		}
+		return;
+	}
+	const size_t index = live_record_property_count_;
+	if (index == record_properties_.size()) {
+		record_properties_.push_back(properties);
+	} else {
+		record_properties_[index] = properties;
+	}
+	try {
+		const auto [_, inserted] = record_property_ids_.emplace(type.value, index);
+		if (!inserted) {
+			throw InternalError("canonical type: duplicate record property publication");
+		}
+	} catch (...) {
+		noteArenaBytes();
+		throw;
+	}
+	++live_record_property_count_;
+	noteArenaBytes();
+}
+
+bool CanonicalTypeTable::hasRecordProperties(TypeId type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	return type && record_property_ids_.contains(type.value);
+}
+
+CanonicalRecordProperties CanonicalTypeTable::recordProperties(TypeId type) const {
+	std::lock_guard lock(mutex_);
+	checkTransactionThread();
+	const auto found = record_property_ids_.find(type.value);
+	if (!type || found == record_property_ids_.end()) {
+		throw InternalError("canonical type: record has no published semantic properties");
+	}
+	return record_properties_[found->second];
+}
+
 CanonicalEnumLayout CanonicalTypeTable::enumLayout(EntityId entity) const {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
@@ -2799,6 +2857,7 @@ TypeId CanonicalTypeTable::tryResolveDependentTipUnlocked(TypeId type) {
 uint64_t CanonicalTypeTable::usedBytesUnlocked() const {
 	return static_cast<uint64_t>(live_count_) * sizeof(CanonicalTypeNode) +
 		static_cast<uint64_t>(live_record_layout_count_) * sizeof(CanonicalRecordLayout) +
+		static_cast<uint64_t>(live_record_property_count_) * sizeof(CanonicalRecordProperties) +
 		static_cast<uint64_t>(live_enum_layout_count_) * sizeof(CanonicalEnumLayout) +
 		static_cast<uint64_t>(live_record_field_schema_count_) *
 			sizeof(CanonicalRecordFieldSchemaHeader) +
@@ -2814,6 +2873,7 @@ uint64_t CanonicalTypeTable::usedBytesUnlocked() const {
 
 uint64_t CanonicalTypeTable::reservedBytesUnlocked() const {
 	return nodes_.reservedBytes() + record_layouts_.reservedBytes() +
+		record_properties_.reservedBytes() +
 		enum_layouts_.reservedBytes() + record_field_schema_headers_.reservedBytes() +
 		record_members_.reservedBytes() + record_bases_.reservedBytes() +
 		class_base_schema_headers_.reservedBytes() + class_bases_.reservedBytes() +
@@ -2841,6 +2901,7 @@ size_t CanonicalTypeTable::beginTransaction() {
 	transaction_marks_.push_back({
 		live_count_,
 		live_record_layout_count_,
+		live_record_property_count_,
 		live_enum_layout_count_,
 		enum_layout_update_history_.size(),
 		live_record_field_schema_count_,
@@ -2877,6 +2938,11 @@ void CanonicalTypeTable::finishTransaction(size_t depth, bool commit) {
 		while (live_record_layout_count_ > mark.record_layout_count) {
 			record_layout_ids_.erase(record_layouts_[live_record_layout_count_ - 1].entity.value);
 			--live_record_layout_count_;
+		}
+		while (live_record_property_count_ > mark.record_property_count) {
+			record_property_ids_.erase(
+				record_properties_[live_record_property_count_ - 1].type.value);
+			--live_record_property_count_;
 		}
 		while (live_enum_layout_count_ > mark.enum_layout_count) {
 			enum_layout_ids_.erase(enum_layouts_[live_enum_layout_count_ - 1].entity.value);
