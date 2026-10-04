@@ -702,9 +702,19 @@ Continue boundary 3A in this order:
     `tests/test_canonical_member_function_template_pack_address_e1617.cpp`
     verifies that a fixed-leading pack overload is selected before access
     checking, and the canonical unit test covers pack deduction and ordering.
-    Constraints, non-type template parameters, and pack forms beyond this
-    single trailing type pack still need their ordering rules. Nested
-    return-only type materialization,
+    Direct integral non-type function-template parameters used as arguments to a
+    class-template specialization now retain `TemplateDeclId` plus parameter
+    index identity and can bind to literal target arguments. The regression
+    `tests/test_canonical_member_function_template_nttp_address_e1617.cpp`
+    checks that `Buffer<Value>` outranks a generic `Type` overload and that
+    access checking runs after that selection. The regression
+    `tests/test_canonical_member_function_template_nttp_address_ambiguous_e1701.cpp`
+    checks that `Buffer<Value, 1>` and `Buffer<1, Value>` remain incomparable;
+    the canonical unit test checks declaration-identity binding and ordering.
+    Complex NTTP expressions,
+    non-literal dependent arguments, constraints, and non-type packs remain
+    unsupported, as do pack forms beyond the single trailing type pack.
+    Nested return-only type materialization,
     free-function-template target deduction,
     dependent member-function-pointer forms that do not import structurally,
     and unsupported callable conversions still need substitution-aware

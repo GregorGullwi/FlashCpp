@@ -7133,6 +7133,165 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				typeSpecifierFromFunctionType(parameter));
 		}
 	}
+	std::vector<CanonicalTemplateNonTypeArgumentPattern>
+		target_non_type_arguments;
+	const auto import_integral_template_parameter_type =
+		[&canonical_types](const TemplateParameterNode& parameter) -> TypeId {
+		const CanonicalTypeImport imported = importCanonicalType(
+			canonical_types,
+			parameter.type_specifier_node());
+		if (imported.status != CanonicalTypeImportStatus::Supported) {
+			return TypeId{};
+		}
+		const TypeId unqualified =
+			canonical_types.withoutTopLevelQualifiers(imported.type);
+		const CanonicalTypeNode node = canonical_types.node(unqualified);
+		if (node.kind != CanonicalTypeKind::Builtin) {
+			return TypeId{};
+		}
+		switch (node.builtin) {
+		case CanonicalBuiltinKind::Bool:
+		case CanonicalBuiltinKind::Char:
+		case CanonicalBuiltinKind::SignedChar:
+		case CanonicalBuiltinKind::UnsignedChar:
+		case CanonicalBuiltinKind::WChar:
+		case CanonicalBuiltinKind::Char8:
+		case CanonicalBuiltinKind::Char16:
+		case CanonicalBuiltinKind::Char32:
+		case CanonicalBuiltinKind::Short:
+		case CanonicalBuiltinKind::UnsignedShort:
+		case CanonicalBuiltinKind::Int:
+		case CanonicalBuiltinKind::UnsignedInt:
+		case CanonicalBuiltinKind::Long:
+		case CanonicalBuiltinKind::UnsignedLong:
+		case CanonicalBuiltinKind::LongLong:
+		case CanonicalBuiltinKind::UnsignedLongLong:
+			return unqualified;
+		default:
+			return TypeId{};
+		}
+	};
+	const auto collect_non_type_argument_patterns =
+		[&](const TypeSpecifierNode& root,
+			const TemplateFunctionDeclarationNode* function_template,
+			TemplateDeclId function_template_decl,
+			std::vector<CanonicalTemplateNonTypeArgumentPattern>& output) {
+		std::vector<const TypeSpecifierNode*> pending{&root};
+		const DependentExpressionTable& expressions =
+			requireFrontendContext().dependentExpressions();
+		while (!pending.empty()) {
+			const TypeSpecifierNode& current = *pending.back();
+			pending.pop_back();
+			if (!current.has_template_specialization()) {
+				continue;
+			}
+			for (size_t index = 0; index < current.specialization_arg_count(); ++index) {
+				if (current.specialization_arg_is_type(index)) {
+					pending.push_back(&current.specialization_arg_type(index));
+					continue;
+				}
+				if (current.specialization_arg_is_template(index) ||
+					current.specialization_arg_is_dependent_template(index)) {
+					continue;
+				}
+				const ExprId expression = current.specialization_arg_expr(index);
+				const ASTNode& expression_node = expressions.node(expression);
+				CanonicalTemplateNonTypeArgumentPattern argument_pattern{
+					expression,
+					CanonicalTemplateNonTypeArgumentKind::Unsupported,
+					TemplateDeclId{},
+					0,
+					TypeId{}};
+				if (const NumericLiteralNode* numeric =
+						tryGetNode<NumericLiteralNode>(expression_node);
+					numeric != nullptr) {
+					argument_pattern.kind =
+						CanonicalTemplateNonTypeArgumentKind::Literal;
+				} else if (const BoolLiteralNode* bool_literal =
+						tryGetNode<BoolLiteralNode>(expression_node);
+					bool_literal != nullptr) {
+					argument_pattern.kind =
+						CanonicalTemplateNonTypeArgumentKind::Literal;
+				} else if (function_template != nullptr) {
+					StringHandle referenced_parameter_name;
+					if (const TemplateParameterReferenceNode* parameter_reference =
+							tryGetNode<TemplateParameterReferenceNode>(expression_node)) {
+						referenced_parameter_name =
+							parameter_reference->param_name();
+					} else if (const IdentifierNode* identifier =
+							tryGetIdentifier(expression_node);
+						identifier != nullptr) {
+						// Resolve the identifier in this function template's parameter
+						// scope, then retain only declaration identity below.
+						referenced_parameter_name = identifier->nameHandle();
+					}
+					if (referenced_parameter_name.isValid()) {
+						const TemplateParameterVector& parameters =
+							function_template->template_parameters();
+						for (size_t parameter_index = 0;
+							 parameter_index < parameters.size();
+							 ++parameter_index) {
+							const TemplateParameterNode& parameter =
+								parameters[parameter_index];
+							if (parameter.nameHandle() !=
+								referenced_parameter_name) {
+								continue;
+							}
+							if (parameter.kind() == TemplateParameterKind::NonType &&
+								!parameter.is_variadic()) {
+								const TypeId parameter_type =
+									import_integral_template_parameter_type(parameter);
+								if (parameter_type) {
+									argument_pattern.kind =
+										CanonicalTemplateNonTypeArgumentKind::TemplateParameter;
+									argument_pattern.parameter_decl =
+										function_template_decl;
+									argument_pattern.parameter_index =
+										static_cast<uint32_t>(parameter_index);
+									argument_pattern.parameter_type = parameter_type;
+								}
+							} else {
+								argument_pattern.kind =
+									CanonicalTemplateNonTypeArgumentKind::Unsupported;
+							}
+							break;
+						}
+					}
+				}
+				const auto existing = std::ranges::find_if(
+					output,
+					[expression](const CanonicalTemplateNonTypeArgumentPattern& existing) {
+						return existing.expression == expression;
+					});
+				if (existing == output.end()) {
+					output.push_back(argument_pattern);
+				} else if (
+					existing->kind != argument_pattern.kind ||
+					existing->parameter_decl != argument_pattern.parameter_decl ||
+					existing->parameter_index != argument_pattern.parameter_index ||
+					existing->parameter_type != argument_pattern.parameter_type) {
+					existing->kind = CanonicalTemplateNonTypeArgumentKind::Unsupported;
+					existing->parameter_decl = TemplateDeclId{};
+					existing->parameter_index = 0;
+					existing->parameter_type = TypeId{};
+				}
+			}
+		}
+	};
+	if (!target_function_types.empty()) {
+		collect_non_type_argument_patterns(
+			target_function_types.front(),
+			nullptr,
+			TemplateDeclId{},
+			target_non_type_arguments);
+	}
+	for (const TypeSpecifierNode& parameter_type : target_parameter_types) {
+		collect_non_type_argument_patterns(
+			parameter_type,
+			nullptr,
+			TemplateDeclId{},
+			target_non_type_arguments);
+	}
 	TypeId target_function_type{};
 	if (target_import.status == CanonicalTypeImportStatus::Supported) {
 		const CanonicalTypeNode target_node = canonical_types.node(target_import.type);
@@ -7164,8 +7323,9 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		TemplateDeclId template_decl;
 	};
 	const auto import_function_template_type =
-		[&canonical_types](
+		[&canonical_types, &collect_non_type_argument_patterns](
 			const FunctionDeclarationNode& function_decl,
+			const TemplateFunctionDeclarationNode& function_template,
 			TemplateDeclId function_template_decl,
 			std::optional<uint32_t> template_parameter_pack_index)
 			-> std::optional<CanonicalFunctionTemplateTypePattern> {
@@ -7175,6 +7335,13 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		}
 		TypeSpecifierNode return_type =
 			function_decl.decl_node().type_specifier_node();
+		std::vector<CanonicalTemplateNonTypeArgumentPattern>
+			non_type_arguments;
+		collect_non_type_argument_patterns(
+			return_type,
+			&function_template,
+			function_template_decl,
+			non_type_arguments);
 		tryBindPublishedTypeEntity(return_type);
 		const CanonicalTypeImport return_import =
 			importCanonicalType(canonical_types, return_type);
@@ -7195,6 +7362,11 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				return std::nullopt;
 			}
 			TypeSpecifierNode parameter_type = parameter_decl.type_specifier_node();
+			collect_non_type_argument_patterns(
+				parameter_type,
+				&function_template,
+				function_template_decl,
+				non_type_arguments);
 			if (parameter_decl.is_parameter_pack()) {
 				if (!template_parameter_pack_index.has_value()) {
 					return std::nullopt;
@@ -7226,6 +7398,28 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			template_parameter_pack_index.has_value()) {
 			return std::nullopt;
 		}
+		const TemplateParameterVector& template_parameters =
+			function_template.template_parameters();
+		for (size_t parameter_index = 0;
+			 parameter_index < template_parameters.size();
+			 ++parameter_index) {
+			if (template_parameters[parameter_index].kind() !=
+				TemplateParameterKind::NonType) {
+				continue;
+			}
+			const auto deduced_parameter = std::ranges::find_if(
+				non_type_arguments,
+				[function_template_decl, parameter_index](
+					const CanonicalTemplateNonTypeArgumentPattern& argument) {
+					return argument.kind ==
+							CanonicalTemplateNonTypeArgumentKind::TemplateParameter &&
+						argument.parameter_decl == function_template_decl &&
+						argument.parameter_index == parameter_index;
+				});
+			if (deduced_parameter == non_type_arguments.end()) {
+				return std::nullopt;
+			}
+		}
 		CVQualifier function_cv = CVQualifier::None;
 		if (function_decl.is_const_member_function()) {
 			function_cv |= CVQualifier::Const;
@@ -7252,7 +7446,8 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				toCanonicalDllLinkage(function_decl.linkage()),
 				dependent_noexcept),
 			function_parameter_pack_position,
-			template_parameter_pack_index};
+			template_parameter_pack_index,
+			std::move(non_type_arguments)};
 	};
 	std::vector<ViableTemplateAddressCandidate> viable_template_addresses;
 	const StructMemberFunction* best_template_address = nullptr;
@@ -7274,24 +7469,42 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			}
 			std::optional<uint32_t> template_parameter_pack_index;
 			bool unsupported_template_parameter = false;
+			bool saw_non_type_template_parameter = false;
 			for (size_t parameter_index = 0;
 				 parameter_index < function_template.template_parameters().size();
 				 ++parameter_index) {
 				const TemplateParameterNode& parameter =
 					function_template.template_parameters()[parameter_index];
-				if (parameter.kind() != TemplateParameterKind::Type ||
-					parameter.has_concept_constraint()) {
+				if (parameter.has_concept_constraint()) {
 					unsupported_template_parameter = true;
 					break;
 				}
-				if (parameter.is_variadic()) {
+				if (parameter.kind() == TemplateParameterKind::NonType) {
+					saw_non_type_template_parameter = true;
+				}
+				if (parameter.kind() == TemplateParameterKind::Type &&
+					parameter.is_variadic()) {
 					if (template_parameter_pack_index.has_value()) {
 						unsupported_template_parameter = true;
 						break;
 					}
 					template_parameter_pack_index =
 						static_cast<uint32_t>(parameter_index);
+				} else if (
+					parameter.kind() == TemplateParameterKind::NonType &&
+					parameter.is_variadic()) {
+					unsupported_template_parameter = true;
+					break;
+				} else if (
+					parameter.kind() != TemplateParameterKind::Type &&
+					parameter.kind() != TemplateParameterKind::NonType) {
+					unsupported_template_parameter = true;
+					break;
 				}
+			}
+			if (template_parameter_pack_index.has_value() &&
+				saw_non_type_template_parameter) {
+				unsupported_template_parameter = true;
 			}
 			if (unsupported_template_parameter) {
 				continue;
@@ -7304,6 +7517,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			const std::optional<CanonicalFunctionTemplateTypePattern>
 				candidate_pattern = import_function_template_type(
 					function_decl,
+					function_template,
 					function_template.template_decl_id(),
 					template_parameter_pack_index);
 			if (!candidate_pattern.has_value()) {
@@ -7314,13 +7528,23 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 					CanonicalTypeKind::Function) {
 				continue;
 			}
+			const bool has_direct_non_type_template_parameter =
+				std::ranges::any_of(
+					candidate_pattern->non_type_arguments,
+					[](const CanonicalTemplateNonTypeArgumentPattern& argument) {
+						return argument.kind ==
+							CanonicalTemplateNonTypeArgumentKind::TemplateParameter;
+					});
 			const CanonicalTemplateTypeDeduction target_deduction =
-				target_function_type
+				target_function_type && !has_direct_non_type_template_parameter
 					? deduceCanonicalFunctionTemplateType(
 						canonical_types,
 						*candidate_pattern,
 						CanonicalFunctionTemplateTypePattern{
-							target_function_type, std::nullopt, std::nullopt},
+							target_function_type,
+							std::nullopt,
+							std::nullopt,
+							target_non_type_arguments},
 						function_template.template_decl_id())
 					: CanonicalTemplateTypeDeduction{};
 			bool target_match = target_deduction.status ==
