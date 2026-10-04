@@ -520,26 +520,6 @@ the symbol as variadic. The same malformed suffix is present on the unchanged
 baseline and prevents linking matching declarations against MSVC-generated C++
 symbols. This needs a separate mangling correction and interoperability regression.
 
-## A conditional void-pointer return can omit the non-null return load
-
-The unchanged baseline returns the wrong result for this reduced program:
-
-```cpp
-void* preserve(void* value, int guard) {
-    if (guard != 17) return nullptr;
-    return value;
-}
-int main() {
-    int value = 41;
-    return preserve(&value, 17) == &value ? 0 : 1;
-}
-```
-
-It returns 1. Disassembly shows the non-null branch reaching the epilogue without
-loading `value` into RAX. This is separate from correctly recording the size of a
-call result whose base category is Void but whose stored representation is a
-64-bit pointer.
-
 ## Temporary frame pre-counting still omits some producers and padding
 
 The temporary-size pre-scan does not publish every typed producer (including
