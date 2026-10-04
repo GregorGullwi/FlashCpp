@@ -695,9 +695,17 @@ Continue boundary 3A in this order:
     and incomparable viable candidates diagnose ambiguity. The
     `test_canonical_member_function_template_address_deep_partial_ordering_ret0.cpp`
     regression exercises 16 nested type arguments below the parser's current
-    depth-20 limit. Constraints, packs, and non-type template parameters still
-    need their ordering rules. Nested class-template return types now
-    materialize return-only member-template bindings from canonical TypeIds; the
+    depth-20 limit. A single trailing type-template parameter pack is now
+    imported with its canonical element TypeId and explicit pack position,
+    deduced over the target signature's remaining parameters, and included in
+    partial ordering. The regression
+    `tests/test_canonical_member_function_template_pack_address_e1617.cpp`
+    verifies that a fixed-leading pack overload is selected before access
+    checking, and the canonical unit test covers pack deduction and ordering.
+    Constraints, non-type template parameters, and pack forms beyond this
+    single trailing type pack still need their ordering rules. Nested
+    class-template return types also materialize return-only member-template
+    bindings from canonical TypeIds; the
     `test_canonical_member_function_template_nested_return_only_deduction_ret0.cpp`
     regression covers both scalar and record arguments. Class-template
     specializations in structured member-function-pointer signatures now
