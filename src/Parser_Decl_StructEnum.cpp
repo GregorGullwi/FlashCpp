@@ -2787,6 +2787,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							// First-declaration `= default` is implicitly inline ([dcl.fct.def.default]).
 							ctor_ref.set_is_implicit(true);
 							ctor_ref.set_is_explicitly_defaulted(true);
+							ctor_ref.set_was_defaulted_on_first_declaration(true);
 							ctor_ref.set_is_inline(true);
 
 							// Create an empty block for the constructor body

@@ -2613,6 +2613,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 									ctor_ref.set_is_implicit(true);
 									ctor_ref.set_is_explicitly_defaulted(true);
+									ctor_ref.set_was_defaulted_on_first_declaration(true);
 									ctor_ref.set_is_inline(true);
 									auto [block_node, block_ref] = create_node_ref(BlockNode());
 									ctor_ref.set_definition(block_node);
@@ -4097,6 +4098,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 
 									ctor_ref.set_is_implicit(true);
 									ctor_ref.set_is_explicitly_defaulted(true);
+									ctor_ref.set_was_defaulted_on_first_declaration(true);
 									ctor_ref.set_is_inline(true);
 									auto [block_node, block_ref] = create_node_ref(BlockNode());
 									ctor_ref.set_definition(block_node);
@@ -6500,6 +6502,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						}
 						constructor_ref.set_is_implicit(true);
 						constructor_ref.set_is_explicitly_defaulted(true);
+						constructor_ref.set_was_defaulted_on_first_declaration(true);
 						constructor_ref.set_is_inline(true);
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
 						(void)block_ref;
@@ -7155,6 +7158,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					}
 					constructor_ref.set_is_implicit(true);
 					constructor_ref.set_is_explicitly_defaulted(true);
+					constructor_ref.set_was_defaulted_on_first_declaration(true);
 					constructor_ref.set_is_inline(true);
 					auto [block_node, block_ref] = create_node_ref(BlockNode());
 					(void)block_ref;

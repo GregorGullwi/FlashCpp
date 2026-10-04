@@ -622,20 +622,6 @@ const StructTypeInfo* resolvePseudoDestructorObjectStruct(const ASTNode& object,
 	return nullptr;
 }
 
-// Helper: iterate non-deferred base classes and return false if any fails the predicate.
-template<typename Pred>
-static bool allNonDeferredBasesSatisfy(const StructTypeInfo* struct_info, Pred pred) {
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred)
-			continue;
-		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
-		const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
-		if (!pred(base_struct))
-			return false;
-	}
-	return true;
-}
-
 bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
 	if (!struct_info || struct_info->has_vtable ||
 		struct_info->hasCopyConstructor() ||
@@ -651,6 +637,35 @@ bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
 			destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration();
 	}
 	return true;
+}
+
+bool hasTrivialDefaultConstructor(const StructTypeInfo* struct_info) {
+	if (struct_info == nullptr || struct_info->hasDefaultMemberInitializers() ||
+		struct_info->isDefaultConstructorDeleted()) {
+		return false;
+	}
+	if (const StructMemberFunction* default_constructor =
+			struct_info->findDefaultConstructor()) {
+		if (!default_constructor->function_decl.is<ConstructorDeclarationNode>()) {
+			throw InternalError("record property: default constructor has invalid AST node");
+		}
+		const ConstructorDeclarationNode& constructor =
+			default_constructor->function_decl.as<ConstructorDeclarationNode>();
+		if (constructor.was_defaulted_on_first_declaration()) {
+			return true;
+		}
+		if (constructor.is_explicitly_defaulted()) {
+			return false;
+		}
+		if (constructor.is_implicit()) {
+			return !struct_info->hasUserDeclaredConstructor();
+		}
+		return false;
+	}
+	// A class with a user-declared constructor has no implicit default
+	// constructor. This includes a deleted copy/move constructor, which is
+	// recorded in StructTypeInfo even though it has no callable AST entry.
+	return !struct_info->hasUserDeclaredConstructor();
 }
 
 template<typename Pred>
@@ -711,8 +726,47 @@ bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
 		struct_info,
 		[](const StructTypeInfo* current) {
 			return hasTrivialSpecialMemberSetForCopying(current) &&
-				!current->hasUserDefinedConstructor();
+				hasTrivialDefaultConstructor(current);
 		});
+}
+
+bool isStructEmptyImpl(const StructTypeInfo* struct_info) {
+	if (struct_info == nullptr) {
+		return false;
+	}
+	std::vector<const StructTypeInfo*> pending{struct_info};
+	std::unordered_set<const StructTypeInfo*> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (current == nullptr || !visited.insert(current).second) {
+			continue;
+		}
+		if (current->is_union || !current->members.empty() || current->has_vtable) {
+			return false;
+		}
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (base.is_deferred || base.is_virtual) {
+				return false;
+			}
+			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct =
+				base_type == nullptr ? nullptr : base_type->getStructInfo();
+			if (base_struct == nullptr) {
+				return false;
+			}
+			pending.push_back(base_struct);
+		}
+	}
+	return true;
+}
+
+bool isStructDestructibleImpl(const StructTypeInfo* struct_info) {
+	if (struct_info == nullptr || struct_info->has_deleted_destructor) {
+		return false;
+	}
+	const StructMemberFunction* destructor = struct_info->findDestructor();
+	return destructor == nullptr || destructor->access == AccessSpecifier::Public;
 }
 
 bool isStructTriviallyDestructibleImpl(const StructTypeInfo* struct_info) {
@@ -730,6 +784,10 @@ bool isStructTriviallyDestructibleImpl(const StructTypeInfo* struct_info) {
 		if (current->has_deleted_destructor)
 			return false;
 		if (const StructMemberFunction* destructor = current->findDestructor()) {
+			if (current == struct_info &&
+				destructor->access != AccessSpecifier::Public) {
+				return false;
+			}
 			if (destructor->is_virtual ||
 				!destructor->function_decl.is<DestructorDeclarationNode>() ||
 				!destructor->function_decl.as<DestructorDeclarationNode>().was_defaulted_on_first_declaration()) {
@@ -786,6 +844,69 @@ bool hasVirtualDestructorImpl(const StructTypeInfo* struct_info) {
 		}
 	}
 	return false;
+}
+
+bool isStructNothrowDestructibleImpl(const StructTypeInfo* struct_info) {
+	if (struct_info == nullptr) {
+		return true;
+	}
+	std::vector<const StructTypeInfo*> pending{struct_info};
+	std::unordered_set<const StructTypeInfo*> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* current = pending.back();
+		pending.pop_back();
+		if (current == nullptr || !visited.insert(current).second) {
+			continue;
+		}
+		if (current->has_deleted_destructor) {
+			return false;
+		}
+		const StructMemberFunction* destructor = current->findDestructor();
+		if (destructor != nullptr) {
+			if (current == struct_info &&
+				destructor->access != AccessSpecifier::Public) {
+				return false;
+			}
+			if (!destructor->function_decl.is<DestructorDeclarationNode>()) {
+				throw InternalError("record property: destructor has invalid AST node");
+			}
+			const DestructorDeclarationNode& declaration =
+				destructor->function_decl.as<DestructorDeclarationNode>();
+			if (declaration.has_noexcept_specifier()) {
+				if (!declaration.is_noexcept()) {
+					return false;
+				}
+				continue;
+			}
+		}
+
+		for (const BaseClassSpecifier& base : current->base_classes) {
+			if (base.is_deferred) {
+				return false;
+			}
+			const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct =
+				base_type == nullptr ? nullptr : base_type->getStructInfo();
+			if (base_struct == nullptr) {
+				return false;
+			}
+			pending.push_back(base_struct);
+		}
+		for (const StructMember& member : current->members) {
+			if (member.pointer_depth > 0 || member.is_reference() ||
+				!is_struct_type(member.type_index.category())) {
+				continue;
+			}
+			const TypeInfo* member_type = tryGetTypeInfo(member.type_index);
+			const StructTypeInfo* member_struct =
+				member_type == nullptr ? nullptr : member_type->getStructInfo();
+			if (member_struct == nullptr) {
+				return false;
+			}
+			pending.push_back(member_struct);
+		}
+	}
+	return true;
 }
 
 bool hasBaseTypeAmongZeroOffsetMembers(
@@ -913,39 +1034,7 @@ bool isStructTrivial(const StructTypeInfo* struct_info) {
 }
 
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
-	if (!struct_info)
-		return true;
-
-	// If there is an explicit user-defined destructor AND it carries an explicit
-	// noexcept specifier (bare noexcept or noexcept(expr)), the is_noexcept()
-	// flag was eagerly evaluated at parse time — trust it directly.
-	// If the destructor has NO explicit noexcept specifier (or is = default),
-	// its effective noexcept status is determined by bases/members, just as for
-	// an implicit destructor (C++20 [except.spec]/7, [class.dtor]/3).
-	const auto* dtor = struct_info->findDestructor();
-	if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-		const auto& dtor_node = dtor->function_decl.as<DestructorDeclarationNode>();
-		if (dtor_node.has_noexcept_specifier()) {
-			return dtor_node.is_noexcept();
-		}
-		// Fall through to base/member check below
-	}
-
-	// No explicit destructor, or destructor without a noexcept specifier:
-	// the effective noexcept status depends on base classes and members.
-	if (!allNonDeferredBasesSatisfy(struct_info, isStructNothrowDestructible))
-		return false;
-	for (const auto& member : struct_info->members) {
-		// Only struct/class-typed members (not pointers or references) have destructors
-		if ((!is_struct_type(member.type_index.category())) ||
-			member.pointer_depth > 0 || member.is_reference())
-			continue;
-		const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-		const StructTypeInfo* mem_struct = member_type_info ? member_type_info->getStructInfo() : nullptr;
-		if (!isStructNothrowDestructible(mem_struct))
-			return false;
-	}
-	return true;
+	return isStructNothrowDestructibleImpl(struct_info);
 }
 
 bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols) {
@@ -1136,8 +1225,8 @@ TypeTraitResult evaluateTypeTrait(
 		break;
 
 	case TypeTraitKind::IsEmpty:
-		if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
-			result = struct_info->members.empty() && !struct_info->has_vtable;
+		if (struct_info && !is_reference && pointer_depth == 0) {
+			result = isStructEmptyImpl(struct_info);
 		}
 		break;
 
@@ -1198,7 +1287,7 @@ TypeTraitResult evaluateTypeTrait(
 		if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;
 		} else if (struct_info && !is_reference && pointer_depth == 0) {
-			result = true;  // Assume destructible unless proven otherwise
+			result = isStructDestructibleImpl(struct_info);
 		}
 		break;
 

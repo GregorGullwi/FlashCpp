@@ -751,15 +751,19 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       Standard-layout checks include the C++20 zero-offset member-type rule
       through nested records, arrays, and unions.
       Constant evaluation delegates aggregate and virtual-destructor queries to
-      that same evaluator. The new regression verifies the reproduced cells in
-      both evaluation paths, including zero-offset base/member conflicts,
-      member arrays, and out-of-line defaulted destructors. The earlier
-      280-cell differential found 35 folded and 23 lowered mismatches before
-      these fixes; it has not yet been rerun, so the remaining cells are
-      unmeasured. The triviality and trivially-copyable
+      that same evaluator. The 280-cell differential was rerun after these
+      fixes; every trait/type cell now matches clang in constant evaluation and
+      runtime lowering. The matrix regression keeps a separate assertion and
+      runtime assignment for each cell across 20 record shapes. Focused
+      regressions also cover zero-offset base/member conflicts, member arrays,
+      first-declaration versus out-of-line defaulted constructors and
+      destructors, and deep derived-record cases. The triviality and
+      trivially-copyable
       record walks use explicit worklists; a 511-level nested-record regression
-      passes, and stack-usage output shows fixed native frames (376 bytes for
-      the shared worklist traversal, 536 bytes for standard-layout). The full
+      passes, including nothrow destructibility. Clang stack-usage output shows
+      fixed native frames: 424 bytes for nothrow destructibility (the previous
+      recursive predicate used 136 bytes per nesting level), 376 bytes for the
+      shared worklist traversal, and 536 bytes for standard-layout. The full
       suite passes after these changes. This implementation still reads
       `StructTypeInfo`. Moving the family to canonical types requires publishing
       member, base, and special-member properties in the canonical record schema;

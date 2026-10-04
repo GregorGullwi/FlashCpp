@@ -673,6 +673,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						advance();
 						ctor_ref.set_is_implicit(true);
 						ctor_ref.set_is_explicitly_defaulted(true);
+						ctor_ref.set_was_defaulted_on_first_declaration(true);
 						ctor_ref.set_is_inline(true);
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
 						ctor_ref.set_definition(block_node);

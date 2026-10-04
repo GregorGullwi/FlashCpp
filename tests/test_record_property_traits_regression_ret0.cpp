@@ -56,6 +56,31 @@ struct DefaultedAfterDeclarationDestructor {
 
 DefaultedAfterDeclarationDestructor::~DefaultedAfterDeclarationDestructor() = default;
 
+struct DefaultedOnFirstDeclarationConstructor {
+	DefaultedOnFirstDeclarationConstructor() = default;
+};
+
+struct DefaultedAfterDeclarationConstructor {
+	DefaultedAfterDeclarationConstructor();
+};
+
+DefaultedAfterDeclarationConstructor::DefaultedAfterDeclarationConstructor() = default;
+
+template<typename T>
+struct DefaultedOnFirstDeclarationTemplateConstructor {
+	T member;
+	DefaultedOnFirstDeclarationTemplateConstructor() = default;
+};
+
+template<typename T>
+struct DefaultedAfterDeclarationTemplateConstructor {
+	T member;
+	DefaultedAfterDeclarationTemplateConstructor();
+};
+
+template<typename T>
+DefaultedAfterDeclarationTemplateConstructor<T>::DefaultedAfterDeclarationTemplateConstructor() = default;
+
 struct NontrivialDestructorMember {
 	~NontrivialDestructorMember() {
 	}
@@ -97,6 +122,18 @@ static_assert(__is_trivially_copyable(DefaultedOnFirstDeclarationDestructor));
 static_assert(!__is_trivially_copyable(DefaultedAfterDeclarationDestructor));
 static_assert(__is_trivial(DefaultedOnFirstDeclarationDestructor));
 static_assert(!__is_trivial(DefaultedAfterDeclarationDestructor));
+static_assert(!__is_aggregate(DefaultedOnFirstDeclarationConstructor));
+static_assert(__is_pod(DefaultedOnFirstDeclarationConstructor));
+static_assert(__is_trivial(DefaultedOnFirstDeclarationConstructor));
+static_assert(!__is_aggregate(DefaultedAfterDeclarationConstructor));
+static_assert(!__is_pod(DefaultedAfterDeclarationConstructor));
+static_assert(!__is_trivial(DefaultedAfterDeclarationConstructor));
+static_assert(!__is_aggregate(DefaultedOnFirstDeclarationTemplateConstructor<int>));
+static_assert(__is_pod(DefaultedOnFirstDeclarationTemplateConstructor<int>));
+static_assert(__is_trivial(DefaultedOnFirstDeclarationTemplateConstructor<int>));
+static_assert(!__is_aggregate(DefaultedAfterDeclarationTemplateConstructor<int>));
+static_assert(!__is_pod(DefaultedAfterDeclarationTemplateConstructor<int>));
+static_assert(!__is_trivial(DefaultedAfterDeclarationTemplateConstructor<int>));
 static_assert(__has_virtual_destructor(VirtualDestructorBase));
 static_assert(__has_virtual_destructor(VirtualDestructorThroughVirtualBase));
 static_assert(!__has_virtual_destructor(VirtualFunctionOnly));
@@ -127,6 +164,18 @@ int main() {
 	int runtime_direct_virtual_dtor = __has_virtual_destructor(VirtualDestructorBase);
 	int runtime_virtual_base_dtor = __has_virtual_destructor(VirtualDestructorThroughVirtualBase);
 	int runtime_non_dtor_virtual = __has_virtual_destructor(VirtualFunctionOnly);
+	int runtime_first_decl_defaulted_ctor_pod = __is_pod(DefaultedOnFirstDeclarationConstructor);
+	int runtime_first_decl_defaulted_ctor_trivial = __is_trivial(DefaultedOnFirstDeclarationConstructor);
+	int runtime_out_of_line_defaulted_ctor_pod = __is_pod(DefaultedAfterDeclarationConstructor);
+	int runtime_out_of_line_defaulted_ctor_trivial = __is_trivial(DefaultedAfterDeclarationConstructor);
+	int runtime_first_decl_defaulted_template_ctor_pod =
+		__is_pod(DefaultedOnFirstDeclarationTemplateConstructor<int>);
+	int runtime_first_decl_defaulted_template_ctor_trivial =
+		__is_trivial(DefaultedOnFirstDeclarationTemplateConstructor<int>);
+	int runtime_out_of_line_defaulted_template_ctor_pod =
+		__is_pod(DefaultedAfterDeclarationTemplateConstructor<int>);
+	int runtime_out_of_line_defaulted_template_ctor_trivial =
+		__is_trivial(DefaultedAfterDeclarationTemplateConstructor<int>);
 	mismatches |= runtime_aggregate ? 0 : 1;
 	mismatches |= runtime_aggregate_with_destructor ? 0 : 2;
 	mismatches |= runtime_aggregate_builtin_array ? 0 : 4194304;
@@ -151,5 +200,13 @@ int main() {
 	mismatches |= runtime_direct_virtual_dtor ? 0 : 128;
 	mismatches |= runtime_virtual_base_dtor ? 0 : 256;
 	mismatches |= runtime_non_dtor_virtual ? 8192 : 0;
+	mismatches |= runtime_first_decl_defaulted_ctor_pod ? 0 : 16777216;
+	mismatches |= runtime_first_decl_defaulted_ctor_trivial ? 0 : 33554432;
+	mismatches |= runtime_out_of_line_defaulted_ctor_pod ? 67108864 : 0;
+	mismatches |= runtime_out_of_line_defaulted_ctor_trivial ? 134217728 : 0;
+	mismatches |= runtime_first_decl_defaulted_template_ctor_pod ? 0 : 268435456;
+	mismatches |= runtime_first_decl_defaulted_template_ctor_trivial ? 0 : 536870912;
+	mismatches |= runtime_out_of_line_defaulted_template_ctor_pod ? 1073741824 : 0;
+	mismatches |= runtime_out_of_line_defaulted_template_ctor_trivial ? 0 : 1073741824;
 	return mismatches;
 }

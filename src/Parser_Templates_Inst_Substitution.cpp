@@ -6825,6 +6825,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			new_ctor_ref.set_is_inline(orig_ctor.is_inline());
 			new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
 			new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
+			new_ctor_ref.set_was_defaulted_on_first_declaration(
+				orig_ctor.was_defaulted_on_first_declaration());
 
 			// Add the constructor to struct_info
 			struct_info->addConstructor(new_ctor_node, mem_func.access);
