@@ -6244,12 +6244,45 @@ struct CanonicalTemplateTypeBinding {
 	std::optional<size_t> pack_element_index;
 };
 
+enum class CanonicalTemplateNonTypeArgumentKind : uint8_t {
+	Literal,
+	TemplateParameter,
+	Unsupported,
+};
+
+// ExprId retains a literal's canonical expression identity. A direct function
+// template NTTP additionally carries declaration/index identity and its
+// canonical integral type; other dependent expression shapes fail closed.
+struct CanonicalTemplateNonTypeArgumentPattern {
+	ExprId expression;
+	CanonicalTemplateNonTypeArgumentKind kind;
+	TemplateDeclId parameter_decl;
+	uint32_t parameter_index;
+	TypeId parameter_type;
+};
+
+struct CanonicalTemplateNonTypeArgumentIdentity {
+	ExprId expression;
+	TemplateDeclId parameter_decl;
+	uint32_t parameter_index;
+	bool is_template_parameter;
+	friend bool operator==(
+		CanonicalTemplateNonTypeArgumentIdentity,
+		CanonicalTemplateNonTypeArgumentIdentity) = default;
+};
+
+struct CanonicalTemplateNonTypeBinding {
+	uint32_t parameter_index;
+	CanonicalTemplateNonTypeArgumentIdentity argument;
+};
+
 struct CanonicalFunctionTemplateTypePattern {
 	TypeId function_type;
 	// The canonical function stores a pack's element type; these indices retain
 	// where that element expands and which template parameter it binds.
 	std::optional<size_t> function_parameter_pack_position;
 	std::optional<uint32_t> template_parameter_pack_index;
+	std::vector<CanonicalTemplateNonTypeArgumentPattern> non_type_arguments;
 };
 
 enum class CanonicalTemplateDeductionStatus : uint8_t {
@@ -6262,6 +6295,7 @@ struct CanonicalTemplateTypeDeduction {
 	CanonicalTemplateDeductionStatus status =
 		CanonicalTemplateDeductionStatus::Unsupported;
 	std::vector<CanonicalTemplateTypeBinding> bindings;
+	std::vector<CanonicalTemplateNonTypeBinding> non_type_bindings;
 };
 
 // Deduce the function-template parameters in pattern_function from
@@ -6298,6 +6332,17 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 	};
 	std::vector<TypePair> pending;
 	std::vector<CanonicalTemplateTypeBinding> bindings;
+	std::vector<CanonicalTemplateNonTypeBinding> non_type_bindings;
+	auto find_non_type_argument_pattern = [](
+		const CanonicalFunctionTemplateTypePattern& function,
+		ExprId expression) -> const CanonicalTemplateNonTypeArgumentPattern* {
+		const auto found = std::ranges::find_if(
+			function.non_type_arguments,
+			[expression](const CanonicalTemplateNonTypeArgumentPattern& argument) {
+				return argument.expression == expression;
+			});
+		return found == function.non_type_arguments.end() ? nullptr : &*found;
+	};
 	auto strip_top_level_parameter_qualifiers = [&](TypeId type) {
 		const CanonicalTypeNode node = table.node(type);
 		if (node.kind == CanonicalTypeKind::LValueReference ||
@@ -6534,8 +6579,81 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 						table.templateArgumentType(argument_arg),
 						pair.pack_element_index});
 				} else if (pattern_kind == CanonicalTemplateArgKind::NonType) {
-					if (table.templateArgumentExpr(pattern_arg) !=
-						table.templateArgumentExpr(argument_arg)) {
+					const ExprId pattern_expression =
+						table.templateArgumentExpr(pattern_arg);
+					const ExprId argument_expression =
+						table.templateArgumentExpr(argument_arg);
+					const CanonicalTemplateNonTypeArgumentPattern* pattern_argument =
+						find_non_type_argument_pattern(
+							pattern_function,
+							pattern_expression);
+					const CanonicalTemplateNonTypeArgumentPattern* argument_pattern =
+						find_non_type_argument_pattern(
+							argument_function,
+							argument_expression);
+					if (pattern_argument == nullptr || argument_pattern == nullptr) {
+						result.status = CanonicalTemplateDeductionStatus::Unsupported;
+						return result;
+					}
+					if (pattern_argument->kind ==
+						CanonicalTemplateNonTypeArgumentKind::TemplateParameter) {
+						CanonicalTemplateNonTypeArgumentIdentity identity{};
+						if (argument_pattern->kind ==
+							CanonicalTemplateNonTypeArgumentKind::TemplateParameter) {
+							if (pattern_argument->parameter_type !=
+								argument_pattern->parameter_type) {
+								result.status = CanonicalTemplateDeductionStatus::Unsupported;
+								return result;
+							}
+							identity = CanonicalTemplateNonTypeArgumentIdentity{
+								ExprId{},
+								argument_pattern->parameter_decl,
+								argument_pattern->parameter_index,
+								true};
+						} else if (argument_pattern->kind ==
+							CanonicalTemplateNonTypeArgumentKind::Literal) {
+							identity = CanonicalTemplateNonTypeArgumentIdentity{
+								argument_expression,
+								TemplateDeclId{},
+								0,
+								false};
+						} else {
+							result.status = CanonicalTemplateDeductionStatus::Unsupported;
+							return result;
+						}
+						const auto existing = std::ranges::find_if(
+							non_type_bindings,
+							[pattern_argument](const CanonicalTemplateNonTypeBinding& binding) {
+								return binding.parameter_index ==
+									pattern_argument->parameter_index;
+							});
+						if (existing == non_type_bindings.end()) {
+							non_type_bindings.push_back(CanonicalTemplateNonTypeBinding{
+								pattern_argument->parameter_index,
+								identity});
+						} else if (existing->argument != identity) {
+							result.status = CanonicalTemplateDeductionStatus::Mismatch;
+							return result;
+						}
+					} else if (pattern_argument->kind ==
+						CanonicalTemplateNonTypeArgumentKind::Literal) {
+						if (argument_pattern->kind ==
+							CanonicalTemplateNonTypeArgumentKind::Literal) {
+							if (pattern_expression != argument_expression) {
+								// ExprId preserves expression identity, not converted
+								// NTTP value equality across different literal spellings.
+								result.status = CanonicalTemplateDeductionStatus::Unsupported;
+								return result;
+							}
+						} else if (argument_pattern->kind ==
+							CanonicalTemplateNonTypeArgumentKind::TemplateParameter) {
+							result.status = CanonicalTemplateDeductionStatus::Mismatch;
+							return result;
+						} else {
+							result.status = CanonicalTemplateDeductionStatus::Unsupported;
+							return result;
+						}
+					} else {
 						result.status = CanonicalTemplateDeductionStatus::Unsupported;
 						return result;
 					}
@@ -6578,6 +6696,7 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 	}
 	result.status = CanonicalTemplateDeductionStatus::Match;
 	result.bindings = std::move(bindings);
+	result.non_type_bindings = std::move(non_type_bindings);
 	return result;
 }
 
@@ -6589,9 +6708,9 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 	return deduceCanonicalFunctionTemplateType(
 		table,
 		CanonicalFunctionTemplateTypePattern{
-			pattern_function, std::nullopt, std::nullopt},
+			pattern_function, std::nullopt, std::nullopt, {}},
 		CanonicalFunctionTemplateTypePattern{
-			argument_function, std::nullopt, std::nullopt},
+			argument_function, std::nullopt, std::nullopt, {}},
 		pattern_template);
 }
 
@@ -6644,10 +6763,10 @@ inline CanonicalTemplatePartialOrdering compareCanonicalFunctionTemplateTypes(
 	return compareCanonicalFunctionTemplateTypes(
 		table,
 		CanonicalFunctionTemplateTypePattern{
-			first_function, std::nullopt, std::nullopt},
+			first_function, std::nullopt, std::nullopt, {}},
 		first_template,
 		CanonicalFunctionTemplateTypePattern{
-			second_function, std::nullopt, std::nullopt},
+			second_function, std::nullopt, std::nullopt, {}},
 		second_template);
 }
 

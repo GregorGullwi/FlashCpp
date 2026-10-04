@@ -42,6 +42,13 @@ public:
 		return nodes_.size();
 	}
 
+	const ASTNode& node(ExprId expression) const {
+		if (!expression || expression.value > nodes_.size()) {
+			throw InternalError("dependent expression: invalid ExprId");
+		}
+		return nodes_[expression.value - 1u];
+	}
+
 private:
 	ChunkedVector<ASTNode, kExprArenaChunkSize> nodes_;
 	std::unordered_map<size_t, std::vector<uint32_t>> buckets_;
