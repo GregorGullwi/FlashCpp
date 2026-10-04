@@ -460,7 +460,6 @@ Parser::tryDeduceMemberFunctionTemplateAddressArguments(
 			break;
 		}
 	}
-	bool deduced_from_return_type = false;
 	if (direct_return_parameter_node != nullptr &&
 		direct_return_parameter_node->kind() == TemplateParameterKind::Type) {
 		if (pattern_return_type.pointer_depth() >
@@ -514,7 +513,6 @@ Parser::tryDeduceMemberFunctionTemplateAddressArguments(
 		return_deductions.push_back(NamedTemplateTypeDeduction{
 			direct_return_parameter,
 			std::move(deduced_return)});
-		deduced_from_return_type = true;
 	} else {
 		const std::optional<bool> nested_deduction =
 			preDeduceTemplateArgsFromMatchingTypes(
@@ -529,10 +527,8 @@ Parser::tryDeduceMemberFunctionTemplateAddressArguments(
 		if (!nested_deduction.has_value()) {
 			return std::nullopt;
 		}
-		deduced_from_return_type = *nested_deduction;
 	}
-	if (!deduced_from_return_type ||
-		!functionTemplateAcceptsCallArgumentCount(
+	if (!functionTemplateAcceptsCallArgumentCount(
 			function_decl,
 			target_parameter_types.size())) {
 		return std::nullopt;

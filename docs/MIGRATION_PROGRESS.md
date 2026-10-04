@@ -683,11 +683,18 @@ Continue boundary 3A in this order:
     `tests/test_canonical_dependent_member_function_template_address_overload_ret0.cpp`,
     `tests/test_canonical_dependent_member_function_template_return_only_deduction_ret0.cpp`,
     and `tests/test_canonical_dependent_member_function_template_address_access_e1617.cpp`.
-    Multiple member-template partial ordering, nested return-only type
-    materialization, free-function-template target deduction, other dependent
-    member-function-pointer forms, and unsupported callable conversions still
-    need substitution-aware canonical ranking. A `ResultWrapper<Result>` probe
-    currently reaches an incomplete result type after member-template deduction.
+    Structurally imported, unconstrained type-only member-function-template
+    address candidates are now partially ordered by canonical function TypeIds,
+    and incomparable viable candidates diagnose ambiguity. The
+    `test_canonical_member_function_template_address_deep_partial_ordering_ret0.cpp`
+    regression exercises 16 nested type arguments below the parser's current
+    depth-20 limit. Constraints, packs, and non-type template parameters still
+    need their ordering rules. Nested return-only type materialization,
+    free-function-template target deduction,
+    dependent member-function-pointer forms that do not import structurally,
+    and unsupported callable conversions still need substitution-aware
+    canonical ranking. A `ResultWrapper<Result>` probe currently reaches an
+    incomplete result type after member-template deduction.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
