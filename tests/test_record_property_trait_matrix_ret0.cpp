@@ -1,4 +1,4 @@
-// Per-cell clang differential for the 14 record-property traits across 20
+// Per-cell clang differential for the 14 record-property traits across 21
 // ordinary record shapes. Static assertions keep every folded cell independent;
 // the runtime assignments exercise the same answers through code generation.
 
@@ -25,6 +25,9 @@ struct Shape17DataBase { int base; };
 struct Shape17DerivedFromDataBase : Shape17DataBase {};
 struct Shape18DerivedOwnData : Shape17DataBase { short own; };
 struct Shape19PrivateData { private: ~Shape19PrivateData() {} public: int value; };
+struct Shape20VirtualBaseNoVirtualFunctions : virtual Shape00Empty {
+	Shape20VirtualBaseNoVirtualFunctions() = default;
+};
 
 #define RECORD_PROPERTY_MATRIX(X) \
 	X(__is_aggregate, Shape00Empty, 1) \
@@ -306,7 +309,21 @@ struct Shape19PrivateData { private: ~Shape19PrivateData() {} public: int value;
 	X(__is_trivially_copyable, Shape19PrivateData, 0) \
 	X(__is_trivial, Shape19PrivateData, 0) \
 	X(__has_trivial_destructor, Shape19PrivateData, 0) \
-	X(__has_virtual_destructor, Shape19PrivateData, 0)
+	X(__has_virtual_destructor, Shape19PrivateData, 0) \
+	X(__is_aggregate, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__is_pod, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__is_standard_layout, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__is_empty, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__is_polymorphic, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__is_final, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__is_abstract, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__is_destructible, Shape20VirtualBaseNoVirtualFunctions, 1) \
+	X(__is_trivially_destructible, Shape20VirtualBaseNoVirtualFunctions, 1) \
+	X(__is_nothrow_destructible, Shape20VirtualBaseNoVirtualFunctions, 1) \
+	X(__is_trivially_copyable, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__is_trivial, Shape20VirtualBaseNoVirtualFunctions, 0) \
+	X(__has_trivial_destructor, Shape20VirtualBaseNoVirtualFunctions, 1) \
+	X(__has_virtual_destructor, Shape20VirtualBaseNoVirtualFunctions, 0)
 
 #define ASSERT_RECORD_PROPERTY(Trait, Shape, Expected) static_assert(Trait(Shape) == Expected, #Trait "(" #Shape ")");
 RECORD_PROPERTY_MATRIX(ASSERT_RECORD_PROPERTY)
