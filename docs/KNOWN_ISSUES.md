@@ -501,20 +501,6 @@ The wide-field check returns 3. Direct aggregate initialization passes. This
 requires a separate investigation of by-value aggregate argument/return storage;
 it is independent of numeric temporary identity.
 
-## Large function-template bodies exceed balanced-delimiter skipping's token limit
-
-`Parser::skip_balanced_delimiters` in `src/Parser_Core.cpp` stops after 10000
-tokens without checking that the delimiters are balanced. Capturing a sufficiently
-large function-template body therefore stops inside the body and later emits
-misleading parse errors. This reproduces on the unchanged baseline with a
-function template containing 833 repetitions of `total = total + (seed * 3 + 1);`
-followed by `return total;` (the exact statement threshold depends on the rest of
-the body). An ordinary function containing 4096 such statements compiles.
-
-The parser must finish capturing the balanced body, or report a deliberate limit
-instead of silently continuing from an incomplete capture. This is separate from
-temporary allocation and should be addressed in bounded parser control flow.
-
 ## MSVC function mangling omits the parameter-list terminator
 
 For `int test(long long)`, the compiler emits `?test@@YAH_JZ` instead of

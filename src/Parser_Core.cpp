@@ -1345,11 +1345,8 @@ void Parser::skip_balanced_delimiters(TokenKind open, TokenKind close) {
 		return;
 	}
 
-	int depth = 0;
-	size_t token_count = 0;
-	const size_t MAX_TOKENS = 10000;	 // Safety limit to prevent infinite loops
-
-	while (!peek().is_eof() && token_count < MAX_TOKENS) {
+	size_t depth = 0;
+	while (!peek().is_eof()) {
 		auto kind = peek();
 		if (kind == open) {
 			depth++;
@@ -1357,11 +1354,10 @@ void Parser::skip_balanced_delimiters(TokenKind open, TokenKind close) {
 			depth--;
 			if (depth == 0) {
 				advance();
-				break;
+				return;
 			}
 		}
 		advance();
-		token_count++;
 	}
 }
 
