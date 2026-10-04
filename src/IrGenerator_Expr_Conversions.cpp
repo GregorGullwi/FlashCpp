@@ -985,6 +985,41 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(const Stru
 
 ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
 											ExpressionContext context) {
+	if (unaryOperatorNode.op() == "&" &&
+		unaryOperatorNode.resolved_addressed_function() != nullptr) {
+		const FunctionDeclarationNode& function =
+			*unaryOperatorNode.resolved_addressed_function();
+		requestInlineFunctionEmission(function);
+		const std::string_view mangled = generateMangledNameForCall(
+			function,
+			StringHandle{},
+			{});
+		TempVar function_address = var_counter.next();
+		FunctionAddressOp address_op;
+		address_op.result.setType(TypeCategory::FunctionPointer);
+		address_op.result.ir_type = IrType::FunctionPointer;
+		address_op.result.size_in_bits = SizeInBits{64};
+		address_op.result.value = function_address;
+		address_op.function_name = StringTable::getOrInternStringHandle(
+			function.decl_node().identifier_token().value());
+		address_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+		ir_.addInstruction(IrInstruction(
+			IrOpcode::FunctionAddress,
+			std::move(address_op),
+			unaryOperatorNode.get_token()));
+		setTempVarMetadata(
+			function_address,
+			TempVarMetadata::makeAddressOnly(
+				nativeTypeIndex(TypeCategory::FunctionPointer),
+				SizeInBits{64},
+				ValueCategory::PRValue));
+		return makeExprResult(
+			nativeTypeIndex(TypeCategory::FunctionPointer),
+			SizeInBits{64},
+			IrOperand{function_address},
+			PointerDepth{},
+			ValueStorage::ContainsAddress);
+	}
 	if (!unaryOperatorNode.is_builtin_addressof() && unaryOperatorNode.op() == "&") {
 		sema_.ensureUnaryAddressOfOperatorResolved(unaryOperatorNode);
 		if (const SemanticAnalysis::ResolvedUnaryOperatorCall* resolved_address =

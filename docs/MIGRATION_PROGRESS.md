@@ -140,6 +140,15 @@ unresolved and defers overload selection to sema. Sema uses the canonical
 argument type for selection and reports ambiguous or non-viable calls at the
 call site. Other parse-time expression queries still use the compatibility
 type view where needed.
+When a function-template address matches a free function-pointer parameter,
+overload probes remain non-instantiating; after the consuming overload wins,
+the parser materializes the deduced specialization and records it on the
+address expression. Sema and IR then use that declaration, including for
+overloaded templates where the target function signature selects a more
+specialized parameter pattern. The regression
+`tests/test_free_function_template_address_materialization_ret0.cpp` checks
+runtime invocation through both a direct template address and an overloaded
+template address.
 Conditional pointer common-type selection now compares imported structural
 `TypeId`s through the shared descriptor adapter. Derived-to-base pointer
 conversions now classify direct record pointees from canonical base schemas

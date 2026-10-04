@@ -288,7 +288,9 @@ CanonicalTypeImport importFunctionDeclarationCanonicalType(
 std::optional<ArgumentConversionInfo>
 tryBuildFreeFunctionTemplateAddressArgumentConversion(
 	const TypeSpecifierNode& parameter_type,
-	const ASTNode* argument_node) {
+	const ASTNode* argument_node,
+	const TemplateFunctionDeclarationNode*& selected_template_out) {
+	selected_template_out = nullptr;
 	const FreeFunctionAddressOverloadSet overload_set =
 		tryCollectFreeFunctionAddressOverloads(argument_node);
 	if (overload_set.function_templates.empty() &&
@@ -347,6 +349,7 @@ tryBuildFreeFunctionTemplateAddressArgumentConversion(
 	struct ViableTemplateAddress {
 		TypeId function_type;
 		TemplateDeclId template_decl;
+		const TemplateFunctionDeclarationNode* function_template;
 	};
 	std::vector<ViableTemplateAddress> viable_templates;
 	viable_templates.reserve(overload_set.function_templates.size());
@@ -377,7 +380,8 @@ tryBuildFreeFunctionTemplateAddressArgumentConversion(
 		if (deduction.status == CanonicalTemplateDeductionStatus::Match) {
 			viable_templates.push_back(ViableTemplateAddress{
 				candidate_function,
-				function_template->template_decl_id()});
+				function_template->template_decl_id(),
+				function_template});
 		}
 	}
 	const auto exact_function_address_conversion = [&]() {
@@ -404,6 +408,7 @@ tryBuildFreeFunctionTemplateAddressArgumentConversion(
 		}
 		return ArgumentConversionInfo::no_match();
 	}
+	size_t selected_template_index = 0;
 	if (viable_templates.size() > 1) {
 		std::vector<bool> is_maximal(viable_templates.size(), true);
 		bool ordering_is_determinate = true;
@@ -436,8 +441,103 @@ tryBuildFreeFunctionTemplateAddressArgumentConversion(
 		if (!ordering_is_determinate || maximal_count != 1) {
 			return ArgumentConversionInfo::no_match();
 		}
+		selected_template_index = static_cast<size_t>(std::ranges::find(
+			is_maximal,
+			true) - is_maximal.begin());
 	}
+	selected_template_out =
+		viable_templates[selected_template_index].function_template;
 	return exact_function_address_conversion();
+}
+
+enum class FreeFunctionTemplateAddressMaterialization : uint8_t {
+	NotSelected,
+	Materialized,
+	Failed,
+};
+
+FreeFunctionTemplateAddressMaterialization
+tryMaterializeSelectedFreeFunctionTemplateAddress(
+	Parser& parser,
+	const TypeSpecifierNode& parameter_type,
+	ASTNode* argument_node) {
+	const TemplateFunctionDeclarationNode* selected_template = nullptr;
+	const std::optional<ArgumentConversionInfo> conversion =
+		tryBuildFreeFunctionTemplateAddressArgumentConversion(
+			parameter_type,
+			argument_node,
+			selected_template);
+	if (!conversion.has_value() || !conversion->is_valid ||
+		selected_template == nullptr) {
+		return FreeFunctionTemplateAddressMaterialization::NotSelected;
+	}
+	if (!argument_node->is<ExpressionNode>() ||
+		!parameter_type.has_function_signature()) {
+		return FreeFunctionTemplateAddressMaterialization::Failed;
+	}
+	auto* address = std::get_if<UnaryOperatorNode>(
+		&argument_node->as<ExpressionNode>());
+	if (address == nullptr) {
+		return FreeFunctionTemplateAddressMaterialization::Failed;
+	}
+
+	const FunctionSignature& target_signature =
+		parameter_type.function_signature();
+	std::vector<TypeSpecifierNode> target_parameter_types;
+	target_parameter_types.reserve(target_signature.parameter_types().size());
+	for (const FunctionType& parameter : target_signature.parameter_types()) {
+		target_parameter_types.push_back(typeSpecifierFromFunctionType(parameter));
+	}
+	TypeSpecifierNode target_return_type =
+		typeSpecifierFromFunctionType(target_signature.return_type());
+	tryBindPublishedTypeEntity(target_return_type);
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport target_return_import =
+		importCanonicalType(table, target_return_type);
+	if (target_return_import.status != CanonicalTypeImportStatus::Supported) {
+		return FreeFunctionTemplateAddressMaterialization::Failed;
+	}
+	const std::optional<ASTNode> instantiated =
+		parser.tryInstantiateFreeFunctionTemplateForAddress(
+			*selected_template,
+			std::span<const TypeSpecifierNode>(
+				target_parameter_types.data(),
+				target_parameter_types.size()),
+			target_return_type,
+			target_return_import.type);
+	const FunctionDeclarationNode* instantiated_function =
+		get_function_decl_node(instantiated);
+	if (instantiated_function == nullptr) {
+		return FreeFunctionTemplateAddressMaterialization::Failed;
+	}
+	address->set_resolved_addressed_function(instantiated_function);
+	return FreeFunctionTemplateAddressMaterialization::Materialized;
+}
+
+bool tryMaterializeSelectedFreeFunctionTemplateAddresses(
+	Parser& parser,
+	const FunctionDeclarationNode& function,
+	ChunkedVector<ASTNode>& arguments) {
+	const std::span<const ASTNode> parameters = function.parameter_nodes();
+	for (size_t argument_index = 0;
+		 argument_index < std::min(arguments.size(), parameters.size());
+		 ++argument_index) {
+		const ASTNode& parameter_node = parameters[argument_index];
+		if (!parameter_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const FreeFunctionTemplateAddressMaterialization materialization =
+			tryMaterializeSelectedFreeFunctionTemplateAddress(
+				parser,
+				parameter_node.as<DeclarationNode>().type_specifier_node(),
+				&arguments[argument_index]);
+		if (materialization ==
+			FreeFunctionTemplateAddressMaterialization::Failed) {
+			return false;
+		}
+	}
+	return true;
 }
 
 template <typename ArgumentNodeContainer>
@@ -454,10 +554,12 @@ OverloadResolutionResult resolveParserOverloadWithArgumentNodes(
 			const TypeSpecifierNode& parameter_type,
 			const ASTNode* argument_node) {
 			if (argument_type.category() == TypeCategory::Invalid) {
+				const TemplateFunctionDeclarationNode* selected_template = nullptr;
 				if (std::optional<ArgumentConversionInfo> function_address =
 						tryBuildFreeFunctionTemplateAddressArgumentConversion(
 							parameter_type,
-							argument_node);
+							argument_node,
+							selected_template);
 					function_address.has_value()) {
 					return *function_address;
 				}
@@ -945,7 +1047,7 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 
 	bool deduced_from_return_type = false;
 	std::optional<TemplateArgumentVector> template_args =
-		tryDeduceMemberFunctionTemplateAddressArguments(
+		tryDeduceFunctionTemplateAddressArguments(
 			*function_template,
 			target_parameter_types,
 			target_return_type,
@@ -996,7 +1098,7 @@ Parser::tryInstantiateMemberFunctionTemplateCandidateForAddress(
 		StringTable::getStringView(member_id.nameHandle());
 	bool deduced_from_return_type = false;
 	std::optional<TemplateArgumentVector> template_args =
-		tryDeduceMemberFunctionTemplateAddressArguments(
+		tryDeduceFunctionTemplateAddressArguments(
 			function_template,
 			target_parameter_types,
 			target_return_type,
@@ -1023,7 +1125,7 @@ Parser::tryInstantiateMemberFunctionTemplateCandidateForAddress(
 }
 
 std::optional<TemplateArgumentVector>
-Parser::tryDeduceMemberFunctionTemplateAddressArguments(
+Parser::tryDeduceFunctionTemplateAddressArguments(
 	const TemplateFunctionDeclarationNode& function_template,
 	std::span<const TypeSpecifierNode> target_parameter_types,
 	const TypeSpecifierNode& target_return_type,
@@ -1247,6 +1349,57 @@ Parser::tryDeduceMemberFunctionTemplateAddressArguments(
 		deduction_info->function_pack_call_arg_start,
 		0,
 		function_decl.namespace_handle());
+}
+
+std::optional<ASTNode> Parser::tryInstantiateFreeFunctionTemplateForAddress(
+	const TemplateFunctionDeclarationNode& function_template,
+	std::span<const TypeSpecifierNode> target_parameter_types,
+	const TypeSpecifierNode& target_return_type,
+	TypeId target_return_type_id) {
+	bool return_type_deduced = false;
+	std::optional<TemplateArgumentVector> template_arguments =
+		tryDeduceFunctionTemplateAddressArguments(
+			function_template,
+			target_parameter_types,
+			target_return_type,
+			target_return_type_id,
+			return_type_deduced);
+	if (!template_arguments.has_value()) {
+		return std::nullopt;
+	}
+
+	const FunctionDeclarationNode& pattern_function =
+		function_template.function_decl_node();
+	const std::string_view simple_name =
+		pattern_function.decl_node().identifier_token().value();
+	std::string_view qualified_name = simple_name;
+	const NamespaceHandle namespace_handle =
+		pattern_function.namespace_handle();
+	if (namespace_handle.isValid() && !namespace_handle.isGlobal()) {
+		qualified_name = StringBuilder()
+						.append(gNamespaceRegistry.getQualifiedName(namespace_handle))
+						.append("::"sv)
+						.append(simple_name)
+						.commit();
+	}
+	std::optional<ASTNode> instantiated =
+		try_instantiate_template_explicit(
+			qualified_name,
+			std::span<const TemplateTypeArg>(
+				template_arguments->data(),
+				template_arguments->size()),
+			target_parameter_types);
+	if (!instantiated.has_value() && qualified_name != simple_name) {
+		instantiated = try_instantiate_template_explicit(
+			simple_name,
+			std::span<const TemplateTypeArg>(
+				template_arguments->data(),
+				template_arguments->size()),
+			target_parameter_types);
+	}
+	return get_function_decl_node(instantiated) != nullptr
+		? instantiated
+		: std::nullopt;
 }
 
 bool Parser::expressionReferencesKnownEmptyFunctionParameterPack(
@@ -1990,7 +2143,7 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 								table.node(target_id).child;
 							const TypeId target_return_type_id =
 								table.node(target_function).child;
-							if (!tryDeduceMemberFunctionTemplateAddressArguments(
+							if (!tryDeduceFunctionTemplateAddressArguments(
 									function_template,
 									target_argument_types,
 									target_return_type,
@@ -8846,6 +8999,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					arg_types,
 					args);
 				if (resolution.has_match && !resolution.is_ambiguous) {
+					if (const FunctionDeclarationNode* function_decl =
+							get_function_decl_node(*resolution.selected_overload);
+						function_decl != nullptr &&
+						!tryMaterializeSelectedFreeFunctionTemplateAddresses(
+							*this,
+							*function_decl,
+							args)) {
+						const std::string message =
+							"Failed to materialize selected function-template address";
+						context_.diagnostics().report(
+							DiagnosticId::NoViableFunctionCall,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(identifier_token),
+							message,
+							{});
+						return ParseResult::error(message, identifier_token);
+					}
 					result = emplace_node<ExpressionNode>(
 						makeCallExprFromNode(*resolution.selected_overload, std::move(args), identifier_token));
 					if (resolution.selected_overload->is<FunctionDeclarationNode>()) {
@@ -9408,6 +9578,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					const DeclarationNode* decl_ptr = getDeclarationNode(*call_target);
 					if (!decl_ptr) {
 						return ParseResult::error("Invalid function declaration", identifier_token);
+					}
+					if (const FunctionDeclarationNode* function_decl =
+							get_function_decl_node(*call_target);
+						function_decl != nullptr &&
+						!tryMaterializeSelectedFreeFunctionTemplateAddresses(
+							*this,
+							*function_decl,
+							args_ref)) {
+						const std::string message =
+							"Failed to materialize selected function-template address";
+						context_.diagnostics().report(
+							DiagnosticId::NoViableFunctionCall,
+							DiagnosticSeverity::Error,
+							lexer_.getSourceLocation(identifier_token),
+							message,
+							{});
+						return ParseResult::error(message, identifier_token);
 					}
 					result = emplace_node<ExpressionNode>(makeCallExprFromNode(*call_target, std::move(args_ref), identifier_token));
 					if (const FunctionDeclarationNode* func_decl =
@@ -12797,10 +12984,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													argument_node);
 											}
 											if (argument_type.category() == TypeCategory::Invalid) {
+												const TemplateFunctionDeclarationNode* selected_template = nullptr;
 												if (std::optional<ArgumentConversionInfo> function_address =
 														tryBuildFreeFunctionTemplateAddressArgumentConversion(
 															parameter_type,
-															argument_node);
+															argument_node,
+															selected_template);
 													function_address.has_value()) {
 													return *function_address;
 												}
@@ -12969,6 +13158,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												func_decl != nullptr) {
 												if (auto err = appendMissingDefaultArguments(*func_decl); err.has_value()) {
 													return *err;
+												}
+												if (!tryMaterializeSelectedFreeFunctionTemplateAddresses(
+														*this,
+														*func_decl,
+														args)) {
+													const std::string message =
+														"Failed to materialize selected function-template address";
+													context_.diagnostics().report(
+														DiagnosticId::NoViableFunctionCall,
+														DiagnosticSeverity::Error,
+														lexer_.getSourceLocation(identifier_token),
+														message,
+														{});
+													return ParseResult::error(message, identifier_token);
 												}
 											}
 
