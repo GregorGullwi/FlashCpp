@@ -1603,7 +1603,8 @@ inline bool tryPublishCanonicalClassBaseSchema(
 		std::vector<CanonicalClassBase> bases;
 		bases.reserve(current.struct_info->base_classes.size());
 		for (const BaseClassSpecifier& base : current.struct_info->base_classes) {
-			if (base.is_deferred || !base.type_index.is_valid()) {
+			if (base.is_deferred || !base.type_index.is_valid() ||
+				base.offset > std::numeric_limits<uint32_t>::max()) {
 				return false;
 			}
 			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
@@ -1635,7 +1636,12 @@ inline bool tryPublishCanonicalClassBaseSchema(
 			if (base.is_virtual) {
 				flags = flags | CanonicalRecordBaseFlags::Virtual;
 			}
-			bases.push_back({imported_base.type, access, flags, 0});
+			bases.push_back({
+				imported_base.type,
+				access,
+				flags,
+				0,
+				static_cast<uint32_t>(base.offset)});
 
 			if (!table.hasClassBaseSchema(imported_base.type)) {
 				const StructTypeInfo* base_struct_info =

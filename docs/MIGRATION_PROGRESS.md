@@ -665,6 +665,12 @@ Continue boundary 3A in this order:
     conversion. `tests/test_conversion_operator_member_object_pointer_tail_ranking_ret0.cpp`
     checks both pointer families and executes the selected data-member-pointer
     overload.
+    Sema now annotates evaluated conversion-function tails to data-member
+    pointers, and code generation applies the canonical public non-virtual
+    base offset while preserving the null member-pointer representation. The
+    regression `tests/test_conversion_operator_member_object_pointer_tail_materialization_ret0.cpp`
+    checks a nonzero base offset, invocation through the converted pointer, and
+    null preservation.
     Dependent function-template addresses whose dependency is inside a nested
     callable return type now retain the overload set until substitution, then
     rank the concrete function-pointer candidates; covered by
