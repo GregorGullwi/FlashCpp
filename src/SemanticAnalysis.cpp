@@ -7324,6 +7324,71 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		const StructMemberFunction* member_function;
 		CanonicalFunctionTemplateTypePattern function_pattern;
 		TemplateDeclId template_decl;
+		bool has_associated_constraints;
+	};
+	const auto has_associated_constraints = [](
+		const TemplateFunctionDeclarationNode& function_template) {
+		return function_template.has_requires_clause() ||
+			std::ranges::any_of(
+				function_template.template_parameters(),
+				[](const TemplateParameterNode& parameter) {
+					return parameter.has_concept_constraint();
+				});
+	};
+	const auto associated_constraints_are_satisfied = [this](
+		const TemplateFunctionDeclarationNode& function_template,
+		const TemplateArgumentVector& template_arguments) {
+		const TemplateParameterVector& template_parameters =
+			function_template.template_parameters();
+		TemplateParamNameViewVector parameter_names;
+		parameter_names.reserve(template_parameters.size());
+		for (const TemplateParameterNode& parameter : template_parameters) {
+			parameter_names.push_back(parameter.name());
+		}
+		if (function_template.has_requires_clause()) {
+			const RequiresClauseNode& requires_clause =
+				function_template.requires_clause()->as<RequiresClauseNode>();
+			const ConstraintEvaluationResult constraint_result = evaluateConstraint(
+				requires_clause.constraint_expr(),
+				template_arguments,
+				parameter_names,
+				&parser(),
+				std::span<const TemplateParameterNode>(
+					template_parameters.data(),
+					template_parameters.size()));
+			if (!constraint_result.satisfied()) {
+				return false;
+			}
+		}
+		bool all_concept_constraints_satisfied = true;
+		forEachNonPackTemplateParamArgBinding(
+			template_parameters,
+			template_arguments,
+			[&](
+				const TemplateParameterNode& parameter,
+				const TemplateTypeArg& argument,
+				size_t) {
+				if (!parameter.has_concept_constraint() ||
+					!all_concept_constraints_satisfied) {
+					return;
+				}
+				const std::optional<ASTNode> concept_node =
+					gConceptRegistry.lookupConcept(parameter.concept_constraint());
+				if (!concept_node.has_value() ||
+					!concept_node->is<ConceptDeclarationNode>()) {
+					all_concept_constraints_satisfied = false;
+					return;
+				}
+				TemplateTypeArg concept_argument = argument;
+				concept_argument.ref_qualifier = ReferenceQualifier::None;
+				TemplateArgumentVector concept_arguments;
+				concept_arguments.push_back(std::move(concept_argument));
+				all_concept_constraints_satisfied = evaluateConstraint(
+					concept_node->as<ConceptDeclarationNode>(),
+					concept_arguments,
+					&parser()).satisfied();
+			});
+		return all_concept_constraints_satisfied;
 	};
 	const auto import_function_template_type =
 		[&canonical_types, &collect_non_type_argument_patterns](
@@ -7467,9 +7532,6 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			if (!function_template.has_template_decl_id()) {
 				continue;
 			}
-			if (function_template.has_requires_clause()) {
-				continue;
-			}
 			std::optional<uint32_t> template_parameter_pack_index;
 			bool unsupported_template_parameter = false;
 			bool saw_non_type_template_parameter = false;
@@ -7478,10 +7540,6 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				 ++parameter_index) {
 				const TemplateParameterNode& parameter =
 					function_template.template_parameters()[parameter_index];
-				if (parameter.has_concept_constraint()) {
-					unsupported_template_parameter = true;
-					break;
-				}
 				if (parameter.kind() == TemplateParameterKind::NonType) {
 					saw_non_type_template_parameter = true;
 				}
@@ -7572,10 +7630,44 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			if (!target_match) {
 				continue;
 			}
+			const bool candidate_has_associated_constraints =
+				has_associated_constraints(function_template);
+			if (candidate_has_associated_constraints) {
+				if (std::ranges::any_of(
+						function_template.template_parameters(),
+						[](const TemplateParameterNode& parameter) {
+							return parameter.is_variadic();
+						}) ||
+					target_signature == nullptr ||
+					!target_signature->hasStructuredTypes() ||
+					target_function_types.empty()) {
+					continue;
+				}
+				const TypeId target_return_type_id = target_function_type
+					? canonical_types.node(target_function_type).child
+					: TypeId{};
+				bool return_type_deduced = false;
+				const std::optional<TemplateArgumentVector> template_arguments =
+					parser().tryDeduceMemberFunctionTemplateAddressArguments(
+						function_template,
+						std::span<const TypeSpecifierNode>(
+							target_parameter_types.data(),
+							target_parameter_types.size()),
+						target_function_types.front(),
+						target_return_type_id,
+						return_type_deduced);
+				if (!template_arguments.has_value() ||
+					!associated_constraints_are_satisfied(
+						function_template,
+						*template_arguments)) {
+					continue;
+				}
+			}
 			viable_template_addresses.push_back(ViableTemplateAddressCandidate{
 				&candidate,
 				*candidate_pattern,
-				function_template.template_decl_id()});
+				function_template.template_decl_id(),
+				candidate_has_associated_constraints});
 		}
 	}
 	if (viable_template_addresses.size() == 1) {
@@ -7604,6 +7696,15 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				} else if (ordering ==
 					CanonicalTemplatePartialOrdering::SecondMoreSpecialized) {
 					is_maximal[first] = false;
+				} else if (
+					ordering == CanonicalTemplatePartialOrdering::Equivalent &&
+					viable_template_addresses[first].has_associated_constraints !=
+						viable_template_addresses[second].has_associated_constraints) {
+					if (viable_template_addresses[first].has_associated_constraints) {
+						is_maximal[second] = false;
+					} else {
+						is_maximal[first] = false;
+					}
 				}
 			}
 		}
