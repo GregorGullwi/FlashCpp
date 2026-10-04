@@ -4321,6 +4321,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_func.template_parameters(),
 							new_func_node,
 							template_func.requires_clause());
+						if (template_func.has_template_decl_id()) {
+							new_template_func.as<TemplateFunctionDeclarationNode>()
+								.set_template_decl_id(template_func.template_decl_id());
+						}
 
 						if (mem_func.operator_kind != OverloadableOperator::None) {
 							instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
@@ -4382,6 +4386,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_func.template_parameters(),
 							new_func_node_no_subst,
 							template_func.requires_clause());
+						if (template_func.has_template_decl_id()) {
+							new_template_func_no_subst
+								.as<TemplateFunctionDeclarationNode>()
+								.set_template_decl_id(template_func.template_decl_id());
+						}
 
 						if (mem_func.operator_kind != OverloadableOperator::None) {
 							instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func_no_subst, mem_func.access);
@@ -11770,6 +11779,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_func.template_parameters(),
 					new_func_node,
 					template_func.requires_clause());
+				if (template_func.has_template_decl_id()) {
+					new_template_func.as<TemplateFunctionDeclarationNode>()
+						.set_template_decl_id(template_func.template_decl_id());
+				}
 
 				if (mem_func.operator_kind != OverloadableOperator::None) {
 					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
@@ -11952,6 +11965,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_func.template_parameters(),
 					new_func_node,
 					template_func.requires_clause());
+				if (template_func.has_template_decl_id()) {
+					new_template_func.as<TemplateFunctionDeclarationNode>()
+						.set_template_decl_id(template_func.template_decl_id());
+				}
 
 				if (mem_func.operator_kind != OverloadableOperator::None) {
 					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);

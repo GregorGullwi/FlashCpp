@@ -7262,12 +7262,18 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				CanonicalTemplateDeductionStatus::Match;
 			if (!target_match && target_signature != nullptr &&
 				target_signature->hasStructuredTypes()) {
+				const TypeId target_return_type_id = target_function_type
+					? canonical_types.node(target_function_type).child
+					: TypeId{};
+				bool return_type_deduced = false;
 				target_match = parser().tryDeduceMemberFunctionTemplateAddressArguments(
 					function_template,
 					std::span<const TypeSpecifierNode>(
 						target_parameter_types.data(),
-						target_parameter_types.size()),
-					target_function_types.front()).has_value();
+					target_parameter_types.size()),
+					target_function_types.front(),
+					target_return_type_id,
+					return_type_deduced).has_value();
 			}
 			if (!target_match) {
 				continue;

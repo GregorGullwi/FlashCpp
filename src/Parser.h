@@ -2272,7 +2272,9 @@ private:
 	std::optional<TemplateArgumentVector> tryDeduceMemberFunctionTemplateAddressArguments(
 		const TemplateFunctionDeclarationNode& function_template,
 		std::span<const TypeSpecifierNode> target_parameter_types,
-		const TypeSpecifierNode& target_return_type);
+		const TypeSpecifierNode& target_return_type,
+		TypeId target_return_type_id,
+		bool& return_type_deduced);
 	struct TemplateDeductionCandidate {
 		TemplateArgumentVector template_args;
 		CallArgDeductionInfo deduction_info;
@@ -3860,7 +3862,9 @@ public:	// Public methods for template instantiation
 		const StructTypeInfo& owner,
 		const QualifiedIdentifierNode& member_id,
 		std::span<const TypeSpecifierNode> target_parameter_types,
-		const TypeSpecifierNode& target_return_type);
+		const TypeSpecifierNode& target_return_type,
+		TypeId target_return_type_id,
+		bool& return_type_deduced);
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,

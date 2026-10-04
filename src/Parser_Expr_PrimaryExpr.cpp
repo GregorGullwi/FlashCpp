@@ -25,6 +25,47 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	Parser& parser);
 
 namespace {
+std::optional<TemplateTypeArg> tryMaterializeCanonicalTemplateTypeBinding(
+	CanonicalTypeTable& canonical_types,
+	const TypeSpecifierNode& target_type,
+	TypeId target_type_id,
+	TypeId target_binding) {
+	if (target_type_id == target_binding) {
+		return TemplateTypeArg::makeTypeSpecifier(target_type);
+	}
+	std::vector<TypeSpecifierNode> pending{target_type};
+	std::vector<TypeId> visited;
+	while (!pending.empty()) {
+		TypeSpecifierNode current = std::move(pending.back());
+		pending.pop_back();
+		tryBindPublishedTypeEntity(current);
+		const CanonicalTypeImport imported =
+			importCanonicalType(canonical_types, current);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			if (imported.type == target_binding) {
+				return TemplateTypeArg::makeTypeSpecifier(current);
+			}
+			if (std::ranges::find(visited, imported.type) != visited.end()) {
+				continue;
+			}
+			visited.push_back(imported.type);
+		}
+
+		const TypeInfo* type_info = tryGetTypeInfo(current.type_index());
+		if (type_info == nullptr || !type_info->isTemplateInstantiation()) {
+			continue;
+		}
+		for (const TypeInfo::TemplateArgInfo& argument : type_info->templateArgs()) {
+			if (std::optional<TypeSpecifierNode> nested =
+					makeTypeSpecifierFromTemplateArgInfo(argument, Token{});
+				nested.has_value()) {
+				pending.push_back(std::move(*nested));
+			}
+		}
+	}
+	return std::nullopt;
+}
+
 struct QualifiedMemberFunctionAddressOverloadSet {
 	const QualifiedIdentifierNode* qualified_identifier = nullptr;
 	const StructTypeInfo* owner = nullptr;
@@ -138,7 +179,38 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 		return ArgumentConversionInfo::no_match();
 	}
 
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport target_import =
+		importCanonicalType(table, parameter_type);
+	if (target_import.status != CanonicalTypeImportStatus::Supported) {
+		return ArgumentConversionInfo::no_match();
+	}
+	TypeId target_type = canonicalTypeWithoutReference(
+		table,
+		target_import.type);
+	target_type = stripCanonicalTopCv(table, target_type).first;
+	const CanonicalTypeNode target_node = table.node(target_type);
+	const bool target_is_member_pointer =
+		target_node.kind == CanonicalTypeKind::MemberFunctionPointer;
+	TypeId target_function{};
+	if (target_is_member_pointer) {
+		target_function = target_node.child;
+	} else if (target_node.kind == CanonicalTypeKind::Pointer) {
+		const TypeId pointee = stripCanonicalTopCv(
+			table,
+			target_node.child).first;
+		if (table.node(pointee).kind != CanonicalTypeKind::Function) {
+			return ArgumentConversionInfo::no_match();
+		}
+		target_function = pointee;
+	} else {
+		return ArgumentConversionInfo::no_match();
+	}
+	const TypeId target_return_type_id = table.node(target_function).child;
+
 	const FunctionDeclarationNode* instantiated_function_template = nullptr;
+	bool instantiated_return_type_was_deduced = false;
 	if (address_overloads.function_templates.size() == 1 &&
 		parameter_type.has_function_signature()) {
 		const FunctionSignature& target_signature =
@@ -158,7 +230,9 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 				std::span<const TypeSpecifierNode>(
 					target_argument_types.data(),
 					target_argument_types.size()),
-				target_return_type);
+				target_return_type,
+				target_return_type_id,
+				instantiated_return_type_was_deduced);
 		if (instantiated.has_value() &&
 			instantiated->is<FunctionDeclarationNode>()) {
 			instantiated_function_template =
@@ -167,149 +241,122 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 	}
 
 	TypeSpecifierNode selected_function_type;
-	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
-	{
-		CanonicalTypeTransaction transaction(table);
-		const CanonicalTypeImport target_import =
-			importCanonicalType(table, parameter_type);
-		if (target_import.status != CanonicalTypeImportStatus::Supported) {
-			return ArgumentConversionInfo::no_match();
+	TypeSpecifierNode selected_direct_function_type;
+	int matching_direct_functions = 0;
+	for (const FunctionDeclarationNode* candidate : address_overloads.direct_functions) {
+		if (candidate == nullptr || candidate->is_template_pattern() ||
+			candidate->is_static() == target_is_member_pointer) {
+			continue;
 		}
-		TypeId target_type = canonicalTypeWithoutReference(
+		TypeSpecifierNode candidate_type = target_is_member_pointer
+			? FlashCpp::ParserFunctionTypeHelpers::
+				  buildMemberFunctionPointerTypeFromFunctionDeclaration(*candidate)
+			: FlashCpp::ParserFunctionTypeHelpers::
+				  buildFunctionPointerTypeFromFunctionDeclaration(*candidate);
+		const CanonicalTypeImport candidate_import =
+			importCanonicalType(table, candidate_type);
+		if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
+			continue;
+		}
+		TypeId candidate_type_id = canonicalTypeWithoutReference(
 			table,
-			target_import.type);
-		target_type = stripCanonicalTopCv(table, target_type).first;
-		const CanonicalTypeNode target_node = table.node(target_type);
-		const bool target_is_member_pointer =
-			target_node.kind == CanonicalTypeKind::MemberFunctionPointer;
-		TypeId target_function{};
+			candidate_import.type);
+		candidate_type_id = stripCanonicalTopCv(table, candidate_type_id).first;
+		const CanonicalTypeNode candidate_node = table.node(candidate_type_id);
+		TypeId candidate_function{};
 		if (target_is_member_pointer) {
-			target_function = target_node.child;
-		} else if (target_node.kind == CanonicalTypeKind::Pointer) {
-			const TypeId pointee = stripCanonicalTopCv(
-				table,
-				target_node.child).first;
-			if (table.node(pointee).kind != CanonicalTypeKind::Function) {
-				return ArgumentConversionInfo::no_match();
+			if (candidate_node.kind != CanonicalTypeKind::MemberFunctionPointer) {
+				continue;
 			}
-			target_function = pointee;
+			candidate_function = candidate_node.child;
 		} else {
+			if (candidate_node.kind != CanonicalTypeKind::Pointer) {
+				continue;
+			}
+			candidate_function = stripCanonicalTopCv(
+				table,
+				candidate_node.child).first;
+			if (table.node(candidate_function).kind !=
+				CanonicalTypeKind::Function) {
+				continue;
+			}
+		}
+		// [over.over]/2 matches the function type independently of its
+		// member class; the selected member pointer is converted afterward.
+		const ConversionPlan function_type_match =
+			buildCanonicalStructuralConversionPlan(
+				table,
+				table.pointer(candidate_function),
+				table.pointer(target_function));
+		if (!function_type_match.is_valid) {
+			continue;
+		}
+		selected_direct_function_type = std::move(candidate_type);
+		++matching_direct_functions;
+	}
+	if (matching_direct_functions > 1) {
+		return ArgumentConversionInfo::no_match();
+	}
+	if (matching_direct_functions == 1) {
+		selected_function_type = std::move(selected_direct_function_type);
+	} else {
+		if (instantiated_function_template == nullptr ||
+			instantiated_function_template->is_static() == target_is_member_pointer) {
 			return ArgumentConversionInfo::no_match();
 		}
-
-		TypeSpecifierNode selected_direct_function_type;
-		int matching_direct_functions = 0;
-		for (const FunctionDeclarationNode* candidate : address_overloads.direct_functions) {
-			if (candidate == nullptr || candidate->is_template_pattern() ||
-				candidate->is_static() == target_is_member_pointer) {
-				continue;
-			}
-			TypeSpecifierNode candidate_type = target_is_member_pointer
-				? FlashCpp::ParserFunctionTypeHelpers::
-					  buildMemberFunctionPointerTypeFromFunctionDeclaration(*candidate)
-				: FlashCpp::ParserFunctionTypeHelpers::
-					  buildFunctionPointerTypeFromFunctionDeclaration(*candidate);
-			const CanonicalTypeImport candidate_import =
-				importCanonicalType(table, candidate_type);
-			if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
-				continue;
-			}
-			TypeId candidate_type_id = canonicalTypeWithoutReference(
-				table,
-				candidate_import.type);
-			candidate_type_id = stripCanonicalTopCv(table, candidate_type_id).first;
-			const CanonicalTypeNode candidate_node = table.node(candidate_type_id);
-			TypeId candidate_function{};
-			if (target_is_member_pointer) {
-				if (candidate_node.kind !=
-					CanonicalTypeKind::MemberFunctionPointer) {
-					continue;
-				}
-				candidate_function = candidate_node.child;
-			} else {
-				if (candidate_node.kind != CanonicalTypeKind::Pointer) {
-					continue;
-				}
-				candidate_function = stripCanonicalTopCv(
-					table,
-					candidate_node.child).first;
-				if (table.node(candidate_function).kind !=
-					CanonicalTypeKind::Function) {
-					continue;
-				}
-			}
-			// [over.over]/2 matches the function type independently of its
-			// member class; the selected member pointer is converted afterward.
-			const ConversionPlan function_type_match =
-				buildCanonicalStructuralConversionPlan(
-					table,
-					table.pointer(candidate_function),
-					table.pointer(target_function));
-			if (!function_type_match.is_valid) {
-				continue;
-			}
-			selected_direct_function_type = std::move(candidate_type);
-			++matching_direct_functions;
+		TypeSpecifierNode candidate_type = target_is_member_pointer
+			? FlashCpp::ParserFunctionTypeHelpers::
+				  buildMemberFunctionPointerTypeFromFunctionDeclaration(
+					  *instantiated_function_template)
+			: FlashCpp::ParserFunctionTypeHelpers::
+				  buildFunctionPointerTypeFromFunctionDeclaration(
+					  *instantiated_function_template);
+		if (instantiated_return_type_was_deduced) {
+			FunctionSignature candidate_signature =
+				candidate_type.function_signature();
+			FunctionType candidate_return_type =
+				candidate_signature.return_type();
+			candidate_return_type.canonical_type_id = target_return_type_id;
+			candidate_signature.setReturnType(std::move(candidate_return_type));
+			candidate_type.set_function_signature(std::move(candidate_signature));
 		}
-		if (matching_direct_functions > 1) {
+		const CanonicalTypeImport candidate_import =
+			importCanonicalType(table, candidate_type);
+		if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
 			return ArgumentConversionInfo::no_match();
 		}
-		if (matching_direct_functions == 1) {
-			selected_function_type = std::move(selected_direct_function_type);
+		TypeId candidate_type_id = canonicalTypeWithoutReference(
+			table,
+			candidate_import.type);
+		candidate_type_id = stripCanonicalTopCv(table, candidate_type_id).first;
+		const CanonicalTypeNode candidate_node = table.node(candidate_type_id);
+		TypeId candidate_function{};
+		if (target_is_member_pointer) {
+			if (candidate_node.kind != CanonicalTypeKind::MemberFunctionPointer) {
+				return ArgumentConversionInfo::no_match();
+			}
+			candidate_function = candidate_node.child;
 		} else {
-			if (instantiated_function_template == nullptr ||
-				instantiated_function_template->is_static() ==
-					target_is_member_pointer) {
+			if (candidate_node.kind != CanonicalTypeKind::Pointer) {
 				return ArgumentConversionInfo::no_match();
 			}
-			TypeSpecifierNode candidate_type = target_is_member_pointer
-				? FlashCpp::ParserFunctionTypeHelpers::
-					  buildMemberFunctionPointerTypeFromFunctionDeclaration(
-						  *instantiated_function_template)
-				: FlashCpp::ParserFunctionTypeHelpers::
-					  buildFunctionPointerTypeFromFunctionDeclaration(
-						  *instantiated_function_template);
-			const CanonicalTypeImport candidate_import =
-				importCanonicalType(table, candidate_type);
-			if (candidate_import.status !=
-				CanonicalTypeImportStatus::Supported) {
-				return ArgumentConversionInfo::no_match();
-			}
-			TypeId candidate_type_id = canonicalTypeWithoutReference(
+			candidate_function = stripCanonicalTopCv(
 				table,
-				candidate_import.type);
-			candidate_type_id =
-				stripCanonicalTopCv(table, candidate_type_id).first;
-			const CanonicalTypeNode candidate_node = table.node(candidate_type_id);
-			TypeId candidate_function{};
-			if (target_is_member_pointer) {
-				if (candidate_node.kind !=
-					CanonicalTypeKind::MemberFunctionPointer) {
-					return ArgumentConversionInfo::no_match();
-				}
-				candidate_function = candidate_node.child;
-			} else {
-				if (candidate_node.kind != CanonicalTypeKind::Pointer) {
-					return ArgumentConversionInfo::no_match();
-				}
-				candidate_function = stripCanonicalTopCv(
-					table,
-					candidate_node.child).first;
-				if (table.node(candidate_function).kind !=
-					CanonicalTypeKind::Function) {
-					return ArgumentConversionInfo::no_match();
-				}
-			}
-			const ConversionPlan function_type_match =
-				buildCanonicalStructuralConversionPlan(
-					table,
-					table.pointer(candidate_function),
-					table.pointer(target_function));
-			if (!function_type_match.is_valid) {
+				candidate_node.child).first;
+			if (table.node(candidate_function).kind !=
+				CanonicalTypeKind::Function) {
 				return ArgumentConversionInfo::no_match();
 			}
-			selected_function_type = std::move(candidate_type);
 		}
+		const ConversionPlan function_type_match =
+			buildCanonicalStructuralConversionPlan(
+				table,
+				table.pointer(candidate_function),
+				table.pointer(target_function));
+		if (!function_type_match.is_valid) {
+			return ArgumentConversionInfo::no_match();
+		}
+		selected_function_type = std::move(candidate_type);
 	}
 
 	const bool parameter_is_reference =
@@ -357,7 +404,10 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 	const StructTypeInfo& owner,
 	const QualifiedIdentifierNode& member_id,
 	std::span<const TypeSpecifierNode> target_parameter_types,
-	const TypeSpecifierNode& target_return_type) {
+	const TypeSpecifierNode& target_return_type,
+	TypeId target_return_type_id,
+	bool& return_type_deduced) {
+	return_type_deduced = false;
 	const std::string_view owner_name = StringTable::getStringView(owner.name);
 	const std::string_view member_name =
 		StringTable::getStringView(member_id.nameHandle());
@@ -376,7 +426,7 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 				explicit_arguments->size()));
 	}
 
-	if (!target_return_type.type_index().is_valid()) {
+	if (!target_return_type_id && !target_return_type.type_index().is_valid()) {
 		return try_instantiate_member_function_template(
 			owner_name,
 			member_name,
@@ -406,11 +456,14 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 			target_parameter_types);
 	}
 
+	bool deduced_from_return_type = false;
 	std::optional<TemplateArgumentVector> template_args =
 		tryDeduceMemberFunctionTemplateAddressArguments(
 			*function_template,
 			target_parameter_types,
-			target_return_type);
+			target_return_type,
+			target_return_type_id,
+			deduced_from_return_type);
 	if (!template_args.has_value()) {
 		return try_instantiate_member_function_template(
 			owner_name,
@@ -429,6 +482,7 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateForAddress(
 				template_args->data(),
 				template_args->size()));
 	if (return_deduced.has_value()) {
+		return_type_deduced = deduced_from_return_type;
 		return return_deduced;
 	}
 	return try_instantiate_member_function_template(
@@ -441,7 +495,10 @@ std::optional<TemplateArgumentVector>
 Parser::tryDeduceMemberFunctionTemplateAddressArguments(
 	const TemplateFunctionDeclarationNode& function_template,
 	std::span<const TypeSpecifierNode> target_parameter_types,
-	const TypeSpecifierNode& target_return_type) {
+	const TypeSpecifierNode& target_return_type,
+	TypeId target_return_type_id,
+	bool& return_type_deduced) {
+	return_type_deduced = false;
 	const TemplateParameterVector& template_params =
 		function_template.template_parameters();
 	const FunctionDeclarationNode& function_decl =
@@ -514,20 +571,106 @@ Parser::tryDeduceMemberFunctionTemplateAddressArguments(
 			direct_return_parameter,
 			std::move(deduced_return)});
 	} else {
-		const std::optional<bool> nested_deduction =
-			preDeduceTemplateArgsFromMatchingTypes(
-				pattern_return_type,
-				target_return_type,
-				std::span<const TemplateParameterNode>(
-					template_params.data(),
-					template_params.size()),
-				return_deductions,
-				return_pack_deductions,
-				0);
-		if (!nested_deduction.has_value()) {
-			return std::nullopt;
+		bool used_canonical_return_deduction = false;
+		if (function_template.has_template_decl_id() && target_return_type_id) {
+			CanonicalTypeTable& canonical_types =
+				requireFrontendContext().canonicalTypes();
+			CanonicalTypeTransaction transaction(canonical_types);
+			TypeSpecifierNode canonical_pattern_return = pattern_return_type;
+			TypeSpecifierNode canonical_target_return = target_return_type;
+			tryBindPublishedTypeEntity(canonical_pattern_return);
+			tryBindPublishedTypeEntity(canonical_target_return);
+			const CanonicalTypeImport pattern_return_import =
+				importCanonicalType(canonical_types, canonical_pattern_return);
+			if (pattern_return_import.status ==
+				CanonicalTypeImportStatus::Supported) {
+				const std::span<const TypeId> no_parameters;
+				const TypeId pattern_return_function = canonical_types.function(
+					pattern_return_import.type,
+					no_parameters,
+					false,
+					CVQualifier::None,
+					ReferenceQualifier::None,
+					false,
+					CanonicalCallingConvention::Default,
+					CanonicalDllLinkage::None,
+					ExprId{});
+				const TypeId target_return_function = canonical_types.function(
+					target_return_type_id,
+					no_parameters,
+					false,
+					CVQualifier::None,
+					ReferenceQualifier::None,
+					false,
+					CanonicalCallingConvention::Default,
+					CanonicalDllLinkage::None,
+					ExprId{});
+				const CanonicalTemplateTypeDeduction canonical_deduction =
+					deduceCanonicalFunctionTemplateType(
+						canonical_types,
+						pattern_return_function,
+						target_return_function,
+						function_template.template_decl_id());
+				if (canonical_deduction.status ==
+						CanonicalTemplateDeductionStatus::Match &&
+					!canonical_deduction.bindings.empty()) {
+					NamedTemplateTypeDeductionVector materialized_deductions;
+					materialized_deductions.reserve(
+						canonical_deduction.bindings.size());
+					bool all_bindings_materialized = true;
+					for (const CanonicalTemplateTypeBinding& binding :
+						 canonical_deduction.bindings) {
+						if (binding.parameter_index >= template_params.size()) {
+							all_bindings_materialized = false;
+							break;
+						}
+						const TemplateParameterNode& parameter =
+							template_params[binding.parameter_index];
+						if (parameter.kind() != TemplateParameterKind::Type ||
+							parameter.is_variadic()) {
+							all_bindings_materialized = false;
+							break;
+						}
+						const std::optional<TemplateTypeArg> argument =
+							tryMaterializeCanonicalTemplateTypeBinding(
+								canonical_types,
+								canonical_target_return,
+								target_return_type_id,
+								binding.argument);
+						if (!argument.has_value()) {
+							all_bindings_materialized = false;
+							break;
+						}
+						materialized_deductions.push_back(
+							NamedTemplateTypeDeduction{
+								parameter.nameHandle(),
+								*argument});
+					}
+					if (all_bindings_materialized) {
+						return_deductions = std::move(materialized_deductions);
+						transaction.commit();
+						used_canonical_return_deduction = true;
+					}
+				}
+			}
+		}
+		if (!used_canonical_return_deduction) {
+			const std::optional<bool> nested_deduction =
+				preDeduceTemplateArgsFromMatchingTypes(
+					pattern_return_type,
+					target_return_type,
+					std::span<const TemplateParameterNode>(
+						template_params.data(),
+						template_params.size()),
+					return_deductions,
+					return_pack_deductions,
+					0);
+			if (!nested_deduction.has_value()) {
+				return std::nullopt;
+			}
 		}
 	}
+	return_type_deduced = !return_deductions.empty();
 	if (!functionTemplateAcceptsCallArgumentCount(
 			function_decl,
 			target_parameter_types.size())) {
@@ -1311,10 +1454,17 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 							}
 							const TypeSpecifierNode target_return_type =
 								typeSpecifierFromFunctionType(target_signature.return_type());
+							bool return_type_deduced = false;
+							const TypeId target_function =
+								table.node(target_id).child;
+							const TypeId target_return_type_id =
+								table.node(target_function).child;
 							if (!tryDeduceMemberFunctionTemplateAddressArguments(
-								function_template,
-								target_argument_types,
-								target_return_type)
+									function_template,
+									target_argument_types,
+									target_return_type,
+									target_return_type_id,
+									return_type_deduced)
 								.has_value()) {
 								has_conflicting_return_deduction = true;
 								conflicting_member_address = member_address;
