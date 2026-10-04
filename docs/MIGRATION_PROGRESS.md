@@ -711,10 +711,20 @@ Continue boundary 3A in this order:
     `tests/test_canonical_member_function_template_nttp_address_ambiguous_e1701.cpp`
     checks that `Buffer<Value, 1>` and `Buffer<1, Value>` remain incomparable;
     the canonical unit test checks declaration-identity binding and ordering.
-    Complex NTTP expressions, non-literal dependent arguments, constraints, and
-    non-type packs remain unsupported, as do pack forms beyond the single
-    trailing type pack. A C-style ellipsis combined with a template pack is
-    also unsupported. Nested class-template return types materialize
+    For equivalent member-template function patterns, a satisfied associated
+    constraint now ranks ahead of an unconstrained candidate. The negative
+    regression `tests/test_canonical_member_function_template_constraint_address_e1617.cpp`
+    checks that the constrained private overload is selected for `int`, while
+    the unconstrained overload remains viable when the constraint fails for
+    `char`. The concept-parameter regression
+    `tests/test_canonical_member_function_template_concept_address_e1617.cpp`
+    checks the same candidate selection through a constrained template
+    parameter. Full C++20 subsumption between two constrained candidates and
+    constraint evaluation for templates containing packs remain unsupported.
+    Complex NTTP expressions, non-literal dependent arguments, and non-type
+    packs remain unsupported, as do pack forms beyond the single trailing type
+    pack. A C-style ellipsis combined with a template pack is also unsupported.
+    Nested class-template return types materialize
     return-only member-template bindings from canonical TypeIds; the
     `test_canonical_member_function_template_nested_return_only_deduction_ret0.cpp`
     regression covers both scalar and record arguments. Class-template
