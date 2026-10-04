@@ -440,6 +440,35 @@ tryBuildFreeFunctionTemplateAddressArgumentConversion(
 	return exact_function_address_conversion();
 }
 
+template <typename ArgumentNodeContainer>
+OverloadResolutionResult resolveParserOverloadWithArgumentNodes(
+	std::span<const ASTNode> overloads,
+	std::span<const TypeSpecifierNode> argument_types,
+	const ArgumentNodeContainer& argument_nodes) {
+	return resolve_overload_with_argument_nodes_using_conversion(
+		overloads,
+		argument_types,
+		argument_nodes,
+		[](
+			const TypeSpecifierNode& argument_type,
+			const TypeSpecifierNode& parameter_type,
+			const ASTNode* argument_node) {
+			if (argument_type.category() == TypeCategory::Invalid) {
+				if (std::optional<ArgumentConversionInfo> function_address =
+						tryBuildFreeFunctionTemplateAddressArgumentConversion(
+							parameter_type,
+							argument_node);
+					function_address.has_value()) {
+					return *function_address;
+				}
+			}
+			return buildArgumentConversionInfo(
+				argument_type,
+				parameter_type,
+				argument_node);
+		});
+}
+
 bool isMemberFunctionPointerType(const TypeSpecifierNode& type) {
 	if (type.category() == TypeCategory::MemberFunctionPointer) {
 		return true;
