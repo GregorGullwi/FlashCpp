@@ -612,20 +612,13 @@ def main():
              "if (syntax.category() == TypeCategory::Struct || syntax.category() == TypeCategory::Enum) {",
              "if (syntax.category() == TypeCategory::Struct) {"),
             ("adapter_unstructured_signature", "CanonicalTypeAdapter.h",
-             "const CanonicalTypeImport imported_return = signature.hasStructuredTypes()\n"
-             "\t\t? importCanonicalFunctionTypeComponent(\n"
-             "\t\t\ttable, signature.return_type(), CanonicalTypeImportContext::Exact)\n"
-             "\t\t: importCanonicalFunctionComponentFromProjection(\n"
+             ": importCanonicalFunctionComponentFromProjection(\n"
              "\t\t\ttable,\n"
              "\t\t\tsignature.return_type_index,\n"
              "\t\t\tsignature.return_pointer_depth,\n"
              "\t\t\tsignature.return_reference_qualifier,\n"
-             "\t\t\tCanonicalTypeImportContext::Exact);",
-             "if (!signature.hasStructuredTypes()) {\n"
-             "\t\treturn {{}, CanonicalTypeImportStatus::UnmigratedCallable};\n"
-             "\t}\n"
-             "\tconst CanonicalTypeImport imported_return = importCanonicalFunctionTypeComponent(\n"
-             "\t\ttable, signature.return_type(), CanonicalTypeImportContext::Exact);"),
+             "\t\t\tCanonicalTypeImportContext::Exact)",
+             ": CanonicalTypeImport{{}, CanonicalTypeImportStatus::UnmigratedCallable}"),
             ("adapter_dependent_noexcept", "CanonicalTypeAdapter.h",
              "if (signature.noexcept_expression.has_value() && !signature.dependent_noexcept) {\n"
              "\t\treturn {{}, CanonicalTypeImportStatus::Unresolved};\n"
