@@ -9946,6 +9946,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
+	const bool target_is_member_object_pointer =
+		isMemberObjectPointerType(target_type_id);
 
 	// C++20 [conv.ptr]: nullptr_t converts to any object, function, or member
 	// pointer type. Lowering selects the target representation of the null value.
@@ -10108,6 +10110,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	}
 
 	if (from_desc.category() == TypeCategory::Struct &&
+		!target_is_member_object_pointer &&
 		!to_desc.pointer_levels.empty() &&
 		to_desc.array_dimensions.empty()) {
 		// Run sema-owned conversion-operator selection once and record the
@@ -10201,10 +10204,11 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 
 	if (from_desc.category() == TypeCategory::Struct &&
 		(is_builtin_type(to_desc.category()) ||
-			to_desc.category() == TypeCategory::Enum) &&
+			to_desc.category() == TypeCategory::Enum ||
+			target_is_member_object_pointer) &&
 		from_desc.pointer_levels.empty() &&
 		from_desc.array_dimensions.empty() &&
-		to_desc.pointer_levels.empty() &&
+		(target_is_member_object_pointer || to_desc.pointer_levels.empty()) &&
 		to_desc.array_dimensions.empty() &&
 		from_desc.ref_qualifier == ReferenceQualifier::None &&
 		to_desc.ref_qualifier == ReferenceQualifier::None) {

@@ -156,18 +156,6 @@ over aliases with callable, array, reference, or member-pointer wrappers. Static
 member semantic identity must remain canonical and must not be flattened to
 bypass this consumer migration gap.
 
-## Evaluated member-pointer conversion-function tails are not annotated
-
-Overload ranking now compares the trailing standard conversion when a user-
-defined conversion operator returns a data-member pointer. An evaluated call
-whose selected target needs the valid `int Base::*` to `int Derived::*`
-conversion still fails before lowering with `sema missed resolved function
-call argument conversion`. Sema does not yet publish that canonical member-
-pointer conversion in the resolved-call argument slot. The ranking regression
-checks the derived-owner candidate in an unevaluated overload query and executes
-the exact-return candidate; applying the selected derived-owner tail needs its
-own annotation and ABI-correct lowering work.
-
 ## Production speculative parsing is not yet integrated with frontend scratch transactions
 
 `FrontendScratchTransaction` now journals frontend scratch state,

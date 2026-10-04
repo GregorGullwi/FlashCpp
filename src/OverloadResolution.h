@@ -1498,6 +1498,61 @@ inline std::optional<DerivedBaseConversionKind> classifyCanonicalDerivedBaseConv
 		has_schema, direct_base_count, direct_base_at);
 }
 
+// Resolve the ABI byte offset for a unique public non-virtual TypeId base path.
+// The relation check and the offset walk use the same canonical class graph;
+// the explicit worklist keeps inheritance depth off the native call stack.
+inline std::optional<int64_t> findCanonicalPublicNonVirtualBaseOffset(
+	const CanonicalTypeTable& table,
+	TypeId derived_type,
+	TypeId base_type) {
+	if (classifyCanonicalDerivedBaseConversion(
+			table, derived_type, base_type) !=
+		DerivedBaseConversionKind::UniquePublicNonVirtual) {
+		return std::nullopt;
+	}
+
+	struct PendingBase {
+		TypeId type;
+		int64_t offset;
+	};
+	std::vector<PendingBase> pending{{derived_type, 0}};
+	std::vector<TypeId> visited_types;
+	for (size_t pending_index = 0;
+		 pending_index < pending.size();
+		 ++pending_index) {
+		const PendingBase current = pending[pending_index];
+		if (current.type == base_type) {
+			return current.offset;
+		}
+		if (std::find(visited_types.begin(), visited_types.end(), current.type) !=
+			visited_types.end()) {
+			continue;
+		}
+		visited_types.push_back(current.type);
+		if (!table.hasClassBaseSchema(current.type)) {
+			return std::nullopt;
+		}
+		const size_t base_count = table.classBaseCount(current.type);
+		for (size_t base_index = 0; base_index < base_count; ++base_index) {
+			const CanonicalClassBase base =
+				table.classBaseAt(current.type, base_index);
+			if (base.access != CanonicalAccess::Public ||
+				hasCanonicalRecordBaseFlag(
+					base.flags, CanonicalRecordBaseFlags::Virtual)) {
+				continue;
+			}
+			if (base.offset_bytes >
+				std::numeric_limits<int64_t>::max() - current.offset) {
+				return std::nullopt;
+			}
+			pending.push_back({
+				base.type,
+				current.offset + static_cast<int64_t>(base.offset_bytes)});
+		}
+	}
+	return std::nullopt;
+}
+
 // Return the byte offset only for a unique, public, non-virtual base.  Callers
 // that need diagnostics must use classifyDerivedBaseConversion() first.
 inline std::optional<int64_t> findPublicBaseSubobjectOffset(TypeIndex base_idx, TypeIndex derived_idx) {

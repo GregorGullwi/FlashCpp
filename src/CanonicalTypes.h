@@ -346,14 +346,15 @@ struct CanonicalRecordBase {
 	friend bool operator==(CanonicalRecordBase, CanonicalRecordBase) = default;
 };
 
-// Inheritance edge keyed by canonical class TypeId. Unlike the record layout
-// schema, this graph also represents class-template specializations and does
-// not carry ABI offsets.
+// Inheritance edge keyed by canonical class TypeId. It includes the target
+// layout offset so conversions involving class-template specializations can
+// lower without looking the owners back up through parser TypeIndex state.
 struct CanonicalClassBase {
 	TypeId type;
 	CanonicalAccess access;
 	CanonicalRecordBaseFlags flags;
 	uint16_t reserved = 0;
+	uint32_t offset_bytes = 0;
 	friend bool operator==(CanonicalClassBase, CanonicalClassBase) = default;
 };
 
@@ -427,7 +428,7 @@ static_assert(sizeof(CanonicalEnumLayout) == 20);
 static_assert(sizeof(CanonicalRecordMember) == 16);
 static_assert(sizeof(CanonicalRecordBase) == 16);
 static_assert(sizeof(CanonicalRecordProperties) == 8);
-static_assert(sizeof(CanonicalClassBase) == 8);
+static_assert(sizeof(CanonicalClassBase) == 12);
 static_assert(sizeof(CanonicalNamedTypeMember) == 16);
 
 class CanonicalTypeTransaction;

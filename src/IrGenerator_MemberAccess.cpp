@@ -3687,20 +3687,77 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
 	if (!conversion_return_type_index.is_valid()) {
 		conversion_return_type_index = nativeTypeIndex(conversion_return_type.category());
 	}
+	const CanonicalTypeId conversion_return_type_id =
+		sema_.canonicalizeTypeForImplicitConversion(conversion_return_type);
+	const bool conversion_returns_member_object_pointer =
+		sema_.isMemberObjectPointerType(conversion_return_type_id);
+	const TypeIndex conversion_result_type_index =
+		conversion_returns_member_object_pointer
+			? conversion_return_type_index.withCategory(TypeCategory::MemberObjectPointer)
+			: conversion_return_type_index;
+	const int conversion_result_size_bits = conversion_returns_member_object_pointer
+		? POINTER_SIZE_BITS
+		: static_cast<int>(conversion_return_type.size_in_bits());
 	std::optional<ExprResult> result = emitConversionOperatorCall(
 		source,
 		source_type_info,
 		conversion_function,
-		conversion_return_type_index,
-		static_cast<int>(conversion_return_type.size_in_bits()),
+		conversion_result_type_index,
+		conversion_result_size_bits,
 		token);
 	if (result.has_value()) {
-		result->pointer_depth = PointerDepth{
-			static_cast<int>(conversion_return_type.runtime_pointer_depth())};
+		result->pointer_depth = conversion_returns_member_object_pointer
+			? PointerDepth{}
+			: PointerDepth{
+				static_cast<int>(conversion_return_type.runtime_pointer_depth())};
+		if (conversion_returns_member_object_pointer) {
+			result->ir_type = IrType::MemberObjectPointer;
+		}
 	}
 	if (!result.has_value() ||
 		cast_info.trailing_standard_conversion == StandardConversionKind::None) {
 		return result;
+	}
+	if (cast_info.trailing_standard_conversion ==
+		StandardConversionKind::PointerConversion) {
+		const CanonicalTypeDesc& conversion_return_desc =
+			sema_.typeContext().get(conversion_return_type_id);
+		const CanonicalTypeDesc& destination_desc =
+			sema_.typeContext().get(cast_info.target_type_id);
+		if (sema_.isMemberObjectPointerType(conversion_return_type_id) &&
+			sema_.isMemberObjectPointerType(cast_info.target_type_id)) {
+			if (!conversion_return_desc.structural_type_id ||
+				!destination_desc.structural_type_id) {
+				throw InternalError(
+					"Sema-selected member-object-pointer conversion has no canonical types");
+			}
+
+			CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+			const TypeId source_member_pointer =
+				canonical_types.withoutTopLevelQualifiers(
+					conversion_return_desc.structural_type_id);
+			const TypeId target_member_pointer =
+				canonical_types.withoutTopLevelQualifiers(
+					destination_desc.structural_type_id);
+			if (canonical_types.node(source_member_pointer).kind !=
+					CanonicalTypeKind::MemberObjectPointer ||
+				canonical_types.node(target_member_pointer).kind !=
+					CanonicalTypeKind::MemberObjectPointer) {
+				throw InternalError(
+					"Sema-selected data-member-pointer conversion has a non-member-pointer shape");
+			}
+			const TypeId source_owner =
+				canonical_types.memberPointerOwner(source_member_pointer);
+			const TypeId target_owner =
+				canonical_types.memberPointerOwner(target_member_pointer);
+			if (source_owner != target_owner) {
+				return adjustMemberObjectPointerForCanonicalBaseConversion(
+					std::move(*result),
+					source_member_pointer,
+					target_member_pointer,
+					token);
+			}
+		}
 	}
 	return generateTypeConversion(
 		*result,
@@ -3708,4 +3765,102 @@ std::optional<ExprResult> AstToIr::emitSemaSelectedConversionOperatorCall(
 		destination_type_category,
 		cast_info.trailing_standard_conversion,
 		token);
+}
+
+ExprResult AstToIr::adjustMemberObjectPointerForCanonicalBaseConversion(
+	ExprResult source_member_pointer,
+	TypeId source_member_pointer_type,
+	TypeId target_member_pointer_type,
+	const Token& source_token) {
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	if (canonical_types.node(source_member_pointer_type).kind !=
+			CanonicalTypeKind::MemberObjectPointer ||
+		canonical_types.node(target_member_pointer_type).kind !=
+			CanonicalTypeKind::MemberObjectPointer) {
+		throw InternalError(
+			"Member-object-pointer base conversion requires canonical member pointer types");
+	}
+	const TypeId base_owner =
+		canonical_types.memberPointerOwner(source_member_pointer_type);
+	const TypeId derived_owner =
+		canonical_types.memberPointerOwner(target_member_pointer_type);
+	const std::optional<int64_t> base_offset =
+		findCanonicalPublicNonVirtualBaseOffset(
+			canonical_types, derived_owner, base_owner);
+	if (!base_offset.has_value() || *base_offset < 0 ||
+		*base_offset > std::numeric_limits<int32_t>::max()) {
+		throw InternalError(
+			"Sema-selected member-object-pointer conversion has no usable base offset");
+	}
+	if (*base_offset == 0) {
+		return source_member_pointer;
+	}
+
+	const SizeInBits member_pointer_size{POINTER_SIZE_BITS};
+	static constexpr unsigned long long kNullMemberObjectPointerRepresentation =
+		~0ULL;
+	const TypedValue source_value = makeTypedValue(
+		TypeCategory::MemberObjectPointer,
+		member_pointer_size,
+		toIrValue(source_member_pointer.value));
+	const TempVar adjusted_value = var_counter.next();
+	BinaryOp add_offset;
+	add_offset.lhs = source_value;
+	add_offset.rhs = makeTypedValue(
+		TypeCategory::UnsignedLongLong,
+		member_pointer_size,
+		static_cast<unsigned long long>(*base_offset));
+	add_offset.result = adjusted_value;
+	ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), source_token));
+
+	// A null data-member pointer is all-bits-one in the current x64 target ABI.
+	// Preserve it instead of adding the base subobject offset to the sentinel.
+	const TempVar is_null_value = var_counter.next();
+	BinaryOp compare_null;
+	compare_null.lhs = source_value;
+	compare_null.rhs = makeTypedValue(
+		TypeCategory::UnsignedLongLong,
+		member_pointer_size,
+		kNullMemberObjectPointerRepresentation);
+	compare_null.result = is_null_value;
+	ir_.addInstruction(IrInstruction(
+		IrOpcode::Equal, std::move(compare_null), source_token));
+
+	const uint32_t label_id = var_counter.next().var_number;
+	const StringHandle null_label = StringTable::createStringHandle(
+		StringBuilder().append("member_object_pointer_null_").append(
+			static_cast<uint64_t>(label_id)));
+	const StringHandle end_label = StringTable::createStringHandle(
+		StringBuilder().append("member_object_pointer_adjusted_").append(
+			static_cast<uint64_t>(label_id)));
+	CondBranchOp branch;
+	branch.label_true = null_label;
+	branch.label_false = end_label;
+	branch.condition = makeTypedValue(
+		TypeCategory::Bool,
+		SizeInBits{8},
+		IrValue(is_null_value));
+	ir_.addInstruction(IrInstruction(
+		IrOpcode::ConditionalBranch, std::move(branch), source_token));
+
+	ir_.addInstruction(IrInstruction(
+		IrOpcode::Label, LabelOp{.label_name = null_label}, source_token));
+	AssignmentOp preserve_null;
+	preserve_null.result = adjusted_value;
+	preserve_null.lhs = makeTypedValue(
+		TypeCategory::MemberObjectPointer,
+		member_pointer_size,
+		IrValue(adjusted_value));
+	preserve_null.rhs = source_value;
+	ir_.addInstruction(IrInstruction(
+		IrOpcode::Assignment, std::move(preserve_null), source_token));
+	ir_.addInstruction(IrInstruction(
+		IrOpcode::Label, LabelOp{.label_name = end_label}, source_token));
+
+	return makeExprResult(
+		nativeTypeIndex(TypeCategory::MemberObjectPointer),
+		member_pointer_size,
+		IrOperand{adjusted_value},
+		PointerDepth{},
+		ValueStorage::ContainsData);
 }
