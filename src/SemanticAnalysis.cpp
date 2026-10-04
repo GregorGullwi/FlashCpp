@@ -7310,7 +7310,10 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 	if (!target_function_type && target_signature != nullptr &&
 		target_signature->hasStructuredTypes()) {
 		const CanonicalTypeImport signature_import =
-			importCanonicalFunctionSignature(canonical_types, *target_signature);
+			importCanonicalFunctionSignature(
+				canonical_types,
+				*target_signature,
+				TypeId{});
 		if (signature_import.status == CanonicalTypeImportStatus::Supported &&
 			canonical_types.node(signature_import.type).kind ==
 				CanonicalTypeKind::Function) {
