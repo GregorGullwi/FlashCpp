@@ -50,11 +50,11 @@ concept Arrayish = __is_array(T);
 template <typename T>
 concept MemberObjectPointerish = __is_member_object_pointer(T);
 template <typename T>
-concept NotTriviallyCopyable = !__is_trivially_copyable(T);
+concept NotDefaultConstructible = !__is_constructible(T);
 template <typename T>
-concept PointerOrUnclassified = Pointerish<T> || __has_virtual_destructor(T);
+concept PointerOrUnclassified = Pointerish<T> || __is_constructible(T);
 template <typename T>
-concept PointerAndUnclassified = Pointerish<T> && __has_virtual_destructor(T);
+concept PointerAndUnclassified = Pointerish<T> && __is_constructible(T);
 
 int probePointer(Pointerish auto) { return 1; }
 int probePointer(...) { return 2; }
@@ -84,7 +84,7 @@ int probeObject(Objectish auto) { return 11; }
 
 int probeArray(Arrayish auto&) { return 28; }
 
-int probeNegatedUnknown(NotTriviallyCopyable auto) { return 17; }
+int probeNegatedUnknown(NotDefaultConstructible auto) { return 17; }
 
 int probeDisjunctionUnknown(PointerOrUnclassified auto) { return 19; }
 
@@ -179,11 +179,9 @@ int main() {
 	if (probeArray(array) != 28) {
 		mismatches |= 20;
 	}
-	// `__is_trivially_copyable` and `__has_virtual_destructor` are class-property
-	// traits the canonical structural family does not own, so these requirements
-	// are unknown rather than proven. Their probes have no fallback: an unknown
-	// outcome is not proof of satisfaction, so a fallback would be selected and
-	// the distinction would be invisible.
+	// Constructibility has a variadic argument list and remains outside the
+	// unary canonical record-property schema, so its requirement is unknown in
+	// lazy constraints rather than being treated as proof or inverted by `!`.
 	if (probeNegatedUnknown(widget) != 17) {
 		mismatches |= 21;
 	}

@@ -1006,14 +1006,25 @@ void CanonicalTypeTable::publishRecordProperties(
 	CanonicalRecordPropertyFlags flags) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	const uint8_t valid_flags = static_cast<uint8_t>(
+	const uint16_t valid_flags = static_cast<uint16_t>(
 		CanonicalRecordPropertyFlags::Polymorphic |
 		CanonicalRecordPropertyFlags::Final |
-		CanonicalRecordPropertyFlags::Abstract);
+		CanonicalRecordPropertyFlags::Abstract |
+		CanonicalRecordPropertyFlags::TriviallyCopyable |
+		CanonicalRecordPropertyFlags::Trivial |
+		CanonicalRecordPropertyFlags::Pod |
+		CanonicalRecordPropertyFlags::StandardLayout |
+		CanonicalRecordPropertyFlags::Aggregate |
+		CanonicalRecordPropertyFlags::Empty |
+		CanonicalRecordPropertyFlags::Destructible |
+		CanonicalRecordPropertyFlags::TriviallyDestructible |
+		CanonicalRecordPropertyFlags::NothrowDestructible |
+		CanonicalRecordPropertyFlags::HasTrivialDestructor |
+		CanonicalRecordPropertyFlags::HasVirtualDestructor);
 	const CanonicalTypeKind kind = type ? nodeUnlocked(type).kind : CanonicalTypeKind::Builtin;
 	if (!type || (kind != CanonicalTypeKind::Record &&
 		kind != CanonicalTypeKind::TemplateSpecialization) ||
-		(static_cast<uint8_t>(flags) & ~valid_flags) != 0) {
+		(static_cast<uint16_t>(flags) & ~valid_flags) != 0) {
 		throw InternalError("canonical type: invalid record property publication");
 	}
 	const CanonicalRecordProperties properties{type, flags};

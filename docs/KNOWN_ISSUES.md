@@ -137,10 +137,15 @@ C++20 answers in constant evaluation, runtime lowering, and lazy constraints,
 with both canonical-trait fallback counters at zero. Class-template
 instantiation now refreshes virtual metadata and object layout after member
 declarations are attached, then publishes the specialization's canonical facts.
-The remaining sema-owned class-property and lifetime traits include
-`__is_empty`, the triviality family, and the destructibility and constructibility
-families; these require member and special-member facts that the canonical table
-does not yet publish. By contrast,
+The remaining sema-owned construction traits (`__is_constructible`,
+`__is_trivially_constructible`, and `__is_nothrow_constructible`) depend on a
+variadic argument list and overload resolution, so they need a canonical
+constructor-query path rather than a unary record-property flag. The unary
+record-property traits now read TypeId-keyed facts published for completed
+records and materialized class-template specializations. The
+`test_canonical_record_property_trait_concepts_ret0.cpp` regression covers
+their constant-evaluation answers, positive and negative class shapes, template
+specializations, and lazy concept constraints. By contrast,
 `__is_class`, `__is_union`, `__is_const`, `__is_volatile`, `__is_signed`, and
 `__is_unsigned` now use canonical type identity. A concept built on an
 unsupported sema-owned trait still receives an explicit unknown outcome: not

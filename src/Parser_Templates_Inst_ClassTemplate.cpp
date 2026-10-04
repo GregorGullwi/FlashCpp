@@ -12076,14 +12076,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (struct_info_ptr->has_vtable && struct_info_ptr->rtti_info == nullptr) {
 		struct_info_ptr->buildRTTI();
 	}
-	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
-	const CanonicalTypeImport imported_specialization =
-		importCanonicalClassTypeInfo(canonical_types, struct_type_info);
-	if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
-		(void)tryPublishCanonicalRecordProperties(
-			canonical_types, imported_specialization.type, *struct_info_ptr);
-	}
-
 	// Process out-of-line member function definitions for the template
 	auto out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(template_name);
 	const std::string_view template_base_name = extractBaseTemplateName(template_name);
@@ -13928,6 +13920,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			effective_template_params,
 			effective_template_args);
 		instantiated_struct.as<StructDeclarationNode>().mark_materialized();
+		CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+		const CanonicalTypeImport imported_specialization =
+			importCanonicalClassTypeInfo(canonical_types, struct_type_info);
+		if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
+			(void)tryPublishCanonicalRecordProperties(
+				canonical_types, imported_specialization.type, *struct_info_ptr);
+		}
 	}
 
 	// Register in cache for O(1) lookup on future instantiations

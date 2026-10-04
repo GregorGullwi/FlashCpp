@@ -1,5 +1,6 @@
 #include "TypeTraitEvaluator.h"
 
+#include <algorithm>
 #include <ranges>
 #include <unordered_set>
 #include <vector>
@@ -245,6 +246,17 @@ enum class CanonicalTraitProperty : uint8_t {
 	IsPolymorphic,
 	IsFinal,
 	IsAbstract,
+	IsTriviallyCopyable,
+	IsTrivial,
+	IsPod,
+	IsStandardLayout,
+	IsAggregate,
+	IsEmpty,
+	IsDestructible,
+	IsTriviallyDestructible,
+	IsNothrowDestructible,
+	HasTrivialDestructor,
+	HasVirtualDestructor,
 	IsConst,
 	IsVolatile,
 	IsSigned,
@@ -282,6 +294,24 @@ CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
 	case TypeTraitKind::IsPolymorphic: return CanonicalTraitProperty::IsPolymorphic;
 	case TypeTraitKind::IsFinal: return CanonicalTraitProperty::IsFinal;
 	case TypeTraitKind::IsAbstract: return CanonicalTraitProperty::IsAbstract;
+	case TypeTraitKind::IsTriviallyCopyable:
+		return CanonicalTraitProperty::IsTriviallyCopyable;
+	case TypeTraitKind::IsTrivial: return CanonicalTraitProperty::IsTrivial;
+	case TypeTraitKind::IsPod: return CanonicalTraitProperty::IsPod;
+	case TypeTraitKind::IsStandardLayout:
+		return CanonicalTraitProperty::IsStandardLayout;
+	case TypeTraitKind::IsAggregate: return CanonicalTraitProperty::IsAggregate;
+	case TypeTraitKind::IsEmpty: return CanonicalTraitProperty::IsEmpty;
+	case TypeTraitKind::IsDestructible:
+		return CanonicalTraitProperty::IsDestructible;
+	case TypeTraitKind::IsTriviallyDestructible:
+		return CanonicalTraitProperty::IsTriviallyDestructible;
+	case TypeTraitKind::IsNothrowDestructible:
+		return CanonicalTraitProperty::IsNothrowDestructible;
+	case TypeTraitKind::HasTrivialDestructor:
+		return CanonicalTraitProperty::HasTrivialDestructor;
+	case TypeTraitKind::HasVirtualDestructor:
+		return CanonicalTraitProperty::HasVirtualDestructor;
 	case TypeTraitKind::IsConst: return CanonicalTraitProperty::IsConst;
 	case TypeTraitKind::IsVolatile: return CanonicalTraitProperty::IsVolatile;
 	case TypeTraitKind::IsSigned: return CanonicalTraitProperty::IsSigned;
@@ -331,6 +361,42 @@ bool isDependentCanonicalNode(CanonicalTypeKind kind) {
 		kind == CanonicalTypeKind::DependentName ||
 		kind == CanonicalTypeKind::DependentTemplateMember ||
 		kind == CanonicalTypeKind::DependentMemberAlias;
+}
+
+CanonicalRecordPropertyFlags canonicalRecordPropertyFlag(
+	CanonicalTraitProperty property) {
+	switch (property) {
+	case CanonicalTraitProperty::IsPolymorphic:
+		return CanonicalRecordPropertyFlags::Polymorphic;
+	case CanonicalTraitProperty::IsFinal:
+		return CanonicalRecordPropertyFlags::Final;
+	case CanonicalTraitProperty::IsAbstract:
+		return CanonicalRecordPropertyFlags::Abstract;
+	case CanonicalTraitProperty::IsTriviallyCopyable:
+		return CanonicalRecordPropertyFlags::TriviallyCopyable;
+	case CanonicalTraitProperty::IsTrivial:
+		return CanonicalRecordPropertyFlags::Trivial;
+	case CanonicalTraitProperty::IsPod:
+		return CanonicalRecordPropertyFlags::Pod;
+	case CanonicalTraitProperty::IsStandardLayout:
+		return CanonicalRecordPropertyFlags::StandardLayout;
+	case CanonicalTraitProperty::IsAggregate:
+		return CanonicalRecordPropertyFlags::Aggregate;
+	case CanonicalTraitProperty::IsEmpty:
+		return CanonicalRecordPropertyFlags::Empty;
+	case CanonicalTraitProperty::IsDestructible:
+		return CanonicalRecordPropertyFlags::Destructible;
+	case CanonicalTraitProperty::IsTriviallyDestructible:
+		return CanonicalRecordPropertyFlags::TriviallyDestructible;
+	case CanonicalTraitProperty::IsNothrowDestructible:
+		return CanonicalRecordPropertyFlags::NothrowDestructible;
+	case CanonicalTraitProperty::HasTrivialDestructor:
+		return CanonicalRecordPropertyFlags::HasTrivialDestructor;
+	case CanonicalTraitProperty::HasVirtualDestructor:
+		return CanonicalRecordPropertyFlags::HasVirtualDestructor;
+	default:
+		throw InternalError("canonical trait: property has no record fact");
+	}
 }
 
 // Classifies one canonical type. `type` is the imported identity, not a peeled
@@ -473,11 +539,29 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 	}
 	case CanonicalTraitProperty::IsPolymorphic:
 	case CanonicalTraitProperty::IsFinal:
-	case CanonicalTraitProperty::IsAbstract: {
+	case CanonicalTraitProperty::IsAbstract:
+	case CanonicalTraitProperty::IsTriviallyCopyable:
+	case CanonicalTraitProperty::IsTrivial:
+	case CanonicalTraitProperty::IsPod:
+	case CanonicalTraitProperty::IsStandardLayout:
+	case CanonicalTraitProperty::IsAggregate:
+	case CanonicalTraitProperty::IsEmpty:
+	case CanonicalTraitProperty::IsDestructible:
+	case CanonicalTraitProperty::IsTriviallyDestructible:
+	case CanonicalTraitProperty::IsNothrowDestructible:
+	case CanonicalTraitProperty::HasTrivialDestructor:
+	case CanonicalTraitProperty::HasVirtualDestructor: {
 		if (is_reference ||
 			(kind != CanonicalTypeKind::Record &&
 				kind != CanonicalTypeKind::TemplateSpecialization)) {
-			return false;
+			const bool is_existing_class_trait =
+				property == CanonicalTraitProperty::IsPolymorphic ||
+				property == CanonicalTraitProperty::IsFinal ||
+				property == CanonicalTraitProperty::IsAbstract;
+			if (is_existing_class_trait) {
+				return false;
+			}
+			return std::nullopt;
 		}
 		if (!table.hasRecordProperties(peeled)) {
 			if (kind == CanonicalTypeKind::Record) {
@@ -491,13 +575,8 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 		}
 		const CanonicalRecordPropertyFlags flags =
 			table.recordProperties(peeled).flags;
-		const CanonicalRecordPropertyFlags requested_flag =
-			property == CanonicalTraitProperty::IsPolymorphic
-				? CanonicalRecordPropertyFlags::Polymorphic
-				: property == CanonicalTraitProperty::IsFinal
-					? CanonicalRecordPropertyFlags::Final
-					: CanonicalRecordPropertyFlags::Abstract;
-		return hasCanonicalRecordPropertyFlag(flags, requested_flag);
+		return hasCanonicalRecordPropertyFlag(
+			flags, canonicalRecordPropertyFlag(property));
 	}
 	case CanonicalTraitProperty::IsConst:
 	case CanonicalTraitProperty::IsVolatile:
@@ -792,7 +871,11 @@ bool isStructEmptyImpl(const StructTypeInfo* struct_info) {
 		if (current == nullptr || !visited.insert(current).second) {
 			continue;
 		}
-		if (current->is_union || !current->members.empty() || current->has_vtable) {
+		const bool has_nonzero_size_data_member =
+			std::ranges::any_of(current->members, [](const StructMember& member) {
+				return !StructTypeInfo::isZeroWidthBitfield(member.bitfield_width);
+			});
+		if (current->is_union || has_nonzero_size_data_member || current->has_vtable) {
 			return false;
 		}
 		for (const BaseClassSpecifier& base : current->base_classes) {
@@ -1085,6 +1168,57 @@ bool isStructTrivial(const StructTypeInfo* struct_info) {
 
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	return isStructNothrowDestructibleImpl(struct_info);
+}
+
+CanonicalRecordPropertyFlags computeCanonicalRecordPropertyFlags(
+	const StructTypeInfo& struct_info) {
+	CanonicalRecordPropertyFlags flags = CanonicalRecordPropertyFlags::None;
+	const bool is_trivially_copyable = isStructTriviallyCopyable(&struct_info);
+	const bool is_trivial = isStructTrivial(&struct_info);
+	const bool is_standard_layout = isStructStandardLayoutImpl(&struct_info);
+	const bool is_trivially_destructible =
+		isStructTriviallyDestructibleImpl(&struct_info);
+	if (struct_info.has_vtable) {
+		flags |= CanonicalRecordPropertyFlags::Polymorphic;
+	}
+	if (struct_info.is_final) {
+		flags |= CanonicalRecordPropertyFlags::Final;
+	}
+	if (struct_info.is_abstract) {
+		flags |= CanonicalRecordPropertyFlags::Abstract;
+	}
+	if (is_trivially_copyable) {
+		flags |= CanonicalRecordPropertyFlags::TriviallyCopyable;
+	}
+	if (is_trivial) {
+		flags |= CanonicalRecordPropertyFlags::Trivial;
+		if (is_standard_layout) {
+			flags |= CanonicalRecordPropertyFlags::Pod;
+		}
+	}
+	if (is_standard_layout) {
+		flags |= CanonicalRecordPropertyFlags::StandardLayout;
+	}
+	if (struct_info.isAggregate()) {
+		flags |= CanonicalRecordPropertyFlags::Aggregate;
+	}
+	if (isStructEmptyImpl(&struct_info)) {
+		flags |= CanonicalRecordPropertyFlags::Empty;
+	}
+	if (isStructDestructibleImpl(&struct_info)) {
+		flags |= CanonicalRecordPropertyFlags::Destructible;
+	}
+	if (is_trivially_destructible) {
+		flags |= CanonicalRecordPropertyFlags::TriviallyDestructible |
+			CanonicalRecordPropertyFlags::HasTrivialDestructor;
+	}
+	if (isStructNothrowDestructible(&struct_info)) {
+		flags |= CanonicalRecordPropertyFlags::NothrowDestructible;
+	}
+	if (hasVirtualDestructorImpl(&struct_info)) {
+		flags |= CanonicalRecordPropertyFlags::HasVirtualDestructor;
+	}
+	return flags;
 }
 
 bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols) {
