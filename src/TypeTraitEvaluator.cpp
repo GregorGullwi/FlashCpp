@@ -559,7 +559,8 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport imported_type = importCanonicalType(table, type_spec);
+	const CanonicalTypeImport imported_type =
+		importCanonicalStructuralTraitOperand(table, type_spec);
 	if (imported_type.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}

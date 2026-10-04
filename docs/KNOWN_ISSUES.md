@@ -130,18 +130,13 @@ table does not own, and the residual 2 on
 member-object-pointer operand: that one needs member-owner identity rather than
 nominal type identity, and its owner is not published at materialization.
 The canonical record-properties schema now publishes polymorphic, final, and
-abstract facts for completed non-template record TypeIds. The
+abstract facts for completed record TypeIds, including materialized
+class-template specializations. The
 `test_canonical_record_class_trait_concepts_ret0.cpp` regression checks their
 C++20 answers in constant evaluation, runtime lowering, and lazy constraints,
-with both canonical-trait fallback counters at zero. Specializations whose
-semantic property facts have not yet been published remain compatibility-owned.
-The implicit class-template instantiation path finalizes `StructTypeInfo` before
-registering lazy member-function stubs, leaving polymorphic, final, and abstract
-facts unset for some complete specializations. For example,
-`__is_polymorphic(PolymorphicSpecialization<int>)` is currently false even
-though the specialization declares a virtual member. Publishing these traits for
-specializations needs the instantiation lifecycle to make the semantic facts
-complete first.
+with both canonical-trait fallback counters at zero. Class-template
+instantiation now refreshes virtual metadata and object layout after member
+declarations are attached, then publishes the specialization's canonical facts.
 The remaining sema-owned class-property and lifetime traits include
 `__is_empty`, the triviality family, and the destructibility and constructibility
 families; these require member and special-member facts that the canonical table

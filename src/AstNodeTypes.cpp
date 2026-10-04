@@ -2916,11 +2916,9 @@ bool StructTypeInfo::buildVTable() {
 		}
 	}
 
-	// Step 2: Process this class's virtual functions
-	if (member_functions.empty()) {
-		return true; // No member functions to process
-	}
-
+	// Step 2: Process this class's virtual functions. Keep going with an empty
+	// member list so inherited pure virtuals still determine abstractness and
+	// inherited vtables receive their symbol metadata.
 	for (auto& func : member_functions) {
 		// Skip constructors (they can't be virtual in the vtable sense)
 		if (func.is_constructor) {
@@ -3054,6 +3052,18 @@ bool StructTypeInfo::buildVTable() {
 	}
 
 	return success;
+}
+
+bool StructTypeInfo::rebuildVTable() {
+	vtable.clear();
+	has_vtable = false;
+	is_abstract = false;
+	vtable_symbol = {};
+	finalization_error_.clear();
+	for (StructMemberFunction& function : member_functions) {
+		function.vtable_index = -1;
+	}
+	return buildVTable();
 }
 
 // Update abstract flag based on pure virtual functions in vtable

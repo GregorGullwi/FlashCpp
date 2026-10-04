@@ -13,6 +13,8 @@
 #include "AstTraversal.h"
 #include "TemplateEnvironment.h"
 #include "ParserTemplateHelpers.h"
+#include "CanonicalTypeAdapter.h"
+#include "FrontendContext.h"
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
@@ -10530,6 +10532,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
 	struct_info_ptr->declaration_node = &instantiated_struct_ref;
 	instantiated_struct_ref.set_injected_class_pattern_declaration(&class_decl);
+	struct_info_ptr->is_final = class_decl.is_final();
 	setOuterTemplateBindingsFromParams(
 		instantiated_struct_ref, effective_template_params, effective_template_args);
 
@@ -10738,7 +10741,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// PHASE 2 deferred-body replay block later in this function decides whether their
 			// deferred bodies should be materialized immediately.
 			if (is_implicit_instantiation &&
-				func_decl.has_any_body_source()) {
+				func_decl.has_any_body_source() &&
+				!mem_func.is_virtual &&
+				!mem_func.is_override) {
 				// Register this member function for lazy instantiation
 				LazyMemberFunctionInfo lazy_info;
 				{
@@ -12060,6 +12065,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					  mem_func.function_declaration.type_name());
 			throw InternalError("Unhandled member function declaration kind during template instantiation");
 		}
+	}
+
+	if (!struct_info_ptr->rebuildVTable()) {
+		FLASH_LOG(Parser, Error, struct_info_ptr->getFinalizationError());
+		return std::nullopt;
+	}
+	struct_info_ptr->recalculateLayout();
+	struct_type_info.fallback_size_bits_ = struct_info_ptr->sizeInBits().value;
+	if (struct_info_ptr->has_vtable && struct_info_ptr->rtti_info == nullptr) {
+		struct_info_ptr->buildRTTI();
+	}
+	CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
+	const CanonicalTypeImport imported_specialization =
+		importCanonicalClassTypeInfo(canonical_types, struct_type_info);
+	if (imported_specialization.status == CanonicalTypeImportStatus::Supported) {
+		(void)tryPublishCanonicalRecordProperties(
+			canonical_types, imported_specialization.type, *struct_info_ptr);
 	}
 
 	// Process out-of-line member function definitions for the template

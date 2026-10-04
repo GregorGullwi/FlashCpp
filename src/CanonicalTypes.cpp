@@ -408,8 +408,7 @@ TypeId CanonicalTypeTable::dependentTemplateMember(
 	for (size_t index = arguments.size(); index-- > 0;) {
 		const TypeId argument = arguments[index];
 		const CanonicalTypeNode argument_node = nodeUnlocked(argument);
-		if (isInternalLink(argument_node.kind) ||
-			argument_node.kind == CanonicalTypeKind::Array) {
+		if (isInternalLink(argument_node.kind)) {
 			throw InternalError("canonical type: invalid dependent template-member argument");
 		}
 		arg_link = internUnlocked({
@@ -448,8 +447,7 @@ TypeId CanonicalTypeTable::dependentMemberAlias(
 	for (size_t index = arguments.size(); index-- > 0;) {
 		const TypeId argument = arguments[index];
 		const CanonicalTypeNode argument_node = nodeUnlocked(argument);
-		if (isInternalLink(argument_node.kind) ||
-			argument_node.kind == CanonicalTypeKind::Array) {
+		if (isInternalLink(argument_node.kind)) {
 			throw InternalError("canonical type: invalid dependent member alias argument");
 		}
 		arg_link = internUnlocked({
@@ -2095,8 +2093,7 @@ TypeId CanonicalTypeTable::rebuildMixedTemplateArgListUnlocked(std::span<const C
 				throw InternalError("canonical type: invalid template specialization type argument");
 			}
 			const CanonicalTypeNode argument_node = nodeUnlocked(argument.type);
-			if (isInternalLink(argument_node.kind) ||
-				argument_node.kind == CanonicalTypeKind::Array) {
+			if (isInternalLink(argument_node.kind)) {
 				throw InternalError("canonical type: invalid template specialization argument");
 			}
 			arg_link = internUnlocked({
