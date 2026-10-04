@@ -34,9 +34,11 @@ Shared evaluation, constant-expression evaluation, and code-generation trait
 lowering all route through that one classification, so a trait no longer
 answers differently depending on whether it is folded or lowered. Class, union,
 cv, signedness, and the `__is_polymorphic`, `__is_final`, and
-`__is_abstract` traits now read canonical type identity or published record
-facts. `__is_empty`, triviality, lifetime, and constructibility traits still
-read sema-owned record metadata, and template, constexpr, and IR consumers
+`__is_abstract` traits now read canonical type identity or published facts for
+completed non-template records. Complete class-template specializations still
+need their semantic property facts published after lazy member declarations are
+registered. `__is_empty`, triviality, lifetime, and constructibility traits
+still read sema-owned record metadata, and template, constexpr, and IR consumers
 still read flat fields. Array and callable outer wrappers remain guarded where
 their consumers are not migrated.
 
@@ -741,7 +743,9 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    family is done in the shared type-trait evaluator and in the lazy-constraint
    evaluator, nominal identity is published at parser materialization, and the
    class, union, qualification, and published polymorphic/final/abstract traits
-   are answered canonically, so the first five splits of this item are landed.
+   for completed non-template records are answered canonically. The implicit
+   class-template instantiation path still needs to publish those facts after
+   lazy member declarations are registered; see [known issues](KNOWN_ISSUES.md).
    Next in order:
    1. **The remaining triviality and lifetime trait families.** `__is_trivially_copyable`,
       `__is_trivial`, `__is_pod`, `__is_standard_layout`, `__is_aggregate`,
