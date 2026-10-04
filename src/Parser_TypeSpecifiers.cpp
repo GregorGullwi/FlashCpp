@@ -5564,23 +5564,37 @@ void Parser::stampPublishedFunctionTemplateParameters(
 	}
 	const TemplateParameterVector& template_parameters =
 		template_decl.template_parameters();
-	const auto stampTypeSpecifier = [&](TypeSpecifierNode& type_spec) {
-		if (!type_spec.has_template_parameter_identity()) {
-			return;
-		}
-		const StringHandle param_name = type_spec.template_parameter_name();
-		for (size_t index = 0; index < template_parameters.size(); ++index) {
-			const TemplateParameterNode& parameter = template_parameters[index];
-			if (parameter.kind() != TemplateParameterKind::Type) {
-				continue;
+	const auto stampTypeSpecifier = [&](TypeSpecifierNode& root_type) {
+		std::vector<TypeSpecifierNode*> pending_types{&root_type};
+		while (!pending_types.empty()) {
+			TypeSpecifierNode& type_spec = *pending_types.back();
+			pending_types.pop_back();
+			if (type_spec.has_template_parameter_identity()) {
+				const StringHandle param_name = type_spec.template_parameter_name();
+				for (size_t index = 0; index < template_parameters.size(); ++index) {
+					const TemplateParameterNode& parameter = template_parameters[index];
+					if (parameter.kind() == TemplateParameterKind::Type &&
+						parameter.nameHandle() == param_name) {
+						// A member function template parsed inside a class-template body can
+						// carry the enclosing active-template stamp provisionally. The
+						// function parameter list owns this matching binding, so replace it
+						// with the published child identity.
+						type_spec.set_template_parameter_decl(
+							template_decl_id,
+							static_cast<uint32_t>(index));
+						break;
+					}
+				}
 			}
-			if (parameter.nameHandle() == param_name) {
-				// A member function template parsed inside a class-template body can
-				// carry the enclosing active-template stamp provisionally. The
-				// function parameter list owns this matching binding, so replace it
-				// with the published child identity.
-				type_spec.set_template_parameter_decl(template_decl_id, static_cast<uint32_t>(index));
-				return;
+			if (type_spec.has_template_specialization()) {
+				for (size_t index = 0;
+					 index < type_spec.specialization_arg_count();
+					 ++index) {
+					if (type_spec.specialization_arg_is_type(index)) {
+						pending_types.push_back(
+							&type_spec.specialization_arg_type(index));
+					}
+				}
 			}
 		}
 	};
