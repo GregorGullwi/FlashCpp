@@ -35,12 +35,11 @@ lowering all route through that one classification, so a trait no longer
 answers differently depending on whether it is folded or lowered. Class, union,
 cv, signedness, and the `__is_polymorphic`, `__is_final`, and
 `__is_abstract` traits now read canonical type identity or published facts for
-completed non-template records. Complete class-template specializations still
-need their semantic property facts published after lazy member declarations are
-registered. `__is_empty`, triviality, lifetime, and constructibility traits
-still read sema-owned record metadata, and template, constexpr, and IR consumers
-still read flat fields. Array and callable outer wrappers remain guarded where
-their consumers are not migrated.
+completed records, including materialized class-template specializations.
+`__is_empty`, triviality, lifetime, and constructibility traits still read
+sema-owned record metadata, and template, constexpr, and IR consumers still
+read flat fields. Array and callable outer wrappers remain guarded where their
+consumers are not migrated.
 
 The lazy constraint evaluator routes the same family through that shared
 classification. A concept requirement whose operand is a substituted template
@@ -105,12 +104,12 @@ plain and signed and unsigned builtins, `wchar_t`, `char`, floating types, both
 enum forms, a union, a struct, a derived struct, a const record, a
 class-template specialization, arrays of every bound shape, const and volatile
 qualifiers, references, and a const pointer, in both the folded and the lowered
-path. The triviality family - `__is_trivially_copyable`, `__is_trivial`,
-`__is_pod`, `__is_standard_layout`, `__is_aggregate`, `__is_empty`,
-`__is_polymorphic`, `__is_final`, `__is_abstract`, and the destructibility and
-constructibility families - still reads `StructTypeInfo`, because
-`CanonicalRecordLayout` publishes object size and member offsets but not member
-triviality, vtable state, or user-declared special members.
+path. The remaining sema-owned record traits - `__is_trivially_copyable`,
+`__is_trivial`, `__is_pod`, `__is_standard_layout`, `__is_aggregate`,
+`__is_empty`, and the destructibility and constructibility families - still read
+`StructTypeInfo`, because the canonical schemas do not yet publish member
+triviality or user-declared special-member facts. Polymorphic, final, and
+abstract are answered from the separate canonical record-properties schema.
 
 Nominal identity is now a property of the syntax node rather than of whichever
 consumer reads it: a record or enum specifier carries its `EntityId` from the
@@ -743,10 +742,8 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    family is done in the shared type-trait evaluator and in the lazy-constraint
    evaluator, nominal identity is published at parser materialization, and the
    class, union, qualification, and published polymorphic/final/abstract traits
-   for completed non-template records are answered canonically. The implicit
-   class-template instantiation path still needs to publish those facts after
-   lazy member declarations are registered; see [known issues](KNOWN_ISSUES.md).
-   Next in order:
+   for completed records, including class-template specializations, are answered
+   canonically. Next in order:
    1. **The remaining triviality and lifetime trait families.** `__is_trivially_copyable`,
       `__is_trivial`, `__is_pod`, `__is_standard_layout`, `__is_aggregate`,
       `__is_empty`, `__is_destructible`, `__is_trivially_destructible`,
@@ -755,7 +752,9 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       `StructTypeInfo`. `CanonicalRecordLayout` publishes object size, member
       offsets, and the union flag. The separate `CanonicalRecordProperties`
       schema now publishes polymorphic, final, and abstract facts for completed
-      record TypeIds. The remaining traits need member and special-member facts,
+      record TypeIds. Class-template instantiation refreshes virtual metadata and
+      layout after attaching member declarations, then publishes these facts.
+      The remaining traits need member and special-member facts,
       so this needs a broader schema for record members and special members
       rather than a classifier change. Unowned traits remain
       `ConstraintSatisfaction::Unknown` in concepts; migrating them will drive

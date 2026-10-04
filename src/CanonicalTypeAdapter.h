@@ -456,6 +456,10 @@ inline TypeSpecifierNode typeSpecifierFromFunctionType(const FunctionType& type)
 inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax, CanonicalTypeImportContext context);
 
+inline CanonicalTypeImport importCanonicalClassTypeInfo(
+	CanonicalTypeTable& table,
+	const TypeInfo& type_info);
+
 inline CanonicalTypeImport importCanonicalFunctionTypeComponent(CanonicalTypeTable& table,
 	const FunctionType& type, CanonicalTypeImportContext context) {
 	return importCanonicalTypeImpl(
@@ -1221,6 +1225,35 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 
 inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
 	return importCanonicalTypeImpl(table, syntax, CanonicalTypeImportContext::Exact);
+}
+
+inline CanonicalTypeImport importCanonicalStructuralTraitOperand(
+	CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax) {
+	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+	if (imported.status != CanonicalTypeImportStatus::UnmigratedNominal ||
+		!syntax.type_index().is_valid()) {
+		return imported;
+	}
+	const TypeInfo* type_info = tryGetTypeInfo(syntax.type_index());
+	if (type_info == nullptr) {
+		return imported;
+	}
+	const CanonicalTypeImport imported_class =
+		importCanonicalClassTypeInfo(table, *type_info);
+	if (imported_class.status != CanonicalTypeImportStatus::Supported) {
+		return imported_class;
+	}
+	auto id = table.qualify(imported_class.type, syntax.cv_qualifier());
+	if (syntax.has_ordered_declarator()) {
+		return applyCanonicalOrderedDeclarator(
+			table, id, syntax, CanonicalTypeImportContext::Exact);
+	}
+	id = addCanonicalPointerLevels(table, id, syntax.pointer_levels());
+	if (syntax.reference_qualifier() != ReferenceQualifier::None) {
+		id = table.reference(id, syntax.reference_qualifier());
+	}
+	return {id, CanonicalTypeImportStatus::Supported};
 }
 
 inline CanonicalTypeImport importCanonicalTemplateTypeArgumentDirect(

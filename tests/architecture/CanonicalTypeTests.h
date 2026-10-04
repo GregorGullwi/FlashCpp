@@ -804,6 +804,30 @@ inline void checkAdapter() {
 			CanonicalTemplateArgument::makeTemplate(TemplateDeclId{13}),
 			CanonicalTemplateArgument::makeType(table.builtin(CanonicalBuiltinKind::Int)),
 		}));
+	const TypeId multidimensional_array_argument = table.array(
+		table.array(table.builtin(CanonicalBuiltinKind::Int), 4), 3);
+	const CanonicalTemplateArgument array_template_args[] = {
+		CanonicalTemplateArgument::makeType(multidimensional_array_argument),
+	};
+	const TypeId array_type_arguments[] = {multidimensional_array_argument};
+	const TypeId array_template_specialization = table.templateSpecialization(
+		TemplateDeclId{14}, array_template_args);
+	const TypeId array_template_arg_link =
+		table.templateSpecializationArguments(array_template_specialization);
+	require(table.templateArgumentType(array_template_arg_link) ==
+		multidimensional_array_argument);
+	const TypeId array_argument_owner = table.templateParameter(TemplateDeclId{15}, 0);
+	const TypeId array_dependent_member = table.dependentTemplateMember(
+		array_argument_owner, "Member", std::span<const TypeId>(array_type_arguments));
+	require(table.templateArgumentType(
+		table.dependentTemplateMemberArguments(array_dependent_member)) ==
+		multidimensional_array_argument);
+	const TypeId array_dependent_alias = table.dependentMemberAlias(
+		array_argument_owner, TemplateDeclId{16},
+		std::span<const TypeId>(array_type_arguments));
+	require(table.templateArgumentType(
+		table.dependentMemberAliasArguments(array_dependent_alias)) ==
+		multidimensional_array_argument);
 	TypeSpecifierNode dependent_template_specialization(
 		TypeCategory::Template, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	dependent_template_specialization.set_template_specialization_mixed(

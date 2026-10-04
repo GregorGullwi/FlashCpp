@@ -558,6 +558,9 @@ struct StructTypeInfo {
 	// Returns false if semantic errors were detected (e.g., overriding final function)
 	bool buildVTable();
 
+	// Rebuild virtual metadata after template member declarations are attached.
+	bool rebuildVTable();
+
 	// Update abstract flag based on pure virtual functions in vtable
 	void updateAbstractFlag();
 
