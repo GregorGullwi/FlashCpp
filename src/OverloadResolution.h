@@ -6237,6 +6237,15 @@ inline OverloadResolutionResult resolve_overload_cached(
 struct CanonicalTemplateTypeBinding {
 	uint32_t parameter_index;
 	TypeId argument;
+	std::optional<size_t> pack_element_index;
+};
+
+struct CanonicalFunctionTemplateTypePattern {
+	TypeId function_type;
+	// The canonical function stores a pack's element type; these indices retain
+	// where that element expands and which template parameter it binds.
+	std::optional<size_t> function_parameter_pack_position;
+	std::optional<uint32_t> template_parameter_pack_index;
 };
 
 enum class CanonicalTemplateDeductionStatus : uint8_t {
@@ -6257,15 +6266,22 @@ struct CanonicalTemplateTypeDeduction {
 // required by [temp.deduct.partial] without manufacturing semantic identities.
 inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 	CanonicalTypeTable& table,
-	TypeId pattern_function,
-	TypeId argument_function,
+	const CanonicalFunctionTemplateTypePattern& pattern_function,
+	const CanonicalFunctionTemplateTypePattern& argument_function,
 	TemplateDeclId pattern_template) {
 	CanonicalTemplateTypeDeduction result;
-	if (!pattern_template || !pattern_function || !argument_function) {
+	if (!pattern_template || !pattern_function.function_type ||
+		!argument_function.function_type ||
+		(pattern_function.function_parameter_pack_position.has_value() !=
+			pattern_function.template_parameter_pack_index.has_value()) ||
+		(argument_function.function_parameter_pack_position.has_value() !=
+			argument_function.template_parameter_pack_index.has_value())) {
 		return result;
 	}
-	const CanonicalTypeNode pattern_function_node = table.node(pattern_function);
-	const CanonicalTypeNode argument_function_node = table.node(argument_function);
+	const CanonicalTypeNode pattern_function_node =
+		table.node(pattern_function.function_type);
+	const CanonicalTypeNode argument_function_node =
+		table.node(argument_function.function_type);
 	if (pattern_function_node.kind != CanonicalTypeKind::Function ||
 		argument_function_node.kind != CanonicalTypeKind::Function) {
 		return result;
@@ -6274,6 +6290,7 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 	struct TypePair {
 		TypeId pattern;
 		TypeId argument;
+		std::optional<size_t> pack_element_index;
 	};
 	std::vector<TypePair> pending;
 	std::vector<CanonicalTemplateTypeBinding> bindings;
@@ -6285,7 +6302,25 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 		}
 		return table.withoutTopLevelQualifiers(type);
 	};
-	auto append_function_pairs = [&](TypeId pattern, TypeId argument) {
+	auto collect_function_parameters = [&](TypeId function) {
+		std::vector<TypeId> parameters;
+		TypeId parameter = table.functionParameters(function);
+		while (parameter) {
+			parameters.push_back(table.functionParameterType(parameter));
+			parameter = table.functionParameterNext(parameter);
+		}
+		return parameters;
+	};
+	auto append_function_pairs = [
+		&table,
+		&pending,
+		&collect_function_parameters,
+		&strip_top_level_parameter_qualifiers](
+			TypeId pattern,
+			TypeId argument,
+			std::optional<size_t> pattern_pack_position,
+			std::optional<size_t> argument_pack_position,
+			std::optional<size_t> enclosing_pack_element_index) {
 		const CanonicalTypeNode pattern_node = table.node(pattern);
 		const CanonicalTypeNode argument_node = table.node(argument);
 		if (pattern_node.kind != CanonicalTypeKind::Function ||
@@ -6296,24 +6331,78 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 			(pattern_node.array_extent >> 32) != (argument_node.array_extent >> 32)) {
 			return false;
 		}
-		pending.push_back(TypePair{pattern_node.child, argument_node.child});
-		TypeId pattern_param = table.functionParameters(pattern);
-		TypeId argument_param = table.functionParameters(argument);
-		while (pattern_param || argument_param) {
-			if (!pattern_param || !argument_param) {
-				return false;
-			}
+		pending.push_back(TypePair{
+			pattern_node.child, argument_node.child,
+			enclosing_pack_element_index});
+		const std::vector<TypeId> pattern_parameters =
+			collect_function_parameters(pattern);
+		const std::vector<TypeId> argument_parameters =
+			collect_function_parameters(argument);
+		if ((pattern_pack_position.has_value() &&
+				(*pattern_pack_position >= pattern_parameters.size() ||
+				 *pattern_pack_position + 1 != pattern_parameters.size())) ||
+			(argument_pack_position.has_value() &&
+				(*argument_pack_position >= argument_parameters.size() ||
+				 *argument_pack_position + 1 != argument_parameters.size()))) {
+			return false;
+		}
+		auto append_parameter_pair = [&](size_t pattern_index,
+									 size_t argument_index,
+									 std::optional<size_t> pack_element_index) {
 			pending.push_back(TypePair{
 				strip_top_level_parameter_qualifiers(
-					table.functionParameterType(pattern_param)),
+					pattern_parameters[pattern_index]),
 				strip_top_level_parameter_qualifiers(
-					table.functionParameterType(argument_param))});
-			pattern_param = table.functionParameterNext(pattern_param);
-			argument_param = table.functionParameterNext(argument_param);
+					argument_parameters[argument_index]),
+				pack_element_index});
+		};
+		if (pattern_pack_position.has_value()) {
+			const size_t pattern_pack = *pattern_pack_position;
+			if (argument_pack_position.has_value() &&
+				*argument_pack_position < pattern_pack) {
+				return false;
+			}
+			if (argument_parameters.size() < pattern_pack) {
+				return false;
+			}
+			for (size_t index = 0; index < pattern_pack; ++index) {
+				if (argument_pack_position.has_value() &&
+					index >= *argument_pack_position) {
+					return false;
+				}
+				append_parameter_pair(
+					index, index, enclosing_pack_element_index);
+			}
+			for (size_t index = pattern_pack;
+				 index < argument_parameters.size();
+				 ++index) {
+				if (argument_pack_position.has_value() &&
+					index > *argument_pack_position) {
+					return false;
+				}
+				append_parameter_pair(
+					pattern_pack,
+					index,
+					index - pattern_pack);
+			}
+			return true;
+		}
+		if (argument_pack_position.has_value() ||
+			pattern_parameters.size() != argument_parameters.size()) {
+			return false;
+		}
+		for (size_t index = 0; index < pattern_parameters.size(); ++index) {
+			append_parameter_pair(
+				index, index, enclosing_pack_element_index);
 		}
 		return true;
 	};
-	if (!append_function_pairs(pattern_function, argument_function)) {
+	if (!append_function_pairs(
+			pattern_function.function_type,
+			argument_function.function_type,
+			pattern_function.function_parameter_pack_position,
+			argument_function.function_parameter_pack_position,
+			std::nullopt)) {
 		result.status = CanonicalTemplateDeductionStatus::Mismatch;
 		return result;
 	}
@@ -6327,14 +6416,29 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 			table.templateParameterDecl(pair.pattern) == pattern_template) {
 			const uint32_t parameter_index =
 				table.templateParameterIndex(pair.pattern);
+			const bool is_template_parameter_pack =
+				pattern_function.template_parameter_pack_index.has_value() &&
+				parameter_index ==
+					*pattern_function.template_parameter_pack_index;
+			if (is_template_parameter_pack &&
+				!pair.pack_element_index.has_value()) {
+				result.status = CanonicalTemplateDeductionStatus::Unsupported;
+				return result;
+			}
+			const std::optional<size_t> binding_pack_element_index =
+				is_template_parameter_pack
+					? pair.pack_element_index
+					: std::nullopt;
 			auto existing = std::find_if(
 				bindings.begin(), bindings.end(),
 				[&](const CanonicalTemplateTypeBinding& binding) {
-					return binding.parameter_index == parameter_index;
+					return binding.parameter_index == parameter_index &&
+						binding.pack_element_index == binding_pack_element_index;
 				});
 			if (existing == bindings.end()) {
 				bindings.push_back(CanonicalTemplateTypeBinding{
-					parameter_index, pair.argument});
+					parameter_index, pair.argument,
+					binding_pack_element_index});
 			} else if (existing->argument != pair.argument) {
 				result.status = CanonicalTemplateDeductionStatus::Mismatch;
 				return result;
@@ -6349,118 +6453,142 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 			return result;
 		}
 		switch (pattern.kind) {
-			case CanonicalTypeKind::Builtin:
-				break;
-			case CanonicalTypeKind::Qualified:
-			case CanonicalTypeKind::Pointer:
-			case CanonicalTypeKind::LValueReference:
-			case CanonicalTypeKind::RValueReference:
-				pending.push_back(TypePair{pattern.child, argument.child});
-				break;
-			case CanonicalTypeKind::Array:
-				if (pattern.array_extent != argument.array_extent) {
+		case CanonicalTypeKind::Builtin:
+			break;
+		case CanonicalTypeKind::Qualified:
+		case CanonicalTypeKind::Pointer:
+		case CanonicalTypeKind::LValueReference:
+		case CanonicalTypeKind::RValueReference:
+			pending.push_back(TypePair{
+				pattern.child, argument.child, pair.pack_element_index});
+			break;
+		case CanonicalTypeKind::Array:
+			if (pattern.array_extent != argument.array_extent) {
+				result.status = CanonicalTemplateDeductionStatus::Mismatch;
+				return result;
+			}
+			pending.push_back(TypePair{
+				pattern.child, argument.child, pair.pack_element_index});
+			break;
+		case CanonicalTypeKind::Function:
+			if (!append_function_pairs(
+					pair.pattern,
+					pair.argument,
+					std::nullopt,
+					std::nullopt,
+					pair.pack_element_index)) {
+				result.status = CanonicalTemplateDeductionStatus::Mismatch;
+				return result;
+			}
+			break;
+		case CanonicalTypeKind::Record:
+		case CanonicalTypeKind::Enum:
+			if (pattern.array_extent != argument.array_extent) {
+				result.status = CanonicalTemplateDeductionStatus::Mismatch;
+				return result;
+			}
+			break;
+		case CanonicalTypeKind::MemberObjectPointer:
+		case CanonicalTypeKind::MemberFunctionPointer:
+			pending.push_back(TypePair{
+				table.memberPointerOwner(pair.pattern),
+				table.memberPointerOwner(pair.argument),
+				pair.pack_element_index});
+			pending.push_back(TypePair{
+				pattern.child, argument.child, pair.pack_element_index});
+			break;
+		case CanonicalTypeKind::TemplateParameter:
+			if (pattern.array_extent != argument.array_extent) {
+				result.status = CanonicalTemplateDeductionStatus::Mismatch;
+				return result;
+			}
+			break;
+		case CanonicalTypeKind::TemplateSpecialization:
+		case CanonicalTypeKind::AliasTemplateSpecialization: {
+			if (pattern.array_extent != argument.array_extent) {
+				result.status = CanonicalTemplateDeductionStatus::Mismatch;
+				return result;
+			}
+			TypeId pattern_arg = table.templateSpecializationArguments(pair.pattern);
+			TypeId argument_arg = table.templateSpecializationArguments(pair.argument);
+			while (pattern_arg || argument_arg) {
+				if (!pattern_arg || !argument_arg) {
 					result.status = CanonicalTemplateDeductionStatus::Mismatch;
 					return result;
 				}
-				pending.push_back(TypePair{pattern.child, argument.child});
-				break;
-			case CanonicalTypeKind::Function:
-				if (!append_function_pairs(pair.pattern, pair.argument)) {
+				const CanonicalTemplateArgKind pattern_kind =
+					table.templateArgumentKind(pattern_arg);
+				const CanonicalTemplateArgKind argument_kind =
+					table.templateArgumentKind(argument_arg);
+				if (pattern_kind != argument_kind) {
 					result.status = CanonicalTemplateDeductionStatus::Mismatch;
 					return result;
 				}
-				break;
-			case CanonicalTypeKind::Record:
-			case CanonicalTypeKind::Enum:
-				if (pattern.array_extent != argument.array_extent) {
-					result.status = CanonicalTemplateDeductionStatus::Mismatch;
-					return result;
-				}
-				break;
-			case CanonicalTypeKind::MemberObjectPointer:
-			case CanonicalTypeKind::MemberFunctionPointer:
-				pending.push_back(TypePair{
-					table.memberPointerOwner(pair.pattern),
-					table.memberPointerOwner(pair.argument)});
-				pending.push_back(TypePair{pattern.child, argument.child});
-				break;
-			case CanonicalTypeKind::TemplateParameter:
-				if (pattern.array_extent != argument.array_extent) {
-					result.status = CanonicalTemplateDeductionStatus::Mismatch;
-					return result;
-				}
-				break;
-			case CanonicalTypeKind::TemplateSpecialization:
-			case CanonicalTypeKind::AliasTemplateSpecialization: {
-				if (pattern.array_extent != argument.array_extent) {
-					result.status = CanonicalTemplateDeductionStatus::Mismatch;
-					return result;
-				}
-				TypeId pattern_arg = table.templateSpecializationArguments(pair.pattern);
-				TypeId argument_arg = table.templateSpecializationArguments(pair.argument);
-				while (pattern_arg || argument_arg) {
-					if (!pattern_arg || !argument_arg) {
-						result.status = CanonicalTemplateDeductionStatus::Mismatch;
-						return result;
-					}
-					const CanonicalTemplateArgKind pattern_kind =
-						table.templateArgumentKind(pattern_arg);
-					const CanonicalTemplateArgKind argument_kind =
-						table.templateArgumentKind(argument_arg);
-					if (pattern_kind != argument_kind) {
-						result.status = CanonicalTemplateDeductionStatus::Mismatch;
-						return result;
-					}
-					if (pattern_kind == CanonicalTemplateArgKind::Type) {
-						pending.push_back(TypePair{
-							table.templateArgumentType(pattern_arg),
-							table.templateArgumentType(argument_arg)});
-					} else if (pattern_kind == CanonicalTemplateArgKind::NonType) {
-						if (table.templateArgumentExpr(pattern_arg) !=
-							table.templateArgumentExpr(argument_arg)) {
-							result.status = CanonicalTemplateDeductionStatus::Unsupported;
-							return result;
-						}
-					} else if (pattern_kind == CanonicalTemplateArgKind::Template) {
-						if (table.templateArgumentTemplate(pattern_arg) !=
-							table.templateArgumentTemplate(argument_arg)) {
-							result.status = CanonicalTemplateDeductionStatus::Unsupported;
-							return result;
-						}
-					} else if (
-						table.templateArgumentDependentTemplateDecl(pattern_arg) !=
-							table.templateArgumentDependentTemplateDecl(argument_arg) ||
-						table.templateArgumentDependentTemplateIndex(pattern_arg) !=
-							table.templateArgumentDependentTemplateIndex(argument_arg)) {
+				if (pattern_kind == CanonicalTemplateArgKind::Type) {
+					pending.push_back(TypePair{
+						table.templateArgumentType(pattern_arg),
+						table.templateArgumentType(argument_arg),
+						pair.pack_element_index});
+				} else if (pattern_kind == CanonicalTemplateArgKind::NonType) {
+					if (table.templateArgumentExpr(pattern_arg) !=
+						table.templateArgumentExpr(argument_arg)) {
 						result.status = CanonicalTemplateDeductionStatus::Unsupported;
 						return result;
 					}
-					pattern_arg = table.templateArgumentNext(pattern_arg);
-					argument_arg = table.templateArgumentNext(argument_arg);
-				}
-				break;
-			}
-			case CanonicalTypeKind::DependentName:
-			case CanonicalTypeKind::DependentTemplateMember:
-			case CanonicalTypeKind::DependentMemberAlias:
-			case CanonicalTypeKind::TemplateArg:
-			case CanonicalTypeKind::NonTypeTemplateArg:
-			case CanonicalTypeKind::TemplateTemplateArg:
-			case CanonicalTypeKind::DependentTemplateTemplateArg:
-			case CanonicalTypeKind::NameBytes:
-				if (pair.pattern != pair.argument) {
+				} else if (pattern_kind == CanonicalTemplateArgKind::Template) {
+					if (table.templateArgumentTemplate(pattern_arg) !=
+						table.templateArgumentTemplate(argument_arg)) {
+						result.status = CanonicalTemplateDeductionStatus::Unsupported;
+						return result;
+					}
+				} else if (
+					table.templateArgumentDependentTemplateDecl(pattern_arg) !=
+						table.templateArgumentDependentTemplateDecl(argument_arg) ||
+					table.templateArgumentDependentTemplateIndex(pattern_arg) !=
+						table.templateArgumentDependentTemplateIndex(argument_arg)) {
 					result.status = CanonicalTemplateDeductionStatus::Unsupported;
 					return result;
 				}
-				break;
-			case CanonicalTypeKind::FunctionParam:
+				pattern_arg = table.templateArgumentNext(pattern_arg);
+				argument_arg = table.templateArgumentNext(argument_arg);
+			}
+			break;
+		}
+		case CanonicalTypeKind::DependentName:
+		case CanonicalTypeKind::DependentTemplateMember:
+		case CanonicalTypeKind::DependentMemberAlias:
+		case CanonicalTypeKind::TemplateArg:
+		case CanonicalTypeKind::NonTypeTemplateArg:
+		case CanonicalTypeKind::TemplateTemplateArg:
+		case CanonicalTypeKind::DependentTemplateTemplateArg:
+		case CanonicalTypeKind::NameBytes:
+			if (pair.pattern != pair.argument) {
 				result.status = CanonicalTemplateDeductionStatus::Unsupported;
 				return result;
+			}
+			break;
+		case CanonicalTypeKind::FunctionParam:
+			result.status = CanonicalTemplateDeductionStatus::Unsupported;
+			return result;
 		}
 	}
 	result.status = CanonicalTemplateDeductionStatus::Match;
 	result.bindings = std::move(bindings);
 	return result;
+}
+
+inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
+	CanonicalTypeTable& table,
+	TypeId pattern_function,
+	TypeId argument_function,
+	TemplateDeclId pattern_template) {
+	return deduceCanonicalFunctionTemplateType(
+		table,
+		CanonicalFunctionTemplateTypePattern{
+			pattern_function, std::nullopt, std::nullopt},
+		CanonicalFunctionTemplateTypePattern{
+			argument_function, std::nullopt, std::nullopt},
+		pattern_template);
 }
 
 enum class CanonicalTemplatePartialOrdering : uint8_t {
@@ -6473,9 +6601,9 @@ enum class CanonicalTemplatePartialOrdering : uint8_t {
 
 inline CanonicalTemplatePartialOrdering compareCanonicalFunctionTemplateTypes(
 	CanonicalTypeTable& table,
-	TypeId first_function,
+	const CanonicalFunctionTemplateTypePattern& first_function,
 	TemplateDeclId first_template,
-	TypeId second_function,
+	const CanonicalFunctionTemplateTypePattern& second_function,
 	TemplateDeclId second_template) {
 	const CanonicalTemplateTypeDeduction second_from_first =
 		deduceCanonicalFunctionTemplateType(
@@ -6501,6 +6629,22 @@ inline CanonicalTemplatePartialOrdering compareCanonicalFunctionTemplateTypes(
 		return CanonicalTemplatePartialOrdering::Equivalent;
 	}
 	return CanonicalTemplatePartialOrdering::Neither;
+}
+
+inline CanonicalTemplatePartialOrdering compareCanonicalFunctionTemplateTypes(
+	CanonicalTypeTable& table,
+	TypeId first_function,
+	TemplateDeclId first_template,
+	TypeId second_function,
+	TemplateDeclId second_template) {
+	return compareCanonicalFunctionTemplateTypes(
+		table,
+		CanonicalFunctionTemplateTypePattern{
+			first_function, std::nullopt, std::nullopt},
+		first_template,
+		CanonicalFunctionTemplateTypePattern{
+			second_function, std::nullopt, std::nullopt},
+		second_template);
 }
 
 inline int computeFunctionTemplateSpecificity(const TemplateFunctionDeclarationNode& template_func) {
