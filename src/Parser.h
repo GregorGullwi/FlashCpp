@@ -3865,6 +3865,14 @@ public:	// Public methods for template instantiation
 		const TypeSpecifierNode& target_return_type,
 		TypeId target_return_type_id,
 		bool& return_type_deduced);
+	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCandidateForAddress(
+		const StructTypeInfo& owner,
+		const QualifiedIdentifierNode& member_id,
+		const TemplateFunctionDeclarationNode& function_template,
+		std::span<const TypeSpecifierNode> target_parameter_types,
+		const TypeSpecifierNode& target_return_type,
+		TypeId target_return_type_id,
+		bool& return_type_deduced);
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,

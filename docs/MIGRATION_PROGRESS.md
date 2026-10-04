@@ -699,10 +699,16 @@ Continue boundary 3A in this order:
     need their ordering rules. Nested class-template return types now
     materialize return-only member-template bindings from canonical TypeIds; the
     `test_canonical_member_function_template_nested_return_only_deduction_ret0.cpp`
-    regression covers both scalar and record arguments. Dependent member-owner
-    specializations can still publish distinct canonical identities during
-    address resolution (see `docs/KNOWN_ISSUES.md`). Unconstrained, type-only
-    free-function-template address candidates now deduce and partially order
+    regression covers both scalar and record arguments. Class-template
+    specializations in structured member-function-pointer signatures now
+    receive canonical TypeIds from published TypeInfo before import, and
+    ordinary calls resolve each qualified member-template address candidate
+    against the target signature instead of retaining the first overload's
+    return hint. The regression
+    `tests/test_canonical_dependent_member_template_owner_identity_overload_ret0.cpp`
+    checks dependent scalar and record selection plus direct record selection.
+    Unconstrained, type-only free-function-template address candidates now
+    deduce and partially order
     against the expected function-pointer `TypeId` during ordinary-call
     conversion; direct free functions participate in the same contextual set.
     `tests/test_canonical_free_function_template_address_deduction_ret0.cpp`
