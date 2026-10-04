@@ -129,10 +129,16 @@ table does not own, and the residual 2 on
 `tests/test_canonical_lazy_constraint_traits_ret0.cpp`, which is a
 member-object-pointer operand: that one needs member-owner identity rather than
 nominal type identity, and its owner is not published at materialization.
+The canonical record-properties schema now publishes polymorphic, final, and
+abstract facts for completed record TypeIds. The
+`test_canonical_record_class_trait_concepts_ret0.cpp` regression checks their
+C++20 answers in constant evaluation, runtime lowering, and lazy constraints,
+with both canonical-trait fallback counters at zero. Specializations whose
+semantic property facts have not yet been published remain compatibility-owned.
 The remaining sema-owned class-property and lifetime traits include
-`__is_polymorphic`, `__is_final`, `__is_abstract`, `__is_empty`, the triviality
-family, and the destructibility and constructibility families; these require
-record facts that the canonical table does not yet publish. By contrast,
+`__is_empty`, the triviality family, and the destructibility and constructibility
+families; these require member and special-member facts that the canonical table
+does not yet publish. By contrast,
 `__is_class`, `__is_union`, `__is_const`, `__is_volatile`, `__is_signed`, and
 `__is_unsigned` now use canonical type identity. A concept built on an
 unsupported sema-owned trait still receives an explicit unknown outcome: not

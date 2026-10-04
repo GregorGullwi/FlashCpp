@@ -61,10 +61,10 @@ inline void recordLazyConstraintTraitFallback() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gLazyConstraintTraitFallbackCount);
 }
 
-// Boundary 3A: a structural [meta.unary.prop] trait answered from flat
-// TypeInfo/TypeIndex/pointer-level/array-dimension fields because the canonical
-// type could not be imported. Direction down to zero as the trait consumers
-// migrate; removal boundary is 3A exit.
+// Boundary 3A: a unary [meta.unary.prop] trait answered from compatibility
+// TypeInfo/TypeIndex fields because canonical type structure or published
+// record-property facts were unavailable. Direction down to zero as trait
+// consumers migrate; removal boundary is 3A exit.
 inline void recordCanonicalStructuralTraitFallback() {
 	FLASHCPP_MIGRATION_COUNTER_BODY(++gCanonicalStructuralTraitFallbackCount);
 }

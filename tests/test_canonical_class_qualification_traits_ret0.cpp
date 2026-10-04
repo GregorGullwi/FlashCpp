@@ -1,8 +1,9 @@
-// The class-property and qualification traits are answered from the canonical
-// type: a record's class/union split from its published complete-object layout,
-// cv qualification from the canonical qualifier plus [dcl.array]'s
-// element-qualification rule, and signedness from the canonical builtin under the
-// target data model. The constant-expression path previously read flat fields
+// The class-property and qualification traits are answered from canonical
+// record facts and type identity: class/union, polymorphic, final, and abstract
+// state from published semantic facts, cv qualification from the canonical
+// qualifier plus [dcl.array]'s element-qualification rule, and signedness from
+// the canonical builtin under the target data model. The constant-expression
+// path previously read flat fields
 // and disagreed with the code-generation path - it called an array or a pointer
 // signed, missed cv on a pointer object, and reported cv introduced through a
 // reference as if it qualified the reference.
@@ -14,6 +15,20 @@ struct Rec {
 
 struct Derived : Rec {
 	int extra;
+};
+
+struct Polymorphic {
+	virtual void bump() {}
+};
+
+struct FinalRecord final {};
+
+struct AbstractRecord {
+	virtual void run() = 0;
+};
+
+struct ConcreteRecord : AbstractRecord {
+	void run() override {}
 };
 
 union Variant {
@@ -51,6 +66,16 @@ static_assert(!__is_class(int));
 static_assert(!__is_class(int*));
 static_assert(!__is_class(int[3]));
 static_assert(!__is_class(Rec&));
+
+// These class properties come from semantic facts published with the record,
+// rather than from spelling-based type recovery in each trait consumer.
+static_assert(__is_polymorphic(Polymorphic));
+static_assert(__is_polymorphic(AbstractRecord));
+static_assert(!__is_polymorphic(FinalRecord));
+static_assert(__is_final(FinalRecord));
+static_assert(!__is_final(ConcreteRecord));
+static_assert(__is_abstract(AbstractRecord));
+static_assert(!__is_abstract(ConcreteRecord));
 
 // Only a union is a union, and a union is not a class.
 static_assert(__is_union(Variant));
@@ -162,5 +187,11 @@ int main() {
 	mismatches |= __is_unsigned(int[3]) ? 2097152u : 0u;
 	mismatches |= __is_pointer(int* const) ? 0u : 4194304u;
 	mismatches |= __is_const(int* const) ? 0u : 8388608u;
+	mismatches |= __is_polymorphic(Polymorphic) ? 0u : 16777216u;
+	mismatches |= __is_polymorphic(FinalRecord) ? 33554432u : 0u;
+	mismatches |= __is_final(FinalRecord) ? 0u : 67108864u;
+	mismatches |= __is_final(ConcreteRecord) ? 134217728u : 0u;
+	mismatches |= __is_abstract(AbstractRecord) ? 0u : 268435456u;
+	mismatches |= __is_abstract(ConcreteRecord) ? 536870912u : 0u;
 	return static_cast<int>(mismatches & 0x7fffffffu);
 }

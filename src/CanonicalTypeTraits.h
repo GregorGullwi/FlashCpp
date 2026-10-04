@@ -21,11 +21,10 @@ struct TypeTraitResult {
 	static TypeTraitResult failure() { return {false, false}; }
 };
 
-// Evaluates the unary [meta.unary.prop] traits whose answer is a function of the
-// canonical type's structural shape: references, pointers, arrays, functions,
-// member pointers, enums, builtins, and the arithmetic/scalar/fundamental/
-// object/compound groupings derived from them. The canonical node is the only
-// authority; no TypeInfo, TypeIndex, pointer level, or array dimension is read.
+// Evaluates unary type-property traits from canonical type structure and
+// published nominal record facts: references, pointers, arrays, functions,
+// member pointers, enums, builtins, class/union identity, and record properties.
+// No TypeInfo, TypeIndex, pointer level, array dimension, or spelling is read.
 // An empty result allows compatibility evaluation for an unmigrated projectable
 // operand; unsupported non-projectable operands fail.
 std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(

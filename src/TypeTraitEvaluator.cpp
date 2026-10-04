@@ -214,11 +214,10 @@ bool areSameTypeTraitOperands(
 
 namespace {
 
-// The unary [meta.unary.prop] family whose answer is a pure function of the
-// canonical type's structural shape. This enumeration is the single authority
+// Unary [meta.unary.prop] properties answered from canonical type shape or
+// published nominal record facts. This enumeration is the single authority
 // for family membership: the answer switch is exhaustive over it, so a trait
-// cannot be classified canonically without being classified from a canonical
-// node, and a new property cannot be added without an answer.
+// cannot be classified without an answer from canonical type data.
 enum class CanonicalTraitProperty : uint8_t {
 	None,
 	IsReference,
@@ -243,6 +242,9 @@ enum class CanonicalTraitProperty : uint8_t {
 	IsCompound,
 	IsClass,
 	IsUnion,
+	IsPolymorphic,
+	IsFinal,
+	IsAbstract,
 	IsConst,
 	IsVolatile,
 	IsSigned,
@@ -277,6 +279,9 @@ CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
 	case TypeTraitKind::IsCompound: return CanonicalTraitProperty::IsCompound;
 	case TypeTraitKind::IsClass: return CanonicalTraitProperty::IsClass;
 	case TypeTraitKind::IsUnion: return CanonicalTraitProperty::IsUnion;
+	case TypeTraitKind::IsPolymorphic: return CanonicalTraitProperty::IsPolymorphic;
+	case TypeTraitKind::IsFinal: return CanonicalTraitProperty::IsFinal;
+	case TypeTraitKind::IsAbstract: return CanonicalTraitProperty::IsAbstract;
 	case TypeTraitKind::IsConst: return CanonicalTraitProperty::IsConst;
 	case TypeTraitKind::IsVolatile: return CanonicalTraitProperty::IsVolatile;
 	case TypeTraitKind::IsSigned: return CanonicalTraitProperty::IsSigned;
@@ -331,7 +336,7 @@ bool isDependentCanonicalNode(CanonicalTypeKind kind) {
 // Classifies one canonical type. `type` is the imported identity, not a peeled
 // node: cv qualification and array bounds are part of the answer for some
 // properties, so each property decides how far to walk.
-bool canonicalNodeSatisfies(CanonicalTraitProperty property,
+std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 	const CanonicalTypeTable& table, TypeId type) {
 	// [dcl.array] an array type is identically cv-qualified to its element, and
 	// [dcl.ref] cv-qualifiers introduced through a reference are ignored. The
@@ -466,6 +471,34 @@ bool canonicalNodeSatisfies(CanonicalTraitProperty property,
 			layout.flags, CanonicalRecordLayoutFlags::Union);
 		return property == CanonicalTraitProperty::IsUnion ? is_union : !is_union;
 	}
+	case CanonicalTraitProperty::IsPolymorphic:
+	case CanonicalTraitProperty::IsFinal:
+	case CanonicalTraitProperty::IsAbstract: {
+		if (is_reference ||
+			(kind != CanonicalTypeKind::Record &&
+				kind != CanonicalTypeKind::TemplateSpecialization)) {
+			return false;
+		}
+		if (!table.hasRecordProperties(peeled)) {
+			if (kind == CanonicalTypeKind::Record) {
+				const EntityId entity = table.recordEntity(peeled);
+				if (entity && table.hasRecordLayout(entity)) {
+					throw InternalError(
+						"canonical trait: complete record has no published property facts");
+				}
+			}
+			return std::nullopt;
+		}
+		const CanonicalRecordPropertyFlags flags =
+			table.recordProperties(peeled).flags;
+		const CanonicalRecordPropertyFlags requested_flag =
+			property == CanonicalTraitProperty::IsPolymorphic
+				? CanonicalRecordPropertyFlags::Polymorphic
+				: property == CanonicalTraitProperty::IsFinal
+					? CanonicalRecordPropertyFlags::Final
+					: CanonicalRecordPropertyFlags::Abstract;
+		return hasCanonicalRecordPropertyFlag(flags, requested_flag);
+	}
 	case CanonicalTraitProperty::IsConst:
 	case CanonicalTraitProperty::IsVolatile:
 	case CanonicalTraitProperty::None:
@@ -543,7 +576,13 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 	// Each property decides how far to walk the canonical chain: cv
 	// qualification and array bounds are part of some answers, so the peel is not
 	// hoisted out here.
-	return canonicalNodeSatisfies(property, table, imported_type.type)
+	const std::optional<bool> canonical_result = canonicalNodeSatisfies(
+		property, table, imported_type.type);
+	if (!canonical_result.has_value()) {
+		recordCanonicalStructuralTraitFallback();
+		return std::nullopt;
+	}
+	return *canonical_result
 		? TypeTraitResult::success_true()
 		: TypeTraitResult::success_false();
 }

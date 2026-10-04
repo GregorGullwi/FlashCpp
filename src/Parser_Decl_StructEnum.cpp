@@ -4755,7 +4755,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	stampStructLexicalScope();
 	if (struct_ref.has_entity_id() && struct_info->hasCompleteObjectLayout()) {
 		FrontendContext& front_end = requireFrontendContext();
-		front_end.canonicalTypes().publishRecordLayout({
+		CanonicalTypeTable& canonical_types = front_end.canonicalTypes();
+		const TypeId record_type = canonical_types.record(struct_ref.entity_id());
+		canonical_types.publishRecordLayout({
 			.entity = struct_ref.entity_id(),
 			.size_bytes = canonicalLayoutSize(toSizeT(struct_info->sizeInBytes())),
 			.layout_data_size_bytes = canonicalLayoutSize(toSizeT(struct_info->layout_data_size)),
@@ -4766,19 +4768,21 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			.flags = struct_info->is_union
 				? CanonicalRecordLayoutFlags::Union : CanonicalRecordLayoutFlags::None,
 		});
+		(void)tryPublishCanonicalRecordProperties(
+			canonical_types, record_type, *struct_info);
 		(void)tryPublishCanonicalClassBaseSchema(
-			front_end.canonicalTypes(),
-			front_end.canonicalTypes().record(struct_ref.entity_id()),
+			canonical_types,
+			record_type,
 			*struct_info);
 		(void)tryPublishCanonicalRecordFieldSchema(
-			front_end.canonicalTypes(), struct_ref.entity_id(), *struct_info);
+			canonical_types, struct_ref.entity_id(), *struct_info);
 		tryPublishNestedClassEntities(
 			front_end.declarationBuilder(),
-			front_end.canonicalTypes(),
+			canonical_types,
 			struct_ref,
 			gSymbolTable);
 		(void)tryPublishCanonicalNamedTypeMembers(
-			front_end.canonicalTypes(), struct_ref.entity_id(), struct_ref);
+			canonical_types, struct_ref.entity_id(), struct_ref);
 	}
 	return saved_position.success(struct_node);
 }

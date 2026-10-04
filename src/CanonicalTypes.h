@@ -295,6 +295,23 @@ enum class CanonicalRecordBaseFlags : uint8_t {
 	Virtual = 1 << 0,
 };
 
+enum class CanonicalRecordPropertyFlags : uint8_t {
+	None = 0,
+	Polymorphic = 1 << 0,
+	Final = 1 << 1,
+	Abstract = 1 << 2,
+};
+
+// Semantic facts that cannot be derived from object layout alone. These are
+// keyed by canonical class TypeId rather than a spelling or parser type index.
+struct CanonicalRecordProperties {
+	TypeId type;
+	CanonicalRecordPropertyFlags flags;
+	uint8_t reserved = 0;
+	uint16_t reserved2 = 0;
+	friend bool operator==(CanonicalRecordProperties, CanonicalRecordProperties) = default;
+};
+
 // Data-member schema entry. Spelling is deliberately absent: identity is the
 // owning EntityId, declaration order, TypeId, and layout facts.
 struct CanonicalRecordMember {
@@ -370,16 +387,35 @@ inline bool hasCanonicalRecordBaseFlag(CanonicalRecordBaseFlags flags,
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
 }
 
+inline CanonicalRecordPropertyFlags operator|(
+	CanonicalRecordPropertyFlags a,
+	CanonicalRecordPropertyFlags b) {
+	return static_cast<CanonicalRecordPropertyFlags>(
+		static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline CanonicalRecordPropertyFlags& operator|=(
+	CanonicalRecordPropertyFlags& a,
+	CanonicalRecordPropertyFlags b) {
+	return a = a | b;
+}
+inline bool hasCanonicalRecordPropertyFlag(
+	CanonicalRecordPropertyFlags flags,
+	CanonicalRecordPropertyFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
 static_assert(std::is_trivially_copyable_v<CanonicalRecordLayout>);
 static_assert(std::is_trivially_copyable_v<CanonicalEnumLayout>);
 static_assert(std::is_trivially_copyable_v<CanonicalRecordMember>);
 static_assert(std::is_trivially_copyable_v<CanonicalRecordBase>);
+static_assert(std::is_trivially_copyable_v<CanonicalRecordProperties>);
 static_assert(std::is_trivially_copyable_v<CanonicalClassBase>);
 static_assert(std::is_trivially_copyable_v<CanonicalNamedTypeMember>);
 static_assert(sizeof(CanonicalRecordLayout) == 24);
 static_assert(sizeof(CanonicalEnumLayout) == 20);
 static_assert(sizeof(CanonicalRecordMember) == 16);
 static_assert(sizeof(CanonicalRecordBase) == 16);
+static_assert(sizeof(CanonicalRecordProperties) == 8);
 static_assert(sizeof(CanonicalClassBase) == 8);
 static_assert(sizeof(CanonicalNamedTypeMember) == 16);
 
@@ -602,6 +638,12 @@ public:
 
 	CanonicalRecordLayout recordLayout(EntityId entity) const;
 
+	void publishRecordProperties(TypeId type, CanonicalRecordPropertyFlags flags);
+
+	bool hasRecordProperties(TypeId type) const;
+
+	CanonicalRecordProperties recordProperties(TypeId type) const;
+
 	CanonicalEnumLayout enumLayout(EntityId entity) const;
 
 	void publishRecordFieldSchema(EntityId entity,
@@ -685,6 +727,7 @@ private:
 	struct TransactionMark {
 		size_t node_count;
 		size_t record_layout_count;
+		size_t record_property_count;
 		size_t enum_layout_count;
 		size_t enum_layout_update_count;
 		size_t record_field_schema_count;
@@ -878,6 +921,7 @@ private:
 	static constexpr uint32_t kChunkSize = 64;
 	size_t live_count_ = 0;
 	size_t live_record_layout_count_ = 0;
+	size_t live_record_property_count_ = 0;
 	size_t live_enum_layout_count_ = 0;
 	size_t live_record_field_schema_count_ = 0;
 	size_t live_record_member_count_ = 0;
@@ -897,8 +941,12 @@ private:
 	// Layout samples use 16 slots (384 record bytes / 256 enum bytes per chunk)
 	// until a production corpus provides a larger measured complete-layout peak.
 	ChunkedVector<CanonicalRecordLayout, 16> record_layouts_;
+	// Property samples use 16 records per chunk until class-trait corpora measure
+	// a larger production peak.
+	ChunkedVector<CanonicalRecordProperties, 16> record_properties_;
 	ChunkedVector<CanonicalEnumLayout, 16> enum_layouts_;
 	std::unordered_map<uint32_t, size_t> record_layout_ids_;
+	std::unordered_map<uint32_t, size_t> record_property_ids_;
 	std::unordered_map<uint32_t, size_t> enum_layout_ids_;
 	// Field-schema samples: 16 headers, 32 members, 16 bases per chunk until a
 	// production corpus measures a larger peak.

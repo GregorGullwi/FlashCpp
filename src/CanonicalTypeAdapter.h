@@ -1427,6 +1427,33 @@ inline const StructTypeInfo* canonicalClassStructInfoFromTypeInfo(
 	return nullptr;
 }
 
+inline bool tryPublishCanonicalRecordProperties(
+	CanonicalTypeTable& table,
+	TypeId type,
+	const StructTypeInfo& struct_info) {
+	if (!type || !struct_info.hasCompleteObjectLayout() ||
+		struct_info.has_deferred_base_classes) {
+		return false;
+	}
+	const CanonicalTypeKind kind = table.node(type).kind;
+	if (kind != CanonicalTypeKind::Record &&
+		kind != CanonicalTypeKind::TemplateSpecialization) {
+		return false;
+	}
+	CanonicalRecordPropertyFlags flags = CanonicalRecordPropertyFlags::None;
+	if (struct_info.has_vtable) {
+		flags |= CanonicalRecordPropertyFlags::Polymorphic;
+	}
+	if (struct_info.is_final) {
+		flags |= CanonicalRecordPropertyFlags::Final;
+	}
+	if (struct_info.is_abstract) {
+		flags |= CanonicalRecordPropertyFlags::Abstract;
+	}
+	table.publishRecordProperties(type, flags);
+	return true;
+}
+
 inline bool tryPublishCanonicalClassBaseSchema(
 	CanonicalTypeTable& table,
 	TypeId root_type,
@@ -1451,14 +1478,20 @@ inline bool tryPublishCanonicalClassBaseSchema(
 	while (!worklist.empty()) {
 		const PendingClass current = worklist.back();
 		worklist.pop_back();
-		if (!visited.insert(current.type.value).second ||
-			table.hasClassBaseSchema(current.type)) {
+		if (!visited.insert(current.type.value).second) {
 			continue;
 		}
 		if (current.struct_info == nullptr ||
 			!current.struct_info->layout_is_complete ||
 			current.struct_info->has_deferred_base_classes) {
 			return false;
+		}
+		if (!tryPublishCanonicalRecordProperties(
+				table, current.type, *current.struct_info)) {
+			return false;
+		}
+		if (table.hasClassBaseSchema(current.type)) {
+			continue;
 		}
 
 		std::vector<CanonicalClassBase> bases;
