@@ -480,6 +480,29 @@ to the callable declarator families in architecture boundary 3A, not to the
 trait evaluator; do not special-case function categories in the trait path to
 mask it.
 
+## Selected free-function-template addresses are not materialized for code generation
+
+Contextual type deduction can select a free-function-template specialization
+when its address is used as a call argument, but the evaluated argument still
+reaches IR generation as an unresolved function identifier. For example:
+
+```cpp
+template<class Type>
+int invoke(Type value) { return sizeof(Type); }
+
+void consume(int (*callback)(int));
+
+int main() {
+	consume(&invoke);
+}
+```
+
+The call is semantically rankable against `int (*)(int)`, but code generation
+currently fails with an unknown-symbol error for `invoke`. Unevaluated target
+formation and overload-ranking probes do not exercise this materialization
+path; the selected specialization must be attached to the expression before
+the compiler can generate an evaluated call.
+
 ## Several constrained function templates in one translation unit mis-resolve
 
 Overload resolution between two constrained function templates becomes
