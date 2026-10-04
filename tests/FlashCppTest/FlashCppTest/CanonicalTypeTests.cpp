@@ -1274,6 +1274,82 @@ TEST_CASE("Canonical TypeIds classify class specialization member pointer bases"
 	CHECK_FALSE(table.hasClassBaseSchema(rollback_owner));
 }
 
+TEST_CASE("Canonical function-template ordering handles trailing type packs") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TemplateDeclId all_pack_template{940};
+	const TemplateDeclId leading_pack_template{941};
+	const TypeId all_pack_type = table.templateParameter(all_pack_template, 0);
+	const TypeId leading_type = table.templateParameter(leading_pack_template, 0);
+	const TypeId trailing_pack_type = table.templateParameter(leading_pack_template, 1);
+	const TypeId marker_type = table.record(EntityId{942});
+	const TypeId character = table.builtin(CanonicalBuiltinKind::Char);
+	const std::array<TypeId, 1> all_pack_parameters{all_pack_type};
+	const std::array<TypeId, 2> leading_pack_parameters{
+		leading_type, trailing_pack_type};
+	const std::array<TypeId, 3> target_parameters{
+		integer, marker_type, character};
+	auto make_function = [&table, integer](std::span<const TypeId> parameters) {
+		return table.function(
+			integer,
+			parameters,
+			false,
+			CVQualifier::None,
+			ReferenceQualifier::None,
+			false,
+			CanonicalCallingConvention::Default,
+			CanonicalDllLinkage::None,
+			ExprId{});
+	};
+	const CanonicalFunctionTemplateTypePattern all_pack_pattern{
+		make_function(all_pack_parameters),
+		std::optional<size_t>{0},
+		std::optional<uint32_t>{0}};
+	const CanonicalFunctionTemplateTypePattern leading_pack_pattern{
+		make_function(leading_pack_parameters),
+		std::optional<size_t>{1},
+		std::optional<uint32_t>{1}};
+	const CanonicalFunctionTemplateTypePattern target_pattern{
+		make_function(target_parameters), std::nullopt, std::nullopt};
+
+	const CanonicalTemplateTypeDeduction all_pack_target =
+		deduceCanonicalFunctionTemplateType(
+			table, all_pack_pattern, target_pattern, all_pack_template);
+	CHECK(all_pack_target.status == CanonicalTemplateDeductionStatus::Match);
+	CHECK(all_pack_target.bindings.size() == 3);
+	CHECK(std::ranges::all_of(
+		all_pack_target.bindings,
+		[](const CanonicalTemplateTypeBinding& binding) {
+			return binding.parameter_index == 0 &&
+				binding.pack_element_index.has_value();
+		}));
+	CHECK(std::ranges::any_of(
+		all_pack_target.bindings,
+		[integer](const CanonicalTemplateTypeBinding& binding) {
+			return binding.argument == integer;
+		}));
+	CHECK(std::ranges::any_of(
+		all_pack_target.bindings,
+		[marker_type](const CanonicalTemplateTypeBinding& binding) {
+			return binding.argument == marker_type;
+		}));
+	CHECK(std::ranges::any_of(
+		all_pack_target.bindings,
+		[character](const CanonicalTemplateTypeBinding& binding) {
+			return binding.argument == character;
+		}));
+
+	const CanonicalTemplatePartialOrdering ordering =
+		compareCanonicalFunctionTemplateTypes(
+			table,
+			all_pack_pattern,
+			all_pack_template,
+			leading_pack_pattern,
+			leading_pack_template);
+	CHECK(ordering == CanonicalTemplatePartialOrdering::SecondMoreSpecialized);
+}
+
 TEST_CASE("Canonical TypeIds compare member object pointer pairs") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();

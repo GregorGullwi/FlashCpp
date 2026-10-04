@@ -7148,39 +7148,83 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			}
 		}
 	}
+	if (!target_function_type && target_signature != nullptr &&
+		target_signature->hasStructuredTypes()) {
+		const CanonicalTypeImport signature_import =
+			importCanonicalFunctionSignature(canonical_types, *target_signature);
+		if (signature_import.status == CanonicalTypeImportStatus::Supported &&
+			canonical_types.node(signature_import.type).kind ==
+				CanonicalTypeKind::Function) {
+			target_function_type = signature_import.type;
+		}
+	}
 	struct ViableTemplateAddressCandidate {
 		const StructMemberFunction* member_function;
-		TypeId function_type;
+		CanonicalFunctionTemplateTypePattern function_pattern;
 		TemplateDeclId template_decl;
 	};
 	const auto import_function_template_type =
 		[&canonical_types](
-			const FunctionDeclarationNode& function_decl) -> CanonicalTypeImport {
+			const FunctionDeclarationNode& function_decl,
+			TemplateDeclId function_template_decl,
+			std::optional<uint32_t> template_parameter_pack_index)
+			-> std::optional<CanonicalFunctionTemplateTypePattern> {
+		if (template_parameter_pack_index.has_value() &&
+			function_decl.is_variadic()) {
+			return std::nullopt;
+		}
 		TypeSpecifierNode return_type =
 			function_decl.decl_node().type_specifier_node();
 		tryBindPublishedTypeEntity(return_type);
 		const CanonicalTypeImport return_import =
 			importCanonicalType(canonical_types, return_type);
 		if (return_import.status != CanonicalTypeImportStatus::Supported) {
-			return return_import;
+			return std::nullopt;
 		}
 		std::vector<TypeId> parameter_types;
 		parameter_types.reserve(function_decl.parameter_nodes().size());
+		std::optional<size_t> function_parameter_pack_position;
+		bool saw_function_parameter_pack = false;
 		for (const ASTNode& parameter_node : function_decl.parameter_nodes()) {
 			if (!parameter_node.is<DeclarationNode>()) {
 				continue;
 			}
-			TypeSpecifierNode parameter_type =
-				parameter_node.as<DeclarationNode>().type_specifier_node();
+			const DeclarationNode& parameter_decl =
+				parameter_node.as<DeclarationNode>();
+			if (saw_function_parameter_pack) {
+				return std::nullopt;
+			}
+			TypeSpecifierNode parameter_type = parameter_decl.type_specifier_node();
+			if (parameter_decl.is_parameter_pack()) {
+				if (!template_parameter_pack_index.has_value()) {
+					return std::nullopt;
+				}
+				function_parameter_pack_position = parameter_types.size();
+				saw_function_parameter_pack = true;
+				parameter_type.set_pack_expansion(false);
+			} else if (parameter_type.is_pack_expansion()) {
+				return std::nullopt;
+			}
 			tryBindPublishedTypeEntity(parameter_type);
+			if (parameter_decl.is_parameter_pack() &&
+				(!parameter_type.has_template_parameter_decl() ||
+				 parameter_type.template_decl_id() != function_template_decl ||
+				 parameter_type.template_parameter_index() !=
+					 *template_parameter_pack_index)) {
+				return std::nullopt;
+			}
 			const CanonicalTypeImport parameter_import = importCanonicalTypeImpl(
 				canonical_types,
 				parameter_type,
 				CanonicalTypeImportContext::FunctionParameter);
 			if (parameter_import.status != CanonicalTypeImportStatus::Supported) {
-				return parameter_import;
+				return std::nullopt;
 			}
 			parameter_types.push_back(parameter_import.type);
+		}
+		if (function_parameter_pack_position.has_value() !=
+			template_parameter_pack_index.has_value()) {
+			return std::nullopt;
 		}
 		CVQualifier function_cv = CVQualifier::None;
 		if (function_decl.is_const_member_function()) {
@@ -7196,7 +7240,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			dependent_noexcept = requireFrontendContext().dependentExpressions().intern(
 				function_decl.noexcept_expression()->node());
 		}
-		return {
+		return CanonicalFunctionTemplateTypePattern{
 			canonical_types.function(
 				return_import.type,
 				parameter_types,
@@ -7207,7 +7251,8 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				toCanonicalCallingConvention(function_decl.calling_convention()),
 				toCanonicalDllLinkage(function_decl.linkage()),
 				dependent_noexcept),
-			CanonicalTypeImportStatus::Supported};
+			function_parameter_pack_position,
+			template_parameter_pack_index};
 	};
 	std::vector<ViableTemplateAddressCandidate> viable_template_addresses;
 	const StructMemberFunction* best_template_address = nullptr;
@@ -7224,14 +7269,31 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			if (!function_template.has_template_decl_id()) {
 				continue;
 			}
-			if (function_template.has_requires_clause() ||
-				std::ranges::any_of(
-					function_template.template_parameters(),
-					[](const TemplateParameterNode& parameter) {
-						return parameter.kind() != TemplateParameterKind::Type ||
-							parameter.is_variadic() ||
-							parameter.has_concept_constraint();
-					})) {
+			if (function_template.has_requires_clause()) {
+				continue;
+			}
+			std::optional<uint32_t> template_parameter_pack_index;
+			bool unsupported_template_parameter = false;
+			for (size_t parameter_index = 0;
+				 parameter_index < function_template.template_parameters().size();
+				 ++parameter_index) {
+				const TemplateParameterNode& parameter =
+					function_template.template_parameters()[parameter_index];
+				if (parameter.kind() != TemplateParameterKind::Type ||
+					parameter.has_concept_constraint()) {
+					unsupported_template_parameter = true;
+					break;
+				}
+				if (parameter.is_variadic()) {
+					if (template_parameter_pack_index.has_value()) {
+						unsupported_template_parameter = true;
+						break;
+					}
+					template_parameter_pack_index =
+						static_cast<uint32_t>(parameter_index);
+				}
+			}
+			if (unsupported_template_parameter) {
 				continue;
 			}
 			const FunctionDeclarationNode& function_decl =
@@ -7239,14 +7301,16 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			if (function_decl.is_static() == target_is_member_function_pointer) {
 				continue;
 			}
-			const CanonicalTypeImport candidate_import =
-				import_function_template_type(function_decl);
-			if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
+			const std::optional<CanonicalFunctionTemplateTypePattern>
+				candidate_pattern = import_function_template_type(
+					function_decl,
+					function_template.template_decl_id(),
+					template_parameter_pack_index);
+			if (!candidate_pattern.has_value()) {
 				continue;
 			}
-			const TypeId candidate_function_type = candidate_import.type;
-			if (!candidate_function_type ||
-				canonical_types.node(candidate_function_type).kind !=
+			if (!candidate_pattern->function_type ||
+				canonical_types.node(candidate_pattern->function_type).kind !=
 					CanonicalTypeKind::Function) {
 				continue;
 			}
@@ -7254,13 +7318,16 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				target_function_type
 					? deduceCanonicalFunctionTemplateType(
 						canonical_types,
-						candidate_function_type,
-						target_function_type,
+						*candidate_pattern,
+						CanonicalFunctionTemplateTypePattern{
+							target_function_type, std::nullopt, std::nullopt},
 						function_template.template_decl_id())
 					: CanonicalTemplateTypeDeduction{};
 			bool target_match = target_deduction.status ==
 				CanonicalTemplateDeductionStatus::Match;
-			if (!target_match && target_signature != nullptr &&
+			if (!target_match &&
+				!candidate_pattern->function_parameter_pack_position.has_value() &&
+				target_signature != nullptr &&
 				target_signature->hasStructuredTypes()) {
 				const TypeId target_return_type_id = target_function_type
 					? canonical_types.node(target_function_type).child
@@ -7280,7 +7347,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			}
 			viable_template_addresses.push_back(ViableTemplateAddressCandidate{
 				&candidate,
-				candidate_function_type,
+				*candidate_pattern,
 				function_template.template_decl_id()});
 		}
 	}
@@ -7297,9 +7364,9 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 				const CanonicalTemplatePartialOrdering ordering =
 					compareCanonicalFunctionTemplateTypes(
 						canonical_types,
-						viable_template_addresses[first].function_type,
+						viable_template_addresses[first].function_pattern,
 						viable_template_addresses[first].template_decl,
-						viable_template_addresses[second].function_type,
+						viable_template_addresses[second].function_pattern,
 						viable_template_addresses[second].template_decl);
 				if (ordering == CanonicalTemplatePartialOrdering::Unsupported) {
 					ordering_is_determinate = false;
