@@ -237,9 +237,15 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 		{
 			TypeCategory expr_category = operands.category();
 
-			// If returning a void expression in a void function, just emit void return
-			// (the expression was already evaluated for its side effects)
-			if (expr_category == TypeCategory::Void && current_function_return_type_index_.category() == TypeCategory::Void) {
+			// TypeCategory records the base type, so void* also has category Void.
+			// Only discard the expression when both sides are truly valueless void
+			// types; a void pointer return still carries its 64-bit value in RAX.
+			const bool is_void_expression =
+				expr_category == TypeCategory::Void && operands.pointer_depth.value == 0;
+			const bool function_returns_void =
+				current_function_return_type_index_.category() == TypeCategory::Void &&
+				!currentFunctionReturnsPointer();
+			if (is_void_expression && function_returns_void) {
 				emitSehFinallyCallsBeforeReturn(node.return_token());
 				emitAndClearFullExpressionTempDestructors();
 				emitDestructorsForNonLocalExit(0);
