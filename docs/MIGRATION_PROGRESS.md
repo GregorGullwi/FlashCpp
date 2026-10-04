@@ -701,9 +701,17 @@ Continue boundary 3A in this order:
     `test_canonical_member_function_template_nested_return_only_deduction_ret0.cpp`
     regression covers both scalar and record arguments. Dependent member-owner
     specializations can still publish distinct canonical identities during
-    address resolution (see `docs/KNOWN_ISSUES.md`). Free-function-template
-    target deduction,
-    dependent member-function-pointer forms that do not import structurally,
+    address resolution (see `docs/KNOWN_ISSUES.md`). Unconstrained, type-only
+    free-function-template address candidates now deduce and partially order
+    against the expected function-pointer `TypeId` during ordinary-call
+    conversion; direct free functions participate in the same contextual set.
+    `tests/test_canonical_free_function_template_address_deduction_ret0.cpp`
+    checks explicit target formation, template partial ordering, direct
+    overload selection, and precedence over an ellipsis fallback. Constrained
+    templates, packs, and non-type template parameters remain unsupported in
+    this path. Evaluated address arguments still need IR materialization of
+    the selected function specialization (see `docs/KNOWN_ISSUES.md`).
+    Dependent member-function-pointer forms that do not import structurally
     and unsupported callable conversions still need substitution-aware
     canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`

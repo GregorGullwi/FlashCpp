@@ -74,6 +74,11 @@ struct QualifiedMemberFunctionAddressOverloadSet {
 	std::vector<const TemplateFunctionDeclarationNode*> function_templates;
 };
 
+struct FreeFunctionAddressOverloadSet {
+	std::vector<const FunctionDeclarationNode*> direct_functions;
+	std::vector<const TemplateFunctionDeclarationNode*> function_templates;
+};
+
 const QualifiedIdentifierNode* tryGetQualifiedMemberFunctionAddress(
 	const ASTNode* argument_node) {
 	if (argument_node == nullptr || !argument_node->is<ExpressionNode>()) {
@@ -164,6 +169,304 @@ QualifiedMemberFunctionAddressOverloadSet tryCollectQualifiedMemberFunctionAddre
 		}
 	}
 	return result;
+}
+
+FreeFunctionAddressOverloadSet tryCollectFreeFunctionAddressOverloads(
+	const ASTNode* argument_node) {
+	FreeFunctionAddressOverloadSet result;
+	if (argument_node == nullptr || !argument_node->is<ExpressionNode>()) {
+		return result;
+	}
+	const auto* address = std::get_if<UnaryOperatorNode>(
+		&argument_node->as<ExpressionNode>());
+	if (address == nullptr || address->op() != "&" ||
+		address->is_builtin_addressof() ||
+		!address->get_operand().is<ExpressionNode>()) {
+		return result;
+	}
+	const ExpressionNode& operand = address->get_operand().as<ExpressionNode>();
+	std::vector<ASTNode> overloads;
+	if (const auto* identifier = std::get_if<IdentifierNode>(&operand)) {
+		if (identifier->binding() != IdentifierBinding::Unresolved &&
+			identifier->binding() != IdentifierBinding::Function) {
+			return result;
+		}
+		overloads = gSymbolTable.lookup_all(identifier->name());
+	} else if (const auto* qualified =
+			   std::get_if<QualifiedIdentifierNode>(&operand)) {
+		if (qualified->has_template_arguments() ||
+			!qualified->namespace_handle().isValid() ||
+			tryCollectQualifiedMemberFunctionAddressOverloads(argument_node)
+				.owner != nullptr) {
+			return result;
+		}
+		overloads = gSymbolTable.lookup_qualified_all(
+			qualified->namespace_handle(),
+			qualified->nameHandle());
+	} else {
+		return result;
+	}
+
+	for (const ASTNode& overload : overloads) {
+		if (overload.is<TemplateFunctionDeclarationNode>()) {
+			const TemplateFunctionDeclarationNode& function_template =
+				overload.as<TemplateFunctionDeclarationNode>();
+			if (!function_template.has_template_decl_id() ||
+				function_template.has_requires_clause() ||
+				std::ranges::any_of(
+					function_template.template_parameters(),
+					[](const TemplateParameterNode& parameter) {
+						return parameter.kind() != TemplateParameterKind::Type ||
+							parameter.is_variadic() ||
+							parameter.has_concept_constraint();
+					})) {
+				return {};
+			}
+			result.function_templates.push_back(&function_template);
+		} else if (overload.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& function =
+				overload.as<FunctionDeclarationNode>();
+			if (!function.is_template_pattern()) {
+				result.direct_functions.push_back(&function);
+			}
+		}
+	}
+	return result;
+}
+
+CanonicalTypeImport importFunctionDeclarationCanonicalType(
+	CanonicalTypeTable& table,
+	const FunctionDeclarationNode& function_decl) {
+	TypeSpecifierNode return_type =
+		function_decl.decl_node().type_specifier_node();
+	tryBindPublishedTypeEntity(return_type);
+	const CanonicalTypeImport return_import =
+		importCanonicalType(table, return_type);
+	if (return_import.status != CanonicalTypeImportStatus::Supported) {
+		return return_import;
+	}
+	std::vector<TypeId> parameter_types;
+	parameter_types.reserve(function_decl.parameter_nodes().size());
+	for (const ASTNode& parameter_node : function_decl.parameter_nodes()) {
+		if (!parameter_node.is<DeclarationNode>()) {
+			throw InternalError(
+				"free function address canonical import: expected parameter declaration");
+		}
+		TypeSpecifierNode parameter_type =
+			parameter_node.as<DeclarationNode>().type_specifier_node();
+		tryBindPublishedTypeEntity(parameter_type);
+		const CanonicalTypeImport parameter_import = importCanonicalTypeImpl(
+			table,
+			parameter_type,
+			CanonicalTypeImportContext::FunctionParameter);
+		if (parameter_import.status != CanonicalTypeImportStatus::Supported) {
+			return parameter_import;
+		}
+		parameter_types.push_back(parameter_import.type);
+	}
+	bool is_noexcept = function_decl.is_noexcept();
+	ExprId dependent_noexcept{};
+	if (function_decl.has_noexcept_expression()) {
+		is_noexcept = false;
+		dependent_noexcept = requireFrontendContext().dependentExpressions().intern(
+			function_decl.noexcept_expression()->node());
+	}
+	return {
+		table.function(
+			return_import.type,
+			parameter_types,
+			function_decl.is_variadic(),
+			CVQualifier::None,
+			function_decl.function_reference_qualifier(),
+			is_noexcept,
+			toCanonicalCallingConvention(function_decl.calling_convention()),
+			toCanonicalDllLinkage(function_decl.linkage()),
+			dependent_noexcept),
+		CanonicalTypeImportStatus::Supported};
+}
+
+std::optional<ArgumentConversionInfo>
+tryBuildFreeFunctionTemplateAddressArgumentConversion(
+	const TypeSpecifierNode& parameter_type,
+	const ASTNode* argument_node) {
+	const FreeFunctionAddressOverloadSet overload_set =
+		tryCollectFreeFunctionAddressOverloads(argument_node);
+	if (overload_set.function_templates.empty() &&
+		overload_set.direct_functions.empty()) {
+		return std::nullopt;
+	}
+
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport target_import =
+		importCanonicalType(table, parameter_type);
+	if (target_import.status != CanonicalTypeImportStatus::Supported) {
+		return ArgumentConversionInfo::no_match();
+	}
+	const TypeId target_type = stripCanonicalTopCv(
+		table,
+		canonicalTypeWithoutReference(table, target_import.type)).first;
+	const CanonicalTypeNode target_node = table.node(target_type);
+	if (target_node.kind != CanonicalTypeKind::Pointer) {
+		return ArgumentConversionInfo::no_match();
+	}
+	const TypeId target_function = stripCanonicalTopCv(
+		table,
+		target_node.child).first;
+	if (table.node(target_function).kind != CanonicalTypeKind::Function) {
+		return ArgumentConversionInfo::no_match();
+	}
+
+	std::optional<ConversionPlan> best_direct_function_conversion;
+	bool direct_function_ambiguous = false;
+	for (const FunctionDeclarationNode* function : overload_set.direct_functions) {
+		if (function == nullptr) {
+			continue;
+		}
+		const CanonicalTypeImport function_import =
+			importFunctionDeclarationCanonicalType(table, *function);
+		if (function_import.status != CanonicalTypeImportStatus::Supported) {
+			continue;
+		}
+		const ConversionPlan conversion = buildCanonicalStructuralConversionPlan(
+			table,
+			table.pointer(function_import.type),
+			target_type);
+		if (!conversion.is_valid) {
+			continue;
+		}
+		if (!best_direct_function_conversion.has_value() ||
+			conversion.rank < best_direct_function_conversion->rank) {
+			best_direct_function_conversion = conversion;
+			direct_function_ambiguous = false;
+		} else if (conversion.rank == best_direct_function_conversion->rank) {
+			direct_function_ambiguous = true;
+		}
+	}
+
+	struct ViableTemplateAddress {
+		TypeId function_type;
+		TemplateDeclId template_decl;
+	};
+	std::vector<ViableTemplateAddress> viable_templates;
+	viable_templates.reserve(overload_set.function_templates.size());
+	for (const TemplateFunctionDeclarationNode* function_template :
+		overload_set.function_templates) {
+		if (function_template == nullptr) {
+			return ArgumentConversionInfo::no_match();
+		}
+		const CanonicalTypeImport candidate_import =
+			importFunctionDeclarationCanonicalType(
+				table,
+				function_template->function_decl_node());
+		if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
+			continue;
+		}
+		const TypeId candidate_function = stripCanonicalTopCv(
+			table,
+			canonicalTypeWithoutReference(table, candidate_import.type)).first;
+		if (table.node(candidate_function).kind != CanonicalTypeKind::Function) {
+			continue;
+		}
+		const CanonicalTemplateTypeDeduction deduction =
+			deduceCanonicalFunctionTemplateType(
+				table,
+				candidate_function,
+				target_function,
+				function_template->template_decl_id());
+		if (deduction.status == CanonicalTemplateDeductionStatus::Match) {
+			viable_templates.push_back(ViableTemplateAddress{
+				candidate_function,
+				function_template->template_decl_id()});
+		}
+	}
+	const auto exact_function_address_conversion = [&]() {
+		return ArgumentConversionInfo{
+			ConversionRank::ExactMatch,
+			&parameter_type,
+			true,
+			ConversionRank::ExactMatch};
+	};
+	if (best_direct_function_conversion.has_value() &&
+		best_direct_function_conversion->rank == ConversionRank::ExactMatch &&
+		!direct_function_ambiguous) {
+		return exact_function_address_conversion();
+	}
+	if (best_direct_function_conversion.has_value() &&
+		best_direct_function_conversion->rank == ConversionRank::ExactMatch &&
+		direct_function_ambiguous) {
+		return ArgumentConversionInfo::no_match();
+	}
+	if (viable_templates.empty()) {
+		if (best_direct_function_conversion.has_value() &&
+			!direct_function_ambiguous) {
+			return exact_function_address_conversion();
+		}
+		return ArgumentConversionInfo::no_match();
+	}
+	if (viable_templates.size() > 1) {
+		std::vector<bool> is_maximal(viable_templates.size(), true);
+		bool ordering_is_determinate = true;
+		for (size_t first = 0; first < viable_templates.size(); ++first) {
+			for (size_t second = first + 1;
+				 second < viable_templates.size();
+				 ++second) {
+				const CanonicalTemplatePartialOrdering ordering =
+					compareCanonicalFunctionTemplateTypes(
+						table,
+						viable_templates[first].function_type,
+						viable_templates[first].template_decl,
+						viable_templates[second].function_type,
+						viable_templates[second].template_decl);
+				if (ordering == CanonicalTemplatePartialOrdering::Unsupported) {
+					ordering_is_determinate = false;
+				}
+				if (ordering ==
+					CanonicalTemplatePartialOrdering::FirstMoreSpecialized) {
+					is_maximal[second] = false;
+				} else if (ordering ==
+					CanonicalTemplatePartialOrdering::SecondMoreSpecialized) {
+					is_maximal[first] = false;
+				}
+			}
+		}
+		const size_t maximal_count = static_cast<size_t>(std::ranges::count(
+			is_maximal,
+			true));
+		if (!ordering_is_determinate || maximal_count != 1) {
+			return ArgumentConversionInfo::no_match();
+		}
+	}
+	return exact_function_address_conversion();
+}
+
+template <typename ArgumentNodeContainer>
+OverloadResolutionResult resolveParserOverloadWithArgumentNodes(
+	std::span<const ASTNode> overloads,
+	std::span<const TypeSpecifierNode> argument_types,
+	const ArgumentNodeContainer& argument_nodes) {
+	return resolve_overload_with_argument_nodes_using_conversion(
+		overloads,
+		argument_types,
+		argument_nodes,
+		[](
+			const TypeSpecifierNode& argument_type,
+			const TypeSpecifierNode& parameter_type,
+			const ASTNode* argument_node) {
+			if (argument_type.category() == TypeCategory::Invalid) {
+				if (std::optional<ArgumentConversionInfo> function_address =
+						tryBuildFreeFunctionTemplateAddressArgumentConversion(
+							parameter_type,
+							argument_node);
+					function_address.has_value()) {
+					return *function_address;
+				}
+			}
+			return buildArgumentConversionInfo(
+				argument_type,
+				parameter_type,
+				argument_node);
+		});
 }
 
 ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
@@ -2386,6 +2689,26 @@ bool Parser::tryCollectOrdinaryDirectCallArgTypes(
 	for (const ASTNode& arg : args) {
 		std::optional<TypeSpecifierNode> arg_type = get_expression_type(arg);
 		if (!arg_type.has_value()) {
+			const FreeFunctionAddressOverloadSet address_overloads =
+				tryCollectFreeFunctionAddressOverloads(&arg);
+			if (address_overloads.function_templates.empty() &&
+				address_overloads.direct_functions.size() == 1) {
+				arg_types_out->push_back(
+					FlashCpp::ParserFunctionTypeHelpers::
+						buildFunctionPointerTypeFromFunctionDeclaration(
+						*address_overloads.direct_functions.front()));
+				continue;
+			}
+			if (!address_overloads.function_templates.empty() ||
+				!address_overloads.direct_functions.empty()) {
+				arg_types_out->push_back(TypeSpecifierNode(
+					TypeCategory::Invalid,
+					TypeQualifier::None,
+					0,
+					Token{},
+					CVQualifier::None));
+				continue;
+			}
 			needs_structured_fallback = true;
 			break;
 		}
@@ -8290,7 +8613,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							return overload.is<TemplateFunctionDeclarationNode>();
 						}),
 					all_overloads.end());
-				auto resolution = resolve_overload_with_argument_nodes(all_overloads, arg_types, args);
+				auto resolution = resolveParserOverloadWithArgumentNodes(
+					all_overloads,
+					arg_types,
+					args);
 				if (resolution.has_match && !resolution.is_ambiguous) {
 					result = emplace_node<ExpressionNode>(
 						makeCallExprFromNode(*resolution.selected_overload, std::move(args), identifier_token));
@@ -8971,7 +9297,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return make_call_result(*identifierType);
 				}
 
-				auto resolution = resolve_overload_with_argument_nodes(all_overloads, arg_types, args_ref);
+				auto resolution = resolveParserOverloadWithArgumentNodes(
+					all_overloads,
+					arg_types,
+					args_ref);
 				FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution.has_match, ", is_ambiguous=", resolution.is_ambiguous);
 
 				if (resolution.is_ambiguous) {
@@ -12145,7 +12474,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 									} else {
 										// Have overloads - do overload resolution
-										auto resolution_result = resolve_overload_with_argument_nodes(all_overloads, arg_types, args);
+										auto resolution_result = resolveParserOverloadWithArgumentNodes(
+											all_overloads,
+											arg_types,
+											args);
 
 										FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution_result.has_match, ", is_ambiguous=", resolution_result.is_ambiguous);
 

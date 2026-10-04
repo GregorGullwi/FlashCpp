@@ -4838,6 +4838,10 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes_using_conve
 		// standard and user-defined conversion sequences [over.ics.rank].
 		if (is_variadic) {
 			for (size_t i = params_to_check; i < argument_types.size(); ++i) {
+				if (argument_types[i].category() == TypeCategory::Invalid) {
+					all_convertible = false;
+					break;
+				}
 				conversion_infos.push_back(ArgumentConversionInfo::ellipsis_match_variadic());
 			}
 		}
