@@ -7618,7 +7618,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 					? canonical_types.node(target_function_type).child
 					: TypeId{};
 				bool return_type_deduced = false;
-				target_match = parser().tryDeduceMemberFunctionTemplateAddressArguments(
+				target_match = parser().tryDeduceFunctionTemplateAddressArguments(
 					function_template,
 					std::span<const TypeSpecifierNode>(
 						target_parameter_types.data(),
@@ -7648,7 +7648,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 					: TypeId{};
 				bool return_type_deduced = false;
 				const std::optional<TemplateArgumentVector> template_arguments =
-					parser().tryDeduceMemberFunctionTemplateAddressArguments(
+					parser().tryDeduceFunctionTemplateAddressArguments(
 						function_template,
 						std::span<const TypeSpecifierNode>(
 							target_parameter_types.data(),
@@ -8821,6 +8821,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return inferExpressionType(e.get_operand());
 				}
 				if (op == "&") {
+					if (const FunctionDeclarationNode* addressed_function =
+							e.resolved_addressed_function()) {
+						return canonicalizeType(
+							FlashCpp::ParserFunctionTypeHelpers::
+								buildFunctionPointerTypeFromFunctionDeclaration(
+									*addressed_function));
+					}
 					if (!e.is_builtin_addressof()) {
 						if (const ResolvedUnaryOperatorCall* resolved_address =
 								getResolvedUnaryAddressOfOperator(&e)) {

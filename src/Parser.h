@@ -2269,7 +2269,7 @@ private:
 		size_t function_pack_arg_start,
 		int recursion_depth,
 		NamespaceHandle source_namespace);
-	std::optional<TemplateArgumentVector> tryDeduceMemberFunctionTemplateAddressArguments(
+	std::optional<TemplateArgumentVector> tryDeduceFunctionTemplateAddressArguments(
 		const TemplateFunctionDeclarationNode& function_template,
 		std::span<const TypeSpecifierNode> target_parameter_types,
 		const TypeSpecifierNode& target_return_type,
@@ -3858,6 +3858,11 @@ private:
 									  TypeSpecifierNode& type_specifier);
 
 public:	// Public methods for template instantiation
+	std::optional<ASTNode> tryInstantiateFreeFunctionTemplateForAddress(
+		const TemplateFunctionDeclarationNode& function_template,
+		std::span<const TypeSpecifierNode> target_parameter_types,
+		const TypeSpecifierNode& target_return_type,
+		TypeId target_return_type_id);
 	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateForAddress(
 		const StructTypeInfo& owner,
 		const QualifiedIdentifierNode& member_id,

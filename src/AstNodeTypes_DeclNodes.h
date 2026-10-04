@@ -3981,12 +3981,21 @@ public:
 	const ASTNode& get_operand() const { return operand_node_; }
 	bool is_prefix() const { return is_prefix_; }
 	bool is_builtin_addressof() const { return is_builtin_addressof_; }
+	const FunctionDeclarationNode* resolved_addressed_function() const {
+		return resolved_addressed_function_;
+	}
+	void set_resolved_addressed_function(
+		const FunctionDeclarationNode* function) {
+		resolved_addressed_function_ = function;
+	}
 
 private:
 	Token identifier_;
 	ASTNode operand_node_;
 	bool is_prefix_;
 	bool is_builtin_addressof_; // True if created from __builtin_addressof intrinsic
+	// Contextual overload resolution records the selected function specialization.
+	const FunctionDeclarationNode* resolved_addressed_function_ = nullptr;
 };
 
 class TernaryOperatorNode {
