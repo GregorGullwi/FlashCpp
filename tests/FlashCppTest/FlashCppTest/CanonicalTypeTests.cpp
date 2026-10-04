@@ -1350,6 +1350,111 @@ TEST_CASE("Canonical function-template ordering handles trailing type packs") {
 	CHECK(ordering == CanonicalTemplatePartialOrdering::SecondMoreSpecialized);
 }
 
+TEST_CASE("Canonical function-template ordering binds direct integral NTTPs by identity") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TemplateDeclId buffer_template{950};
+	const TemplateDeclId first_function_template{951};
+	const TemplateDeclId second_function_template{952};
+	const std::array<CanonicalTemplateArgument, 2> first_arguments{
+		CanonicalTemplateArgument::makeNonType(ExprId{1}),
+		CanonicalTemplateArgument::makeNonType(ExprId{5})};
+	const std::array<CanonicalTemplateArgument, 2> second_arguments{
+		CanonicalTemplateArgument::makeNonType(ExprId{5}),
+		CanonicalTemplateArgument::makeNonType(ExprId{2})};
+	const std::array<CanonicalTemplateArgument, 2> target_arguments{
+		CanonicalTemplateArgument::makeNonType(ExprId{6}),
+		CanonicalTemplateArgument::makeNonType(ExprId{5})};
+	const TypeId first_buffer =
+		table.templateSpecialization(buffer_template, first_arguments);
+	const TypeId second_buffer =
+		table.templateSpecialization(buffer_template, second_arguments);
+	const TypeId target_buffer =
+		table.templateSpecialization(buffer_template, target_arguments);
+	const auto make_function = [&table, integer](TypeId parameter) {
+		const std::array<TypeId, 1> parameters{parameter};
+		return table.function(
+			integer,
+			parameters,
+			false,
+			CVQualifier::None,
+			ReferenceQualifier::None,
+			false,
+			CanonicalCallingConvention::Default,
+			CanonicalDllLinkage::None,
+			ExprId{});
+	};
+	const CanonicalFunctionTemplateTypePattern first_pattern{
+		make_function(first_buffer),
+		std::nullopt,
+		std::nullopt,
+		{
+			CanonicalTemplateNonTypeArgumentPattern{
+				ExprId{1},
+				CanonicalTemplateNonTypeArgumentKind::TemplateParameter,
+				first_function_template,
+				0,
+				integer},
+			CanonicalTemplateNonTypeArgumentPattern{
+				ExprId{5},
+				CanonicalTemplateNonTypeArgumentKind::Literal,
+				TemplateDeclId{},
+				0,
+				TypeId{}}}};
+	const CanonicalFunctionTemplateTypePattern second_pattern{
+		make_function(second_buffer),
+		std::nullopt,
+		std::nullopt,
+		{
+			CanonicalTemplateNonTypeArgumentPattern{
+				ExprId{5},
+				CanonicalTemplateNonTypeArgumentKind::Literal,
+				TemplateDeclId{},
+				0,
+				TypeId{}},
+			CanonicalTemplateNonTypeArgumentPattern{
+				ExprId{2},
+				CanonicalTemplateNonTypeArgumentKind::TemplateParameter,
+				second_function_template,
+				0,
+				integer}}};
+	const CanonicalFunctionTemplateTypePattern target_pattern{
+		make_function(target_buffer),
+		std::nullopt,
+		std::nullopt,
+		{
+			CanonicalTemplateNonTypeArgumentPattern{
+				ExprId{6},
+				CanonicalTemplateNonTypeArgumentKind::Literal,
+				TemplateDeclId{},
+				0,
+				TypeId{}},
+			CanonicalTemplateNonTypeArgumentPattern{
+				ExprId{5},
+				CanonicalTemplateNonTypeArgumentKind::Literal,
+				TemplateDeclId{},
+				0,
+				TypeId{}}}};
+
+	const CanonicalTemplateTypeDeduction target_deduction =
+		deduceCanonicalFunctionTemplateType(
+			table, first_pattern, target_pattern, first_function_template);
+	CHECK(target_deduction.status == CanonicalTemplateDeductionStatus::Match);
+	REQUIRE(target_deduction.non_type_bindings.size() == 1);
+	CHECK(target_deduction.non_type_bindings.front().parameter_index == 0);
+	CHECK(target_deduction.non_type_bindings.front().argument.expression == ExprId{6});
+
+	const CanonicalTemplatePartialOrdering ordering =
+		compareCanonicalFunctionTemplateTypes(
+			table,
+			first_pattern,
+			first_function_template,
+			second_pattern,
+			second_function_template);
+	CHECK(ordering == CanonicalTemplatePartialOrdering::Neither);
+}
+
 TEST_CASE("Canonical TypeIds compare member object pointer pairs") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
