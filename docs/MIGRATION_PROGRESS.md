@@ -751,10 +751,11 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       Standard-layout checks include the C++20 zero-offset member-type rule
       through nested records, arrays, and unions.
       Constant evaluation delegates aggregate and virtual-destructor queries to
-      that same evaluator. The 280-cell differential was rerun after these
+      that same evaluator. The 294-cell differential was rerun after these
       fixes; every trait/type cell now matches clang in constant evaluation and
       runtime lowering. The matrix regression keeps a separate assertion and
-      runtime assignment for each cell across 20 record shapes. Focused
+      runtime assignment for each cell across 21 record shapes, including a
+      virtual-base class without virtual functions. Focused
       regressions also cover zero-offset base/member conflicts, member arrays,
       first-declaration versus out-of-line defaulted constructors and
       destructors, and deep derived-record cases. The triviality and

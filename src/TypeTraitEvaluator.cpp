@@ -622,8 +622,17 @@ const StructTypeInfo* resolvePseudoDestructorObjectStruct(const ASTNode& object,
 	return nullptr;
 }
 
+bool hasVirtualBaseClass(const StructTypeInfo& struct_info) {
+	for (const BaseClassSpecifier& base : struct_info.base_classes) {
+		if (base.is_virtual) {
+			return true;
+		}
+	}
+	return false;
+}
+
 bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
-	if (!struct_info || struct_info->has_vtable ||
+	if (!struct_info || struct_info->has_vtable || hasVirtualBaseClass(*struct_info) ||
 		struct_info->hasCopyConstructor() ||
 		struct_info->hasMoveConstructor() ||
 		struct_info->hasCopyAssignmentOperator() ||
@@ -640,7 +649,8 @@ bool hasTrivialSpecialMemberSetForCopying(const StructTypeInfo* struct_info) {
 }
 
 bool hasTrivialDefaultConstructor(const StructTypeInfo* struct_info) {
-	if (struct_info == nullptr || struct_info->hasDefaultMemberInitializers() ||
+	if (struct_info == nullptr || hasVirtualBaseClass(*struct_info) ||
+		struct_info->hasDefaultMemberInitializers() ||
 		struct_info->isDefaultConstructorDeleted()) {
 		return false;
 	}
