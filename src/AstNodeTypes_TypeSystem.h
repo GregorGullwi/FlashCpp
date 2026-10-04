@@ -1180,6 +1180,10 @@ struct FunctionSignature;
 // adjustment is performed by the parser before this value is created.
 struct FunctionType {
 	TypeIndex type_index{};
+	// A short-lived exact return override used while checking a callable type
+	// against a target. Persistent FunctionType objects leave this empty; the
+	// owning TypeSpecifier keeps canonical import tied to its transaction.
+	TypeId canonical_type_id{};
 	// Published nominal identity for a Struct/Enum component. The canonical
 	// adapter reads this instead of resolving TypeIndex through the global type
 	// table, so a substituted callable component keeps its entity without a

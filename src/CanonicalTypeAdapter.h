@@ -169,6 +169,17 @@ inline TypeId addCanonicalArrayDimensions(CanonicalTypeTable& table, TypeId id,
 
 inline CanonicalTypeImport importCanonicalFunctionSignature(
 	CanonicalTypeTable& table,
+	const FunctionSignature& signature,
+	TypeId return_type_override);
+
+inline CanonicalTypeImport importCanonicalTemplateSpecialization(
+	CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax,
+	CanonicalTypeImportContext context);
+
+inline CanonicalTypeImport importCanonicalMemberPointerFunctionSignature(
+	CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax,
 	const FunctionSignature& signature);
 
 inline CanonicalTypeImport importCanonicalFunctionTypeComponent(
@@ -350,7 +361,10 @@ inline CanonicalTypeImport applyCanonicalOrderedDeclarator(
 			FunctionSignature signature = syntax.function_signature();
 			signature.class_name = {};
 			const CanonicalTypeImport imported_function =
-				importCanonicalFunctionSignature(table, signature);
+				importCanonicalMemberPointerFunctionSignature(
+					table,
+					syntax,
+					signature);
 			if (imported_function.status != CanonicalTypeImportStatus::Supported) {
 				return imported_function;
 			}
@@ -465,6 +479,9 @@ inline CanonicalTypeImport importCanonicalClassTypeInfo(
 
 inline CanonicalTypeImport importCanonicalFunctionTypeComponent(CanonicalTypeTable& table,
 	const FunctionType& type, CanonicalTypeImportContext context) {
+	if (type.canonical_type_id) {
+		return {type.canonical_type_id, CanonicalTypeImportStatus::Supported};
+	}
 	return importCanonicalTypeImpl(
 		table,
 		typeSpecifierFromFunctionType(type),
@@ -657,7 +674,8 @@ inline CanonicalTypeImport importCanonicalFunctionComponentFromProjection(
 
 inline CanonicalTypeImport importCanonicalFunctionSignature(
 	CanonicalTypeTable& table,
-	const FunctionSignature& signature) {
+	const FunctionSignature& signature,
+	TypeId return_type_override) {
 	// Retained noexcept(expr) needs a published ExprId before canonical import.
 	if (signature.noexcept_expression.has_value() && !signature.dependent_noexcept) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
@@ -668,7 +686,11 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 
 	// Structured return uses FunctionType; otherwise recover from the flat
 	// TypeIndex projection that older signature writers still publish.
-	const CanonicalTypeImport imported_return = signature.hasStructuredTypes()
+	const CanonicalTypeImport imported_return = return_type_override
+		? CanonicalTypeImport{
+			return_type_override,
+			CanonicalTypeImportStatus::Supported}
+		: signature.hasStructuredTypes()
 		? importCanonicalFunctionTypeComponent(
 			table, signature.return_type(), CanonicalTypeImportContext::Exact)
 		: importCanonicalFunctionComponentFromProjection(
@@ -729,6 +751,52 @@ inline CanonicalTypeImport importCanonicalFunctionSignature(
 			toCanonicalDllLinkage(signature.linkage),
 			signature.dependent_noexcept),
 		CanonicalTypeImportStatus::Supported};
+}
+
+inline CanonicalTypeImport importCanonicalMemberPointerFunctionSignature(
+	CanonicalTypeTable& table,
+	const TypeSpecifierNode& syntax,
+	const FunctionSignature& signature) {
+	TypeId return_type_override{};
+	if (syntax.has_template_specialization()) {
+		TypeSpecifierNode return_base = syntax;
+		return_base.clear_declarator_shape();
+		return_base.clear_function_signature();
+		return_base.clear_member_class_identity();
+		return_base.set_cv_qualifier(CVQualifier::None);
+		const CanonicalTypeImport imported_return_base =
+			importCanonicalTemplateSpecialization(
+				table,
+				return_base,
+				CanonicalTypeImportContext::Exact);
+		if (imported_return_base.status !=
+			CanonicalTypeImportStatus::Supported) {
+			return imported_return_base;
+		}
+		return_type_override = imported_return_base.type;
+		if (signature.hasStructuredTypes()) {
+			const TypeSpecifierNode return_shape =
+				typeSpecifierFromFunctionType(signature.return_type());
+			return_type_override = table.qualify(
+				return_type_override,
+				return_shape.cv_qualifier());
+			const bool has_pointee_array =
+				return_shape.has_pointee_array_declarator();
+			const bool has_ordinary_array =
+				return_shape.is_array() && !has_pointee_array;
+			return_type_override = applyCanonicalPointerArrayReference(
+				table,
+				return_type_override,
+				return_shape,
+				CanonicalTypeImportContext::Exact,
+				has_ordinary_array,
+				has_pointee_array);
+		}
+	}
+	return importCanonicalFunctionSignature(
+		table,
+		signature,
+		return_type_override);
 }
 
 // Member pointers require a published class EntityId. Spelling-only owners stay
@@ -793,7 +861,11 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 		}
 		FunctionSignature signature = syntax.function_signature();
 		signature.class_name = {};
-		const auto imported_function = importCanonicalFunctionSignature(table, signature);
+		const auto imported_function =
+			importCanonicalMemberPointerFunctionSignature(
+				table,
+				syntax,
+				signature);
 		if (imported_function.status != CanonicalTypeImportStatus::Supported) {
 			return imported_function;
 		}
@@ -882,7 +954,10 @@ inline CanonicalTypeImport importCanonicalCallable(CanonicalTypeTable& table,
 	if (signature.class_name.isValid()) {
 		return {{}, CanonicalTypeImportStatus::UnmigratedCallable};
 	}
-	const auto imported_function = importCanonicalFunctionSignature(table, signature);
+	const auto imported_function = importCanonicalFunctionSignature(
+		table,
+		signature,
+		TypeId{});
 	if (imported_function.status != CanonicalTypeImportStatus::Supported) {
 		return imported_function;
 	}
@@ -1061,6 +1136,19 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	if (syntax.is_pack_expansion() || syntax.has_concept_constraint()) {
 		return {{}, CanonicalTypeImportStatus::Unresolved};
 	}
+	// A member-pointer declarator wraps the complete callable type. Its base
+	// may itself be a template specialization, a template parameter, or a
+	// dependent name, so import the pointer shape before interpreting that base.
+	if (syntax.has_member_class() ||
+		syntax.category() == TypeCategory::MemberFunctionPointer ||
+		syntax.category() == TypeCategory::MemberObjectPointer) {
+		CanonicalTypeTransaction transaction(table);
+		const auto imported = importCanonicalMemberPointer(table, syntax);
+		if (imported.status == CanonicalTypeImportStatus::Supported) {
+			transaction.commit();
+		}
+		return imported;
+	}
 	if (syntax.has_dependent_name_type()) {
 		const auto base = syntax.dependent_name_type();
 		const auto base_kind = table.node(base).kind;
@@ -1087,16 +1175,6 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 	if (syntax.has_template_specialization()) {
 		CanonicalTypeTransaction transaction(table);
 		const auto imported = importCanonicalTemplateSpecialization(table, syntax, context);
-		if (imported.status == CanonicalTypeImportStatus::Supported) {
-			transaction.commit();
-		}
-		return imported;
-	}
-	if (syntax.has_member_class() ||
-		syntax.category() == TypeCategory::MemberFunctionPointer ||
-		syntax.category() == TypeCategory::MemberObjectPointer) {
-		CanonicalTypeTransaction transaction(table);
-		const auto imported = importCanonicalMemberPointer(table, syntax);
 		if (imported.status == CanonicalTypeImportStatus::Supported) {
 			transaction.commit();
 		}

@@ -1,5 +1,19 @@
 # Known Issues
 
+## Dependent member-template addresses can duplicate the owner's canonical identity
+
+When a dependent expression takes the address of a member function template on
+a class-template specialization, the instantiated candidate and the same
+specialization named in a target member-function-pointer parameter can receive
+different canonical owner identities. Reference conversion then rejects the
+candidate even when both spell the same specialization, leaving an enclosing
+`auto` return type incomplete. A reduced case is a `Factory<T>::make<Result>`
+member returning `ResultWrapper<Result>`, selected inside a function template
+against overloads accepting pointers to members of `Factory<int>` and
+`Factory<Record>`. The non-dependent `ResultWrapper<Result>` deduction case is
+covered separately; canonical class-specialization identity must be unified
+before the dependent-owner case can pass.
+
 ## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
 
 Compiling `tests/std/test_std_typeinfo_ret0.cpp` with the WSL Debug compiler

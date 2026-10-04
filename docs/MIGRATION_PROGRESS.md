@@ -696,12 +696,16 @@ Continue boundary 3A in this order:
     `test_canonical_member_function_template_address_deep_partial_ordering_ret0.cpp`
     regression exercises 16 nested type arguments below the parser's current
     depth-20 limit. Constraints, packs, and non-type template parameters still
-    need their ordering rules. Nested return-only type materialization,
-    free-function-template target deduction,
+    need their ordering rules. Nested class-template return types now
+    materialize return-only member-template bindings from canonical TypeIds; the
+    `test_canonical_member_function_template_nested_return_only_deduction_ret0.cpp`
+    regression covers both scalar and record arguments. Dependent member-owner
+    specializations can still publish distinct canonical identities during
+    address resolution (see `docs/KNOWN_ISSUES.md`). Free-function-template
+    target deduction,
     dependent member-function-pointer forms that do not import structurally,
     and unsupported callable conversions still need substitution-aware
-    canonical ranking. A `ResultWrapper<Result>` probe currently reaches an
-    incomplete result type after member-template deduction.
+    canonical ranking.
     Ordinary function-pointer `decltype(&function<T>)`
     aliases now retain and substitute explicit function-template arguments
     before ranking.
