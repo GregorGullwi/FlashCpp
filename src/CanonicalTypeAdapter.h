@@ -119,6 +119,9 @@ struct CanonicalTypeImport {
 
 static_assert(sizeof(CanonicalTypeImport) == 8);
 
+CanonicalRecordPropertyFlags computeCanonicalRecordPropertyFlags(
+	const StructTypeInfo& struct_info);
+
 struct CanonicalDeclaratorExport {
 	TypeId base;
 	std::vector<DeclaratorComponent> components;
@@ -1473,16 +1476,8 @@ inline bool tryPublishCanonicalRecordProperties(
 		kind != CanonicalTypeKind::TemplateSpecialization) {
 		return false;
 	}
-	CanonicalRecordPropertyFlags flags = CanonicalRecordPropertyFlags::None;
-	if (struct_info.has_vtable) {
-		flags |= CanonicalRecordPropertyFlags::Polymorphic;
-	}
-	if (struct_info.is_final) {
-		flags |= CanonicalRecordPropertyFlags::Final;
-	}
-	if (struct_info.is_abstract) {
-		flags |= CanonicalRecordPropertyFlags::Abstract;
-	}
+	const CanonicalRecordPropertyFlags flags =
+		computeCanonicalRecordPropertyFlags(struct_info);
 	table.publishRecordProperties(type, flags);
 	return true;
 }

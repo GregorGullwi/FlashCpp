@@ -295,11 +295,22 @@ enum class CanonicalRecordBaseFlags : uint8_t {
 	Virtual = 1 << 0,
 };
 
-enum class CanonicalRecordPropertyFlags : uint8_t {
+enum class CanonicalRecordPropertyFlags : uint16_t {
 	None = 0,
 	Polymorphic = 1 << 0,
 	Final = 1 << 1,
 	Abstract = 1 << 2,
+	TriviallyCopyable = 1 << 3,
+	Trivial = 1 << 4,
+	Pod = 1 << 5,
+	StandardLayout = 1 << 6,
+	Aggregate = 1 << 7,
+	Empty = 1 << 8,
+	Destructible = 1 << 9,
+	TriviallyDestructible = 1 << 10,
+	NothrowDestructible = 1 << 11,
+	HasTrivialDestructor = 1 << 12,
+	HasVirtualDestructor = 1 << 13,
 };
 
 // Semantic facts that cannot be derived from object layout alone. These are
@@ -308,7 +319,7 @@ struct CanonicalRecordProperties {
 	TypeId type;
 	CanonicalRecordPropertyFlags flags;
 	uint8_t reserved = 0;
-	uint16_t reserved2 = 0;
+	uint8_t reserved2 = 0;
 	friend bool operator==(CanonicalRecordProperties, CanonicalRecordProperties) = default;
 };
 
@@ -391,7 +402,7 @@ inline CanonicalRecordPropertyFlags operator|(
 	CanonicalRecordPropertyFlags a,
 	CanonicalRecordPropertyFlags b) {
 	return static_cast<CanonicalRecordPropertyFlags>(
-		static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+		static_cast<uint16_t>(a) | static_cast<uint16_t>(b));
 }
 inline CanonicalRecordPropertyFlags& operator|=(
 	CanonicalRecordPropertyFlags& a,
@@ -401,7 +412,7 @@ inline CanonicalRecordPropertyFlags& operator|=(
 inline bool hasCanonicalRecordPropertyFlag(
 	CanonicalRecordPropertyFlags flags,
 	CanonicalRecordPropertyFlags bit) {
-	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+	return (static_cast<uint16_t>(flags) & static_cast<uint16_t>(bit)) != 0;
 }
 
 static_assert(std::is_trivially_copyable_v<CanonicalRecordLayout>);
