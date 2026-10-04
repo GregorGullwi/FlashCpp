@@ -516,10 +516,12 @@ struct RecordDepth511 { RecordDepth510 member; };
 static_assert(__is_trivially_copyable(RecordDepth511));
 static_assert(__is_trivial(RecordDepth511));
 static_assert(__is_pod(RecordDepth511));
+static_assert(__is_nothrow_destructible(RecordDepth511));
 
 int main() {
     int trivial_copyable = __is_trivially_copyable(RecordDepth511);
     int trivial = __is_trivial(RecordDepth511);
     int pod = __is_pod(RecordDepth511);
-    return trivial_copyable && trivial && pod ? 0 : 1;
+    int nothrow_destructible = __is_nothrow_destructible(RecordDepth511);
+    return trivial_copyable && trivial && pod && nothrow_destructible ? 0 : 1;
 }

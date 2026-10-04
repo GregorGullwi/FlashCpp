@@ -2679,6 +2679,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
+					new_ctor_ref.set_was_defaulted_on_first_declaration(
+						orig_ctor.was_defaulted_on_first_declaration());
 					new_ctor_ref.set_is_inline(orig_ctor.is_inline());
 					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
@@ -4071,6 +4073,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					pack_param_info_.resize(saved_pack_info);
 					new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
+					new_ctor_ref.set_was_defaulted_on_first_declaration(
+						orig_ctor.was_defaulted_on_first_declaration());
 					new_ctor_ref.set_is_inline(orig_ctor.is_inline());
 
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
@@ -9130,6 +9134,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_ctor.set_is_implicit(original_ctor.is_implicit());
 					substituted_ctor.set_is_explicitly_defaulted(
 						original_ctor.is_explicitly_defaulted());
+					substituted_ctor.set_was_defaulted_on_first_declaration(
+						original_ctor.was_defaulted_on_first_declaration());
 					substituted_ctor.set_is_inline(original_ctor.is_inline());
 					substituted_ctor.set_noexcept(original_ctor.is_noexcept());
 					substituted_ctor.set_explicit(original_ctor.is_explicit());
@@ -11205,6 +11211,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ctor_pack_param_info.size()));
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
+					new_ctor_ref.set_was_defaulted_on_first_declaration(
+						ctor_decl.was_defaulted_on_first_declaration());
 					new_ctor_ref.set_is_inline(ctor_decl.is_inline());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 					if (substituted_body.has_value()) {
@@ -11288,6 +11296,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
+					new_ctor_ref.set_was_defaulted_on_first_declaration(
+						ctor_decl.was_defaulted_on_first_declaration());
 					new_ctor_ref.set_is_inline(ctor_decl.is_inline());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 					new_ctor_ref.set_explicit(ctor_decl.is_explicit());

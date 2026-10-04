@@ -448,6 +448,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(
 		substituteConstructorInitializers(ctor_decl, new_ctor_ref);
 		new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 		new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
+		new_ctor_ref.set_was_defaulted_on_first_declaration(
+			ctor_decl.was_defaulted_on_first_declaration());
 		new_ctor_ref.set_is_inline(ctor_decl.is_inline());
 		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 

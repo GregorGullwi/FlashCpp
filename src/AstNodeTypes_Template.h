@@ -600,6 +600,7 @@ public:
 	const std::optional<DelegatingInitializer>& delegating_initializer() const { return delegating_initializer_; }
 	bool is_implicit() const { return is_implicit_; }
 	bool is_explicitly_defaulted() const { return is_explicitly_defaulted_; }
+	bool was_defaulted_on_first_declaration() const { return was_defaulted_on_first_declaration_; }
 
 	void add_parameter_node(ASTNode parameter_node) {
 		parameter_nodes_.push_back(parameter_node);
@@ -644,6 +645,9 @@ public:
 	}
 	void set_is_explicitly_defaulted(bool explicitly_defaulted) {
 		is_explicitly_defaulted_ = explicitly_defaulted;
+	}
+	void set_was_defaulted_on_first_declaration(bool was_defaulted) {
+		was_defaulted_on_first_declaration_ = was_defaulted;
 	}
 	void set_owning_type_index(TypeIndex owning_type_index) {
 		owning_type_index_ = owning_type_index;
@@ -855,6 +859,7 @@ private:
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
 	bool is_explicitly_defaulted_ = false;  // True for user-declared constructors spelled '= default'
+	bool was_defaulted_on_first_declaration_ : 1 = false;
 	bool is_noexcept_ = false;  // noexcept specifier
 	bool is_explicit_ = false;  // explicit specifier
 	bool is_constexpr_ = false;	// constexpr specifier

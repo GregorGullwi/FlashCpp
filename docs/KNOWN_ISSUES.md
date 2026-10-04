@@ -187,54 +187,6 @@ unaffected; only taking the address of a member function (including
 `bool b = &S::f;`) is. A proper fix must lower the selected function according
 to the target ABI and account for virtual member functions.
 
-## Record-property trait differential has unverified cells
-
-A 280-cell differential measured on 2026-09-30 compared 14 record-property
-traits over 20 record shapes against clang in both constant evaluation (a
-per-cell `static_assert`) and code generation (a plain `int v = trait(X);`
-assignment). That pre-fix baseline found 35 folded mismatches and 23 lowered
-mismatches. The matrix has not been rerun since the corrections below, so those
-counts are historical and do not describe the current compiler.
-
-The shared evaluator and constant-evaluation routing now agree with clang for
-the reproduced cases in
-[`test_record_property_traits_regression_ret0.cpp`](../tests/test_record_property_traits_regression_ret0.cpp):
-
-- Aggregate answers for an empty record, a record with a user-declared
-  destructor, and builtin/record array types.
-- POD and standard-layout classification for a scalar union and derived
-  records whose data members appear at multiple inheritance levels, including
-  C++20 zero-offset conflicts where a base type also appears through the first
-  member, a nested array member, or a nested union member.
-- Trivial destruction for a class with only a virtual function, a member with a
-  non-trivial destructor (including an array of such members), and defaulted
-  destructors defaulted on the first declaration versus out of line.
-- Virtual-destructor detection for a direct virtual destructor, inheritance
-  through a virtual base, and a virtual function without a virtual destructor.
-
-Each case is checked with a per-cell `static_assert` and runtime trait
-assignment, exercising both paths. The additional zero-offset cases are covered in
-[`test_record_property_standard_layout_zero_offset_ret0.cpp`](../tests/test_record_property_standard_layout_zero_offset_ret0.cpp).
-
-The trivially-copyable and trivial record walks use explicit worklists to keep
-native stack use bounded as record nesting grows. The
-[`test_deep_record_property_traits_worklist_ret0.cpp`](../tests/test_deep_record_property_traits_worklist_ret0.cpp)
-regression checks these answers and POD at 511 nested record levels; it passes
-with the normal test process stack. The full suite also passes after these
-changes. Clang stack-usage output measured the iterative traversal frame at
-376 bytes and the standard-layout walk, the largest changed frame, at 536
-bytes; the previous recursive predicate frame was 136 bytes per level.
-
-The full matrix still needs to be rerun to establish the remaining cells. The
-record-property evaluator continues to read sema-owned `StructTypeInfo` for
-member, base, and special-member facts; the canonical record schema publishes
-layout data but not those properties. This remains a migration gap, and the
-remaining trait families need a published member-property schema before they
-can leave the compatibility path. The old differential also exposed a harness
-trap: a chunk of `static_assert`s stops at its first failure, so per-chunk folded
-counts under-report mismatches; use one assertion per cell when recreating the
-matrix.
-
 ## Static-member template initializer replay still re-parses source text
 
 Variable-template initializers now substitute structurally from the
