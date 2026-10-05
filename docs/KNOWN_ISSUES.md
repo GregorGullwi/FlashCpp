@@ -411,6 +411,27 @@ flow), coordinating with the template/semantic worklist migration where the
 measured path crosses that boundary. Do not pursue a standalone stack-reserve
 change before that work.
 
+## `decltype` of a subscript expression does not parse
+
+`decltype` of a subscript expression is rejected even though the subscript
+itself is a valid expression:
+
+```cpp
+int main() {
+	int values[3] = {0};
+	int* pointer = values;
+	using FromArray = decltype(values[1]);    // rejected
+	using FromPointer = decltype(pointer[0]); // rejected
+	using FromName = decltype(values);        // accepted
+}
+```
+
+The failure is a parser gap, not a semantic one: `using T = decltype(...)`
+reports "Expected type or namespace name", and the same spelling inside a
+type-trait argument reports `TypeTraitArgumentMustBeType` (1403). It is
+independent of the canonical type work and belongs in the declarator
+expression parser, not a special case in the trait path.
+
 ## Several constrained function templates in one translation unit mis-resolve
 
 Overload resolution between two constrained function templates becomes
