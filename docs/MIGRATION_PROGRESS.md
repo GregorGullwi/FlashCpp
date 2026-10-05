@@ -836,15 +836,21 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    1. **The constructibility family.** `__is_constructible`,
       `__is_trivially_constructible`, and `__is_nothrow_constructible` still
       read `StructTypeInfo` because their answers depend on a variadic argument
-      list and overload resolution. They need a canonical constructor-query
-      path that preserves C++20 initialization and access rules. The unary
-      triviality and lifetime traits now use TypeId-keyed record-property facts.
-      `CanonicalRecordLayout` publishes object size, member offsets, and the
-      union flag. `CanonicalRecordProperties` publishes unary record-property
-      facts for completed record TypeIds. Class-template instantiation refreshes
-      virtual metadata and layout after attaching member declarations, propagates
-      deleted special-member facts, and then publishes these facts.
-      Constructibility remains
+      list and overload resolution. The zero-argument `__is_constructible`
+      query now rejects an abstract class, a deleted default constructor, and an
+      inaccessible default constructor, which the approximate record check
+      previously reported as constructible; the reduced regression is
+      `tests/test_is_constructible_default_constructor_ret0.cpp`. Base and
+      member default-construction recursion (a derived class whose base has no
+      usable default constructor) and the trivially/nothrow variants still fall
+      back, and the TypeId-keyed fact publication plus the lazy concept flip
+      remain. The unary triviality and lifetime traits now use TypeId-keyed
+      record-property facts. `CanonicalRecordLayout` publishes object size,
+      member offsets, and the union flag. `CanonicalRecordProperties` publishes
+      unary record-property facts for completed record TypeIds. Class-template
+      instantiation refreshes virtual metadata and layout after attaching member
+      declarations, propagates deleted special-member facts, and then publishes
+      these facts. Constructibility remains
       `ConstraintSatisfaction::Unknown` in concepts until that canonical
       constructor-query path is available.
 
@@ -929,6 +935,22 @@ start them.
 - **Callable ABI mangling:** MSVC name mangling still throws an internal error
   for function declarations with non-projectable ordered callable parameters;
   address this at boundary 3B after canonical type migration.
+- **Boundary 4 handoff - member-function-pointer descriptor identity:** a
+  concrete member-function-pointer target whose owner survives only as the
+  function signature's class name reaches `tryImportCanonicalTypeDesc` with
+  `CanonicalTypeDesc::structural_type_id` unset. `materializeTypeSpecifier`
+  then rebuilds the node from the flat `type_index` plus that signature, so the
+  canonical importer sees no owner `TypeId`/`EntityId` and returns
+  `UnmigratedCallable`. Trace: `checkMemberFunctionAddressAccessForTarget`
+  (`SemanticAnalysis.cpp`) -> `tryImportCanonicalTypeDesc` ->
+  `materializeTypeSpecifier` -> `set_function_signature`. Extending the
+  `canonicalizeType` member-pointer branch near the member-object-pointer block
+  did not fire, so the descriptor is produced by a different semantic
+  normalization path. First split: populate `structural_type_id` on
+  member-function-pointer descriptors in the semantic type context from the
+  canonical owner `TypeId` (not the `type_index` or the signature spelling),
+  then let materialization reconstruct the owner. This blocks the remaining
+  dependent member-function-pointer `UnmigratedCallable` shapes.
 - **Negative tests:** encode the exact expected diagnostic ID multiset in the
   filename (for example, `_e1001.cpp` or `_e1003_e1051.cpp`). `_fail.cpp` is
   reserved for the immutable legacy inventory.
