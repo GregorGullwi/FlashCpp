@@ -1848,6 +1848,24 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		}
 
 		if (additional_types.empty()) {
+			if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+				// The approximate record check reports a class constructible
+				// when a default constructor exists, even when that constructor
+				// is deleted or inaccessible, or the class is abstract. Base
+				// and member default-construction recursion stays deferred.
+				if (struct_info->is_abstract ||
+					struct_info->isDefaultConstructorDeleted() ||
+					(struct_info->implicit_default_constructor.is_finalized &&
+					 struct_info->implicit_default_constructor.is_deleted)) {
+					return TypeTraitResult::success_false();
+				}
+				if (const StructMemberFunction* default_ctor =
+						struct_info->findDefaultConstructor();
+					default_ctor != nullptr &&
+					default_ctor->access != AccessSpecifier::Public) {
+					return TypeTraitResult::success_false();
+				}
+			}
 			TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
 			return base_result.success
 				? base_result
