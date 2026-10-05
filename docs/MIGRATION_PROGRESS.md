@@ -26,7 +26,11 @@ imports, while compatibility paths still materialize flat types for unmigrated
 families. Parser-side overload ranking and other syntax-facing conversion
 callers still use `TypeSpecifierNode`. Ordered pointer objects use
 `runtime_pointer_depth`; `__is_same` compares canonical `TypeId`s for supported
-operands, and the shared type-trait evaluator now classifies the whole
+operands, importing each operand through the structural-trait importer so a
+class-template specialization projected as a nominal specifier recovers its
+published EntityId (see
+`tests/test_canonical_lazy_same_specialization_concept_ret0.cpp`), and the
+shared type-trait evaluator now classifies the whole
 structural `[meta.unary.prop]` family from the canonical node: references,
 pointers, arrays, functions, member pointers, enums, and the builtin
 arithmetic/scalar/fundamental/object/compound groupings derived from them.
