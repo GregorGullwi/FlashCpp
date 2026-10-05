@@ -874,6 +874,24 @@ bool hasTrivialDefaultConstructor(const StructTypeInfo* struct_info) {
 	return !struct_info->hasUserDeclaredConstructor();
 }
 
+// A default member initializer that value- or default-constructs its member
+// runs that class's default constructor. Detected structurally so the nothrow
+// walk can include it; other initializer expressions need expression-level
+// noexcept evaluation and stay deferred.
+bool defaultInitializerIsDefaultConstruction(const ASTNode& initializer) {
+	if (initializer.is<InitializerListNode>()) {
+		return initializer.as<InitializerListNode>().initializers().empty();
+	}
+	if (initializer.is<ExpressionNode>()) {
+		const ExpressionNode& expression = initializer.as<ExpressionNode>();
+		if (const auto* constructor_call =
+				std::get_if<ConstructorCallNode>(&expression)) {
+			return constructor_call->arguments().empty();
+		}
+	}
+	return false;
+}
+
 // A class whose default constructor is implicit or explicitly defaulted
 // inherits its default-construction property from every base class and member
 // that constructor initializes. A user-provided default constructor initializes
@@ -884,7 +902,8 @@ bool hasTrivialDefaultConstructor(const StructTypeInfo* struct_info) {
 template <typename ClassProperty>
 bool recordSubobjectsSatisfyDefaultConstruction(
 	const StructTypeInfo& root,
-	ClassProperty class_property) {
+	ClassProperty class_property,
+	bool recurse_default_initialized_members) {
 	std::vector<const StructTypeInfo*> pending{&root};
 	std::vector<const StructTypeInfo*> visited;
 	while (!pending.empty()) {
@@ -935,6 +954,18 @@ bool recordSubobjectsSatisfyDefaultConstruction(
 				continue;
 			}
 			if (member.default_initializer.has_value()) {
+				// A default member initializer of a class type that default
+				// constructs the member still runs that class's default
+				// constructor, so the nothrow answer must include it. Other
+				// initializer expressions need expression-level noexcept
+				// evaluation and stay deferred.
+				if (recurse_default_initialized_members &&
+					member.pointer_depth == 0 &&
+					is_struct_type(member.type_index.category()) &&
+					defaultInitializerIsDefaultConstruction(
+						*member.default_initializer)) {
+					pending.push_back(structInfoFromTypeIndex(member.type_index));
+				}
 				continue;
 			}
 			if (member.is_reference()) {
@@ -955,7 +986,8 @@ bool recordDefaultConstructible(const StructTypeInfo& root) {
 		root,
 		[](const StructTypeInfo&, const StructMemberFunction*) {
 			return true;
-		});
+		},
+		false);
 }
 
 bool recordTriviallyConstructible(const StructTypeInfo& root) {
@@ -963,7 +995,8 @@ bool recordTriviallyConstructible(const StructTypeInfo& root) {
 		root,
 		[](const StructTypeInfo& info, const StructMemberFunction*) {
 			return hasTrivialDefaultConstructor(&info);
-		});
+		},
+		false);
 }
 
 bool recordNothrowConstructible(const StructTypeInfo& root) {
@@ -985,7 +1018,8 @@ bool recordNothrowConstructible(const StructTypeInfo& root) {
 			// An implicit or defaulted non-trivial constructor inherits the
 			// exception specification of its subobjects.
 			return true;
-		});
+		},
+		true);
 }
 
 template<typename Pred>
