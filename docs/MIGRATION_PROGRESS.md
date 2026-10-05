@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-10-04.
+Last updated: 2026-10-05.
 
 ## Current state
 
@@ -326,9 +326,17 @@ checks a dependent source exception specification against fixed non-throwing
 and potentially-throwing target aliases after class-template substitution.
 Deferred ordinary function-template addresses now retain their explicit
 template arguments through substitution, so `decltype(&function<T>)` aliases
-use substituted signatures for overload ranking. Exact type identity for a
-concrete alias-template specialization remains a separate gap in
-`docs/KNOWN_ISSUES.md`.
+use substituted signatures for overload ranking. A global function-template
+address reached through an alias-template specialization now types as the same
+flat callable specifier as the directly written address. Alias substitution
+re-shapes the address-of operand into a qualified identifier, and the
+address-of query now returns the designator's function-pointer type instead of
+adding a second pointer level. Canonical identity already agreed through
+`TypeId`; this removes the flat template-argument divergence, so
+`SameType<Type, Type>` and `__is_same` agree. The regression
+`tests/test_canonical_alias_function_template_address_identity_ret0.cpp`
+checks alias-versus-direct identity for zero-parameter, scalar-parameter, and
+record-parameter function templates.
 `tests/test_canonical_distinct_dependent_noexcept_function_pointer_alias_overload_ret0.cpp`
 checks that distinct dependent exception expressions select the non-throwing
 target for `int` and the potentially-throwing target for `char`, and resolves a
