@@ -1106,192 +1106,218 @@ static const TypeInfo* tryResolveDeferredBaseToConcreteStruct(
 }
 
 // Helper: Look up a type alias including inherited ones from base classes
-// Searches struct_name::member_name first, then recursively searches base classes
-// Uses depth limit to prevent infinite recursion in case of malformed input
-const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name, int depth) {
-	// Prevent infinite recursion with a reasonable depth limit
-	constexpr int kMaxInheritanceDepth = 100;
-	if (depth > kMaxInheritanceDepth) {
-		FLASH_LOG_FORMAT(Templates, Warning, "lookup_inherited_type_alias: max depth exceeded for '{}::{}'",
-						 StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
-		return nullptr;
-	}
+// Searches base classes in declaration order using an explicit depth-first worklist.
+const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name) {
+	struct LookupFrame {
+		StringHandle current_name{};
+		const StructTypeInfo* struct_info = nullptr;
+		size_t next_base = 0;
+		std::vector<StringHandle> alias_path;
+	};
 
 	FLASH_LOG_FORMAT(Templates, Trace, "lookup_inherited_type_alias: looking for '{}::{}' ",
-					 StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
+		StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
 
-	// First try direct lookup with qualified name
-	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(StringTable::getStringView(struct_name))
-		.append("::")
-		.append(StringTable::getStringView(member_name));
-	std::string_view qualified_name = qualified_name_builder.commit();
-	StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name);
-
-	if (LazyTypeAliasRegistry::getInstance().needsEvaluation(struct_name, member_name)) {
-		if (std::optional<TypeIndex> lazy_alias_type =
-				evaluateLazyTypeAlias(struct_name, member_name);
-			lazy_alias_type.has_value()) {
-			uint32_t size_bits = 0;
-			const TypeInfo* lazy_type_info = tryGetTypeInfo(*lazy_alias_type);
-			if (lazy_type_info != nullptr) {
-				SizeInBits lazy_size_bits = lazy_type_info->sizeInBits();
-				if (lazy_size_bits.is_set()) {
-					size_bits = lazy_size_bits.value;
+	std::vector<LookupFrame> frames;
+	frames.push_back(LookupFrame{struct_name, nullptr, 0, {}});
+	while (!frames.empty()) {
+		LookupFrame& frame = frames.back();
+		if (frame.struct_info == nullptr) {
+			if (std::find(frame.alias_path.begin(), frame.alias_path.end(), frame.current_name) !=
+				frame.alias_path.end()) {
+				frames.pop_back();
+				continue;
+			}
+			bool active_alias_cycle = false;
+			for (size_t frame_index = 0; frame_index + 1 < frames.size(); ++frame_index) {
+				const LookupFrame& active_frame = frames[frame_index];
+				if (active_frame.current_name == frame.current_name ||
+					std::find(
+						active_frame.alias_path.begin(),
+						active_frame.alias_path.end(),
+						frame.current_name) != active_frame.alias_path.end()) {
+					active_alias_cycle = true;
+					break;
 				}
 			}
-
-			auto direct_register_it = getTypesByNameMap().find(qualified_name_handle);
-			if (direct_register_it != getTypesByNameMap().end() &&
-				direct_register_it->second != nullptr) {
-				update_type_alias_copy(
-					*direct_register_it->second,
-					*lazy_alias_type,
-					size_bits,
-					nullptr,
-					lazy_type_info);
-			} else {
-				add_type_alias_copy(qualified_name_handle, *lazy_alias_type, size_bits);
+			if (active_alias_cycle) {
+				frames.pop_back();
+				continue;
 			}
-		}
-	}
+			frame.alias_path.push_back(frame.current_name);
 
-	auto direct_it = getTypesByNameMap().find(qualified_name_handle);
-	if (direct_it != getTypesByNameMap().end()) {
-		FLASH_LOG_FORMAT(Templates, Trace, "Found direct type alias '{}'", qualified_name);
-		return direct_it->second;
-	}
+			StringBuilder qualified_name_builder;
+			qualified_name_builder.append(StringTable::getStringView(frame.current_name))
+				.append("::")
+				.append(StringTable::getStringView(member_name));
+			std::string_view qualified_name = qualified_name_builder.commit();
+			StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name);
 
-	// Not found directly, look up the struct and search its base classes
-	auto struct_it = getTypesByNameMap().find(struct_name);
-	if (struct_it == getTypesByNameMap().end()) {
-		FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' not found in getTypesByNameMap()", StringTable::getStringView(struct_name));
-		return nullptr;
-	}
-
-	const TypeInfo* struct_type_info = struct_it->second;
-
-	// If this is a type alias (no struct_info_), resolve the underlying type
-	if (!struct_type_info->getStructInfo()) {
-		if (struct_type_info->isTemplateInstantiation()) {
-			AliasTemplateMaterializationResult canonical_owner =
-				materializeCanonicalOwnerTypeForLookup(*struct_type_info, {});
-			if (canonical_owner.resolved_type_info != nullptr &&
-				canonical_owner.resolved_type_info->name().isValid() &&
-				canonical_owner.resolved_type_info != struct_type_info) {
-				StringHandle canonical_owner_name = canonical_owner.resolved_type_info->name();
-				if (canonical_owner_name != struct_name) {
-					FLASH_LOG_FORMAT(
-						Templates,
-						Debug,
-						"Canonicalized placeholder owner '{}' -> '{}' while resolving '{}'",
-						StringTable::getStringView(struct_name),
-						StringTable::getStringView(canonical_owner_name),
-						StringTable::getStringView(member_name));
-					return lookup_inherited_type_alias(canonical_owner_name, member_name, depth + 1);
-				}
-			}
-		}
-
-		if (struct_type_info->isTemplateInstantiation()) {
-			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
-				struct_type_info->sourceNamespace(),
-				struct_type_info->baseTemplateName());
-			TemplateNameLookupResult alias_template_lookup = gTemplateRegistry.lookupTemplateName(
-				buildTemplateNameLookupRequest(
-					alias_template_name,
-					TemplateNameLookupKind::Qualified,
-					false));
-			if (!alias_template_lookup.hasAliasTemplate()) {
-				alias_template_lookup = gTemplateRegistry.lookupTemplateName(
-					buildTemplateNameLookupRequest(
-						struct_type_info->baseTemplateName(),
-						TemplateNameLookupKind::Ordinary,
-						false));
-			}
-			std::optional<ASTNode> alias_template_entry =
-				alias_template_lookup.firstDeclarationOfKind(TemplateDeclarationKind::AliasTemplate);
-			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
-				std::vector<TemplateTypeArg> concrete_args;
-				concrete_args.reserve(struct_type_info->templateArgs().size());
-				for (const auto& arg_info : struct_type_info->templateArgs()) {
-					TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
-					concrete_arg.setCategory(arg_info.category());
-					concrete_args.push_back(concrete_arg);
-				}
-
-				if (std::optional<TemplateTypeArg> rebound_arg =
-						tryRebindAliasTargetTemplateArg(
-							alias_template_entry->as<TemplateAliasNode>(),
-							concrete_args);
-					rebound_arg.has_value() &&
-					!rebound_arg->is_value &&
-					rebound_arg->type_index.is_valid()) {
-					if (const TypeInfo* rebound_type = tryGetTypeInfo(rebound_arg->type_index)) {
-						FLASH_LOG_FORMAT(
-							Templates,
-							Debug,
-							"Alias-template placeholder '{}' resolved '{}' through alias target '{}'",
-							StringTable::getStringView(struct_name),
-							StringTable::getStringView(member_name),
-							StringTable::getStringView(rebound_type->name()));
-						if (member_name == StringTable::getOrInternStringHandle("type")) {
-							return rebound_type;
+			if (LazyTypeAliasRegistry::getInstance().needsEvaluation(frame.current_name, member_name)) {
+				if (std::optional<TypeIndex> lazy_alias_type =
+						evaluateLazyTypeAlias(frame.current_name, member_name);
+					lazy_alias_type.has_value()) {
+					uint32_t size_bits = 0;
+					const TypeInfo* lazy_type_info = tryGetTypeInfo(*lazy_alias_type);
+					if (lazy_type_info != nullptr) {
+						SizeInBits lazy_size_bits = lazy_type_info->sizeInBits();
+						if (lazy_size_bits.is_set()) {
+							size_bits = lazy_size_bits.value;
 						}
-						return lookup_inherited_type_alias(rebound_type->name(), member_name, depth + 1);
+					}
+
+					auto direct_register_it = getTypesByNameMap().find(qualified_name_handle);
+					if (direct_register_it != getTypesByNameMap().end() &&
+						direct_register_it->second != nullptr) {
+						update_type_alias_copy(
+							*direct_register_it->second,
+							*lazy_alias_type,
+							size_bits,
+							nullptr,
+							lazy_type_info);
+					} else {
+						add_type_alias_copy(qualified_name_handle, *lazy_alias_type, size_bits);
 					}
 				}
 			}
-		}
 
-		// This might be a type alias - try to find the actual struct type
-		// Type aliases have a type_index that points to the underlying type
-		// Check if type_index_ is valid and points to a different TypeInfo entry
-		if (const TypeInfo* underlying_type = tryGetTypeInfo(struct_type_info->type_index_)) {
-			// Check if this is actually an alias (points to a different TypeInfo)
-			// by comparing the pointer addresses
-			if (underlying_type != struct_type_info && underlying_type->getStructInfo()) {
-				StringHandle underlying_name = underlying_type->name();
-				FLASH_LOG_FORMAT(Templates, Trace, "Type '{}' is an alias for '{}', following alias",
-								 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
-				return lookup_inherited_type_alias(underlying_name, member_name, depth + 1);
+			auto direct_it = getTypesByNameMap().find(qualified_name_handle);
+			if (direct_it != getTypesByNameMap().end()) {
+				FLASH_LOG_FORMAT(Templates, Trace, "Found direct type alias '{}'", qualified_name);
+				return direct_it->second;
 			}
-		}
-		FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has no struct_info_ and couldn't resolve alias", StringTable::getStringView(struct_name));
-		return nullptr;
-	}
 
-	// Search base classes recursively
-	const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-	FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
-	for (const auto& base_class : struct_info->base_classes) {
-		if (base_class.is_deferred) {
-			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
-			if (resolved != nullptr) {
-				const TypeInfo* base_result = lookup_inherited_type_alias(resolved->name(), member_name, depth + 1);
-				if (base_result != nullptr) {
-					FLASH_LOG_FORMAT(Templates, Trace, "Found inherited type alias '{}::{}' via deferred base '{}'",
-									 StringTable::getStringView(struct_name), StringTable::getStringView(member_name), base_class.name);
-					return base_result;
+			auto struct_it = getTypesByNameMap().find(frame.current_name);
+			if (struct_it == getTypesByNameMap().end()) {
+				FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' not found in getTypesByNameMap()",
+					StringTable::getStringView(frame.current_name));
+				frames.pop_back();
+				continue;
+			}
+
+			const TypeInfo* struct_type_info = struct_it->second;
+			if (!struct_type_info->getStructInfo()) {
+				if (struct_type_info->isTemplateInstantiation()) {
+					AliasTemplateMaterializationResult canonical_owner =
+						materializeCanonicalOwnerTypeForLookup(*struct_type_info, {});
+					if (canonical_owner.resolved_type_info != nullptr &&
+						canonical_owner.resolved_type_info->name().isValid() &&
+						canonical_owner.resolved_type_info != struct_type_info) {
+						StringHandle canonical_owner_name = canonical_owner.resolved_type_info->name();
+						if (canonical_owner_name != frame.current_name) {
+							FLASH_LOG_FORMAT(
+								Templates,
+								Debug,
+								"Canonicalized placeholder owner '{}' -> '{}' while resolving '{}'",
+								StringTable::getStringView(frame.current_name),
+								StringTable::getStringView(canonical_owner_name),
+								StringTable::getStringView(member_name));
+							frame.current_name = canonical_owner_name;
+							continue;
+						}
+					}
 				}
+
+				if (struct_type_info->isTemplateInstantiation()) {
+					StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
+						struct_type_info->sourceNamespace(),
+						struct_type_info->baseTemplateName());
+					TemplateNameLookupResult alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+						buildTemplateNameLookupRequest(
+							alias_template_name,
+							TemplateNameLookupKind::Qualified,
+						false));
+					if (!alias_template_lookup.hasAliasTemplate()) {
+						alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+							buildTemplateNameLookupRequest(
+								struct_type_info->baseTemplateName(),
+								TemplateNameLookupKind::Ordinary,
+								false));
+					}
+					std::optional<ASTNode> alias_template_entry =
+						alias_template_lookup.firstDeclarationOfKind(TemplateDeclarationKind::AliasTemplate);
+					if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
+						std::vector<TemplateTypeArg> concrete_args;
+						concrete_args.reserve(struct_type_info->templateArgs().size());
+						for (const auto& arg_info : struct_type_info->templateArgs()) {
+							TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
+							concrete_arg.setCategory(arg_info.category());
+							concrete_args.push_back(concrete_arg);
+						}
+
+						if (std::optional<TemplateTypeArg> rebound_arg =
+								tryRebindAliasTargetTemplateArg(
+									alias_template_entry->as<TemplateAliasNode>(),
+									concrete_args);
+							rebound_arg.has_value() &&
+							!rebound_arg->is_value &&
+							rebound_arg->type_index.is_valid()) {
+							if (const TypeInfo* rebound_type = tryGetTypeInfo(rebound_arg->type_index)) {
+								FLASH_LOG_FORMAT(
+									Templates,
+									Debug,
+									"Alias-template placeholder '{}' resolved '{}' through alias target '{}'",
+									StringTable::getStringView(frame.current_name),
+									StringTable::getStringView(member_name),
+									StringTable::getStringView(rebound_type->name()));
+								if (member_name == StringTable::getOrInternStringHandle("type")) {
+									return rebound_type;
+								}
+								frame.current_name = rebound_type->name();
+								continue;
+							}
+						}
+					}
+				}
+
+				if (const TypeInfo* underlying_type = tryGetTypeInfo(struct_type_info->type_index_)) {
+					if (underlying_type != struct_type_info && underlying_type->getStructInfo()) {
+						StringHandle underlying_name = underlying_type->name();
+						FLASH_LOG_FORMAT(
+							Templates,
+							Trace,
+							"Type '{}' is an alias for '{}', following alias",
+							StringTable::getStringView(frame.current_name),
+							StringTable::getStringView(underlying_name));
+						frame.current_name = underlying_name;
+						continue;
+					}
+				}
+				FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has no struct_info_ and couldn't resolve alias",
+					StringTable::getStringView(frame.current_name));
+				frames.pop_back();
+				continue;
 			}
+
+			frame.struct_info = struct_type_info->getStructInfo();
+			FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has {} base classes",
+				StringTable::getStringView(frame.current_name), frame.struct_info->base_classes.size());
+		}
+
+		const auto& base_classes = frame.struct_info->base_classes;
+		if (frame.next_base == base_classes.size()) {
+			frames.pop_back();
 			continue;
 		}
 
-		FLASH_LOG_FORMAT(Templates, Trace, "Checking base class '{}'", base_class.name);
-		// Recursively look up in base class - convert base_class.name to StringHandle for performance
-		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_class.name);
-		const TypeInfo* base_result = lookup_inherited_type_alias(base_name_handle, member_name, depth + 1);
-		if (base_result != nullptr) {
-			FLASH_LOG_FORMAT(Templates, Trace, "Found inherited type alias '{}::{}' via base class '{}'",
-							 StringTable::getStringView(struct_name), StringTable::getStringView(member_name), base_class.name);
-			return base_result;
+		const auto& base_class = base_classes[frame.next_base++];
+		StringHandle base_name_handle;
+		if (base_class.is_deferred) {
+			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
+			if (resolved == nullptr) {
+				continue;
+			}
+			base_name_handle = resolved->name();
+			FLASH_LOG_FORMAT(Templates, Trace, "Checking deferred base class '{}'", base_class.name);
+		} else {
+			FLASH_LOG_FORMAT(Templates, Trace, "Checking base class '{}'", base_class.name);
+			base_name_handle = StringTable::getOrInternStringHandle(base_class.name);
 		}
+		frames.push_back(LookupFrame{base_name_handle, nullptr, 0, {}});
 	}
 
 	return nullptr;
 }
-
 // Helper: Look up a template function including inherited ones from base classes
 const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth) {
 	// Prevent infinite recursion with a reasonable depth limit

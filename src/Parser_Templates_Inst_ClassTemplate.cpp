@@ -1946,6 +1946,392 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	// Pre-materialize concrete deferred class-template bases in postorder. A
+	// dependent inheritance chain otherwise re-enters this large instantiation
+	// routine once per base level, consuming native stack proportional to source
+	// depth before inherited aliases can be resolved.
+	if (template_base_worklist_preflight_depth_ == 0 &&
+		!gTemplateRegistry.lookupExactSpecialization(
+			template_name,
+			filled_args_for_pattern_match).has_value()) {
+		struct BaseInstantiationArgumentIdentity {
+			enum class Kind : uint8_t {
+				Type,
+				Value,
+				Template,
+			};
+			Kind kind = Kind::Type;
+			TypeId type{};
+			TypeId value_type{};
+			int64_t value = 0;
+			TemplateDeclId template_decl{};
+			bool operator==(const BaseInstantiationArgumentIdentity&) const = default;
+		};
+		struct BaseInstantiationIdentity {
+			TemplateDeclId template_decl{};
+			std::vector<BaseInstantiationArgumentIdentity> arguments;
+			bool operator==(const BaseInstantiationIdentity&) const = default;
+		};
+		struct BaseInstantiationRequest {
+			std::string_view template_name;
+			std::vector<TemplateTypeArg> arguments;
+			BaseInstantiationIdentity identity;
+		};
+		struct BaseInstantiationFrame {
+			BaseInstantiationRequest request;
+			std::vector<BaseInstantiationRequest> children;
+			size_t next_child = 0;
+			bool children_loaded = false;
+		};
+
+		auto make_request = [&](std::string_view requested_name,
+								std::span<const TemplateTypeArg> requested_args)
+			-> std::optional<BaseInstantiationRequest> {
+			if (gTemplateRegistry.lookup_alias_template(requested_name).has_value()) {
+				return std::nullopt;
+			}
+			auto template_entry = gTemplateRegistry.lookupTemplate(requested_name);
+			if (!template_entry.has_value() ||
+				!template_entry->is<TemplateClassDeclarationNode>()) {
+				return std::nullopt;
+			}
+			const TemplateClassDeclarationNode& class_template =
+				template_entry->as<TemplateClassDeclarationNode>();
+			if (!class_template.has_template_decl_id()) {
+				return std::nullopt;
+			}
+
+			BaseInstantiationRequest request;
+			request.template_name = requested_name;
+			request.arguments.assign(requested_args.begin(), requested_args.end());
+			request.identity.template_decl = class_template.template_decl_id();
+			request.identity.arguments.reserve(requested_args.size());
+			CanonicalTypeTable& canonical_types =
+				requireFrontendContext().canonicalTypes();
+			CanonicalTypeTransaction canonical_transaction(canonical_types);
+			for (const TemplateTypeArg& argument : requested_args) {
+				if (argument.is_dependent || argument.is_pack) {
+					return std::nullopt;
+				}
+				BaseInstantiationArgumentIdentity argument_identity;
+				if (argument.is_value) {
+					const FlashCpp::NonTypeValueIdentity value_identity =
+						argument.valueIdentity();
+					if (value_identity.is_dependent ||
+						value_identity.kind != FlashCpp::NonTypeValueIdentityKind::Integral) {
+						return std::nullopt;
+					}
+					TypeIndex value_type_index = value_identity.value_type_index;
+					if (!value_type_index.is_valid()) {
+						value_type_index = nativeTypeIndex(argument.typeEnum());
+					}
+					TypeSpecifierNode value_type(
+						value_type_index.withCategory(value_type_index.category()),
+						0,
+						Token{},
+						CVQualifier::None,
+						ReferenceQualifier::None);
+					const CanonicalTypeImport imported_value_type =
+						importCanonicalType(
+							canonical_types,
+							value_type);
+					if (imported_value_type.status != CanonicalTypeImportStatus::Supported) {
+						return std::nullopt;
+					}
+					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Value;
+					argument_identity.value_type = imported_value_type.type;
+					argument_identity.value = value_identity.value;
+				} else if (argument.is_template_template_arg) {
+					auto template_argument_entry =
+						gTemplateRegistry.lookupTemplate(argument.template_name_handle);
+					if (!template_argument_entry.has_value() ||
+						!template_argument_entry->is<TemplateClassDeclarationNode>() ||
+						!template_argument_entry->as<TemplateClassDeclarationNode>()
+							 .has_template_decl_id()) {
+						return std::nullopt;
+					}
+					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Template;
+					argument_identity.template_decl = template_argument_entry->as<
+						TemplateClassDeclarationNode>().template_decl_id();
+				} else {
+					TypeSpecifierNode argument_type =
+						makeTypeSpecifierFromTemplateTypeArg(argument, Token{});
+					tryBindPublishedTypeEntity(argument_type);
+					if (argument_type.has_member_class()) {
+						tryBindPublishedMemberClassEntity(argument_type);
+					}
+					const CanonicalTypeImport imported_type = importCanonicalType(
+						canonical_types,
+						argument_type);
+					if (imported_type.status != CanonicalTypeImportStatus::Supported) {
+						return std::nullopt;
+					}
+					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Type;
+					argument_identity.type = imported_type.type;
+				}
+				request.identity.arguments.push_back(argument_identity);
+			}
+			canonical_transaction.commit();
+			return request;
+		};
+
+		auto find_identity = [](
+			const std::vector<BaseInstantiationIdentity>& identities,
+			const BaseInstantiationIdentity& identity) {
+			return std::find(identities.begin(), identities.end(), identity) != identities.end();
+		};
+		auto find_pattern_struct = [](
+			const TemplateRegistry::SpecializationPatternMatch& pattern_match)
+			-> const StructDeclarationNode* {
+			if (pattern_match.node.is<StructDeclarationNode>()) {
+				return &pattern_match.node.as<StructDeclarationNode>();
+			}
+			if (pattern_match.node.is<TemplateClassDeclarationNode>()) {
+				return &pattern_match.node.as<TemplateClassDeclarationNode>()
+					.class_decl_node();
+			}
+			return nullptr;
+		};
+		auto collect_children = [&](const BaseInstantiationRequest& request)
+			-> std::optional<std::vector<BaseInstantiationRequest>> {
+			auto fail = [&](std::string_view reason)
+				-> std::optional<std::vector<BaseInstantiationRequest>> {
+				FLASH_LOG(Templates, Trace, "Deferred-base worklist stopped at ",
+					request.template_name, ": ", reason);
+				return std::nullopt;
+			};
+			if (gTemplateRegistry.lookupExactSpecialization(
+					request.template_name,
+					request.arguments).has_value()) {
+				return std::vector<BaseInstantiationRequest>{};
+			}
+			auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(
+				request.template_name,
+				request.arguments);
+			const TemplateParameterVector* pattern_template_params = nullptr;
+			const StructDeclarationNode* pattern_struct = nullptr;
+			std::vector<TemplateTypeArg> pattern_arguments;
+			if (pattern_match.has_value()) {
+				const TemplatePattern& pattern = *pattern_match->pattern;
+				pattern_template_params = &pattern.template_params;
+				pattern_struct = find_pattern_struct(*pattern_match);
+				pattern_arguments.reserve(pattern.template_params.size());
+				for (const TemplateParameterNode& parameter : pattern.template_params) {
+					if (parameter.is_variadic()) {
+						return fail("matched pattern has a template pack");
+					}
+					auto binding = pattern_match->substitutions.find(parameter.nameHandle());
+					if (binding == pattern_match->substitutions.end()) {
+						return fail("matched pattern parameter has no concrete binding");
+					}
+					pattern_arguments.push_back(binding->second);
+				}
+			} else {
+				auto primary_template_entry =
+					gTemplateRegistry.lookupTemplate(request.template_name);
+				if (!primary_template_entry.has_value() ||
+					!primary_template_entry->is<TemplateClassDeclarationNode>()) {
+					return fail("primary class template declaration is unavailable");
+				}
+				const TemplateClassDeclarationNode& primary_template =
+					primary_template_entry->as<TemplateClassDeclarationNode>();
+				pattern_template_params = &primary_template.template_parameters();
+				pattern_struct = &primary_template.class_decl_node();
+				if (pattern_template_params->size() != request.arguments.size()) {
+					return fail("primary template arguments are not fully materialized");
+				}
+				pattern_arguments = request.arguments;
+			}
+			if (pattern_struct == nullptr || pattern_template_params == nullptr) {
+				return fail("template declaration has no class body");
+			}
+
+			TemplateArgSubstitutionMap substitutions;
+			TemplateArgPackSubstitutionMap pack_substitutions;
+			buildTemplateArgSubstitutionMaps(
+				*pattern_template_params,
+				pattern_arguments,
+				[](const TemplateParameterNode&, const TemplateTypeArg& argument) {
+					return argument;
+				},
+				substitutions,
+				pack_substitutions);
+
+			std::vector<BaseInstantiationRequest> children;
+			for (const DeferredTemplateBaseClassSpecifier& deferred_base :
+				 pattern_struct->deferred_template_base_classes()) {
+				if (deferred_base.is_pack_expansion ||
+					!deferred_base.member_type_chain.empty()) {
+					return fail("base uses a pack expansion or member-type chain");
+				}
+				const std::string_view base_template_name =
+					StringTable::getStringView(deferred_base.base_template_name);
+				if (base_template_name.empty()) {
+					return fail("deferred base has no template name");
+				}
+				if (gTemplateRegistry.lookup_alias_template(base_template_name).has_value()) {
+					return fail("deferred base names an alias template");
+				}
+				auto base_template_entry = gTemplateRegistry.lookupTemplate(base_template_name);
+				if (!base_template_entry.has_value() ||
+					!base_template_entry->is<TemplateClassDeclarationNode>()) {
+					continue;
+				}
+				std::vector<TemplateTypeArg> base_arguments;
+				base_arguments.reserve(deferred_base.template_arguments.size());
+				bool arguments_resolved = true;
+				for (const TemplateArgumentNodeInfo& argument_info :
+					 deferred_base.template_arguments) {
+					if (argument_info.is_pack) {
+						arguments_resolved = false;
+						FLASH_LOG(Templates, Trace, "Deferred-base worklist could not materialize a pack argument");
+						break;
+					}
+					if (argument_info.node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& type_specifier =
+							argument_info.node.as<TypeSpecifierNode>();
+						auto resolved_type = tryResolveDeferredBaseTypeArgFromMap(
+							type_specifier,
+							substitutions);
+						if (!resolved_type.has_value()) {
+							resolved_type = tryMaterializeDeferredBaseTypeArg(
+								type_specifier,
+								*pattern_template_params,
+								pattern_arguments,
+								[](std::string_view,
+								   std::span<const TemplateTypeArg>) {
+									return std::string_view{};
+								});
+						}
+						if (resolved_type.has_value()) {
+							base_arguments.push_back(std::move(*resolved_type));
+							continue;
+						}
+						TemplateTypeArg concrete_type(type_specifier);
+						if (concrete_type.is_dependent ||
+							!concrete_type.type_index.is_valid()) {
+							arguments_resolved = false;
+							FLASH_LOG(Templates, Trace, "Deferred-base worklist could not substitute a type argument");
+							break;
+						}
+						base_arguments.push_back(std::move(concrete_type));
+						continue;
+					}
+					if (!argument_info.node.is<ExpressionNode>()) {
+						arguments_resolved = false;
+						FLASH_LOG(Templates, Trace, "Deferred-base worklist found a non-expression NTTP argument");
+						break;
+					}
+					ASTNode substituted_argument = substituteTemplateParameters(
+						argument_info.node,
+						*pattern_template_params,
+						pattern_arguments);
+					if (auto value = try_evaluate_constant_expression(substituted_argument)) {
+						const TypeIndex value_type_index = makeDeferredBaseValueTypeIndex(
+							value->type,
+							value->type_index);
+						base_arguments.push_back(TemplateTypeArg::makeValue(
+							value->value,
+							value_type_index));
+						continue;
+					}
+					arguments_resolved = false;
+					FLASH_LOG(Templates, Trace, "Deferred-base worklist could not evaluate an NTTP argument");
+					break;
+				}
+				if (!arguments_resolved) {
+					return fail("template arguments could not be resolved");
+				}
+				auto child = make_request(base_template_name, base_arguments);
+				if (!child.has_value()) {
+					return fail("resolved base did not have a canonical instantiation identity");
+				}
+				children.push_back(std::move(*child));
+			}
+			return children;
+		};
+
+		if (auto root = make_request(
+				template_name,
+				std::span<const TemplateTypeArg>(
+					filled_args_for_pattern_match.data(),
+					filled_args_for_pattern_match.size()));
+			root.has_value()) {
+			std::vector<BaseInstantiationFrame> frames;
+			std::vector<BaseInstantiationIdentity> active_identities;
+			std::vector<BaseInstantiationIdentity> completed_identities;
+			std::vector<BaseInstantiationRequest> postorder;
+			frames.push_back(BaseInstantiationFrame{std::move(*root), {}, 0, false});
+			bool worklist_complete = true;
+			while (!frames.empty() && worklist_complete) {
+				BaseInstantiationFrame& frame = frames.back();
+				if (!frame.children_loaded) {
+					if (find_identity(completed_identities, frame.request.identity) ||
+						find_identity(active_identities, frame.request.identity)) {
+						worklist_complete = !find_identity(
+							active_identities,
+							frame.request.identity);
+						frames.pop_back();
+						continue;
+					}
+					active_identities.push_back(frame.request.identity);
+					auto children = collect_children(frame.request);
+					if (!children.has_value()) {
+						worklist_complete = false;
+						break;
+					}
+					frame.children = std::move(*children);
+					frame.children_loaded = true;
+					continue;
+				}
+				if (frame.next_child < frame.children.size()) {
+					BaseInstantiationRequest child =
+						std::move(frame.children[frame.next_child++]);
+					if (find_identity(completed_identities, child.identity)) {
+						continue;
+					}
+					if (find_identity(active_identities, child.identity)) {
+						worklist_complete = false;
+						break;
+					}
+					frames.push_back(BaseInstantiationFrame{std::move(child), {}, 0, false});
+					continue;
+				}
+				postorder.push_back(frame.request);
+				completed_identities.push_back(frame.request.identity);
+				auto active = std::find(
+					active_identities.begin(),
+					active_identities.end(),
+					frame.request.identity);
+				if (active != active_identities.end()) {
+					active_identities.erase(active);
+				}
+				frames.pop_back();
+			}
+
+			if (worklist_complete && postorder.size() > 1) {
+				FLASH_LOG(Templates, Debug, "Deferred-base worklist collected ",
+					postorder.size(), " class instantiations for ", template_name);
+				struct WorklistPreflightScope {
+					size_t& depth;
+					explicit WorklistPreflightScope(size_t& value) : depth(value) { ++depth; }
+					~WorklistPreflightScope() { --depth; }
+				} preflight_scope(template_base_worklist_preflight_depth_);
+				for (size_t index = 0; index + 1 < postorder.size(); ++index) {
+					auto materialized_base = try_instantiate_class_template(
+						postorder[index].template_name,
+						postorder[index].arguments,
+						false);
+					if (materialized_base.has_value() &&
+						materialized_base->is<StructDeclarationNode>() &&
+						shouldCommitTemplateInstantiationArtifacts()) {
+						registerAndNormalizeLateMaterializedTopLevelNode(*materialized_base);
+					}
+				}
+			}
+		}
+	}
+
 	// First, check if there's an exact specialization match
 	// Try to match a specialization pattern and get the substitution mapping
 	{

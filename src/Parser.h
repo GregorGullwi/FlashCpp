@@ -1476,6 +1476,9 @@ private:
 	// Active parser-level instantiation context chain (null when not inside any instantiation).
 	// Managed by ScopedParserInstantiationContext RAII guards.
 	const ParserInstantiationContext* current_instantiation_ctx_ = nullptr;
+	// Nonzero while class-template base dependencies are pre-materialized from
+	// an explicit worklist, so child instantiations do not start another walk.
+	size_t template_base_worklist_preflight_depth_ = 0;
 
 	// Last parsed trailing requires clause from caller-specific requires handling
 	// skip_function_trailing_specifiers() stops before 'requires' so callers can
@@ -4564,14 +4567,12 @@ private:	 // Resume private methods
 
 	// Helper: Look up a type alias including inherited ones from base classes
 	// Returns the TypeInfo pointer if found, nullptr otherwise
-	// Uses depth limit to prevent infinite recursion in malformed input
-	const TypeInfo* lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name, int depth = 0);
+	const TypeInfo* lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name);
 	// Convenience overload for string_view parameters
-	const TypeInfo* lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name, int depth = 0) {
+	const TypeInfo* lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name) {
 		return lookup_inherited_type_alias(
 			StringTable::getOrInternStringHandle(struct_name),
-			StringTable::getOrInternStringHandle(member_name),
-			depth);
+			StringTable::getOrInternStringHandle(member_name));
 	}
 
 	// Helper: Look up a template function including inherited ones from base classes
