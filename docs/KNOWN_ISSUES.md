@@ -426,13 +426,14 @@ static_assert(__is_same(decltype(freeFn), int (*)(int)));  // currently true
 static_assert(__is_same(decltype(freeFn), int(int)));      // should be true
 ```
 
-`__is_pointer(decltype(freeFn))` is therefore `true` and `__is_function(...)` is
-`false`, and the structural `[meta.unary.prop]` family now reports exactly that
-published identity. The identity defect predates the canonical trait
-classification and is independently observable through `__is_same`. It belongs
-to the callable declarator families in architecture boundary 3A, not to the
-trait evaluator; do not special-case function categories in the trait path to
-mask it.
+The `int(int)` spelling now parses as a type-id, so the assertion is observable
+and fails on the identity rather than the parse. `__is_pointer(decltype(freeFn))`
+is therefore `true` and `__is_function(...)` is `false`, and the structural
+`[meta.unary.prop]` family now reports exactly that published identity. The
+identity defect predates the canonical trait classification and is independently
+observable through `__is_same`. It belongs to the callable declarator families
+in architecture boundary 3A, not to the trait evaluator; do not special-case
+function categories in the trait path to mask it.
 
 ## Several constrained function templates in one translation unit mis-resolve
 
