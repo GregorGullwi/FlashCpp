@@ -2261,7 +2261,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					primary_template_entry->as<TemplateClassDeclarationNode>();
 				pattern_template_params = &primary_template.template_parameters();
 				pattern_struct = &primary_template.class_decl_node();
-				if (pattern_template_params->size() != request_args.size()) {
+				size_t required_argument_count = 0;
+				bool has_template_parameter_pack = false;
+				for (const TemplateParameterNode& parameter : *pattern_template_params) {
+					if (parameter.is_variadic()) {
+						if (has_template_parameter_pack) {
+							return fail("primary template has multiple parameter packs");
+						}
+						has_template_parameter_pack = true;
+					} else {
+						++required_argument_count;
+					}
+				}
+				if (request_args.size() < required_argument_count ||
+					(!has_template_parameter_pack &&
+						request_args.size() != required_argument_count)) {
 					return fail("primary template arguments are not fully materialized");
 				}
 				pattern_arguments.assign(request_args.begin(), request_args.end());
@@ -2298,99 +2312,199 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substitutions_scratch,
 				pack_substitutions_scratch);
 
-			children.clear();
-			for (const DeferredTemplateBaseClassSpecifier& deferred_base :
-				 pattern_struct->deferred_template_base_classes()) {
-				if (deferred_base.is_pack_expansion ||
-					!deferred_base.member_type_chain.empty()) {
-					return fail("base uses a pack expansion or member-type chain");
+			auto resolve_deferred_base_argument = [&](const TemplateArgumentNodeInfo& argument_info,
+												 std::optional<size_t> expansion_index,
+												 const DeferredBasePackExpansionBindingInfo* pack_bindings)
+				-> std::optional<TemplateTypeArg> {
+				if (argument_info.is_pack) {
+					return std::nullopt;
 				}
-				std::string_view base_template_name =
-					StringTable::getStringView(deferred_base.base_template_name);
-				if (base_template_name.empty()) {
-					return fail("deferred base has no template name");
-				}
-				std::vector<TemplateTypeArg>& base_arguments = base_arguments_scratch;
-				base_arguments.clear();
-				base_arguments.reserve(deferred_base.template_arguments.size());
-				bool arguments_resolved = true;
-				for (const TemplateArgumentNodeInfo& argument_info :
-					 deferred_base.template_arguments) {
-					if (argument_info.is_pack) {
-						arguments_resolved = false;
-						FLASH_LOG(Templates, Trace, "Deferred-base worklist could not materialize a pack argument");
-						break;
-					}
-					if (argument_info.node.is<TypeSpecifierNode>()) {
+				if (expansion_index.has_value() && pack_bindings != nullptr) {
+					StringHandle pack_name{};
+					if (argument_info.node.is<ExpressionNode>()) {
+						const ExpressionNode& expression = argument_info.node.as<ExpressionNode>();
+						if (const auto* parameter = std::get_if<TemplateParameterReferenceNode>(&expression)) {
+							pack_name = parameter->param_name();
+						} else if (const auto* identifier = std::get_if<IdentifierNode>(&expression)) {
+							pack_name = StringTable::getOrInternStringHandle(identifier->name());
+						}
+					} else if (argument_info.node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_specifier =
 							argument_info.node.as<TypeSpecifierNode>();
-						auto resolved_type = tryResolveDeferredBaseTypeArgFromMap(
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_specifier.type_index())) {
+							pack_name = type_info->name();
+						}
+					}
+					if (pack_name.isValid()) {
+						for (const DeferredBasePackBinding& pack_binding : pack_bindings->pack_bindings) {
+							if (pack_binding.name != pack_name ||
+								*expansion_index >= pack_binding.args.size()) {
+								continue;
+							}
+						TemplateTypeArg expanded_arg = pack_binding.args[*expansion_index];
+						if (argument_info.node.is<TypeSpecifierNode>()) {
+							expanded_arg = rebindDependentTemplateTypeArg(
+								expanded_arg,
+								TemplateTypeArg(argument_info.node.as<TypeSpecifierNode>()));
+						}
+						expanded_arg.is_pack = false;
+						return expanded_arg;
+						}
+					}
+				}
+
+				if (argument_info.node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_specifier = argument_info.node.as<TypeSpecifierNode>();
+					if (auto resolved_type = tryResolveDeferredBaseTypeArgFromMap(
 							type_specifier,
 							substitutions_scratch);
-						if (!resolved_type.has_value()) {
-							resolved_type = tryMaterializeDeferredBaseTypeArg(
-								type_specifier,
-								*pattern_template_params,
-								pattern_arguments,
-								[](std::string_view,
-								   std::span<const TemplateTypeArg>) {
-									return std::string_view{};
-								});
-						}
-						if (resolved_type.has_value()) {
-							base_arguments.push_back(std::move(*resolved_type));
-							continue;
-						}
-						TemplateTypeArg concrete_type(type_specifier);
-						if (concrete_type.is_dependent ||
-							!concrete_type.type_index.is_valid()) {
-							arguments_resolved = false;
-							FLASH_LOG(Templates, Trace, "Deferred-base worklist could not substitute a type argument");
-							break;
-						}
-						base_arguments.push_back(std::move(concrete_type));
-						continue;
+						resolved_type.has_value()) {
+						return resolved_type;
 					}
-					if (!argument_info.node.is<ExpressionNode>()) {
-						arguments_resolved = false;
-						FLASH_LOG(Templates, Trace, "Deferred-base worklist found a non-expression NTTP argument");
-						break;
+					if (auto resolved_type = tryMaterializeDeferredBaseTypeArg(
+							type_specifier,
+							*pattern_template_params,
+							pattern_arguments,
+							[](std::string_view,
+							   std::span<const TemplateTypeArg>) {
+								return std::string_view{};
+							});
+						resolved_type.has_value()) {
+						return resolved_type;
 					}
+					TemplateTypeArg concrete_type(type_specifier);
+					if (concrete_type.is_dependent ||
+						!concrete_type.type_index.is_valid()) {
+						return std::nullopt;
+					}
+					return concrete_type;
+				}
+				if (argument_info.node.is<ExpressionNode>()) {
 					ASTNode substituted_argument = substituteTemplateParameters(
 						argument_info.node,
 						*pattern_template_params,
 						pattern_arguments);
 					if (auto value = try_evaluate_constant_expression(substituted_argument)) {
-						const TypeIndex value_type_index = makeDeferredBaseValueTypeIndex(
-							value->type,
-							value->type_index);
-						base_arguments.push_back(TemplateTypeArg::makeValue(
+						return TemplateTypeArg::makeValue(
 							value->value,
-							value_type_index));
+							makeDeferredBaseValueTypeIndex(value->type, value->type_index));
+					}
+				}
+				return std::nullopt;
+			};
+
+			children.clear();
+			for (const DeferredTemplateBaseClassSpecifier& deferred_base : pattern_struct->deferred_template_base_classes()) {
+				std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
+				if (base_template_name.empty()) {
+					return fail("deferred base has no template name");
+				}
+				DeferredBasePackExpansionBindingInfo pack_bindings;
+				size_t expansion_count = 1;
+				if (deferred_base.is_pack_expansion) {
+					pack_bindings = collectDeferredBasePackExpansionBindings(
+						deferred_base,
+						pack_substitutions_scratch);
+					if (pack_bindings.invalid || pack_bindings.pack_bindings.empty()) {
+						return fail("pack expansion has no consistent concrete bindings");
+					}
+					expansion_count = pack_bindings.expansion_count;
+				}
+				for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
+					std::vector<TemplateTypeArg>& base_arguments = base_arguments_scratch;
+					base_arguments.clear();
+					base_arguments.reserve(deferred_base.template_arguments.size());
+					bool arguments_resolved = true;
+					for (const TemplateArgumentNodeInfo& argument_info :
+						 deferred_base.template_arguments) {
+						auto resolved_argument = resolve_deferred_base_argument(
+							argument_info,
+							deferred_base.is_pack_expansion
+								? std::optional<size_t>(expansion_index)
+								: std::nullopt,
+							deferred_base.is_pack_expansion ? &pack_bindings : nullptr);
+						if (!resolved_argument.has_value()) {
+							arguments_resolved = false;
+							break;
+						}
+						base_arguments.push_back(std::move(*resolved_argument));
+					}
+					if (!arguments_resolved) {
+						return fail("template arguments could not be resolved");
+					}
+					std::string_view expanded_base_template_name = base_template_name;
+					if (gTemplateRegistry.lookup_alias_template(expanded_base_template_name).has_value()) {
+						if (!resolve_alias_base(expanded_base_template_name, base_arguments)) {
+							return fail("alias-template base target could not be resolved");
+						}
+					}
+					if (!deferred_base.member_type_chain.empty()) {
+						if (deferred_base.member_type_chain.size() != 1 ||
+							deferred_base.member_type_chain.front().has_template_arguments) {
+							return fail("member-type chain is not a single plain alias");
+						}
+						auto owner_entry = gTemplateRegistry.lookupTemplate(expanded_base_template_name);
+						if (!owner_entry.has_value() ||
+							!owner_entry->is<TemplateClassDeclarationNode>()) {
+							return fail("member-type owner is not a primary class template");
+						}
+						const TemplateClassDeclarationNode& owner_template = owner_entry->as<TemplateClassDeclarationNode>();
+						const StringHandle member_name = deferred_base.member_type_chain.front().member_name;
+						const auto alias_it = std::find_if(
+							owner_template.class_decl_node().type_aliases().begin(),
+							owner_template.class_decl_node().type_aliases().end(),
+							[&](const TypeAliasDecl& alias) {
+								return alias.alias_name == member_name;
+							});
+						if (alias_it == owner_template.class_decl_node().type_aliases().end() ||
+							!alias_it->type_node.is<TypeSpecifierNode>()) {
+							return fail("member name is not a class-template type alias");
+						}
+
+						const TypeSpecifierNode& alias_target_specifier = alias_it->type_node.as<TypeSpecifierNode>();
+						const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_specifier.type_index());
+						if (alias_target_info == nullptr ||
+							!alias_target_info->isTemplateInstantiation()) {
+							return fail("member alias target is not a template instantiation");
+						}
+						std::string_view target_template_name = StringTable::getStringView(alias_target_info->baseTemplateName());
+						std::vector<TemplateTypeArg> target_arguments =
+							materializePlaceholderTemplateArgs(
+								*alias_target_info,
+								owner_template.template_parameters(),
+								base_arguments);
+						if (gTemplateRegistry.lookup_alias_template(target_template_name).has_value()) {
+							if (!resolve_alias_base(target_template_name, target_arguments)) {
+								return fail("member alias target chain could not be resolved");
+							}
+						}
+						auto target_request = make_request(target_template_name, target_arguments);
+						if (!target_request.has_value()) {
+							return fail("member alias target has no canonical instantiation identity");
+						}
+						children.push_back(*target_request);
+
+						std::vector<TemplateTypeArg> owner_arguments = base_arguments;
+						auto owner_request = make_request(
+							expanded_base_template_name,
+							owner_arguments);
+						if (!owner_request.has_value()) {
+							return fail("member-type owner has no canonical instantiation identity");
+						}
+						children.push_back(*owner_request);
 						continue;
 					}
-					arguments_resolved = false;
-					FLASH_LOG(Templates, Trace, "Deferred-base worklist could not evaluate an NTTP argument");
-					break;
-				}
-				if (!arguments_resolved) {
-					return fail("template arguments could not be resolved");
-				}
-				if (gTemplateRegistry.lookup_alias_template(base_template_name).has_value()) {
-					if (!resolve_alias_base(base_template_name, base_arguments)) {
-						return fail("alias-template base target could not be resolved");
+					auto base_template_entry = gTemplateRegistry.lookupTemplate(expanded_base_template_name);
+					if (!base_template_entry.has_value() ||
+						!base_template_entry->is<TemplateClassDeclarationNode>()) {
+						continue;
 					}
+					auto child = make_request(expanded_base_template_name, base_arguments);
+					if (!child.has_value()) {
+						return fail("resolved base did not have a canonical instantiation identity");
+					}
+					children.push_back(*child);
 				}
-				auto base_template_entry = gTemplateRegistry.lookupTemplate(base_template_name);
-				if (!base_template_entry.has_value() ||
-					!base_template_entry->is<TemplateClassDeclarationNode>()) {
-					continue;
-				}
-				auto child = make_request(base_template_name, base_arguments);
-				if (!child.has_value()) {
-					return fail("resolved base did not have a canonical instantiation identity");
-				}
-				children.push_back(*child);
 			}
 			return true;
 		};
