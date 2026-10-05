@@ -5152,6 +5152,30 @@ ParseResult Parser::parse_type_specifier() {
 	return ParseResult::error(error_msg, peek().is_eof() ? Token() : peek_info());
 }
 
+// [dcl.type.decltype]: whether a parenthesized operand is an lvalue. Covers the
+// id-expression, subscript, and dereference forms and member access on an
+// lvalue object; other shapes (calls, xvalues) keep the prvalue default.
+static bool decltypeOperandIsLvalue(const ASTNode& node) {
+	const ASTNode* current = &node;
+	while (current->is<ExpressionNode>()) {
+		const ExpressionNode& expr = current->as<ExpressionNode>();
+		if (std::holds_alternative<IdentifierNode>(expr) ||
+			std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+			std::holds_alternative<ArraySubscriptNode>(expr)) {
+			return true;
+		}
+		if (const auto* unary = std::get_if<UnaryOperatorNode>(&expr)) {
+			return unary->op() == "*";
+		}
+		if (const auto* member = std::get_if<MemberAccessNode>(&expr)) {
+			current = &member->object();
+			continue;
+		}
+		return false;
+	}
+	return false;
+}
+
 ParseResult Parser::parse_decltype_specifier() {
 	// Parse decltype(expr) or decltype(auto) or __typeof__(expr) type specifier
 	// Example: decltype(x + y) result = x + y;
@@ -5440,13 +5464,9 @@ ParseResult Parser::parse_decltype_specifier() {
 		}
 		const bool fully_parenthesized = (peek() == ")"_tok);
 		restore_token_position(expr_end_pos);
-		if (fully_parenthesized && decltype_expr->is<ExpressionNode>()) {
-			const ExpressionNode& inner = decltype_expr->as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(inner) ||
-				std::holds_alternative<QualifiedIdentifierNode>(inner)) {
-				type_spec_opt->set_reference_qualifier(
-					ReferenceQualifier::LValueReference);
-			}
+		if (fully_parenthesized && decltypeOperandIsLvalue(*decltype_expr)) {
+			type_spec_opt->set_reference_qualifier(
+				ReferenceQualifier::LValueReference);
 		}
 	}
 	discard_saved_token(last_expr_start);

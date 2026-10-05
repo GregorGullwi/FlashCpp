@@ -831,7 +831,13 @@ a function designator, and the prvalue forms. The rule keys off the last
 comma-operator operand, the one whose type `decltype` takes, so
 `decltype((x), (x))` is `int&` while `decltype((x), x)` is `int`;
 `tests/test_decltype_comma_operator_parenthesized_lvalue_ret0.cpp` covers the
-parenthesized, bare, prvalue, and three-operand shapes.
+parenthesized, bare, prvalue, and three-operand shapes. A dereference and
+member access on an lvalue are recognized as lvalues too, so
+`decltype((*p))` and `decltype((s.m))` are references;
+`tests/test_decltype_parenthesized_lvalue_forms_ret0.cpp` covers the
+dereference, member access, member-access chain, and prvalue forms. Calls,
+xvalues, and subscript expressions still keep the prvalue default (`decltype`
+of a subscript expression does not yet parse at all, a separate parser gap).
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
@@ -847,10 +853,11 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    class, union, qualification, and published polymorphic/final/abstract traits
    for completed records, including class-template specializations, are answered
    canonically. Next in order:
-   1. **The constructibility family.** `__is_constructible`,
-      `__is_trivially_constructible`, and `__is_nothrow_constructible` still
-      read `StructTypeInfo` because their answers depend on a variadic argument
-      list and overload resolution. The zero-argument queries now reject an
+   1. **The constructibility family.** The zero-argument `__is_constructible`,
+      `__is_trivially_constructible`, and `__is_nothrow_constructible` answers
+      are classified from TypeId-keyed record facts in the folded and lazy
+      paths. The argument-bearing forms still read `StructTypeInfo` through
+      constructor overload resolution. The zero-argument queries reject an
       abstract class, a deleted default constructor, and an inaccessible default
       constructor, which the approximate record check previously reported as
       constructible. The trivially-constructible answer uses
@@ -900,9 +907,10 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       unary record-property facts for completed record TypeIds. Class-template
       instantiation refreshes virtual metadata and layout after attaching member
       declarations, propagates deleted special-member facts, and then publishes
-      these facts. Constructibility remains
-      `ConstraintSatisfaction::Unknown` in concepts until that canonical
-      constructor-query path is available.
+      these facts. Remaining: the exception specification contributed by a
+      default member initializer that is not a default construction (needs
+      expression-level noexcept evaluation), and the canonical (non-sema) form
+      of the argument-bearing query.
 
       Code generation delegates these rules and the assignability forms to the
       shared evaluator through `isRecordPropertyTraitOwnedBySharedEvaluator`.
@@ -958,6 +966,12 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    template argument, so `__is_same(Fn, int(int))` and `Box<int(int)>` parse;
    `tests/test_function_type_type_id_argument_ret0.cpp` covers the spelling,
    its distinction from a function pointer, and the template-argument form.
+   The `decltype` reference rule now covers a parenthesized id-expression,
+   dereference, and member access on an lvalue, and keys off the last
+   comma-operator operand. Remaining: a call or xvalue operand
+   (`std::move(x)`, a call returning `T&&`), and a subscript operand, which
+   additionally does not parse as a `decltype` operand at all (see
+   [known issues](KNOWN_ISSUES.md)).
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;
