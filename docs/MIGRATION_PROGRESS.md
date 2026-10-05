@@ -856,7 +856,11 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       folded and lazy paths;
       `tests/test_canonical_lazy_default_construction_concept_ret0.cpp` and
       `tests/test_canonical_lazy_trivial_nothrow_construction_concept_ret0.cpp`
-      check the classified lazy answers. The trivial and nothrow answers share
+      check the classified lazy answers; the default-construction query imports
+      its operand through the structural-trait importer, so a class-template
+      specialization projected as a nominal specifier recovers its published
+      EntityId instead of falling back, which lowered that regression's
+      `lazy_constraint_trait_fallback` to 0. The trivial and nothrow answers share
       the base/member walk, so a non-trivial member or base makes default
       construction non-trivial and a throwing member makes it throwing. An
       argument-bearing constructibility requirement now resolves through
