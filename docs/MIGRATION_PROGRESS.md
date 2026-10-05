@@ -827,7 +827,11 @@ distinction and the `__is_function` / `__is_pointer` answers. The decltype path
 now also applies [dcl.type.decltype]'s reference rule to a parenthesized
 id-expression, so `decltype((x))` is `int&` while `decltype(x)` is `int`;
 `tests/test_decltype_parenthesized_lvalue_ret0.cpp` covers a scalar, a record,
-a function designator, and the prvalue forms.
+a function designator, and the prvalue forms. The rule keys off the last
+comma-operator operand, the one whose type `decltype` takes, so
+`decltype((x), (x))` is `int&` while `decltype((x), x)` is `int`;
+`tests/test_decltype_comma_operator_parenthesized_lvalue_ret0.cpp` covers the
+parenthesized, bare, prvalue, and three-operand shapes.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
