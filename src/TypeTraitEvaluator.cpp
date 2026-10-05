@@ -797,6 +797,70 @@ bool hasTrivialDefaultConstructor(const StructTypeInfo* struct_info) {
 	return !struct_info->hasUserDeclaredConstructor();
 }
 
+// A class whose default constructor is implicit or explicitly defaulted is
+// default-constructible only when every base class and every member that
+// constructor initializes is itself default-constructible. A user-provided
+// default constructor initializes its own subobjects, so recursion stops
+// there. Uses an explicit worklist so subobject depth does not grow the native
+// stack.
+bool recordDefaultConstructible(const StructTypeInfo& root) {
+	std::vector<const StructTypeInfo*> pending{&root};
+	std::vector<const StructTypeInfo*> visited;
+	while (!pending.empty()) {
+		const StructTypeInfo* info = pending.back();
+		pending.pop_back();
+		if (info == nullptr) {
+			return false;
+		}
+		if (std::find(visited.begin(), visited.end(), info) != visited.end()) {
+			continue;
+		}
+		visited.push_back(info);
+		if (info->is_abstract || info->isDefaultConstructorDeleted()) {
+			return false;
+		}
+		const StructMemberFunction* default_ctor = info->findDefaultConstructor();
+		if (default_ctor != nullptr) {
+			if (default_ctor->access != AccessSpecifier::Public) {
+				return false;
+			}
+			if (default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& constructor =
+					default_ctor->function_decl.as<ConstructorDeclarationNode>();
+				if (!constructor.is_implicit() &&
+					!constructor.is_explicitly_defaulted()) {
+					continue;  // user-provided initializes its own subobjects
+				}
+			}
+		} else if (info->hasUserDeclaredConstructor()) {
+			return false;
+		}
+		for (const BaseClassSpecifier& base : info->base_classes) {
+			if (base.is_deferred) {
+				continue;
+			}
+			pending.push_back(structInfoFromTypeIndex(base.type_index));
+		}
+		for (const StructMember& member : info->members) {
+			if (!info->isPotentiallyConstructedByDefaultConstructor(member)) {
+				continue;
+			}
+			if (member.default_initializer.has_value()) {
+				continue;
+			}
+			if (member.is_reference()) {
+				return false;  // reference member without an initializer
+			}
+			if (member.pointer_depth > 0 ||
+				!is_struct_type(member.type_index.category())) {
+				continue;
+			}
+			pending.push_back(structInfoFromTypeIndex(member.type_index));
+		}
+	}
+	return true;
+}
+
 template<typename Pred>
 bool allRecordSubobjectsSatisfy(const StructTypeInfo* struct_info, Pred pred) {
 	if (!struct_info)
@@ -1853,11 +1917,16 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible ||
 				trait_expr.kind() == TypeTraitKind::IsNothrowConstructible;
 			if (is_constructibility_kind) {
+				if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+					return recordDefaultConstructible(*struct_info)
+						? TypeTraitResult::success_true()
+						: TypeTraitResult::success_false();
+				}
 				// The approximate record check reports a class constructible
 				// when a default constructor exists, even when that constructor
-				// is deleted or inaccessible, or the class is abstract. This
-				// applies to every default-construction variant. Base and member
-				// default-construction recursion stays deferred.
+				// is deleted or inaccessible, or the class is abstract. Base
+				// and member recursion for the trivial and nothrow variants
+				// stays deferred.
 				if (struct_info->is_abstract ||
 					struct_info->isDefaultConstructorDeleted() ||
 					(struct_info->implicit_default_constructor.is_finalized &&
