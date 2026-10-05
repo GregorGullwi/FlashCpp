@@ -839,13 +839,18 @@ bool shouldPublishParserEnum(
 	ScopeType scope_type,
 	bool parsing_template_class,
 	bool is_function_local,
+	bool can_publish_local_identity,
 	bool is_nested,
 	bool is_anonymous) {
-	if (parsing_template_class || is_function_local || is_nested || is_anonymous) {
+	if (parsing_template_class || is_nested || is_anonymous) {
 		return false;
 	}
 	if (enum_decl.name().empty()) {
 		return false;
+	}
+	if (is_function_local) {
+		return can_publish_local_identity &&
+			(scope_type == ScopeType::Function || scope_type == ScopeType::Block);
 	}
 	return scope_type == ScopeType::Global || scope_type == ScopeType::Namespace;
 }
@@ -1041,10 +1046,12 @@ PublishResult commitParserEnumPublication(
 	DeclarationBuilder& builder,
 	EnumDeclarationNode& enum_decl,
 	ScopeId lexical_scope_id,
+	OwnerId owner_id,
 	bool is_definition,
 	const SymbolTable& symbol_table) {
 	ClassDeclRequest request{};
 	request.lexical_scope_id = lexical_scope_id;
+	request.owner_id = owner_id;
 	request.name = StringTable::getOrInternStringHandle(enum_decl.name());
 	request.is_definition = is_definition;
 	request.kind = DeclKind::Enum;

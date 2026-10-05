@@ -3336,14 +3336,55 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const ArraySubscriptNode& subscript =
 			std::get<ArraySubscriptNode>(expr);
 		auto is_builtin_subscript_index = [&](const TypeSpecifierNode& type) {
-			if (isIntegralType(type.category())) {
-				return true;
+			CanonicalTypeTable& canonical_types =
+				requireFrontendContext().canonicalTypes();
+			TypeSpecifierNode canonical_syntax = type;
+			tryBindPublishedTypeEntity(canonical_syntax);
+			const CanonicalTypeImport imported =
+				importCanonicalType(canonical_types, canonical_syntax);
+			if (imported.status != CanonicalTypeImportStatus::Supported) {
+				return false;
 			}
-			if (type.category() == TypeCategory::Enum) {
-				const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
-				const EnumTypeInfo* enum_info =
-					type_info ? type_info->getEnumInfo() : nullptr;
-				return enum_info && !enum_info->is_scoped;
+
+			TypeId index_type_id = imported.type;
+			CanonicalTypeNode index_node = canonical_types.node(index_type_id);
+			if (index_node.kind == CanonicalTypeKind::LValueReference ||
+				index_node.kind == CanonicalTypeKind::RValueReference) {
+				index_type_id = index_node.child;
+			}
+			index_type_id = canonical_types.withoutTopLevelQualifiers(index_type_id);
+			index_node = canonical_types.node(index_type_id);
+			if (index_node.kind == CanonicalTypeKind::Builtin) {
+				switch (index_node.builtin) {
+				case CanonicalBuiltinKind::Bool:
+				case CanonicalBuiltinKind::Char:
+				case CanonicalBuiltinKind::SignedChar:
+				case CanonicalBuiltinKind::UnsignedChar:
+				case CanonicalBuiltinKind::WChar:
+				case CanonicalBuiltinKind::Char8:
+				case CanonicalBuiltinKind::Char16:
+				case CanonicalBuiltinKind::Char32:
+				case CanonicalBuiltinKind::Short:
+				case CanonicalBuiltinKind::UnsignedShort:
+				case CanonicalBuiltinKind::Int:
+				case CanonicalBuiltinKind::UnsignedInt:
+				case CanonicalBuiltinKind::Long:
+				case CanonicalBuiltinKind::UnsignedLong:
+				case CanonicalBuiltinKind::LongLong:
+				case CanonicalBuiltinKind::UnsignedLongLong:
+					return true;
+			default:
+				return false;
+				}
+			}
+			if (index_node.kind == CanonicalTypeKind::Enum) {
+				const EntityId enum_entity = canonical_types.enumEntity(index_type_id);
+				if (!canonical_types.hasEnumLayout(enum_entity)) {
+					return false;
+				}
+				return !hasCanonicalEnumLayoutFlag(
+					canonical_types.enumLayout(enum_entity).flags,
+					CanonicalEnumLayoutFlags::Scoped);
 			}
 			return false;
 		};
