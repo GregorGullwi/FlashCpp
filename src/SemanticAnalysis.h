@@ -286,6 +286,10 @@ public:
 	};
 	const ResolvedUnaryOperatorCall* getResolvedUnaryAddressOfOperator(const UnaryOperatorNode* key) const;
 	void ensureUnaryAddressOfOperatorResolved(const UnaryOperatorNode& unary_node);
+	// Lower a `&Owner::member` address whose target type was resolved during
+	// semantic analysis. Instantiation is deferred to this call because the
+	// address may be seen while the parser is still normalizing a pattern body.
+	void ensureMemberFunctionAddressMaterialized(const UnaryOperatorNode& unary_node);
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
@@ -760,6 +764,17 @@ private:
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const UnaryOperatorNode*, const FunctionDeclarationNode*> op_unary_deref_table_;
 	std::unordered_map<const UnaryOperatorNode*, ResolvedUnaryOperatorCall> op_unary_address_table_;
+	struct PendingMemberFunctionAddress {
+		const StructTypeInfo* owner = nullptr;
+		const QualifiedIdentifierNode* qualified = nullptr;
+		const FunctionDeclarationNode* selected_function = nullptr;
+		std::vector<TypeSpecifierNode> target_parameter_types;
+		TypeSpecifierNode target_return_type;
+		TypeId target_return_type_id{};
+		bool is_template = false;
+	};
+	std::unordered_map<const UnaryOperatorNode*, PendingMemberFunctionAddress>
+		pending_member_function_addresses_;
 	std::unordered_set<const UnaryOperatorNode*> analyzed_op_unary_address_queries_;
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
 	std::unordered_set<const void*> analyzed_op_call_queries_;

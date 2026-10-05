@@ -985,19 +985,33 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(const Stru
 
 ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
 											ExpressionContext context) {
+	if (unaryOperatorNode.op() == "&") {
+		// Contextual member-function-address resolution records a pending
+		// selection during sema; materialize it here, after parsing, so the
+		// instantiated root is registered in a non-pattern ownership phase.
+		sema_.ensureMemberFunctionAddressMaterialized(unaryOperatorNode);
+	}
 	if (unaryOperatorNode.op() == "&" &&
 		unaryOperatorNode.resolved_addressed_function() != nullptr) {
 		const FunctionDeclarationNode& function =
 			*unaryOperatorNode.resolved_addressed_function();
+		// A pointer-to-member-function shares the 64-bit function-address
+		// representation for non-virtual members, so the lowering differs only
+		// in the semantic category/IR type and the mangled symbol's owner.
+		const TypeCategory pointer_category = function.is_member_function()
+			? TypeCategory::MemberFunctionPointer
+			: TypeCategory::FunctionPointer;
+		const IrType pointer_ir_type = function.is_member_function()
+			? IrType::MemberFunctionPointer
+			: IrType::FunctionPointer;
 		requestInlineFunctionEmission(function);
-		const std::string_view mangled = generateMangledNameForCall(
-			function,
-			StringHandle{},
-			{});
+		const std::string_view mangled = function.has_mangled_name()
+			? function.mangled_name()
+			: generateMangledNameForCall(function, StringHandle{}, {});
 		TempVar function_address = var_counter.next();
 		FunctionAddressOp address_op;
-		address_op.result.setType(TypeCategory::FunctionPointer);
-		address_op.result.ir_type = IrType::FunctionPointer;
+		address_op.result.setType(pointer_category);
+		address_op.result.ir_type = pointer_ir_type;
 		address_op.result.size_in_bits = SizeInBits{64};
 		address_op.result.value = function_address;
 		address_op.function_name = StringTable::getOrInternStringHandle(
@@ -1010,11 +1024,11 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		setTempVarMetadata(
 			function_address,
 			TempVarMetadata::makeAddressOnly(
-				nativeTypeIndex(TypeCategory::FunctionPointer),
+				nativeTypeIndex(pointer_category),
 				SizeInBits{64},
 				ValueCategory::PRValue));
 		return makeExprResult(
-			nativeTypeIndex(TypeCategory::FunctionPointer),
+			nativeTypeIndex(pointer_category),
 			SizeInBits{64},
 			IrOperand{function_address},
 			PointerDepth{},
