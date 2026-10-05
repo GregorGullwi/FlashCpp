@@ -1948,6 +1948,37 @@ bool isRecordPropertyTraitOwnedBySharedEvaluator(TypeTraitKind kind) {
 	}
 }
 
+// Whether a single already-resolved argument type can initialize a scalar,
+// reference, or pointer target. Shared by the folded and lazy constructibility
+// queries.
+bool constructibleFromArgument(
+	const TypeSpecifierNode& target,
+	const TypeSpecifierNode& arg) {
+	if (target.category() == TypeCategory::Enum &&
+		arg.category() == TypeCategory::Enum) {
+		if (!target.type_index().is_valid() || !arg.type_index().is_valid()) {
+			return false;
+		}
+		if (target.type_index() != arg.type_index()) {
+			return false;
+		}
+	}
+	if (target.pointer_depth() > 0) {
+		if (arg.pointer_depth() == 0) {
+			return arg.category() == TypeCategory::Nullptr;
+		}
+		if (arg.pointer_depth() != target.pointer_depth()) {
+			return false;
+		}
+		if (target.category() != arg.category() &&
+			target.category() != TypeCategory::Void &&
+			arg.category() != TypeCategory::Void) {
+			return false;
+		}
+	}
+	return can_convert_type(arg, target).is_valid;
+}
+
 // Shared record branch of the argument-bearing constructibility query. The
 // caller supplies the already-resolved argument types; a record target is
 // constructible when constructor-overload resolution finds a match, with the
@@ -1985,9 +2016,21 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 		kind != TypeTraitKind::IsNothrowConstructible) {
 		return std::nullopt;
 	}
+	// A reference or scalar target accepts at most one source type and uses the
+	// implicit conversion rules rather than constructor overload resolution.
+	if (target.is_reference() ||
+		TypeTraitEval::isScalarType(
+			target.category(), target.is_reference(), target.pointer_depth())) {
+		if (arguments.size() != 1) {
+			return TypeTraitResult::success_false();
+		}
+		return constructibleFromArgument(target, arguments.front())
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
 	const StructTypeInfo* struct_info = structInfoFromTypeIndex(target.type_index());
 	if (struct_info == nullptr) {
-		return std::nullopt;  // scalar, reference, and pointer targets defer
+		return std::nullopt;  // unmigrated target shapes defer
 	}
 	return evaluateRecordConstructibleFromArgs(
 		kind, *struct_info, arguments, target.runtime_pointer_depth());
@@ -2028,33 +2071,6 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			additional_types.push_back(
 				normalizeTypeTraitOperand(additional_type_node.as<TypeSpecifierNode>()));
 		}
-		auto canConstructFromArg =
-			[](const TypeSpecifierNode& target, const TypeSpecifierNode& arg) {
-				if (target.category() == TypeCategory::Enum &&
-					arg.category() == TypeCategory::Enum) {
-					if (!target.type_index().is_valid() || !arg.type_index().is_valid()) {
-						return false;
-					}
-					if (target.type_index() != arg.type_index()) {
-						return false;
-					}
-				}
-				if (target.pointer_depth() > 0) {
-					if (arg.pointer_depth() == 0) {
-						return arg.category() == TypeCategory::Nullptr;
-					}
-					if (arg.pointer_depth() != target.pointer_depth()) {
-						return false;
-					}
-					if (target.category() != arg.category() &&
-						target.category() != TypeCategory::Void &&
-						arg.category() != TypeCategory::Void) {
-						return false;
-					}
-				}
-				return can_convert_type(arg, target).is_valid;
-			};
-
 		if (trait_expr.kind() == TypeTraitKind::IsAssignable ||
 			trait_expr.kind() == TypeTraitKind::IsTriviallyAssignable ||
 			trait_expr.kind() == TypeTraitKind::IsNothrowAssignable) {
@@ -2073,7 +2089,7 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			if (additional_types.size() != 1) {
 				return TypeTraitResult::success_false();
 			}
-			return canConstructFromArg(type_spec, additional_types.front())
+			return constructibleFromArgument(type_spec, additional_types.front())
 				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();
 		}
@@ -2089,7 +2105,7 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			if (additional_types.size() != 1) {
 				return TypeTraitResult::success_false();
 			}
-			return canConstructFromArg(type_spec, additional_types.front())
+			return constructibleFromArgument(type_spec, additional_types.front())
 				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();
 		}
