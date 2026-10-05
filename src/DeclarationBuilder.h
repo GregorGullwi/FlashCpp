@@ -505,6 +505,7 @@ bool shouldPublishParserEnum(
 	ScopeType scope_type,
 	bool parsing_template_class,
 	bool is_function_local,
+	bool can_publish_local_identity,
 	bool is_nested,
 	bool is_anonymous);
 
@@ -542,5 +543,6 @@ PublishResult commitParserEnumPublication(
 	DeclarationBuilder& builder,
 	EnumDeclarationNode& enum_decl,
 	ScopeId lexical_scope_id,
+	OwnerId owner_id,
 	bool is_definition,
 	const SymbolTable& symbol_table);

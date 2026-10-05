@@ -4828,6 +4828,12 @@ ParseResult Parser::parse_enum_declaration() {
 		gNamespaceRegistry.getQualifiedName(enum_namespace_handle);
 	const bool is_nested_enum = !struct_parsing_context_stack_.empty();
 	const bool is_function_local_enum = current_function_ != nullptr;
+	const bool can_publish_local_enum_identity =
+		is_function_local_enum &&
+		!parsing_template_class_ &&
+		!current_function_->is_template_pattern() &&
+		!current_function_->has_outer_template_bindings() &&
+		!is_nested_enum;
 	StringHandle enum_struct_chain;
 	if (is_nested_enum) {
 		enum_struct_chain = buildNestedTypeChainName(struct_parsing_context_stack_, enum_name);
@@ -4875,24 +4881,32 @@ ParseResult Parser::parse_enum_declaration() {
 	(void)gSymbolTable.insert(enum_name, enum_node);
 	EnumTypeInfo& enum_info = enum_type_info.createEnumInfo(enum_name, is_scoped);
 	enum_info.declaration_node = &enum_ref;
-	const auto stampEnumLexicalScope = [&enum_node, this, is_function_local_enum, is_nested_enum, is_anonymous_enum]() {
+	const auto stampEnumLexicalScope = [
+		&enum_node, this, is_function_local_enum, can_publish_local_enum_identity,
+		is_nested_enum, is_anonymous_enum]() {
+		const ScopeId lexical_scope_id = gSymbolTable.currentScopeId();
 		SymbolTableDetail::stampLexicalScopeOnDeclaration(
-			enum_node, gSymbolTable.currentScopeId());
+			enum_node, lexical_scope_id);
 		EnumDeclarationNode& stamped = enum_node.as<EnumDeclarationNode>();
 		if (!shouldPublishParserEnum(
 				stamped,
 				gSymbolTable.get_current_scope_type(),
 				parsing_template_class_,
 				is_function_local_enum,
+				can_publish_local_enum_identity,
 				is_nested_enum,
 				is_anonymous_enum)) {
 			return;
 		}
 		FrontendContext& front_end = requireFrontendContext();
+		const OwnerId owner_id = is_function_local_enum
+			? ownerIdFromLocalScope(lexical_scope_id)
+			: OwnerId{};
 		const PublishResult published = commitParserEnumPublication(
 			front_end.declarationBuilder(),
 			stamped,
-			gSymbolTable.currentScopeId(),
+			lexical_scope_id,
+			owner_id,
 			!stamped.is_forward_declaration(),
 			gSymbolTable);
 		if (published.status == PublishStatus::Created ||
