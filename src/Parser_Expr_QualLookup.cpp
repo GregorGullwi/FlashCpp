@@ -3332,6 +3332,85 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				return this_type;
 			}
 		}
+	} else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+		const ArraySubscriptNode& subscript =
+			std::get<ArraySubscriptNode>(expr);
+		auto is_builtin_subscript_index = [&](const TypeSpecifierNode& type) {
+			if (isIntegralType(type.category())) {
+				return true;
+			}
+			if (type.category() == TypeCategory::Enum) {
+				const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+				const EnumTypeInfo* enum_info =
+					type_info ? type_info->getEnumInfo() : nullptr;
+				return enum_info && !enum_info->is_scoped;
+			}
+			return false;
+		};
+		auto get_builtin_subscript_result = [](
+			const TypeSpecifierNode& operand_type)
+			-> std::optional<TypeSpecifierNode> {
+			TypeSpecifierNode result = operand_type;
+			promoteDeclaratorShapeToOrdered(result);
+			if (!result.has_ordered_declarator() ||
+				result.declarator_components().empty()) {
+				return std::nullopt;
+			}
+
+			DeclaratorComponentKind outer_kind =
+				result.declarator_components().front().kind;
+			if (outer_kind == DeclaratorComponentKind::LValueReference ||
+				outer_kind == DeclaratorComponentKind::RValueReference) {
+				result.remove_outermost_ordered_declarator_component();
+				if (result.declarator_components().empty()) {
+					return std::nullopt;
+				}
+				outer_kind = result.declarator_components().front().kind;
+			}
+
+			if (outer_kind == DeclaratorComponentKind::Pointer) {
+				if (result.category() == TypeCategory::Void ||
+					result.category() == TypeCategory::Function ||
+					result.category() == TypeCategory::FunctionPointer ||
+					result.category() == TypeCategory::MemberFunctionPointer ||
+					result.category() == TypeCategory::MemberObjectPointer) {
+					return std::nullopt;
+				}
+			} else if (outer_kind != DeclaratorComponentKind::Array &&
+				outer_kind != DeclaratorComponentKind::UnknownBoundArray) {
+				return std::nullopt;
+			}
+
+			result.remove_outermost_ordered_declarator_component();
+			result.prepend_ordered_declarator_component(
+				DeclaratorComponent::lvalueReference());
+			if (const int size_bits = getTypeSpecSizeBits(result);
+				size_bits > 0) {
+				result.set_size_in_bits(size_bits);
+			}
+			return result;
+		};
+
+		const std::optional<TypeSpecifierNode> left_type =
+			get_expression_type(subscript.array_expr());
+		const std::optional<TypeSpecifierNode> index_type =
+			get_expression_type(subscript.index_expr());
+		if (!left_type.has_value() || !index_type.has_value()) {
+			return std::nullopt;
+		}
+		if (is_builtin_subscript_index(*index_type)) {
+			if (auto result = get_builtin_subscript_result(*left_type)) {
+				return result;
+			}
+		}
+
+		// C++20 [expr.sub] permits the pointer or array operand on either side
+		// of the brackets. Restrict the reversed form to a known built-in
+		// integral or unscoped-enum index so this type query does not guess at
+		// overloaded operator[] conversions.
+		if (is_builtin_subscript_index(*left_type)) {
+			return get_builtin_subscript_result(*index_type);
+		}
 	} else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& binary = std::get<BinaryOperatorNode>(expr);
 		TokenKind op_kind = binary.get_token().kind();
