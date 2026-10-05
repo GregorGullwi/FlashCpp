@@ -64,6 +64,14 @@ struct BaseNonTrivial {
 struct DerivedNonTrivial : BaseNonTrivial {
 };
 
+struct ThrowingInit {
+	ThrowingMember member{};
+};
+
+struct NothrowInit {
+	NothrowMember member{};
+};
+
 static_assert(__is_trivially_constructible(Plain), "aggregate default construction is trivial");
 static_assert(!__is_trivially_constructible(UserDefault), "user-provided default is not trivial");
 static_assert(!__is_trivially_constructible(DeletedDefault), "deleted default is not trivial");
@@ -81,6 +89,8 @@ static_assert(!__is_trivially_constructible(HasNonTrivialMember), "a non-trivial
 static_assert(!__is_trivially_constructible(DerivedNonTrivial), "a non-trivial base makes default construction non-trivial");
 static_assert(__is_nothrow_constructible(HasNothrowMember), "a noexcept member keeps default construction non-throwing");
 static_assert(!__is_nothrow_constructible(HasThrowingMember), "a throwing member makes default construction throwing");
+static_assert(!__is_nothrow_constructible(ThrowingInit), "a throwing default member initializer makes default construction throwing");
+static_assert(__is_nothrow_constructible(NothrowInit), "a noexcept default member initializer keeps default construction non-throwing");
 
 int main() {
 	return 0;
