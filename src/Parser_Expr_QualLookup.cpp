@@ -3525,6 +3525,23 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 				if (const auto* qualified_identifier =
 						std::get_if<QualifiedIdentifierNode>(&operand_expr)) {
+					// An id-expression naming a free function is a function
+					// designator, so taking its address yields the
+					// function-pointer type rather than a pointer to that
+					// pointer. A substituted function template-id arrives here
+					// as a qualified identifier, while the unqualified
+					// designator path above already handles the bare spelling.
+					// Returning the designator type keeps the flat callable
+					// projection identical for both spellings, matching the one
+					// canonical TypeId the importer already assigns them.
+					if (qualified_identifier->namespace_handle().isGlobal()) {
+						if (auto function_template_type =
+								tryBuildFunctionTemplateAddressType(
+									*qualified_identifier);
+							function_template_type.has_value()) {
+							return *function_template_type;
+						}
+					}
 					NamespaceHandle ns_handle =
 						qualified_identifier->namespace_handle();
 					if (!ns_handle.isGlobal()) {
