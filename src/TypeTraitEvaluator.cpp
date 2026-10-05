@@ -1973,6 +1973,9 @@ bool isRecordPropertyTraitOwnedBySharedEvaluator(TypeTraitKind kind) {
 	case TypeTraitKind::IsNothrowDestructible:
 	case TypeTraitKind::HasTrivialDestructor:
 	case TypeTraitKind::HasVirtualDestructor:
+	case TypeTraitKind::IsConstructible:
+	case TypeTraitKind::IsTriviallyConstructible:
+	case TypeTraitKind::IsNothrowConstructible:
 	case TypeTraitKind::IsAssignable:
 	case TypeTraitKind::IsTriviallyAssignable:
 	case TypeTraitKind::IsNothrowAssignable:

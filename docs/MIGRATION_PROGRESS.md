@@ -873,7 +873,10 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       `Member member{}` makes the class nothrow only when `Member`'s default
       constructor is. Other default member initializer expressions need
       expression-level noexcept evaluation, and the canonical (non-sema) form
-      of the argument-bearing query remains. The unary triviality and lifetime traits now use TypeId-keyed
+      of the argument-bearing query remains. Code generation now delegates the
+      three constructibility kinds to the shared evaluator instead of its own
+      approximate switch, which removed the duplicate logic and keeps the
+      folded, constexpr, and lowered answers on one classification. The unary triviality and lifetime traits now use TypeId-keyed
       record-property facts. `CanonicalRecordLayout` publishes object size,
       member offsets, and the union flag. `CanonicalRecordProperties` publishes
       unary record-property facts for completed record TypeIds. Class-template
