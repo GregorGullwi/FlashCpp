@@ -1,8 +1,55 @@
 #include "CompilerIncludes.h"
 #include "CanonicalTypeAdapter.h"
+#include "FlatHashTable.h"
+#include "ParserTemplateHelpers.h"
 #include "doctest.h"
 
 TEST_SUITE("FrontendContext") {
+	TEST_CASE("Alias-base identity path rejects repeated declaration IDs") {
+		std::vector<TemplateDeclId> alias_path;
+		const TemplateDeclId first_alias{31};
+		const TemplateDeclId second_alias{47};
+
+		CHECK_FALSE(tryEnterAliasTemplateIdentity(alias_path, TemplateDeclId{}));
+		CHECK(tryEnterAliasTemplateIdentity(alias_path, first_alias));
+		CHECK(tryEnterAliasTemplateIdentity(alias_path, second_alias));
+		CHECK_FALSE(tryEnterAliasTemplateIdentity(alias_path, first_alias));
+		CHECK(alias_path.size() == 2);
+	}
+
+	TEST_CASE("Flat hash table preserves colliding keys across erase and rehash") {
+		struct ConstantHash {
+			size_t operator()(int) const {
+				return 1;
+			}
+		};
+		FlashCpp::FlatHashTable<int, int, ConstantHash, std::equal_to<int>> table;
+		table.insert(1, 10);
+		table.insert(1, 11);
+		table.insert(2, 20);
+		for (int key = 3; key < 32; ++key) {
+			table.insert(key, key * 10);
+		}
+
+		std::vector<int> values;
+		table.forEachValue(1, [&](int value) {
+			values.push_back(value);
+			return false;
+		});
+		CHECK((values == std::vector<int>{10, 11}));
+		CHECK(table.eraseOne(1));
+		CHECK(table.contains(2));
+		CHECK(table.size() == 31);
+
+		FlashCpp::FlatHashSet<int, ConstantHash, std::equal_to<int>> set;
+		CHECK(set.insert(4));
+		CHECK_FALSE(set.insert(4));
+		CHECK(set.insert(5));
+		CHECK(set.erase(4));
+		CHECK_FALSE(set.contains(4));
+		CHECK(set.contains(5));
+	}
+
 	TEST_CASE("Scratch budget permits exact-budget typed allocations") {
 		struct Value {
 			double real;

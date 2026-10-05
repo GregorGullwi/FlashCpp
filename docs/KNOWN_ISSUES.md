@@ -10,6 +10,15 @@ failure while processing the standard header, separate from Itanium symbol
 mangling; the typeinfo test therefore does not currently verify the mangling
 change on WSL.
 
+## Deep pack-expanded and member-type class-template bases need stack coverage
+
+PR #2241's preflight worklist handles concrete class-template bases, including
+deferred alias-template targets. It still declines pack-expanded bases and
+bases with a member-type chain. Those cases fall back to the ordinary recursive
+instantiation path, and deep chains through them have not been verified under
+the normal OS stack limit. TODO: add targeted regressions and extend the
+worklist to schedule these dependencies without native recursion.
+
 ## Member class template dependent bases are not instantiated
 
 A member class template whose base is one of its own type parameters does not

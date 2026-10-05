@@ -1113,7 +1113,7 @@ TEST_CASE("Canonical TypeIds retain class specialization member function pointer
 	REQUIRE(imported.status == CanonicalTypeImportStatus::Supported);
 	CHECK(table.memberPointerOwner(imported.type) == int_owner);
 	CHECK(table.memberPointerPointee(imported.type) == importCanonicalFunctionSignature(
-		table, signature).type);
+		table, signature, TypeId{}).type);
 
 	const std::optional<ConversionPlan> exact_plan =
 		tryBuildCanonicalProjectableConversionPlan(int_pointer, int_pointer);

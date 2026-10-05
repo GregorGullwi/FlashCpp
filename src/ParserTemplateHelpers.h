@@ -3,6 +3,7 @@
 // Auto-generated internal header containing helper functions for template instantiation
 // Extracted from Parser_Templates_Inst_ClassTemplate.cpp lines 1-4007
 
+#include <algorithm>
 #include <cctype>
 #include <functional>
 
@@ -1079,6 +1080,17 @@ inline void registerAliasTemplateWithOuterBinding(
 using TemplateArgSubstitutionMap = std::unordered_map<std::string_view, TemplateTypeArg>;
 using TemplateArgPackSubstitutionMap =
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>;
+
+inline bool tryEnterAliasTemplateIdentity(
+	std::vector<TemplateDeclId>& alias_path,
+	TemplateDeclId alias_decl_id) {
+	if (!alias_decl_id ||
+		std::find(alias_path.begin(), alias_path.end(), alias_decl_id) != alias_path.end()) {
+		return false;
+	}
+	alias_path.push_back(alias_decl_id);
+	return true;
+}
 
 struct DeferredBasePackBinding {
 	StringHandle name;
