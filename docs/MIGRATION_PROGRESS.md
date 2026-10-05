@@ -836,15 +836,18 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    1. **The constructibility family.** `__is_constructible`,
       `__is_trivially_constructible`, and `__is_nothrow_constructible` still
       read `StructTypeInfo` because their answers depend on a variadic argument
-      list and overload resolution. The zero-argument `__is_constructible`
-      query now rejects an abstract class, a deleted default constructor, and an
-      inaccessible default constructor, which the approximate record check
-      previously reported as constructible; the reduced regression is
-      `tests/test_is_constructible_default_constructor_ret0.cpp`. Base and
-      member default-construction recursion (a derived class whose base has no
-      usable default constructor) and the trivially/nothrow variants still fall
-      back, and the TypeId-keyed fact publication plus the lazy concept flip
-      remain. The unary triviality and lifetime traits now use TypeId-keyed
+      list and overload resolution. The zero-argument queries now reject an
+      abstract class, a deleted default constructor, and an inaccessible default
+      constructor, which the approximate record check previously reported as
+      constructible. The trivially-constructible answer uses
+      `hasTrivialDefaultConstructor`, and the nothrow answer reads a
+      user-provided default constructor's exception specification; the reduced
+      regressions are `tests/test_is_constructible_default_constructor_ret0.cpp`
+      and `tests/test_is_trivially_nothrow_constructible_default_ret0.cpp`. Base
+      and member default-construction recursion (a derived class whose base has
+      no usable default constructor) and the exception-specification recursion
+      for an implicit non-trivial constructor still fall back, and the
+      TypeId-keyed fact publication plus the lazy concept flip remain. The unary triviality and lifetime traits now use TypeId-keyed
       record-property facts. `CanonicalRecordLayout` publishes object size,
       member offsets, and the union flag. `CanonicalRecordProperties` publishes
       unary record-property facts for completed record TypeIds. Class-template

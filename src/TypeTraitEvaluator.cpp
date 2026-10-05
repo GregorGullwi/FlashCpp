@@ -1848,22 +1848,50 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		}
 
 		if (additional_types.empty()) {
-			if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+			const bool is_constructibility_kind =
+				trait_expr.kind() == TypeTraitKind::IsConstructible ||
+				trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible ||
+				trait_expr.kind() == TypeTraitKind::IsNothrowConstructible;
+			if (is_constructibility_kind) {
 				// The approximate record check reports a class constructible
 				// when a default constructor exists, even when that constructor
-				// is deleted or inaccessible, or the class is abstract. Base
-				// and member default-construction recursion stays deferred.
+				// is deleted or inaccessible, or the class is abstract. This
+				// applies to every default-construction variant. Base and member
+				// default-construction recursion stays deferred.
 				if (struct_info->is_abstract ||
 					struct_info->isDefaultConstructorDeleted() ||
 					(struct_info->implicit_default_constructor.is_finalized &&
 					 struct_info->implicit_default_constructor.is_deleted)) {
 					return TypeTraitResult::success_false();
 				}
-				if (const StructMemberFunction* default_ctor =
-						struct_info->findDefaultConstructor();
-					default_ctor != nullptr &&
+				const StructMemberFunction* default_ctor =
+					struct_info->findDefaultConstructor();
+				if (default_ctor != nullptr &&
 					default_ctor->access != AccessSpecifier::Public) {
 					return TypeTraitResult::success_false();
+				}
+				if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
+					return hasTrivialDefaultConstructor(struct_info)
+						? TypeTraitResult::success_true()
+						: TypeTraitResult::success_false();
+				}
+				if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
+					if (hasTrivialDefaultConstructor(struct_info)) {
+						return TypeTraitResult::success_true();
+					}
+					if (default_ctor != nullptr &&
+						default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+						const ConstructorDeclarationNode& constructor =
+							default_ctor->function_decl.as<ConstructorDeclarationNode>();
+						if (!constructor.is_implicit()) {
+							return constructor.is_noexcept()
+								? TypeTraitResult::success_true()
+								: TypeTraitResult::success_false();
+						}
+					}
+					// An implicit non-trivial constructor needs base and member
+					// exception-specification recursion; keep the approximate
+					// answer for that shape.
 				}
 			}
 			TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
