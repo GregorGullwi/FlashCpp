@@ -959,6 +959,20 @@ void appendParameterTypeCode(OutputType& output, const TypeSpecifierNode& type_n
 	appendTypeCode(output, type_node.adjusted_function_parameter_type());
 }
 
+inline void appendMsvcFunctionParameterListTerminator(
+	StringBuilder& output,
+	size_t parameter_count,
+	bool is_variadic) {
+	if (is_variadic) {
+		output.append("ZZ");
+		return;
+	}
+	if (parameter_count != 0) {
+		output.append('@');
+	}
+	output.append('Z');
+}
+
 // ============================================================================
 // Itanium C++ ABI Substitution Support (Itanium C++ ABI §5.1.8)
 // ============================================================================
@@ -2527,12 +2541,8 @@ inline MangledName generateMangledName(
 		}
 	}
 
-	// End marker - different for variadic vs non-variadic
-	if (is_variadic) {
-		builder.append("ZZ");  // Variadic functions end with 'ZZ' in MSVC mangling
-	} else {
-		builder.append('Z');	 // Non-variadic functions end with 'Z'
-	}
+	appendMsvcFunctionParameterListTerminator(
+		builder, param_types.size(), is_variadic);
 
 	return MangledName(builder.commit());
 }
@@ -2656,12 +2666,8 @@ inline MangledName generateMangledName(
 		}
 	}
 
-	// End marker
-	if (is_variadic) {
-		builder.append("ZZ");
-	} else {
-		builder.append('Z');
-	}
+	appendMsvcFunctionParameterListTerminator(
+		builder, param_nodes.size(), is_variadic);
 
 	return MangledName(builder.commit());
 }

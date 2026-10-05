@@ -1,0 +1,6 @@
+# Match the decorated name emitted by MSVC for int test(long long).
+?test@@YAH_J@Z
+?no_parameters@@YAHXZ
+?one_parameter@@YAHH@Z
+?multiple_parameters@@YAHHN@Z
+?variadic_parameters@@YAHHZZ

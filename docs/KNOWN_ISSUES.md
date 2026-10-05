@@ -446,14 +446,6 @@ The wide-field check returns 3. Direct aggregate initialization passes. This
 requires a separate investigation of by-value aggregate argument/return storage;
 it is independent of numeric temporary identity.
 
-## MSVC function mangling omits the parameter-list terminator
-
-For `int test(long long)`, the compiler emits `?test@@YAH_JZ` instead of
-`?test@@YAH_J@Z`. The missing parameter-list terminator makes dumpbin interpret
-the symbol as variadic. The same malformed suffix is present on the unchanged
-baseline and prevents linking matching declarations against MSVC-generated C++
-symbols. This needs a separate mangling correction and interoperability regression.
-
 ## Temporary frame pre-counting still omits some producers and padding
 
 The temporary-size pre-scan does not publish every typed producer (including
