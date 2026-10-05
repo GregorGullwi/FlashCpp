@@ -597,14 +597,18 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
 	}
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport lhs_type = importCanonicalType(table, lhs);
+	// A class-template specialization projected as a nominal specifier needs the
+	// structural-trait importer to recover its published EntityId.
+	const CanonicalTypeImport lhs_type =
+		importCanonicalStructuralTraitOperand(table, lhs);
 	if (lhs_type.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}
 	if (lhs_type.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;
 	}
-	const CanonicalTypeImport rhs_type = importCanonicalType(table, rhs);
+	const CanonicalTypeImport rhs_type =
+		importCanonicalStructuralTraitOperand(table, rhs);
 	if (rhs_type.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}
