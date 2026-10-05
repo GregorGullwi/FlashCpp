@@ -311,6 +311,7 @@ enum class CanonicalRecordPropertyFlags : uint16_t {
 	NothrowDestructible = 1 << 11,
 	HasTrivialDestructor = 1 << 12,
 	HasVirtualDestructor = 1 << 13,
+	DefaultConstructible = 1 << 14,
 };
 
 // Semantic facts that cannot be derived from object layout alone. These are

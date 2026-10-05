@@ -37,3 +37,12 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs);
+
+// Evaluates the zero-argument default-construction question from canonical
+// identity: a record or class-template specialization answers from the
+// published DefaultConstructible fact, builtins, pointers, and enums are
+// constructible, and references, arrays, functions, and void are not. An empty
+// result allows compatibility evaluation for an unimported operand or an
+// unpublished fact.
+std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
+	const TypeSpecifierNode& type_spec);
