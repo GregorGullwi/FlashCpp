@@ -5381,8 +5381,15 @@ ParseResult Parser::parse_decltype_specifier() {
 		throw InternalError("decltype expression parse succeeded without an AST node");
 	}
 
-	// Deduce the type from the expression
-	auto type_spec_opt = get_expression_type(*decltype_expr);
+	// Deduce the type from the expression. A bare function designator keeps its
+	// function type here because `decltype` does not apply the
+	// function-to-pointer conversion.
+	std::optional<TypeSpecifierNode> type_spec_opt =
+		FlashCpp::ParserFunctionTypeHelpers::tryGetBareFunctionDesignatorType(
+			*decltype_expr);
+	if (!type_spec_opt.has_value()) {
+		type_spec_opt = get_expression_type(*decltype_expr);
+	}
 	if (!type_spec_opt.has_value()) {
 		// If we're in a template body/declaration and the expression is dependent,
 		// create a dependent type placeholder that will be resolved during instantiation.

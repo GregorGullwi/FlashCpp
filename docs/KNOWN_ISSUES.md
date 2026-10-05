@@ -411,30 +411,6 @@ flow), coordinating with the template/semantic worklist migration where the
 measured path crosses that boundary. Do not pursue a standalone stack-reserve
 change before that work.
 
-## A function designator's `decltype` imports as a pointer to function
-
-The parser publishes a function declaration's type with the
-`TypeCategory::FunctionPointer` category and no pointer levels, and the
-canonical importer turns that shape into `Pointer(Function)` so that
-`int (*)(int)` and `int(int)` stay distinguishable in the flat projection. A
-`decltype` of a function designator therefore receives the pointer-to-function
-identity instead of the function identity:
-
-```cpp
-int freeFn(int);
-static_assert(__is_same(decltype(freeFn), int (*)(int)));  // currently true
-static_assert(__is_same(decltype(freeFn), int(int)));      // should be true
-```
-
-The `int(int)` spelling now parses as a type-id, so the assertion is observable
-and fails on the identity rather than the parse. `__is_pointer(decltype(freeFn))`
-is therefore `true` and `__is_function(...)` is `false`, and the structural
-`[meta.unary.prop]` family now reports exactly that published identity. The
-identity defect predates the canonical trait classification and is independently
-observable through `__is_same`. It belongs to the callable declarator families
-in architecture boundary 3A, not to the trait evaluator; do not special-case
-function categories in the trait path to mask it.
-
 ## Several constrained function templates in one translation unit mis-resolve
 
 Overload resolution between two constrained function templates becomes

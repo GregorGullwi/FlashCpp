@@ -818,10 +818,12 @@ answered from compatibility fields, has a fixed corpus and baseline in
 `tests/migration_counters/corpus_baseline.tsv`, and must reach zero at the 3A
 exit; it currently measures the record and enum operands reached through a
 `decltype` that has not published its `EntityId`, and the lazy-constraint path,
-which does not use the shared evaluator at all. A function designator's
-`decltype` still imports as a pointer-to-function, so the family reports that
-published identity; the defect is recorded in
-[known issues](KNOWN_ISSUES.md) and belongs to the callable declarator families.
+which does not use the shared evaluator at all. A bare function designator's
+`decltype` now keeps its function type instead of importing as a
+pointer-to-function, so `decltype(freeFn)` is `int(int)` while
+`decltype(&freeFn)` stays `int (*)(int)`;
+`tests/test_function_designator_decltype_identity_ret0.cpp` covers the
+distinction and the `__is_function` / `__is_pointer` answers.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
