@@ -853,13 +853,17 @@ bool hasTrivialDefaultConstructor(const StructTypeInfo* struct_info) {
 	return !struct_info->hasUserDeclaredConstructor();
 }
 
-// A class whose default constructor is implicit or explicitly defaulted is
-// default-constructible only when every base class and every member that
-// constructor initializes is itself default-constructible. A user-provided
-// default constructor initializes its own subobjects, so recursion stops
-// there. Uses an explicit worklist so subobject depth does not grow the native
-// stack.
-bool recordDefaultConstructible(const StructTypeInfo& root) {
+// A class whose default constructor is implicit or explicitly defaulted
+// inherits its default-construction property from every base class and member
+// that constructor initializes. A user-provided default constructor initializes
+// its own subobjects, so recursion stops there. Uses an explicit worklist so
+// subobject depth does not grow the native stack. `class_property` decides the
+// property for one class; the walk owns the shared preconditions (abstract,
+// deleted, inaccessible, reference member).
+template <typename ClassProperty>
+bool recordSubobjectsSatisfyDefaultConstruction(
+	const StructTypeInfo& root,
+	ClassProperty class_property) {
 	std::vector<const StructTypeInfo*> pending{&root};
 	std::vector<const StructTypeInfo*> visited;
 	while (!pending.empty()) {
@@ -880,16 +884,24 @@ bool recordDefaultConstructible(const StructTypeInfo& root) {
 			if (default_ctor->access != AccessSpecifier::Public) {
 				return false;
 			}
-			if (default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-				const ConstructorDeclarationNode& constructor =
-					default_ctor->function_decl.as<ConstructorDeclarationNode>();
-				if (!constructor.is_implicit() &&
-					!constructor.is_explicitly_defaulted()) {
-					continue;  // user-provided initializes its own subobjects
-				}
-			}
 		} else if (info->hasUserDeclaredConstructor()) {
 			return false;
+		}
+		if (!class_property(*info, default_ctor)) {
+			return false;
+		}
+		bool recurse = true;
+		if (default_ctor != nullptr &&
+			default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& constructor =
+				default_ctor->function_decl.as<ConstructorDeclarationNode>();
+			if (!constructor.is_implicit() &&
+				!constructor.is_explicitly_defaulted()) {
+				recurse = false;  // user-provided initializes its own subobjects
+			}
+		}
+		if (!recurse) {
+			continue;
 		}
 		for (const BaseClassSpecifier& base : info->base_classes) {
 			if (base.is_deferred) {
@@ -915,6 +927,44 @@ bool recordDefaultConstructible(const StructTypeInfo& root) {
 		}
 	}
 	return true;
+}
+
+bool recordDefaultConstructible(const StructTypeInfo& root) {
+	return recordSubobjectsSatisfyDefaultConstruction(
+		root,
+		[](const StructTypeInfo&, const StructMemberFunction*) {
+			return true;
+		});
+}
+
+bool recordTriviallyConstructible(const StructTypeInfo& root) {
+	return recordSubobjectsSatisfyDefaultConstruction(
+		root,
+		[](const StructTypeInfo& info, const StructMemberFunction*) {
+			return hasTrivialDefaultConstructor(&info);
+		});
+}
+
+bool recordNothrowConstructible(const StructTypeInfo& root) {
+	return recordSubobjectsSatisfyDefaultConstruction(
+		root,
+		[](const StructTypeInfo& info, const StructMemberFunction* default_ctor) {
+			if (hasTrivialDefaultConstructor(&info)) {
+				return true;
+			}
+			if (default_ctor != nullptr &&
+				default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& constructor =
+					default_ctor->function_decl.as<ConstructorDeclarationNode>();
+				if (!constructor.is_implicit() &&
+					!constructor.is_explicitly_defaulted()) {
+					return constructor.is_noexcept();
+				}
+			}
+			// An implicit or defaulted non-trivial constructor inherits the
+			// exception specification of its subobjects.
+			return true;
+		});
 }
 
 template<typename Pred>
@@ -1986,45 +2036,15 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 						? TypeTraitResult::success_true()
 						: TypeTraitResult::success_false();
 				}
-				// The approximate record check reports a class constructible
-				// when a default constructor exists, even when that constructor
-				// is deleted or inaccessible, or the class is abstract. Base
-				// and member recursion for the trivial and nothrow variants
-				// stays deferred.
-				if (struct_info->is_abstract ||
-					struct_info->isDefaultConstructorDeleted() ||
-					(struct_info->implicit_default_constructor.is_finalized &&
-					 struct_info->implicit_default_constructor.is_deleted)) {
-					return TypeTraitResult::success_false();
-				}
-				const StructMemberFunction* default_ctor =
-					struct_info->findDefaultConstructor();
-				if (default_ctor != nullptr &&
-					default_ctor->access != AccessSpecifier::Public) {
-					return TypeTraitResult::success_false();
-				}
 				if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
-					return hasTrivialDefaultConstructor(struct_info)
+					return recordTriviallyConstructible(*struct_info)
 						? TypeTraitResult::success_true()
 						: TypeTraitResult::success_false();
 				}
 				if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
-					if (hasTrivialDefaultConstructor(struct_info)) {
-						return TypeTraitResult::success_true();
-					}
-					if (default_ctor != nullptr &&
-						default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-						const ConstructorDeclarationNode& constructor =
-							default_ctor->function_decl.as<ConstructorDeclarationNode>();
-						if (!constructor.is_implicit()) {
-							return constructor.is_noexcept()
-								? TypeTraitResult::success_true()
-								: TypeTraitResult::success_false();
-						}
-					}
-					// An implicit non-trivial constructor needs base and member
-					// exception-specification recursion; keep the approximate
-					// answer for that shape.
+					return recordNothrowConstructible(*struct_info)
+						? TypeTraitResult::success_true()
+						: TypeTraitResult::success_false();
 				}
 			}
 			TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
