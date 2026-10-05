@@ -411,36 +411,6 @@ flow), coordinating with the template/semantic worklist migration where the
 measured path crosses that boundary. Do not pursue a standalone stack-reserve
 change before that work.
 
-## Concrete function-pointer alias identity loses decltype equivalence
-
-A concrete alias-template specialization whose target is a function-template
-address does not compare equal to the same directly written address type:
-
-```cpp
-template <class T>
-int function() noexcept(sizeof(T) > 1) { return 0; }
-
-template <class T>
-using FunctionAddress = decltype(&function<T>);
-
-template <class Left, class Right>
-struct SameType { static constexpr bool value = false; };
-
-template <class Type>
-struct SameType<Type, Type> { static constexpr bool value = true; };
-
-static_assert(SameType<
-    FunctionAddress<int>,
-    decltype(&function<int>)>::value);
-```
-
-Clang accepts this assertion; FlashCpp currently reports `StaticAssertFailure`.
-Dependent function-pointer aliases can still select overloads by their
-substituted exception specifications, but canonical type identity for the
-materialized concrete alias remains incomplete. Keep this separate from the
-bounded overload-ranking slice until alias materialization preserves the full
-function signature through type deduction.
-
 ## A function designator's `decltype` imports as a pointer to function
 
 The parser publishes a function declaration's type with the
