@@ -10,18 +10,6 @@ failure while processing the standard header, separate from Itanium symbol
 mangling; the typeinfo test therefore does not currently verify the mangling
 change on WSL.
 
-## Deep class-template base materialization can overflow the native stack
-
-Resolving a dependent alias through a long finite class-template base chain can
-recurse through `try_instantiate_class_template`,
-`instantiate_and_register_base_template`, and
-`materializeTemplateInstantiationForLookup` until the compiler stack overflows.
-A depth-64 `MemberPointerAliasLayer<T, Depth>` chain reproduced
-`EXCEPTION_STACK_OVERFLOW` while resolving an inherited member-pointer alias; a
-depth-32 version avoided the crash but left overload selection ambiguous. This
-path needs explicit worklist-based materialization and a deep regression under
-the normal process stack limit. Do not increase the stack size to mask it.
-
 ## Member class template dependent bases are not instantiated
 
 A member class template whose base is one of its own type parameters does not
@@ -370,13 +358,6 @@ producing an implementation-limit diagnostic. The throughput corpus avoids
 this construct; the query benchmark retains a separate 1,025-level logical
 dependency probe. Architecture boundary 7 must move the real instantiation and
 substitution path onto small arena-owned frames before this issue can be closed.
-
-A separate probe using recursively inherited `Deep<N> : Deep<N - 1>` classes
-overflowed the shipping Windows compiler stack at depth 96. Its crash trace
-repeated `try_instantiate_class_template`, base-template registration, and
-lookup materialization. This is the same native-recursion boundary, but a
-different instantiation trigger; cover both paths when moving class-template
-instantiation and substitution onto an explicit worklist.
 
 ## Unity arithmetic test can overflow the native stack
 

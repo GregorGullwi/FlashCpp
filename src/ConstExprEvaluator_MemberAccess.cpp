@@ -429,8 +429,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (const TypeInfo* inherited_alias_owner =
 						context.parser->lookup_inherited_type_alias(
 							outer_owner_handle,
-							nested_member_handle,
-							0);
+							nested_member_handle);
 					inherited_alias_owner != nullptr &&
 					inherited_alias_owner->name().isValid()) {
 					ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(

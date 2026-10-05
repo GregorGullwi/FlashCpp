@@ -3514,17 +3514,35 @@ ParseResult Parser::parse_type_specifier() {
 							resolved_alias.type_index,
 							resolved_type_size,
 							type_name_token,
-							cv_qualifier,
+							static_cast<CVQualifier>(
+								static_cast<uint8_t>(cv_qualifier) |
+								static_cast<uint8_t>(resolved_alias.cv_qualifier)),
 							ReferenceQualifier::None);
-						type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
-						if (resolved_alias.isArray()) {
-							type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
+						if (resolved_alias.has_ordered_declarator) {
+							type_spec_node.as<TypeSpecifierNode>().set_ordered_declarator(
+								resolved_alias.ordered_declarator);
+						} else {
+							type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(
+								resolved_alias.pointer_depth);
+							if (resolved_alias.pointee_array_declarator) {
+								type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
+									resolved_alias.array_dimensions);
+								type_spec_node.as<TypeSpecifierNode>().set_pointee_array_declarator(true);
+							} else if (resolved_alias.isArray()) {
+								type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(
+									resolved_alias.array_dimensions);
+							}
 						}
 						if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
 							type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
 						}
 						if (resolved_alias.function_signature.has_value()) {
 							type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
+						}
+						if (resolved_alias.has_member_class_owner()) {
+							applyResolvedAliasMemberOwner(
+								type_spec_node.as<TypeSpecifierNode>(),
+								resolved_alias);
 						}
 						return type_spec_node;
 					};
@@ -5034,28 +5052,39 @@ ParseResult Parser::parse_type_specifier() {
 				original_type_info->registeredTypeIndex().withCategory(original_type_info->typeEnum()));
 			// Create the TypeSpecifierNode for the struct
 			TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
-											 ? resolved_alias.type_index
-											 : struct_type_info->type_index_.withCategory(TypeCategory::Struct);
+												 ? resolved_alias.type_index
+												 : struct_type_info->type_index_.withCategory(TypeCategory::Struct);
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
-				resolved_type_index, type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
+				resolved_type_index,
+				type_size,
+				type_name_token,
+				static_cast<CVQualifier>(
+					static_cast<uint8_t>(cv_qualifier) |
+					static_cast<uint8_t>(resolved_alias.cv_qualifier)),
+				ReferenceQualifier::None);
 			bindInjectedClassIdentity(
 				type_spec_node.as<TypeSpecifierNode>(),
 				*original_type_info);
+			if (resolved_alias.has_ordered_declarator) {
+				type_spec_node.as<TypeSpecifierNode>().set_ordered_declarator(
+					resolved_alias.ordered_declarator);
+			} else {
+				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
+				if (resolved_alias.pointee_array_declarator) {
+					type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
+						resolved_alias.array_dimensions);
+					type_spec_node.as<TypeSpecifierNode>().set_pointee_array_declarator(true);
+				} else if (resolved_alias.isArray()) {
+					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(
+						resolved_alias.array_dimensions);
+				}
+			}
 			if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
 				type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
-			}
-			type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
-			if (resolved_alias.pointee_array_declarator) {
-				type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
-					resolved_alias.array_dimensions);
-				type_spec_node.as<TypeSpecifierNode>().set_pointee_array_declarator(true);
-			} else if (resolved_alias.isArray()) {
-				type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
 			}
 			if (resolved_alias.function_signature.has_value()) {
 				type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
 			}
-
 			return ParseResult::success(type_spec_node);
 		}
 
@@ -5106,13 +5135,20 @@ ParseResult Parser::parse_type_specifier() {
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					resolved_alias.type_index.is_valid() ? resolved_alias.type_index : user_type_index.withCategory(resolved_type),
 					type_size, type_name_token, effective_cv, ReferenceQualifier::None);
-				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
-				if (resolved_alias.pointee_array_declarator) {
-					type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
-						resolved_alias.array_dimensions);
-					type_spec_node.as<TypeSpecifierNode>().set_pointee_array_declarator(true);
-				} else if (resolved_alias.isArray()) {
-					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
+				if (resolved_alias.has_ordered_declarator) {
+					type_spec_node.as<TypeSpecifierNode>().set_ordered_declarator(
+						resolved_alias.ordered_declarator);
+				} else {
+					type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(
+						resolved_alias.pointer_depth);
+					if (resolved_alias.pointee_array_declarator) {
+						type_spec_node.as<TypeSpecifierNode>().set_pointee_array_dimensions(
+							resolved_alias.array_dimensions);
+						type_spec_node.as<TypeSpecifierNode>().set_pointee_array_declarator(true);
+					} else if (resolved_alias.isArray()) {
+						type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(
+							resolved_alias.array_dimensions);
+					}
 				}
 				// Add reference qualifiers from typedef
 				if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
