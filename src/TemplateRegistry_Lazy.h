@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CanonicalTypeTraits.h"
+#include "FrontendContext.h"
 #include "FrontendIds.h"
 #include "MigrationStats.h"
 #include "TemplateRegistry.h"
@@ -2437,6 +2438,19 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				return std::nullopt;
 			}
 			const TypeSpecifierNode& ts = type_node.as<TypeSpecifierNode>();
+			// The operand derives from flat template-argument storage, which
+			// carries a member pointer's owner only as a spelling. Publish both
+			// the nominal entity for a record/enum base and the declaring-class
+			// owner for a member pointer before canonical import, so a
+			// member-object-pointer operand is classified from identity rather
+			// than falling back to the compatibility switch.
+			auto publishOperandIdentity = [](TypeSpecifierNode& operand) {
+				tryBindPublishedTypeEntity(operand);
+				if (operand.has_member_class() &&
+					FrontendContext::active() != nullptr) {
+					tryBindPublishedMemberClassEntity(operand);
+				}
+			};
 			if (ts.category() == TypeCategory::UserDefined ||
 				ts.category() == TypeCategory::TypeAlias ||
 				ts.category() == TypeCategory::Template) {
@@ -2451,15 +2465,12 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					}
 					TypeSpecifierNode operand =
 						makeTypeSpecifierFromTemplateTypeArg(arg, ts.token());
-					// Publish the nominal EntityId so the canonical importer
-					// recognizes a record or enum operand instead of deferring
-					// the classification to the compatibility switch.
-					tryBindPublishedTypeEntity(operand);
+					publishOperandIdentity(operand);
 					return operand;
 				}
 			}
 			TypeSpecifierNode operand = ts;
-			tryBindPublishedTypeEntity(operand);
+			publishOperandIdentity(operand);
 			return operand;
 		};
 
