@@ -944,7 +944,10 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    for remaining valid ordered forms still rejected at a boundary, including
    alias array, reference, and member-pointer wrappers. Keep member `TypeId`s
    preserved through every AST copy and substitution route as those paths
-   migrate.
+   migrate. An abstract function type is now parsed as a type-id argument and a
+   template argument, so `__is_same(Fn, int(int))` and `Box<int(int)>` parse;
+   `tests/test_function_type_type_id_argument_ret0.cpp` covers the spelling,
+   its distinction from a function pointer, and the template-argument form.
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;
