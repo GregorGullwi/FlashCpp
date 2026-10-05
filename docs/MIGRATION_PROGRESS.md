@@ -849,23 +849,23 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       derived class whose base has no usable default constructor is no longer
       reported constructible; see
       `tests/test_is_constructible_subobject_recursion_ret0.cpp`. The
-      `DefaultConstructible` fact is now published by class `TypeId` in
-      `CanonicalRecordProperties`, and the zero-argument query is answered from
-      it in both the folded and lazy paths;
-      `tests/test_canonical_lazy_default_construction_concept_ret0.cpp` checks
-      the classified lazy answers and lowers the lazy regression's
-      `lazy_constraint_trait_fallback` from 4 to 2. The trivial and nothrow
-      zero-argument answers now share that base/member walk, so a non-trivial
-      member or base makes default construction non-trivial and a throwing
-      member makes it throwing. The `DefaultConstructible`,
-      `TriviallyDefaultConstructible`, and `NothrowDefaultConstructible` facts
-      are published by class `TypeId` in `CanonicalRecordProperties`
-      (`CanonicalRecordConstructionFlags`), and all three zero-argument queries
-      are answered from them in the folded and lazy paths;
+      `DefaultConstructible`, `TriviallyDefaultConstructible`, and
+      `NothrowDefaultConstructible` facts are published by class `TypeId` in
+      `CanonicalRecordProperties` (`CanonicalRecordConstructionFlags`), and the
+      zero-argument queries for all three variants are answered from them in the
+      folded and lazy paths;
+      `tests/test_canonical_lazy_default_construction_concept_ret0.cpp` and
       `tests/test_canonical_lazy_trivial_nothrow_construction_concept_ret0.cpp`
-      checks the classified lazy trivial and nothrow answers. The exception
-      specification contributed by a default member initializer and the
-      variadic forms still fall back. The unary triviality and lifetime traits now use TypeId-keyed
+      check the classified lazy answers. The trivial and nothrow answers share
+      the base/member walk, so a non-trivial member or base makes default
+      construction non-trivial and a throwing member makes it throwing. An
+      argument-bearing constructibility requirement now resolves through
+      constructor overload resolution in the lazy path for a record target,
+      matching the folded path;
+      `tests/test_canonical_variadic_constructibility_concept_ret0.cpp` checks a
+      matching constructor, an arity mismatch, a record argument, and a missing
+      int constructor. The exception specification contributed by a default
+      member initializer and the non-record variadic targets still fall back. The unary triviality and lifetime traits now use TypeId-keyed
       record-property facts. `CanonicalRecordLayout` publishes object size,
       member offsets, and the union flag. `CanonicalRecordProperties` publishes
       unary record-property facts for completed record TypeIds. Class-template
