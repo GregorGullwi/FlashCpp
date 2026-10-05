@@ -860,12 +860,17 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       the base/member walk, so a non-trivial member or base makes default
       construction non-trivial and a throwing member makes it throwing. An
       argument-bearing constructibility requirement now resolves through
-      constructor overload resolution in the lazy path for a record target,
-      matching the folded path;
-      `tests/test_canonical_variadic_constructibility_concept_ret0.cpp` checks a
-      matching constructor, an arity mismatch, a record argument, and a missing
-      int constructor. The exception specification contributed by a default
-      member initializer and the non-record variadic targets still fall back. The unary triviality and lifetime traits now use TypeId-keyed
+      constructor overload resolution in the lazy path for a record target, and
+      through the implicit conversion rules for a scalar, reference, or pointer
+      target, matching the folded path. The shared
+      `constructibleFromArgument` conversion check is used by both paths;
+      `tests/test_canonical_variadic_constructibility_concept_ret0.cpp` and
+      `tests/test_canonical_variadic_nonrecord_constructibility_concept_ret0.cpp`
+      check a matching constructor, an arity mismatch, a record argument, a
+      missing int constructor, and scalar and pointer conversion targets. The
+      exception specification contributed by a default member initializer and
+      the canonical (non-sema) form of the argument-bearing query still fall
+      back. The unary triviality and lifetime traits now use TypeId-keyed
       record-property facts. `CanonicalRecordLayout` publishes object size,
       member offsets, and the union flag. `CanonicalRecordProperties` publishes
       unary record-property facts for completed record TypeIds. Class-template
