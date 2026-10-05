@@ -854,9 +854,12 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       it in both the folded and lazy paths;
       `tests/test_canonical_lazy_default_construction_concept_ret0.cpp` checks
       the classified lazy answers and lowers the lazy regression's
-      `lazy_constraint_trait_fallback` from 4 to 2. The exception-specification
-      recursion for an implicit non-trivial constructor, the subobject walk for
-      the trivial and nothrow variants, and the variadic forms still fall back. The unary triviality and lifetime traits now use TypeId-keyed
+      `lazy_constraint_trait_fallback` from 4 to 2. The trivial and nothrow
+      zero-argument answers now share that base/member walk, so a non-trivial
+      member or base makes default construction non-trivial and a throwing
+      member makes it throwing. The exception specification contributed by a
+      default member initializer, the `TypeId`-keyed trivial and nothrow facts
+      that the lazy path would need, and the variadic forms still fall back. The unary triviality and lifetime traits now use TypeId-keyed
       record-property facts. `CanonicalRecordLayout` publishes object size,
       member offsets, and the union flag. `CanonicalRecordProperties` publishes
       unary record-property facts for completed record TypeIds. Class-template
