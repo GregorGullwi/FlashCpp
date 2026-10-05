@@ -149,6 +149,16 @@ specialized parameter pattern. The regression
 `tests/test_free_function_template_address_materialization_ret0.cpp` checks
 runtime invocation through both a direct template address and an overloaded
 template address.
+The same contextual-resolution record now covers member-function addresses:
+sema attaches the selected member specialization to `&Owner::member`, and IR
+lowers it to the member's code symbol with the member-function-pointer IR type.
+Instantiation is deferred until IR so a parser-owned pattern root never reaches
+the late-materialization boundary. The regression
+`tests/test_member_function_pointer_address_materialization_ret0.cpp` checks an
+implicitly converted address, a `static_cast` address, and the deduplicated
+member-template overload, plus that a null member pointer stays null. Virtual
+member addresses and multiple-inheritance adjustment remain unsupported (see
+`KNOWN_ISSUES.md`).
 Conditional pointer common-type selection now compares imported structural
 `TypeId`s through the shared descriptor adapter. Derived-to-base pointer
 conversions now classify direct record pointees from canonical base schemas

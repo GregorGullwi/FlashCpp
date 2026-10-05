@@ -174,19 +174,29 @@ namespace changes whose symbol-table writes belong to another. Keep publication
 transactions within one context until registry ownership or journal enlistment is
 moved to a shared coordinator.
 
-## Runtime member-function-pointer address-of is not lowered
+## Member-function-pointer address-of only lowers non-virtual, non-adjusted cases
 
-`int (S::*p)() = &S::f;` still does not materialize a runtime member-function
-pointer. Sema can resolve a target overload and check access, but IR generation
-does not lower that selection to the member-function-pointer representation. It
-falls through to a generic `AddressOf` instruction; `handleAddressOf` misses
-the qualified member in the local scope, emits a zero placeholder, and returns
-without storing the result temp, leaving the variable's slot uninitialized.
-Whether such a pointer compares non-null therefore depends on unrelated stack
-layout. Null member-function pointers and their `[conv.bool]` conversions are
-unaffected; only taking the address of a member function (including
-`bool b = &S::f;`) is. A proper fix must lower the selected function according
-to the target ABI and account for virtual member functions.
+`int (S::*p)() = &S::f;` now materializes a runtime member-function pointer for
+the common case: sema records the selected overload on the address expression
+and IR lowers it to the member's code symbol. The representation is the
+compiler's existing 64-bit member pointer, so this covers non-virtual members
+whose address needs no `this` adjustment (single-inheritance, no virtual
+dispatch).
+
+The following remain unsupported and are rejected or left unresolved:
+
+- Taking the address of a **virtual** member function throws
+  `CompileError`; the 64-bit representation cannot carry the vtable-index
+  encoding the ABI requires.
+- Multiple-inheritance adjustment of a member-function pointer is not applied.
+- Instantiating a member template address whose signature contains a class
+  template in both the return and parameter (or that shares a name with a
+  non-template overload) can still route instantiation through a parser-owned
+  root. `ensureMemberFunctionAddressMaterialized` logs a warning and leaves the
+  address unresolved in that case rather than failing the translation unit, so
+  the old uninitialized-slot behavior can still appear there.
+- Calling through a materialized member-function pointer is a separate,
+  still-unimplemented path (it emits an ``.()`` symbol).
 
 ## Static-member template initializer replay still re-parses source text
 

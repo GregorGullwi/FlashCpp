@@ -3507,9 +3507,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (op == "&") {
 			if (const FunctionDeclarationNode* addressed_function =
 					unary.resolved_addressed_function()) {
-				return FlashCpp::ParserFunctionTypeHelpers::
-					buildFunctionPointerTypeFromFunctionDeclaration(
-						*addressed_function);
+				return addressed_function->is_member_function()
+					? FlashCpp::ParserFunctionTypeHelpers::
+						  buildMemberFunctionPointerTypeFromFunctionDeclaration(
+							  *addressed_function)
+					: FlashCpp::ParserFunctionTypeHelpers::
+						  buildFunctionPointerTypeFromFunctionDeclaration(
+							  *addressed_function);
 			}
 			if (auto free_function_type =
 					FlashCpp::ParserFunctionTypeHelpers::tryGetBareFunctionIdentifierType(

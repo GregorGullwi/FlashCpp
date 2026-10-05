@@ -7810,6 +7810,111 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		selected_function->is_static()
 			? TypeIndex{}
 			: resolved->member_class_type_index);
+
+	// Record a pending lowering for the selected specialization. Sema already
+	// picks the overload here, but IR generation cannot repeat that resolution,
+	// so it must lower this exact entity instead of a generic AddressOf. The
+	// instantiation/materialization itself is deferred to
+	// ensureMemberFunctionAddressMaterialized: this function can run while the
+	// parser is still normalizing a pattern body, where registering an
+	// instantiated root is not allowed.
+	if (best_member_function->is_virtual) {
+		// A member-function pointer to a virtual function needs the vtable-index
+		// encoding and dynamic dispatch; the current 64-bit member-pointer
+		// representation cannot carry that, so reject rather than emit a wrong
+		// static address.
+		throw CompileError(
+			"taking the address of a virtual member function is not yet supported");
+	}
+	PendingMemberFunctionAddress request;
+	request.owner = member_owner;
+	request.qualified = qualified;
+	request.selected_function = selected_function;
+	request.is_template = best_template_address != nullptr;
+	if (request.is_template) {
+		if (target_signature == nullptr ||
+			!target_signature->hasStructuredTypes()) {
+			return;
+		}
+		request.target_parameter_types = target_parameter_types;
+		request.target_return_type =
+			typeSpecifierFromFunctionType(target_signature->return_type());
+		request.target_return_type_id = target_function_type
+			? canonical_types.node(target_function_type).child
+			: TypeId{};
+	} else if (!selected_function->is_materialized() &&
+		!selected_function->has_any_body_source()) {
+		return;
+	}
+	pending_member_function_addresses_.insert_or_assign(
+		address_operator, std::move(request));
+}
+
+void SemanticAnalysis::ensureMemberFunctionAddressMaterialized(
+	const UnaryOperatorNode& unary_node) {
+	if (unary_node.resolved_addressed_function() != nullptr) {
+		return;
+	}
+	auto pending = pending_member_function_addresses_.find(&unary_node);
+	if (pending == pending_member_function_addresses_.end()) {
+		return;
+	}
+	const PendingMemberFunctionAddress request = pending->second;
+	pending_member_function_addresses_.erase(pending);
+
+	const FunctionDeclarationNode* address_function = nullptr;
+	if (request.is_template) {
+		bool return_type_deduced = false;
+		std::optional<ASTNode> instantiated;
+		try {
+			instantiated = parser().tryInstantiateMemberFunctionTemplateForAddress(
+				*request.owner,
+				*request.qualified,
+				std::span<const TypeSpecifierNode>(
+					request.target_parameter_types.data(),
+					request.target_parameter_types.size()),
+				request.target_return_type,
+				request.target_return_type_id,
+				return_type_deduced);
+		} catch (const InternalError& error) {
+			// Some overload shapes (a same-named non-template next to a member
+			// template) still route instantiation through a parser-owned root,
+			// which the late-materialization boundary rejects. There is no
+			// symbol to lower in that case, so leave the selection unresolved
+			// instead of failing the whole translation unit.
+			FLASH_LOG(General, Warning,
+					  "member function address materialization skipped: ",
+					  error.what());
+			return;
+		}
+		if (instantiated.has_value()) {
+			if (const FunctionDeclarationNode* instantiated_function =
+					get_function_decl_node(*instantiated);
+				instantiated_function != nullptr &&
+				instantiated_function->is_materialized()) {
+				address_function = instantiated_function;
+			}
+		}
+	} else if (request.selected_function->is_materialized()) {
+		address_function = request.selected_function;
+	} else if (request.selected_function->has_any_body_source()) {
+		if (std::optional<ASTNode> materialized =
+				ensureMemberFunctionMaterialized(
+					request.owner->name, *request.selected_function);
+			materialized.has_value()) {
+			if (const FunctionDeclarationNode* materialized_function =
+					get_function_decl_node(*materialized);
+				materialized_function != nullptr &&
+				materialized_function->is_materialized()) {
+				address_function = materialized_function;
+			}
+		}
+	}
+	if (address_function == nullptr) {
+		return;
+	}
+	const_cast<UnaryOperatorNode&>(unary_node)
+		.set_resolved_addressed_function(address_function);
 }
 
 std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::tryResolveIdentifierMember(const IdentifierNode& identifier) const {
@@ -8823,10 +8928,15 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (op == "&") {
 					if (const FunctionDeclarationNode* addressed_function =
 							e.resolved_addressed_function()) {
-						return canonicalizeType(
-							FlashCpp::ParserFunctionTypeHelpers::
-								buildFunctionPointerTypeFromFunctionDeclaration(
-									*addressed_function));
+						TypeSpecifierNode addressed_type =
+							addressed_function->is_member_function()
+								? FlashCpp::ParserFunctionTypeHelpers::
+									  buildMemberFunctionPointerTypeFromFunctionDeclaration(
+										  *addressed_function)
+								: FlashCpp::ParserFunctionTypeHelpers::
+									  buildFunctionPointerTypeFromFunctionDeclaration(
+										  *addressed_function);
+						return canonicalizeType(addressed_type);
 					}
 					if (!e.is_builtin_addressof()) {
 						if (const ResolvedUnaryOperatorCall* resolved_address =
