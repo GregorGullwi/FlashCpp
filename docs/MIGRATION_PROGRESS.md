@@ -835,9 +835,13 @@ parenthesized, bare, prvalue, and three-operand shapes. A dereference and
 member access on an lvalue are recognized as lvalues too, so
 `decltype((*p))` and `decltype((s.m))` are references;
 `tests/test_decltype_parenthesized_lvalue_forms_ret0.cpp` covers the
-dereference, member access, member-access chain, and prvalue forms. Calls,
-xvalues, and subscript expressions still keep the prvalue default (`decltype`
-of a subscript expression does not yet parse at all, a separate parser gap).
+dereference, member access, member-access chain, and prvalue forms. Built-in
+array and pointer subscripts now resolve from their ordered declarator shape,
+so `decltype(a[i])` and `decltype(p[i])` produce lvalue references while
+preserving nested array bounds and element cv-qualification;
+`tests/test_decltype_subscript_expression_ret0.cpp` covers those forms and the
+C++20 reversed pointer-subscript form. Class `operator[]` selection stays with
+sema. Calls and xvalue operands remain open decltype value-category cases.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
@@ -967,11 +971,9 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    `tests/test_function_type_type_id_argument_ret0.cpp` covers the spelling,
    its distinction from a function pointer, and the template-argument form.
    The `decltype` reference rule now covers a parenthesized id-expression,
-   dereference, and member access on an lvalue, and keys off the last
-   comma-operator operand. Remaining: a call or xvalue operand
-   (`std::move(x)`, a call returning `T&&`), and a subscript operand, which
-   additionally does not parse as a `decltype` operand at all (see
-   [known issues](KNOWN_ISSUES.md)).
+   dereference, member access on an lvalue, and built-in subscripting, and keys
+   off the last comma-operator operand. Remaining: a call or xvalue operand
+   (for example, `std::move(x)` or a call returning `T&&`).
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;
