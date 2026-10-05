@@ -867,10 +867,13 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       `tests/test_canonical_variadic_constructibility_concept_ret0.cpp` and
       `tests/test_canonical_variadic_nonrecord_constructibility_concept_ret0.cpp`
       check a matching constructor, an arity mismatch, a record argument, a
-      missing int constructor, and scalar and pointer conversion targets. The
-      exception specification contributed by a default member initializer and
-      the canonical (non-sema) form of the argument-bearing query still fall
-      back. The unary triviality and lifetime traits now use TypeId-keyed
+      missing int constructor, and scalar and pointer conversion targets. A
+      class-type default member initializer that default-constructs the member
+      now contributes to the nothrow answer, so a member initialized as
+      `Member member{}` makes the class nothrow only when `Member`'s default
+      constructor is. Other default member initializer expressions need
+      expression-level noexcept evaluation, and the canonical (non-sema) form
+      of the argument-bearing query remains. The unary triviality and lifetime traits now use TypeId-keyed
       record-property facts. `CanonicalRecordLayout` publishes object size,
       member offsets, and the union flag. `CanonicalRecordProperties` publishes
       unary record-property facts for completed record TypeIds. Class-template
