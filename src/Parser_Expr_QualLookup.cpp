@@ -7,6 +7,7 @@
 #include "CanonicalTypeAdapter.h"
 #include "FrontendContext.h"
 #include "MemberFunctionLookupShared.h"
+#include "FlatHashTable.h"
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -1112,91 +1113,126 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 		StringHandle current_name{};
 		const StructTypeInfo* struct_info = nullptr;
 		size_t next_base = 0;
-		std::vector<StringHandle> alias_path;
+		size_t alias_path_begin = 0;
+		bool direct_lookup_checked = false;
+		bool cacheable = true;
 	};
 
 	FLASH_LOG_FORMAT(Templates, Trace, "lookup_inherited_type_alias: looking for '{}::{}' ",
 		StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
 
+	auto try_lookup_direct_alias = [&](StringHandle owner_name)
+		-> std::optional<const TypeInfo*> {
+		StringBuilder qualified_name_builder;
+		qualified_name_builder.append(StringTable::getStringView(owner_name))
+			.append("::")
+			.append(StringTable::getStringView(member_name));
+		std::string_view qualified_name = qualified_name_builder.commit();
+		StringHandle qualified_name_handle =
+			StringTable::getOrInternStringHandle(qualified_name);
+
+		if (LazyTypeAliasRegistry::getInstance().needsEvaluation(owner_name, member_name)) {
+			if (std::optional<TypeIndex> lazy_alias_type =
+					evaluateLazyTypeAlias(owner_name, member_name);
+				lazy_alias_type.has_value()) {
+				uint32_t size_bits = 0;
+				const TypeInfo* lazy_type_info = tryGetTypeInfo(*lazy_alias_type);
+				if (lazy_type_info != nullptr) {
+					SizeInBits lazy_size_bits = lazy_type_info->sizeInBits();
+					if (lazy_size_bits.is_set()) {
+						size_bits = lazy_size_bits.value;
+					}
+				}
+
+				auto direct_register_it = getTypesByNameMap().find(qualified_name_handle);
+				if (direct_register_it != getTypesByNameMap().end() &&
+					direct_register_it->second != nullptr) {
+					update_type_alias_copy(
+						*direct_register_it->second,
+						*lazy_alias_type,
+						size_bits,
+						nullptr,
+						lazy_type_info);
+				} else {
+					add_type_alias_copy(qualified_name_handle, *lazy_alias_type, size_bits);
+				}
+			}
+		}
+
+		auto direct_it = getTypesByNameMap().find(qualified_name_handle);
+		if (direct_it != getTypesByNameMap().end()) {
+			FLASH_LOG_FORMAT(Templates, Trace, "Found direct type alias '{}'", qualified_name);
+			return direct_it->second;
+		}
+		return std::nullopt;
+	};
 	std::vector<LookupFrame> frames;
-	frames.push_back(LookupFrame{struct_name, nullptr, 0, {}});
+	std::vector<StringHandle> active_alias_path;
+	FlashCpp::FlatHashSet<StringHandle, StringHandleHash, std::equal_to<StringHandle>> active_names;
+	FlashCpp::FlatHashSet<StringHandle, StringHandleHash, std::equal_to<StringHandle>> completed_misses;
+	auto pop_frame = [&](bool remember_miss, bool safe_miss) {
+		const size_t alias_path_begin = frames.back().alias_path_begin;
+		const bool cacheable_miss = safe_miss && frames.back().cacheable;
+		if (remember_miss && cacheable_miss) {
+			for (size_t index = alias_path_begin; index < active_alias_path.size(); ++index) {
+				completed_misses.insert(active_alias_path[index]);
+			}
+		}
+		while (active_alias_path.size() > alias_path_begin) {
+			active_names.erase(active_alias_path.back());
+			active_alias_path.pop_back();
+		}
+		frames.pop_back();
+		if (!cacheable_miss && !frames.empty()) {
+			frames.back().cacheable = false;
+		}
+	};
+	const bool root_cacheable =
+		!LazyTypeAliasRegistry::getInstance().needsEvaluation(struct_name, member_name);
+	if (std::optional<const TypeInfo*> direct_alias =
+			try_lookup_direct_alias(struct_name);
+		direct_alias.has_value()) {
+		return *direct_alias;
+	}
+	frames.push_back(LookupFrame{struct_name, nullptr, 0, 0, true, root_cacheable});
 	while (!frames.empty()) {
 		LookupFrame& frame = frames.back();
 		if (frame.struct_info == nullptr) {
-			if (std::find(frame.alias_path.begin(), frame.alias_path.end(), frame.current_name) !=
-				frame.alias_path.end()) {
-				frames.pop_back();
+			if (active_names.contains(frame.current_name)) {
+				pop_frame(false, false);
 				continue;
 			}
-			bool active_alias_cycle = false;
-			for (size_t frame_index = 0; frame_index + 1 < frames.size(); ++frame_index) {
-				const LookupFrame& active_frame = frames[frame_index];
-				if (active_frame.current_name == frame.current_name ||
-					std::find(
-						active_frame.alias_path.begin(),
-						active_frame.alias_path.end(),
-						frame.current_name) != active_frame.alias_path.end()) {
-					active_alias_cycle = true;
-					break;
+			active_names.insert(frame.current_name);
+			active_alias_path.push_back(frame.current_name);
+			if (!frame.direct_lookup_checked) {
+				frame.direct_lookup_checked = true;
+				if (LazyTypeAliasRegistry::getInstance().needsEvaluation(
+						frame.current_name,
+						member_name)) {
+					frame.cacheable = false;
+				}
+				if (std::optional<const TypeInfo*> direct_alias =
+						try_lookup_direct_alias(frame.current_name);
+					direct_alias.has_value()) {
+					return *direct_alias;
 				}
 			}
-			if (active_alias_cycle) {
-				frames.pop_back();
+			if (completed_misses.contains(frame.current_name)) {
+				pop_frame(false, true);
 				continue;
-			}
-			frame.alias_path.push_back(frame.current_name);
-
-			StringBuilder qualified_name_builder;
-			qualified_name_builder.append(StringTable::getStringView(frame.current_name))
-				.append("::")
-				.append(StringTable::getStringView(member_name));
-			std::string_view qualified_name = qualified_name_builder.commit();
-			StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name);
-
-			if (LazyTypeAliasRegistry::getInstance().needsEvaluation(frame.current_name, member_name)) {
-				if (std::optional<TypeIndex> lazy_alias_type =
-						evaluateLazyTypeAlias(frame.current_name, member_name);
-					lazy_alias_type.has_value()) {
-					uint32_t size_bits = 0;
-					const TypeInfo* lazy_type_info = tryGetTypeInfo(*lazy_alias_type);
-					if (lazy_type_info != nullptr) {
-						SizeInBits lazy_size_bits = lazy_type_info->sizeInBits();
-						if (lazy_size_bits.is_set()) {
-							size_bits = lazy_size_bits.value;
-						}
-					}
-
-					auto direct_register_it = getTypesByNameMap().find(qualified_name_handle);
-					if (direct_register_it != getTypesByNameMap().end() &&
-						direct_register_it->second != nullptr) {
-						update_type_alias_copy(
-							*direct_register_it->second,
-							*lazy_alias_type,
-							size_bits,
-							nullptr,
-							lazy_type_info);
-					} else {
-						add_type_alias_copy(qualified_name_handle, *lazy_alias_type, size_bits);
-					}
-				}
-			}
-
-			auto direct_it = getTypesByNameMap().find(qualified_name_handle);
-			if (direct_it != getTypesByNameMap().end()) {
-				FLASH_LOG_FORMAT(Templates, Trace, "Found direct type alias '{}'", qualified_name);
-				return direct_it->second;
 			}
 
 			auto struct_it = getTypesByNameMap().find(frame.current_name);
 			if (struct_it == getTypesByNameMap().end()) {
 				FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' not found in getTypesByNameMap()",
 					StringTable::getStringView(frame.current_name));
-				frames.pop_back();
+				pop_frame(true, true);
 				continue;
 			}
 
 			const TypeInfo* struct_type_info = struct_it->second;
 			if (!struct_type_info->getStructInfo()) {
+				frame.cacheable = false;
 				if (struct_type_info->isTemplateInstantiation()) {
 					AliasTemplateMaterializationResult canonical_owner =
 						materializeCanonicalOwnerTypeForLookup(*struct_type_info, {});
@@ -1213,6 +1249,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 								StringTable::getStringView(canonical_owner_name),
 								StringTable::getStringView(member_name));
 							frame.current_name = canonical_owner_name;
+							frame.direct_lookup_checked = false;
 							continue;
 						}
 					}
@@ -1264,6 +1301,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 									return rebound_type;
 								}
 								frame.current_name = rebound_type->name();
+								frame.direct_lookup_checked = false;
 								continue;
 							}
 						}
@@ -1280,12 +1318,13 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 							StringTable::getStringView(frame.current_name),
 							StringTable::getStringView(underlying_name));
 						frame.current_name = underlying_name;
+						frame.direct_lookup_checked = false;
 						continue;
 					}
 				}
 				FLASH_LOG_FORMAT(Templates, Trace, "Struct '{}' has no struct_info_ and couldn't resolve alias",
 					StringTable::getStringView(frame.current_name));
-				frames.pop_back();
+				pop_frame(true, true);
 				continue;
 			}
 
@@ -1296,13 +1335,14 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 
 		const auto& base_classes = frame.struct_info->base_classes;
 		if (frame.next_base == base_classes.size()) {
-			frames.pop_back();
+			pop_frame(true, true);
 			continue;
 		}
 
 		const auto& base_class = base_classes[frame.next_base++];
 		StringHandle base_name_handle;
 		if (base_class.is_deferred) {
+			frame.cacheable = false;
 			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
 			if (resolved == nullptr) {
 				continue;
@@ -1313,7 +1353,13 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 			FLASH_LOG_FORMAT(Templates, Trace, "Checking base class '{}'", base_class.name);
 			base_name_handle = StringTable::getOrInternStringHandle(base_class.name);
 		}
-		frames.push_back(LookupFrame{base_name_handle, nullptr, 0, {}});
+		frames.push_back(LookupFrame{
+			base_name_handle,
+			nullptr,
+			0,
+			active_alias_path.size(),
+			false,
+			true});
 	}
 
 	return nullptr;

@@ -2,6 +2,7 @@
 #include <functional>
 
 #include "Parser.h"
+#include "FlatHashTable.h"
 #include "CallNodeHelpers.h"
 #include "RebindStaticMemberAst.h"
 #include "ConstExprEvaluator.h"
@@ -1967,26 +1968,53 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			TemplateDeclId template_decl{};
 			bool operator==(const BaseInstantiationArgumentIdentity&) const = default;
 		};
-		struct BaseInstantiationIdentity {
-			TemplateDeclId template_decl{};
-			std::vector<BaseInstantiationArgumentIdentity> arguments;
-			bool operator==(const BaseInstantiationIdentity&) const = default;
-		};
 		struct BaseInstantiationRequest {
-			std::string_view template_name;
-			std::vector<TemplateTypeArg> arguments;
-			BaseInstantiationIdentity identity;
+			StringHandle template_name{};
+			TemplateDeclId template_decl{};
+			size_t arguments_begin = 0;
+			size_t arguments_count = 0;
+			size_t identity_begin = 0;
+			size_t identity_count = 0;
+			size_t children_begin = 0;
+			size_t children_count = 0;
+			bool children_loaded = false;
+			enum class State : uint8_t {
+				Unvisited,
+				Active,
+				Completed,
+			};
+			State state = State::Unvisited;
 		};
 		struct BaseInstantiationFrame {
-			BaseInstantiationRequest request;
-			std::vector<BaseInstantiationRequest> children;
+			size_t request_id = 0;
 			size_t next_child = 0;
-			bool children_loaded = false;
 		};
+		struct SubstitutionParameterKey {
+			std::string_view name;
+			bool is_pack = false;
+			bool operator==(const SubstitutionParameterKey&) const = default;
+		};
+		std::vector<BaseInstantiationRequest> requests;
+		std::vector<TemplateTypeArg> request_arguments;
+		std::vector<BaseInstantiationArgumentIdentity> request_identity_arguments;
+		std::vector<size_t> request_child_ids;
+		FlashCpp::FlatHashTable<
+			size_t,
+			size_t,
+			std::hash<size_t>,
+			std::equal_to<size_t>> request_ids_by_hash;
+		std::vector<BaseInstantiationArgumentIdentity> identity_scratch;
+		std::vector<TemplateTypeArg> pattern_arguments_scratch;
+		std::vector<TemplateTypeArg> base_arguments_scratch;
+		std::vector<TemplateDeclId> alias_identity_scratch;
+		TemplateArgSubstitutionMap substitutions_scratch;
+		TemplateArgPackSubstitutionMap pack_substitutions_scratch;
+		std::vector<SubstitutionParameterKey> substitution_parameter_shape_scratch;
+		std::vector<SubstitutionParameterKey> previous_substitution_parameter_shape;
 
 		auto make_request = [&](std::string_view requested_name,
-								std::span<const TemplateTypeArg> requested_args)
-			-> std::optional<BaseInstantiationRequest> {
+								std::vector<TemplateTypeArg>& requested_args)
+			-> std::optional<size_t> {
 			if (gTemplateRegistry.lookup_alias_template(requested_name).has_value()) {
 				return std::nullopt;
 			}
@@ -2001,11 +2029,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				return std::nullopt;
 			}
 
-			BaseInstantiationRequest request;
-			request.template_name = requested_name;
-			request.arguments.assign(requested_args.begin(), requested_args.end());
-			request.identity.template_decl = class_template.template_decl_id();
-			request.identity.arguments.reserve(requested_args.size());
+			const TemplateDeclId template_decl = class_template.template_decl_id();
+			identity_scratch.clear();
+			identity_scratch.reserve(requested_args.size());
 			CanonicalTypeTable& canonical_types =
 				requireFrontendContext().canonicalTypes();
 			CanonicalTypeTransaction canonical_transaction(canonical_types);
@@ -2069,16 +2095,67 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Type;
 					argument_identity.type = imported_type.type;
 				}
-				request.identity.arguments.push_back(argument_identity);
+				identity_scratch.push_back(argument_identity);
 			}
 			canonical_transaction.commit();
-			return request;
-		};
 
-		auto find_identity = [](
-			const std::vector<BaseInstantiationIdentity>& identities,
-			const BaseInstantiationIdentity& identity) {
-			return std::find(identities.begin(), identities.end(), identity) != identities.end();
+			auto combine_hash = [](size_t& seed, size_t value) {
+				seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+			};
+			size_t identity_hash = std::hash<uint32_t>{}(template_decl.value);
+			for (const BaseInstantiationArgumentIdentity& argument : identity_scratch) {
+				combine_hash(identity_hash, static_cast<size_t>(argument.kind));
+				combine_hash(identity_hash, argument.type.value);
+				combine_hash(identity_hash, argument.value_type.value);
+				combine_hash(identity_hash, std::hash<int64_t>{}(argument.value));
+				combine_hash(identity_hash, argument.template_decl.value);
+			}
+
+			std::optional<size_t> matching_request_id;
+			request_ids_by_hash.forEachValue(
+				identity_hash,
+				[&](size_t candidate_request_id) {
+					const BaseInstantiationRequest& existing = requests[candidate_request_id];
+					if (existing.template_decl != template_decl ||
+						existing.identity_count != identity_scratch.size()) {
+						return false;
+					}
+					const auto existing_identity_begin =
+						request_identity_arguments.begin() + existing.identity_begin;
+					if (!std::equal(
+							identity_scratch.begin(),
+							identity_scratch.end(),
+							existing_identity_begin)) {
+						return false;
+					}
+					matching_request_id = candidate_request_id;
+					return true;
+				});
+			if (matching_request_id.has_value()) {
+				requested_args.clear();
+				return *matching_request_id;
+			}
+
+			BaseInstantiationRequest request;
+			request.template_name = StringTable::getOrInternStringHandle(requested_name);
+			request.template_decl = template_decl;
+			request.arguments_begin = request_arguments.size();
+			request.arguments_count = requested_args.size();
+			request.identity_begin = request_identity_arguments.size();
+			request.identity_count = identity_scratch.size();
+			request_arguments.insert(
+				request_arguments.end(),
+				std::make_move_iterator(requested_args.begin()),
+				std::make_move_iterator(requested_args.end()));
+			request_identity_arguments.insert(
+				request_identity_arguments.end(),
+				identity_scratch.begin(),
+				identity_scratch.end());
+			requested_args.clear();
+			const size_t request_id = requests.size();
+			requests.push_back(request);
+			request_ids_by_hash.insert(identity_hash, request_id);
+			return request_id;
 		};
 		auto find_pattern_struct = [](
 			const TemplateRegistry::SpecializationPatternMatch& pattern_match)
@@ -2092,25 +2169,72 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			return nullptr;
 		};
-		auto collect_children = [&](const BaseInstantiationRequest& request)
-			-> std::optional<std::vector<BaseInstantiationRequest>> {
-			auto fail = [&](std::string_view reason)
-				-> std::optional<std::vector<BaseInstantiationRequest>> {
+		auto request_argument_span = [&](size_t request_id) {
+			const BaseInstantiationRequest& request = requests[request_id];
+			return std::span<const TemplateTypeArg>(request_arguments).subspan(
+				request.arguments_begin,
+				request.arguments_count);
+		};
+		auto resolve_alias_base = [&](std::string_view& current_name,
+								  std::vector<TemplateTypeArg>& requested_args) {
+			alias_identity_scratch.clear();
+			while (true) {
+				auto alias_entry = gTemplateRegistry.lookup_alias_template(current_name);
+				if (!alias_entry.has_value()) {
+					return true;
+				}
+				if (!alias_entry->is<TemplateAliasNode>()) {
+					return false;
+				}
+				const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
+				if (!tryEnterAliasTemplateIdentity(
+						alias_identity_scratch,
+						alias_node.template_decl_id()) ||
+					!alias_node.is_deferred() ||
+					alias_node.target_template_name().empty() ||
+					alias_node.hasDeferredMemberTarget()) {
+					return false;
+				}
+				auto target_arguments = materializeDeferredAliasTemplateArgs(
+					alias_node,
+					requested_args,
+					gTemplateRegistry.getOuterTemplateBinding(current_name));
+				if (!target_arguments.has_value()) {
+					return false;
+				}
+				requested_args.clear();
+				requested_args.reserve(target_arguments->size());
+				for (TemplateTypeArg& target_argument : *target_arguments) {
+					requested_args.push_back(std::move(target_argument));
+				}
+				current_name = alias_node.target_template_name();
+			}
+		};
+		auto collect_children = [&](size_t request_id,
+								std::vector<size_t>& children) {
+			const StringHandle request_name_handle = requests[request_id].template_name;
+			const std::string_view request_name =
+				StringTable::getStringView(request_name_handle);
+			const std::span<const TemplateTypeArg> request_args =
+				request_argument_span(request_id);
+			auto fail = [&](std::string_view reason) {
 				FLASH_LOG(Templates, Trace, "Deferred-base worklist stopped at ",
-					request.template_name, ": ", reason);
-				return std::nullopt;
+					request_name, ": ", reason);
+				return false;
 			};
 			if (gTemplateRegistry.lookupExactSpecialization(
-					request.template_name,
-					request.arguments).has_value()) {
-				return std::vector<BaseInstantiationRequest>{};
+					request_name,
+					request_args).has_value()) {
+				return true;
 			}
 			auto pattern_match = gTemplateRegistry.matchSpecializationPatternWithBindings(
-				request.template_name,
-				request.arguments);
+				request_name,
+				request_args);
 			const TemplateParameterVector* pattern_template_params = nullptr;
 			const StructDeclarationNode* pattern_struct = nullptr;
-			std::vector<TemplateTypeArg> pattern_arguments;
+			std::vector<TemplateTypeArg>& pattern_arguments =
+				pattern_arguments_scratch;
+			pattern_arguments.clear();
 			if (pattern_match.has_value()) {
 				const TemplatePattern& pattern = *pattern_match->pattern;
 				pattern_template_params = &pattern.template_params;
@@ -2128,7 +2252,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			} else {
 				auto primary_template_entry =
-					gTemplateRegistry.lookupTemplate(request.template_name);
+					gTemplateRegistry.lookupTemplate(request_name);
 				if (!primary_template_entry.has_value() ||
 					!primary_template_entry->is<TemplateClassDeclarationNode>()) {
 					return fail("primary class template declaration is unavailable");
@@ -2137,47 +2261,57 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					primary_template_entry->as<TemplateClassDeclarationNode>();
 				pattern_template_params = &primary_template.template_parameters();
 				pattern_struct = &primary_template.class_decl_node();
-				if (pattern_template_params->size() != request.arguments.size()) {
+				if (pattern_template_params->size() != request_args.size()) {
 					return fail("primary template arguments are not fully materialized");
 				}
-				pattern_arguments = request.arguments;
+				pattern_arguments.assign(request_args.begin(), request_args.end());
 			}
 			if (pattern_struct == nullptr || pattern_template_params == nullptr) {
 				return fail("template declaration has no class body");
 			}
 
-			TemplateArgSubstitutionMap substitutions;
-			TemplateArgPackSubstitutionMap pack_substitutions;
+			substitution_parameter_shape_scratch.clear();
+			for (const TemplateParameterNode& parameter : *pattern_template_params) {
+				const TemplateParameterNode* resolved_parameter =
+					tryGetTemplateParameterNode(parameter);
+				if (resolved_parameter != nullptr) {
+					substitution_parameter_shape_scratch.push_back(SubstitutionParameterKey{
+						resolved_parameter->name(),
+						resolved_parameter->is_variadic()});
+				}
+			}
+			if (substitution_parameter_shape_scratch != previous_substitution_parameter_shape) {
+				// Preserve map nodes when consecutive requests use the same parameter
+				// identities. buildTemplateArgSubstitutionMaps overwrites each binding.
+				substitutions_scratch.clear();
+				pack_substitutions_scratch.clear();
+				previous_substitution_parameter_shape.assign(
+					substitution_parameter_shape_scratch.begin(),
+					substitution_parameter_shape_scratch.end());
+			}
 			buildTemplateArgSubstitutionMaps(
 				*pattern_template_params,
 				pattern_arguments,
 				[](const TemplateParameterNode&, const TemplateTypeArg& argument) {
 					return argument;
 				},
-				substitutions,
-				pack_substitutions);
+				substitutions_scratch,
+				pack_substitutions_scratch);
 
-			std::vector<BaseInstantiationRequest> children;
+			children.clear();
 			for (const DeferredTemplateBaseClassSpecifier& deferred_base :
 				 pattern_struct->deferred_template_base_classes()) {
 				if (deferred_base.is_pack_expansion ||
 					!deferred_base.member_type_chain.empty()) {
 					return fail("base uses a pack expansion or member-type chain");
 				}
-				const std::string_view base_template_name =
+				std::string_view base_template_name =
 					StringTable::getStringView(deferred_base.base_template_name);
 				if (base_template_name.empty()) {
 					return fail("deferred base has no template name");
 				}
-				if (gTemplateRegistry.lookup_alias_template(base_template_name).has_value()) {
-					return fail("deferred base names an alias template");
-				}
-				auto base_template_entry = gTemplateRegistry.lookupTemplate(base_template_name);
-				if (!base_template_entry.has_value() ||
-					!base_template_entry->is<TemplateClassDeclarationNode>()) {
-					continue;
-				}
-				std::vector<TemplateTypeArg> base_arguments;
+				std::vector<TemplateTypeArg>& base_arguments = base_arguments_scratch;
+				base_arguments.clear();
 				base_arguments.reserve(deferred_base.template_arguments.size());
 				bool arguments_resolved = true;
 				for (const TemplateArgumentNodeInfo& argument_info :
@@ -2192,7 +2326,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							argument_info.node.as<TypeSpecifierNode>();
 						auto resolved_type = tryResolveDeferredBaseTypeArgFromMap(
 							type_specifier,
-							substitutions);
+							substitutions_scratch);
 						if (!resolved_type.has_value()) {
 							resolved_type = tryMaterializeDeferredBaseTypeArg(
 								type_specifier,
@@ -2242,70 +2376,77 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (!arguments_resolved) {
 					return fail("template arguments could not be resolved");
 				}
+				if (gTemplateRegistry.lookup_alias_template(base_template_name).has_value()) {
+					if (!resolve_alias_base(base_template_name, base_arguments)) {
+						return fail("alias-template base target could not be resolved");
+					}
+				}
+				auto base_template_entry = gTemplateRegistry.lookupTemplate(base_template_name);
+				if (!base_template_entry.has_value() ||
+					!base_template_entry->is<TemplateClassDeclarationNode>()) {
+					continue;
+				}
 				auto child = make_request(base_template_name, base_arguments);
 				if (!child.has_value()) {
 					return fail("resolved base did not have a canonical instantiation identity");
 				}
-				children.push_back(std::move(*child));
+				children.push_back(*child);
 			}
-			return children;
+			return true;
 		};
 
-		if (auto root = make_request(
-				template_name,
-				std::span<const TemplateTypeArg>(
-					filled_args_for_pattern_match.data(),
-					filled_args_for_pattern_match.size()));
+		std::vector<TemplateTypeArg> root_arguments(
+			filled_args_for_pattern_match.begin(),
+			filled_args_for_pattern_match.end());
+		if (auto root = make_request(template_name, root_arguments);
 			root.has_value()) {
 			std::vector<BaseInstantiationFrame> frames;
-			std::vector<BaseInstantiationIdentity> active_identities;
-			std::vector<BaseInstantiationIdentity> completed_identities;
-			std::vector<BaseInstantiationRequest> postorder;
-			frames.push_back(BaseInstantiationFrame{std::move(*root), {}, 0, false});
+			std::vector<size_t> children_scratch;
+			std::vector<size_t> postorder;
+			frames.push_back(BaseInstantiationFrame{*root, 0});
 			bool worklist_complete = true;
 			while (!frames.empty() && worklist_complete) {
 				BaseInstantiationFrame& frame = frames.back();
-				if (!frame.children_loaded) {
-					if (find_identity(completed_identities, frame.request.identity) ||
-						find_identity(active_identities, frame.request.identity)) {
-						worklist_complete = !find_identity(
-							active_identities,
-							frame.request.identity);
-						frames.pop_back();
-						continue;
-					}
-					active_identities.push_back(frame.request.identity);
-					auto children = collect_children(frame.request);
-					if (!children.has_value()) {
+				const size_t request_id = frame.request_id;
+				if (requests[request_id].state == BaseInstantiationRequest::State::Completed) {
+					frames.pop_back();
+					continue;
+				}
+				if (!requests[request_id].children_loaded) {
+					if (requests[request_id].state == BaseInstantiationRequest::State::Active) {
 						worklist_complete = false;
 						break;
 					}
-					frame.children = std::move(*children);
-					frame.children_loaded = true;
-					continue;
-				}
-				if (frame.next_child < frame.children.size()) {
-					BaseInstantiationRequest child =
-						std::move(frame.children[frame.next_child++]);
-					if (find_identity(completed_identities, child.identity)) {
-						continue;
-					}
-					if (find_identity(active_identities, child.identity)) {
+					requests[request_id].state = BaseInstantiationRequest::State::Active;
+					children_scratch.clear();
+					if (!collect_children(request_id, children_scratch)) {
 						worklist_complete = false;
 						break;
 					}
-					frames.push_back(BaseInstantiationFrame{std::move(child), {}, 0, false});
+					requests[request_id].children_begin = request_child_ids.size();
+					requests[request_id].children_count = children_scratch.size();
+					request_child_ids.insert(
+						request_child_ids.end(),
+						children_scratch.begin(),
+						children_scratch.end());
+					requests[request_id].children_loaded = true;
 					continue;
 				}
-				postorder.push_back(frame.request);
-				completed_identities.push_back(frame.request.identity);
-				auto active = std::find(
-					active_identities.begin(),
-					active_identities.end(),
-					frame.request.identity);
-				if (active != active_identities.end()) {
-					active_identities.erase(active);
+				if (frame.next_child < requests[request_id].children_count) {
+					const size_t child_id = request_child_ids[
+						requests[request_id].children_begin + frame.next_child++];
+					if (requests[child_id].state == BaseInstantiationRequest::State::Completed) {
+						continue;
+					}
+					if (requests[child_id].state == BaseInstantiationRequest::State::Active) {
+						worklist_complete = false;
+						break;
+					}
+					frames.push_back(BaseInstantiationFrame{child_id, 0});
+					continue;
 				}
+				requests[request_id].state = BaseInstantiationRequest::State::Completed;
+				postorder.push_back(request_id);
 				frames.pop_back();
 			}
 
@@ -2318,9 +2459,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					~WorklistPreflightScope() { --depth; }
 				} preflight_scope(template_base_worklist_preflight_depth_);
 				for (size_t index = 0; index + 1 < postorder.size(); ++index) {
+					const BaseInstantiationRequest& request = requests[postorder[index]];
 					auto materialized_base = try_instantiate_class_template(
-						postorder[index].template_name,
-						postorder[index].arguments,
+						StringTable::getStringView(request.template_name),
+						std::span<const TemplateTypeArg>(request_arguments).subspan(
+							request.arguments_begin,
+							request.arguments_count),
 						false);
 					if (materialized_base.has_value() &&
 						materialized_base->is<StructDeclarationNode>() &&
