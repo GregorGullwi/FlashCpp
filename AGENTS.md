@@ -86,3 +86,12 @@ To show IR, use `--log-level=Codegen:debug`
 * Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.
 * When creating tests, mix different native types and sizes with structs and templates to get good coverage of each feature.
 * PR Descriptions should be describing the solved problem in a descriptive way, not just listing bullet points. It should not contain a list of run tests, but describe what any added tests actually verify.
+* It's okay to have lines up to 120 characters long, especially when initializing a variable, example:
+ - bad: 
+	std::string_view base_template_name =
+		StringTable::getStringView(deferred_base.base_template_name);
+	for (int i :
+		collection) {
+ - good:
+	std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
+	for (int i : collection) {
