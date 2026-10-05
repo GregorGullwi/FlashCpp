@@ -74,6 +74,14 @@ machine-checkable evidence rather than a behavioral difference. The regression
 covers both operand spellings, a union, a class-template specialization, and
 `__is_same` between distinct records and between both enum forms.
 
+The lazy-constraint operand materializer now publishes a member pointer's
+declaring-class identity alongside the record/enum nominal entity, so a
+member-object-pointer operand is classified canonically instead of remaining an
+unclassified lazy-constraint trait. `tests/test_canonical_member_object_pointer_operand_identity_ret0.cpp`
+baselines both trait-fallback counters at 0; on the lazy regression
+`canonical_structural_trait_fallback` fell from 2 to 0 and
+`lazy_constraint_trait_fallback` from 6 to 4.
+
 The class, union, and qualification traits are answered from the canonical type
 as well. A record's class/union split comes from its published
 `CanonicalRecordLayout` union flag, a class-template specialization is a class
@@ -595,8 +603,9 @@ covered; passing tests or the breadth of landed code do not complete the
 boundary. This slice advanced the criterion that flat pointer-level and
 array-dimension fields are absent from migrated semantic paths, for the
 type-trait consumer family, the lazy-constraint evaluator, and trait-operand
-nominal identity; the flat classifier in `TypeTraitEvaluator.cpp` remains for
-the families listed under remaining work item 2. Implementation effort is not yet estimated reliably.
+nominal and member-owner identity; the flat classifier in
+`TypeTraitEvaluator.cpp` remains for the families listed under remaining work
+item 2. Implementation effort is not yet estimated reliably.
 
 ## Next work
 
@@ -940,16 +949,13 @@ is ready. Never run the full suite concurrently with the build.
 
 Migration counters and static identity inventories are baselined under
 `tests/migration_counters/`; run the host-native counter and inventory scripts
-after compiler changes. On 2026-09-30 all fixed-corpus entries remained within
-baseline, including `canonical_structural_trait_fallback` at 0 on the three
-structural-trait regressions, its baseline lowered from 23 so a reappearance
-fails, and `lazy_constraint_trait_fallback` at 6 on
-`tests/test_canonical_lazy_constraint_traits_ret0.cpp`. The residual
-`canonical_structural_trait_fallback` of 2 on the lazy regression is a
-member-object-pointer operand, which needs member-owner publication rather than
-nominal type identity. The inline dollar-recovery inventory
-and the canonical-adapter source corpus remain within their supported/deferred
-baselines. Gate 0's Windows and ELF
+after compiler changes. On 2026-10-05 all fixed-corpus entries remained within
+baseline, including `canonical_structural_trait_fallback` at 0 on the
+structural-trait and lazy-constraint regressions (baseline lowered from 23 so a
+reappearance fails). The remaining four lazy-constraint fallbacks are the
+constructibility probes, which need the canonical constructor-query path. The
+inline dollar-recovery inventory and the canonical-adapter source corpus remain
+within their supported/deferred baselines. Gate 0's Windows and ELF
 multi-translation-unit checks remain required compatibility evidence. See the
 plan for complete boundary-specific validation.
 
