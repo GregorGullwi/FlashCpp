@@ -5270,8 +5270,11 @@ ParseResult Parser::parse_decltype_specifier() {
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
 	// In decltype context, < after qualified-id should strongly prefer template arguments over comparison
 	SaveHandle expr_start_pos = save_token_position();
-	SaveHandle decltype_paren_start = save_token_position();
-	const bool decltype_starts_with_paren = (peek() == "("_tok);
+	// Track the last comma-operator operand: [dcl.type.decltype] takes the
+	// result type from that operand, so its parenthesization is the one that
+	// decides the reference rule.
+	SaveHandle last_expr_start = save_token_position();
+	bool last_expr_starts_with_paren = (peek() == "("_tok);
 	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 	if (expr_result.is_error()) {
 		// If we're in a template context and the expression parsing fails (e.g., due to
@@ -5315,6 +5318,9 @@ ParseResult Parser::parse_decltype_specifier() {
 	while (peek() == ","_tok) {
 		advance(); // consume ','
 		SaveHandle comma_expr_pos = save_token_position();
+		discard_saved_token(last_expr_start);
+		last_expr_start = save_token_position();
+		last_expr_starts_with_paren = (peek() == "("_tok);
 		auto next_expr = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 		if (next_expr.is_error()) {
 			// In template context, create dependent type and skip to closing paren.
@@ -5413,10 +5419,11 @@ ParseResult Parser::parse_decltype_specifier() {
 	// unparenthesized form yields the declared type. The parser keeps no
 	// parenthesization marker, so detect a fully parenthesized expression from
 	// its token range and apply the reference rule to an id-expression, which is
-	// always an lvalue.
-	if (decltype_starts_with_paren) {
+	// always an lvalue. The detection uses the last comma-operator operand, the
+	// one whose type decltype takes.
+	if (last_expr_starts_with_paren) {
 		SaveHandle expr_end_pos = save_token_position();
-		restore_token_position(decltype_paren_start);
+		restore_token_position(last_expr_start);
 		advance();  // consume the outer '('
 		int paren_depth = 1;
 		while (!peek().is_eof() && paren_depth > 0) {
@@ -5442,7 +5449,7 @@ ParseResult Parser::parse_decltype_specifier() {
 			}
 		}
 	}
-	discard_saved_token(decltype_paren_start);
+	discard_saved_token(last_expr_start);
 
 	// Publish the nominal identity a deduced record or enum type already has, so
 	// every consumer of this specifier - the canonical type table in particular -
