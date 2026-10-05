@@ -10,14 +10,22 @@ failure while processing the standard header, separate from Itanium symbol
 mangling; the typeinfo test therefore does not currently verify the mangling
 change on WSL.
 
-## Deep pack-expanded and member-type class-template bases need stack coverage
+## Complex member-type class-template bases still need stack coverage
 
-PR #2241's preflight worklist handles concrete class-template bases, including
-deferred alias-template targets. It still declines pack-expanded bases and
-bases with a member-type chain. Those cases fall back to the ordinary recursive
-instantiation path, and deep chains through them have not been verified under
-the normal OS stack limit. TODO: add targeted regressions and extend the
-worklist to schedule these dependencies without native recursion.
+The base-instantiation worklist now expands concrete pack-expanded bases and
+schedules single-segment, non-template member aliases whose targets are
+class-template specializations. The 1,024-level regressions
+`tests/test_deep_pack_expanded_base_chain_ret0.cpp` and
+`tests/test_deep_member_type_base_chain_ret0.cpp` cover those paths; the pack
+and alias regressions also pass at their existing shallow depths. These checks
+use the shipping Windows compiler build settings, with no stack-reserve change.
+
+More complex member-type paths still fall back to ordinary instantiation:
+multiple member segments, member-template segments, and member aliases whose
+targets are not directly materialized class-template specializations. Stack
+usage for deep chains through those forms remains unverified. Extend dependency
+scheduling to cover them while sharing base substitution semantics with
+ordinary instantiation.
 
 ## Member class template dependent bases are not instantiated
 
