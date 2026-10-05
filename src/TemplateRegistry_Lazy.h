@@ -2497,18 +2497,44 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				canonical_result.has_value()) {
 				return constraint_result_for_trait(*canonical_result);
 			}
-			// A zero-argument constructibility requirement is the
-			// default-construction question, which the published canonical
-			// record facts own. The variadic forms still fall back.
-			if ((trait_expr.kind() == TypeTraitKind::IsConstructible ||
-				 trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible ||
-				 trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) &&
-				trait_expr.additional_type_nodes().empty()) {
-				if (const std::optional<TypeTraitResult> canonical_result =
-						tryEvaluateCanonicalDefaultConstructionTrait(
-							trait_expr.kind(), *first_specifier);
-					canonical_result.has_value()) {
-					return constraint_result_for_trait(*canonical_result);
+			// A constructibility requirement with no arguments is the
+			// default-construction question, owned by the published canonical
+			// record facts; with argument types it goes through constructor
+			// overload resolution.
+			if (trait_expr.kind() == TypeTraitKind::IsConstructible ||
+				trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible ||
+				trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
+				if (trait_expr.additional_type_nodes().empty()) {
+					if (const std::optional<TypeTraitResult> canonical_result =
+							tryEvaluateCanonicalDefaultConstructionTrait(
+								trait_expr.kind(), *first_specifier);
+						canonical_result.has_value()) {
+						return constraint_result_for_trait(*canonical_result);
+					}
+				} else {
+					std::vector<TypeSpecifierNode> argument_specifiers;
+					argument_specifiers.reserve(
+						trait_expr.additional_type_nodes().size());
+					bool arguments_resolved = true;
+					for (const ASTNode& argument_node :
+						 trait_expr.additional_type_nodes()) {
+						const std::optional<TypeSpecifierNode> argument_specifier =
+							resolve_operand_specifier(argument_node);
+						if (!argument_specifier.has_value()) {
+							arguments_resolved = false;
+							break;
+						}
+						argument_specifiers.push_back(*argument_specifier);
+					}
+					if (arguments_resolved) {
+						if (const std::optional<TypeTraitResult> canonical_result =
+								tryEvaluateCanonicalConstructibleFromArgs(
+									trait_expr.kind(), *first_specifier,
+									argument_specifiers);
+							canonical_result.has_value()) {
+							return constraint_result_for_trait(*canonical_result);
+						}
+					}
 				}
 			}
 			if (trait_expr.kind() == TypeTraitKind::IsSame &&

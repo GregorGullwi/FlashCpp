@@ -1948,6 +1948,51 @@ bool isRecordPropertyTraitOwnedBySharedEvaluator(TypeTraitKind kind) {
 	}
 }
 
+// Shared record branch of the argument-bearing constructibility query. The
+// caller supplies the already-resolved argument types; a record target is
+// constructible when constructor-overload resolution finds a match, with the
+// trivial and nothrow variants keeping the record's own constructor property.
+TypeTraitResult evaluateRecordConstructibleFromArgs(
+	TypeTraitKind kind,
+	const StructTypeInfo& struct_info,
+	std::span<const TypeSpecifierNode> arguments,
+	size_t target_pointer_depth) {
+	if (struct_info.is_union || target_pointer_depth != 0) {
+		return TypeTraitResult::success_false();
+	}
+	const ConstructorOverloadResolutionResult ctor_resolution =
+		resolve_constructor_overload(struct_info, arguments, false);
+	if (!ctor_resolution.has_match) {
+		return TypeTraitResult::success_false();
+	}
+	if (kind == TypeTraitKind::IsConstructible) {
+		return TypeTraitResult::success_true();
+	}
+	return (!struct_info.has_vtable && !struct_info.hasUserDefinedConstructor())
+		? TypeTraitResult::success_true()
+		: TypeTraitResult::success_false();
+}
+
+std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& target,
+	std::span<const TypeSpecifierNode> arguments) {
+	if (arguments.empty()) {
+		return std::nullopt;  // the zero-argument query owns this case
+	}
+	if (kind != TypeTraitKind::IsConstructible &&
+		kind != TypeTraitKind::IsTriviallyConstructible &&
+		kind != TypeTraitKind::IsNothrowConstructible) {
+		return std::nullopt;
+	}
+	const StructTypeInfo* struct_info = structInfoFromTypeIndex(target.type_index());
+	if (struct_info == nullptr) {
+		return std::nullopt;  // scalar, reference, and pointer targets defer
+	}
+	return evaluateRecordConstructibleFromArgs(
+		kind, *struct_info, arguments, target.runtime_pointer_depth());
+}
+
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 	if (trait_expr.is_no_arg_trait()) {
 		return trait_expr.kind() == TypeTraitKind::IsConstantEvaluated
@@ -2082,18 +2127,9 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				: TypeTraitResult::success_false();
 		}
 
-		const ConstructorOverloadResolutionResult ctor_resolution =
-			resolve_constructor_overload(*struct_info, additional_types, false);
-		if (!ctor_resolution.has_match) {
-			return TypeTraitResult::success_false();
-		}
-
-		if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
-			return TypeTraitResult::success_true();
-		}
-		return (!struct_info->has_vtable && !struct_info->hasUserDefinedConstructor())
-			? TypeTraitResult::success_true()
-			: TypeTraitResult::success_false();
+		return evaluateRecordConstructibleFromArgs(
+			trait_expr.kind(), *struct_info, additional_types,
+			type_spec.pointer_depth());
 	}
 
 	if (trait_expr.has_second_type()) {

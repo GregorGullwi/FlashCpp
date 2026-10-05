@@ -48,3 +48,12 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
 std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec);
+
+// Evaluates an argument-bearing __is_constructible, __is_trivially_constructible,
+// or __is_nothrow_constructible query for a record target through
+// constructor-overload resolution. An empty result allows compatibility
+// evaluation for a non-record target or an unsupported argument.
+std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& target,
+	std::span<const TypeSpecifierNode> arguments);
