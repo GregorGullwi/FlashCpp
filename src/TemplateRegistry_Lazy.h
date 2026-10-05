@@ -1,7 +1,6 @@
 #pragma once
 
 #include "CanonicalTypeTraits.h"
-#include "FrontendContext.h"
 #include "FrontendIds.h"
 #include "MigrationStats.h"
 #include "TemplateRegistry.h"
@@ -2443,11 +2442,10 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			// the nominal entity for a record/enum base and the declaring-class
 			// owner for a member pointer before canonical import, so a
 			// member-object-pointer operand is classified from identity rather
-			// than falling back to the compatibility switch.
+			// than remaining an unclassified lazy-constraint trait.
 			auto publishOperandIdentity = [](TypeSpecifierNode& operand) {
 				tryBindPublishedTypeEntity(operand);
-				if (operand.has_member_class() &&
-					FrontendContext::active() != nullptr) {
+				if (operand.has_member_class()) {
 					tryBindPublishedMemberClassEntity(operand);
 				}
 			};
