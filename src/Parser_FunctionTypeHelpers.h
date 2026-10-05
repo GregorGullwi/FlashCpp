@@ -50,7 +50,8 @@ inline FunctionType makePublishedFunctionTypeFromSpecifier(
 	return makeFunctionTypeFromSpecifier(bound_type);
 }
 
-inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
+inline FunctionSignature makeFunctionSignatureFromFunctionDeclaration(
+	const FunctionDeclarationNode& func_decl) {
 	FunctionSignature sig;
 	const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
 	sig.setReturnType(makePublishedFunctionTypeFromSpecifier(return_type));
@@ -72,28 +73,58 @@ inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const F
 		sig.dependent_noexcept = requireFrontendContext().dependentExpressions().intern(
 			sig.noexcept_expression->node());
 	}
+	return sig;
+}
 
-	// A non-projectable return spine cannot be flattened into a function-pointer
-	// category. Keep the function object ([conv.func] has not been applied yet)
-	// so overload resolution can prepend the pointer itself.
-	if (return_type.has_ordered_declarator() &&
-		!return_type.ordered_declarator_has_legacy_projection()) {
-		TypeSpecifierNode function_type = return_type;
-		std::vector<DeclaratorComponent> components;
-		components.reserve(return_type.declarator_components().size() + 1);
-		components.push_back(DeclaratorComponent::function());
-		components.insert(
-			components.end(),
-			return_type.declarator_components().begin(),
-			return_type.declarator_components().end());
-		function_type.set_ordered_declarator(std::move(components));
-		function_type.set_function_signature(sig);
-		return function_type;
+// A non-projectable return spine cannot be flattened into a function-pointer
+// category. Keep the function object ([conv.func] has not been applied yet)
+// so overload resolution can prepend the pointer itself.
+inline std::optional<TypeSpecifierNode> buildNonProjectableFunctionObject(
+	const FunctionDeclarationNode& func_decl,
+	const FunctionSignature& sig) {
+	const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
+	if (!return_type.has_ordered_declarator() ||
+		return_type.ordered_declarator_has_legacy_projection()) {
+		return std::nullopt;
 	}
+	TypeSpecifierNode function_type = return_type;
+	std::vector<DeclaratorComponent> components;
+	components.reserve(return_type.declarator_components().size() + 1);
+	components.push_back(DeclaratorComponent::function());
+	components.insert(
+		components.end(),
+		return_type.declarator_components().begin(),
+		return_type.declarator_components().end());
+	function_type.set_ordered_declarator(std::move(components));
+	function_type.set_function_signature(sig);
+	return function_type;
+}
 
+inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
+	const FunctionSignature sig = makeFunctionSignatureFromFunctionDeclaration(func_decl);
+	if (std::optional<TypeSpecifierNode> function_object =
+			buildNonProjectableFunctionObject(func_decl, sig);
+		function_object.has_value()) {
+		return *function_object;
+	}
 	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, func_decl.decl_node().identifier_token(), CVQualifier::None);
 	fp_type.set_function_signature(sig);
 	return fp_type;
+}
+
+// A function designator's type is the function type itself ([dcl.fct]); the
+// function-to-pointer conversion applies only where an expression value is
+// required. `decltype` of a bare designator uses this form.
+inline TypeSpecifierNode buildFunctionTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
+	const FunctionSignature sig = makeFunctionSignatureFromFunctionDeclaration(func_decl);
+	if (std::optional<TypeSpecifierNode> function_object =
+			buildNonProjectableFunctionObject(func_decl, sig);
+		function_object.has_value()) {
+		return *function_object;
+	}
+	TypeSpecifierNode fn_type(TypeCategory::Function, TypeQualifier::None, 64, func_decl.decl_node().identifier_token(), CVQualifier::None);
+	fn_type.set_function_signature(sig);
+	return fn_type;
 }
 
 inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
@@ -299,6 +330,27 @@ inline std::optional<TypeSpecifierNode> tryGetBareFunctionIdentifierType(const A
 	}
 	if (const FunctionDeclarationNode* func_decl = findFunctionDeclarationForSymbol(*symbol)) {
 		return buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
+	}
+	return std::nullopt;
+}
+
+// The undecayed type of a bare function designator, used by `decltype` where
+// the function-to-pointer conversion does not apply.
+inline std::optional<TypeSpecifierNode> tryGetBareFunctionDesignatorType(const ASTNode& arg_node) {
+	if (!arg_node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+	const ExpressionNode& expr = arg_node.as<ExpressionNode>();
+	if (!std::holds_alternative<IdentifierNode>(expr)) {
+		return std::nullopt;
+	}
+	const auto& ident = std::get<IdentifierNode>(expr);
+	auto symbol = gSymbolTable.lookup(ident.nameHandle());
+	if (!symbol.has_value()) {
+		return std::nullopt;
+	}
+	if (const FunctionDeclarationNode* func_decl = findFunctionDeclarationForSymbol(*symbol)) {
+		return buildFunctionTypeFromFunctionDeclaration(*func_decl);
 	}
 	return std::nullopt;
 }
