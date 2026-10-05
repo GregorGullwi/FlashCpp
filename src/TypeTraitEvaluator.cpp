@@ -667,6 +667,62 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 		: TypeTraitResult::success_false();
 }
 
+// Zero-argument default-construction query keyed by canonical identity. Records
+// and class-template specializations answer from the published
+// DefaultConstructible fact; builtins, pointers, and enums are constructible,
+// references, arrays, functions, and void are not. Returns nullopt when the
+// operand cannot be imported or its fact is not published, so the caller keeps
+// its compatibility answer.
+std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
+	const TypeSpecifierNode& type_spec) {
+	FrontendContext* context = FrontendContext::active();
+	if (context == nullptr) {
+		return std::nullopt;
+	}
+	CanonicalTypeTable& table = context->canonicalTypes();
+	CanonicalTypeTransaction transaction(table);
+	const CanonicalTypeImport imported = importCanonicalType(table, type_spec);
+	if (imported.status == CanonicalTypeImportStatus::Invalid) {
+		return TypeTraitResult::failure();
+	}
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	TypeId type = imported.type;
+	const CanonicalTypeKind imported_kind = table.node(type).kind;
+	if (imported_kind == CanonicalTypeKind::LValueReference ||
+		imported_kind == CanonicalTypeKind::RValueReference) {
+		return TypeTraitResult::success_false();
+	}
+	type = table.withoutTopLevelQualifiers(type);
+	const CanonicalTypeNode node = table.node(type);
+	switch (node.kind) {
+	case CanonicalTypeKind::Record:
+	case CanonicalTypeKind::TemplateSpecialization:
+		if (!table.hasRecordProperties(type)) {
+			return std::nullopt;
+		}
+		return (static_cast<uint16_t>(table.recordProperties(type).flags) &
+				static_cast<uint16_t>(CanonicalRecordPropertyFlags::DefaultConstructible))
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	case CanonicalTypeKind::Builtin:
+		return node.builtin == CanonicalBuiltinKind::Void
+			? TypeTraitResult::success_false()
+			: TypeTraitResult::success_true();
+	case CanonicalTypeKind::Pointer:
+	case CanonicalTypeKind::MemberObjectPointer:
+	case CanonicalTypeKind::MemberFunctionPointer:
+	case CanonicalTypeKind::Enum:
+		return TypeTraitResult::success_true();
+	case CanonicalTypeKind::Array:
+	case CanonicalTypeKind::Function:
+		return TypeTraitResult::success_false();
+	default:
+		return std::nullopt;
+	}
+}
+
 namespace {
 
 std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const ExpressionNode& expr, const SymbolTable& symbols) {
@@ -1281,6 +1337,9 @@ CanonicalRecordPropertyFlags computeCanonicalRecordPropertyFlags(
 	}
 	if (hasVirtualDestructorImpl(&struct_info)) {
 		flags |= CanonicalRecordPropertyFlags::HasVirtualDestructor;
+	}
+	if (recordDefaultConstructible(struct_info)) {
+		flags |= CanonicalRecordPropertyFlags::DefaultConstructible;
 	}
 	return flags;
 }
@@ -1918,6 +1977,11 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				trait_expr.kind() == TypeTraitKind::IsNothrowConstructible;
 			if (is_constructibility_kind) {
 				if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+					if (const std::optional<TypeTraitResult> canonical =
+							tryEvaluateCanonicalDefaultConstructionTrait(type_spec);
+						canonical.has_value()) {
+						return *canonical;
+					}
 					return recordDefaultConstructible(*struct_info)
 						? TypeTraitResult::success_true()
 						: TypeTraitResult::success_false();

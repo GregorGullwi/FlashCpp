@@ -1020,7 +1020,8 @@ void CanonicalTypeTable::publishRecordProperties(
 		CanonicalRecordPropertyFlags::TriviallyDestructible |
 		CanonicalRecordPropertyFlags::NothrowDestructible |
 		CanonicalRecordPropertyFlags::HasTrivialDestructor |
-		CanonicalRecordPropertyFlags::HasVirtualDestructor);
+		CanonicalRecordPropertyFlags::HasVirtualDestructor |
+		CanonicalRecordPropertyFlags::DefaultConstructible);
 	const CanonicalTypeKind kind = type ? nodeUnlocked(type).kind : CanonicalTypeKind::Builtin;
 	if (!type || (kind != CanonicalTypeKind::Record &&
 		kind != CanonicalTypeKind::TemplateSpecialization) ||

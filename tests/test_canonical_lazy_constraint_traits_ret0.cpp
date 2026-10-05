@@ -49,8 +49,11 @@ template <typename T>
 concept Arrayish = __is_array(T);
 template <typename T>
 concept MemberObjectPointerish = __is_member_object_pointer(T);
+// A variadic constructibility requirement stays unclassified, so `!` still
+// propagates an Unknown outcome. The zero-argument form is now classified and
+// is covered by test_canonical_lazy_default_construction_concept_ret0.cpp.
 template <typename T>
-concept NotDefaultConstructible = !__is_constructible(T);
+concept NotConstructibleFromInt = !__is_constructible(T, int);
 template <typename T>
 concept PointerOrUnclassified = Pointerish<T> || __is_constructible(T);
 template <typename T>
@@ -84,7 +87,7 @@ int probeObject(Objectish auto) { return 11; }
 
 int probeArray(Arrayish auto&) { return 28; }
 
-int probeNegatedUnknown(NotDefaultConstructible auto) { return 17; }
+int probeNegatedUnknown(NotConstructibleFromInt auto) { return 17; }
 
 int probeDisjunctionUnknown(PointerOrUnclassified auto) { return 19; }
 
