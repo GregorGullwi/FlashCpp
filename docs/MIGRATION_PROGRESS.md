@@ -843,11 +843,17 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       `hasTrivialDefaultConstructor`, and the nothrow answer reads a
       user-provided default constructor's exception specification; the reduced
       regressions are `tests/test_is_constructible_default_constructor_ret0.cpp`
-      and `tests/test_is_trivially_nothrow_constructible_default_ret0.cpp`. Base
-      and member default-construction recursion (a derived class whose base has
-      no usable default constructor) and the exception-specification recursion
-      for an implicit non-trivial constructor still fall back, and the
-      TypeId-keyed fact publication plus the lazy concept flip remain. The unary triviality and lifetime traits now use TypeId-keyed
+      and `tests/test_is_trivially_nothrow_constructible_default_ret0.cpp`.
+      `__is_constructible` now walks the base and member subobject graph with an
+      explicit worklist and stops at a user-provided default constructor, so a
+      derived class whose base has no usable default constructor is no longer
+      reported constructible; see
+      `tests/test_is_constructible_subobject_recursion_ret0.cpp`. The
+      exception-specification recursion for an implicit non-trivial
+      constructor and the subobject walk for the trivial and nothrow variants
+      still fall back, and the TypeId-keyed fact publication plus the lazy
+      concept flip remain; the walk is still keyed by `StructTypeInfo` because
+      the constructor facts are not yet published by `TypeId`. The unary triviality and lifetime traits now use TypeId-keyed
       record-property facts. `CanonicalRecordLayout` publishes object size,
       member offsets, and the union flag. `CanonicalRecordProperties` publishes
       unary record-property facts for completed record TypeIds. Class-template
