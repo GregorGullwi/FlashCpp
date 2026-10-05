@@ -76,8 +76,8 @@ covers both operand spellings, a union, a class-template specialization, and
 
 The lazy-constraint operand materializer now publishes a member pointer's
 declaring-class identity alongside the record/enum nominal entity, so a
-member-object-pointer operand is classified canonically instead of by the
-compatibility switch. `tests/test_canonical_member_object_pointer_operand_identity_ret0.cpp`
+member-object-pointer operand is classified canonically instead of remaining an
+unclassified lazy-constraint trait. `tests/test_canonical_member_object_pointer_operand_identity_ret0.cpp`
 baselines both trait-fallback counters at 0; on the lazy regression
 `canonical_structural_trait_fallback` fell from 2 to 0 and
 `lazy_constraint_trait_fallback` from 6 to 4.
