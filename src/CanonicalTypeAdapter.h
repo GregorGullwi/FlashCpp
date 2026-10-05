@@ -122,6 +122,9 @@ static_assert(sizeof(CanonicalTypeImport) == 8);
 CanonicalRecordPropertyFlags computeCanonicalRecordPropertyFlags(
 	const StructTypeInfo& struct_info);
 
+CanonicalRecordConstructionFlags computeCanonicalRecordConstructionFlags(
+	const StructTypeInfo& struct_info);
+
 struct CanonicalDeclaratorExport {
 	TypeId base;
 	std::vector<DeclaratorComponent> components;
@@ -1556,7 +1559,9 @@ inline bool tryPublishCanonicalRecordProperties(
 	}
 	const CanonicalRecordPropertyFlags flags =
 		computeCanonicalRecordPropertyFlags(struct_info);
-	table.publishRecordProperties(type, flags);
+	const CanonicalRecordConstructionFlags construction_flags =
+		computeCanonicalRecordConstructionFlags(struct_info);
+	table.publishRecordProperties(type, flags, construction_flags);
 	return true;
 }
 

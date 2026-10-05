@@ -667,14 +667,34 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 		: TypeTraitResult::success_false();
 }
 
+CanonicalRecordConstructionFlags canonicalConstructionFlagForTrait(
+	TypeTraitKind kind) {
+	switch (kind) {
+	case TypeTraitKind::IsConstructible:
+		return CanonicalRecordConstructionFlags::DefaultConstructible;
+	case TypeTraitKind::IsTriviallyConstructible:
+		return CanonicalRecordConstructionFlags::TriviallyDefaultConstructible;
+	case TypeTraitKind::IsNothrowConstructible:
+		return CanonicalRecordConstructionFlags::NothrowDefaultConstructible;
+	default:
+		return CanonicalRecordConstructionFlags::None;
+	}
+}
+
 // Zero-argument default-construction query keyed by canonical identity. Records
-// and class-template specializations answer from the published
-// DefaultConstructible fact; builtins, pointers, and enums are constructible,
-// references, arrays, functions, and void are not. Returns nullopt when the
-// operand cannot be imported or its fact is not published, so the caller keeps
-// its compatibility answer.
+// and class-template specializations answer from the published construction
+// fact for the requested variant; builtins, pointers, and enums are
+// constructible, references, arrays, functions, and void are not. Returns
+// nullopt when the operand cannot be imported or its fact is not published, so
+// the caller keeps its compatibility answer.
 std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
+	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec) {
+	const CanonicalRecordConstructionFlags property =
+		canonicalConstructionFlagForTrait(kind);
+	if (property == CanonicalRecordConstructionFlags::None) {
+		return std::nullopt;
+	}
 	FrontendContext* context = FrontendContext::active();
 	if (context == nullptr) {
 		return std::nullopt;
@@ -702,8 +722,9 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
 		if (!table.hasRecordProperties(type)) {
 			return std::nullopt;
 		}
-		return (static_cast<uint16_t>(table.recordProperties(type).flags) &
-				static_cast<uint16_t>(CanonicalRecordPropertyFlags::DefaultConstructible))
+		return (static_cast<uint8_t>(
+					table.recordProperties(type).construction_flags) &
+				static_cast<uint8_t>(property))
 			? TypeTraitResult::success_true()
 			: TypeTraitResult::success_false();
 	case CanonicalTypeKind::Builtin:
@@ -853,13 +874,17 @@ bool hasTrivialDefaultConstructor(const StructTypeInfo* struct_info) {
 	return !struct_info->hasUserDeclaredConstructor();
 }
 
-// A class whose default constructor is implicit or explicitly defaulted is
-// default-constructible only when every base class and every member that
-// constructor initializes is itself default-constructible. A user-provided
-// default constructor initializes its own subobjects, so recursion stops
-// there. Uses an explicit worklist so subobject depth does not grow the native
-// stack.
-bool recordDefaultConstructible(const StructTypeInfo& root) {
+// A class whose default constructor is implicit or explicitly defaulted
+// inherits its default-construction property from every base class and member
+// that constructor initializes. A user-provided default constructor initializes
+// its own subobjects, so recursion stops there. Uses an explicit worklist so
+// subobject depth does not grow the native stack. `class_property` decides the
+// property for one class; the walk owns the shared preconditions (abstract,
+// deleted, inaccessible, reference member).
+template <typename ClassProperty>
+bool recordSubobjectsSatisfyDefaultConstruction(
+	const StructTypeInfo& root,
+	ClassProperty class_property) {
 	std::vector<const StructTypeInfo*> pending{&root};
 	std::vector<const StructTypeInfo*> visited;
 	while (!pending.empty()) {
@@ -880,16 +905,24 @@ bool recordDefaultConstructible(const StructTypeInfo& root) {
 			if (default_ctor->access != AccessSpecifier::Public) {
 				return false;
 			}
-			if (default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-				const ConstructorDeclarationNode& constructor =
-					default_ctor->function_decl.as<ConstructorDeclarationNode>();
-				if (!constructor.is_implicit() &&
-					!constructor.is_explicitly_defaulted()) {
-					continue;  // user-provided initializes its own subobjects
-				}
-			}
 		} else if (info->hasUserDeclaredConstructor()) {
 			return false;
+		}
+		if (!class_property(*info, default_ctor)) {
+			return false;
+		}
+		bool recurse = true;
+		if (default_ctor != nullptr &&
+			default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& constructor =
+				default_ctor->function_decl.as<ConstructorDeclarationNode>();
+			if (!constructor.is_implicit() &&
+				!constructor.is_explicitly_defaulted()) {
+				recurse = false;  // user-provided initializes its own subobjects
+			}
+		}
+		if (!recurse) {
+			continue;
 		}
 		for (const BaseClassSpecifier& base : info->base_classes) {
 			if (base.is_deferred) {
@@ -915,6 +948,44 @@ bool recordDefaultConstructible(const StructTypeInfo& root) {
 		}
 	}
 	return true;
+}
+
+bool recordDefaultConstructible(const StructTypeInfo& root) {
+	return recordSubobjectsSatisfyDefaultConstruction(
+		root,
+		[](const StructTypeInfo&, const StructMemberFunction*) {
+			return true;
+		});
+}
+
+bool recordTriviallyConstructible(const StructTypeInfo& root) {
+	return recordSubobjectsSatisfyDefaultConstruction(
+		root,
+		[](const StructTypeInfo& info, const StructMemberFunction*) {
+			return hasTrivialDefaultConstructor(&info);
+		});
+}
+
+bool recordNothrowConstructible(const StructTypeInfo& root) {
+	return recordSubobjectsSatisfyDefaultConstruction(
+		root,
+		[](const StructTypeInfo& info, const StructMemberFunction* default_ctor) {
+			if (hasTrivialDefaultConstructor(&info)) {
+				return true;
+			}
+			if (default_ctor != nullptr &&
+				default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& constructor =
+					default_ctor->function_decl.as<ConstructorDeclarationNode>();
+				if (!constructor.is_implicit() &&
+					!constructor.is_explicitly_defaulted()) {
+					return constructor.is_noexcept();
+				}
+			}
+			// An implicit or defaulted non-trivial constructor inherits the
+			// exception specification of its subobjects.
+			return true;
+		});
 }
 
 template<typename Pred>
@@ -1338,8 +1409,21 @@ CanonicalRecordPropertyFlags computeCanonicalRecordPropertyFlags(
 	if (hasVirtualDestructorImpl(&struct_info)) {
 		flags |= CanonicalRecordPropertyFlags::HasVirtualDestructor;
 	}
+	return flags;
+}
+
+CanonicalRecordConstructionFlags computeCanonicalRecordConstructionFlags(
+	const StructTypeInfo& struct_info) {
+	CanonicalRecordConstructionFlags flags =
+		CanonicalRecordConstructionFlags::None;
 	if (recordDefaultConstructible(struct_info)) {
-		flags |= CanonicalRecordPropertyFlags::DefaultConstructible;
+		flags |= CanonicalRecordConstructionFlags::DefaultConstructible;
+	}
+	if (recordTriviallyConstructible(struct_info)) {
+		flags |= CanonicalRecordConstructionFlags::TriviallyDefaultConstructible;
+	}
+	if (recordNothrowConstructible(struct_info)) {
+		flags |= CanonicalRecordConstructionFlags::NothrowDefaultConstructible;
 	}
 	return flags;
 }
@@ -1971,61 +2055,26 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		}
 
 		if (additional_types.empty()) {
-			const bool is_constructibility_kind =
-				trait_expr.kind() == TypeTraitKind::IsConstructible ||
-				trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible ||
-				trait_expr.kind() == TypeTraitKind::IsNothrowConstructible;
-			if (is_constructibility_kind) {
-				if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
-					if (const std::optional<TypeTraitResult> canonical =
-							tryEvaluateCanonicalDefaultConstructionTrait(type_spec);
-						canonical.has_value()) {
-						return *canonical;
-					}
-					return recordDefaultConstructible(*struct_info)
-						? TypeTraitResult::success_true()
-						: TypeTraitResult::success_false();
-				}
-				// The approximate record check reports a class constructible
-				// when a default constructor exists, even when that constructor
-				// is deleted or inaccessible, or the class is abstract. Base
-				// and member recursion for the trivial and nothrow variants
-				// stays deferred.
-				if (struct_info->is_abstract ||
-					struct_info->isDefaultConstructorDeleted() ||
-					(struct_info->implicit_default_constructor.is_finalized &&
-					 struct_info->implicit_default_constructor.is_deleted)) {
-					return TypeTraitResult::success_false();
-				}
-				const StructMemberFunction* default_ctor =
-					struct_info->findDefaultConstructor();
-				if (default_ctor != nullptr &&
-					default_ctor->access != AccessSpecifier::Public) {
-					return TypeTraitResult::success_false();
-				}
-				if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
-					return hasTrivialDefaultConstructor(struct_info)
-						? TypeTraitResult::success_true()
-						: TypeTraitResult::success_false();
-				}
-				if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
-					if (hasTrivialDefaultConstructor(struct_info)) {
-						return TypeTraitResult::success_true();
-					}
-					if (default_ctor != nullptr &&
-						default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-						const ConstructorDeclarationNode& constructor =
-							default_ctor->function_decl.as<ConstructorDeclarationNode>();
-						if (!constructor.is_implicit()) {
-							return constructor.is_noexcept()
-								? TypeTraitResult::success_true()
-								: TypeTraitResult::success_false();
-						}
-					}
-					// An implicit non-trivial constructor needs base and member
-					// exception-specification recursion; keep the approximate
-					// answer for that shape.
-				}
+			if (const std::optional<TypeTraitResult> canonical =
+					tryEvaluateCanonicalDefaultConstructionTrait(
+						trait_expr.kind(), type_spec);
+				canonical.has_value()) {
+				return *canonical;
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+				return recordDefaultConstructible(*struct_info)
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
+				return recordTriviallyConstructible(*struct_info)
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
+				return recordNothrowConstructible(*struct_info)
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
 			}
 			TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
 			return base_result.success

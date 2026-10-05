@@ -902,18 +902,20 @@ inline void checkAdapter() {
 		CanonicalRecordPropertyFlags::Final;
 	const CanonicalRecordProperties record_properties{
 		record_with_properties, record_property_flags};
-	table.publishRecordProperties(record_with_properties, record_property_flags);
+	table.publishRecordProperties(record_with_properties, record_property_flags, CanonicalRecordConstructionFlags::None);
 	require(table.hasRecordProperties(record_with_properties));
 	require(table.recordProperties(record_with_properties) == record_properties);
-	table.publishRecordProperties(record_with_properties, record_property_flags);
+	table.publishRecordProperties(record_with_properties, record_property_flags, CanonicalRecordConstructionFlags::None);
 	rejects([&] {
 		table.publishRecordProperties(
-			record_with_properties, CanonicalRecordPropertyFlags::Abstract);
+			record_with_properties, CanonicalRecordPropertyFlags::Abstract,
+			CanonicalRecordConstructionFlags::None);
 	});
 	rejects([&] {
 		table.publishRecordProperties(
 			table.builtin(CanonicalBuiltinKind::Int),
-			CanonicalRecordPropertyFlags::None);
+			CanonicalRecordPropertyFlags::None,
+			CanonicalRecordConstructionFlags::None);
 	});
 	const CanonicalEnumLayout enum_layout{
 		.entity = EntityId{5},
@@ -1096,7 +1098,8 @@ inline void checkAdapter() {
 	const TypeId rolled_property_type = table.record(EntityId{12});
 	table.publishRecordFieldSchema(EntityId{12}, rolled_members, {});
 	table.publishRecordProperties(
-		rolled_property_type, CanonicalRecordPropertyFlags::Polymorphic);
+		rolled_property_type, CanonicalRecordPropertyFlags::Polymorphic,
+		CanonicalRecordConstructionFlags::None);
 	schema_transaction.rollback();
 	require(!table.hasRecordLayout(EntityId{12}));
 	require(!table.hasRecordFieldSchema(EntityId{12}));
