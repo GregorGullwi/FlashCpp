@@ -5270,6 +5270,8 @@ ParseResult Parser::parse_decltype_specifier() {
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
 	// In decltype context, < after qualified-id should strongly prefer template arguments over comparison
 	SaveHandle expr_start_pos = save_token_position();
+	SaveHandle decltype_paren_start = save_token_position();
+	const bool decltype_starts_with_paren = (peek() == "("_tok);
 	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 	if (expr_result.is_error()) {
 		// If we're in a template context and the expression parsing fails (e.g., due to
@@ -5406,6 +5408,41 @@ ParseResult Parser::parse_decltype_specifier() {
 		}
 		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
 	}
+
+	// [dcl.type.decltype]: a parenthesized lvalue expression yields T&; the
+	// unparenthesized form yields the declared type. The parser keeps no
+	// parenthesization marker, so detect a fully parenthesized expression from
+	// its token range and apply the reference rule to an id-expression, which is
+	// always an lvalue.
+	if (decltype_starts_with_paren) {
+		SaveHandle expr_end_pos = save_token_position();
+		restore_token_position(decltype_paren_start);
+		advance();  // consume the outer '('
+		int paren_depth = 1;
+		while (!peek().is_eof() && paren_depth > 0) {
+			if (peek() == "("_tok) {
+				++paren_depth;
+			} else if (peek() == ")"_tok) {
+				--paren_depth;
+				if (paren_depth == 0) {
+					advance();  // consume the matching ')'
+					break;
+				}
+			}
+			advance();
+		}
+		const bool fully_parenthesized = (peek() == ")"_tok);
+		restore_token_position(expr_end_pos);
+		if (fully_parenthesized && decltype_expr->is<ExpressionNode>()) {
+			const ExpressionNode& inner = decltype_expr->as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(inner) ||
+				std::holds_alternative<QualifiedIdentifierNode>(inner)) {
+				type_spec_opt->set_reference_qualifier(
+					ReferenceQualifier::LValueReference);
+			}
+		}
+	}
+	discard_saved_token(decltype_paren_start);
 
 	// Publish the nominal identity a deduced record or enum type already has, so
 	// every consumer of this specifier - the canonical type table in particular -

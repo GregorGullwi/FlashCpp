@@ -823,7 +823,11 @@ which does not use the shared evaluator at all. A bare function designator's
 pointer-to-function, so `decltype(freeFn)` is `int(int)` while
 `decltype(&freeFn)` stays `int (*)(int)`;
 `tests/test_function_designator_decltype_identity_ret0.cpp` covers the
-distinction and the `__is_function` / `__is_pointer` answers.
+distinction and the `__is_function` / `__is_pointer` answers. The decltype path
+now also applies [dcl.type.decltype]'s reference rule to a parenthesized
+id-expression, so `decltype((x))` is `int&` while `decltype(x)` is `int`;
+`tests/test_decltype_parenthesized_lvalue_ret0.cpp` covers a scalar, a record,
+a function designator, and the prvalue forms.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
