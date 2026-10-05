@@ -667,14 +667,34 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalStructuralTrait(
 		: TypeTraitResult::success_false();
 }
 
+CanonicalRecordConstructionFlags canonicalConstructionFlagForTrait(
+	TypeTraitKind kind) {
+	switch (kind) {
+	case TypeTraitKind::IsConstructible:
+		return CanonicalRecordConstructionFlags::DefaultConstructible;
+	case TypeTraitKind::IsTriviallyConstructible:
+		return CanonicalRecordConstructionFlags::TriviallyDefaultConstructible;
+	case TypeTraitKind::IsNothrowConstructible:
+		return CanonicalRecordConstructionFlags::NothrowDefaultConstructible;
+	default:
+		return CanonicalRecordConstructionFlags::None;
+	}
+}
+
 // Zero-argument default-construction query keyed by canonical identity. Records
-// and class-template specializations answer from the published
-// DefaultConstructible fact; builtins, pointers, and enums are constructible,
-// references, arrays, functions, and void are not. Returns nullopt when the
-// operand cannot be imported or its fact is not published, so the caller keeps
-// its compatibility answer.
+// and class-template specializations answer from the published construction
+// fact for the requested variant; builtins, pointers, and enums are
+// constructible, references, arrays, functions, and void are not. Returns
+// nullopt when the operand cannot be imported or its fact is not published, so
+// the caller keeps its compatibility answer.
 std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
+	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec) {
+	const CanonicalRecordConstructionFlags property =
+		canonicalConstructionFlagForTrait(kind);
+	if (property == CanonicalRecordConstructionFlags::None) {
+		return std::nullopt;
+	}
 	FrontendContext* context = FrontendContext::active();
 	if (context == nullptr) {
 		return std::nullopt;
@@ -702,8 +722,9 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
 		if (!table.hasRecordProperties(type)) {
 			return std::nullopt;
 		}
-		return (static_cast<uint16_t>(table.recordProperties(type).flags) &
-				static_cast<uint16_t>(CanonicalRecordPropertyFlags::DefaultConstructible))
+		return (static_cast<uint8_t>(
+					table.recordProperties(type).construction_flags) &
+				static_cast<uint8_t>(property))
 			? TypeTraitResult::success_true()
 			: TypeTraitResult::success_false();
 	case CanonicalTypeKind::Builtin:
@@ -1388,8 +1409,21 @@ CanonicalRecordPropertyFlags computeCanonicalRecordPropertyFlags(
 	if (hasVirtualDestructorImpl(&struct_info)) {
 		flags |= CanonicalRecordPropertyFlags::HasVirtualDestructor;
 	}
+	return flags;
+}
+
+CanonicalRecordConstructionFlags computeCanonicalRecordConstructionFlags(
+	const StructTypeInfo& struct_info) {
+	CanonicalRecordConstructionFlags flags =
+		CanonicalRecordConstructionFlags::None;
 	if (recordDefaultConstructible(struct_info)) {
-		flags |= CanonicalRecordPropertyFlags::DefaultConstructible;
+		flags |= CanonicalRecordConstructionFlags::DefaultConstructible;
+	}
+	if (recordTriviallyConstructible(struct_info)) {
+		flags |= CanonicalRecordConstructionFlags::TriviallyDefaultConstructible;
+	}
+	if (recordNothrowConstructible(struct_info)) {
+		flags |= CanonicalRecordConstructionFlags::NothrowDefaultConstructible;
 	}
 	return flags;
 }
@@ -2021,31 +2055,26 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		}
 
 		if (additional_types.empty()) {
-			const bool is_constructibility_kind =
-				trait_expr.kind() == TypeTraitKind::IsConstructible ||
-				trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible ||
-				trait_expr.kind() == TypeTraitKind::IsNothrowConstructible;
-			if (is_constructibility_kind) {
-				if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
-					if (const std::optional<TypeTraitResult> canonical =
-							tryEvaluateCanonicalDefaultConstructionTrait(type_spec);
-						canonical.has_value()) {
-						return *canonical;
-					}
-					return recordDefaultConstructible(*struct_info)
-						? TypeTraitResult::success_true()
-						: TypeTraitResult::success_false();
-				}
-				if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
-					return recordTriviallyConstructible(*struct_info)
-						? TypeTraitResult::success_true()
-						: TypeTraitResult::success_false();
-				}
-				if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
-					return recordNothrowConstructible(*struct_info)
-						? TypeTraitResult::success_true()
-						: TypeTraitResult::success_false();
-				}
+			if (const std::optional<TypeTraitResult> canonical =
+					tryEvaluateCanonicalDefaultConstructionTrait(
+						trait_expr.kind(), type_spec);
+				canonical.has_value()) {
+				return *canonical;
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+				return recordDefaultConstructible(*struct_info)
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
+				return recordTriviallyConstructible(*struct_info)
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
+				return recordNothrowConstructible(*struct_info)
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
 			}
 			TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
 			return base_result.success

@@ -311,7 +311,16 @@ enum class CanonicalRecordPropertyFlags : uint16_t {
 	NothrowDestructible = 1 << 11,
 	HasTrivialDestructor = 1 << 12,
 	HasVirtualDestructor = 1 << 13,
-	DefaultConstructible = 1 << 14,
+};
+
+// Default-construction facts for a completed class, keyed by canonical TypeId.
+// Kept separate from the unary property mask because the answer depends on the
+// base and member subobject graph rather than a single class property.
+enum class CanonicalRecordConstructionFlags : uint8_t {
+	None = 0,
+	DefaultConstructible = 1 << 0,
+	TriviallyDefaultConstructible = 1 << 1,
+	NothrowDefaultConstructible = 1 << 2,
 };
 
 // Semantic facts that cannot be derived from object layout alone. These are
@@ -319,8 +328,9 @@ enum class CanonicalRecordPropertyFlags : uint16_t {
 struct CanonicalRecordProperties {
 	TypeId type;
 	CanonicalRecordPropertyFlags flags;
+	CanonicalRecordConstructionFlags construction_flags =
+		CanonicalRecordConstructionFlags::None;
 	uint8_t reserved = 0;
-	uint8_t reserved2 = 0;
 	friend bool operator==(CanonicalRecordProperties, CanonicalRecordProperties) = default;
 };
 
@@ -385,6 +395,23 @@ inline CanonicalRecordMemberFlags& operator|=(CanonicalRecordMemberFlags& a,
 }
 inline bool hasCanonicalRecordMemberFlag(CanonicalRecordMemberFlags flags,
 	CanonicalRecordMemberFlags bit) {
+	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+}
+
+inline CanonicalRecordConstructionFlags operator|(
+	CanonicalRecordConstructionFlags a,
+	CanonicalRecordConstructionFlags b) {
+	return static_cast<CanonicalRecordConstructionFlags>(
+		static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline CanonicalRecordConstructionFlags& operator|=(
+	CanonicalRecordConstructionFlags& a,
+	CanonicalRecordConstructionFlags b) {
+	return a = a | b;
+}
+inline bool hasCanonicalRecordConstructionFlag(
+	CanonicalRecordConstructionFlags flags,
+	CanonicalRecordConstructionFlags bit) {
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
 }
 
@@ -651,7 +678,8 @@ public:
 
 	CanonicalRecordLayout recordLayout(EntityId entity) const;
 
-	void publishRecordProperties(TypeId type, CanonicalRecordPropertyFlags flags);
+	void publishRecordProperties(TypeId type, CanonicalRecordPropertyFlags flags,
+		CanonicalRecordConstructionFlags construction_flags);
 
 	bool hasRecordProperties(TypeId type) const;
 

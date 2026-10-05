@@ -2499,12 +2499,14 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			}
 			// A zero-argument constructibility requirement is the
 			// default-construction question, which the published canonical
-			// record fact owns. The variadic forms still fall back.
-			if (trait_expr.kind() == TypeTraitKind::IsConstructible &&
+			// record facts own. The variadic forms still fall back.
+			if ((trait_expr.kind() == TypeTraitKind::IsConstructible ||
+				 trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible ||
+				 trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) &&
 				trait_expr.additional_type_nodes().empty()) {
 				if (const std::optional<TypeTraitResult> canonical_result =
 						tryEvaluateCanonicalDefaultConstructionTrait(
-							*first_specifier);
+							trait_expr.kind(), *first_specifier);
 					canonical_result.has_value()) {
 					return constraint_result_for_trait(*canonical_result);
 				}
