@@ -701,7 +701,11 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
 	}
 	CanonicalTypeTable& table = context->canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport imported = importCanonicalType(table, type_spec);
+	// The lazy operand materializer projects a class-template specialization as
+	// a nominal specifier; the structural-trait importer recovers its published
+	// EntityId before the plain importer would defer it.
+	const CanonicalTypeImport imported =
+		importCanonicalStructuralTraitOperand(table, type_spec);
 	if (imported.status == CanonicalTypeImportStatus::Invalid) {
 		return TypeTraitResult::failure();
 	}
