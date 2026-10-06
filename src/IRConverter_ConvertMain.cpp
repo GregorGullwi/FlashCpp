@@ -2355,17 +2355,19 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 					}
 					handled_by_typed_payload = true;
 				}
-				else if (const ConversionOp* conversion = std::any_cast<ConversionOp>(&instruction.getTypedPayload())) {
-					recordTemporarySize(conversion->result, conversion->to_size);
+				else if (const ConversionOp* conversion_op =
+					std::any_cast<ConversionOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(conversion_op->result, conversion_op->to_size);
 					handled_by_typed_payload = true;
 				}
-				else if (const TypeConversionOp* conversion = std::any_cast<TypeConversionOp>(&instruction.getTypedPayload())) {
-					recordTemporarySize(conversion->result, conversion->to_size_in_bits.value);
+				else if (const TypeConversionOp* type_conversion =
+					std::any_cast<TypeConversionOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(type_conversion->result, type_conversion->to_size_in_bits.value);
 					handled_by_typed_payload = true;
 				}
-				else if (const StackAllocOp* allocation = std::any_cast<StackAllocOp>(&instruction.getTypedPayload())) {
-					if (const auto* temp = std::get_if<TempVar>(&allocation->result)) {
-						recordTemporarySize(*temp, allocation->size_in_bits.value);
+				else if (const StackAllocOp* stack_allocation = std::any_cast<StackAllocOp>(&instruction.getTypedPayload())) {
+					if (const auto* temp = std::get_if<TempVar>(&stack_allocation->result)) {
+						recordTemporarySize(*temp, stack_allocation->size_in_bits.value);
 					} else {
 						throw InternalError("StackAlloc requires numeric temporary storage");
 					}
@@ -2456,16 +2458,19 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 					std::any_cast<FunctionAddressOp>(&instruction.getTypedPayload())) {
 					handled_by_typed_payload = recordTypedValueResult(function_address->result);
 				}
-				else if (const HeapAllocOp* allocation = std::any_cast<HeapAllocOp>(&instruction.getTypedPayload())) {
-					recordTemporarySize(allocation->result, POINTER_SIZE_BITS);
+				else if (const HeapAllocOp* heap_allocation =
+					std::any_cast<HeapAllocOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(heap_allocation->result, POINTER_SIZE_BITS);
 					handled_by_typed_payload = true;
 				}
-				else if (const HeapAllocArrayOp* allocation = std::any_cast<HeapAllocArrayOp>(&instruction.getTypedPayload())) {
-					recordTemporarySize(allocation->result, POINTER_SIZE_BITS);
+				else if (const HeapAllocArrayOp* array_allocation =
+					std::any_cast<HeapAllocArrayOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(array_allocation->result, POINTER_SIZE_BITS);
 					handled_by_typed_payload = true;
 				}
-				else if (const PlacementNewOp* allocation = std::any_cast<PlacementNewOp>(&instruction.getTypedPayload())) {
-					recordTemporarySize(allocation->result, POINTER_SIZE_BITS);
+				else if (const PlacementNewOp* placement_allocation =
+					std::any_cast<PlacementNewOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(placement_allocation->result, POINTER_SIZE_BITS);
 					handled_by_typed_payload = true;
 				}
 				else if (const TypeidOp* typeid_op = std::any_cast<TypeidOp>(&instruction.getTypedPayload())) {
