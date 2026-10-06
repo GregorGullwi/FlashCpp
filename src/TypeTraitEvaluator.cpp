@@ -2090,6 +2090,20 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 		kind, *struct_info, arguments, target.runtime_pointer_depth());
 }
 
+// Single constructibility authority shared by the folded/constexpr path, the
+// lazy constraint path, and code generation. A zero-argument query is the
+// default-construction question; an argument-bearing query resolves a
+// constructor. An empty result lets the caller keep its compatibility answer.
+std::optional<TypeTraitResult> evaluateConstructibility(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& target,
+	std::span<const TypeSpecifierNode> arguments) {
+	if (arguments.empty()) {
+		return tryEvaluateCanonicalDefaultConstructionTrait(kind, target);
+	}
+	return tryEvaluateCanonicalConstructibleFromArgs(kind, target, arguments);
+}
+
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 	if (trait_expr.is_no_arg_trait()) {
 		return trait_expr.kind() == TypeTraitKind::IsConstantEvaluated
@@ -2137,9 +2151,32 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				additional_types.front());
 		}
 
-		// Reference targets are never default-constructible and only support a single source type.
-		// Use sema-level implicit conversion rules for reference binding compatibility.
-		if (type_spec.is_reference()) {
+		// The constructible family has one shared authority. Reject the union
+		// and pointer shapes the compatibility path has always rejected before
+		// a published fact can answer, then try the canonical query and fall
+		// back to the sema predicates only for an operand it cannot import.
+		const bool is_reference_target = type_spec.is_reference();
+		const bool is_scalar_target = TypeTraitEval::isScalarType(
+			type_spec.category(),
+			type_spec.is_reference(),
+			type_spec.pointer_depth());
+		const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
+		if (!is_reference_target && !is_scalar_target &&
+			(!struct_info || struct_info->is_union || type_spec.pointer_depth() != 0)) {
+			return TypeTraitResult::success_false();
+		}
+		if (const std::optional<TypeTraitResult> canonical =
+				evaluateConstructibility(
+					trait_expr.kind(), type_spec, additional_types);
+			canonical.has_value()) {
+			return *canonical;
+		}
+
+		// Compatibility fallback for an operand the canonical table cannot
+		// import. Reference and scalar targets keep their sema conversion
+		// answer; an unpublished record fact falls back to the sema
+		// default-construction predicates.
+		if (is_reference_target) {
 			if (additional_types.size() != 1) {
 				return TypeTraitResult::success_false();
 			}
@@ -2147,11 +2184,6 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();
 		}
-
-		const bool is_scalar_target = TypeTraitEval::isScalarType(
-			type_spec.category(),
-			type_spec.is_reference(),
-			type_spec.pointer_depth());
 		if (is_scalar_target) {
 			if (additional_types.empty()) {
 				return TypeTraitResult::success_true();
@@ -2163,43 +2195,28 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();
 		}
-
-		const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
-		if (!struct_info || struct_info->is_union || type_spec.pointer_depth() != 0) {
+		if (!struct_info) {
 			return TypeTraitResult::success_false();
 		}
-
-		if (additional_types.empty()) {
-			if (const std::optional<TypeTraitResult> canonical =
-					tryEvaluateCanonicalDefaultConstructionTrait(
-						trait_expr.kind(), type_spec);
-				canonical.has_value()) {
-				return *canonical;
-			}
-			if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
-				return recordDefaultConstructible(*struct_info)
-					? TypeTraitResult::success_true()
-					: TypeTraitResult::success_false();
-			}
-			if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
-				return recordTriviallyConstructible(*struct_info)
-					? TypeTraitResult::success_true()
-					: TypeTraitResult::success_false();
-			}
-			if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
-				return recordNothrowConstructible(*struct_info)
-					? TypeTraitResult::success_true()
-					: TypeTraitResult::success_false();
-			}
-			TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
-			return base_result.success
-				? base_result
+		if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+			return recordDefaultConstructible(*struct_info)
+				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();
 		}
-
-		return evaluateRecordConstructibleFromArgs(
-			trait_expr.kind(), *struct_info, additional_types,
-			type_spec.pointer_depth());
+		if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
+			return recordTriviallyConstructible(*struct_info)
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+		if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
+			return recordNothrowConstructible(*struct_info)
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+		TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
+		return base_result.success
+			? base_result
+			: TypeTraitResult::success_false();
 	}
 
 	if (trait_expr.has_second_type()) {

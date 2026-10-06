@@ -2497,43 +2497,33 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				canonical_result.has_value()) {
 				return constraint_result_for_trait(*canonical_result);
 			}
-			// A constructibility requirement with no arguments is the
-			// default-construction question, owned by the published canonical
-			// record facts; with argument types it goes through constructor
-			// overload resolution.
+			// The constructible family is answered by one shared authority: a
+			// zero-argument query from the published default-construction fact,
+			// an argument-bearing query through constructor resolution.
 			if (trait_expr.kind() == TypeTraitKind::IsConstructible ||
 				trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible ||
 				trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
-				if (trait_expr.additional_type_nodes().empty()) {
+				std::vector<TypeSpecifierNode> argument_specifiers;
+				argument_specifiers.reserve(
+					trait_expr.additional_type_nodes().size());
+				bool arguments_resolved = true;
+				for (const ASTNode& argument_node :
+					 trait_expr.additional_type_nodes()) {
+					const std::optional<TypeSpecifierNode> argument_specifier =
+						resolve_operand_specifier(argument_node);
+					if (!argument_specifier.has_value()) {
+						arguments_resolved = false;
+						break;
+					}
+					argument_specifiers.push_back(*argument_specifier);
+				}
+				if (arguments_resolved) {
 					if (const std::optional<TypeTraitResult> canonical_result =
-							tryEvaluateCanonicalDefaultConstructionTrait(
-								trait_expr.kind(), *first_specifier);
+							evaluateConstructibility(
+								trait_expr.kind(), *first_specifier,
+								argument_specifiers);
 						canonical_result.has_value()) {
 						return constraint_result_for_trait(*canonical_result);
-					}
-				} else {
-					std::vector<TypeSpecifierNode> argument_specifiers;
-					argument_specifiers.reserve(
-						trait_expr.additional_type_nodes().size());
-					bool arguments_resolved = true;
-					for (const ASTNode& argument_node :
-						 trait_expr.additional_type_nodes()) {
-						const std::optional<TypeSpecifierNode> argument_specifier =
-							resolve_operand_specifier(argument_node);
-						if (!argument_specifier.has_value()) {
-							arguments_resolved = false;
-							break;
-						}
-						argument_specifiers.push_back(*argument_specifier);
-					}
-					if (arguments_resolved) {
-						if (const std::optional<TypeTraitResult> canonical_result =
-								tryEvaluateCanonicalConstructibleFromArgs(
-									trait_expr.kind(), *first_specifier,
-									argument_specifiers);
-							canonical_result.has_value()) {
-							return constraint_result_for_trait(*canonical_result);
-						}
 					}
 				}
 			}

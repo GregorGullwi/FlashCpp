@@ -38,22 +38,14 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs);
 
-// Evaluates the zero-argument default-construction question from canonical
-// identity for one of __is_constructible, __is_trivially_constructible, or
-// __is_nothrow_constructible: a record or class-template specialization answers
-// from the published construction fact, builtins, pointers, and enums are
-// constructible, and references, arrays, functions, and void are not. An empty
-// result allows compatibility evaluation for an unimported operand or an
-// unpublished fact.
-std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
-	TypeTraitKind kind,
-	const TypeSpecifierNode& type_spec);
-
-// Evaluates an argument-bearing __is_constructible, __is_trivially_constructible,
-// or __is_nothrow_constructible query for a record target through
-// constructor-overload resolution. An empty result allows compatibility
-// evaluation for a non-record target or an unsupported argument.
-std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
+// Evaluates a __is_constructible, __is_trivially_constructible, or
+// __is_nothrow_constructible query from canonical identity. A zero-argument
+// query is the default-construction question answered from the published
+// construction fact; an argument-bearing query resolves a constructor for a
+// record target and applies the implicit conversion rules for a reference or
+// scalar target. An empty result allows compatibility evaluation for an
+// unimported operand or an unpublished fact.
+std::optional<TypeTraitResult> evaluateConstructibility(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& target,
 	std::span<const TypeSpecifierNode> arguments);
