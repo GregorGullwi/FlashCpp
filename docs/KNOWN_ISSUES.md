@@ -443,22 +443,3 @@ int main() { return exercise(2); }
 The wide-field check returns 3. Direct aggregate initialization passes. This
 requires a separate investigation of by-value aggregate argument/return storage;
 it is independent of numeric temporary identity.
-
-## Temporary frame pre-counting still omits some producers and padding
-
-The temporary-size pre-scan does not publish every typed producer (including
-conversion, string-literal, heap-allocation, and function-address operations).
-Those slots are allocated during emission. The initial temporary cursor also
-includes padding not represented in the pre-count. These limitations predate
-numeric temporary storage. Extending the frame's lowest occupied offset during
-emission does not consistently reserve outgoing argument/home space below newly
-allocated slots. The numeric table removes identity collisions but does not by
-itself complete frame layout for these producers. Consolidate producer storage
-publication and keep outgoing storage below every allocated local slot; add a
-regression that makes a callee write its home/stack-argument area.
-
-The Windows throw-slot path also advances the temporary cursor without the checked
-arithmetic used by numeric temporary allocation. Lambda `__invoke` generation
-resets temporary numbers without clearing global reference metadata. Both require
-separate boundary regressions and investigation; no new name-based type recovery
-should be introduced to compensate for either path.
