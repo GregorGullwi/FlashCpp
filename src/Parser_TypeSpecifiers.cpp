@@ -5648,11 +5648,11 @@ void Parser::stampDependentMemberChainFromQualifier(
 			if (arg_spec.is_pack_expansion()) {
 				return;
 			}
-			const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
-			if (imported.status != CanonicalTypeImportStatus::Supported) {
+			const std::optional<TypeId> imported = tryImportSupportedCanonical(arg_spec);
+			if (!imported.has_value()) {
 				return;
 			}
-			argument_ids.push_back(imported.type);
+			argument_ids.push_back(*imported);
 		}
 		// Only the first member is a direct member of the qualifier's owner. A
 		// published member alias there carries declaration identity so the
@@ -5804,11 +5804,11 @@ void Parser::tryStampDependentInstantiationMemberChain(
 			if (type_arg->is_pack_expansion()) {
 				return;
 			}
-			const CanonicalTypeImport imported = importCanonicalType(table, *type_arg);
-			if (imported.status != CanonicalTypeImportStatus::Supported) {
+			const std::optional<TypeId> imported = tryImportSupportedCanonical(*type_arg);
+			if (!imported.has_value()) {
 				return;
 			}
-			argument_ids.push_back(CanonicalTemplateArgument::makeType(imported.type));
+			argument_ids.push_back(CanonicalTemplateArgument::makeType(*imported));
 			continue;
 		}
 		if (const TemplateDeclId* template_arg = std::get_if<TemplateDeclId>(&arg)) {

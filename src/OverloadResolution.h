@@ -2234,20 +2234,16 @@ inline std::optional<int> tryCompareFixedEnumPromotionTargets(
 	if (canonical_argument.category() == TypeCategory::Enum) {
 		tryBindPublishedTypeEntity(canonical_argument);
 	}
-	const CanonicalTypeImport argument_import = importCanonicalType(
-		table, canonical_argument);
-	const CanonicalTypeImport lhs_import = importCanonicalType(
-		table, lhs_parameter);
-	const CanonicalTypeImport rhs_import = importCanonicalType(
-		table, rhs_parameter);
-	if (argument_import.status != CanonicalTypeImportStatus::Supported ||
-		lhs_import.status != CanonicalTypeImportStatus::Supported ||
-		rhs_import.status != CanonicalTypeImportStatus::Supported) {
+	const std::optional<TypeId> argument_import = tryImportSupportedCanonical(canonical_argument);
+	const std::optional<TypeId> lhs_import = tryImportSupportedCanonical(lhs_parameter);
+	const std::optional<TypeId> rhs_import = tryImportSupportedCanonical(rhs_parameter);
+	if (!argument_import.has_value() || !lhs_import.has_value() ||
+		!rhs_import.has_value()) {
 		return std::nullopt;
 	}
 	const TypeId argument = stripCanonicalTopCv(
 		table,
-		canonicalTypeWithoutReference(table, argument_import.type)).first;
+		canonicalTypeWithoutReference(table, *argument_import)).first;
 	if (table.node(argument).kind != CanonicalTypeKind::Enum) {
 		return 0;
 	}
@@ -2269,10 +2265,10 @@ inline std::optional<int> tryCompareFixedEnumPromotionTargets(
 	}
 	const TypeId lhs_target = stripCanonicalTopCv(
 		table,
-		canonicalTypeWithoutReference(table, lhs_import.type)).first;
+		canonicalTypeWithoutReference(table, *lhs_import)).first;
 	const TypeId rhs_target = stripCanonicalTopCv(
 		table,
-		canonicalTypeWithoutReference(table, rhs_import.type)).first;
+		canonicalTypeWithoutReference(table, *rhs_import)).first;
 	if (lhs_target == layout.underlying_type &&
 		rhs_target == promoted_underlying) {
 		return -1;
@@ -2862,13 +2858,12 @@ trySelectCanonicalUserDefinedConversionOperator(
 			CanonicalTypeTransaction return_type_transaction(table);
 			TypeSpecifierNode canonical_return_type = return_type;
 			tryBindPublishedTypeEntity(canonical_return_type);
-			const CanonicalTypeImport return_type_import =
-				importCanonicalType(table, canonical_return_type);
-			if (return_type_import.status != CanonicalTypeImportStatus::Supported) {
+			const std::optional<TypeId> return_type_import = tryImportSupportedCanonical(canonical_return_type);
+			if (!return_type_import.has_value()) {
 				continue;
 			}
 			const TypeId unreferenced_return_type = canonicalTypeWithoutReference(
-				table, return_type_import.type);
+				table, *return_type_import);
 			const CanonicalTypeKind return_type_kind = table.node(
 				stripCanonicalTopCv(table, unreferenced_return_type).first).kind;
 			if (return_type_kind != CanonicalTypeKind::Pointer &&

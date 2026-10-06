@@ -4968,25 +4968,23 @@ ParseResult Parser::parse_enum_declaration() {
 				get_type_size_bits(*promotion_category),
 				Token{},
 				CVQualifier::None);
-			const CanonicalTypeImport imported_promotion = importCanonicalType(
-				front_end.canonicalTypes(), promotion_syntax);
-			if (imported_promotion.status != CanonicalTypeImportStatus::Supported) {
+			const std::optional<TypeId> imported_promotion = tryImportSupportedCanonical(promotion_syntax);
+			if (!imported_promotion.has_value()) {
 				throw InternalError("canonical enum promotion type is not importable");
 			}
-			unfixed_promotion_type = imported_promotion.type;
+			unfixed_promotion_type = *imported_promotion;
 		}
 		const TypeSpecifierNode underlying_syntax = enum_ref.has_underlying_type()
 			? *enum_ref.underlying_type()
 			: TypeSpecifierNode(enum_info.underlying_type, TypeQualifier::None,
 				enum_info.underlying_size.value, Token{}, CVQualifier::None);
-		const CanonicalTypeImport imported_underlying = importCanonicalType(
-			front_end.canonicalTypes(), underlying_syntax);
-		if (imported_underlying.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> imported_underlying = tryImportSupportedCanonical(underlying_syntax);
+		if (!imported_underlying.has_value()) {
 			return;
 		}
 		front_end.canonicalTypes().publishEnumLayout({
 			.entity = enum_ref.entity_id(),
-			.underlying_type = imported_underlying.type,
+			.underlying_type = *imported_underlying,
 			.unfixed_promotion_type = unfixed_promotion_type,
 			.size_bytes = canonicalLayoutSize(toSizeT(enum_info.sizeInBytes())),
 			.enumerator_count = canonicalLayoutCount(enum_info.enumerators.size()),

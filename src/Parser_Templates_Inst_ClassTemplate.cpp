@@ -2057,15 +2057,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						Token{},
 						CVQualifier::None,
 						ReferenceQualifier::None);
-					const CanonicalTypeImport imported_value_type =
-						importCanonicalType(
-							canonical_types,
-							value_type);
-					if (imported_value_type.status != CanonicalTypeImportStatus::Supported) {
+					const std::optional<TypeId> imported_value_type = tryImportSupportedCanonical(value_type);
+					if (!imported_value_type.has_value()) {
 						return std::nullopt;
 					}
 					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Value;
-					argument_identity.value_type = imported_value_type.type;
+					argument_identity.value_type = *imported_value_type;
 					argument_identity.value = value_identity.value;
 				} else if (argument.is_template_template_arg) {
 					auto template_argument_entry =
@@ -2086,14 +2083,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (argument_type.has_member_class()) {
 						tryBindPublishedMemberClassEntity(argument_type);
 					}
-					const CanonicalTypeImport imported_type = importCanonicalType(
-						canonical_types,
-						argument_type);
-					if (imported_type.status != CanonicalTypeImportStatus::Supported) {
+					const std::optional<TypeId> imported_type = tryImportSupportedCanonical(argument_type);
+					if (!imported_type.has_value()) {
 						return std::nullopt;
 					}
 					argument_identity.kind = BaseInstantiationArgumentIdentity::Kind::Type;
-					argument_identity.type = imported_type.type;
+					argument_identity.type = *imported_type;
 				}
 				identity_scratch.push_back(argument_identity);
 			}

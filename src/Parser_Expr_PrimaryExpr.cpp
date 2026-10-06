@@ -300,14 +300,13 @@ tryBuildFreeFunctionTemplateAddressArgumentConversion(
 
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport target_import =
-		importCanonicalType(table, parameter_type);
-	if (target_import.status != CanonicalTypeImportStatus::Supported) {
+	const std::optional<TypeId> target_import = tryImportSupportedCanonical(parameter_type);
+	if (!target_import.has_value()) {
 		return ArgumentConversionInfo::no_match();
 	}
 	const TypeId target_type = stripCanonicalTopCv(
 		table,
-		canonicalTypeWithoutReference(table, target_import.type)).first;
+		canonicalTypeWithoutReference(table, *target_import)).first;
 	const CanonicalTypeNode target_node = table.node(target_type);
 	if (target_node.kind != CanonicalTypeKind::Pointer) {
 		return ArgumentConversionInfo::no_match();
@@ -493,9 +492,8 @@ tryMaterializeSelectedFreeFunctionTemplateAddress(
 	tryBindPublishedTypeEntity(target_return_type);
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const CanonicalTypeImport target_return_import =
-		importCanonicalType(table, target_return_type);
-	if (target_return_import.status != CanonicalTypeImportStatus::Supported) {
+	const std::optional<TypeId> target_return_import = tryImportSupportedCanonical(target_return_type);
+	if (!target_return_import.has_value()) {
 		return FreeFunctionTemplateAddressMaterialization::Failed;
 	}
 	const std::optional<ASTNode> instantiated =
@@ -505,7 +503,7 @@ tryMaterializeSelectedFreeFunctionTemplateAddress(
 				target_parameter_types.data(),
 				target_parameter_types.size()),
 			target_return_type,
-			target_return_import.type);
+			*target_return_import);
 	const FunctionDeclarationNode* instantiated_function =
 		get_function_decl_node(instantiated);
 	if (instantiated_function == nullptr) {
@@ -751,14 +749,13 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 	bindCanonicalClassSpecializationsInFunctionSignature(
 		table,
 		canonical_parameter_type);
-	const CanonicalTypeImport target_import =
-		importCanonicalType(table, canonical_parameter_type);
-	if (target_import.status != CanonicalTypeImportStatus::Supported) {
+	const std::optional<TypeId> target_import = tryImportSupportedCanonical(canonical_parameter_type);
+	if (!target_import.has_value()) {
 		return ArgumentConversionInfo::no_match();
 	}
 	TypeId target_type = canonicalTypeWithoutReference(
 		table,
-		target_import.type);
+		*target_import);
 	target_type = stripCanonicalTopCv(table, target_type).first;
 	const CanonicalTypeNode target_node = table.node(target_type);
 	const bool target_is_member_pointer =
@@ -824,14 +821,13 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 				  buildMemberFunctionPointerTypeFromFunctionDeclaration(*candidate)
 			: FlashCpp::ParserFunctionTypeHelpers::
 				  buildFunctionPointerTypeFromFunctionDeclaration(*candidate);
-		const CanonicalTypeImport candidate_import =
-			importCanonicalType(table, candidate_type);
-		if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> candidate_import = tryImportSupportedCanonical(candidate_type);
+		if (!candidate_import.has_value()) {
 			continue;
 		}
 		TypeId candidate_type_id = canonicalTypeWithoutReference(
 			table,
-			candidate_import.type);
+			*candidate_import);
 		candidate_type_id = stripCanonicalTopCv(table, candidate_type_id).first;
 		const CanonicalTypeNode candidate_node = table.node(candidate_type_id);
 		TypeId candidate_function{};

@@ -5817,20 +5817,19 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 		CanonicalTypeTable& canonical_types =
 			requireFrontendContext().canonicalTypes();
-		const CanonicalTypeImport imported =
-			importCanonicalType(canonical_types, resolved_syntax);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(resolved_syntax);
+		if (!imported.has_value()) {
 			throw InternalError(
 				"semantic canonicalization rejected ordered declarator");
 		}
 		if (!resolved_syntax.ordered_declarator_has_legacy_projection()) {
-			desc.structural_type_id = imported.type;
+			desc.structural_type_id = *imported;
 		}
 		// [dcl.ptr]/1: a pointer whose immediate pointee is an array designates
 		// that array object. Publish the same flat flag the projectable
 		// pointer-to-array form already carries, so dereference lowering does
 		// not walk the syntax spine.
-		CanonicalTypeNode outer = canonical_types.node(imported.type);
+		CanonicalTypeNode outer = canonical_types.node(*imported);
 		if (outer.kind == CanonicalTypeKind::Qualified && outer.child) {
 			outer = canonical_types.node(outer.child);
 		}
@@ -7137,14 +7136,12 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		target_non_type_arguments;
 	const auto import_integral_template_parameter_type =
 		[&canonical_types](const TemplateParameterNode& parameter) -> TypeId {
-		const CanonicalTypeImport imported = importCanonicalType(
-			canonical_types,
-			parameter.type_specifier_node());
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(parameter.type_specifier_node());
+		if (!imported.has_value()) {
 			return TypeId{};
 		}
 		const TypeId unqualified =
-			canonical_types.withoutTopLevelQualifiers(imported.type);
+			canonical_types.withoutTopLevelQualifiers(*imported);
 		const CanonicalTypeNode node = canonical_types.node(unqualified);
 		if (node.kind != CanonicalTypeKind::Builtin) {
 			return TypeId{};
@@ -7411,9 +7408,8 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			function_template_decl,
 			non_type_arguments);
 		tryBindPublishedTypeEntity(return_type);
-		const CanonicalTypeImport return_import =
-			importCanonicalType(canonical_types, return_type);
-		if (return_import.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> return_import = tryImportSupportedCanonical(return_type);
+		if (!return_import.has_value()) {
 			return std::nullopt;
 		}
 		std::vector<TypeId> parameter_types;
@@ -7504,7 +7500,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		}
 		return CanonicalFunctionTemplateTypePattern{
 			canonical_types.function(
-				return_import.type,
+				*return_import,
 				parameter_types,
 				function_decl.is_variadic(),
 				function_cv,

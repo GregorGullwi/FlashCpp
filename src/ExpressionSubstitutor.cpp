@@ -5363,11 +5363,11 @@ ExpressionSubstitutor::tryRestampDependentNameType(const TypeSpecifierNode& type
 		if (arg_spec.is_pack_expansion()) {
 			return {};
 		}
-		const CanonicalTypeImport imported = importCanonicalType(table, arg_spec);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(arg_spec);
+		if (!imported.has_value()) {
 			return {};
 		}
-		argument_ids.push_back(imported.type);
+		argument_ids.push_back(*imported);
 	}
 
 	TypeId substituted = table.substitute(stamp, env, argument_ids);

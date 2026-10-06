@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "CanonicalTypes.h"
+#include "FrontendContext.h"
 #include "TemplateRegistry_Types.h"
 
 #include <limits>
@@ -1306,6 +1307,23 @@ inline CanonicalTypeImport importCanonicalTypeImpl(CanonicalTypeTable& table,
 
 inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const TypeSpecifierNode& syntax) {
 	return importCanonicalTypeImpl(table, syntax, CanonicalTypeImportContext::Exact);
+}
+
+// Collapses the common "import this operand, then bail unless it imported as
+// Supported" preamble. Returns the imported TypeId on Supported and an empty
+// result for every other status, so the caller keeps its compatibility
+// fallback; a caller that must distinguish Invalid (for example conversion
+// planning) keeps its explicit status handling. The caller owns the
+// CanonicalTypeTransaction over requireFrontendContext()'s table, so the
+// import still rolls back with the caller's scope.
+inline std::optional<TypeId> tryImportSupportedCanonical(
+	const TypeSpecifierNode& syntax) {
+	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
+	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
+	if (imported.status != CanonicalTypeImportStatus::Supported) {
+		return std::nullopt;
+	}
+	return imported.type;
 }
 
 inline CanonicalTypeImport importCanonicalStructuralTraitOperand(

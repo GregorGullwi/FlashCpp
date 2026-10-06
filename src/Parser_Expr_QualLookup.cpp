@@ -3412,13 +3412,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				requireFrontendContext().canonicalTypes();
 			TypeSpecifierNode canonical_syntax = type;
 			tryBindPublishedTypeEntity(canonical_syntax);
-			const CanonicalTypeImport imported =
-				importCanonicalType(canonical_types, canonical_syntax);
-			if (imported.status != CanonicalTypeImportStatus::Supported) {
+			const std::optional<TypeId> imported = tryImportSupportedCanonical(canonical_syntax);
+			if (!imported.has_value()) {
 				return false;
 			}
 
-			TypeId index_type_id = imported.type;
+			TypeId index_type_id = *imported;
 			CanonicalTypeNode index_node = canonical_types.node(index_type_id);
 			if (index_node.kind == CanonicalTypeKind::LValueReference ||
 				index_node.kind == CanonicalTypeKind::RValueReference) {
@@ -5175,13 +5174,11 @@ std::optional<TypeId> Parser::tryImportCanonicalStaticMemberType(
 	TypeSpecifierNode& type) {
 	tryBindPublishedTypeEntity(type);
 	tryBindPublishedMemberClassEntity(type);
-	const CanonicalTypeImport imported = importCanonicalType(
-		requireFrontendContext().canonicalTypes(),
-		type);
-	if (imported.status != CanonicalTypeImportStatus::Supported) {
+	const std::optional<TypeId> imported = tryImportSupportedCanonical(type);
+	if (!imported.has_value()) {
 		return std::nullopt;
 	}
-	return imported.type;
+	return *imported;
 }
 
 // Note: Type size lookup is now unified in ::get_type_size_bits() from AstNodeTypes.h

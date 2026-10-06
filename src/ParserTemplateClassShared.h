@@ -419,11 +419,11 @@ inline void substituteCanonicalMemberFunctionPointerOwner(
 			}
 			TypeSpecifierNode argument_type = typeSpecifierFromTemplateTypeArgProjection(arg);
 			argument_type.set_type_index(canonicalizeConcreteTemplateArgumentTypeIndex(arg));
-			const CanonicalTypeImport imported_argument = importCanonicalType(table, argument_type);
-			if (imported_argument.status != CanonicalTypeImportStatus::Supported) {
+			const std::optional<TypeId> imported_argument = tryImportSupportedCanonical(argument_type);
+			if (!imported_argument.has_value()) {
 				return;
 			}
-			canonical_args.push_back(imported_argument.type);
+			canonical_args.push_back(*imported_argument);
 		}
 
 		const TypeId substituted_owner = table.substitute(
