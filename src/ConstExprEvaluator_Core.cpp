@@ -1574,7 +1574,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_constexpr_member_binary_operat
 
 EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
 											  EvaluationContext& context) {
-	// Handle address-of (&) without evaluating the operand: the result is a pointer to the named variable.
+	// Handle address-of (&) for simple entities, resolving array-subscript bases by declared type.
 	if (op == "&") {
 		if (operand_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = operand_node.as<ExpressionNode>();
@@ -1586,14 +1586,65 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 					return EvalResult::from_member_pointer(member->member_name, member->offset);
 				}
 			}
-			// &arr[i]: address of array element → pointer with offset
+			// &arr[i]: address of an array element → pointer with offset
 			if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
-				std::string_view arr_name = getIdentifierNameFromAstNode(subscript->array_expr());
-				if (!arr_name.empty()) {
-					auto index_result = evaluate(subscript->index_expr(), context);
-					if (!index_result.success())
-						return index_result;
-					return EvalResult::from_pointer(arr_name, index_result.as_int());
+				const IdentifierNode* array_identifier = tryGetIdentifier(subscript->array_expr());
+				if (!array_identifier || !context.symbols) {
+					return EvalResult::error(
+						"Array type is unavailable for address-of subscript in constant expression",
+						EvalErrorType::NotConstantExpression);
+				}
+
+				auto index_result = evaluate(subscript->index_expr(), context);
+				if (!index_result.success()) {
+					return index_result;
+				}
+
+				if (const EvalResult* array_binding = findLocalBinding(array_identifier->name(), context);
+					array_binding && array_binding->pointer_to_var.isValid()) {
+					return EvalResult::from_pointer(
+						array_binding->pointer_to_var,
+						array_binding->pointer_offset + index_result.as_int());
+				}
+
+				const IdentifierNode* base_identifier = array_identifier;
+				std::unordered_set<const VariableDeclarationNode*> visited_references;
+				for (;;) {
+					std::optional<ASTNode> symbol = lookup_identifier_symbol(
+						base_identifier, base_identifier->name(), *context.symbols);
+					if (!symbol.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+						symbol = lookup_identifier_symbol(
+							base_identifier, base_identifier->name(), *context.global_symbols);
+					}
+					const DeclarationNode* declaration = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+					if (!declaration) {
+						return EvalResult::error(
+							"Array type is unavailable for address-of subscript in constant expression",
+							EvalErrorType::NotConstantExpression);
+					}
+
+					const TypeSpecifierNode& type = declaration->type_specifier_node();
+					if (type.is_array_object()) {
+						return EvalResult::from_pointer(base_identifier->name(), index_result.as_int());
+					}
+					if (!type.is_reference_to_array() || !symbol->is<VariableDeclarationNode>()) {
+						return EvalResult::error(
+							"Array type is unavailable for address-of subscript in constant expression",
+							EvalErrorType::NotConstantExpression);
+					}
+
+					const VariableDeclarationNode& reference = symbol->as<VariableDeclarationNode>();
+					if (!visited_references.insert(&reference).second || !reference.initializer().has_value()) {
+						return EvalResult::error(
+							"Reference target is unavailable for address-of subscript in constant expression",
+							EvalErrorType::NotConstantExpression);
+					}
+					base_identifier = tryGetIdentifier(*reference.initializer());
+					if (!base_identifier) {
+						return EvalResult::error(
+							"Reference target is unavailable for address-of subscript in constant expression",
+							EvalErrorType::NotConstantExpression);
+					}
 				}
 			}
 		}
