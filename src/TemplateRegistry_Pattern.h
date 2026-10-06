@@ -617,6 +617,13 @@ struct TemplatePattern {
 				!pattern_arg.is_array &&
 				pattern_arg.member_pointer_kind == MemberPointerKind::None &&
 				!pattern_arg.function_signature.has_value();
+			// A pattern whose base is a bare deduced type parameter and whose own
+			// cv or array shape is absent absorbs those from the concrete argument
+			// into the deduced parameter: `T&` matches `const int&` (T = const int)
+			// and `int(&)[3]` (T = int[3]). An explicit `const T` or `T[N]` keeps
+			// its qualifier structural because the pattern carries it.
+			const bool deduced_absorbs_cv = pattern_arg_is_deduced_type_param && pattern_arg.cv_qualifier == CVQualifier::None;
+			const bool deduced_absorbs_array = pattern_arg_is_deduced_type_param && !pattern_arg.is_array;
 
 			// Check if modifiers match
 			if (!direct_whole_type_deduction &&
@@ -631,12 +638,12 @@ struct TemplatePattern {
 				FLASH_LOG(Templates, Trace, "  FAILED: pointer_depth mismatch");
 				return false;
 			}
-			if (!direct_whole_type_deduction &&
+			if (!direct_whole_type_deduction && !deduced_absorbs_cv &&
 				pattern_arg.cv_qualifier != concrete_arg.cv_qualifier) {
 				FLASH_LOG(Templates, Trace, "  FAILED: cv_qualifier mismatch");
 				return false;
 			}
-			if (!direct_whole_type_deduction &&
+			if (!direct_whole_type_deduction && !deduced_absorbs_array &&
 				pattern_arg.is_array != concrete_arg.is_array) {
 				FLASH_LOG(Templates, Trace, "  FAILED: array-ness mismatch");
 				return false;

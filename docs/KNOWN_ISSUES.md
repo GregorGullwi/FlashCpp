@@ -10,6 +10,14 @@ failure while processing the standard header, separate from Itanium symbol
 mangling; the typeinfo test therefore does not currently verify the mangling
 change on WSL.
 
+## Unbounded array reference as a template argument does not parse
+
+`Kind<int(&)[]>` (a reference to an unbounded array) is a valid template
+argument, but the parser rejects it with "Expected primary expression". The
+bounded form `Kind<int(&)[3]>` parses and matches a `T&` partial specialization.
+The gap is in parsing an abstract declarator whose array bound is omitted behind
+a reference, not in the partial-specialization matcher.
+
 ## Complex member-type class-template bases still need stack coverage
 
 The base-instantiation worklist now expands concrete pack-expanded bases and
