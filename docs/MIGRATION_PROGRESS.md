@@ -900,7 +900,7 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
       `tests/test_is_constructible_subobject_recursion_ret0.cpp`. The
       `DefaultConstructible`, `TriviallyDefaultConstructible`, and
       `NothrowDefaultConstructible` facts are published by class `TypeId` in
-      `CanonicalRecordProperties` (`CanonicalRecordConstructionFlags`), and the
+      `CanonicalRecordProperties` (`CanonicalRecordFacts`), and the
       zero-argument queries for all three variants are answered from them in the
       folded and lazy paths;
       `tests/test_canonical_lazy_default_construction_concept_ret0.cpp` and

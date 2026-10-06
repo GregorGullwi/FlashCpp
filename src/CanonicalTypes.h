@@ -295,42 +295,36 @@ enum class CanonicalRecordBaseFlags : uint8_t {
 	Virtual = 1 << 0,
 };
 
-enum class CanonicalRecordPropertyFlags : uint16_t {
+// Unified semantic facts for a completed class, keyed by canonical TypeId. The
+// structural properties and the default-construction facts share one mask so a
+// trait check reads a single flag system regardless of which group a fact
+// belongs to; the bit values are disjoint and stable.
+enum class CanonicalRecordFacts : uint32_t {
 	None = 0,
-	Polymorphic = 1 << 0,
-	Final = 1 << 1,
-	Abstract = 1 << 2,
-	TriviallyCopyable = 1 << 3,
-	Trivial = 1 << 4,
-	Pod = 1 << 5,
-	StandardLayout = 1 << 6,
-	Aggregate = 1 << 7,
-	Empty = 1 << 8,
-	Destructible = 1 << 9,
-	TriviallyDestructible = 1 << 10,
-	NothrowDestructible = 1 << 11,
-	HasTrivialDestructor = 1 << 12,
-	HasVirtualDestructor = 1 << 13,
-};
-
-// Default-construction facts for a completed class, keyed by canonical TypeId.
-// Kept separate from the unary property mask because the answer depends on the
-// base and member subobject graph rather than a single class property.
-enum class CanonicalRecordConstructionFlags : uint8_t {
-	None = 0,
-	DefaultConstructible = 1 << 0,
-	TriviallyDefaultConstructible = 1 << 1,
-	NothrowDefaultConstructible = 1 << 2,
+	Polymorphic = 1u << 0,
+	Final = 1u << 1,
+	Abstract = 1u << 2,
+	TriviallyCopyable = 1u << 3,
+	Trivial = 1u << 4,
+	Pod = 1u << 5,
+	StandardLayout = 1u << 6,
+	Aggregate = 1u << 7,
+	Empty = 1u << 8,
+	Destructible = 1u << 9,
+	TriviallyDestructible = 1u << 10,
+	NothrowDestructible = 1u << 11,
+	HasTrivialDestructor = 1u << 12,
+	HasVirtualDestructor = 1u << 13,
+	DefaultConstructible = 1u << 14,
+	TriviallyDefaultConstructible = 1u << 15,
+	NothrowDefaultConstructible = 1u << 16,
 };
 
 // Semantic facts that cannot be derived from object layout alone. These are
 // keyed by canonical class TypeId rather than a spelling or parser type index.
 struct CanonicalRecordProperties {
 	TypeId type;
-	CanonicalRecordPropertyFlags flags;
-	CanonicalRecordConstructionFlags construction_flags =
-		CanonicalRecordConstructionFlags::None;
-	uint8_t reserved = 0;
+	CanonicalRecordFacts facts = CanonicalRecordFacts::None;
 	friend bool operator==(CanonicalRecordProperties, CanonicalRecordProperties) = default;
 };
 
@@ -398,21 +392,18 @@ inline bool hasCanonicalRecordMemberFlag(CanonicalRecordMemberFlags flags,
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
 }
 
-inline CanonicalRecordConstructionFlags operator|(
-	CanonicalRecordConstructionFlags a,
-	CanonicalRecordConstructionFlags b) {
-	return static_cast<CanonicalRecordConstructionFlags>(
-		static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+inline CanonicalRecordFacts operator|(CanonicalRecordFacts a,
+	CanonicalRecordFacts b) {
+	return static_cast<CanonicalRecordFacts>(
+		static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
-inline CanonicalRecordConstructionFlags& operator|=(
-	CanonicalRecordConstructionFlags& a,
-	CanonicalRecordConstructionFlags b) {
+inline CanonicalRecordFacts& operator|=(CanonicalRecordFacts& a,
+	CanonicalRecordFacts b) {
 	return a = a | b;
 }
-inline bool hasCanonicalRecordConstructionFlag(
-	CanonicalRecordConstructionFlags flags,
-	CanonicalRecordConstructionFlags bit) {
-	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
+inline bool hasCanonicalRecordFact(CanonicalRecordFacts flags,
+	CanonicalRecordFacts bit) {
+	return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(bit)) != 0;
 }
 
 inline CanonicalRecordBaseFlags operator|(CanonicalRecordBaseFlags a, CanonicalRecordBaseFlags b) {
@@ -425,23 +416,6 @@ inline CanonicalRecordBaseFlags& operator|=(CanonicalRecordBaseFlags& a,
 inline bool hasCanonicalRecordBaseFlag(CanonicalRecordBaseFlags flags,
 	CanonicalRecordBaseFlags bit) {
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(bit)) != 0;
-}
-
-inline CanonicalRecordPropertyFlags operator|(
-	CanonicalRecordPropertyFlags a,
-	CanonicalRecordPropertyFlags b) {
-	return static_cast<CanonicalRecordPropertyFlags>(
-		static_cast<uint16_t>(a) | static_cast<uint16_t>(b));
-}
-inline CanonicalRecordPropertyFlags& operator|=(
-	CanonicalRecordPropertyFlags& a,
-	CanonicalRecordPropertyFlags b) {
-	return a = a | b;
-}
-inline bool hasCanonicalRecordPropertyFlag(
-	CanonicalRecordPropertyFlags flags,
-	CanonicalRecordPropertyFlags bit) {
-	return (static_cast<uint16_t>(flags) & static_cast<uint16_t>(bit)) != 0;
 }
 
 static_assert(std::is_trivially_copyable_v<CanonicalRecordLayout>);
@@ -678,8 +652,7 @@ public:
 
 	CanonicalRecordLayout recordLayout(EntityId entity) const;
 
-	void publishRecordProperties(TypeId type, CanonicalRecordPropertyFlags flags,
-		CanonicalRecordConstructionFlags construction_flags);
+	void publishRecordProperties(TypeId type, CanonicalRecordFacts facts);
 
 	bool hasRecordProperties(TypeId type) const;
 

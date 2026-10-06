@@ -119,10 +119,7 @@ struct CanonicalTypeImport {
 
 static_assert(sizeof(CanonicalTypeImport) == 8);
 
-CanonicalRecordPropertyFlags computeCanonicalRecordPropertyFlags(
-	const StructTypeInfo& struct_info);
-
-CanonicalRecordConstructionFlags computeCanonicalRecordConstructionFlags(
+CanonicalRecordFacts computeCanonicalRecordFacts(
 	const StructTypeInfo& struct_info);
 
 struct CanonicalDeclaratorExport {
@@ -1557,11 +1554,8 @@ inline bool tryPublishCanonicalRecordProperties(
 		kind != CanonicalTypeKind::TemplateSpecialization) {
 		return false;
 	}
-	const CanonicalRecordPropertyFlags flags =
-		computeCanonicalRecordPropertyFlags(struct_info);
-	const CanonicalRecordConstructionFlags construction_flags =
-		computeCanonicalRecordConstructionFlags(struct_info);
-	table.publishRecordProperties(type, flags, construction_flags);
+	const CanonicalRecordFacts facts = computeCanonicalRecordFacts(struct_info);
+	table.publishRecordProperties(type, facts);
 	return true;
 }
 

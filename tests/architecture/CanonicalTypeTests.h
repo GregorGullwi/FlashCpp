@@ -897,25 +897,23 @@ inline void checkAdapter() {
 	table.publishRecordLayout(record_layout);
 	require(table.recordLayout(EntityId{3}) == record_layout);
 	const TypeId record_with_properties = table.record(EntityId{3});
-	const CanonicalRecordPropertyFlags record_property_flags =
-		CanonicalRecordPropertyFlags::Polymorphic |
-		CanonicalRecordPropertyFlags::Final;
+	const CanonicalRecordFacts record_property_facts =
+		CanonicalRecordFacts::Polymorphic |
+		CanonicalRecordFacts::Final;
 	const CanonicalRecordProperties record_properties{
-		record_with_properties, record_property_flags};
-	table.publishRecordProperties(record_with_properties, record_property_flags, CanonicalRecordConstructionFlags::None);
+		record_with_properties, record_property_facts};
+	table.publishRecordProperties(record_with_properties, record_property_facts);
 	require(table.hasRecordProperties(record_with_properties));
 	require(table.recordProperties(record_with_properties) == record_properties);
-	table.publishRecordProperties(record_with_properties, record_property_flags, CanonicalRecordConstructionFlags::None);
+	table.publishRecordProperties(record_with_properties, record_property_facts);
 	rejects([&] {
 		table.publishRecordProperties(
-			record_with_properties, CanonicalRecordPropertyFlags::Abstract,
-			CanonicalRecordConstructionFlags::None);
+			record_with_properties, CanonicalRecordFacts::Abstract);
 	});
 	rejects([&] {
 		table.publishRecordProperties(
 			table.builtin(CanonicalBuiltinKind::Int),
-			CanonicalRecordPropertyFlags::None,
-			CanonicalRecordConstructionFlags::None);
+			CanonicalRecordFacts::None);
 	});
 	const CanonicalEnumLayout enum_layout{
 		.entity = EntityId{5},
@@ -1098,8 +1096,7 @@ inline void checkAdapter() {
 	const TypeId rolled_property_type = table.record(EntityId{12});
 	table.publishRecordFieldSchema(EntityId{12}, rolled_members, {});
 	table.publishRecordProperties(
-		rolled_property_type, CanonicalRecordPropertyFlags::Polymorphic,
-		CanonicalRecordConstructionFlags::None);
+		rolled_property_type, CanonicalRecordFacts::Polymorphic);
 	schema_transaction.rollback();
 	require(!table.hasRecordLayout(EntityId{12}));
 	require(!table.hasRecordFieldSchema(EntityId{12}));

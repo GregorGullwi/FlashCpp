@@ -1003,37 +1003,34 @@ CanonicalRecordLayout CanonicalTypeTable::recordLayout(EntityId entity) const {
 
 void CanonicalTypeTable::publishRecordProperties(
 	TypeId type,
-	CanonicalRecordPropertyFlags flags,
-	CanonicalRecordConstructionFlags construction_flags) {
+	CanonicalRecordFacts facts) {
 	std::lock_guard lock(mutex_);
 	checkTransactionThread();
-	const uint16_t valid_flags = static_cast<uint16_t>(
-		CanonicalRecordPropertyFlags::Polymorphic |
-		CanonicalRecordPropertyFlags::Final |
-		CanonicalRecordPropertyFlags::Abstract |
-		CanonicalRecordPropertyFlags::TriviallyCopyable |
-		CanonicalRecordPropertyFlags::Trivial |
-		CanonicalRecordPropertyFlags::Pod |
-		CanonicalRecordPropertyFlags::StandardLayout |
-		CanonicalRecordPropertyFlags::Aggregate |
-		CanonicalRecordPropertyFlags::Empty |
-		CanonicalRecordPropertyFlags::Destructible |
-		CanonicalRecordPropertyFlags::TriviallyDestructible |
-		CanonicalRecordPropertyFlags::NothrowDestructible |
-		CanonicalRecordPropertyFlags::HasTrivialDestructor |
-		CanonicalRecordPropertyFlags::HasVirtualDestructor);
-	const uint8_t valid_construction_flags = static_cast<uint8_t>(
-		CanonicalRecordConstructionFlags::DefaultConstructible |
-		CanonicalRecordConstructionFlags::TriviallyDefaultConstructible |
-		CanonicalRecordConstructionFlags::NothrowDefaultConstructible);
+	const uint32_t valid_facts = static_cast<uint32_t>(
+		CanonicalRecordFacts::Polymorphic |
+		CanonicalRecordFacts::Final |
+		CanonicalRecordFacts::Abstract |
+		CanonicalRecordFacts::TriviallyCopyable |
+		CanonicalRecordFacts::Trivial |
+		CanonicalRecordFacts::Pod |
+		CanonicalRecordFacts::StandardLayout |
+		CanonicalRecordFacts::Aggregate |
+		CanonicalRecordFacts::Empty |
+		CanonicalRecordFacts::Destructible |
+		CanonicalRecordFacts::TriviallyDestructible |
+		CanonicalRecordFacts::NothrowDestructible |
+		CanonicalRecordFacts::HasTrivialDestructor |
+		CanonicalRecordFacts::HasVirtualDestructor |
+		CanonicalRecordFacts::DefaultConstructible |
+		CanonicalRecordFacts::TriviallyDefaultConstructible |
+		CanonicalRecordFacts::NothrowDefaultConstructible);
 	const CanonicalTypeKind kind = type ? nodeUnlocked(type).kind : CanonicalTypeKind::Builtin;
 	if (!type || (kind != CanonicalTypeKind::Record &&
 		kind != CanonicalTypeKind::TemplateSpecialization) ||
-		(static_cast<uint16_t>(flags) & ~valid_flags) != 0 ||
-		(static_cast<uint8_t>(construction_flags) & ~valid_construction_flags) != 0) {
+		(static_cast<uint32_t>(facts) & ~valid_facts) != 0) {
 		throw InternalError("canonical type: invalid record property publication");
 	}
-	const CanonicalRecordProperties properties{type, flags, construction_flags};
+	const CanonicalRecordProperties properties{type, facts};
 	const auto existing = record_property_ids_.find(type.value);
 	if (existing != record_property_ids_.end()) {
 		if (record_properties_[existing->second] != properties) {
