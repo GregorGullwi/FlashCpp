@@ -2,30 +2,34 @@
 
 ## WSL front end crashes while processing the libstdc++ `<typeinfo>` test
 
-Compiling `tests/std/test_std_typeinfo_ret0.cpp` with the WSL Debug compiler
-currently ends in a SIGSEGV before code generation. The captured stack runs
-through `AstToIr::tryEvaluateAsConstExpr<MemberAccessNode>`, constexpr
-destructor evaluation, and `StructTypeInfo::buildRTTI()`. This is a front-end
-failure while processing the standard header, separate from Itanium symbol
-mangling; the typeinfo test therefore does not currently verify the mangling
-change on WSL.
+Reproduced on 2026-10-06 on Ubuntu 24.04 under WSL2 with a fresh Debug compiler
+build (`make main CXX=clang++`). Running
+`x64/Debug/FlashCpp tests/std/test_std_typeinfo_ret0.cpp` preprocesses the
+header, then SIGSEGVs (exit 139) before producing an object. GDB places the
+fault in `std::optional<ASTNode>::has_value()` on a null optional, called by
+`ConstExpr::Evaluator::resolve_constexpr_member_source_from_initializer` for
+`__name` while evaluating the array subscript in `type_info::name()`. The
+evaluation occurs during IR generation through
+`AstToIr::tryEvaluateAsConstExpr<TernaryOperatorNode>`. This front-end failure
+means the test still does not reach its Itanium symbol-mangling check on WSL.
 
 ## Complex member-type class-template bases still need stack coverage
 
 The base-instantiation worklist now expands concrete pack-expanded bases and
-schedules single-segment, non-template member aliases whose targets are
-class-template specializations. The 1,024-level regressions
-`tests/test_deep_pack_expanded_base_chain_ret0.cpp` and
-`tests/test_deep_member_type_base_chain_ret0.cpp` cover those paths; the pack
-and alias regressions also pass at their existing shallow depths. These checks
-use the shipping Windows compiler build settings, with no stack-reserve change.
+schedules member-type chains that pass through plain nested classes and end in
+a non-template alias to a class-template specialization. The 1,024-level
+regressions `tests/test_deep_pack_expanded_base_chain_ret0.cpp`,
+`tests/test_deep_member_type_base_chain_ret0.cpp`, and
+`tests/test_deep_nested_member_type_base_chain_ret0.cpp` cover those paths;
+the pack and alias regressions also pass at their existing shallow depths.
+These checks use the shipping Windows compiler build settings, with no
+stack-reserve change.
 
-More complex member-type paths still fall back to ordinary instantiation:
-multiple member segments, member-template segments, and member aliases whose
-targets are not directly materialized class-template specializations. Stack
-usage for deep chains through those forms remains unverified. Extend dependency
-scheduling to cover them while sharing base substitution semantics with
-ordinary instantiation.
+Member-template segments and member aliases whose targets are not directly
+materialized class-template specializations still fall back to ordinary
+instantiation. Stack usage for deep chains through those forms remains
+unverified. Extend dependency scheduling to cover them while sharing base
+substitution semantics with ordinary instantiation.
 
 ## Member class template dependent bases are not instantiated
 

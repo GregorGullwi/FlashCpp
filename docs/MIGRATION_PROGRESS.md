@@ -1055,6 +1055,14 @@ start them.
 - **Compiler bugs and bounded unsupported cases:** consult
   [known issues](KNOWN_ISSUES.md) before selecting adjacent work. Add newly
   found bugs there; keep this file focused on migration work still ahead.
+- **Template-instantiation stack safety:** the existing class-base preflight
+  now schedules plain nested-class member-type chains ending in a type alias
+  to a class-template specialization. The 1,024-level regression
+  `tests/test_deep_nested_member_type_base_chain_ret0.cpp` passes under the
+  shipping Windows stack setting. This advances one legacy base-instantiation
+  path but does not complete boundary 8A; member-template segments and indirect
+  alias targets remain open in [known issues](KNOWN_ISSUES.md), and the broader
+  AST-based instantiation and old-path deletion criteria remain unfinished.
 - **Callable ABI mangling:** MSVC name mangling still throws an internal error
   for function declarations with non-projectable ordered callable parameters;
   address this at boundary 3B after canonical type migration.
