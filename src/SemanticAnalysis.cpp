@@ -5817,7 +5817,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 		CanonicalTypeTable& canonical_types =
 			requireFrontendContext().canonicalTypes();
-		const std::optional<TypeId> imported = tryImportSupportedCanonical(resolved_syntax);
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(canonical_types, resolved_syntax);
 		if (!imported.has_value()) {
 			throw InternalError(
 				"semantic canonicalization rejected ordered declarator");
@@ -7136,7 +7136,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 		target_non_type_arguments;
 	const auto import_integral_template_parameter_type =
 		[&canonical_types](const TemplateParameterNode& parameter) -> TypeId {
-		const std::optional<TypeId> imported = tryImportSupportedCanonical(parameter.type_specifier_node());
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(canonical_types, parameter.type_specifier_node());
 		if (!imported.has_value()) {
 			return TypeId{};
 		}
@@ -7408,7 +7408,7 @@ void SemanticAnalysis::checkMemberFunctionAddressAccessForTarget(
 			function_template_decl,
 			non_type_arguments);
 		tryBindPublishedTypeEntity(return_type);
-		const std::optional<TypeId> return_import = tryImportSupportedCanonical(return_type);
+		const std::optional<TypeId> return_import = tryImportSupportedCanonical(canonical_types, return_type);
 		if (!return_import.has_value()) {
 			return std::nullopt;
 		}

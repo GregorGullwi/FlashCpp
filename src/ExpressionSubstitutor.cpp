@@ -5363,7 +5363,7 @@ ExpressionSubstitutor::tryRestampDependentNameType(const TypeSpecifierNode& type
 		if (arg_spec.is_pack_expansion()) {
 			return {};
 		}
-		const std::optional<TypeId> imported = tryImportSupportedCanonical(arg_spec);
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, arg_spec);
 		if (!imported.has_value()) {
 			return {};
 		}

@@ -300,7 +300,7 @@ tryBuildFreeFunctionTemplateAddressArgumentConversion(
 
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const std::optional<TypeId> target_import = tryImportSupportedCanonical(parameter_type);
+	const std::optional<TypeId> target_import = tryImportSupportedCanonical(table, parameter_type);
 	if (!target_import.has_value()) {
 		return ArgumentConversionInfo::no_match();
 	}
@@ -492,7 +492,7 @@ tryMaterializeSelectedFreeFunctionTemplateAddress(
 	tryBindPublishedTypeEntity(target_return_type);
 	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	CanonicalTypeTransaction transaction(table);
-	const std::optional<TypeId> target_return_import = tryImportSupportedCanonical(target_return_type);
+	const std::optional<TypeId> target_return_import = tryImportSupportedCanonical(table, target_return_type);
 	if (!target_return_import.has_value()) {
 		return FreeFunctionTemplateAddressMaterialization::Failed;
 	}
@@ -691,14 +691,13 @@ std::optional<TypeSpecifierNode> tryBuildMatchingMemberAddressTemplateType(
 		candidate_signature.setReturnType(std::move(candidate_return_type));
 		candidate_type.set_function_signature(std::move(candidate_signature));
 	}
-	const CanonicalTypeImport candidate_import =
-		importCanonicalType(table, candidate_type);
-	if (candidate_import.status != CanonicalTypeImportStatus::Supported) {
+	const std::optional<TypeId> candidate_import = tryImportSupportedCanonical(table, candidate_type);
+	if (!candidate_import.has_value()) {
 		return std::nullopt;
 	}
 	TypeId candidate_type_id = canonicalTypeWithoutReference(
 		table,
-		candidate_import.type);
+		*candidate_import);
 	candidate_type_id = stripCanonicalTopCv(table, candidate_type_id).first;
 	const CanonicalTypeNode candidate_node = table.node(candidate_type_id);
 	TypeId candidate_function{};
@@ -749,7 +748,7 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 	bindCanonicalClassSpecializationsInFunctionSignature(
 		table,
 		canonical_parameter_type);
-	const std::optional<TypeId> target_import = tryImportSupportedCanonical(canonical_parameter_type);
+	const std::optional<TypeId> target_import = tryImportSupportedCanonical(table, canonical_parameter_type);
 	if (!target_import.has_value()) {
 		return ArgumentConversionInfo::no_match();
 	}
@@ -821,7 +820,7 @@ ArgumentConversionInfo buildQualifiedMemberFunctionAddressArgumentConversion(
 				  buildMemberFunctionPointerTypeFromFunctionDeclaration(*candidate)
 			: FlashCpp::ParserFunctionTypeHelpers::
 				  buildFunctionPointerTypeFromFunctionDeclaration(*candidate);
-		const std::optional<TypeId> candidate_import = tryImportSupportedCanonical(candidate_type);
+		const std::optional<TypeId> candidate_import = tryImportSupportedCanonical(table, candidate_type);
 		if (!candidate_import.has_value()) {
 			continue;
 		}

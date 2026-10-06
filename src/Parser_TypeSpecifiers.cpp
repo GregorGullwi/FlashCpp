@@ -91,9 +91,9 @@ void appendAliasTypeDefaults(
 		TypeSpecifierNode bound_default =
 			parameter.default_value().as<TypeSpecifierNode>();
 		tryBindPublishedTypeEntity(bound_default);
-		const CanonicalTypeImport imported = importCanonicalType(table, bound_default);
-		if (imported.status != CanonicalTypeImportStatus::Supported ||
-			!canonicalTypeIsBindableAliasDefault(table, imported.type)) {
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, bound_default);
+		if (!imported.has_value() ||
+			!canonicalTypeIsBindableAliasDefault(table, *imported)) {
 			return;
 		}
 	}
@@ -5648,7 +5648,7 @@ void Parser::stampDependentMemberChainFromQualifier(
 			if (arg_spec.is_pack_expansion()) {
 				return;
 			}
-			const std::optional<TypeId> imported = tryImportSupportedCanonical(arg_spec);
+			const std::optional<TypeId> imported = tryImportSupportedCanonical(table, arg_spec);
 			if (!imported.has_value()) {
 				return;
 			}
@@ -5804,7 +5804,7 @@ void Parser::tryStampDependentInstantiationMemberChain(
 			if (type_arg->is_pack_expansion()) {
 				return;
 			}
-			const std::optional<TypeId> imported = tryImportSupportedCanonical(*type_arg);
+			const std::optional<TypeId> imported = tryImportSupportedCanonical(table, *type_arg);
 			if (!imported.has_value()) {
 				return;
 			}
