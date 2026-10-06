@@ -954,6 +954,7 @@ struct FunctionAddressOp {
 struct VariableDeclOp {
 	TypeIndex type_index{};	// TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};
+	SizeInBits referenced_value_size_in_bits{};
 	// Frame name: identifies this declaration's storage. A declaration that
 	// shadows an outer local of the same spelling gets its own frame name so
 	// both objects keep a frame slot.
@@ -1097,6 +1098,7 @@ struct IndirectCallOp {
 struct CatchBeginOp {
 	TempVar exception_temp;		// Temporary holding the exception object
 	TypeIndex type_index;		  // Type index for user-defined types
+	SizeInBits exception_size_in_bits{};	// Size of the caught object before reference binding
 	TypeCategory exceptionType() const { return type_index.category(); }
 	std::string_view catch_end_label;  // Label to jump to if not matched
 	std::string_view continuation_label;	 // Parent-function continuation label after catch completes

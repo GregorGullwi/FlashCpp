@@ -129,12 +129,15 @@ const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index) {
 }
 
 size_t getResolvedTypeSizeBytes(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index) {
-	if (const TypeInfo* type_info = tryGetTypeInfo(resolved_type_index)) {
-		if (type_info->hasStoredSize()) {
-			return toSizeT(type_info->sizeInBytes());
-		}
+	const int size_bits = getTypeSpecSizeBits(type_spec);
+	if (size_bits > 0) {
+		return static_cast<size_t>((size_bits + 7) / 8);
 	}
-	TypeCategory resolved_category = resolved_type_index.category();
+	TypeIndex canonical_type_index = canonicalize_type_alias(resolved_type_index).resolvedTypeIndex();
+	TypeCategory resolved_category = canonical_type_index.category();
+	if (resolved_category == TypeCategory::Invalid) {
+		resolved_category = resolve_type_alias(type_spec.type_index());
+	}
 	if (resolved_category == TypeCategory::Invalid) {
 		resolved_category = type_spec.type();
 	}
@@ -147,13 +150,17 @@ MemberSizeAndAlignment calculateResolvedMemberSizeAndAlignment(const TypeSpecifi
 	}
 
 	size_t size = getResolvedTypeSizeBytes(type_spec, resolved_type_index);
-	TypeCategory resolved_category = resolved_type_index.category();
+	const TypeIndex canonical_type_index = canonicalize_type_alias(resolved_type_index).resolvedTypeIndex();
+	TypeCategory resolved_category = canonical_type_index.category();
+	if (resolved_category == TypeCategory::Invalid) {
+		resolved_category = resolve_type_alias(type_spec.type_index());
+	}
 	if (resolved_category == TypeCategory::Invalid) {
 		resolved_category = type_spec.type();
 	}
 
 	size_t alignment = get_type_alignment(resolved_category, size);
-	if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_type_index)) {
+	if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(canonical_type_index)) {
 		alignment = struct_info->alignment;
 	}
 

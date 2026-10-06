@@ -1315,7 +1315,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			info.mangled_name = var_name;  // Phase 4: Using StringHandle directly
 			info.size_in_bits = SizeInBits{type_node.size_in_bits()};
 			TypeCategory semantic_type = resolve_type_alias(type_node.type_index());
-			info.type_index = carriesSemanticTypeIndex(semantic_type) ? type_node.type_index() : TypeIndex{};
+			info.type_index = carriesSemanticTypeIndex(semantic_type)
+				? type_node.type_index()
+				: nativeTypeIndex(semantic_type);
 				// Phase 4: Using StringHandle for key
 			StringHandle key = decl.identifier_token().handle();
 			static_local_names_[key] = info;
@@ -1378,6 +1380,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.declared_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				if (decl_op.is_reference()) {
+					const int referenced_size_bits = runtime_pointer_depth > 0 || type_node.has_function_signature()
+						? POINTER_SIZE_BITS
+						: requireConcreteAliasResolvedTypeSizeBits(type_node, "local reference storage");
+					decl_op.referenced_value_size_in_bits = SizeInBits{referenced_size_bits};
+				}
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = false;
 
@@ -1554,6 +1562,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.declared_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				if (decl_op.is_reference()) {
+					const int referenced_size_bits = runtime_pointer_depth > 0 || type_node.has_function_signature()
+						? POINTER_SIZE_BITS
+						: requireConcreteAliasResolvedTypeSizeBits(type_node, "local reference storage");
+					decl_op.referenced_value_size_in_bits = SizeInBits{referenced_size_bits};
+				}
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = decl.owns_inline_array_storage();
 				if (initializer_typed_value.has_value()) {
@@ -1575,6 +1589,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.declared_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				if (decl_op.is_reference()) {
+					const int referenced_size_bits = runtime_pointer_depth > 0 || type_node.has_function_signature()
+						? POINTER_SIZE_BITS
+						: requireConcreteAliasResolvedTypeSizeBits(type_node, "local reference storage");
+					decl_op.referenced_value_size_in_bits = SizeInBits{referenced_size_bits};
+				}
 				decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 				decl_op.is_array = decl.owns_inline_array_storage();
 				if (type_node.is_member_object_pointer_type() &&
@@ -2513,6 +2533,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	decl_op.declared_name = decl.identifier_token().handle();
 	decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 	decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+	if (decl_op.is_reference()) {
+		const int referenced_size_bits = runtime_pointer_depth > 0 || type_node.has_function_signature()
+			? POINTER_SIZE_BITS
+			: requireConcreteAliasResolvedTypeSizeBits(type_node, "local reference storage");
+		decl_op.referenced_value_size_in_bits = SizeInBits{referenced_size_bits};
+	}
 	decl_op.pointer_depth = PointerDepth{static_cast<int>(runtime_pointer_depth)};
 	decl_op.is_array = decl.owns_inline_array_storage();
 	if (decl.owns_inline_array_storage() && operands.size() >= 10) {
@@ -3700,8 +3726,12 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		hidden_decl_op.type_index = nativeTypeIndex(init_type);
 		hidden_decl_op.size_in_bits = SizeInBits{64};  // Reference is always 64-bit pointer
 		hidden_decl_op.ref_qualifier = node.is_rvalue_reference()
-										   ? CVReferenceQualifier::RValueReference
-										   : CVReferenceQualifier::LValueReference;
+												 ? CVReferenceQualifier::RValueReference
+												 : CVReferenceQualifier::LValueReference;
+		if (init_size <= 0) {
+			throw InternalError("Structured binding reference is missing its referenced value size");
+		}
+		hidden_decl_op.referenced_value_size_in_bits = SizeInBits{init_size};
 		hidden_decl_op.pointer_depth = init_operands.pointer_depth;
 
 			// Generate addressof for the initializer to get reference
@@ -3848,8 +3878,9 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				binding_var_decl.type_index = nativeTypeIndex(array_element_type);
 				binding_var_decl.size_in_bits = SizeInBits{64};	// References are pointers (64-bit addresses)
 				binding_var_decl.ref_qualifier = node.is_rvalue_reference()
-													 ? CVReferenceQualifier::RValueReference
-													 : CVReferenceQualifier::LValueReference;
+												 ? CVReferenceQualifier::RValueReference
+												 : CVReferenceQualifier::LValueReference;
+				binding_var_decl.referenced_value_size_in_bits = SizeInBits{static_cast<int>(array_element_size)};
 				binding_var_decl.initializer = withStorage(makeTypedValue(array_element_type, SizeInBits{64}, element_addr), ValueStorage::ContainsAddress);
 
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
@@ -4078,6 +4109,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 												 ? CVReferenceQualifier::RValueReference
 												 : CVReferenceQualifier::LValueReference;
+			binding_var_decl.referenced_value_size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			binding_var_decl.pointer_depth = PointerDepth{static_cast<int>(member.pointer_depth)};
 			TypedValue init_val;
 			init_val.setType(member.memberType());

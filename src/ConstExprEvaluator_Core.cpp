@@ -2325,6 +2325,51 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 			// Handle identifier - get type from its declaration
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const auto& id_node = std::get<IdentifierNode>(expr);
+				if (context.struct_node != nullptr) {
+					for (const StructMemberDecl& member : context.struct_node->members()) {
+						const DeclarationNode* member_decl = nullptr;
+						if (member.declaration.is<DeclarationNode>()) {
+							member_decl = &member.declaration.as<DeclarationNode>();
+						} else if (member.declaration.is<VariableDeclarationNode>()) {
+							member_decl = &member.declaration.as<VariableDeclarationNode>().declaration();
+						}
+						if (member_decl == nullptr ||
+							member_decl->identifier_token().handle() != id_node.nameHandle()) {
+							continue;
+						}
+
+						size_t member_size_bytes =
+							get_typespec_size_bytes(member_decl->type_specifier_node());
+						if (member_decl->has_outer_array_extents()) {
+							if (member_decl->array_dimensions().empty()) {
+								return EvalResult::error(
+									"sizeof: class member array has no complete bounds",
+									EvalErrorType::TemplateDependentExpression);
+							}
+							for (const ASTNode& dimension : member_decl->array_dimensions()) {
+								const EvalResult bound = Evaluator::evaluate(dimension, context);
+								if (!bound.success() || bound.as_int() <= 0) {
+									return EvalResult::error(
+										"sizeof: class member array has an incomplete bound",
+										EvalErrorType::TemplateDependentExpression);
+								}
+								const size_t extent = static_cast<size_t>(bound.as_int());
+								if (member_size_bytes >
+									std::numeric_limits<size_t>::max() / extent) {
+									return EvalResult::error(
+										"sizeof class member array size overflow in constant expression");
+								}
+								member_size_bytes *= extent;
+							}
+						}
+						if (member_size_bytes == 0) {
+							return EvalResult::error(
+								"sizeof: class member has an incomplete or dependent type",
+								EvalErrorType::TemplateDependentExpression);
+						}
+						return EvalResult::from_int(static_cast<long long>(member_size_bytes));
+					}
+				}
 
 				// Look up the identifier in the symbol table (local first, then global)
 				if (context.symbols) {

@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "TypeSizeQuery.h"
 
 void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 	active_try_statement_depth_ += 1;
@@ -100,6 +101,8 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			CatchBeginOp catch_op;
 			catch_op.exception_temp = exception_temp;
 			catch_op.type_index = type_index.withCategory(type_node.type());
+			catch_op.exception_size_in_bits = SizeInBits{
+				requireConcreteAliasResolvedTypeSizeBits(type_node, "catch exception object")};
 			catch_op.catch_end_label = catch_end_label;
 			catch_op.continuation_label = end_label;
 			catch_op.is_const = type_node.is_const();
@@ -171,6 +174,12 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 												   type_index.is_valid();
 
 					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+					if (decl_op.is_reference()) {
+						const int referenced_size_bits = type_node.runtime_pointer_depth() > 0 || type_node.has_function_signature()
+							? POINTER_SIZE_BITS
+							: requireConcreteAliasResolvedTypeSizeBits(type_node, "catch variable reference storage");
+						decl_op.referenced_value_size_in_bits = SizeInBits{referenced_size_bits};
+					}
 					decl_op.is_array = false;
 					decl_op.custom_alignment = 0;
 

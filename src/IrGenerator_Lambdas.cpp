@@ -973,6 +973,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 		// TempVar is 1-based. For static functions (like __invoke), no 'this' pointer,
 		// so TempVar() starts at 1 which is the first available slot.
 	var_counter = TempVar();
+	GlobalTempVarMetadataStorage::instance().clear();
 	ScopedLocalVarIdReset local_var_id_reset{*this};
 
 	// Set current function return type and size for type checking in return statements

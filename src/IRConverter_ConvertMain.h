@@ -200,12 +200,14 @@ private:
 	// Helper function to get or reserve a stack slot for a temporary variable.
 	// This is now just a thin wrapper around getStackOffsetFromTempVar which
 	// handles stack space tracking and offset registration.
-	int allocateStackSlotForTempVar(int32_t index, int size_in_bits = 64);
+	int allocateStackSlotForTempVar(int32_t index);
+	int allocateStackSlotForTempVar(int32_t index, int size_in_bits);
 
 	// Get the function-local numeric slot, allocating it after named storage.
 	// Recorded producer sizes describe storage (including address slots), while
 	// size_in_bits supplies the size for an explicitly sized unrecorded producer.
-	int32_t getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits = 64);
+	int32_t getStackOffsetFromTempVar(TempVar tempVar);
+	int32_t getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits);
 	SizeInBits getStackVariableLoadSizeBits(VariableKey variable_key) const;
 
 	void flushAllDirtyRegisters();

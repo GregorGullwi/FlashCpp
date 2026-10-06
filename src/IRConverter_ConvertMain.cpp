@@ -2017,10 +2017,62 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		}
 	}
 
-		// Track maximum outgoing call argument space needed
+	// Track maximum outgoing call argument space needed
 	size_t max_outgoing_arg_bytes = 0;
+	uint64_t additional_temporary_storage_bytes = 0;
+	auto addTemporaryStorageBytes = [](uint64_t& total, uint64_t bytes) {
+		if (bytes > std::numeric_limits<uint64_t>::max() - total) {
+			throw InternalError("Temporary storage size calculation overflowed");
+		}
+		total += bytes;
+	};
 
 	for (const auto& instruction : it->second) {
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (instruction.getOpcode() == IrOpcode::TryBegin && g_enable_exceptions) {
+				addTemporaryStorageBytes(additional_temporary_storage_bytes, 16);
+			}
+			if (instruction.hasTypedPayload()) {
+				if (const FunctionCleanupLPOp* cleanup =
+					std::any_cast<FunctionCleanupLPOp>(&instruction.getTypedPayload())) {
+					if (g_enable_exceptions && !cleanup->cleanup_vars.empty()) {
+						addTemporaryStorageBytes(additional_temporary_storage_bytes, 8);
+					}
+				}
+			}
+		}
+		if (instruction.hasTypedPayload()) {
+			if (const ThrowOp* throw_op = std::any_cast<ThrowOp>(&instruction.getTypedPayload());
+				throw_op != nullptr && g_enable_exceptions) {
+				size_t exception_size = throw_op->size_in_bytes;
+				if (const TypeInfo* type_info = tryGetTypeInfo(throw_op->type_index)) {
+					if (const StructTypeInfo* struct_info = type_info->getStructInfo();
+						struct_info != nullptr && struct_info->sizeInBytes().is_set()) {
+						const size_t layout_bytes = toSizeT(struct_info->sizeInBytes());
+						if (layout_bytes != 0) {
+							exception_size = layout_bytes;
+						}
+					}
+				}
+				if (exception_size == 0) {
+					throw InternalError("ThrowOp is missing its exception object size");
+				}
+				if (exception_size > std::numeric_limits<size_t>::max() - 7) {
+					throw InternalError("ThrowOp exception size cannot be aligned safely");
+				}
+				const size_t aligned_exception_size = (exception_size + 7) & ~size_t{7};
+				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+					if (throw_op->type_index.category() == TypeCategory::Struct &&
+						throw_op->type_index.is_valid() && !throw_op->value_is_materialized) {
+						addTemporaryStorageBytes(additional_temporary_storage_bytes, 8);
+					}
+				} else {
+					addTemporaryStorageBytes(additional_temporary_storage_bytes,
+						static_cast<uint64_t>(aligned_exception_size));
+					addTemporaryStorageBytes(additional_temporary_storage_bytes, 32);
+				}
+			}
+		}
 			// Look for TempVar operands in the instruction
 		func_stack_space.shadow_stack_space |=
 			(0x20 * (instruction.getOpcode() == IrOpcode::FunctionCall ||
@@ -2192,7 +2244,19 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			bool is_array = op.is_array;
 			int total_size_bits = size_in_bits.value;
 			if (is_reference) {
+				if (!op.referenced_value_size_in_bits.is_set() ||
+					op.referenced_value_size_in_bits.value <= 0) {
+					throw InternalError("VariableDeclOp is missing its referenced value size");
+				}
 				total_size_bits = 64;
+				if (op.initializer.has_value() &&
+					(std::holds_alternative<unsigned long long>(op.initializer->value) ||
+					 std::holds_alternative<double>(op.initializer->value))) {
+					const uint64_t literal_size_bits =
+						static_cast<uint64_t>(op.referenced_value_size_in_bits.value);
+					const uint64_t literal_size_bytes = ((literal_size_bits + 63) / 64) * 8;
+					addTemporaryStorageBytes(additional_temporary_storage_bytes, literal_size_bytes);
+				}
 			}
 			if (is_array && op.array_count.has_value()) {
 				uint64_t array_size = op.array_count.value();
@@ -2205,15 +2269,26 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		} else {
 				// Track TempVars and their sizes from typed payloads or legacy operand format
 			bool handled_by_typed_payload = false;
+			auto recordTypedValueResult = [this](const TypedValue& value) {
+				const auto* temp = std::get_if<TempVar>(&value.value);
+				if (temp == nullptr) {
+					return false;
+				}
+				const int storage_size_bits = value.storage == ValueStorage::ContainsAddress
+					? POINTER_SIZE_BITS
+					: value.size_in_bits.value;
+				recordTemporarySize(*temp, storage_size_bits);
+				return true;
+			};
 
 				// For typed payload instructions, try common payload types
 			if (instruction.hasTypedPayload()) {
-				if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
-					if (const CatchBeginOp* catch_op = std::any_cast<CatchBeginOp>(&instruction.getTypedPayload())) {
-						if (catch_op->exception_temp.var_number != 0) {
-							size_t catch_temp_number = catch_op->exception_temp.var_number;
+				if (const CatchBeginOp* catch_op = std::any_cast<CatchBeginOp>(&instruction.getTypedPayload())) {
+					if (catch_op->exception_temp.var_number != 0) {
+						if (catch_op->is_reference() || catch_op->is_rvalue_reference()) {
+							if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+								size_t catch_temp_number = catch_op->exception_temp.var_number;
 
-							if (catch_op->is_reference() || catch_op->is_rvalue_reference()) {
 								bool already_reserved = false;
 								for (size_t existing : current_function_reserved_catch_ref_temps_) {
 									if (existing == catch_temp_number) {
@@ -2225,26 +2300,21 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 									current_function_reserved_catch_ref_temps_.push_back(catch_temp_number);
 									current_function_reserved_catch_ref_temp_size_ += 8;
 								}
-								recordTemporarySize(catch_op->exception_temp, 64);
-								handled_by_typed_payload = true;
-							} else {
-								int catch_size_bits = 0;
-								if (const TypeInfo* ti = tryGetTypeInfo(catch_op->type_index)) {
-									if (ti->sizeInBits().is_set()) {
-										catch_size_bits = ti->sizeInBits().value;
-									}
-								} else {
-									catch_size_bits = get_type_size_bits(catch_op->exceptionType());
-								}
-								if (catch_size_bits > 0) {
-									if (current_function_reserved_catch_obj_padding_size_ == 0) {
-										current_function_reserved_catch_obj_padding_size_ = 8;
-									}
-									recordTemporarySize(catch_op->exception_temp, catch_size_bits);
-									handled_by_typed_payload = true;
+							}
+							recordTemporarySize(catch_op->exception_temp, POINTER_SIZE_BITS);
+						} else {
+							if (!catch_op->exception_size_in_bits.is_set() ||
+								catch_op->exception_size_in_bits.value <= 0) {
+								throw InternalError("CatchBeginOp is missing its exception object size");
+							}
+							if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+								if (current_function_reserved_catch_obj_padding_size_ == 0) {
+									current_function_reserved_catch_obj_padding_size_ = 8;
 								}
 							}
+							recordTemporarySize(catch_op->exception_temp, catch_op->exception_size_in_bits.value);
 						}
+						handled_by_typed_payload = true;
 					}
 				}
 
@@ -2272,7 +2342,10 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				else if (const UnaryOp* unary_op = std::any_cast<UnaryOp>(&instruction.getTypedPayload())) {
 					// For logical not, result is always bool (8 bits)
 					// For bitwise not and negate, result size matches operand size
-					recordTemporarySize(unary_op->result, unary_op->value.size_in_bits.value);
+					const int result_size = instruction.getOpcode() == IrOpcode::LogicalNot
+						? 8
+						: unary_op->value.size_in_bits.value;
+					recordTemporarySize(unary_op->result, result_size);
 					handled_by_typed_payload = true;
 				}
 				// Try CallOp (function calls)
@@ -2280,6 +2353,14 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 					if (!call_op->returnsValuelessVoid()) {
 						recordTemporarySize(call_op->result, call_op->return_size_in_bits.value);
 					}
+					handled_by_typed_payload = true;
+				}
+				else if (const ConversionOp* conversion = std::any_cast<ConversionOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(conversion->result, conversion->to_size);
+					handled_by_typed_payload = true;
+				}
+				else if (const TypeConversionOp* conversion = std::any_cast<TypeConversionOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(conversion->result, conversion->to_size_in_bits.value);
 					handled_by_typed_payload = true;
 				}
 				else if (const StackAllocOp* allocation = std::any_cast<StackAllocOp>(&instruction.getTypedPayload())) {
@@ -2292,33 +2373,23 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 				// Try IndirectCallOp (function pointer calls)
 				else if (const IndirectCallOp* indirect_call_op = std::any_cast<IndirectCallOp>(&instruction.getTypedPayload())) {
-					int result_size = indirect_call_op->return_size_in_bits.value;
-					if (result_size == 0) {
-						int computed_size = get_type_size_bits(indirect_call_op->returnType());
-						if (computed_size > 0) {
-							result_size = computed_size;
-						} else {
-							result_size = static_cast<int>(sizeof(void*) * 8);
-						}
+					if (indirect_call_op->return_size_in_bits.value > 0) {
+						recordTemporarySize(indirect_call_op->result, indirect_call_op->return_size_in_bits.value);
+					} else if (indirect_call_op->returnType() != TypeCategory::Void) {
+						throw InternalError("IndirectCallOp is missing its return storage size");
 					}
-					recordTemporarySize(indirect_call_op->result, result_size);
 					handled_by_typed_payload = true;
 				}
 				// Try VirtualCallOp (vtable-dispatched calls)
 				else if (const VirtualCallOp* virtual_call_op = std::any_cast<VirtualCallOp>(&instruction.getTypedPayload())) {
-					if (const auto* result_temp = std::get_if<TempVar>(&virtual_call_op->result.value)) {
-						int result_size = virtual_call_op->result.size_in_bits.value;
-						if (result_size == 0) {
-							int computed_size = get_type_size_bits(virtual_call_op->result.typeEnum());
-							if (computed_size > 0) {
-								result_size = computed_size;
-							} else {
-								result_size = static_cast<int>(sizeof(void*) * 8);
-							}
-						}
-						recordTemporarySize(*result_temp, result_size);
-						handled_by_typed_payload = true;
+					const bool returns_valueless_void =
+						virtual_call_op->result.effectiveIrType() == IrType::Void &&
+						!virtual_call_op->returns_reference &&
+						!virtual_call_op->result.pointer_depth.is_pointer();
+					if (!returns_valueless_void) {
+						recordTypedValueResult(virtual_call_op->result);
 					}
+					handled_by_typed_payload = true;
 				}
 				// Try ArrayAccessOp (array element load)
 				else if (const ArrayAccessOp* array_op = std::any_cast<ArrayAccessOp>(&instruction.getTypedPayload())) {
@@ -2328,6 +2399,15 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				// Try ArrayElementAddressOp (get address of array element)
 				else if (const ArrayElementAddressOp* addr_op = std::any_cast<ArrayElementAddressOp>(&instruction.getTypedPayload())) {
 					recordTemporarySize(addr_op->result, 64); // Pointer is always 64-bit
+					handled_by_typed_payload = true;
+				}
+				else if (const ComputeAddressOp* address_op = std::any_cast<ComputeAddressOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(address_op->result, POINTER_SIZE_BITS);
+					handled_by_typed_payload = true;
+				}
+				else if (const VirtualBaseAdjustOp* adjustment =
+					std::any_cast<VirtualBaseAdjustOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(adjustment->result, POINTER_SIZE_BITS);
 					handled_by_typed_payload = true;
 				}
 				// Try DereferenceOp (for dereferencing pointers/references)
@@ -2358,24 +2438,75 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 					// Try GlobalLoadOp (for loading global variables)
 				else if (const GlobalLoadOp* global_load_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload())) {
-					if (const auto* temp_var_ptr = std::get_if<TempVar>(&global_load_op->result.value)) {
-						auto temp_var = *temp_var_ptr;
-						recordTemporarySize(temp_var, global_load_op->result.size_in_bits.value);
-						handled_by_typed_payload = true;
-					}
+					handled_by_typed_payload = recordTypedValueResult(global_load_op->result);
 				}
 				// Try MemberLoadOp (member access — e.g. %2 = member_access bool8 %obj.flag)
-				// Large struct members (>64 bits) are stored as pointer addresses (64-bit) by
-				// handleMemberAccess, so clamp to 64 in that case.  Zero size can arise from
-				// incomplete/void members; treat those as 64-bit pointers as well.
 				else if (const MemberLoadOp* member_load_op = std::any_cast<MemberLoadOp>(&instruction.getTypedPayload())) {
-					if (std::holds_alternative<TempVar>(member_load_op->result.value)) {
-						auto temp_var = std::get<TempVar>(member_load_op->result.value);
-						const int raw_size = member_load_op->result.size_in_bits.value;
-						const int result_size = (raw_size > 0 && raw_size <= 64) ? raw_size : 64;
-						recordTemporarySize(temp_var, result_size);
-						handled_by_typed_payload = true;
+					handled_by_typed_payload = recordTypedValueResult(member_load_op->result);
+				}
+				else if (const StringLiteralOp* string_literal = std::any_cast<StringLiteralOp>(&instruction.getTypedPayload())) {
+					const auto* temp = std::get_if<TempVar>(&string_literal->result);
+					if (temp == nullptr) {
+						throw InternalError("StringLiteralOp requires numeric temporary storage");
 					}
+					recordTemporarySize(*temp, POINTER_SIZE_BITS);
+					handled_by_typed_payload = true;
+				}
+				else if (const FunctionAddressOp* function_address =
+					std::any_cast<FunctionAddressOp>(&instruction.getTypedPayload())) {
+					handled_by_typed_payload = recordTypedValueResult(function_address->result);
+				}
+				else if (const HeapAllocOp* allocation = std::any_cast<HeapAllocOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(allocation->result, POINTER_SIZE_BITS);
+					handled_by_typed_payload = true;
+				}
+				else if (const HeapAllocArrayOp* allocation = std::any_cast<HeapAllocArrayOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(allocation->result, POINTER_SIZE_BITS);
+					handled_by_typed_payload = true;
+				}
+				else if (const PlacementNewOp* allocation = std::any_cast<PlacementNewOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(allocation->result, POINTER_SIZE_BITS);
+					handled_by_typed_payload = true;
+				}
+				else if (const TypeidOp* typeid_op = std::any_cast<TypeidOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(typeid_op->result, POINTER_SIZE_BITS);
+					handled_by_typed_payload = true;
+				}
+				else if (const DynamicCastOp* dynamic_cast_op = std::any_cast<DynamicCastOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(dynamic_cast_op->result, POINTER_SIZE_BITS);
+					handled_by_typed_payload = true;
+				}
+				else if (const ReturnOp* return_op = std::any_cast<ReturnOp>(&instruction.getTypedPayload())) {
+					if (return_op->return_value.has_value()) {
+						if (const auto* temp = std::get_if<TempVar>(&return_op->return_value.value())) {
+							const int storage_size_bits = return_op->return_storage == ValueStorage::ContainsAddress
+								? POINTER_SIZE_BITS
+								: return_op->return_size;
+							recordTemporarySize(*temp, storage_size_bits);
+						}
+					}
+					handled_by_typed_payload = true;
+				}
+				else if (const SehExceptionIntrinsicOp* intrinsic =
+					std::any_cast<SehExceptionIntrinsicOp>(&instruction.getTypedPayload())) {
+					const int result_size = instruction.getOpcode() == IrOpcode::SehGetExceptionInfo ? POINTER_SIZE_BITS : 32;
+					recordTemporarySize(intrinsic->result, result_size);
+					handled_by_typed_payload = true;
+				}
+				else if (const SehSaveExceptionCodeOp* save =
+					std::any_cast<SehSaveExceptionCodeOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(save->saved_var, 32);
+					handled_by_typed_payload = true;
+				}
+				else if (const SehGetExceptionCodeBodyOp* code =
+					std::any_cast<SehGetExceptionCodeBodyOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(code->result, 32);
+					handled_by_typed_payload = true;
+				}
+				else if (const SehAbnormalTerminationOp* termination =
+					std::any_cast<SehAbnormalTerminationOp>(&instruction.getTypedPayload())) {
+					recordTemporarySize(termination->result, 32);
+					handled_by_typed_payload = true;
 				}
 				// Add more payload types here as they produce TempVars
 
@@ -2384,7 +2515,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			// Fallback: Track TempVars from legacy operand format
 			// Most arithmetic/logic instructions have format: [result_var, type, size, ...]
 			// where operand 0 is result, operand 1 is type, operand 2 is size
-			if (!handled_by_typed_payload &&
+			if (!instruction.hasTypedPayload() && !handled_by_typed_payload &&
 				instruction.getOperandCount() >= 3 &&
 				instruction.isOperandType<TempVar>(0) &&
 				instruction.isOperandType<int>(2)) {
@@ -2460,8 +2591,13 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 	// Include every recorded slot, rounded to the target's eight-byte stack unit.
 	uint64_t temp_var_space = 0;
 	for (const TemporarySlot& slot : temporary_slots_) {
-		temp_var_space += (static_cast<uint64_t>(slot.size_bits) + 63) / 64 * 8;
+		const uint64_t slot_size_bytes = (static_cast<uint64_t>(slot.size_bits) + 63) / 64 * 8;
+		addTemporaryStorageBytes(temp_var_space, slot_size_bytes);
 	}
+	addTemporaryStorageBytes(temp_var_space, 8);
+	addTemporaryStorageBytes(temp_var_space, current_function_reserved_catch_obj_padding_size_);
+	addTemporaryStorageBytes(temp_var_space, current_function_reserved_catch_return_slot_size_);
+	addTemporaryStorageBytes(temp_var_space, additional_temporary_storage_bytes);
 	if (temp_var_space > INT_MAX) {
 		throw InternalError("Temporary storage exceeds the target stack displacement range");
 	}
@@ -2481,8 +2617,14 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 template <class TWriterClass>
 int IrToObjConverter<TWriterClass>::allocateStackSlotForTempVar(int32_t index, int size_in_bits) {
+	static_cast<void>(size_in_bits);
+	return allocateStackSlotForTempVar(index);
+}
+
+template <class TWriterClass>
+int IrToObjConverter<TWriterClass>::allocateStackSlotForTempVar(int32_t index) {
 	TempVar tempVar(index);
-	return getStackOffsetFromTempVar(tempVar, size_in_bits);
+	return getStackOffsetFromTempVar(tempVar);
 }
 
 template <class TWriterClass>
@@ -2499,7 +2641,8 @@ typename IrToObjConverter<TWriterClass>::TemporarySlot& IrToObjConverter<TWriter
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::recordTemporarySize(TempVar temp, int size_bits) {
 	if (size_bits <= 0) {
-		throw InternalError("Temporary storage requires a positive IR size");
+		throw InternalError(std::string("Temporary storage requires a positive IR size for temporary ") +
+			std::to_string(temp.var_number) + " (received " + std::to_string(size_bits) + " bits)");
 	}
 	TemporarySlot& slot = temporarySlot(temp);
 	slot.size_bits = std::max(slot.size_bits, size_bits);
@@ -2507,13 +2650,17 @@ void IrToObjConverter<TWriterClass>::recordTemporarySize(TempVar temp, int size_
 
 template <class TWriterClass>
 int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits) {
+	static_cast<void>(size_in_bits);
+	return getStackOffsetFromTempVar(tempVar);
+}
+
+template <class TWriterClass>
+int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVar) {
 	TemporarySlot& slot = temporarySlot(tempVar);
-	// Producer IR describes the stored representation. A consumer may pass the
-	// size of an aggregate pointee, which must never enlarge an address slot.
-	const int actual_size_bits = slot.size_bits > 0 ? slot.size_bits : size_in_bits;
+	const int actual_size_bits = slot.size_bits;
 	const int64_t size_bytes = (static_cast<int64_t>(actual_size_bits) + 63) / 64 * 8;
 	if (actual_size_bits <= 0 || variable_scopes.empty()) {
-		throw InternalError("Temporary allocation requires sized function storage");
+		throw InternalError("Temporary producer is missing its recorded storage size");
 	}
 	if (slot.offset != INT_MIN) {
 		return slot.offset;
@@ -2524,9 +2671,6 @@ int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVa
 		throw InternalError("Temporary storage exceeds the target stack displacement range");
 	}
 	next_temp_var_offset_ = static_cast<int32_t>(next_offset);
-	if (slot.size_bits == 0) {
-		slot.size_bits = actual_size_bits;
-	}
 	slot.offset = -static_cast<int32_t>(frame_bytes);
 	variable_scopes.back().scope_stack_space = std::min(variable_scopes.back().scope_stack_space, slot.offset);
 	return slot.offset;
@@ -4433,27 +4577,17 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 		flushAllDirtyRegisters();
 
-			// Determine effective return size; fall back to type size if not provided
+			// Return storage size is published by call IR; valueless void calls have no result slot.
 		int return_size_bits = call_op.return_size_in_bits.value;
-		if (return_size_bits == 0) {
-			int computed_size = get_type_size_bits(call_op.returnType());
-			if (computed_size > 0) {
-				return_size_bits = computed_size;
-			} else {
-					// Default to pointer size to ensure unique stack slot
-				return_size_bits = static_cast<int>(sizeof(void*) * 8);
-			}
+		const bool returns_valueless_void = call_op.returnsValuelessVoid();
+		if (!returns_valueless_void && return_size_bits <= 0) {
+			throw InternalError("CallOp is missing its return storage size");
 		}
 
-			// Get result offset - use actual return size for proper stack allocation
-		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "handleFunctionCall: allocating temporary {} with return_size_in_bits={}",
-						 call_op.result.var_number, return_size_bits);
-		int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, return_size_bits);
-		FLASH_LOG_FORMAT(Codegen, Debug,
-						 "handleFunctionCall: result_offset={} for temporary {}",
-						 result_offset, call_op.result.var_number);
-		temporarySlot(call_op.result).offset = result_offset;
+		int result_offset = 0;
+		if (!returns_valueless_void) {
+			result_offset = getStackOffsetFromTempVar(call_op.result);
+		}
 
 			// Platform-specific format check for ABI differences
 		constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
@@ -4948,7 +5082,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Store return value - RAX for integers, XMM0 for floats.
 			// `const void*` is TypeCategory::Void with a 64-bit pointer size; skipping
 			// that store drops the callee's RAX before the caller compares it.
-		if (!call_op.returnsValuelessVoid() && !call_op.usesReturnSlot()) {
+		if (!returns_valueless_void && !call_op.usesReturnSlot()) {
 			if (call_op.returns_reference) {
 					// A reference result is a 64-bit pointer in RAX, never a by-value
 					// aggregate. Store it directly; running SysV struct classification
@@ -5718,8 +5852,14 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		// Get result offset
 	assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
 	const TempVar& result_var = std::get<TempVar>(op.result.value);
-	int result_offset = getStackOffsetFromTempVar(result_var);
-	temporarySlot(result_var).offset = result_offset;
+	const bool returns_valueless_void =
+		op.result.effectiveIrType() == IrType::Void &&
+		!op.returns_reference &&
+		!op.result.pointer_depth.is_pointer();
+	int result_offset = 0;
+	if (!returns_valueless_void) {
+		result_offset = getStackOffsetFromTempVar(result_var);
+	}
 
 		// Get object offset
 	int object_offset = 0;
@@ -5957,7 +6097,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		// Step 7: Store return value from RAX to result variable using the correct size.
 		// A hidden-slot aggregate was constructed directly into the result location by
 		// the callee, so RAX (the returned slot pointer) must not be stored over it.
-	if (op.result.effectiveIrType() != IrType::Void && !uses_return_slot) {
+	if (!returns_valueless_void && !uses_return_slot) {
 		emitMovToFrameSized(
 			SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
 			SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.typeEnum())}	// dest
@@ -7016,22 +7156,12 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 	}
 
 	if (is_reference) {
-			// For references, we need to determine the size of the VALUE being referenced,
-			// not the size of the reference itself (which is always 64 bits for a pointer)
-		int value_size_bits = op.size_in_bits.value;
-
-			// If size_in_bits is 64 and the type is not a 64-bit type, we need to calculate the actual size
-			// This happens for structured bindings where size_in_bits is set to 64 (pointer size)
-		if (op.size_in_bits == SizeInBits{64} && !op.pointer_depth.is_pointer()) {
-				// Try to get the actual size from the type
-			int calculated_size = get_type_size_bits(var_type);
-			if (calculated_size > 0 && calculated_size != 64) {
-				value_size_bits = calculated_size;
-				FLASH_LOG(Codegen, Debug, "Reference variable: Calculated value_size_bits=", value_size_bits, " from type=", static_cast<int>(var_type));
-			}
+		const int value_size_bits = op.referenced_value_size_in_bits.value;
+		if (value_size_bits <= 0) {
+			throw InternalError("Reference VariableDeclOp is missing its referenced value size");
 		}
 
-		setReferenceInfo(var_info->offset, TypeIndex{0, var_type}, value_size_bits, is_rvalue_reference, TempVar{0});
+		setReferenceInfo(var_info->offset, op.type_index, value_size_bits, is_rvalue_reference, TempVar{0});
 		int32_t dst_offset = var_info->offset;
 		X64Register pointer_reg = allocateRegisterWithSpilling();
 		bool pointer_initialized = false;
@@ -7091,13 +7221,9 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					// C++ allows binding rvalue references and const lvalue references
 					// to literals (e.g., int&& rr = 42; const int& cr = 42;) by
 					// extending the lifetime of a temporary.
-				int lit_size = op.size_in_bits.value;
-				if (lit_size == 64) {
-						// For references, size_in_bits is 64 (pointer size);
-						// use the actual value size from get_type_size_bits
-					int actual = get_type_size_bits(var_type);
-					if (actual > 0 && actual != 64)
-						lit_size = actual;
+				int lit_size = op.referenced_value_size_in_bits.value;
+				if (lit_size <= 0) {
+					throw InternalError("Reference literal is missing its referenced value size");
 				}
 				int lit_bytes = (lit_size + 7) / 8;
 				lit_bytes = (lit_bytes + 7) & ~7;  // 8-byte aligned
@@ -15351,18 +15477,17 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	flushAllDirtyRegisters();
 
 	int return_size_bits = op.return_size_in_bits.value;
-	if (return_size_bits == 0) {
-		int computed_size = get_type_size_bits(op.returnType());
-		if (computed_size > 0) {
-			return_size_bits = computed_size;
-		} else {
-			return_size_bits = static_cast<int>(sizeof(void*) * 8);
-		}
+	const bool returns_valueless_void =
+		op.returnType() == TypeCategory::Void && !op.returns_reference && !op.return_pointer_depth.is_pointer();
+	if (!returns_valueless_void && return_size_bits <= 0) {
+		throw InternalError("IndirectCallOp is missing its return storage size");
 	}
 
 		// Get result offset
-	int result_offset = allocateStackSlotForTempVar(op.result.var_number, return_size_bits);
-	temporarySlot(op.result).offset = result_offset;
+	int result_offset = 0;
+	if (!returns_valueless_void) {
+		result_offset = getStackOffsetFromTempVar(op.result);
+	}
 
 	constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 	const size_t max_int_regs = is_coff_format ? 4 : 6;
@@ -15668,10 +15793,6 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	textSectionData.push_back(0xFF); // CALL r/m64
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
-	const bool returns_valueless_void =
-		op.returnType() == TypeCategory::Void &&
-		!op.returns_reference &&
-		!op.return_pointer_depth.is_pointer();
 	if (!returns_valueless_void && !op.usesReturnSlot()) {
 		if (op.returns_reference || op.return_pointer_depth.is_pointer()) {
 				// A reference (T& / T&&) or pointer (T*) result is a 64-bit address in
@@ -15774,14 +15895,8 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 		return;
 	}
 
-	int type_size_bits = 0;
+	const int type_size_bits = catch_op.exception_size_in_bits.value;
 	bool is_builtin = is_builtin_type(catch_op.exceptionType());
-
-	if (is_builtin) {
-		type_size_bits = get_type_size_bits(catch_op.exceptionType());
-	} else if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
-		type_size_bits = ti->sizeInBits().value;
-	}
 	size_t type_size = type_size_bits / 8;
 
 	if (g_enable_debug_output) {
@@ -15928,20 +16043,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			// var_number == 0 indicates catch(...) which has no exception variable,
 			// or an unnamed catch parameter like catch(int) without a variable name.
 		if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
-			int catch_storage_bits = 64;
-			if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
-				if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
-					if (ti->sizeInBits().is_set()) {
-						catch_storage_bits = static_cast<int>(ti->sizeInBits().value);
-					}
-				} else {
-					int builtin_size = get_type_size_bits(catch_op.exceptionType());
-					if (builtin_size > 0) {
-						catch_storage_bits = builtin_size;
-					}
-				}
-			}
-			handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, catch_storage_bits);
+			handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
 		} else {
 			handler.catch_obj_stack_offset = 0;
 		}
@@ -16079,18 +16181,12 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			// the address of the slot itself.
 		if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
 			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, 64);
-			int referenced_size_bits = 64;
-			if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
-				if (ti->sizeInBits().is_set()) {
-					referenced_size_bits = static_cast<int>(ti->sizeInBits().value);
-				}
-			} else {
-				int builtin_size = get_type_size_bits(catch_op.exceptionType());
-				if (builtin_size > 0) {
-					referenced_size_bits = builtin_size;
-				}
-			}
-			setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()}, referenced_size_bits, catch_op.is_rvalue_reference(), catch_op.exception_temp);
+			setReferenceInfo(
+				stack_offset,
+				catch_op.type_index,
+				catch_op.exception_size_in_bits.value,
+				catch_op.is_rvalue_reference(),
+				catch_op.exception_temp);
 		} else if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0) {
 			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp, 64);
 			indirect_stack_info_.erase(stack_offset);
@@ -16283,6 +16379,9 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 		exception_size = 1;
 
 		// Round exception size up to 8-byte alignment
+	if (exception_size > std::numeric_limits<size_t>::max() - 7) {
+		throw InternalError("ThrowOp exception size cannot be aligned safely");
+	}
 	size_t aligned_exception_size = (exception_size + 7) & ~7;
 
 			// Platform-specific exception handling
@@ -16445,16 +16544,26 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			// window is overwritten before RaiseException snapshots the object,
 			// so cross-TU catch-by-value/ref copies zeros. Keep 32 bytes of
 			// stack below the slot (MSVC places the object at [RSP+20h]+).
-		int32_t throw_temp_size = static_cast<int32_t>((aligned_exception_size + 7) & ~7);
-		next_temp_var_offset_ += throw_temp_size;
-		int32_t throw_slot_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
-		next_temp_var_offset_ += 32;
+		if (aligned_exception_size > static_cast<size_t>(INT_MAX)) {
+			throw InternalError("Windows throw object exceeds the target stack displacement range");
+		}
+		const int64_t throw_temp_size = static_cast<int64_t>(aligned_exception_size);
+		const int64_t throw_slot_frame_offset = static_cast<int64_t>(current_function_named_vars_size_) +
+			next_temp_var_offset_ + throw_temp_size;
+		const int64_t next_temp_offset = static_cast<int64_t>(next_temp_var_offset_) + throw_temp_size + 32;
+		const int64_t required_frame_size = static_cast<int64_t>(current_function_named_vars_size_) + next_temp_offset;
+		if (throw_slot_frame_offset <= 0 || throw_slot_frame_offset > INT_MAX ||
+			next_temp_offset < 0 || next_temp_offset > INT_MAX ||
+			required_frame_size < 0 || required_frame_size > INT_MAX) {
+			throw InternalError("Windows throw storage exceeds the target stack displacement range");
+		}
+		next_temp_var_offset_ = static_cast<int32_t>(next_temp_offset);
+		int32_t throw_slot_offset = -static_cast<int32_t>(throw_slot_frame_offset);
 			// Extend scope_stack_space to account for this allocation
 		if (!variable_scopes.empty()) {
 			auto& scope = variable_scopes.back();
-			int32_t required = static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_;
-			if (required > -scope.scope_stack_space) {
-				scope.scope_stack_space = -required;
+			if (required_frame_size > -static_cast<int64_t>(scope.scope_stack_space)) {
+				scope.scope_stack_space = -static_cast<int32_t>(required_frame_size);
 			}
 		}
 

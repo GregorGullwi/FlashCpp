@@ -878,8 +878,28 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 						if (type_spec.token().type() == Token::Type::Identifier) {
 							StringHandle tok_handle = type_spec.token().handle();
 							auto sym_opt = lookup_symbol(tok_handle);
-							if (sym_opt.has_value() &&
-								sym_opt->is<VariableDeclarationNode>()) {
+							bool is_current_class_member = false;
+							if (!struct_parsing_context_stack_.empty()) {
+								const StructDeclarationNode* current_struct =
+									struct_parsing_context_stack_.back().struct_node;
+								if (current_struct != nullptr) {
+									for (const StructMemberDecl& member : current_struct->members()) {
+										const DeclarationNode* member_decl = nullptr;
+										if (member.declaration.is<DeclarationNode>()) {
+											member_decl = &member.declaration.as<DeclarationNode>();
+										} else if (member.declaration.is<VariableDeclarationNode>()) {
+											member_decl = &member.declaration.as<VariableDeclarationNode>().declaration();
+										}
+										if (member_decl != nullptr &&
+											member_decl->identifier_token().handle() == tok_handle) {
+											is_current_class_member = true;
+											break;
+										}
+									}
+								}
+							}
+							if ((sym_opt.has_value() && sym_opt->is<VariableDeclarationNode>()) ||
+								is_current_class_member) {
 								is_complete_type = false;
 							}
 						}
