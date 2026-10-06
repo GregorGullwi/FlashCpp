@@ -3971,9 +3971,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				result.set_reference_qualifier(ReferenceQualifier::LValueReference);
 				return result;
 			} else if (operand_type.pointer_levels().size() > 0) {
-				// Dereferencing a pointer removes one level of pointer
+				// Dereferencing a pointer removes one level of pointer and yields
+				// an lvalue of the pointee type, so the reference rule and
+				// overload ranking see the same value category.
 				TypeSpecifierNode result = operand_type;
 				result.remove_pointer_level();
+				result.set_reference_qualifier(ReferenceQualifier::LValueReference);
 				// The array bounds now describe the dereferenced array object,
 				// rather than the pointee of a still-present pointer.
 				if (result.pointer_levels().empty() &&

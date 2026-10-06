@@ -606,9 +606,10 @@ that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
 boundary. This slice advanced the importer/declarator coverage work item by
 completing the `[dcl.type.decltype]` value-category rule: callable-object calls
-select their overload from each argument's value category, and an
-unparenthesized class member access names the declared member type; it completes
-no exit criterion on its own. The flat-field-absence criterion remains advanced
+select their overload from each argument's value category, an unparenthesized
+class member access names the declared member type, and a pointer dereference is
+an lvalue of the pointee type; it completes no exit criterion on its own. The
+flat-field-absence criterion remains advanced
 but incomplete for the type-trait consumer family, the lazy-constraint
 evaluator, and trait-operand nominal and member-owner identity; the flat
 classifier in `TypeTraitEvaluator.cpp` remains for the families listed under
@@ -865,7 +866,13 @@ unparenthesized class member access names the declared type of the member, so
 declared reference member keeps its `int&` in both forms. The parser suppresses
 the value-category reference for that one shape; `.`, `->`, and nested members
 are covered by `tests/test_decltype_unparenthesized_member_access_ret0.cpp`.
-Calls whose argument value category is not known at parse time remain open.
+A pointer dereference now yields an lvalue of the pointee type, so
+`decltype(*pointer)` is `T&` without parentheses and overload ranking selects the
+lvalue overload; `tests/test_decltype_dereference_value_category_ret0.cpp`
+covers scalar, nested, and record pointees plus a runtime binding. The
+ordered-declarator pointer-to-array dereference still defers to sema, so its
+`decltype` remains open. Calls whose argument value category is not known at
+parse time also remain open.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
@@ -1004,8 +1011,11 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    `T&&`); `tests/test_decltype_call_operator_value_category_ret0.cpp` checks
    those forms. The reference rule's complement is also in place: an
    unparenthesized class member access names the declared member type, covered
-   by `tests/test_decltype_unparenthesized_member_access_ret0.cpp`. Remaining: a
-   call or xvalue operand whose value category the parser does not know at parse
+   by `tests/test_decltype_unparenthesized_member_access_ret0.cpp`, and a
+   pointer dereference yields an lvalue of the pointee type, covered by
+   `tests/test_decltype_dereference_value_category_ret0.cpp`. Remaining: the
+   ordered-declarator pointer-to-array dereference (deferred to sema) and a call
+   or xvalue operand whose value category the parser does not know at parse
    time.
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
