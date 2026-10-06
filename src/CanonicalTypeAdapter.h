@@ -2,7 +2,6 @@
 
 #include "AstNodeTypes.h"
 #include "CanonicalTypes.h"
-#include "FrontendContext.h"
 #include "TemplateRegistry_Types.h"
 
 #include <limits>
@@ -1312,13 +1311,14 @@ inline CanonicalTypeImport importCanonicalType(CanonicalTypeTable& table, const 
 // Collapses the common "import this operand, then bail unless it imported as
 // Supported" preamble. Returns the imported TypeId on Supported and an empty
 // result for every other status, so the caller keeps its compatibility
-// fallback; a caller that must distinguish Invalid (for example conversion
-// planning) keeps its explicit status handling. The caller owns the
-// CanonicalTypeTransaction over requireFrontendContext()'s table, so the
-// import still rolls back with the caller's scope.
+// fallback. Invalid is folded into that fallback: these operands are
+// compiler-constructed projections where a malformed shape is not a hard error,
+// and the callers deliberately recover. The caller owns the
+// CanonicalTypeTransaction over `table`, so the import still rolls back with
+// the caller's scope.
 inline std::optional<TypeId> tryImportSupportedCanonical(
+	CanonicalTypeTable& table,
 	const TypeSpecifierNode& syntax) {
-	CanonicalTypeTable& table = requireFrontendContext().canonicalTypes();
 	const CanonicalTypeImport imported = importCanonicalType(table, syntax);
 	if (imported.status != CanonicalTypeImportStatus::Supported) {
 		return std::nullopt;

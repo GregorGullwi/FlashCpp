@@ -2057,7 +2057,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						Token{},
 						CVQualifier::None,
 						ReferenceQualifier::None);
-					const std::optional<TypeId> imported_value_type = tryImportSupportedCanonical(value_type);
+					const std::optional<TypeId> imported_value_type = tryImportSupportedCanonical(canonical_types, value_type);
 					if (!imported_value_type.has_value()) {
 						return std::nullopt;
 					}
@@ -2083,7 +2083,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (argument_type.has_member_class()) {
 						tryBindPublishedMemberClassEntity(argument_type);
 					}
-					const std::optional<TypeId> imported_type = tryImportSupportedCanonical(argument_type);
+					const std::optional<TypeId> imported_type = tryImportSupportedCanonical(canonical_types, argument_type);
 					if (!imported_type.has_value()) {
 						return std::nullopt;
 					}

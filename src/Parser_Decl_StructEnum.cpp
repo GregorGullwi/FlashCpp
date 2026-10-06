@@ -152,8 +152,8 @@ bool tryPublishCanonicalRecordFieldSchema(CanonicalTypeTable& table, EntityId en
 			return false;
 		}
 		TypeSpecifierNode member_syntax = makeCanonicalMemberTypeSpec(member);
-		const CanonicalTypeImport imported = importCanonicalType(table, member_syntax);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, member_syntax);
+		if (!imported.has_value()) {
 			return false;
 		}
 		CanonicalRecordMemberFlags flags = CanonicalRecordMemberFlags::None;
@@ -168,7 +168,7 @@ bool tryPublishCanonicalRecordFieldSchema(CanonicalTypeTable& table, EntityId en
 			flags = flags | CanonicalRecordMemberFlags::NoUniqueAddress;
 		}
 		members.push_back({
-			.type = imported.type,
+			.type = *imported,
 			.offset_bytes = canonicalLayoutSize(member.offset),
 			.size_bytes = canonicalLayoutSize(member.size),
 			.bit_width = bit_width,
@@ -219,13 +219,13 @@ bool tryPublishCanonicalNamedTypeMembers(CanonicalTypeTable& table, EntityId ent
 		TypeSpecifierNode alias_syntax = alias.type_node.as<TypeSpecifierNode>();
 		tryBindPublishedTypeEntity(alias_syntax);
 		tryBindPublishedMemberClassEntity(alias_syntax);
-		const CanonicalTypeImport imported = importCanonicalType(table, alias_syntax);
-		if (imported.status != CanonicalTypeImportStatus::Supported) {
+		const std::optional<TypeId> imported = tryImportSupportedCanonical(table, alias_syntax);
+		if (!imported.has_value()) {
 			return false;
 		}
 		named_members.push_back({
 			.name = alias_name,
-			.type = imported.type,
+			.type = *imported,
 		});
 	}
 
@@ -4968,7 +4968,8 @@ ParseResult Parser::parse_enum_declaration() {
 				get_type_size_bits(*promotion_category),
 				Token{},
 				CVQualifier::None);
-			const std::optional<TypeId> imported_promotion = tryImportSupportedCanonical(promotion_syntax);
+			const std::optional<TypeId> imported_promotion =
+				tryImportSupportedCanonical(front_end.canonicalTypes(), promotion_syntax);
 			if (!imported_promotion.has_value()) {
 				throw InternalError("canonical enum promotion type is not importable");
 			}
@@ -4978,7 +4979,8 @@ ParseResult Parser::parse_enum_declaration() {
 			? *enum_ref.underlying_type()
 			: TypeSpecifierNode(enum_info.underlying_type, TypeQualifier::None,
 				enum_info.underlying_size.value, Token{}, CVQualifier::None);
-		const std::optional<TypeId> imported_underlying = tryImportSupportedCanonical(underlying_syntax);
+		const std::optional<TypeId> imported_underlying =
+			tryImportSupportedCanonical(front_end.canonicalTypes(), underlying_syntax);
 		if (!imported_underlying.has_value()) {
 			return;
 		}

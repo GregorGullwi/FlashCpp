@@ -3412,7 +3412,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				requireFrontendContext().canonicalTypes();
 			TypeSpecifierNode canonical_syntax = type;
 			tryBindPublishedTypeEntity(canonical_syntax);
-			const std::optional<TypeId> imported = tryImportSupportedCanonical(canonical_syntax);
+			const std::optional<TypeId> imported = tryImportSupportedCanonical(canonical_types, canonical_syntax);
 			if (!imported.has_value()) {
 				return false;
 			}
@@ -5174,7 +5174,7 @@ std::optional<TypeId> Parser::tryImportCanonicalStaticMemberType(
 	TypeSpecifierNode& type) {
 	tryBindPublishedTypeEntity(type);
 	tryBindPublishedMemberClassEntity(type);
-	const std::optional<TypeId> imported = tryImportSupportedCanonical(type);
+	const std::optional<TypeId> imported = tryImportSupportedCanonical(requireFrontendContext().canonicalTypes(), type);
 	if (!imported.has_value()) {
 		return std::nullopt;
 	}

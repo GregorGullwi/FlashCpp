@@ -2213,11 +2213,11 @@ inline TypeId canonicalPromotedFixedEnumUnderlyingType(
 		get_type_size_bits(promoted_category),
 		Token{},
 		CVQualifier::None);
-	const CanonicalTypeImport imported = importCanonicalType(table, promoted_syntax);
-	if (imported.status != CanonicalTypeImportStatus::Supported) {
+	const std::optional<TypeId> imported = tryImportSupportedCanonical(table, promoted_syntax);
+	if (!imported.has_value()) {
 		throw InternalError("canonical enum promotion type is not importable");
 	}
-	return imported.type;
+	return *imported;
 }
 
 inline std::optional<int> tryCompareFixedEnumPromotionTargets(
@@ -2234,9 +2234,9 @@ inline std::optional<int> tryCompareFixedEnumPromotionTargets(
 	if (canonical_argument.category() == TypeCategory::Enum) {
 		tryBindPublishedTypeEntity(canonical_argument);
 	}
-	const std::optional<TypeId> argument_import = tryImportSupportedCanonical(canonical_argument);
-	const std::optional<TypeId> lhs_import = tryImportSupportedCanonical(lhs_parameter);
-	const std::optional<TypeId> rhs_import = tryImportSupportedCanonical(rhs_parameter);
+	const std::optional<TypeId> argument_import = tryImportSupportedCanonical(table, canonical_argument);
+	const std::optional<TypeId> lhs_import = tryImportSupportedCanonical(table, lhs_parameter);
+	const std::optional<TypeId> rhs_import = tryImportSupportedCanonical(table, rhs_parameter);
 	if (!argument_import.has_value() || !lhs_import.has_value() ||
 		!rhs_import.has_value()) {
 		return std::nullopt;
@@ -2858,7 +2858,7 @@ trySelectCanonicalUserDefinedConversionOperator(
 			CanonicalTypeTransaction return_type_transaction(table);
 			TypeSpecifierNode canonical_return_type = return_type;
 			tryBindPublishedTypeEntity(canonical_return_type);
-			const std::optional<TypeId> return_type_import = tryImportSupportedCanonical(canonical_return_type);
+			const std::optional<TypeId> return_type_import = tryImportSupportedCanonical(table, canonical_return_type);
 			if (!return_type_import.has_value()) {
 				continue;
 			}
