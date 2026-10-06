@@ -2434,29 +2434,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					if (!deferred_base.member_type_chain.empty()) {
-						if (deferred_base.member_type_chain.size() != 1 ||
-							deferred_base.member_type_chain.front().has_template_arguments) {
-							return fail("member-type chain is not a single plain alias");
-						}
 						auto owner_entry = gTemplateRegistry.lookupTemplate(expanded_base_template_name);
 						if (!owner_entry.has_value() ||
 							!owner_entry->is<TemplateClassDeclarationNode>()) {
 							return fail("member-type owner is not a primary class template");
 						}
 						const TemplateClassDeclarationNode& owner_template = owner_entry->as<TemplateClassDeclarationNode>();
-						const StringHandle member_name = deferred_base.member_type_chain.front().member_name;
-						const auto alias_it = std::find_if(
-							owner_template.class_decl_node().type_aliases().begin(),
-							owner_template.class_decl_node().type_aliases().end(),
-							[&](const TypeAliasDecl& alias) {
-								return alias.alias_name == member_name;
-							});
-						if (alias_it == owner_template.class_decl_node().type_aliases().end() ||
-							!alias_it->type_node.is<TypeSpecifierNode>()) {
-							return fail("member name is not a class-template type alias");
+						const StructDeclarationNode* member_owner = &owner_template.class_decl_node();
+						const TypeAliasDecl* member_alias = nullptr;
+						for (size_t member_index = 0; member_index < deferred_base.member_type_chain.size(); ++member_index) {
+							const QualifiedTypeMemberAccess& member_access = deferred_base.member_type_chain[member_index];
+							if (member_access.has_template_arguments) {
+								return fail("member-type chain contains a member-template segment");
+							}
+							const bool is_last_member = member_index + 1 == deferred_base.member_type_chain.size();
+							if (is_last_member) {
+								for (const TypeAliasDecl& alias : member_owner->type_aliases()) {
+									if (alias.alias_name == member_access.member_name) {
+										member_alias = &alias;
+										break;
+									}
+								}
+								break;
+							}
+
+							const StructDeclarationNode* nested_member = nullptr;
+							for (const ASTNode& nested_class : member_owner->nested_classes()) {
+								if (!nested_class.is<StructDeclarationNode>()) {
+									continue;
+								}
+								const StructDeclarationNode& nested_struct = nested_class.as<StructDeclarationNode>();
+								if (nested_struct.name() == member_access.member_name) {
+									nested_member = &nested_struct;
+									break;
+								}
+							}
+							if (nested_member == nullptr) {
+								return fail("intermediate member is not a plain nested class");
+							}
+							member_owner = nested_member;
+						}
+						if (member_alias == nullptr ||
+							!member_alias->type_node.is<TypeSpecifierNode>()) {
+							return fail("terminal member is not a class-template type alias");
 						}
 
-						const TypeSpecifierNode& alias_target_specifier = alias_it->type_node.as<TypeSpecifierNode>();
+						const TypeSpecifierNode& alias_target_specifier = member_alias->type_node.as<TypeSpecifierNode>();
 						const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_specifier.type_index());
 						if (alias_target_info == nullptr ||
 							!alias_target_info->isTemplateInstantiation()) {
