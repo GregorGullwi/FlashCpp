@@ -606,8 +606,9 @@ that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
 boundary. This slice advanced the importer/declarator coverage work item by
 making callable-object call overload selection preserve each argument's value
-category, so `decltype` of a call agrees with the runtime overload; it completes
-no exit criterion on its own. The flat-field-absence criterion remains advanced
+category, so `decltype` of a call - through an identifier, a temporary, or an
+object data member - agrees with the runtime overload; it completes no exit
+criterion on its own. The flat-field-absence criterion remains advanced
 but incomplete for the type-trait consumer family, the lazy-constraint
 evaluator, and trait-operand nominal and member-owner identity; the flat
 classifier in `TypeTraitEvaluator.cpp` remains for the families listed under
@@ -853,8 +854,12 @@ direct-call paths already use.
 `tests/test_decltype_call_operator_value_category_ret0.cpp` checks the lvalue,
 xvalue, parenthesized, and temporary callable forms with a partial-specialization
 reference-kind discriminator and a runtime binding. A callable stored as an
-object data member (`object.callable(args)`) still falls back to the synthetic
-return type, and calls whose argument value category is not known at parse time
+object data member (`object.callable(args)`) now resolves the same way: the
+member-access path builds the member-access expression, deduces the argument
+value categories, and stores the selected `operator()` as the callee, so `.`,
+`->`, and nested member callables keep the lvalue or xvalue overload's return
+type instead of the synthetic `int` fallback. The same regression covers those
+member forms. Calls whose argument value category is not known at parse time
 remain open.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
@@ -988,12 +993,12 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    dereference, member access on an lvalue, and built-in subscripting, and keys
    off the last comma-operator operand. Callable-object calls now propagate an
    argument's lvalue value category into `operator()` overload selection, so
-   `decltype` of a call through an identifier, a parenthesized callable, or a
-   temporary matches the runtime overload's return type (including `T&` and
+   `decltype` of a call through an identifier, a parenthesized callable, a
+   temporary, or an object data member reached through `.`, `->`, or a nested
+   member matches the runtime overload's return type (including `T&` and
    `T&&`); `tests/test_decltype_call_operator_value_category_ret0.cpp` checks
-   those forms. Remaining: a callable stored as an object data member
-   (`object.callable(args)`) and a call or xvalue operand whose value category
-   the parser does not know at parse time.
+   those forms. Remaining: a call or xvalue operand whose value category the
+   parser does not know at parse time.
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;

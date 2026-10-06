@@ -1595,6 +1595,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		std::optional<TypeSpecifierNode> member_call_return_type_hint;
 		bool is_function_pointer_member_call = false;
+		const FunctionDeclarationNode* callable_object_operator = nullptr;
 		if (!known_member_func && !instantiated_func.has_value()) {
 			if (auto type_opt = get_expression_type(*result);
 				type_opt.has_value() && is_struct_type(type_opt->category())) {
@@ -1623,6 +1624,29 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 							FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
 								function_pointer_type,
 								member_name_token);
+					} else if (member.has_value() &&
+						is_struct_type(member->memberType())) {
+						// A data member of class type is invoked through its own
+						// `operator()`. Resolve the overload from the argument value
+						// categories so the parser-facing return type agrees with the
+						// runtime call instead of falling back to the synthetic int
+						// type. The receiver here is still the object, so build the
+						// member-access expression the call operator is selected on.
+						std::optional<ASTNode> member_access_expr =
+							emplace_node<ExpressionNode>(MemberAccessNode(*result, member_name_token, is_arrow_access));
+						const std::vector<TypeSpecifierNode> deduced_member_arg_types = apply_lvalue_reference_deduction(args, arg_types);
+						const bool all_member_arg_types_known = deduced_member_arg_types.size() == args.size();
+						const ConcreteCallOperatorResolution member_call_operator_resolution =
+							tryResolveConcreteCallOperator(
+								member_access_expr,
+								deduced_member_arg_types,
+								args.size(),
+								all_member_arg_types_known);
+						if (member_call_operator_resolution.state ==
+								ConcreteCallOperatorResolution::State::Resolved &&
+							member_call_operator_resolution.function != nullptr) {
+							callable_object_operator = member_call_operator_resolution.function;
+						}
 					}
 				}
 			}
@@ -1635,6 +1659,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			func_ref_ptr = instantiated_func_decl;
 		} else if (known_member_func) {
 			func_ref_ptr = known_member_func;
+		} else if (callable_object_operator != nullptr) {
+			func_ref_ptr = callable_object_operator;
 		} else {
 			ASTNode temp_type;
 			if (member_call_return_type_hint.has_value()) {

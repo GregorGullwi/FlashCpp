@@ -86,12 +86,20 @@ To show IR, use `--log-level=Codegen:debug`
 * Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.
 * When creating tests, mix different native types and sizes with structs and templates to get good coverage of each feature.
 * PR Descriptions should be describing the solved problem in a descriptive way, not just listing bullet points. It should not contain a list of run tests, but describe what any added tests actually verify.
-* It's okay to have lines up to 120 characters long, especially when initializing a variable, example:
- - bad: 
+* Keep lines at or under 120 characters; count each tab as one character.
+* Do not break a simple declaration's initializer across lines. If
+  `Type name = expression;` fits in 120 characters, write it on one line. Break
+  only when the joined line would exceed 120, or when the initializer is a
+  braced/initializer list or a call whose argument list is genuinely clearer
+  multi-line.
+ - bad:
 	std::string_view base_template_name =
 		StringTable::getStringView(deferred_base.base_template_name);
 	for (int i :
 		collection) {
+	const std::vector<TypeSpecifierNode> deduced_arg_types =
+		apply_lvalue_reference_deduction(args, arg_types);
  - good:
 	std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
 	for (int i : collection) {
+	const std::vector<TypeSpecifierNode> deduced_arg_types = apply_lvalue_reference_deduction(args, arg_types);
