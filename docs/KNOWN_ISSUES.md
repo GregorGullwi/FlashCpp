@@ -363,39 +363,6 @@ this construct; the query benchmark retains a separate 1,025-level logical
 dependency probe. Architecture boundary 7 must move the real instantiation and
 substitution path onto small arena-owned frames before this issue can be closed.
 
-## Unity arithmetic test can overflow the native stack
-
-The unity test executable crashes with `SIGSEGV - Stack overflow` in `Arithmetic
-operations and nested function calls`
-(`tests/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp:1344`) when
-linked with the default 1 MiB stack; it was reproduced on 2026-09-07:
-
-```text
-C:\Program Files\LLVM\bin\clang-cl.exe /nologo /std:c++20 /EHsc /W3 /I src /I tests\external\doctest /I external /I tests\FlashCppTest\FlashCppTest\FlashCppTest tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp /Fe:x64\enum-publication-unit\FlashCppTest.exe
-x64\enum-publication-unit\FlashCppTest.exe --test-case="Arithmetic operations and nested function calls"
-```
-
-The selected test alone crashes before assertions; exact enum-publication tests
-pass. This is unrelated to canonical enum publication. Owner: arithmetic
-expression / nested-call test path. The unit-test harness now links the same
-32 MiB stack reserve the shipping Windows binary uses
-(`FlashCppTest.vcxproj` `StackReserveSize`, and `/link /STACK:33554432` for
-direct-driver builds), so both harness paths pass on 2026-09-14. This is a
-test-harness parity fix, not a compiler fix: the production compiler's own
-stack limit stays what the shipping build already linked, and the underlying
-native-stack pressure is masked, not fixed — it must not be used to declare the
-path safe or to raise the shipping compiler's stack limit.
-
-This aligns with the authoritative rearchitecture plan's stack and recursion
-policy: source-controlled parser, expression, substitution, template, and
-semantic work must not grow native stack with logical depth; the target is at
-least 1,024 template-instantiation levels under the normal OS stack limit with
-nearly constant native-stack use. Defer the underlying investigation and
-bounded-depth regression to architecture boundary 10E (bounded parser control
-flow), coordinating with the template/semantic worklist migration where the
-measured path crosses that boundary. Do not pursue a standalone stack-reserve
-change before that work.
-
 ## Several constrained function templates in one translation unit mis-resolve
 
 Overload resolution between two constrained function templates becomes
