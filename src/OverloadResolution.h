@@ -3271,7 +3271,7 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 		// element type, such as a pointer element gaining pointee cv, is a
 		// qualification conversion.
 		bool qualification_changed = false;
-		bool allow_unknown_outer_array_bound = true;
+		bool allow_unknown_array_bound_at_element_level = true;
 		TypeId source_element = source_type;
 		TypeId target_element = target_type;
 		for (;;) {
@@ -3314,10 +3314,10 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(
 			if (!arrayBoundsMatchForReferenceBinding(
 					source_shape_node,
 					target_shape_node,
-					allow_unknown_outer_array_bound)) {
+					allow_unknown_array_bound_at_element_level)) {
 				return ConversionPlan::no_match();
 			}
-			allow_unknown_outer_array_bound = false;
+			allow_unknown_array_bound_at_element_level = false;
 			source_element = source_shape_node.child;
 			target_element = target_shape_node.child;
 		}
