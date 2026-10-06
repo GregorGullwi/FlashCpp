@@ -261,9 +261,6 @@ enum class CanonicalTraitProperty : uint8_t {
 	IsVolatile,
 	IsSigned,
 	IsUnsigned,
-	IsDefaultConstructible,
-	IsTriviallyDefaultConstructible,
-	IsNothrowDefaultConstructible,
 };
 
 CanonicalTraitProperty canonicalTraitProperty(TypeTraitKind kind) {
@@ -397,12 +394,6 @@ CanonicalRecordFacts canonicalRecordPropertyFlag(
 		return CanonicalRecordFacts::HasTrivialDestructor;
 	case CanonicalTraitProperty::HasVirtualDestructor:
 		return CanonicalRecordFacts::HasVirtualDestructor;
-	case CanonicalTraitProperty::IsDefaultConstructible:
-		return CanonicalRecordFacts::DefaultConstructible;
-	case CanonicalTraitProperty::IsTriviallyDefaultConstructible:
-		return CanonicalRecordFacts::TriviallyDefaultConstructible;
-	case CanonicalTraitProperty::IsNothrowDefaultConstructible:
-		return CanonicalRecordFacts::NothrowDefaultConstructible;
 	default:
 		throw InternalError("canonical trait: property has no record fact");
 	}
@@ -590,11 +581,6 @@ std::optional<bool> canonicalNodeSatisfies(CanonicalTraitProperty property,
 	case CanonicalTraitProperty::IsConst:
 	case CanonicalTraitProperty::IsVolatile:
 	case CanonicalTraitProperty::None:
-	// Construction properties are keyed by TypeTraitKind, not by the unary
-	// structural classifier, so they never reach this answer switch.
-	case CanonicalTraitProperty::IsDefaultConstructible:
-	case CanonicalTraitProperty::IsTriviallyDefaultConstructible:
-	case CanonicalTraitProperty::IsNothrowDefaultConstructible:
 		break;
 	}
 	throw InternalError("canonical trait: unclassified structural property");
@@ -689,14 +675,11 @@ CanonicalRecordFacts canonicalConstructionFlagForTrait(
 	TypeTraitKind kind) {
 	switch (kind) {
 	case TypeTraitKind::IsConstructible:
-		return canonicalRecordPropertyFlag(
-			CanonicalTraitProperty::IsDefaultConstructible);
+		return CanonicalRecordFacts::DefaultConstructible;
 	case TypeTraitKind::IsTriviallyConstructible:
-		return canonicalRecordPropertyFlag(
-			CanonicalTraitProperty::IsTriviallyDefaultConstructible);
+		return CanonicalRecordFacts::TriviallyDefaultConstructible;
 	case TypeTraitKind::IsNothrowConstructible:
-		return canonicalRecordPropertyFlag(
-			CanonicalTraitProperty::IsNothrowDefaultConstructible);
+		return CanonicalRecordFacts::NothrowDefaultConstructible;
 	default:
 		return CanonicalRecordFacts::None;
 	}
@@ -708,7 +691,7 @@ CanonicalRecordFacts canonicalConstructionFlagForTrait(
 // constructible, references, arrays, functions, and void are not. Returns
 // nullopt when the operand cannot be imported or its fact is not published, so
 // the caller keeps its compatibility answer.
-std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
+static std::optional<TypeTraitResult> tryEvaluateCanonicalDefaultConstructionTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec) {
 	const CanonicalRecordFacts property =
@@ -2058,7 +2041,7 @@ TypeTraitResult evaluateRecordConstructibleFromArgs(
 		: TypeTraitResult::success_false();
 }
 
-std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
+static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& target,
 	std::span<const TypeSpecifierNode> arguments) {
@@ -2090,11 +2073,10 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibleFromArgs(
 		kind, *struct_info, arguments, target.runtime_pointer_depth());
 }
 
-// Single constructibility authority shared by the folded/constexpr path, the
-// lazy constraint path, and code generation. A zero-argument query is the
-// default-construction question; an argument-bearing query resolves a
-// constructor. An empty result lets the caller keep its compatibility answer.
-std::optional<TypeTraitResult> evaluateConstructibility(
+// Canonical-only constructibility: the zero-argument query answers from the
+// published default-construction fact and the argument-bearing query resolves a
+// constructor. An empty result means the canonical table cannot decide.
+static std::optional<TypeTraitResult> tryEvaluateCanonicalConstructibility(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& target,
 	std::span<const TypeSpecifierNode> arguments) {
@@ -2102,6 +2084,80 @@ std::optional<TypeTraitResult> evaluateConstructibility(
 		return tryEvaluateCanonicalDefaultConstructionTrait(kind, target);
 	}
 	return tryEvaluateCanonicalConstructibleFromArgs(kind, target, arguments);
+}
+
+// Single constructibility authority shared by the folded/constexpr path, the
+// lazy constraint path, and code generation. `fallback` decides whether an
+// operand the canonical table cannot decide keeps an empty result (the lazy
+// path, which reports an unknown constraint) or falls through to the sema
+// compatibility answer (the folded path). The canonical query and the
+// compatibility answer live here together so the reference, scalar, and record
+// rules have one implementation.
+std::optional<TypeTraitResult> evaluateConstructibility(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& target,
+	std::span<const TypeSpecifierNode> arguments,
+	ConstructibilityFallback fallback) {
+	const bool is_reference_target = target.is_reference();
+	const bool is_scalar_target = TypeTraitEval::isScalarType(
+		target.category(), target.is_reference(), target.pointer_depth());
+	const StructTypeInfo* struct_info = structInfoFromTypeIndex(target.type_index());
+	// The compatibility path rejects a union or pointer-shaped record before a
+	// published fact can answer; the canonical-only path does not apply it.
+	if (fallback == ConstructibilityFallback::Sema &&
+		!is_reference_target && !is_scalar_target &&
+		(!struct_info || struct_info->is_union || target.pointer_depth() != 0)) {
+		return TypeTraitResult::success_false();
+	}
+	if (const std::optional<TypeTraitResult> canonical =
+			tryEvaluateCanonicalConstructibility(kind, target, arguments);
+		canonical.has_value()) {
+		return canonical;
+	}
+	if (fallback == ConstructibilityFallback::None) {
+		return std::nullopt;
+	}
+	if (is_reference_target) {
+		if (arguments.size() != 1) {
+			return TypeTraitResult::success_false();
+		}
+		return constructibleFromArgument(target, arguments.front())
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+	if (is_scalar_target) {
+		if (arguments.empty()) {
+			return TypeTraitResult::success_true();
+		}
+		if (arguments.size() != 1) {
+			return TypeTraitResult::success_false();
+		}
+		return constructibleFromArgument(target, arguments.front())
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+	if (!struct_info) {
+		return TypeTraitResult::success_false();
+	}
+	if (kind == TypeTraitKind::IsConstructible) {
+		return recordDefaultConstructible(*struct_info)
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+	if (kind == TypeTraitKind::IsTriviallyConstructible) {
+		return recordTriviallyConstructible(*struct_info)
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+	if (kind == TypeTraitKind::IsNothrowConstructible) {
+		return recordNothrowConstructible(*struct_info)
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+	TypeTraitResult base_result = evaluateTypeTrait(kind, target, struct_info);
+	return base_result.success
+		? base_result
+		: TypeTraitResult::success_false();
 }
 
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
@@ -2139,84 +2195,11 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			additional_types.push_back(
 				normalizeTypeTraitOperand(additional_type_node.as<TypeSpecifierNode>()));
 		}
-		if (trait_expr.kind() == TypeTraitKind::IsAssignable ||
-			trait_expr.kind() == TypeTraitKind::IsTriviallyAssignable ||
-			trait_expr.kind() == TypeTraitKind::IsNothrowAssignable) {
-			if (additional_types.size() != 1) {
-				return TypeTraitResult::success_false();
-			}
-			return evaluateAssignableTrait(
-				trait_expr.kind(),
-				type_spec,
-				additional_types.front());
-		}
-
-		// The constructible family has one shared authority. Reject the union
-		// and pointer shapes the compatibility path has always rejected before
-		// a published fact can answer, then try the canonical query and fall
-		// back to the sema predicates only for an operand it cannot import.
-		const bool is_reference_target = type_spec.is_reference();
-		const bool is_scalar_target = TypeTraitEval::isScalarType(
-			type_spec.category(),
-			type_spec.is_reference(),
-			type_spec.pointer_depth());
-		const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
-		if (!is_reference_target && !is_scalar_target &&
-			(!struct_info || struct_info->is_union || type_spec.pointer_depth() != 0)) {
-			return TypeTraitResult::success_false();
-		}
-		if (const std::optional<TypeTraitResult> canonical =
-				evaluateConstructibility(
-					trait_expr.kind(), type_spec, additional_types);
-			canonical.has_value()) {
-			return *canonical;
-		}
-
-		// Compatibility fallback for an operand the canonical table cannot
-		// import. Reference and scalar targets keep their sema conversion
-		// answer; an unpublished record fact falls back to the sema
-		// default-construction predicates.
-		if (is_reference_target) {
-			if (additional_types.size() != 1) {
-				return TypeTraitResult::success_false();
-			}
-			return constructibleFromArgument(type_spec, additional_types.front())
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
-		}
-		if (is_scalar_target) {
-			if (additional_types.empty()) {
-				return TypeTraitResult::success_true();
-			}
-			if (additional_types.size() != 1) {
-				return TypeTraitResult::success_false();
-			}
-			return constructibleFromArgument(type_spec, additional_types.front())
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
-		}
-		if (!struct_info) {
-			return TypeTraitResult::success_false();
-		}
-		if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
-			return recordDefaultConstructible(*struct_info)
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
-		}
-		if (trait_expr.kind() == TypeTraitKind::IsTriviallyConstructible) {
-			return recordTriviallyConstructible(*struct_info)
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
-		}
-		if (trait_expr.kind() == TypeTraitKind::IsNothrowConstructible) {
-			return recordNothrowConstructible(*struct_info)
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
-		}
-		TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
-		return base_result.success
-			? base_result
-			: TypeTraitResult::success_false();
+		// The constructible family has one shared authority, including the sema
+		// compatibility answer for an operand the canonical table cannot decide.
+		const std::optional<TypeTraitResult> constructibility = evaluateConstructibility(
+			trait_expr.kind(), type_spec, additional_types, ConstructibilityFallback::Sema);
+		return constructibility.value_or(TypeTraitResult::success_false());
 	}
 
 	if (trait_expr.has_second_type()) {

@@ -38,14 +38,24 @@ std::optional<TypeTraitResult> tryEvaluateCanonicalSameTrait(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs);
 
+// Whether evaluateConstructibility falls back to the sema compatibility answer
+// when the canonical table cannot decide. The lazy constraint path asks for
+// None so an undecidable operand keeps its unknown constraint answer; the
+// folded path asks for Sema so an unmigrated operand keeps its sema answer.
+enum class ConstructibilityFallback : uint8_t {
+	None,
+	Sema,
+};
+
 // Evaluates a __is_constructible, __is_trivially_constructible, or
 // __is_nothrow_constructible query from canonical identity. A zero-argument
 // query is the default-construction question answered from the published
 // construction fact; an argument-bearing query resolves a constructor for a
 // record target and applies the implicit conversion rules for a reference or
-// scalar target. An empty result allows compatibility evaluation for an
-// unimported operand or an unpublished fact.
+// scalar target. An empty result is possible only for
+// ConstructibilityFallback::None and lets the caller keep its own answer.
 std::optional<TypeTraitResult> evaluateConstructibility(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& target,
-	std::span<const TypeSpecifierNode> arguments);
+	std::span<const TypeSpecifierNode> arguments,
+	ConstructibilityFallback fallback);

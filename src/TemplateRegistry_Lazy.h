@@ -2521,7 +2521,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					if (const std::optional<TypeTraitResult> canonical_result =
 							evaluateConstructibility(
 								trait_expr.kind(), *first_specifier,
-								argument_specifiers);
+								argument_specifiers, ConstructibilityFallback::None);
 						canonical_result.has_value()) {
 						return constraint_result_for_trait(*canonical_result);
 					}
