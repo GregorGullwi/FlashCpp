@@ -5,7 +5,7 @@ plan](2026-08-24-front-end-rearchitecture-plan.md) is authoritative for the
 design, boundaries, and exit criteria. This file records current state and
 next work; completed implementation history belongs in git.
 
-Last updated: 2026-10-05.
+Last updated: 2026-10-06.
 
 ## Current state
 
@@ -604,12 +604,14 @@ measurement is stale.
 The explicit-criteria rollup is **10/79 complete**. The boundary-3A criterion
 that pointer-to-member overloads distinguish owner and pointee types is now
 covered; passing tests or the breadth of landed code do not complete the
-boundary. This slice advanced the criterion that flat pointer-level and
-array-dimension fields are absent from migrated semantic paths, for the
-type-trait consumer family, the lazy-constraint evaluator, and trait-operand
-nominal and member-owner identity; the flat classifier in
-`TypeTraitEvaluator.cpp` remains for the families listed under remaining work
-item 2. Implementation effort is not yet estimated reliably.
+boundary. This slice advanced the importer/declarator coverage work item by
+making callable-object call overload selection preserve each argument's value
+category, so `decltype` of a call agrees with the runtime overload; it completes
+no exit criterion on its own. The flat-field-absence criterion remains advanced
+but incomplete for the type-trait consumer family, the lazy-constraint
+evaluator, and trait-operand nominal and member-owner identity; the flat
+classifier in `TypeTraitEvaluator.cpp` remains for the families listed under
+remaining work item 2. Implementation effort is not yet estimated reliably.
 
 ## Next work
 
@@ -841,7 +843,19 @@ so `decltype(a[i])` and `decltype(p[i])` produce lvalue references while
 preserving nested array bounds and element cv-qualification;
 `tests/test_decltype_subscript_expression_ret0.cpp` covers those forms and the
 C++20 reversed pointer-subscript form. Class `operator[]` selection stays with
-sema. Calls and xvalue operands remain open decltype value-category cases.
+sema. Callable-object calls now preserve each argument's lvalue value category
+while the parser selects the `operator()` overload, so the parser-facing return
+type that `decltype` reads matches the runtime call: an lvalue argument selects
+the `T&`-returning overload instead of the `T&&`-returning one, and an xvalue
+argument keeps `T&&`. The fix reuses `apply_lvalue_reference_deduction` at the
+identifier and general postfix callable-call sites, the same helper the
+direct-call paths already use.
+`tests/test_decltype_call_operator_value_category_ret0.cpp` checks the lvalue,
+xvalue, parenthesized, and temporary callable forms with a partial-specialization
+reference-kind discriminator and a runtime binding. A callable stored as an
+object data member (`object.callable(args)`) still falls back to the synthetic
+return type, and calls whose argument value category is not known at parse time
+remain open.
 
 Overload-ranking tie-breakers for reference parameter identity and pointer
 
@@ -972,8 +986,14 @@ Overload-ranking tie-breakers for reference parameter identity and pointer
    its distinction from a function pointer, and the template-argument form.
    The `decltype` reference rule now covers a parenthesized id-expression,
    dereference, member access on an lvalue, and built-in subscripting, and keys
-   off the last comma-operator operand. Remaining: a call or xvalue operand
-   (for example, `std::move(x)` or a call returning `T&&`).
+   off the last comma-operator operand. Callable-object calls now propagate an
+   argument's lvalue value category into `operator()` overload selection, so
+   `decltype` of a call through an identifier, a parenthesized callable, or a
+   temporary matches the runtime overload's return type (including `T&` and
+   `T&&`); `tests/test_decltype_call_operator_value_category_ret0.cpp` checks
+   those forms. Remaining: a callable stored as an object data member
+   (`object.callable(args)`) and a call or xvalue operand whose value category
+   the parser does not know at parse time.
 4. **Close and mutation-validate the 3A exit criteria.** Prove independence
    from parser/context stacks, parse order, and string insertion order; cover
    remaining pointer-to-member, function, dependent, and template families;

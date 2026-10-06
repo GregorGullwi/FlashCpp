@@ -12123,6 +12123,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 					}
 					const bool all_op_types_known = op_arg_types.size() == args.size();
+					if (all_op_types_known) {
+						// Preserve each argument's lvalue value category so the
+						// selected `operator()` overload - and therefore the
+						// parser-facing return type that `decltype` reads - matches
+						// the runtime call. Without this an lvalue argument selects
+						// the rvalue-reference overload.
+						op_arg_types = apply_lvalue_reference_deduction(args, op_arg_types);
+					}
 					const ConcreteCallOperatorResolution call_operator_resolution =
 						tryResolveConcreteCallOperator(
 							object_expr,
