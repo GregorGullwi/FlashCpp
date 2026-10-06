@@ -132,6 +132,13 @@ void applyResolvedSubstitutedTypeMetadata(
 	const TemplateTypeArg* resolved_arg,
 	TypeIndex source_type_index) {
 	if (resolved_arg) {
+		// The resolved argument is the type bound to the template parameter that
+		// is the base of this specifier (for example `Type` in `Type*`). Its
+		// base cv-qualifiers must survive substitution; otherwise `Type*` with
+		// `Type = const int` collapses to `int*`.
+		if (resolved_arg->cv_qualifier != CVQualifier::None) {
+			target.add_cv_qualifier(resolved_arg->cv_qualifier);
+		}
 		for (size_t i = 0; i < resolved_arg->pointer_depth; ++i) {
 			CVQualifier cv = i < resolved_arg->pointer_cv_qualifiers.size()
 								 ? resolved_arg->pointer_cv_qualifiers[i]
