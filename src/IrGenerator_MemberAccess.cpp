@@ -155,7 +155,8 @@ static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& d
 	{
 		const TypeSpecifierNode& type_node = decl.type_specifier_node();
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
-			return type_node.array_dimension_count();
+			return type_node.array_dimension_count() +
+				static_cast<size_t>(type_node.has_unsized_outer_array_dimension());
 		}
 	}
 	return decl.array_dimension_count();
@@ -166,7 +167,17 @@ std::vector<size_t> AstToIr::getEffectiveArrayDimensionsForCodegen(const Declara
 		const TypeSpecifierNode& type_node = decl.type_specifier_node();
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
 			const std::span<const size_t> dimensions = type_node.array_dimensions();
-			return std::vector<size_t>(dimensions.begin(), dimensions.end());
+			std::vector<size_t> effective_dimensions;
+			effective_dimensions.reserve(
+				dimensions.size() +
+				static_cast<size_t>(type_node.has_unsized_outer_array_dimension()));
+			if (type_node.has_unsized_outer_array_dimension()) {
+				// Preserve the outer rank so indexing keeps the known inner-dimension strides.
+				effective_dimensions.push_back(0);
+			}
+			effective_dimensions.insert(
+				effective_dimensions.end(), dimensions.begin(), dimensions.end());
+			return effective_dimensions;
 		}
 	}
 

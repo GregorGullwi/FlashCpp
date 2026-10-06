@@ -1208,10 +1208,10 @@ bool Parser::parseReferenceToArrayDeclarator(
 	type_spec.set_reference_qualifier(
 		is_rvalue_ref ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference);
 	type_spec.set_array(true);
+	addConstantArrayDimensionsToTypeSpec(type_spec, array_dimensions);
 	if (is_unsized_outer_array) {
 		type_spec.set_unsized_outer_array_dimension(true);
 	}
-	addConstantArrayDimensionsToTypeSpec(type_spec, array_dimensions);
 
 	out_identifier = identifier;
 	out_has_identifier = has_identifier;
