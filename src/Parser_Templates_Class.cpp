@@ -5474,12 +5474,22 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 				std::move(replay_template_parameters));
 		} else {
 			// Simple identifier base class – look it up now; defer only if it's a template parameter
-			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_class_name));
-			if (type_it != getTypesByNameMap().end()) {
+			const StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_class_name);
+			const auto parameter_kind = currentTemplateParamKind(base_name_handle);
+			const auto& current_parameter_names = currentTemplateParamNames();
+			const bool is_current_template_parameter =
+				std::find(current_parameter_names.begin(), current_parameter_names.end(), base_name_handle) !=
+				current_parameter_names.end();
+			const bool is_type_template_parameter = is_current_template_parameter &&
+				(!parameter_kind.has_value() ||
+					*parameter_kind == TemplateParameterKind::Type);
+			auto type_it = getTypesByNameMap().find(base_name_handle);
+			if (type_it != getTypesByNameMap().end() && !is_type_template_parameter) {
 				// Concrete type found – register immediately (no deferral needed)
 				struct_ref.add_base_class(base_class_name, type_it->second->type_index_, base_access, is_virtual_base, /*is_deferred=*/false);
 			} else {
-				// Not yet known – likely a template parameter or forward-declared type; defer
+				// A type parameter can already have a placeholder in the type map. Keep it
+				// deferred so instantiation substitutes the member template's argument.
 				struct_ref.add_base_class(base_class_name, TypeIndex{}, base_access, is_virtual_base, /*is_deferred=*/true);
 			}
 		}

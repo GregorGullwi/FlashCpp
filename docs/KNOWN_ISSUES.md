@@ -31,23 +31,6 @@ instantiation. Stack usage for deep chains through those forms remains
 unverified. Extend dependency scheduling to cover them while sharing base
 substitution semantics with ordinary instantiation.
 
-## Member class template dependent bases are not instantiated
-
-A member class template whose base is one of its own type parameters does not
-inherit the base when the member template is instantiated:
-
-```cpp
-struct Payload { int v; };
-template <class T> struct A { template <class U> struct B : U { }; };
-A<int>::B<Payload> b;   // error: member 'v' not found in struct 'B$<hash>'
-```
-
-A concrete base works, and a dependent base in a nested class of a class
-template works, so the gap is the member template's own parameter not being
-substituted into its base list. A class nested inside a member class template
-with a dependent base (`struct Inner : U { };`) reaches the same path. This is
-independent of nested-class parsing, which now works.
-
 ## Replayed function-template local classes can reach codegen without coherent TypeInfo ownership
 
 A namespace/global function-template body that declares a local class and is

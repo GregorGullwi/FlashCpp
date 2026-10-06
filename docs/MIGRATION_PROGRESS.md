@@ -1063,6 +1063,13 @@ start them.
   path but does not complete boundary 8A; member-template segments and indirect
   alias targets remain open in [known issues](KNOWN_ISSUES.md), and the broader
   AST-based instantiation and old-path deletion criteria remain unfinished.
+- **Member-template dependent bases:** member base-list parsing now recognizes
+  an active type parameter even when a placeholder with that name is already
+  present in the type map. Instantiating `Nested<Payload> : Payload` and a
+  nested `Inner : Payload` now records the concrete base and exposes its
+  inherited members; `tests/test_member_class_template_dependent_base_ret0.cpp`
+  covers both layouts with mixed-size fields. This closes that specific known
+  issue without completing boundary 8A.
 - **Callable ABI mangling:** MSVC name mangling still throws an internal error
   for function declarations with non-projectable ordered callable parameters;
   address this at boundary 3B after canonical type migration.
