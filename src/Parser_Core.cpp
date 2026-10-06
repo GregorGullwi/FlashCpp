@@ -128,40 +128,90 @@ const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index) {
 	return nullptr;
 }
 
+static TypeIndex resolveMemberLayoutTypeIndex(
+	const TypeSpecifierNode& type_spec,
+	TypeIndex resolved_type_index) {
+	TypeIndex canonical_type_index = canonicalize_type_alias(resolved_type_index).resolvedTypeIndex();
+	if (!canonical_type_index.is_valid()) {
+		canonical_type_index = canonicalize_type_alias(type_spec.type_index()).resolvedTypeIndex();
+	}
+	if (canonical_type_index.is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(canonical_type_index)) {
+			canonical_type_index = canonical_type_index.withCategory(type_info->typeEnum());
+		}
+	}
+	return canonical_type_index;
+}
+
+static const TypeInfo* tryGetMemberLayoutTypeInfo(TypeIndex canonical_type_index) {
+	if (!canonical_type_index.is_valid()) {
+		return nullptr;
+	}
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(canonical_type_index);
+	return resolved_alias.terminal_type_info;
+}
+
+static TypeCategory getMemberLayoutTypeCategory(
+	const TypeSpecifierNode& type_spec,
+	TypeIndex canonical_type_index,
+	const TypeInfo* type_info) {
+	if (type_info != nullptr) {
+		return type_info->typeEnum();
+	}
+	if (canonical_type_index.category() != TypeCategory::Invalid) {
+		return canonical_type_index.category();
+	}
+	return type_spec.type();
+}
+
 size_t getResolvedTypeSizeBytes(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index) {
 	const int size_bits = getTypeSpecSizeBits(type_spec);
 	if (size_bits > 0) {
 		return static_cast<size_t>((size_bits + 7) / 8);
 	}
-	TypeIndex canonical_type_index = canonicalize_type_alias(resolved_type_index).resolvedTypeIndex();
-	TypeCategory resolved_category = canonical_type_index.category();
-	if (resolved_category == TypeCategory::Invalid) {
-		resolved_category = resolve_type_alias(type_spec.type_index());
+	const TypeIndex canonical_type_index = resolveMemberLayoutTypeIndex(type_spec, resolved_type_index);
+	const TypeInfo* type_info = tryGetMemberLayoutTypeInfo(canonical_type_index);
+	if (type_info != nullptr) {
+		if (const StructTypeInfo* struct_info = type_info->getStructInfo();
+			struct_info != nullptr && struct_info->hasCompleteObjectLayout()) {
+			return toSizeT(struct_info->sizeInBytes());
+		}
+		if (const EnumTypeInfo* enum_info = type_info->getEnumInfo()) {
+			return toSizeT(enum_info->sizeInBytes());
+		}
+		if (!type_info->isStruct() && !type_info->isEnum() && type_info->hasStoredSize()) {
+			return toSizeT(type_info->sizeInBytes());
+		}
 	}
-	if (resolved_category == TypeCategory::Invalid) {
-		resolved_category = type_spec.type();
+	const TypeCategory resolved_category =
+		getMemberLayoutTypeCategory(type_spec, canonical_type_index, type_info);
+	if (needs_type_index(resolved_category)) {
+		return 0;
 	}
-	return get_type_size_bits(resolved_category) / 8;
+	return static_cast<size_t>(get_type_size_bits(resolved_category) / 8);
 }
 
-MemberSizeAndAlignment calculateResolvedMemberSizeAndAlignment(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index) {
-	if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference() || type_spec.is_function_pointer()) {
+MemberSizeAndAlignment calculateResolvedMemberSizeAndAlignment(
+	const TypeSpecifierNode& type_spec,
+	TypeIndex resolved_type_index) {
+	if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference() ||
+		type_spec.is_function_pointer()) {
 		return MemberSizeAndAlignment{sizeof(void*), sizeof(void*)};
 	}
 
-	size_t size = getResolvedTypeSizeBytes(type_spec, resolved_type_index);
-	const TypeIndex canonical_type_index = canonicalize_type_alias(resolved_type_index).resolvedTypeIndex();
-	TypeCategory resolved_category = canonical_type_index.category();
-	if (resolved_category == TypeCategory::Invalid) {
-		resolved_category = resolve_type_alias(type_spec.type_index());
-	}
-	if (resolved_category == TypeCategory::Invalid) {
-		resolved_category = type_spec.type();
-	}
+	const TypeIndex canonical_type_index = resolveMemberLayoutTypeIndex(type_spec, resolved_type_index);
+	const TypeInfo* type_info = tryGetMemberLayoutTypeInfo(canonical_type_index);
+	const size_t size = getResolvedTypeSizeBytes(type_spec, canonical_type_index);
+	const TypeCategory resolved_category =
+		getMemberLayoutTypeCategory(type_spec, canonical_type_index, type_info);
 
 	size_t alignment = get_type_alignment(resolved_category, size);
-	if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(canonical_type_index)) {
-		alignment = struct_info->alignment;
+	if (type_info != nullptr) {
+		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+			alignment = struct_info->alignment;
+		} else if (const EnumTypeInfo* enum_info = type_info->getEnumInfo()) {
+			alignment = get_type_alignment(enum_info->underlying_type, size);
+		}
 	}
 
 	return MemberSizeAndAlignment{size, alignment};
